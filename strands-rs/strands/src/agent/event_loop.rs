@@ -868,12 +868,7 @@ impl Agent {
     }
 
     fn tool_specs(&self) -> Vec<ToolSpec> {
-        self.local
-            .tool_registry()
-            .list()
-            .iter()
-            .map(|tool| tool.tool_spec())
-            .collect()
+        self.local.tool_registry().tool_specs()
     }
 
     /// Calls the model, with the before and after hooks and retries.

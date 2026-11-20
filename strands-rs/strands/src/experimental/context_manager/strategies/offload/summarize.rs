@@ -268,12 +268,7 @@ impl SummarizeReplacer {
             ..SummarizeOptions::default()
         };
         if replay {
-            options.tool_specs = agent
-                .tool_registry()
-                .list()
-                .iter()
-                .map(|tool| tool.tool_spec())
-                .collect();
+            options.tool_specs = agent.tool_registry().tool_specs();
             options.system_prompt = agent.system_prompt().cloned();
         }
         options

@@ -206,6 +206,24 @@ fn leaves_a_tool_registered_under_a_current_name_by_another_source() {
 }
 
 #[test]
+fn returns_specs_in_order_for_options() {
+    for (sort, expected) in [
+        (None, ["zeta", "alpha", "Mike"]),
+        (Some(false), ["zeta", "alpha", "Mike"]),
+        (Some(true), ["Mike", "alpha", "zeta"]),
+    ] {
+        let tools: Vec<Arc<dyn Tool>> = ["zeta", "alpha", "Mike"].into_iter().map(tool).collect();
+        let mut registry = ToolRegistry::with_tools(tools.clone()).unwrap();
+        if let Some(sort) = sort {
+            registry.set_sort_tool_specs(sort);
+        }
+        let specs: Vec<String> = registry.tool_specs().into_iter().map(|spec| spec.name).collect();
+        assert_eq!(specs, expected, "{sort:?}");
+        assert!(ptr_eq_all(&registry.list(), &tools));
+    }
+}
+
+#[test]
 fn retrieves_a_tool_by_name() {
     let mut registry = ToolRegistry::new();
     let tool = tool("find-me");

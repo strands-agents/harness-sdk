@@ -8,6 +8,7 @@ use indexmap::IndexMap;
 use super::source::ToolSource;
 use super::tool::{Tool, is_valid_tool_name};
 use crate::error::{ToolNotFoundError, ToolValidationError};
+use crate::types::ToolSpec;
 
 type Result<T, E = crate::error::Error> = std::result::Result<T, E>;
 
@@ -20,6 +21,7 @@ const MAX_TOOL_NAME_LENGTH: usize = 64;
 #[derive(Clone, Default)]
 pub struct ToolRegistry {
     tools: IndexMap<String, Arc<dyn Tool>>,
+    sort_tool_specs: bool,
 }
 
 impl ToolRegistry {
@@ -157,6 +159,30 @@ impl ToolRegistry {
     #[must_use]
     pub fn list(&self) -> Vec<Arc<dyn Tool>> {
         self.tools.values().cloned().collect()
+    }
+
+    /// The specs of every registered tool: sorted by name when
+    /// [`sort_tool_specs`](Self::sort_tool_specs) is set, otherwise in registration order
+    /// (`toolSpecs`).
+    #[must_use]
+    pub fn tool_specs(&self) -> Vec<ToolSpec> {
+        let mut specs: Vec<ToolSpec> = self.tools.values().map(|tool| tool.tool_spec()).collect();
+        if self.sort_tool_specs {
+            specs.sort_by(|left, right| left.name.cmp(&right.name));
+        }
+        specs
+    }
+
+    /// Whether [`tool_specs`](Self::tool_specs) sorts specs by name (`sortToolSpecs`). Defaults
+    /// to `false`, which keeps registration order.
+    #[must_use]
+    pub fn sort_tool_specs(&self) -> bool {
+        self.sort_tool_specs
+    }
+
+    /// Sets whether [`tool_specs`](Self::tool_specs) sorts specs by name.
+    pub fn set_sort_tool_specs(&mut self, sort: bool) {
+        self.sort_tool_specs = sort;
     }
 
     /// Whether no tools are registered.

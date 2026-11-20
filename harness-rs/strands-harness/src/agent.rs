@@ -337,6 +337,8 @@ pub struct HarnessAgentOptions {
     /// See [`AgentConfig::tool_executor`].
     #[builder(into)]
     pub tool_executor: Option<ToolExecutorStrategy>,
+    /// See [`AgentConfig::sort_tools`].
+    pub sort_tools: Option<bool>,
     /// See [`AgentConfig::conversation_manager`].
     pub conversation_manager: Option<Arc<dyn ConversationManager>>,
     /// See [`AgentConfig::trace_attributes`].
@@ -771,6 +773,7 @@ pub(crate) async fn assemble_with(
         description,
         id,
         tool_executor,
+        sort_tools,
         conversation_manager,
         trace_attributes,
         baggage_attributes,
@@ -944,6 +947,7 @@ pub(crate) async fn assemble_with(
         description,
         id,
         tool_executor,
+        sort_tools,
         conversation_manager,
         context_manager: Some(context_manager.unwrap_or(ContextManagerStrategy::Auto)),
         background_tasks: Some(background_tasks),
