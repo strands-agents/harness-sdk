@@ -294,10 +294,13 @@ fn convert_node(mut remaining: JsonObject) -> Result<JsonObject> {
         return Ok(converted);
     }
 
-    let kind = take(&mut remaining, "type");
+    let mut kind = take(&mut remaining, "type");
+    if convert_literals(&mut remaining, &mut converted) {
+        kind = None;
+    }
     convert_composition(&mut remaining, &mut converted, kind.clone())?;
 
-    for key in ["enum", "description", "title"] {
+    for key in ["description", "title"] {
         if let Some(value) = take(&mut remaining, key) {
             converted.insert(key.to_owned(), value);
         }
@@ -345,12 +348,35 @@ fn convert_composition(remaining: &mut JsonObject, converted: &mut JsonObject, k
         converted.insert("allOf".to_owned(), convert_all(&variants)?);
     } else if let Some(kind) = kind {
         converted.insert("type".to_owned(), kind);
-    } else {
+    } else if !converted.contains_key("enum") && !converted.contains_key("const") {
         return Err(Error::other(
-            "Schema must have a 'type', 'anyOf', 'oneOf', or 'allOf' field.",
+            "Schema must have a 'type', 'anyOf', 'oneOf', or 'allOf' field, or a 'const' or non-empty 'enum' of strings, numbers, booleans, or null.",
         ));
     }
     Ok(())
+}
+
+/// Moves a primitive `enum` or `const` into the converted schema, returning whether either was
+/// moved.
+fn convert_literals(remaining: &mut JsonObject, converted: &mut JsonObject) -> bool {
+    let primitive_enum = remaining
+        .get("enum")
+        .and_then(JsonValue::as_array)
+        .is_some_and(|values| !values.is_empty() && values.iter().all(is_primitive));
+    if primitive_enum && let Some(values) = take(remaining, "enum") {
+        converted.insert("enum".to_owned(), values);
+    }
+    if remaining.get("const").is_some_and(is_primitive)
+        && let Some(value) = take(remaining, "const")
+    {
+        converted.insert("const".to_owned(), value);
+    }
+    converted.contains_key("enum") || converted.contains_key("const")
+}
+
+/// Whether a value is one native structured output accepts in `enum` and `const`.
+fn is_primitive(value: &JsonValue) -> bool {
+    !matches!(value, JsonValue::Array(_) | JsonValue::Object(_))
 }
 
 fn convert_object(remaining: &mut JsonObject, converted: &mut JsonObject) -> Result<()> {
@@ -586,7 +612,7 @@ mod tests {
 
     #[test]
     fn matches_the_anthropic_sdk_transform() {
-        for name in ["Person", "Roster", "WithNestedRecord"] {
+        for name in ["Person", "Roster", "WithNestedRecord", "Team", "WithMixedLiteral"] {
             let converted = to_native_output_schema(&schema(name)).unwrap();
             let expected = &FIXTURES[name]["anthropic"];
             assert_eq!(converted, *expected, "{name}");
@@ -595,14 +621,14 @@ mod tests {
     }
 
     #[test]
-    fn keeps_enums_which_native_output_supports() {
+    fn keeps_primitive_enums_and_consts_in_place_of_the_type_which_native_output_supports() {
         assert_eq!(
             to_native_output_schema(&schema("Color")).unwrap(),
             json!({
                 "type": "object",
-                "properties": {"color": {"type": "string", "enum": ["red", "blue"]}},
+                "properties": {"color": {"enum": ["red", "blue"]}, "version": {"const": 1}},
                 "additionalProperties": false,
-                "required": ["color"],
+                "required": ["color", "version"],
             })
         );
     }
