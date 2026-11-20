@@ -391,12 +391,11 @@ class LiteLLMModel(OpenAIModel):
         self, output_model: type[T], prompt: Messages, system_prompt: str | None = None
     ) -> T:
         """Get structured output using native response_format support."""
-        response = await litellm.acompletion(
-            **self.client_args,
-            model=self.get_config()["model_id"],
-            messages=self.format_request(prompt, system_prompt=system_prompt)["messages"],
-            response_format=output_model,
-        )
+        request = {**self.client_args, **self.format_request(prompt, system_prompt=system_prompt)}
+        request["stream"] = False
+        request.pop("stream_options", None)
+        request["response_format"] = output_model
+        response = await litellm.acompletion(**request)
 
         if len(response.choices) > 1:
             raise ValueError("Multiple choices found in the response.")
