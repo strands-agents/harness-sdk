@@ -13,10 +13,9 @@
  * and memory/time/recursion limits are enforced by the VM. The only way out of the sandbox is the
  * tool functions handed in here, so the sandbox reaches exactly what the agent's own tools reach.
  * Under Node the interpreter runs in a separate worker process (native addon) or, where the addon
- * cannot load, as WebAssembly -- the language-level sandbox holds either way. Neither can be
- * interrupted while the guest computes: on a timeout or cancel the tool returns at once, but the guest
- * keeps running in its worker until the compute limit (in Python the worker is killed instead). Guest
- * compute is capped much lower on the WebAssembly build (`WASM_MAX_DURATION_SECS`).
+ * cannot load, in-process as WebAssembly -- the language-level sandbox holds either way, but the
+ * in-process build blocks the event loop while the guest computes, so neither the wall-clock timeout
+ * nor a cancel can preempt it; guest compute is capped much lower there (`WASM_MAX_DURATION_SECS`).
  * For an OS boundary around the *tools*, run the agent under a Docker/SSH sandbox.
  *
  * Inner tool calls run the way the executor runs a model-issued call (`beforeToolCall` hooks -> the
@@ -47,7 +46,7 @@ type MontyModule = typeof import('@pydantic/monty')
 // is bounded separately by `timeoutMs`. Suspensions are host round trips: a sequentially awaited
 // tool call costs two, a gathered one about one, so this is roughly 500 sequential calls per run.
 // Exported for tests, which lower the duration to exercise the limit quickly.
-export const LIMITS = { maxFeedDurationSecs: 60, maxMemory: 256 * 1024 * 1024, maxSuspensions: 1_000 }
+export const LIMITS = { maxDurationSecs: 60, maxMemory: 256 * 1024 * 1024, maxSuspensions: 1_000 }
 
 // Inner tool calls in flight at once per run: `asyncio.gather` over a big list must not fan out
 // unbounded against the same agent (a model turn is naturally bounded by its handful of tool_use blocks).
@@ -466,7 +465,7 @@ function cap(raw: string, limit = MAX_OUTPUT_CHARS): string {
 
 /**
  * Await `run` until it settles, `timeoutMs` elapses, or `cancelSignal` fires. Rejects with `'timeout'`
- * or `'cancel'` on the latter two; the caller then abandons the run.
+ * or `'cancel'` on the latter two; the caller tears the sandbox down, which is what stops the code.
  */
 function withDeadline<T>(run: Promise<T>, timeoutMs: number | null, cancelSignal: AbortSignal | undefined): Promise<T> {
   const cleanup = new globalThis.AbortController()
@@ -526,28 +525,25 @@ export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOp
         const { monty, inProcess } = await loadMonty()
         const { Monty, MontyError, MontyRuntimeError, MontySyntaxError } = monty
         const limits = inProcess
-          ? { ...LIMITS, maxFeedDurationSecs: Math.min(LIMITS.maxFeedDurationSecs, WASM_MAX_DURATION_SECS) }
+          ? { ...LIMITS, maxDurationSecs: Math.min(LIMITS.maxDurationSecs, WASM_MAX_DURATION_SECS) }
           : LIMITS
         const pool = await Monty.create()
         try {
           const session = await pool.checkout({ scriptName: USER_CODE_FILENAME, limits })
-          let abandoned = false
           try {
             const run = session.feedRun(input.code, {
               externalLookup,
               printCallback: (stream, text) => output.write(stream, text),
             })
-            // On timeout/cancel the run is abandoned; swallow the late rejection.
+            // On timeout/cancel the run is abandoned and its session closed; swallow the late rejection.
             run.catch(() => {})
             await withDeadline(run, timeoutMs, context.cancelSignal)
           } catch (error) {
             controller.abort()
             if (error instanceof Error && error.message === 'cancel') {
-              abandoned = true
               throw new Error('Execution cancelled.', { cause: error })
             }
             if (error instanceof Error && error.message === 'timeout' && timeoutMs !== null) {
-              abandoned = true
               throw new Error(output.withError(`Execution error: timed out after ${timeoutMs / 1000} seconds.`), {
                 cause: error,
               })
@@ -563,14 +559,7 @@ export function makeProgrammaticToolCaller(options: MakeProgrammaticToolCallerOp
             }
             throw error
           } finally {
-            // A session closes only once its feed ends, and code that is computing cannot be interrupted, so
-            // an abandoned run is closed in the background: the VM duration limit ends it.
-            const closed = session.close()
-            if (abandoned) {
-              closed.catch(() => {})
-            } else {
-              await closed
-            }
+            await session.close()
           }
         } finally {
           await pool.close()
