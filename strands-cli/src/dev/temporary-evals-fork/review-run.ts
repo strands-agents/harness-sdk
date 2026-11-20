@@ -23,7 +23,6 @@ const question = (edit: ProposedEdit, run: string, at: number, of: number): Wiza
             { value: ACCEPT, label: 'Apply this change' },
             { value: 'reject', label: 'Leave it as it is' },
           ],
-          selected: [ACCEPT],
           multiple: false,
         },
         {
@@ -43,8 +42,22 @@ const question = (edit: ProposedEdit, run: string, at: number, of: number): Wiza
  * Walks a finished run's edits one at a time and applies only the accepted ones.
  * Cancelling a question rejects that edit and stops, so the rest stay unapplied.
  */
+const reviewing = new WeakMap<object, Set<string>>()
+
 export const reviewOptimizeRun = async (sessions: TemporaryDevSessions, runId: string): Promise<void> => {
-  const { optimize, ask } = sessions
+  // One walk per run and workspace: the finish opens it, and the progress line's click must not start a second.
+  const walks = reviewing.get(sessions.optimize) ?? new Set<string>()
+  reviewing.set(sessions.optimize, walks)
+  if (walks.has(runId)) return
+  walks.add(runId)
+  try {
+    await walkRun(sessions, runId)
+  } finally {
+    walks.delete(runId)
+  }
+}
+
+const walkRun = async ({ optimize, ask }: TemporaryDevSessions, runId: string): Promise<void> => {
   if (!optimize.focusRun(runId)) return
   const run = optimize.snapshot().runs?.find((candidate) => candidate.id === runId)
   if (run?.state.step !== 'review') return

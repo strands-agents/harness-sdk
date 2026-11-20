@@ -205,11 +205,14 @@ describe('optimize-harness guidance', () => {
     expect(instructions).toContain('a run already going is not a reason to refuse a new one')
   })
 
-  it('shouldApplyOnlyNamedEditsAndPreserveAPendingReview', () => {
-    expect(instructions).toContain('Apply only the ones the developer names, with strands_dev_apply_optimization')
-    expect(instructions).toContain('never write them with file tools')
-    expect(instructions).toContain('Preserve an unaccepted review')
-    expect(instructions).toContain('strands_dev_reject_optimization only on explicit intent to discard')
+  it('shouldLeaveTheReviewToTheScreenAndReportInALineOrTwo', () => {
+    expect(instructions).toContain("its review opens on the developer's screen by itself")
+    expect(instructions).toContain('an accepted edit is written and hot-reloaded without you')
+    expect(instructions).toContain('Never print the edit text, never ask whether to apply, discard, or leave pending')
+    expect(instructions).toContain('never write edits with file tools')
+    expect(instructions).toContain(
+      'strands_dev_apply_optimization only when the developer asks in chat for an edit the screen no longer offers'
+    )
     expect(instructions).toContain('strands_dev_cancel_optimization only when the developer asks to stop a run')
   })
 

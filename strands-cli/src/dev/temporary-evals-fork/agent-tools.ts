@@ -320,6 +320,21 @@ const reviewReport = ({ run, baseline, best, measuredOn, edits, applied, applyEr
     applyError,
   })
 
+const reviewSummary = ({ run, baseline, best, measuredOn, edits }: OptimizeReview): object =>
+  defined({
+    run,
+    baseline,
+    best,
+    measuredOn,
+    edits: edits.map(({ knob, unavailable }, index) => defined({ index, knob, unavailable })),
+    next:
+      "The review is on the developer's screen: each edit shows as a diff they apply or reject there, and an " +
+      'accepted edit is written and hot-reloaded without you. Report the run in a line or two: the score before ' +
+      "and after, and this run's own page link from strands_dev_status. Do not print the edit text, do not ask " +
+      'whether to apply, and call strands_dev_apply_optimization only when the developer asks in chat for an ' +
+      'edit the screen no longer offers.',
+  })
+
 const hasPendingEdits = ({ edits, applied }: OptimizeReview): boolean =>
   edits.some((edit) => !edit.unavailable) && !applied?.length
 
@@ -874,7 +889,7 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
         })
       )
     if (finished.step !== 'review') throw new Error('The optimization stopped without a review.')
-    return reply(reviewReport(finished.review))
+    return reply(reviewSummary(finished.review))
   },
 })
 

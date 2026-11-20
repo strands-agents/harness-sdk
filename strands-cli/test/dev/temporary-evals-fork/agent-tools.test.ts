@@ -821,9 +821,10 @@ describe('TEMPORARY dev chat part', () => {
       best: 0.9,
       measuredOn: 'validation cases',
       edits: [
-        { index: 0, knob: 'instructions', target: 'agent.py', before: 'Old.', after: 'New.' },
-        { index: 1, knob: 'effort', unavailable: 'set in code', before: 'low', after: 'high' },
+        { index: 0, knob: 'instructions' },
+        { index: 1, knob: 'effort', unavailable: 'set in code' },
       ],
+      next: expect.stringContaining('Do not print the edit text'),
     })
   })
 
