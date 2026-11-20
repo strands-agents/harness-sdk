@@ -9,7 +9,7 @@ _HAIKU_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
 def _bedrock_decision_model() -> LLMDecisionModel:
-    return LLMDecisionModel(model=BedrockModel(model_id=_HAIKU_MODEL_ID, max_tokens=512))
+    return LLMDecisionModel(model=BedrockModel(model_id=_HAIKU_MODEL_ID, max_tokens=512, strict_tools=True))
 
 
 @pytest.mark.asyncio
