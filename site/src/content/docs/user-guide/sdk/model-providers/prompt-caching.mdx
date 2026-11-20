@@ -5,8 +5,6 @@ tags: [caching]
 sourceLinks:
   - path: strands-py/src/strands/injection/_message_injection.py
   - path: strands-ts/src/injection/message-injection.ts
-  - path: strands-py/src/strands/background_tasks/_background_tasks.py
-  - path: strands-ts/src/background-tasks/background-tasks.ts
 ---
 
 Your agent sends the same tools, system prompt, and earlier messages to the model on
@@ -120,12 +118,6 @@ when your agent's context changes on every call.
 
 Strands places no cache points on the Chat Completions API, so it behaves like a model
 provider with implicit caching, even for models that take cache points on other APIs.
-
-### Background tasks
-
-[Background tasks](../../harness/configure/background-tasks.md) add a label to each tool
-that can run as a background task. The model receives an edited tool configuration,
-which changes the bytes in the cached prefix and breaks the cache.
 
 ## Provider limits
 
