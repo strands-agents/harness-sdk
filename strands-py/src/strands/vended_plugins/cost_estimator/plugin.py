@@ -12,7 +12,7 @@ import math
 import sys
 from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 try:
     from genai_prices import Usage as _PricedUsage
@@ -28,11 +28,10 @@ except ImportError as error:
     raise ImportError(f"strands.vended_plugins.cost_estimator {reason}") from error
 
 from ...agent.invocation_context import InvocationContext, ModelUsage
-from ...hooks.events import BeforeInvocationEvent
 from ...middleware import InvokeModelStage, ModelStopReason, TypedEvent
 from ...models._provider_name import _model_key
 from ...plugins import Plugin
-from ...types.event_loop import StopReason, Usage
+from ...types.event_loop import Usage
 
 if TYPE_CHECKING:
     from ...agent.agent import Agent
@@ -159,26 +158,16 @@ class GenAIPricesEstimator(Plugin):
     Args:
         prices: Your own prices. They win over genai-prices, and one with a ``provider_name`` wins over one
             without.
-        max_cost_usd: Stops the request an attached agent runs in, with ``stop_reason`` ``"limit_cost_usd"``,
-            once its estimate reaches this amount. Checked before each turn of every agent in the request, so
-            the turn that crosses it finishes first. A request with a model that has no price stops too, since
-            the limit cannot be checked. ``None`` for no limit.
 
     Raises:
-        ValueError: If two prices name the same provider and model, or ``max_cost_usd`` is not a finite,
-            positive number.
+        ValueError: If two prices name the same provider and model.
     """
 
     name = "strands:genai-prices-estimator"
 
-    def __init__(self, *, prices: Sequence[ModelPrice] = (), max_cost_usd: float | None = None) -> None:
+    def __init__(self, *, prices: Sequence[ModelPrice] = ()) -> None:
         """Initialize the estimator."""
         super().__init__()
-        if max_cost_usd is not None:
-            is_number = isinstance(max_cost_usd, (int, float)) and not isinstance(max_cost_usd, bool)
-            if not (is_number and 0 < max_cost_usd <= sys.float_info.max):
-                raise ValueError(f"max_cost_usd=<{max_cost_usd!r}> | the cost limit must be a finite, positive number")
-        self._max_cost_usd = max_cost_usd
         self._prices: dict[tuple[str | None, str], ModelPrice] = {}
         for price in prices:
             key = (price.provider_name, price.model_id)
@@ -192,10 +181,8 @@ class GenAIPricesEstimator(Plugin):
             _genai_price("openai", "gpt-4o")
 
     def init_agent(self, agent: Agent) -> None:
-        """Register the middleware that adds a ``cost_estimate`` event after each model call, and the cost limit."""
+        """Register the middleware that adds a ``cost_estimate`` event after each model call."""
         agent.add_middleware(InvokeModelStage, self._emit_estimate)
-        if self._max_cost_usd is not None:
-            agent.add_hook(self._add_cost_limit, BeforeInvocationEvent)
 
     def estimate(
         self, request: AgentResult | MultiAgentResult | InvocationContext | Iterable[ModelUsage]
@@ -252,27 +239,6 @@ class GenAIPricesEstimator(Plugin):
         except Exception as error:
             logger.warning("error=<%s> | cost estimate failed | no estimate emitted for this model call", error)
             return None
-
-    def _add_cost_limit(self, event: BeforeInvocationEvent) -> None:
-        """Put the cost limit on the request the agent runs in, where every nested call checks it."""
-        context = event.invocation_context
-        if context is not None and self._reached_cost_limit not in context._limit_checks:
-            context._limit_checks.append(self._reached_cost_limit)
-
-    def _reached_cost_limit(self, context: InvocationContext) -> StopReason | None:
-        """The stop reason once the request's estimate reaches the limit, or cannot be compared with it."""
-        try:
-            estimate = self.estimate(context)
-        except Exception as error:
-            logger.warning("error=<%s> | cost estimate failed | stopping, the cost limit cannot be checked", error)
-            return "limit_cost_usd"
-        if estimate.total_usd is None:
-            logger.warning(
-                "model_ids=<%s> | a model in the request has no price | stopping, the cost limit cannot be checked",
-                [model.model_id for model in estimate.unpriced],
-            )
-            return "limit_cost_usd"
-        return "limit_cost_usd" if estimate.total_usd >= cast(float, self._max_cost_usd) else None
 
     def _estimate(self, usage_by_model: Iterable[ModelUsage]) -> CostEstimate:
         models = tuple(self._estimate_model(model_usage) for model_usage in usage_by_model)

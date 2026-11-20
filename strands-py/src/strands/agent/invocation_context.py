@@ -49,8 +49,7 @@ class ModelUsage:
 
 
 # Contexts are shared across threads: sync tools, and the agents they call, run on worker threads.
-# Reentrant, because a limit check that runs while a turn is taken reads ``usage_by_model``.
-_usage_lock = threading.RLock()
+_usage_lock = threading.Lock()
 
 
 class InvocationContext:
@@ -77,7 +76,6 @@ class InvocationContext:
     _auxiliary: bool
     _usage: InvocationContextUsage
     _usage_by_model: dict[tuple[str | None, str | None], Usage]
-    _limit_checks: list[Callable[[InvocationContext], StopReason | None]]
     _structured_output_failures: int
 
     def __init__(self) -> None:
@@ -188,7 +186,6 @@ def _create_invocation_context(
     context._auxiliary = auxiliary
     context._usage = InvocationContextUsage(turns_taken=0, inputTokens=0, outputTokens=0, totalTokens=0)
     context._usage_by_model = {}
-    context._limit_checks = []
     context._structured_output_failures = 0
     return context
 
@@ -276,8 +273,7 @@ def _reached_limit(invocation_context: InvocationContext) -> StopReason | None:
     """Return the stop reason for the first limit reached, or ``None`` if none is reached.
 
     Checks this instance's own limits first and then each parent's. Within one instance the
-    order is turns, then total_tokens, then output_tokens, then structured_output_attempts, then
-    the limits a plugin added, such as a cost limit.
+    order is turns, then total_tokens, then output_tokens, then structured_output_attempts.
     """
     own = _reached_own_limit(invocation_context)
     if own is not None:
@@ -287,7 +283,9 @@ def _reached_limit(invocation_context: InvocationContext) -> StopReason | None:
 
 
 def _reached_own_limit(invocation_context: InvocationContext) -> StopReason | None:
-    limits: Limits = invocation_context._limits or {}
+    limits = invocation_context._limits
+    if not limits:
+        return None
     turns = limits.get("turns")
     usage = invocation_context.usage
     if turns is not None and usage["turns_taken"] >= turns:
@@ -304,8 +302,4 @@ def _reached_own_limit(invocation_context: InvocationContext) -> StopReason | No
         and invocation_context._structured_output_failures >= structured_output_attempts
     ):
         return "limit_structured_output_attempts"
-    for check in invocation_context._limit_checks:
-        stop_reason = check(invocation_context)
-        if stop_reason is not None:
-            return stop_reason
     return None

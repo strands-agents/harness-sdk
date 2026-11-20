@@ -196,37 +196,6 @@ def test_counts_structured_output_failures_toward_limiting_parents_but_not_throu
     assert _reached_limit(nested) == "limit_structured_output_attempts"
 
 
-def test_reached_limit_reports_an_added_limit_check_after_the_limits_of_the_request():
-    request = _create_invocation_context({"turns": 1})
-    request._limit_checks.append(lambda context: "limit_cost_usd")
-
-    assert _reached_limit(request) == "limit_cost_usd"
-    assert request._take_turn() == "limit_cost_usd"
-    request._limit_checks.clear()
-    request._take_turn()
-    request._limit_checks.append(lambda context: "limit_cost_usd")
-    assert _reached_limit(request) == "limit_turns"
-
-
-def test_reached_limit_applies_an_added_limit_check_to_nested_but_not_auxiliary_calls():
-    request = _create_invocation_context()
-    checked = []
-    request._limit_checks.append(lambda context: checked.append(context) or "limit_cost_usd")
-
-    assert _reached_limit(_create_invocation_context({"turns": 5}, request)) == "limit_cost_usd"
-    assert _reached_limit(_create_auxiliary_invocation_context(request)) is None
-    assert checked == [request]
-
-
-def test_take_turn_runs_a_limit_check_that_reads_usage_by_model():
-    request = _create_invocation_context()
-    request._record_usage({"inputTokens": 1, "outputTokens": 1, "totalTokens": 2}, "bedrock", "model-a")
-    request._limit_checks.append(lambda context: "limit_cost_usd" if len(context.usage_by_model) > 1 else None)
-
-    assert request._take_turn() is None
-    assert request.usage["turns_taken"] == 1
-
-
 def test_has_limit_sees_limits_of_limiting_parents_only():
     request = _create_invocation_context({"structured_output_attempts": 2})
 

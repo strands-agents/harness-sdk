@@ -10,8 +10,7 @@ addedDate: 2026-11-19
 ---
 
 The `GenAIPricesEstimator` plugin estimates what a request cost in USD. It multiplies the
-tokens each model used by that model's list price and adds the results. It can also
-[stop a request](#limit-the-cost-of-a-request) once the estimate reaches an amount you set.
+tokens each model used by that model's list price and adds the results.
 
 The number is an estimate, not a bill. The prices come from
 [genai-prices](https://github.com/pydantic/genai-prices), a third-party package that
@@ -153,42 +152,6 @@ A model that reaches Bedrock through another class, such as `OpenAIModel` with
 its own metadata. The name is `None` when the SDK cannot tell, as for a custom model or an
 OpenAI-compatible endpoint with its own base URL. A SageMaker model's `model_id` is its
 endpoint name.
-
-## Limit the Cost of a Request
-
-Pass `max_cost_usd` to stop a request once its estimate reaches that amount:
-
-```python
-from strands import Agent
-from strands.vended_plugins.cost_estimator import GenAIPricesEstimator
-
-cost = GenAIPricesEstimator(max_cost_usd=0.50)
-agent = Agent(plugins=[cost])
-
-result = agent("Research the three proposals and compare them.")
-
-if result.stop_reason == "limit_cost_usd":
-    print("Stopped at", cost.estimate(result).total_usd)
-```
-
-The limit works like the request's [invocation limits](../agents/agent-loop.mdx#invocation-limits):
-
-- It covers the whole request the agent runs in. Every agent in the request checks it and
-  stops with `limit_cost_usd`, including nested agents that do not have the plugin.
-- It is checked before each turn, so the turn that crosses the limit finishes first and
-  the estimate can end above the limit. The history stays valid to invoke again.
-- Each top-level call starts from zero. A call you continue by passing
-  `invocation_context` continues the same spend.
-- Auxiliary calls, such as summarization, add to the estimate but are never stopped.
-
-The limit needs a price for every model in the request. When a model has none, the request
-stops with `limit_cost_usd` after that model's first call and the plugin logs a warning
-that names the model, because the limit can no longer be checked.
-[Pass your own price](#use-your-own-prices) for it, such as a price of zero for a local
-model.
-
-The limit compares an estimate, not your bill. See
-[What the Estimate Leaves Out](#what-the-estimate-leaves-out).
 
 ## Use Your Own Prices
 

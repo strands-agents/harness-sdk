@@ -1,5 +1,5 @@
 name: GenAI Prices Estimator
-description: Estimate what a request cost in USD from each model's token usage and the list prices in genai-prices, streamed after every model call, with an optional cost limit for the request.
+description: Estimate what a request cost in USD from each model's token usage and the list prices in genai-prices, streamed after every model call.
 integrationType: plugin
 maintainedBy: strands
 languages:
