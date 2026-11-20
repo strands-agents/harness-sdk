@@ -325,10 +325,8 @@ export {
 } from './retry/index.js'
 
 // Context Manager
-// Note: the context manager surface lives at '@strands-agents/sdk/context-manager', mirroring
-// Python's `strands.context_manager`. Only the type naming the Agent's `contextManager` parameter
-// is here, so configuring an agent needs no second import.
-export type { ContextManagerStrategy } from './context-manager/context-manager.js'
+// Note: the context manager is intentionally not exported here — its surface lives at
+// '@strands-agents/sdk/context-manager', mirroring Python's `strands.context_manager`.
 
 // Conversation Manager
 export {
