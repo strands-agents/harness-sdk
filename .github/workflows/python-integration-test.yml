@@ -156,11 +156,28 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --no-cache-dir hatch
+      # The model conformance cases call live models, so a pull request runs them only when it changes
+      # something that can affect a model's behavior, and then only on the core targets.
+      # model-conformance.yml runs the whole list weekly.
+      - name: Decide whether the model conformance cases apply
+        id: conformance
+        if: github.event_name == 'pull_request_target' && matrix.scope == 'all'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          changed=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename')
+          applicable='^(shared/|strands-py/pyproject\.toml$|strands-py/src/strands/models/|strands-py/src/strands/vended_plugins/context_injector/|strands-py/tests_integ/models/(conformance|conftest|test_model_conformance)\.py$)'
+          if grep -qE "$applicable" <<<"$changed"; then
+            echo "mode=core" >> "$GITHUB_OUTPUT"
+          fi
       - name: Run integration tests
         env:
           AWS_REGION: us-east-1
           AWS_REGION_NAME: us-east-1
           STRANDS_TEST_API_KEYS_SECRET_NAME: ${{ secrets.STRANDS_TEST_API_KEYS_SECRET_NAME }}
+          STRANDS_CONFORMANCE: ${{ steps.conformance.outputs.mode }}
           # Caps the hatch-test env at mcp 1.x via the pyproject override.
           STRANDS_TEST_MCP_V1: ${{ matrix.scope == 'mcp-1x' && '1' || '' }}
         id: tests
