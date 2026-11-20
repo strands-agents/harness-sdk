@@ -113,32 +113,43 @@ a[aria-current="page"]:hover {
 }
 
 /* Wide blocks (`:::wide`, rendered by src/plugins/remark-wide-blocks.ts): one figure, table,
-   or code block that grows into spare room beside the text column, never under the TOC or the
-   sidebar, up to --wide-block-max. Below 72rem there is no spare room, so it stays column width.
-   The maths mirrors Starlight's TwoColumnContent and ContentPanel: R = 100vw - left sidebar is
-   the width beside the sidebar, W the column, S the TOC, P the content-panel padding.
+   or code block that keeps its left edge on the text column and grows to the right into spare
+   room, never under the TOC, up to --wide-block-max. Below 72rem there is no spare room, so it
+   stays column width. Terms follow Starlight's TwoColumnContent and ContentPanel:
+   R = 100vw - left sidebar, W the column, S the TOC (--sl-sidebar-width), P the panel padding.
    100vw counts a classic scrollbar, which overstates the room by half its width; the P gutter
-   absorbs that. Tables and code keep their own horizontal scroll inside the block.
-   Only top-level blocks widen: inside an aside or a <TabItem> the maths would pull the block
-   past the aside's border or away from its tab bar, so a nested `:::wide` stays column width. */
+   kept before the TOC absorbs that. Tables and code keep their own horizontal scroll inside.
+   Only top-level blocks widen: inside an aside or a <TabItem> the block would leave the aside's
+   border or its tab bar behind, so a nested `:::wide` stays column width. */
 @media (min-width: 72rem) {
-	/* With a TOC, the column sits against the TOC, so all spare room is on the left:
-	   main pane = W + (R - W - S) / 2, minus 2P of padding, minus the column. */
-	:root[data-has-sidebar][data-has-toc] .sl-markdown-content > .wide-block {
-		--wide-room: max(
+	/* Starlight sizes the TOC container to S plus the spare width, (R - W - S) / 2, and draws the
+	   TOC at its left edge, right next to the text. Move the TOC right by as much of that spare
+	   width as a wide block can use (up to --wide-block-max - W), so a gap opens between the text
+	   and the TOC for wide blocks, and the TOC never drifts further than the widest block needs.
+	   When there is no spare width the container is exactly S wide, so nothing moves. */
+	:root[data-has-sidebar][data-has-toc] {
+		--toc-spare: max(
 			0px,
-			(100vw - var(--sl-content-inline-start, 0px) - var(--sl-content-width) - var(--sl-sidebar-width)) / 2 -
-				2 * var(--sl-content-pad-x)
+			(100vw - var(--sl-content-inline-start, 0px) - var(--sl-content-width) - var(--sl-sidebar-width)) / 2
 		);
-		margin-inline-start: calc(-1 * min(var(--wide-room), var(--wide-block-max) - var(--sl-content-width)));
+		--toc-shift: min(var(--toc-spare), var(--wide-block-max) - var(--sl-content-width));
 	}
-	/* Without a TOC, the column is centred, so the block grows equally on both sides. */
+	:root[data-has-sidebar][data-has-toc] .right-sidebar {
+		inset-inline-start: auto;
+		inset-inline-end: calc(var(--toc-spare) - var(--toc-shift));
+		width: var(--sl-sidebar-width);
+	}
+	:root[data-has-sidebar][data-has-toc] .sl-markdown-content > .wide-block {
+		margin-inline-end: calc(-1 * var(--toc-shift));
+	}
+	/* Without a TOC the column is centred; the block still grows only to the right, keeping a
+	   P gutter from the window edge. */
 	:root[data-has-sidebar]:not([data-has-toc]) .sl-markdown-content > .wide-block {
 		--wide-room: max(
 			0px,
-			(100vw - var(--sl-content-inline-start, 0px) - 2 * var(--sl-content-pad-x) - var(--sl-content-width)) / 2
+			(100vw - var(--sl-content-inline-start, 0px) - var(--sl-content-width)) / 2 - var(--sl-content-pad-x)
 		);
-		margin-inline: calc(-1 * min(var(--wide-room), (var(--wide-block-max) - var(--sl-content-width)) / 2));
+		margin-inline-end: calc(-1 * min(var(--wide-room), var(--wide-block-max) - var(--sl-content-width)));
 	}
 }
 
