@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   InitializedEvent,
   AfterInvocationEvent,
@@ -185,6 +185,21 @@ describe('BeforeToolCallEvent', () => {
     event.agent = new Agent()
     // @ts-expect-error verifying that property is readonly
     event.tool = tool
+  })
+
+  it('answers interrupt with the override it was created with', () => {
+    const interrupt = vi.fn().mockReturnValue('approved')
+    const toolUse = { name: 'testTool', toolUseId: 'test-id', input: {} }
+    const event = new BeforeToolCallEvent({
+      agent: new Agent(),
+      toolUse,
+      tool: undefined,
+      invocationState: {},
+      interrupt,
+    })
+
+    expect(event.interrupt({ name: 'confirm' })).toBe('approved')
+    expect(interrupt).toHaveBeenCalledWith({ name: 'confirm' })
   })
 
   it('creates instance with undefined tool when tool is not found', () => {
