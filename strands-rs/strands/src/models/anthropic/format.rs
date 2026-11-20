@@ -263,7 +263,7 @@ impl Formatter<'_> {
         }
         self.reject_removed_sampling_params(&request)?;
         if self.drops_stale_thinking
-            && let Some(thinking) = thinking_with_drop_block(request.get("thinking"))
+            && let Some(thinking) = thinking_with_drop_block(request.get("thinking"), is_tool_forced(&request))
         {
             request.insert("thinking".to_owned(), JsonValue::Object(thinking));
         }
@@ -576,6 +576,17 @@ impl Formatter<'_> {
             Vec::new()
         }
     }
+}
+
+/// Whether the request forces a tool call, which rules thinking out.
+pub(super) fn is_tool_forced(request: &JsonObject) -> bool {
+    matches!(
+        request
+            .get("tool_choice")
+            .and_then(|choice| choice.get("type"))
+            .and_then(JsonValue::as_str),
+        Some("any" | "tool")
+    )
 }
 
 fn format_tool_spec(spec: &ToolSpec) -> JsonValue {

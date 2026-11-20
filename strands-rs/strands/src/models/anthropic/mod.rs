@@ -58,7 +58,7 @@ use self::anthropic_model_options_builder::IsComplete;
 use self::client::{
     AnthropicClient, ApiVersion, ClientRequest, HttpAnthropicClient, header_values, resolve_api_version,
 };
-use self::format::{FormatOptions, Formatter, from_last_compaction, validate_anthropic_tools};
+use self::format::{FormatOptions, Formatter, from_last_compaction, is_tool_forced, validate_anthropic_tools};
 use self::stream::{MessageAccumulator, ResponseState, UsageCounters, format_compaction_usage, stream_usage};
 use super::defaults::{MODEL_DEFAULTS, default_max_tokens_warning_message, default_model_warning_message};
 use super::http::{HttpError, RedactedHeaders, read_env};
@@ -552,6 +552,7 @@ struct AttemptFailure {
     error: AttemptError,
     continuations: u32,
     thinking: Option<JsonValue>,
+    tool_forced: bool,
 }
 
 impl AttemptError {
@@ -725,13 +726,18 @@ impl Inner {
     /// the next structured output mechanism after a rejection.
     fn stream(self: Arc<Self>, request: ModelRequest) -> BoxStream<'static, Result<ModelStreamEvent>> {
         Box::pin(async_stream::stream! {
+            // Set while a drop_block retry has yielded nothing: the model it was latched over.
+            let mut latched_over = None;
             loop {
                 let mechanism = self.structured_output_mechanism(&request);
                 let mut attempt = Arc::clone(&self).attempt(request.clone(), mechanism);
                 let mut failure = None;
                 while let Some(item) = attempt.next().await {
                     match item {
-                        Ok(event) => yield Ok(event),
+                        Ok(event) => {
+                            latched_over = None;
+                            yield Ok(event);
+                        }
                         Err(error) => {
                             failure = Some(error);
                             break;
@@ -742,7 +748,8 @@ impl Inner {
                 let Some(failure) = failure else {
                     return;
                 };
-                if self.retry_with_drop_block(&failure) {
+                if let Some(previous) = self.retry_with_drop_block(&failure) {
+                    latched_over = Some(previous);
                     continue;
                 }
                 // A mechanism is rejected on a turn's first request, before any event; continuations
@@ -752,6 +759,10 @@ impl Inner {
                 {
                     continue;
                 }
+                // A rejected retry must not leave drop_block on for later requests.
+                if let Some(previous) = latched_over {
+                    *self.drop_stale_thinking_model_id.lock().unwrap_or_else(PoisonError::into_inner) = previous;
+                }
                 yield Err(translate_error(failure.error));
                 return;
             }
@@ -759,25 +770,26 @@ impl Inner {
     }
 
     /// Turns `drop_block` on for the model after a thinking-binding error on a turn's first
-    /// request; stale blocks stay in history, so it stays on for every later request to the model.
-    fn retry_with_drop_block(&self, failure: &AttemptFailure) -> bool {
+    /// request, returning the model it was on for before; stale blocks stay in history, so it stays
+    /// on for every later request to the model.
+    fn retry_with_drop_block(&self, failure: &AttemptFailure) -> Option<Option<String>> {
         let binding = failure.continuations == 0
             && failure.error.status() == Some(400)
             && is_thinking_binding_error(&failure.error.message())
-            && thinking_with_drop_block(failure.thinking.as_ref()).is_some();
+            && thinking_with_drop_block(failure.thinking.as_ref(), failure.tool_forced).is_some();
         if !binding {
-            return false;
+            return None;
         }
         let model_id = self.config().model_id;
         tracing::warn!(
             "model_id=<{}> | history edit invalidated replayed thinking blocks, retrying with drop_block",
             model_id.as_deref().unwrap_or_default()
         );
-        *self
+        let mut latched = self
             .drop_stale_thinking_model_id
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = model_id;
-        true
+            .unwrap_or_else(PoisonError::into_inner);
+        Some(std::mem::replace(&mut latched, model_id))
     }
 
     /// One request, resuming a paused server-side tool turn with follow-up requests, so an error
@@ -791,11 +803,12 @@ impl Inner {
             let (mut body, beta) = match self.prepare(&request, mechanism) {
                 Ok(prepared) => prepared,
                 Err(error) => {
-                    yield Err(AttemptFailure { error: AttemptError::Sdk(error), continuations: 0, thinking: None });
+                    yield Err(AttemptFailure { error: AttemptError::Sdk(error), continuations: 0, thinking: None, tool_forced: false });
                     return;
                 }
             };
             let thinking = body.get("thinking").cloned();
+            let tool_forced = is_tool_forced(&body);
             let mut continuations = 0;
             let mut total = UsageCounters::default();
             loop {
@@ -806,7 +819,7 @@ impl Inner {
                     let event = match event {
                         Ok(event) => event,
                         Err(error) => {
-                            yield Err(AttemptFailure { error: AttemptError::Http(error), continuations, thinking: thinking.clone() });
+                            yield Err(AttemptFailure { error: AttemptError::Http(error), continuations, thinking: thinking.clone(), tool_forced });
                             return;
                         }
                     };
@@ -826,7 +839,7 @@ impl Inner {
                         let error = ModelError::new(format!(
                             "server-side tool turn did not complete after {continuations} continuations"
                         ));
-                        yield Err(AttemptFailure { error: AttemptError::Sdk(error.into()), continuations, thinking: thinking.clone() });
+                        yield Err(AttemptFailure { error: AttemptError::Sdk(error.into()), continuations, thinking: thinking.clone(), tool_forced });
                         return;
                     }
                     continuations += 1;

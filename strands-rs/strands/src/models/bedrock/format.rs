@@ -74,7 +74,6 @@ impl<'a> FormatOptions<'a> {
 pub(super) struct Formatter<'a> {
     config: &'a BedrockModelConfig,
     model_info: &'a ModelInfo,
-    drop_stale_thinking_model_id: Option<String>,
 }
 
 fn invalid(message: impl Into<String>) -> Error {
@@ -86,16 +85,8 @@ fn bytes(data: &[u8]) -> JsonValue {
 }
 
 impl<'a> Formatter<'a> {
-    pub(super) fn new(
-        config: &'a BedrockModelConfig,
-        model_info: &'a ModelInfo,
-        drop_stale_thinking_model_id: Option<String>,
-    ) -> Self {
-        Self {
-            config,
-            model_info,
-            drop_stale_thinking_model_id,
-        }
+    pub(super) fn new(config: &'a BedrockModelConfig, model_info: &'a ModelInfo) -> Self {
+        Self { config, model_info }
     }
 
     fn model_id(&self) -> &str {
@@ -220,9 +211,7 @@ impl<'a> Formatter<'a> {
             return Some(fields.clone());
         };
         if matches!(tool_choice, None | Some(ToolChoice::Auto)) {
-            let drop_stale = self.drop_stale_thinking_model_id.as_deref() == Some(self.model_id());
-            let with_drop_block = drop_stale.then(|| fields_with_drop_block(Some(fields))).flatten();
-            return Some(with_drop_block.map_or_else(|| fields.clone(), JsonValue::Object));
+            return Some(fields.clone());
         }
         let mut rest = object.clone();
         rest.remove("thinking");
@@ -901,10 +890,20 @@ pub(super) fn apply_native_output_config(request: &mut JsonObject, schema: &Json
     Ok(())
 }
 
-/// The additional request fields with `drop_block` and its beta, or `None` if they cannot change.
-pub(super) fn fields_with_drop_block(fields: Option<&JsonValue>) -> Option<JsonObject> {
-    let fields = fields?.as_object()?;
-    let thinking = thinking_with_drop_block(fields.get("thinking"))?;
+/// The request with stale thinking blocks dropped (`drop_block` and its beta), or `None` if it
+/// cannot change.
+pub(super) fn request_with_drop_block(request: &JsonObject) -> Option<JsonObject> {
+    let empty = JsonObject::new();
+    let fields = match request.get("additionalModelRequestFields") {
+        Some(fields) => fields.as_object()?,
+        None => &empty,
+    };
+    let tool_forced = request
+        .get("toolConfig")
+        .and_then(|config| config.get("toolChoice"))
+        .and_then(JsonValue::as_object)
+        .is_some_and(|choice| choice.contains_key("any") || choice.contains_key("tool"));
+    let thinking = thinking_with_drop_block(fields.get("thinking"), tool_forced)?;
     let mut betas: Vec<JsonValue> = fields
         .get("anthropic_beta")
         .and_then(JsonValue::as_array)
@@ -916,5 +915,7 @@ pub(super) fn fields_with_drop_block(fields: Option<&JsonValue>) -> Option<JsonO
     let mut updated = fields.clone();
     updated.insert("anthropic_beta".to_owned(), JsonValue::Array(betas));
     updated.insert("thinking".to_owned(), JsonValue::Object(thinking));
-    Some(updated)
+    let mut request = request.clone();
+    request.insert("additionalModelRequestFields".to_owned(), JsonValue::Object(updated));
+    Some(request)
 }
