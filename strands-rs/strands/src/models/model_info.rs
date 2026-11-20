@@ -403,6 +403,24 @@ mod tests {
     }
 
     #[test]
+    fn keeps_the_typed_fields_and_skips_the_rest() {
+        // The data entry also carries defaultEffort, which the SDK does not type.
+        assert_eq!(
+            serde_json::to_value(lookup_model_info("claude-opus-5-5")).unwrap(),
+            json!({
+                "capabilities": {
+                    "promptCaching": "cachePoints",
+                    "forcedToolChoice": false,
+                    "nativeStructuredOutput": true,
+                    "serverSideSummary": true,
+                    "temporaryMessages": true,
+                },
+                "limits": {"contextWindow": 1_000_000, "maxOutputTokens": 128_000},
+            })
+        );
+    }
+
+    #[test]
     fn returns_the_entry_facts_and_nothing_for_unknown_ids() {
         assert_eq!(
             serde_json::to_value(lookup_model_info("eu.anthropic.claude-sonnet-4-6")).unwrap(),

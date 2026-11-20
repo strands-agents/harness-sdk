@@ -60,7 +60,7 @@
 //! | Feature | Default | Adds |
 //! |---|---|---|
 //! | `bedrock` | yes | `models::BedrockModel`, the Amazon Bedrock Converse provider, and the default model |
-//! | `anthropic` | | `models::anthropic::AnthropicModel`, the Anthropic Messages API provider |
+//! | `anthropic` | | `models::anthropic::AnthropicModel`, the Anthropic Messages API provider; with `bedrock`, also `AnthropicModel::bedrock` and `AnthropicBedrockConfig` for Claude on Bedrock's InvokeModel API |
 //! | `openai` | | `models::openai::OpenAIModel` (Responses and Chat Completions); it does not need `bedrock` |
 //! | `mantle` | | `models::openai::OpenAIModel::bedrock_mantle`, Amazon Bedrock's OpenAI-compatible Mantle endpoint, and `BedrockMantleConfig`; turns on `openai`, adds the AWS signing and credential crates and does not need `bedrock` |
 //! | `mcp` | | `mcp::McpClient`, Model Context Protocol clients over stdio, streamable HTTP and SSE, and the `mcp_router` tool |

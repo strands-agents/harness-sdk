@@ -44,11 +44,17 @@ pub(super) struct FormatOptions<'a> {
     pub(super) dynamic_trailing_blocks: usize,
 }
 
+/// The API version Bedrock's InvokeModel takes in the body (`AnthropicBedrock`'s default). It still
+/// accepts the sampling params the Anthropic API's current version removed.
+const BEDROCK_INVOKE_MODEL_API_VERSION: &str = "bedrock-2023-05-31";
+
 /// A snapshot of what formatting reads from the model.
 pub(super) struct Formatter<'a> {
     pub(super) config: &'a AnthropicModelConfig,
     pub(super) model_info: ModelInfo,
     pub(super) api_version: Option<&'a ApiVersion>,
+    /// Whether requests go to Bedrock's InvokeModel API.
+    pub(super) bedrock_runtime: bool,
     pub(super) drops_stale_thinking: bool,
     pub(super) client_betas: &'a [String],
     pub(super) max_tokens: u64,
@@ -260,6 +266,9 @@ impl Formatter<'_> {
             .flatten()
         {
             request.insert(key.clone(), value.clone());
+        }
+        if self.bedrock_runtime && !request.contains_key("anthropic_version") {
+            request.insert("anthropic_version".to_owned(), BEDROCK_INVOKE_MODEL_API_VERSION.into());
         }
         self.reject_removed_sampling_params(&request)?;
         if self.drops_stale_thinking

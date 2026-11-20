@@ -161,6 +161,18 @@ pub(super) fn built_model(
     )
 }
 
+/// A model on `client` that sends to Bedrock's InvokeModel API, as [`AnthropicModel::bedrock`] does.
+pub(super) fn bedrock_model(client: &Arc<MockClient>, config: AnthropicModelConfig) -> AnthropicModel {
+    let config = constructing(|| prepare_config(config)).unwrap();
+    AnthropicModel::from_client(
+        config,
+        Arc::clone(client) as Arc<dyn AnthropicClient>,
+        Vec::new(),
+        None,
+        true,
+    )
+}
+
 pub(super) fn config() -> AnthropicModelConfigBuilder {
     AnthropicModelConfig::builder()
 }
@@ -759,6 +771,18 @@ mod stream_event_handling {
         assert!(matches!(error, Error::ModelThrottled(_)), "{error:?}");
         assert!(error.to_string().contains("Rate limit exceeded"), "{error}");
         assert!(std::error::Error::source(&error).is_some());
+    }
+
+    #[tokio::test]
+    async fn maps_a_mid_stream_bedrock_type_to_model_throttled_error() {
+        for kind in ["throttlingException", "serviceUnavailableException"] {
+            let frame = json!({"type": kind, "message": "Too many tokens"}).to_string();
+            let client = MockClient::new(move |_| vec![Ok(json!({"type": "ping"})), Err(HttpError::event(&frame))]);
+            let error = collect(&model(&client, AnthropicModelConfig::default()), hi())
+                .await
+                .unwrap_err();
+            assert!(matches!(error, Error::ModelThrottled(_)), "{kind}: {error:?}");
+        }
     }
 
     #[tokio::test]
@@ -1680,5 +1704,45 @@ mod api_version_compatibility {
                 .starts_with("anthropicTools should not contain function tool definitions")
         );
         assert_eq!(provider.config().anthropic_tools, None);
+    }
+}
+
+mod bedrock_invoke_model_api_version {
+    use super::*;
+
+    async fn sent_body(provider: &AnthropicModel, client: &MockClient) -> JsonValue {
+        collect(provider, hi()).await.unwrap();
+        client.requests()[0].body.clone()
+    }
+
+    #[tokio::test]
+    async fn pins_bedrock_2023_05_31_on_an_anthropic_bedrock_client_keeping_the_sampling_params() {
+        let client = MockClient::capture();
+        let provider = bedrock_model(&client, config().temperature(0.2).build());
+        let body = sent_body(&provider, &client).await;
+        assert_eq!(body["anthropic_version"], json!("bedrock-2023-05-31"));
+        assert_eq!(body["temperature"], json!(0.2));
+    }
+
+    #[tokio::test]
+    async fn keeps_an_anthropic_version_set_in_params() {
+        let client = MockClient::capture();
+        let provider = bedrock_model(
+            &client,
+            config()
+                .params(json!({"anthropic_version": "bedrock-2099-01-01"}))
+                .build(),
+        );
+        assert_eq!(
+            sent_body(&provider, &client).await["anthropic_version"],
+            json!("bedrock-2099-01-01")
+        );
+    }
+
+    #[tokio::test]
+    async fn sends_no_anthropic_version_on_another_client() {
+        let client = MockClient::capture();
+        let provider = model(&client, AnthropicModelConfig::default());
+        assert!(sent_body(&provider, &client).await.get("anthropic_version").is_none());
     }
 }

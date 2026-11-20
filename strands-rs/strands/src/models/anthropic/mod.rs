@@ -43,6 +43,8 @@
 //! # }
 //! ```
 
+#[cfg(feature = "bedrock")]
+mod bedrock;
 mod client;
 mod format;
 mod stream;
@@ -55,6 +57,8 @@ use async_trait::async_trait;
 use futures::StreamExt;
 
 use self::anthropic_model_options_builder::IsComplete;
+#[cfg(feature = "bedrock")]
+pub use self::bedrock::AnthropicBedrockConfig;
 use self::client::{
     AnthropicClient, ApiVersion, ClientRequest, HttpAnthropicClient, header_values, resolve_api_version,
 };
@@ -369,6 +373,8 @@ struct Inner {
     client_betas: Vec<String>,
     /// Unknown for a substituted client, whose API version the provider cannot see.
     api_version: Option<ApiVersion>,
+    /// Whether requests go to Bedrock's InvokeModel API, which takes its API version in the body.
+    bedrock_runtime: bool,
     /// The model a thinking-binding error turned `drop_block` on for.
     drop_stale_thinking_model_id: Mutex<Option<String>>,
 }
@@ -427,12 +433,23 @@ impl AnthropicModel {
         client_betas: Vec<String>,
         api_version: Option<ApiVersion>,
     ) -> Self {
+        Self::from_client(config, client, client_betas, api_version, false)
+    }
+
+    fn from_client(
+        config: AnthropicModelConfig,
+        client: Arc<dyn AnthropicClient>,
+        client_betas: Vec<String>,
+        api_version: Option<ApiVersion>,
+        bedrock_runtime: bool,
+    ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 config: RwLock::new(config),
                 client,
                 client_betas,
                 api_version,
+                bedrock_runtime,
                 drop_stale_thinking_model_id: Mutex::new(None),
             }),
         }
@@ -585,7 +602,19 @@ impl AttemptError {
     }
 }
 
-/// Maps a context overflow, a 429 and a transport failure to the SDK's error types.
+/// Exception frames Bedrock sends for a throttle that arrives mid-stream, which have no status.
+const BEDROCK_THROTTLING_EVENTS: [&str; 2] = ["throttlingException", "serviceUnavailableException"];
+
+fn is_throttle(error: &HttpError) -> bool {
+    error.status_code() == Some(429)
+        || error
+            .body()
+            .and_then(|body| body.get("type"))
+            .and_then(JsonValue::as_str)
+            .is_some_and(|kind| BEDROCK_THROTTLING_EVENTS.contains(&kind))
+}
+
+/// Maps a context overflow, a throttle and a transport failure to the SDK's error types.
 fn translate_error(error: AttemptError) -> Error {
     let message = error.message();
     let lowered = message.to_lowercase();
@@ -596,7 +625,7 @@ fn translate_error(error: AttemptError) -> Error {
         return ContextWindowOverflowError::new(message).into();
     }
     match error {
-        AttemptError::Http(error) if error.status_code() == Some(429) => {
+        AttemptError::Http(error) if is_throttle(&error) => {
             tracing::debug!("throttled | error_message=<{message}>");
             ModelThrottledError::new(message).with_source(error).into()
         }
@@ -648,6 +677,7 @@ impl Inner {
             config,
             model_info: model_info_of(config),
             api_version: self.api_version.as_ref(),
+            bedrock_runtime: self.bedrock_runtime,
             drops_stale_thinking: self.drops_stale_thinking(config),
             client_betas: &self.client_betas,
             max_tokens: resolved_max_tokens(config),
