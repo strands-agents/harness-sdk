@@ -296,7 +296,7 @@ class TestMessageLevelWithRoleAlternation:
         assert await Offload.drop("*").when(preserve_recent=2).apply(context) is True
 
         marker = offload_placeholder("drop", format_dropped_messages(removed_tokens), None, removed_tokens)
-        assert messages == [q1, {**tool_use, "content": [*tool_use["content"], marker]}, tool_result, a3]
+        assert messages == [q1, {**tool_use, "content": [marker, *tool_use["content"]]}, tool_result, a3]
         assert messages[2] is tool_result
 
     @pytest.mark.asyncio
@@ -702,6 +702,17 @@ class TestInsertMarker:
 
         assert len(messages) == 3
         assert messages[1]["content"] == [ContentBlock(text="a1"), self._MARKER]
+
+    def test_places_the_marker_before_a_trailing_tool_use_block(self):
+        """A text block after a toolUse reads as assistant prefill to Anthropic models with thinking enabled."""
+        tool_use = ContentBlock(toolUse={"toolUseId": "tu-1", "name": "read", "input": {}})
+        carrier = Message(role="assistant", content=[ContentBlock(text="a1"), tool_use])
+        messages = [_text("user", "task"), carrier, _text("user", "u1")]
+
+        insert_marker(messages, 1, self._MARKER)
+
+        assert len(messages) == 3
+        assert messages[1]["content"] == [ContentBlock(text="a1"), self._MARKER, tool_use]
 
     def test_gives_a_standalone_marker_message_its_own_tracking_id(self):
         """A stash ref is keyed by tracking id, so two id-less messages would share one block index."""

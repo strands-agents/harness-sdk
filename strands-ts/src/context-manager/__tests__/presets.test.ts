@@ -38,6 +38,12 @@ describe('presets', () => {
       expect(strategies).toHaveLength(1)
       expect(strategies[0]!.name).toBe('offload:drop')
     })
+
+    it('deferredToolLoading resolves to a deferred tool loading strategy', () => {
+      const strategies = resolvePreset('deferredToolLoading')
+      expect(strategies).toHaveLength(1)
+      expect(strategies[0]!.name).toBe('offload:defer')
+    })
   })
 
   describe('resolveStrategies', () => {
