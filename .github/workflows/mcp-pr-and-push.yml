@@ -10,6 +10,13 @@ on:
   workflow_dispatch:
 
 jobs:
+  call-test-integ:
+    uses: ./.github/workflows/mcp-test-integ.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
   call-test-lint:
     uses: ./.github/workflows/mcp-test-lint.yml
     permissions:
