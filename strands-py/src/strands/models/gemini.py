@@ -618,6 +618,24 @@ class GeminiModel(Model):
             case _:  # pragma: no cover
                 raise RuntimeError(f"chunk_type=<{event['chunk_type']} | unknown type")
 
+    def _format_message_stop(self, finish_reason: Any, tool_used: bool) -> StreamEvent:
+        """Format the message stop event for a finished stream.
+
+        A function call only turns a normal stop into tool_use. A truncated or blocked turn keeps its reason, so
+        the event loop does not run tools from an incomplete response.
+
+        Args:
+            finish_reason: The finish reason of the last candidate.
+            tool_used: Whether the stream emitted a function call.
+
+        Returns:
+            The formatted message stop event.
+        """
+        stop_event = self._format_chunk({"chunk_type": "message_stop", "data": finish_reason})
+        if tool_used and stop_event["messageStop"]["stopReason"] == "end_turn":
+            return self._format_chunk({"chunk_type": "message_stop", "data": "TOOL_USE"})
+        return stop_event
+
     @override
     async def count_tokens(
         self,
@@ -787,12 +805,7 @@ class GeminiModel(Model):
                     },
                 )
                 yield self._format_chunk({"chunk_type": "content_stop", "data_type": "reasoning_content"})
-            yield self._format_chunk(
-                {
-                    "chunk_type": "message_stop",
-                    "data": "TOOL_USE" if tool_used else (candidate.finish_reason if candidate else "STOP"),
-                }
-            )
+            yield self._format_message_stop(candidate.finish_reason if candidate else "STOP", tool_used)
             if event and event.usage_metadata is not None:
                 yield self._format_chunk({"chunk_type": "metadata", "data": event.usage_metadata})
 
