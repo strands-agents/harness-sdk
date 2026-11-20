@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DocumentBlock, ImageBlock } from '@strands-agents/sdk'
@@ -64,6 +64,26 @@ describe('read/write/edit', () => {
     const path = join(dir, 'f.txt')
     await write.invoke({ path, content: 'dup\ndup\n' }, ctx())
     await expect(edit.invoke({ path, old_str: 'dup', new_str: 'x' }, ctx())).rejects.toThrow('appears 2 times')
+  })
+
+  it("inserts new_str literally without expanding $$, $&, $`, or $'", async () => {
+    const path = join(dir, 'script.sh')
+    await write.invoke({ path, content: 'echo PID\n' }, ctx())
+    await edit.invoke({ path, old_str: 'PID', new_str: "$$ $& $` $' $1" }, ctx())
+    expect(readFileSync(path, 'utf8')).toBe("echo $$ $& $` $' $1\n")
+  })
+
+  it('handles regex metacharacters, multiline, and unicode literally in edit', async () => {
+    const path = join(dir, 'unicode.txt')
+    await write.invoke({ path, content: 'line1 [a-z]+ (foo)\nline2 café 🚀\n' }, ctx())
+    await edit.invoke({ path, old_str: '[a-z]+ (foo)\nline2 café', new_str: '$$1 .* \\n\nline2 日本語' }, ctx())
+    expect(readFileSync(path, 'utf8')).toBe('line1 $$1 .* \\n\nline2 日本語 🚀\n')
+  })
+
+  it('rejects an empty old_str', async () => {
+    const path = join(dir, 'empty-old.txt')
+    await write.invoke({ path, content: 'hello\n' }, ctx())
+    await expect(edit.invoke({ path, old_str: '', new_str: 'x' }, ctx())).rejects.toThrow('old_str must not be empty')
   })
 
   it('returns an ImageBlock for an image extension', async () => {
