@@ -3,11 +3,13 @@
 import json
 from typing import Any, Protocol
 
+from .....types.content import ContentBlock
 from .....types.tools import ToolUse
 from ...core.context import SteeringContext
 
 # Agent SOP format - see https://github.com/strands-agents/agent-sop
-_STEERING_PROMPT_TEMPLATE = """# Steering Evaluation
+# Holds no per-call data, so it stays an identical prefix that a model can cache across steering calls.
+_STEERING_INSTRUCTIONS_TEMPLATE = """# Steering Evaluation
 
 ## Overview
 
@@ -27,10 +29,6 @@ should try a different approach or get human input.
 - Do NOT make assumptions about what tools "should" or "shouldn't" do
 - Focus ONLY on patterns in the context data
 
-## Context
-
-{context_str}
-
 ### Understanding Ledger Tool States
 
 If the context includes a ledger with tool_calls, the "status" field indicates:
@@ -45,15 +43,11 @@ The tool has NOT started executing yet.
 that IS the current tool being evaluated.
 It is NOT already executing or a duplicate.
 
-## Event to Evaluate
-
-{event_description}
-
 ## Steps
 
 ### 1. Analyze the {action_type_title}
 
-Review ONLY the context data above. Look for patterns in the data that indicate:
+Review ONLY the context data below. Look for patterns in the data that indicate:
 
 - Previous failures or successes with this tool
 - Frequency of attempts
@@ -78,13 +72,22 @@ Review ONLY the context data above. Look for patterns in the data that indicate:
 - "interrupt" if context data shows patterns requiring human input
 """
 
+_STEERING_CONTEXT_TEMPLATE = """## Context
+
+{context_str}
+
+## Event to Evaluate
+
+{event_description}
+"""
+
 
 class LLMPromptMapper(Protocol):
     """Protocol for mapping context and events to LLM evaluation prompts."""
 
     def create_steering_prompt(
         self, steering_context: SteeringContext, tool_use: ToolUse | None = None, **kwargs: Any
-    ) -> str:
+    ) -> str | list[ContentBlock]:
         """Create steering prompt for LLM evaluation.
 
         Args:
@@ -93,7 +96,8 @@ class LLMPromptMapper(Protocol):
             **kwargs: Additional event data for other steering events
 
         Returns:
-            Formatted prompt string for LLM evaluation
+            The prompt as a string, or as content blocks whose last block holds the per-call data. For content
+            blocks, a model with prompt caching enabled caches the blocks before the last one.
         """
         ...
 
@@ -103,10 +107,11 @@ class DefaultPromptMapper(LLMPromptMapper):
 
     def create_steering_prompt(
         self, steering_context: SteeringContext, tool_use: ToolUse | None = None, **kwargs: Any
-    ) -> str:
+    ) -> list[ContentBlock]:
         """Create default steering prompt using Agent SOP structure.
 
-        Uses Agent SOP format for structured, constraint-based prompts.
+        Uses Agent SOP format for structured, constraint-based prompts: a block of static instructions, then a
+        block with the context and the event.
         See: https://github.com/strands-agents/agent-sop
         """
         context_str = (
@@ -122,9 +127,8 @@ class DefaultPromptMapper(LLMPromptMapper):
             event_description = "General evaluation"
             action_type = "action"
 
-        return _STEERING_PROMPT_TEMPLATE.format(
-            action_type=action_type,
-            action_type_title=action_type.title(),
-            context_str=context_str,
-            event_description=event_description,
+        instructions = _STEERING_INSTRUCTIONS_TEMPLATE.format(
+            action_type=action_type, action_type_title=action_type.title()
         )
+        context = _STEERING_CONTEXT_TEMPLATE.format(context_str=context_str, event_description=event_description)
+        return [{"text": instructions}, {"text": context}]
