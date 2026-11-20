@@ -14,6 +14,7 @@ from strands.hooks import (
     BeforeModelCallEvent,
     BeforeToolCallEvent,
     MessageAddedEvent,
+    ModelStreamUpdateEvent,
 )
 from strands.interrupt import Interrupt, InterruptException
 from strands.types.content import Messages
@@ -107,6 +108,25 @@ def user():
 def mock_sleep():
     with patch.object(strands.event_loop._retry.asyncio, "sleep", new_callable=AsyncMock) as mock:
         yield mock
+
+
+@pytest.fixture
+def text_chunks():
+    return [
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "hello"}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ]
+
+
+@pytest.fixture
+def text_agent():
+    return Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "hello"}]}]),
+        callback_handler=None,
+    )
 
 
 def test_agent__init__hooks():
@@ -1127,6 +1147,106 @@ def test_hooks_param_callable_invoked_during_lifecycle():
 
     assert len(before_events) == 1
     assert isinstance(before_events[0], BeforeInvocationEvent)
+
+
+def test_agent__call__model_stream_update_hooks(text_agent, text_chunks):
+    """Verify that ModelStreamUpdateEvent fires for each chunk between the model call events."""
+    hook_provider = MockHookProvider([BeforeModelCallEvent, ModelStreamUpdateEvent, AfterModelCallEvent])
+    text_agent.hooks.add_hook(hook_provider)
+    invocation_state = {"request_id": "r1"}
+
+    text_agent("test message", invocation_state=invocation_state)
+
+    tru_events = hook_provider.events_received
+    exp_events = [
+        BeforeModelCallEvent(agent=text_agent, invocation_state=invocation_state, projected_input_tokens=ANY),
+        *[
+            ModelStreamUpdateEvent(agent=text_agent, chunk=chunk, invocation_state=invocation_state)
+            for chunk in text_chunks
+        ],
+        AfterModelCallEvent(
+            agent=text_agent,
+            invocation_state=invocation_state,
+            stop_response=AfterModelCallEvent.ModelStopResponse(
+                message={"role": "assistant", "content": [{"text": "hello"}], "metadata": ANY, "tracking_id": ANY},
+                stop_reason="end_turn",
+            ),
+        ),
+    ]
+    assert tru_events == exp_events
+
+    invocation_context = tru_events[0].invocation_context
+    assert invocation_context is not None
+    assert all(event.invocation_context is invocation_context for event in tru_events)
+
+
+@pytest.mark.asyncio
+async def test_agent_stream_async_model_stream_update_hooks(text_agent, text_chunks):
+    """Verify that ModelStreamUpdateEvent hooks see each chunk before it is yielded to the caller."""
+    tru_order = []
+
+    def record_event_type(event: BeforeModelCallEvent | AfterModelCallEvent) -> None:
+        tru_order.append(type(event).__name__)
+
+    async def record_chunk(event: ModelStreamUpdateEvent) -> None:
+        tru_order.append(("hook", event.chunk))
+
+    text_agent.add_hook(record_event_type)
+    text_agent.add_hook(record_chunk)
+
+    async for event in text_agent.stream_async("test message"):
+        if "event" in event:
+            tru_order.append(("stream", event["event"]))
+
+    exp_order = [
+        "BeforeModelCallEvent",
+        *[(receiver, chunk) for chunk in text_chunks for receiver in ("hook", "stream")],
+        "AfterModelCallEvent",
+    ]
+    assert tru_order == exp_order
+
+
+@pytest.mark.asyncio
+async def test_model_stream_update_hook_cannot_modify_response(text_agent, alist):
+    def redact(event: ModelStreamUpdateEvent) -> None:
+        if "contentBlockDelta" in event.chunk:
+            event.chunk["contentBlockDelta"]["delta"]["text"] = "REDACTED"
+
+    text_agent.add_hook(redact)
+
+    events = await alist(text_agent.stream_async("test message"))
+
+    tru_deltas = [
+        event["event"]["contentBlockDelta"] for event in events if "contentBlockDelta" in event.get("event", {})
+    ]
+    exp_deltas = [{"delta": {"text": "hello"}}]
+    assert tru_deltas == exp_deltas
+    assert text_agent.messages[-1]["content"] == [{"text": "hello"}]
+
+
+def test_model_stream_update_hook_exception_fails_model_call(text_agent, text_chunks):
+    """Verify that an exception raised by a ModelStreamUpdateEvent hook reaches AfterModelCallEvent."""
+    exception = RuntimeError("stop streaming")
+    tru_chunks = []
+    tru_exceptions = []
+
+    def stop_first_attempt(event: ModelStreamUpdateEvent) -> None:
+        tru_chunks.append(event.chunk)
+        if len(tru_chunks) == 1:
+            raise exception
+
+    def retry_failed_call(event: AfterModelCallEvent) -> None:
+        tru_exceptions.append(event.exception)
+        event.retry = event.exception is not None
+
+    text_agent.add_hook(stop_first_attempt)
+    text_agent.add_hook(retry_failed_call)
+
+    result = text_agent("test message")
+
+    assert tru_exceptions == [exception, None]
+    assert tru_chunks == [text_chunks[0], *text_chunks]
+    assert result.message["content"] == [{"text": "hello"}]
 
 
 def test_before_model_call_hook_interrupt_stops_and_resumes_at_model_call():

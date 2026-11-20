@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 from ..types.agent import AgentInput
 from ..types.content import ContentBlock, Message, Messages
 from ..types.interrupt import _Interruptible
-from ..types.streaming import StopReason
+from ..types.streaming import StopReason, StreamEvent
 from ..types.tools import AgentTool, ToolResult, ToolUse
 from .registry import BaseHookEvent, HookEvent, _LocalAgentT
 
@@ -404,6 +404,28 @@ class AfterModelCallEvent(HookEvent):
     def should_reverse_callbacks(self) -> bool:
         """True to invoke callbacks in reverse order."""
         return True
+
+
+@dataclass
+class ModelStreamUpdateEvent(HookEvent):
+    """Event triggered for each chunk the model streams.
+
+    This event is fired between BeforeModelCallEvent and AfterModelCallEvent, once per
+    chunk and before the chunk is yielded to the caller. It is read-only: ``chunk`` is a
+    copy, so modifying it does not change the model response. When a model call is
+    retried, the event fires again for the chunks of the new attempt.
+
+    Note: This event is not fired for invocations to structured_output.
+
+    Attributes:
+        chunk: The raw streaming chunk from the model.
+        invocation_state: State and configuration passed through the agent invocation.
+            This can include shared context for multi-agent coordination, request tracking,
+            and dynamic configuration.
+    """
+
+    chunk: StreamEvent
+    invocation_state: dict[str, Any] = field(default_factory=dict)
 
 
 # Multiagent hook events start here

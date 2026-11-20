@@ -167,3 +167,13 @@ def test_has_callbacks(hook_registry, normal_event):
     # Test with multiple event types
     hook_registry.add_callback(AfterTestEvent, Mock())
     assert hook_registry.has_callbacks()
+
+
+def test_has_callbacks_for(hook_registry):
+    assert not hook_registry._has_callbacks_for(NormalTestEvent)
+
+    hook_registry.add_callback(AfterTestEvent, Mock())
+    assert not hook_registry._has_callbacks_for(NormalTestEvent)
+
+    hook_registry.add_callback(NormalTestEvent, Mock())
+    assert hook_registry._has_callbacks_for(NormalTestEvent)
