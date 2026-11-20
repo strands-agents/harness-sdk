@@ -174,7 +174,17 @@ const askCommand = (sessions: Sessions): DevChatCommand => ({
   open:
     (context): DevChatPanelView =>
     (props) =>
-      createElement(WizardRequestPanel, { ...props, broker: sessions(context).ask }),
+      createElement(WizardRequestPanel, {
+        ...props,
+        broker: sessions(context).ask,
+        onAutofill: (on) =>
+          void context.report(
+            'success',
+            on
+              ? 'Autofill on · the agent answers its own questions with their defaults'
+              : 'Autofill off · the agent asks, and you answer on screen'
+          ),
+      }),
   attach: (context): void => sessions(context).ask.attachOpener(() => context.openPanel('ask')),
 })
 

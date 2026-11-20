@@ -17,6 +17,8 @@ export interface WizardRequestPanelProps {
   readonly width: number
   readonly height: number
   readonly close: () => void
+  /** Reports the autofill state under the chat input, so the component stays about the question. */
+  readonly onAutofill?: (on: boolean) => void
 }
 
 type Answers = Record<string, WizardAnswer>
@@ -130,12 +132,14 @@ const RequestView = ({
   request,
   broker,
   autofill,
+  onAutofill,
   width,
   height,
 }: {
   request: WizardRequest
   broker: WizardBroker
   autofill: boolean
+  onAutofill?: (on: boolean) => void
   width: number
   height: number
 }): ReactElement => {
@@ -158,12 +162,24 @@ const RequestView = ({
       onFinish={() => broker.respond(request.id, { ...answers.current() })}
       onCancel={() => broker.respond(request.id, undefined)}
       position={position}
-      autofill={{ on: autofill, set: (on) => broker.setAutofill(on) }}
+      autofill={{
+        on: autofill,
+        set: (on) => {
+          broker.setAutofill(on)
+          onAutofill?.(on)
+        },
+      }}
     />
   )
 }
 
-export const WizardRequestPanel = ({ broker, width, height, close }: WizardRequestPanelProps): ReactElement => {
+export const WizardRequestPanel = ({
+  broker,
+  width,
+  height,
+  close,
+  onAutofill,
+}: WizardRequestPanelProps): ReactElement => {
   const [request, setRequest] = useState(() => broker.pending())
   const [autofill, setAutofill] = useState(() => broker.autofill())
   useEffect(
@@ -186,6 +202,14 @@ export const WizardRequestPanel = ({ broker, width, height, close }: WizardReque
     )
   // Remount on a new request so its answers start from that request's own defaults.
   return (
-    <RequestView key={request.id} request={request} broker={broker} autofill={autofill} width={width} height={height} />
+    <RequestView
+      key={request.id}
+      request={request}
+      broker={broker}
+      autofill={autofill}
+      {...(onAutofill ? { onAutofill } : {})}
+      width={width}
+      height={height}
+    />
   )
 }

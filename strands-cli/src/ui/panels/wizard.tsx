@@ -341,12 +341,14 @@ const rowHints = (
   row: WizardRow | undefined,
   finishHint: (blocking: WizardNotice | undefined) => string,
   blocking: WizardNotice | undefined,
-  walked: boolean
+  walked: boolean,
+  autofill: boolean
 ): string[] => {
   const tab = walked ? ['Tab next tab'] : []
-  const hints = (action: string): string[] => [...tab, '↑↓', action, 'Esc cancel']
+  const fill = autofill ? ['ctrl+a autofill'] : []
+  const hints = (action: string): string[] => [...tab, '↑↓', action, ...fill, 'Esc cancel']
   if (row?.kind === 'button') return hints(buttonHint(row.button, finishHint, blocking))
-  if (row?.kind !== 'field') return [...tab, 'Esc cancel']
+  if (row?.kind !== 'field') return [...tab, ...fill, 'Esc cancel']
   if (row.field.kind === 'toggle' && row.field.unavailable !== undefined) return hints('not available')
   return hints(row.field.hint)
 }
@@ -545,11 +547,6 @@ export const Wizard = ({
         <Line tone="muted">{`${' '.repeat(LABEL_WIDTH + 2)}${step.footnote}`}</Line>
       ) : null}
       {notice ? <Line tone={notice.tone}>{`  ${notice.text}`}</Line> : compact ? null : <Gap />}
-      {autofill ? (
-        <Line tone="muted">
-          {`  autofill: ${autofill.on ? 'on · the agent answers the next one itself' : 'off'} · ctrl+a`}
-        </Line>
-      ) : null}
       <WizardButtons
         buttons={buttons}
         ready={ready}
@@ -561,7 +558,11 @@ export const Wizard = ({
       />
       <Fill />
       <KeyHints
-        hints={editor ? ['Enter save', 'Esc cancel'] : rowHints(focused, finishHint, blocking, steps.length > 1)}
+        hints={
+          editor
+            ? ['Enter save', 'Esc cancel']
+            : rowHints(focused, finishHint, blocking, steps.length > 1, autofill !== undefined)
+        }
       />
     </>
   )

@@ -51,8 +51,17 @@ const show = async (element: ReactElement, rows = 20) => {
   return { text: (): string => frame().join('\n'), press }
 }
 
-const panel = async (broker: WizardBroker, rows = 20) =>
-  show(createElement(WizardRequestPanel, { broker, width: 96, height: rows - 2, close: vi.fn() }), rows)
+const panel = async (broker: WizardBroker, rows = 20, onAutofill?: (on: boolean) => void) =>
+  show(
+    createElement(WizardRequestPanel, {
+      broker,
+      width: 96,
+      height: rows - 2,
+      close: vi.fn(),
+      ...(onAutofill ? { onAutofill } : {}),
+    }),
+    rows
+  )
 
 describe('defaultAnswers', () => {
   it('shouldSeedEveryFieldFromItsSpec', () => {
@@ -370,23 +379,26 @@ describe('WizardRequestPanel', () => {
     await expect(asked).resolves.toEqual({ tune: [] })
   })
 
-  it('shouldShowTheAutofillToggleOnEveryQuestion', async () => {
+  it('shouldOfferTheAutofillKeyWithoutPuttingItsStateInTheComponent', async () => {
     const broker = new WizardBroker()
     void broker.ask(request())
     const { text } = await panel(broker)
 
-    expect(text()).toContain('autofill: off · ctrl+a')
+    expect(text()).toContain('ctrl+a autofill')
+    expect(text()).not.toContain('autofill: off')
   })
 
-  it('shouldTurnAutofillOnWhenTheUserPressesCtrlA', async () => {
+  it('shouldTurnAutofillOnAndReportItOutwardWhenTheUserPressesCtrlA', async () => {
     const broker = new WizardBroker()
+    const reported: boolean[] = []
     void broker.ask(request())
-    const { text, press } = await panel(broker)
+    const { text, press } = await panel(broker, 20, (on) => reported.push(on))
 
     await press('\u0001')
 
     expect(broker.autofill()).toBe(true)
-    expect(text()).toContain('autofill: on · the agent answers the next one itself')
+    expect(reported).toEqual([true])
+    expect(text()).not.toContain('the agent answers the next one itself')
   })
 
   it('shouldSayWhenNoQuestionIsWaiting', async () => {
