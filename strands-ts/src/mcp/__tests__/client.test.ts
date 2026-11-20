@@ -1871,6 +1871,10 @@ describe('McpClient transport resolution', () => {
     vi.clearAllMocks()
   })
 
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('constructs StreamableHTTPClientTransport when url is provided', () => {
     new McpClient({ url: 'https://mcp.example.com' })
     expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(new URL('https://mcp.example.com'), {})
@@ -1894,6 +1898,42 @@ describe('McpClient transport resolution', () => {
       clientSecret: 'secret',
       scope: 'read write',
     })
+  })
+
+  it('passes issuer as expectedIssuer without warning', () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    new McpClient({
+      url: 'https://mcp.example.com',
+      auth: { clientId: 'id', clientSecret: 'secret', issuer: 'https://auth.example.com' },
+    })
+    expect(ClientCredentialsProvider).toHaveBeenCalledWith({
+      clientId: 'id',
+      clientSecret: 'secret',
+      expectedIssuer: 'https://auth.example.com',
+    })
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('warns once per host when auth has no issuer', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const client = new McpClient({
+      url: 'https://user:password@no-issuer.example.com/mcp?key=value',
+      auth: { clientId: 'id', clientSecret: 'secret' },
+    })
+    await client.connect()
+    await client.connect(true)
+    expect(warnSpy.mock.calls).toStrictEqual([
+      [
+        'host=<no-issuer.example.com> | oauth client credentials have no issuer, the mcp server decides which authorization server receives them | set the auth issuer to pin the authorization server',
+      ],
+    ])
+  })
+
+  it.each(['', 'auth.example.com', 'ftp://auth.example.com'])('throws when issuer is %j', (issuer) => {
+    expect(
+      () => new McpClient({ url: 'https://mcp.example.com', auth: { clientId: 'id', clientSecret: 'secret', issuer } })
+    ).toThrow('"auth.issuer" must be an http:// or https:// URL')
+    expect(ClientCredentialsProvider).not.toHaveBeenCalled()
   })
 
   it('passes custom authProvider to transport', () => {

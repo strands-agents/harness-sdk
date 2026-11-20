@@ -26,6 +26,7 @@ import { McpTool } from '../tools/mcp-tool.js'
 import { MAX_TOOL_NAME_LENGTH } from '../registry/tool-registry.js'
 import { ToolValidationError } from '../errors.js'
 import { logger } from '../logging/index.js'
+import { warnOnce } from '../logging/warn-once.js'
 import { type McpLoadServersOptions, type McpServerConfig, mcpServerLoader } from './config.js'
 import { buildMcpParamHeaders, createTaskRoutingFetch, TaskTransport } from './task-transport.js'
 
@@ -89,6 +90,8 @@ export interface McpClientCredentials {
   clientSecret: string
   /** OAuth scopes to request. Joined with spaces before sending to the token endpoint. */
   scopes?: string[]
+  /** Issuer URL of the authorization server the credentials belong to. When set, they are only sent there. */
+  issuer?: string
 }
 
 /** Decides whether a tool matches a filter. Receives the tool under its agent-facing name. */
@@ -492,15 +495,26 @@ export class McpClient {
       throw new Error('McpClientConfig: provide either "auth" or "authProvider", not both')
     }
 
+    const url = args.url instanceof URL ? args.url : new URL(args.url!)
+    const issuer = args.auth?.issuer
+    if (issuer !== undefined && !/^https?:\/\//i.test(issuer)) {
+      throw new Error('McpClientConfig: "auth.issuer" must be an http:// or https:// URL')
+    }
+    if (args.auth && issuer === undefined) {
+      warnOnce(
+        logger,
+        `host=<${url.hostname}> | oauth client credentials have no issuer, the mcp server decides which authorization server receives them | set the auth issuer to pin the authorization server`
+      )
+    }
     const authProvider = args.auth
       ? new ClientCredentialsProvider({
           clientId: args.auth.clientId,
           clientSecret: args.auth.clientSecret,
           ...(args.auth.scopes && { scope: args.auth.scopes.join(' ') }),
+          ...(issuer !== undefined && { expectedIssuer: issuer }),
         })
       : args.authProvider
 
-    const url = args.url instanceof URL ? args.url : new URL(args.url!)
     return new StreamableHTTPClientTransport(url, {
       ...(authProvider && { authProvider }),
       ...(args.headers && { requestInit: { headers: args.headers } }),

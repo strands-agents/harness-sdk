@@ -1,7 +1,8 @@
 """Unit tests for MCPClient.load_servers (mcpServers JSON config loading)."""
 
 import json
-from unittest.mock import ANY, patch
+import warnings
+from unittest.mock import ANY, create_autospec, patch
 
 import pytest
 
@@ -10,6 +11,8 @@ from strands.tools.mcp.mcp_client import MCPClient
 
 # mcp 2.x renamed the provider's `scopes` keyword to `scope`.
 SCOPE_KWARG = "scope" if MCP_V2 else "scopes"
+
+pytestmark = pytest.mark.filterwarnings("ignore:MCPClient. 'auth' has no 'issuer':UserWarning")
 
 
 @pytest.fixture
@@ -345,6 +348,27 @@ def test_continue_on_error_logs_warning(mock_client, transports, caplog):
     assert "MCP server config failed, skipping" in caplog.text
 
 
+def test_continue_on_error_raises_a_warning_turned_into_an_error(mock_client, transports):
+    """Under `python -W error::UserWarning`, a server whose auth has no issuer fails instead of being skipped."""
+    config = {"srv": {"url": "https://example.com/mcp", "auth": {"client_id": "id", "client_secret": "secret"}}}
+    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            with pytest.raises(UserWarning, match="'auth' has no 'issuer'"):
+                MCPClient.load_servers(config, continue_on_error=True)
+
+
+def test_continue_on_error_raises_other_warning_categories(mock_client, transports):
+    """As when `python -W error` turns the `mcp` 1.30 provider's DeprecationWarning into an error."""
+    config = {"srv": {"url": "https://example.com/mcp", "auth": {"client_id": "id", "client_secret": "secret"}}}
+    with patch(
+        "mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider",
+        side_effect=DeprecationWarning("Omitting `issuer` is deprecated"),
+    ):
+        with pytest.raises(DeprecationWarning):
+            MCPClient.load_servers(config, continue_on_error=True)
+
+
 def test_continue_on_error_passed_to_client(mock_client, transports):
     """The config flag is threaded through to the constructed client so its runtime honors it."""
     MCPClient.load_servers({"srv": {"command": "node", "continue_on_error": True}})
@@ -408,6 +432,50 @@ def test_config_auth_builds_client_credentials_provider(mock_client, transports)
         **{SCOPE_KWARG: "read write"},
     )
     assert transports["http"].call_args.kwargs["auth"] is provider_cls.return_value
+
+
+def test_config_auth_issuer_passed_to_provider(mock_client, transports, monkeypatch):
+    def provider(server_url, storage, client_id, client_secret, scope=None, scopes=None, issuer=None): ...
+
+    monkeypatch.setenv("OAUTH_ISSUER", "https://auth.example.com")
+    with patch(
+        "mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider", create_autospec(provider)
+    ) as provider_cls:
+        MCPClient.load_servers(
+            {
+                "srv": {
+                    "url": "https://example.com/mcp",
+                    "auth": {"client_id": "id", "client_secret": "secret", "issuer": "${OAUTH_ISSUER}"},
+                }
+            }
+        )
+
+    provider_cls.assert_called_once_with(
+        server_url="https://example.com/mcp",
+        storage=ANY,
+        client_id="id",
+        client_secret="secret",
+        issuer="https://auth.example.com",
+        **{SCOPE_KWARG: None},
+    )
+
+
+def test_config_auth_null_issuer_is_treated_as_omitted(mock_client, transports):
+    auth = {"client_id": "id", "client_secret": "secret", "issuer": None}
+    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider") as provider_cls:
+        MCPClient.load_servers({"srv": {"url": "https://example.com/mcp", "auth": auth}})
+
+    assert "issuer" not in provider_cls.call_args.kwargs
+
+
+def test_config_auth_without_issuer_warns_at_the_caller(mock_client, transports):
+    with patch("mcp.client.auth.extensions.client_credentials.ClientCredentialsOAuthProvider"):
+        with pytest.warns(UserWarning, match="'auth' has no 'issuer', so the MCP server at 'example.com'") as caught:
+            MCPClient.load_servers(
+                {"srv": {"url": "https://example.com/mcp", "auth": {"client_id": "id", "client_secret": "secret"}}}
+            )
+
+    assert [warning.filename for warning in caught] == [__file__]
 
 
 def test_auth_interpolates_env_vars(mock_client, transports, monkeypatch):
