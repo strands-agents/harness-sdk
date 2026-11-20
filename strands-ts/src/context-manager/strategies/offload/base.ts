@@ -20,6 +20,7 @@ import type { Archive } from '../../archive.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { carriedTokens, formatElided, isOffloaded, offloadPlaceholder } from '../../placeholder.js'
 import { collectRemovableWithPair, placeholderFor, removeMessages, repairAlternation } from '../../message-trimming.js'
+import { holdsToolReference } from '../../../models/tool-references.js'
 import { isPinned } from '../../../conversation-manager/compression/pin-message.js'
 import { ResolvedConditions, type OffloadConditions } from './conditions.js'
 import { buildToolNameMap, isMediaBlock, isProtocolBlock, OffloadTargetMatcher, type OffloadTarget } from './target.js'
@@ -189,11 +190,14 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   }
 
   /**
-   * Whether a tool result is the retrieval tool's output, or already holds a placeholder this strategy shouldn't
-   * replace. Only drop goes further, since truncate and summarize would read the placeholder as the content.
+   * Whether a tool result is the retrieval tool's output, holds a tool reference, or already holds a placeholder this
+   * strategy shouldn't replace. Only drop goes further, since truncate and summarize would read the placeholder as the
+   * content.
    */
   private _isProtectedResult(block: ToolResultBlock, toolNameMap: Map<string, string>): boolean {
     if (this._archive && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return true
+    // A tool reference is what keeps a loaded tool's schema in the model's context.
+    if (holdsToolReference(block)) return true
     const placeholder = block.content.find(isOffloaded)
     return placeholder !== undefined && (this._method !== 'drop' || placeholder.method === 'drop')
   }

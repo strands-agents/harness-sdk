@@ -25,7 +25,7 @@ describe('NodeResult', () => {
         duration: 150,
         content: [
           { futureBlock: { value: 1 } },
-          { toolResult: { toolUseId: 't-0', status: 'success', content: [{ toolReference: { name: 'shell' } }] } },
+          { toolResult: { toolUseId: 't-0', status: 'success', content: [{ futureBlock: { name: 'shell' } }] } },
         ],
       } as JSONValue
 
@@ -36,7 +36,7 @@ describe('NodeResult', () => {
         new ToolResultBlock({
           toolUseId: 't-0',
           status: 'success',
-          content: [new UnknownBlock({ toolReference: { name: 'shell' } })],
+          content: [new UnknownBlock({ futureBlock: { name: 'shell' } })],
         }),
       ])
       expect(restored.toJSON()).toStrictEqual(saved)

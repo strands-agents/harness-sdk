@@ -18,7 +18,14 @@ export { ContextManager } from './context-manager.js'
 export type { ContextManagerStrategy } from './context-manager.js'
 export type { ContextManagerConfig, ContextStrategy, ContextState, ArchiveConfig } from './types.js'
 export { Offload } from './strategies/offload/index.js'
-export type { OffloadTarget, OffloadConditions, OffloadStrategy } from './strategies/offload/index.js'
+export type {
+  OffloadTarget,
+  OffloadConditions,
+  OffloadStrategy,
+  DeferTarget,
+  DeferConditions,
+  DeferStrategy,
+} from './strategies/offload/index.js'
 export type { TruncateConfig } from './methods/truncate.js'
 export type { SummarizeConfig } from './strategies/offload/summarize.js'
 export type { StrategyPresetName } from './presets.js'
