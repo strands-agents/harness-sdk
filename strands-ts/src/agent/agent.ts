@@ -2660,6 +2660,7 @@ export class Agent implements LocalAgent, InvokableAgent {
           messages: ctx.messages as Message[],
           ...(modelId && { modelId }),
           ...(ctx.systemPrompt !== undefined && { systemPrompt: ctx.systemPrompt }),
+          toolSpecs: ctx.toolSpecs,
         })
 
         let modelSpanEnded = false

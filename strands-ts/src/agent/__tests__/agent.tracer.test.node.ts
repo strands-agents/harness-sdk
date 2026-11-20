@@ -520,6 +520,29 @@ describe('Agent tracer integration', () => {
         })
       )
     })
+
+    it('model span receives the tool specs the model is called with after middleware', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const kept = createMockTool('kept', () => new ToolResultBlock({ toolUseId: 'x', status: 'success', content: [] }))
+      const dropped = createMockTool(
+        'dropped',
+        () => new ToolResultBlock({ toolUseId: 'x', status: 'success', content: [] })
+      )
+      const agent = new Agent({ model, tools: [kept, dropped] })
+      const tracer = getLatestTracer()
+      const streamSpy = vi.spyOn(model, 'stream')
+
+      agent.addMiddleware(InvokeModelStage.Input, async (context) => ({
+        ...context,
+        toolSpecs: context.toolSpecs.filter((spec) => spec.name === 'kept'),
+      }))
+
+      await agent.invoke('Hi')
+
+      const sentToolSpecs = streamSpy.mock.calls[0]![1]!.toolSpecs
+      expect(sentToolSpecs).toStrictEqual([kept.toolSpec])
+      expect(tracer.startModelInvokeSpan).toHaveBeenCalledWith(expect.objectContaining({ toolSpecs: sentToolSpecs }))
+    })
   })
 
   describe('tool call span lifecycle', () => {
