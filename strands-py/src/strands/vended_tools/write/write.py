@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from ...tools.decorator import tool
 from ...types.tools import ToolContext
+from .._lines import split_lines
 from .._paths import validate_absolute_path
 
 if TYPE_CHECKING:
@@ -73,7 +74,7 @@ def make_write(
         active = sandbox if sandbox is not None else tool_context.agent.sandbox
 
         await active.write_text(path, content)
-        line_count = 0 if content == "" else len(content.split("\n"))
+        line_count = len(split_lines(content))
         noun = "line" if line_count == 1 else "lines"
         return f"Wrote {line_count} {noun} to {path}."
 

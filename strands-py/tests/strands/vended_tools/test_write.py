@@ -77,12 +77,12 @@ class TestWrite:
         assert result == f"Wrote 1 line to {file_path}."
 
     @pytest.mark.asyncio
-    async def test_trailing_newline_counts_the_empty_tail(self, write_tool, ctx, tmp_path):
-        # ``"a\nb\n".split("\n") == ["a", "b", ""]`` — three entries for two
-        # text lines plus the final newline. Matches the harness tool's count.
+    async def test_trailing_newline_does_not_count_an_empty_tail(self, write_tool, ctx, tmp_path):
+        # ``cat -n`` and ``wc -l`` count a trailing newline as the end of the last
+        # line, so "a\\nb\\n" is two lines, not three.
         file_path = str(tmp_path / "tail.txt")
         result = await write_tool(path=file_path, content="a\nb\n", tool_context=ctx)
-        assert result == f"Wrote 3 lines to {file_path}."
+        assert result == f"Wrote 2 lines to {file_path}."
 
     @pytest.mark.asyncio
     async def test_creates_parent_directories(self, write_tool, ctx, tmp_path):
