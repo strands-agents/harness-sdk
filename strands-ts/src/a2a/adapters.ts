@@ -1,21 +1,21 @@
 /**
  * Conversion utilities between Strands SDK content blocks and A2A protocol parts.
  *
- * Supports text, images, videos, documents, and structured data.
+ * Supports text, images, audio, videos, documents, and structured data.
  */
 
 import type { Part, FileWithBytes, FileWithUri } from '@a2a-js/sdk'
 import type { ContentBlock } from '../types/messages.js'
 import { TextBlock } from '../types/messages.js'
-import type { ImageFormat, DocumentFormat, VideoFormat } from '../mime.js'
-import { toMimeType, toMediaFormat } from '../mime.js'
-import { ImageBlock, VideoBlock, DocumentBlock, decodeBase64, encodeBase64 } from '../types/media.js'
+import type { AudioFormat, ImageFormat, DocumentFormat, VideoFormat } from '../mime.js'
+import { toMimeType, toMediaFormat, toAudioMimeType, toAudioFormat } from '../mime.js'
+import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, decodeBase64, encodeBase64 } from '../types/media.js'
 import { logger } from '../logging/logger.js'
 
 /**
  * Converts A2A protocol parts to Strands SDK content blocks.
  *
- * Handles text, file (image/video/document), and structured data parts,
+ * Handles text, file (image/audio/video/document), and structured data parts,
  * @param parts - Array of A2A protocol parts
  * @returns Array of Strands content blocks
  */
@@ -46,7 +46,7 @@ export function partsToContentBlocks(parts: Part[]): ContentBlock[] {
 /**
  * Converts Strands SDK content blocks to A2A protocol parts.
  *
- * Supports text, image, video, and document blocks. Image and video blocks
+ * Supports text, image, audio, video, and document blocks. Image, audio, and video blocks
  * with byte sources are encoded as base64 file parts; URL-based sources
  * become URI file parts. Unsupported block types are silently skipped.
  *
@@ -62,6 +62,7 @@ export function contentBlocksToParts(blocks: ContentBlock[]): Part[] {
         parts.push({ kind: 'text', text: block.text })
         break
       case 'imageBlock':
+      case 'audioBlock':
       case 'videoBlock': {
         const filePart = _mediaBlockToFilePart(block)
         if (filePart) parts.push(filePart)
@@ -94,6 +95,10 @@ function _convertFilePart(file: FileWithBytes | FileWithUri): ContentBlock {
       return new ImageBlock({ format: format as ImageFormat, source: { bytes: decoded } })
     }
 
+    if (fileType === 'audio') {
+      return new AudioBlock({ format: format as AudioFormat, source: { bytes: decoded } })
+    }
+
     if (fileType === 'video') {
       return new VideoBlock({ format: format as VideoFormat, source: { bytes: decoded } })
     }
@@ -116,16 +121,27 @@ function _convertFilePart(file: FileWithBytes | FileWithUri): ContentBlock {
  * @param mimeType - The MIME type string
  * @returns The file type category
  */
-function _getFileType(mimeType: string | undefined): 'image' | 'video' | 'document' | 'unknown' {
+function _getFileType(mimeType: string | undefined): 'image' | 'audio' | 'video' | 'document' | 'unknown' {
   if (!mimeType) {
     return 'unknown'
   }
 
-  const lower = mimeType.toLowerCase()
+  const lower = _stripMimeParameters(mimeType)
   if (lower.startsWith('image/')) return 'image'
+  if (toAudioFormat(lower)) return 'audio'
   if (lower.startsWith('video/')) return 'video'
   if (lower.startsWith('text/') || lower.startsWith('application/')) return 'document'
   return 'unknown'
+}
+
+/**
+ * Lowercases a MIME type and drops its parameters (e.g., `text/plain; charset=utf-8` → `text/plain`).
+ *
+ * @param mimeType - The MIME type string
+ * @returns The bare MIME type
+ */
+function _stripMimeParameters(mimeType: string): string {
+  return mimeType.split(';')[0]!.trim().toLowerCase()
 }
 
 /**
@@ -141,10 +157,10 @@ function _getFormat(mimeType: string | undefined, fileType: string): string {
     return fileType === 'image' ? 'png' : fileType === 'video' ? 'mp4' : 'txt'
   }
 
-  const lower = mimeType.toLowerCase()
+  const lower = _stripMimeParameters(mimeType)
 
   // Use the reverse lookup (handles complex types like application/vnd.ms-excel → xls)
-  const known = toMediaFormat(lower)
+  const known = fileType === 'audio' ? toAudioFormat(lower) : toMediaFormat(lower)
   if (known) {
     return known
   }
@@ -158,15 +174,19 @@ function _getFormat(mimeType: string | undefined, fileType: string): string {
 }
 
 /**
- * Converts an ImageBlock or VideoBlock to an A2A FilePart.
+ * Converts an ImageBlock, AudioBlock, or VideoBlock to an A2A FilePart.
  *
- * @param block - The image or video block
+ * @param block - The image, audio, or video block
  * @returns A2A FilePart, or undefined if the source type is unsupported
  */
-function _mediaBlockToFilePart(block: ImageBlock | VideoBlock): Part | undefined {
-  const mimeType = toMimeType(block.format)!
+function _mediaBlockToFilePart(block: ImageBlock | AudioBlock | VideoBlock): Part | undefined {
+  const mimeType = (block.type === 'audioBlock' ? toAudioMimeType(block.format) : toMimeType(block.format))!
 
-  if (block.source.type === 'imageSourceBytes' || block.source.type === 'videoSourceBytes') {
+  if (
+    block.source.type === 'imageSourceBytes' ||
+    block.source.type === 'audioSourceBytes' ||
+    block.source.type === 'videoSourceBytes'
+  ) {
     return { kind: 'file', file: { bytes: encodeBase64(block.source.bytes), mimeType } }
   }
 

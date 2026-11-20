@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { partsToContentBlocks, contentBlocksToParts } from '../adapters.js'
 import { TextBlock, ToolUseBlock, ReasoningBlock, OffloadedBlock } from '../../types/messages.js'
 import type { ContentBlock } from '../../types/messages.js'
-import { ImageBlock, VideoBlock, DocumentBlock, encodeBase64 } from '../../types/media.js'
+import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, encodeBase64 } from '../../types/media.js'
 import type { Part } from '@a2a-js/sdk'
 
 describe('adapters', () => {
@@ -28,6 +28,17 @@ describe('adapters', () => {
       { mimeType: 'application/pdf', BlockClass: DocumentBlock, format: 'pdf' },
       { mimeType: 'application/vnd.ms-excel', BlockClass: DocumentBlock, format: 'xls' },
       { mimeType: 'application/octet-stream', BlockClass: DocumentBlock, format: 'octet-stream' },
+      { mimeType: 'audio/mpeg', BlockClass: AudioBlock, format: 'mp3' },
+      { mimeType: 'audio/wav', BlockClass: AudioBlock, format: 'wav' },
+      { mimeType: 'audio/x-wav', BlockClass: AudioBlock, format: 'wav' },
+      { mimeType: 'audio/wave', BlockClass: AudioBlock, format: 'wav' },
+      { mimeType: 'audio/mp4', BlockClass: AudioBlock, format: 'm4a' },
+      { mimeType: 'audio/x-unknown', BlockClass: DocumentBlock, format: 'x-unknown' },
+      { mimeType: 'text/plain; charset=utf-8', BlockClass: DocumentBlock, format: 'txt' },
+      { mimeType: 'application/pdf; name=x', BlockClass: DocumentBlock, format: 'pdf' },
+      { mimeType: 'IMAGE/PNG; q=1', BlockClass: ImageBlock, format: 'png' },
+      { mimeType: ' Image/PNG ; q=1', BlockClass: ImageBlock, format: 'png' },
+      { mimeType: '; charset=utf-8', BlockClass: DocumentBlock, format: 'txt' },
     ])(
       'converts file with bytes and MIME $mimeType to correct block with format $format',
       ({ mimeType, BlockClass, format }) => {
@@ -37,7 +48,7 @@ describe('adapters', () => {
 
         expect(blocks).toHaveLength(1)
         expect(blocks[0]).toBeInstanceOf(BlockClass)
-        expect((blocks[0] as ImageBlock | VideoBlock | DocumentBlock).format).toBe(format)
+        expect((blocks[0] as AudioBlock | ImageBlock | VideoBlock | DocumentBlock).format).toBe(format)
       }
     )
 
@@ -138,12 +149,48 @@ describe('adapters', () => {
         },
       },
       {
+        desc: 'AudioBlock with bytes',
+        block: new AudioBlock({ format: 'wav', source: { bytes: new Uint8Array([82, 73]) } }),
+        expected: { kind: 'file', file: { bytes: encodeBase64(new Uint8Array([82, 73])), mimeType: 'audio/wav' } },
+      },
+      {
         desc: 'DocumentBlock with text source',
         block: new DocumentBlock({ name: 'readme', format: 'txt', source: { text: 'Hello doc' } }),
         expected: { kind: 'text', text: 'Hello doc' },
       },
     ])('converts $desc to file part', ({ block, expected }) => {
       expect(contentBlocksToParts([block])).toStrictEqual([expected])
+    })
+
+    it.each([
+      { mimeType: 'audio/mpeg', expected: 'audio/mpeg' },
+      { mimeType: 'audio/wav', expected: 'audio/wav' },
+      { mimeType: 'audio/x-wav', expected: 'audio/wav' },
+      { mimeType: 'audio/wave', expected: 'audio/wav' },
+      { mimeType: 'audio/mp4', expected: 'audio/mp4' },
+      { mimeType: ' Image/PNG ; q=1', expected: 'image/png' },
+      { mimeType: '; charset=utf-8', expected: 'text/plain' },
+      { mimeType: 'text/plain; charset=utf-8', expected: 'text/plain' },
+      { mimeType: 'application/pdf; name=x', expected: 'application/pdf' },
+    ])('round-trips a file part with MIME $mimeType to $expected', ({ mimeType, expected }) => {
+      const parts: Part[] = [{ kind: 'file', file: { bytes: encodeBase64('hi'), mimeType, name: 'f' } }]
+
+      const roundTripped = contentBlocksToParts(partsToContentBlocks(parts))
+
+      expect(roundTripped).toHaveLength(1)
+      expect(roundTripped[0]).toMatchObject({ kind: 'file', file: { mimeType: expected } })
+    })
+
+    it('keeps an unrecognized audio subtype on the document path without a MIME type', () => {
+      const parts: Part[] = [
+        { kind: 'file', file: { bytes: encodeBase64('hi'), mimeType: 'audio/x-unknown', name: 'f' } },
+      ]
+
+      const roundTripped = contentBlocksToParts(partsToContentBlocks(parts))
+
+      expect(roundTripped).toHaveLength(1)
+      expect(roundTripped[0]).toMatchObject({ kind: 'file' })
+      expect((roundTripped[0] as { file: { mimeType?: string } }).file.mimeType).toBeUndefined()
     })
 
     it('handles mixed text and media blocks', () => {
