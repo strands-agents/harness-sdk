@@ -1,5 +1,5 @@
 /**
- * Retrieval tool for accessing stashed (L1) content.
+ * Retrieval tool for accessing archived (L1) content.
  *
  * Registered automatically when the ContextManager has storage configured.
  *
@@ -28,12 +28,12 @@ import type {
 } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
 import type { Tool } from '../tools/tool.js'
-import type { Stash } from './stash.js'
+import type { Archive } from './archive.js'
 import { flattenMessagesToContent } from './content-rendering.js'
 import { isOffloaded } from './placeholder.js'
 
-/** What a stash entry holds: one stored block, or the messages removed together. */
-type StashEntry = ToolResultContent | ContentBlock | Message[]
+/** What an archive entry holds: one stored block, or the messages removed together. */
+type ArchiveEntry = ToolResultContent | ContentBlock | Message[]
 
 export const RETRIEVAL_TOOL_NAME = 'retrieve_context'
 
@@ -54,15 +54,15 @@ const retrievalInputSchema = z.object({
 })
 
 /**
- * Creates the retrieval tool for the given stash.
+ * Creates the retrieval tool for the given archive.
  *
- * @param stash - The stash instance to retrieve from
+ * @param archive - The archive instance to retrieve from
  * @param maxResultTokens - Maximum tokens in the retrieval result
- * @returns A Tool that can retrieve stashed content
+ * @returns A Tool that can retrieve archived content
  *
  * @internal
  */
-export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Tool {
+export function createRetrievalTool(archive: Archive, maxResultTokens?: number): Tool {
   const maxChars = (maxResultTokens ?? DEFAULT_MAX_RESULT_TOKENS) * CHARS_PER_TOKEN
 
   return tool({
@@ -83,7 +83,7 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
     inputSchema: retrievalInputSchema,
     callback: async (input) => {
       const reference = input.reference.trim()
-      const entries = await resolveReference(stash, reference)
+      const entries = await resolveReference(archive, reference)
       // Thrown, not returned: the tool factory gives a returned string success status, and a model that
       // reads "Error" under success retries and then invents the content. A missing reference is terminal
       // only once the id was passed as the placeholder lists it; content offloaded again never comes back.
@@ -107,7 +107,7 @@ export function createRetrievalTool(stash: Stash, maxResultTokens?: number): Too
  * content, are returned as blocks, so media reaches the model as media and only their text is cut to
  * `maxChars`; anything else is returned in its JSON form.
  */
-function fullContent(entries: StashEntry[], maxChars: number): JSONValue {
+function fullContent(entries: ArchiveEntry[], maxChars: number): JSONValue {
   const blocks = entries.flatMap((entry) => (Array.isArray(entry) ? flattenMessagesToContent(entry) : [entry]))
   if (blocks.every(isToolResultContent)) {
     const clipped = clipText(blocks, maxChars)
@@ -118,7 +118,7 @@ function fullContent(entries: StashEntry[], maxChars: number): JSONValue {
   return serialized.length <= maxChars ? data : `${serialized.slice(0, maxChars)}\n\n[truncated]`
 }
 
-function isToolResultContent(entry: StashEntry): entry is ToolResultContent {
+function isToolResultContent(entry: ArchiveEntry): entry is ToolResultContent {
   return (
     entry instanceof TextBlock ||
     entry instanceof JsonBlock ||
@@ -152,7 +152,7 @@ function clipText(blocks: ToolResultContent[], maxChars: number): ToolResultCont
 
 /** The lines of the entries' text that match `pattern` or fall in `line_range`. */
 function searchEntries(
-  entries: StashEntry[],
+  entries: ArchiveEntry[],
   input: z.infer<typeof retrievalInputSchema>,
   maxChars: number
 ): ReturnType<typeof searchContent> {
@@ -172,23 +172,23 @@ function searchEntries(
  * reference is an exact key and resolves to that entry. Ids take precedence because a placeholder
  * references a tool result by id, and an id may itself end like a key (`tool_1`).
  */
-async function resolveReference(stash: Stash, reference: string): Promise<StashEntry[]> {
-  const keys = await stash.keysOf(reference)
-  if (keys.length > 0) return entriesFrom(await Promise.all(keys.map((key) => stash.retrieve(key))))
+async function resolveReference(archive: Archive, reference: string): Promise<ArchiveEntry[]> {
+  const keys = await archive.keysOf(reference)
+  if (keys.length > 0) return entriesFrom(await Promise.all(keys.map((key) => archive.retrieve(key))))
 
-  const exact = await stash.retrieve(reference)
+  const exact = await archive.retrieve(reference)
   return exact ? entriesFrom([exact]) : []
 }
 
-function entriesFrom(results: ReadonlyArray<{ data: unknown } | null>): StashEntry[] {
+function entriesFrom(results: ReadonlyArray<{ data: unknown } | null>): ArchiveEntry[] {
   return results.flatMap((result) => {
-    const entry = result && stashEntryFromData(result.data)
+    const entry = result && archiveEntryFromData(result.data)
     return entry ? [entry] : []
   })
 }
 
-/** Deserializes a stash entry with the same readers that load it from a session. */
-function stashEntryFromData(data: unknown): StashEntry | null {
+/** Deserializes an archive entry with the same readers that load it from a session. */
+function archiveEntryFromData(data: unknown): ArchiveEntry | null {
   if (Array.isArray(data)) return data.map((message) => Message.fromMessageData(message as MessageData))
   if (data === null || typeof data !== 'object') return null
   try {
@@ -202,13 +202,13 @@ function stashEntryFromData(data: unknown): StashEntry | null {
   }
 }
 
-function entryToData(entry: StashEntry): JSONValue {
+function entryToData(entry: ArchiveEntry): JSONValue {
   const data = Array.isArray(entry) ? entry.map((message) => message.toJSON()) : entry.toJSON()
   return data as unknown as JSONValue
 }
 
 /** The searchable text of an entry: its text, JSON, and tool-result text, in order. */
-function entryText(entry: StashEntry): string | null {
+function entryText(entry: ArchiveEntry): string | null {
   if (Array.isArray(entry)) return joinText(entry.flatMap((message) => message.content.map(blockText)))
   return blockText(entry)
 }
