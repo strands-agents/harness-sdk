@@ -1,5 +1,6 @@
 """Tests for _snapshot.py — Snapshot dataclass and resolve_snapshot_fields."""
 
+import copy
 import json
 import re
 from typing import Any, get_args
@@ -8,6 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from strands import Agent
+from strands.agent.conversation_manager import SummarizingConversationManager
+from strands.interrupt import _InterruptState
 from strands.types._snapshot import (
     ALL_SNAPSHOT_FIELDS,
     SNAPSHOT_PRESETS,
@@ -18,6 +21,7 @@ from strands.types._snapshot import (
     resolve_snapshot_fields,
 )
 from strands.types.exceptions import SnapshotException
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 # Helpers
 
@@ -294,6 +298,80 @@ def test_take_snapshot_app_data_is_independent_copy():
 
     app_data["key"] = "mutated"
     assert snapshot.app_data["key"] == "original"
+
+
+def test_take_snapshot_conversation_manager_state_is_independent_copy():
+    """Captured conversation manager state is independent of the live summary, see #6270."""
+    manager = SummarizingConversationManager()
+    summary = {"role": "user", "content": [{"text": "original"}]}
+    manager.restore_from_session({**manager.get_state(), "summary_message": summary})
+    agent = Agent(
+        model=MockedModelProvider([]), conversation_manager=manager, messages=[summary], callback_handler=None
+    )
+    snapshot = agent.take_snapshot(preset="session")
+
+    manager.get_state()["summary_message"]["content"][0]["text"] = "mutated"
+
+    tru_state = snapshot.data["conversation_manager_state"]
+    exp_state = {
+        "__name__": "SummarizingConversationManager",
+        "summary_message": {"role": "user", "content": [{"text": "original"}]},
+        "removed_message_count": 0,
+    }
+    assert tru_state == exp_state
+    assert snapshot.data["messages"] == [exp_state["summary_message"]]
+
+
+def test_load_snapshot_conversation_manager_state_is_independent_copy():
+    """Restored conversation manager mutations leave the snapshot unchanged, see #6270."""
+    exp_state = {
+        "__name__": "SummarizingConversationManager",
+        "summary_message": {"role": "user", "content": [{"text": "original"}]},
+        "removed_message_count": 0,
+    }
+    snapshot = _make_snapshot(data={"conversation_manager_state": copy.deepcopy(exp_state)})
+    manager = SummarizingConversationManager()
+    agent = Agent(model=MockedModelProvider([]), conversation_manager=manager, callback_handler=None)
+    agent.load_snapshot(snapshot)
+
+    assert manager.get_state() == exp_state
+    manager.get_state()["summary_message"]["content"][0]["text"] = "mutated"
+
+    tru_state = snapshot.data["conversation_manager_state"]
+    assert tru_state == exp_state
+
+
+@pytest.mark.parametrize("restore", [False, True], ids=["capture", "restore"])
+def test_snapshot_interrupt_state_is_independent_copy(restore):
+    """Live interrupt mutations leave captured and loaded snapshots unchanged, see #6270."""
+    exp_state = {
+        "interrupts": {"tool-1": {"id": "tool-1", "name": "approval", "reason": ["original"], "response": ["yes"]}},
+        "context": {"nested": ["original"]},
+        "activated": True,
+        "pending_tool_execution": {
+            "assistant_message": {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "tool-1", "name": "example", "input": {"value": "original"}}}],
+            },
+            "completed_tool_results": [{"toolUseId": "tool-1", "status": "success", "content": [{"text": "original"}]}],
+        },
+    }
+    agent = _make_agent()
+    agent._interrupt_state = _InterruptState.from_dict(copy.deepcopy(exp_state))
+    snapshot = agent.take_snapshot(include=["interrupt_state"])
+    if restore:
+        agent = _make_agent()
+        agent.load_snapshot(snapshot)
+
+    state = agent._interrupt_state
+    state.context["nested"].append("mutated")
+    state.interrupts["tool-1"].reason.append("mutated")
+    state.interrupts["tool-1"].response.append("mutated")
+    state.pending_tool_execution.assistant_message["content"][0]["toolUse"]["input"]["value"] = "mutated"
+    state.pending_tool_execution.completed_tool_results[0]["content"][0]["text"] = "mutated"
+
+    tru_state = snapshot.data["interrupt_state"]
+    assert tru_state == exp_state
 
 
 # Scope validation
