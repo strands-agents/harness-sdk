@@ -185,9 +185,10 @@ export type AgentConfig = {
    */
   model?: Model<BaseModelConfig> | ModelRouter | string
   /**
-   * Model for the auxiliary side calls the SDK makes outside the main agent loop: context
-   * summarization, memory extraction, the HITL risk classifier, LLM steering, the goal judge, and
-   * the `web_fetch` analyst. Defaults to `model`, so leaving it unset changes nothing; set it
+   * Model for the auxiliary side calls the SDK makes outside the main agent loop:
+   * conversation-manager summarization, memory extraction, the HITL risk classifier, LLM steering,
+   * the goal judge, and the `web_fetch` analyst. The context manager's summarize strategy does
+   * not use it; it resolves `this model > model`. Defaults to `model`, so leaving it unset changes nothing; set it
    * (typically to a smaller, cheaper model) to move every side call off the main model at once.
    * Each side call resolves its model as `component's own model > auxModel > model`.
    * Accepts a Model or a string representing a Bedrock model ID, like `model`; a ModelRouter is
