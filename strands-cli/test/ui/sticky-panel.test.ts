@@ -206,7 +206,8 @@ describe('a sticky question panel', () => {
 
     await press('\u001b[A')
 
-    expect(screen()).toContain('Viewing /ask · ↓ chat · Enter to send there')
+    expect(screen()).toContain('Enter to send')
+    expect(screen()).not.toContain('Viewing /ask')
   })
 
   it('shouldLeaveTheKeyboardWithTheChatWhenAQuestionOpens', async () => {

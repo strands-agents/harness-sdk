@@ -60,8 +60,10 @@ const TOOL_ACTIVITY_BY_STATUS: Record<ToolStatus, ToolActivity> = {
   cancelled: 'cancelled',
 }
 
-const askingOnScreen = ({ entries }: ChatTurn): boolean =>
-  entries.some((entry) => entry.type === 'tool' && entry.status === 'running' && isOnScreenQuestionTool(entry.name))
+const isPendingQuestion = (entry: ChatEntry): boolean =>
+  entry.type === 'tool' && entry.status === 'running' && isOnScreenQuestionTool(entry.name)
+
+const askingOnScreen = ({ entries }: ChatTurn): boolean => entries.some(isPendingQuestion)
 
 export function turnActivity(turn: ChatTurn, awaitingApproval: boolean): TurnActivity {
   if (awaitingApproval) return 'awaitingApproval'
@@ -119,6 +121,8 @@ export function TurnView({
   const silentOpening = turn.prompt === '' && turn.source === undefined && !turn.attachments?.length
   const awaitingApproval = active && approvalToolName !== undefined
   const activity = turnActivity(turn, awaitingApproval)
+  // The question on screen says everything; a status line and a tool row next to it are noise.
+  const asking = active && askingOnScreen(turn)
   const spinner = useSpinner(
     active && turn.status === 'running' && !silentOpening && !awaitingApproval,
     settings.animations
@@ -127,7 +131,10 @@ export function TurnView({
   const visibleEntries = silentOpening
     ? turn.entries.filter((entry) => entry.type === 'assistant' || entry.type === 'media')
     : turn.entries
-  const groupedEntries = settings.toolOutput === 'hidden' ? visibleEntries : groupToolEntries(visibleEntries)
+  const grouped = settings.toolOutput === 'hidden' ? visibleEntries : groupToolEntries(visibleEntries)
+  const groupedEntries = asking
+    ? grouped.filter((entry) => !(Array.isArray(entry) ? entry : [entry]).some((one) => isPendingQuestion(one)))
+    : grouped
   const entries = settings.showReasoning ? groupedEntries : groupedEntries.filter((entry) => entry.type !== 'reasoning')
   const firstEntry = entries[0]
   const startsWithTool = firstEntry?.type === 'tool' || firstEntry?.type === 'toolGroup'
@@ -180,7 +187,7 @@ export function TurnView({
           />
         )
       })}
-      {active && turn.status === 'running' && !silentOpening ? (
+      {active && turn.status === 'running' && !silentOpening && !asking ? (
         <Box flexDirection="column" marginTop={1}>
           <Text color={theme.warning}>{turnActivityText(activity, turn, spinner, interruptKey)}</Text>
           {activity === 'waitingForResponse' ? (
