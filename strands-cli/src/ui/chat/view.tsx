@@ -376,7 +376,11 @@ function ChatViewContent({
     (showConfigurationDock || showDockedDevPanel) && terminalWidth >= CONFIG_DOCK_MIN_TERMINAL_WIDTH
   const configDockWidth =
     showConfigurationDock || showDockedDevPanel
-      ? configurationDockWidth(terminalWidth, explicitConfiguration && showConfigurationDock)
+      ? configurationDockWidth(
+          terminalWidth,
+          explicitConfiguration && showConfigurationDock,
+          dockedDevPanel?.wideDock?.() === true
+        )
       : 0
   const configDockLeft = wideConfigurationDock ? Math.max(0, terminalWidth - 2 - configDockWidth) : 0
   const startupReservedRightWidth = wideConfigurationDock ? configDockWidth + CONFIG_DOCK_GAP : 0

@@ -118,6 +118,8 @@ export interface DevChatCommand {
   sticky?: boolean
   /** Renders beside the transcript at the dock's width, when its content needs that width right now. */
   dock?(): boolean
+  /** Widens that dock, for a panel holding lines to read rather than rows to pick. */
+  wideDock?(): boolean
   /** Called when the developer submits a chat message instead of answering. */
   dropPending?(): void
   /** The rows this panel's content needs right now, to shrink the frame to it. */
@@ -254,6 +256,8 @@ export type NewChatPanel =
       sticky?: boolean
       /** Renders beside the transcript at the dock's width rather than above the chat input. */
       dock?: () => boolean
+      /** Widens that dock, for a panel holding lines to read rather than rows to pick. */
+      wideDock?: () => boolean
       /** Resolves whatever this panel is waiting on, so a chat message can be sent instead. */
       dropPending?: () => void
       /** The rows its content needs, when that is fewer than the panel's usual share of the screen. */

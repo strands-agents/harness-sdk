@@ -59,6 +59,8 @@ export const FULL_LOCKUP_TOP_PADDING = 6
 export const COMPACT_LOCKUP_TOP_PADDING = 2
 const CONFIG_DOCK_MIN_WIDTH = 34
 const CONFIG_DOCK_MAX_WIDTH = 52
+const WIDE_DOCK_WIDTH_RATIO = 0.62
+const WIDE_DOCK_MAX_WIDTH = 92
 const CONFIG_DOCK_WIDTH_RATIO = 0.42
 const SECTIONED_PANEL_SIDEBAR_DIVISOR = 3
 const DEV_PANEL_MIN_HEIGHT = 8
@@ -194,11 +196,13 @@ export function sectionedPanelSidebarWidth(panelWidth: number, preferredWidth = 
   return Math.max(1, Math.min(Math.floor(panelWidth / SECTIONED_PANEL_SIDEBAR_DIVISOR), preferredWidth))
 }
 
-export function configurationDockWidth(terminalWidth: number, explicit = false): number {
+/** `wide` is for a dock holding lines to read, such as a file change, which 42% of the width cuts. */
+export function configurationDockWidth(terminalWidth: number, explicit = false, wide = false): number {
   const contentWidth = Math.max(1, terminalWidth - 2)
+  const ratio = wide ? WIDE_DOCK_WIDTH_RATIO : CONFIG_DOCK_WIDTH_RATIO
   const splitWidth = Math.min(
-    CONFIG_DOCK_MAX_WIDTH,
-    Math.max(CONFIG_DOCK_MIN_WIDTH, Math.floor(contentWidth * CONFIG_DOCK_WIDTH_RATIO))
+    wide ? WIDE_DOCK_MAX_WIDTH : CONFIG_DOCK_MAX_WIDTH,
+    Math.max(CONFIG_DOCK_MIN_WIDTH, Math.floor(contentWidth * ratio))
   )
   return explicit && terminalWidth < CONFIG_DOCK_MIN_TERMINAL_WIDTH ? contentWidth : Math.min(contentWidth, splitWidth)
 }

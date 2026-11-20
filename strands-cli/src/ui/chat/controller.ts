@@ -3061,6 +3061,7 @@ export class ChatController implements ChatControllerApi {
       openCommand: (name) => this.openDevCommand(name),
       ...(devCommand.sticky ? { sticky: true } : {}),
       ...(devCommand.dock ? { dock: (): boolean => devCommand.dock!() } : {}),
+      ...(devCommand.wideDock ? { wideDock: (): boolean => devCommand.wideDock!() } : {}),
       ...(devCommand.dropPending ? { dropPending: (): void => devCommand.dropPending!() } : {}),
       ...(devCommand.contentRows ? { contentRows: (): number | undefined => devCommand.contentRows!() } : {}),
     })
