@@ -23,6 +23,7 @@ from botocore.session import Session as BotocoreSession
 
 import strands
 from strands import _exception_notes
+from strands._context_manager.placeholder import offload_placeholder
 from strands.models import BedrockModel, CacheConfig, CacheToolsConfig, ModelCapabilities, ModelInfo, ModelLimits
 from strands.models.bedrock import (
     DEFAULT_BEDROCK_MODEL_ID,
@@ -364,6 +365,21 @@ def test__init__model_config(bedrock_client):
     assert tru_max_tokens == exp_max_tokens
 
 
+@pytest.mark.parametrize(
+    "guardrail_config",
+    [
+        {"guardrail_id": "g1"},
+        {"guardrail_version": "v1"},
+        {"guardrail_id": "", "guardrail_version": "v1"},
+        {"guardrail_id": "g1", "guardrail_version": ""},
+    ],
+)
+def test__init__partial_guardrail_config_raises_value_error(bedrock_client, guardrail_config):
+    """Reject partial guardrail configuration (#4204)."""
+    with pytest.raises(ValueError, match="guardrail_id and guardrail_version must be set together"):
+        BedrockModel(model_id="m1", **guardrail_config)
+
+
 def test__init__context_window_limit(bedrock_client):
     _ = bedrock_client
 
@@ -431,6 +447,21 @@ def test_update_config(model, model_id):
     exp_model_id = model_id
 
     assert tru_model_id == exp_model_id
+
+
+@pytest.mark.parametrize(
+    "guardrail_config",
+    [
+        {"guardrail_id": "g1"},
+        {"guardrail_version": "v1"},
+        {"guardrail_id": "", "guardrail_version": "v1"},
+        {"guardrail_id": "g1", "guardrail_version": ""},
+    ],
+)
+def test_update_config_partial_guardrail_config_raises_value_error(model, guardrail_config):
+    """Reject updating only one guardrail setting (#4204)."""
+    with pytest.raises(ValueError, match="guardrail_id and guardrail_version must be set together"):
+        model.update_config(**guardrail_config)
 
 
 def test_cache_key_round_trips_through_config(model):
@@ -3109,6 +3140,27 @@ def test_format_request_message_content_preserves_nonempty_tool_result_content(m
     assert tool_result["content"] == [{"text": "some result"}]
 
 
+def test_format_request_message_content_sends_an_offloaded_block_as_text(model, model_id):
+    """Bedrock rejects unknown content block fields, so a placeholder reaches it as the text the model receives."""
+    placeholder = offload_placeholder("drop", "[Dropped: ~1,200 tokens]", "tu-1", 1200)
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                placeholder,
+                {"toolResult": {"toolUseId": "tu-1", "status": "success", "content": [placeholder]}},
+            ],
+        }
+    ]
+
+    formatted_messages = model._format_bedrock_messages(messages)
+
+    assert formatted_messages[0]["content"] == [
+        {"text": "[Dropped: ~1,200 tokens] [ref: tu-1]"},
+        {"toolResult": {"toolUseId": "tu-1", "content": [{"text": "[Dropped: ~1,200 tokens] [ref: tu-1]"}]}},
+    ]
+
+
 def test_format_request_message_content_guard_content_without_qualifiers(model, model_id):
     """Test that _format_request_message_content accepts guardContent text blocks without qualifiers.
 
@@ -4871,7 +4923,21 @@ def test_nova_moves_a_caller_placed_cache_point_off_a_tool_result_back_to_the_pr
     assert _all_cache_points(request) == [{"type": "default"}]
 
 
-def test_nova_caches_a_plain_text_user_message_that_follows_earlier_tool_calls(bedrock_client):
+def _nova_chat(*prompts):
+    messages = []
+    for prompt in prompts:
+        messages += [
+            {"role": "assistant", "content": [{"text": "Ok"}]},
+            {"role": "user", "content": [{"text": prompt}]},
+        ]
+    return messages[1:]
+
+
+def _user_content(request):
+    return [message["content"] for message in request["messages"] if message["role"] == "user"]
+
+
+def test_nova_keeps_the_earlier_prompts_cache_point_when_a_plain_text_user_message_follows_tool_calls(bedrock_client):
     _ = bedrock_client
     model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
     messages = [
@@ -4883,8 +4949,148 @@ def test_nova_caches_a_plain_text_user_message_that_follows_earlier_tool_calls(b
 
     request = model.format_request(messages, tool_specs=[NOVA_TOOL_SPEC])
 
+    assert request["messages"][0]["content"] == [{"text": "What is 6 x 7?"}, NOVA_CACHE_POINT]
     assert request["messages"][-1]["content"] == [{"text": "Thanks"}, NOVA_CACHE_POINT]
-    assert _all_cache_points(request) == [{"type": "default"}]
+    assert _all_cache_points(request) == [{"type": "default"}] * 2
+
+
+def test_nova_keeps_cache_points_on_the_last_three_user_messages_with_text(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+
+    request = model.format_request(_nova_chat("One", "Two", "Three", "Four"))
+
+    tru_content = _user_content(request)
+    exp_content = [
+        [{"text": "One"}],
+        [{"text": "Two"}, NOVA_CACHE_POINT],
+        [{"text": "Three"}, NOVA_CACHE_POINT],
+        [{"text": "Four"}, NOVA_CACHE_POINT],
+    ]
+    assert tru_content == exp_content
+
+
+def test_nova_keeps_its_cache_points_in_place_through_a_tool_loop(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+    messages = [
+        *_nova_chat("One", "Two"),
+        {"role": "assistant", "content": [{"text": "Ok"}]},
+        *_nova_tool_turn(),
+        {"role": "user", "content": [NOVA_TOOL_RESULT]},
+    ]
+
+    request = model.format_request(messages, tool_specs=[NOVA_TOOL_SPEC])
+
+    tru_content = _user_content(request)
+    exp_content = [
+        [{"text": "One"}, NOVA_CACHE_POINT],
+        [{"text": "Two"}, NOVA_CACHE_POINT],
+        [{"text": "What is 6 x 7?"}, NOVA_CACHE_POINT],
+        [NOVA_TOOL_RESULT],
+    ]
+    assert tru_content == exp_content
+
+
+@pytest.mark.parametrize(
+    ("system_points", "exp_content"),
+    [
+        (
+            1,
+            [
+                [{"text": "One"}, NOVA_CACHE_POINT],
+                [{"text": "Two"}, NOVA_CACHE_POINT],
+                [{"text": "Three"}, NOVA_CACHE_POINT],
+            ],
+        ),
+        (2, [[{"text": "One"}], [{"text": "Two"}, NOVA_CACHE_POINT], [{"text": "Three"}, NOVA_CACHE_POINT]]),
+        (3, [[{"text": "One"}], [{"text": "Two"}], [{"text": "Three"}, NOVA_CACHE_POINT]]),
+        (4, [[{"text": "One"}], [{"text": "Two"}], [{"text": "Three"}]]),
+    ],
+)
+def test_nova_fits_its_conversation_cache_points_in_the_four_converse_accepts(
+    bedrock_client, system_points, exp_content
+):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+    system = [{"text": "Be helpful"}, NOVA_CACHE_POINT] * system_points
+
+    request = model.format_request(_nova_chat("One", "Two", "Three"), system_prompt_content=system)
+
+    tru_content = _user_content(request)
+    assert tru_content == exp_content
+    assert len(_all_cache_points(request)) <= 4
+
+
+def test_nova_counts_the_deprecated_cache_prompt_point_against_the_four_converse_accepts(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_prompt="default", cache_config=CacheConfig(strategy="auto"))
+    system = [{"text": "Be helpful"}, NOVA_CACHE_POINT]
+
+    with pytest.warns(UserWarning, match="cache_prompt is deprecated"):
+        request = model.format_request(_nova_chat("One", "Two", "Three"), system_prompt_content=system)
+
+    tru_content = _user_content(request)
+    exp_content = [[{"text": "One"}], [{"text": "Two"}, NOVA_CACHE_POINT], [{"text": "Three"}, NOVA_CACHE_POINT]]
+    assert tru_content == exp_content
+
+
+@pytest.mark.parametrize(
+    ("system_points", "exp_content"),
+    [
+        (
+            0,
+            [
+                [{"text": "One"}],
+                [{"text": "Two"}, NOVA_CACHE_POINT],
+                [{"text": "Three"}, NOVA_CACHE_POINT],
+                [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}],
+            ],
+        ),
+        (
+            1,
+            [
+                [{"text": "One"}],
+                [{"text": "Two"}, NOVA_CACHE_POINT],
+                [{"text": "Three"}, NOVA_CACHE_POINT],
+                [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}],
+            ],
+        ),
+        (
+            2,
+            [
+                [{"text": "One"}],
+                [{"text": "Two"}],
+                [{"text": "Three"}, NOVA_CACHE_POINT],
+                [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}],
+            ],
+        ),
+        (
+            3,
+            [
+                [{"text": "One"}],
+                [{"text": "Two"}],
+                [{"text": "Three"}],
+                [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}],
+            ],
+        ),
+        (4, [[{"text": "One"}], [{"text": "Two"}], [{"text": "Three"}], [{"text": "Four"}, {"text": "per-call"}]]),
+    ],
+)
+def test_nova_keeps_cache_points_on_earlier_user_messages_behind_a_caller_placed_one(
+    bedrock_client, system_points, exp_content
+):
+    _ = bedrock_client
+    model = BedrockModel(model_id=NOVA, cache_config=CacheConfig(strategy="auto"))
+    system = [{"text": "Be helpful"}, NOVA_CACHE_POINT] * system_points
+    messages = _nova_chat("One", "Two", "Three", "Four")
+    messages[-1]["content"] = [{"text": "Four"}, NOVA_CACHE_POINT, {"text": "per-call"}]
+
+    request = model.format_request(messages, system_prompt_content=system)
+
+    tru_content = _user_content(request)
+    assert tru_content == exp_content
+    assert len(_all_cache_points(request)) <= 4
 
 
 def test_claude_keeps_the_tools_cache_point_and_ttl(bedrock_client):

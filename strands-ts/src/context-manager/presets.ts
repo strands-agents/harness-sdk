@@ -5,8 +5,6 @@
  * change between releases as we tune based on real-world usage data. Treat the preset
  * name as the stable contract, not its expansion. Use raw `Offload.*` strategies when
  * you need a specific, pinned configuration.
- *
- * @experimental
  */
 
 import type { ContextStrategy } from './types.js'
@@ -22,12 +20,19 @@ import { Offload } from './strategies/offload/index.js'
  * - `'largeToolOffloading'` — truncate tool results over 2500 tokens to a 1000-token preview
  * - `'overflowProtection'` — drop the oldest messages when the context window is full
  * - `'staleToolCleanup'` — drop tool results outside the newest 5 tool-result messages
+ * - `'deferredToolLoading'` — experimental: from 20 tools, the SDK's own included, defer tools' input schemas until
+ *   the model loads them. Claude 4.5 and later defer natively through `AnthropicModel`, most other models get each
+ *   deferred tool as a stub (name and description), and models that can't use stubs
+ *   (`deferredToolLoading: 'unsupported'`) get every spec. The SDK's own tools and tools without parameters are always
+ *   sent in full and every other tool is deferred, so the model loads even its most used tools first; `Offload.defer`
+ *   keeps the ones you name
  */
 export const STRATEGY_PRESET_NAMES = [
   'proactiveSummarization',
   'largeToolOffloading',
   'overflowProtection',
   'staleToolCleanup',
+  'deferredToolLoading',
 ] as const
 
 /** String union of preset names. */
@@ -51,6 +56,8 @@ export function resolvePreset(name: StrategyPresetName): ContextStrategy[] {
       return [Offload.drop('*').when({ contextUtilization: '100%', preserveRecent: 4 })]
     case 'staleToolCleanup':
       return [Offload.drop('toolResults').when({ preserveRecent: 5 })]
+    case 'deferredToolLoading':
+      return [Offload.defer('toolSpecs').when({ toolCount: 20 })]
   }
 }
 

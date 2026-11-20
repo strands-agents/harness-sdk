@@ -190,7 +190,7 @@ create_harness(builtin_tools={"*": False, "read": True, "web_fetch": {}})   # pi
 
 `BUILTIN_TOOL_NAMES` (exported from the package root) is the full list. Prefer the mapping form
 for "the defaults minus X" (`{"subagent": False}`); a list pins every name it contains, so listing
-`web_search` on a model without native search raises instead of quietly staying off (opt into the
+`web_search` on a model without search raises instead of quietly staying off (opt into the
 Exa fallback with `{"web_search": "exa"}`).
 
 `subagent` always runs in the background. By default, the model may also select background
@@ -225,10 +225,12 @@ create_harness(builtin_tools=["shell", "read", "write", "edit"])   # no subagent
 The tool's model-facing parameters are derived from configuration. For a fully configured tool
 (custom roles, model tiers, fixed prompts), build one with `make_subagent` and pass it via `tools`
 with `subagent` dropped from `builtin_tools`. You supply the `builder`, a function that turns a
-resolved `AgentSpec` into the child agent (typically calling `create_harness`); this is the seam
-that makes the child a harness member. Delegation depth is bounded at two levels by default; pass
-`max_depth` to change it. Each axis (`instructions`, `tools`, `mcp_servers`, `model`, `context`)
-becomes a parameter, or not, depending on whether it is `Fixed`, `Inherit`, `Open`, or `Choice`:
+resolved `AgentSpec` into the child agent (typically calling `create_harness`, sync or async); this
+is the seam that makes the child a harness member. `make_subagent` is the SDK's vended subagent tool,
+re-exported here. Delegation depth is bounded at two levels by default; pass `max_depth` to change it.
+Each axis (`instructions`, `tools`, `model`, `context`) becomes a parameter, or not, depending on
+whether it is `Fixed`, `Inherit`, `Open`, or `Choice`. See [docs/subagent.md](docs/subagent.md) for
+what the default wiring adds and what changed when the harness moved to the SDK tool:
 
 ```python
 from strands_harness import create_harness
@@ -307,14 +309,17 @@ create_harness(builtin_tools={"web_fetch": {"model": "anthropic/claude-haiku-4-5
 
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the
 model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, and Daybreak models on
-`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. In case of no
-native search (Amazon Bedrock, other Mantle models, a `Model` instance) `web_search` is
+`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. Other
+Amazon Bedrock models get a `web_search` tool backed by
+[Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html)
+instead. In case of no native search (a `Model` instance from another provider) `web_search` is
 off by default. To enable web search for these providers, you can opt into Exa with
 `{"web_search": "exa"}`. The model then gets a `web_search` tool backed by Exa's hosted search. It
 works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can
 override a provider's native web search by adding `"exa"` explicitly to any model. If you are
 using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in
-`AmazonBedrockFullAccess`) to avoid failing search.
+`AmazonBedrockFullAccess`) to avoid failing search; AgentCore web search needs
+`bedrock-agentcore:InvokeWebSearch`.
 
 > [!WARNING]
 > Web search through Exa sends every search query the model writes to Exa (exa.ai), a third-party
@@ -323,7 +328,8 @@ using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in
 
 ```python
 create_harness(model="openai/gpt-5.6-sol")                 # native search on, it's in the defaults
-create_harness(builtin_tools={"web_search": "exa"})  # Bedrock: search through Exa (third party)
+create_harness()                                           # Bedrock: AgentCore web search, also a default
+create_harness(builtin_tools={"web_search": "exa"})        # any model: search through Exa (third party)
 ```
 
 ## Caching reused context

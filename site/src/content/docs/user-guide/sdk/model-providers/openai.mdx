@@ -164,6 +164,10 @@ model = OpenAIModel(
 ```
 
 See the [OpenAI Harmony message format](https://cookbook.openai.com/articles/openai-harmony#message-format) for details on GPT-OSS stop tokens.
+
+**Tools with GPT-5.6 and GPT-6 Models**
+
+OpenAI's Chat Completions API accepts tools for GPT-5.6 and GPT-6 models only with reasoning off, and for some of them (such as `gpt-6-astra` and `gpt-6.1-sol`) not at all. When the client targets `api.openai.com` or Amazon Bedrock Mantle, `OpenAIModel` therefore sends `reasoning_effort="none"`, with a warning, when an agent with tools runs on the first group and `params` sets no `reasoning_effort`. A `reasoning_effort` you set is sent as it is, so OpenAI rejects any value but `"none"`. For the second group, OpenAI rejects every request with tools, and the error `OpenAIModel` raises says so. To use tools on the second group, or tools with reasoning on the first, use `OpenAIResponsesModel`. Requests to other OpenAI-compatible endpoints are sent as configured.
 </Tab>
 <Tab label="TypeScript">
 
@@ -192,6 +196,10 @@ const model = new OpenAIModel({
 ```
 
 See the [OpenAI Harmony message format](https://cookbook.openai.com/articles/openai-harmony#message-format) for details on GPT-OSS stop tokens.
+
+**Tools with GPT-5.6 and GPT-6 Models**
+
+OpenAI's Chat Completions API accepts tools for GPT-5.6 and GPT-6 models only with reasoning off, and for some of them (such as `gpt-6-astra` and `gpt-6.1-sol`) not at all. With `api: 'chat'` and a client that targets `api.openai.com` or Amazon Bedrock Mantle, `OpenAIModel` therefore sends `reasoning_effort: 'none'`, with a warning, when an agent with tools runs on the first group and `params` sets no `reasoning_effort`. A `reasoning_effort` you set is sent as it is, so OpenAI rejects any value but `'none'`. For the second group, OpenAI rejects every request with tools, and the error `OpenAIModel` throws says so. To use tools on the second group, or tools with reasoning on the first, use the default `api: 'responses'`. Requests to other OpenAI-compatible endpoints are sent as configured.
 </Tab>
 </Tabs>
 
