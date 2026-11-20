@@ -73,8 +73,8 @@ use super::streaming::{ModelMessageStopEvent, ModelMetadataEvent, ModelStreamEve
 use super::thinking_binding::{is_thinking_binding_error, thinking_with_drop_block};
 use super::{
     BaseModelConfig, BoxStream, CacheConfig, CountTokensOptions, Model, ModelCapabilities, ModelInfo, ModelRequest,
-    SummarizeOptions, SummarizeResult, base_model_info, estimate_tokens, merge_model_info, resolve_config_metadata,
-    resolve_max_tokens, summarize_client_side,
+    SummarizeOptions, SummarizeResult, base_model_info, estimate_tokens, resolve_config_metadata, resolve_max_tokens,
+    summarize_client_side,
 };
 use crate::error::{ContextWindowOverflowError, Error, ModelError, ModelNetworkError, ModelThrottledError, Result};
 use crate::logging::warn_once;
@@ -552,7 +552,7 @@ fn model_info_of(config: &AnthropicModelConfig) -> ModelInfo {
         },
         ..ModelInfo::default()
     };
-    merge_model_info([
+    ModelInfo::merge([
         Some(&base_model_info(&resolved)),
         Some(&provider),
         config.model_info.as_ref(),

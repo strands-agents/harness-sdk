@@ -6,8 +6,8 @@ use async_trait::async_trait;
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 
+use super::model_info::lookup_model_info;
 use super::model_info::{ModelCapabilities, ModelInfo, ModelLimits, default_context_window_limit};
-use super::model_info::{lookup_model_info, merge_model_info};
 use super::streaming::{
     ContentBlockDelta, ContentBlockStart, ModelContentBlockStartEvent, ModelMetadataEvent, ModelRedactionEvent,
     ModelStreamEvent, ReasoningContentDelta,
@@ -212,7 +212,7 @@ pub enum AggregatedEvent {
 /// [`update_config`](Model::update_config); everything else has a default. Agents hold models as
 /// `Arc<dyn Model>`, so a provider keeps its configuration behind interior locking. A provider that
 /// overrides a default and still needs it calls the free function behind it:
-/// [`base_model_info`] with [`merge_model_info`](crate::models::merge_model_info) for
+/// [`base_model_info`] with [`ModelInfo::merge`](crate::models::ModelInfo::merge) for
 /// [`model_info`](Model::model_info), [`estimate_tokens`] for [`count_tokens`](Model::count_tokens)
 /// and [`summarize_client_side`](crate::models::summarize_client_side) for
 /// [`summarize`](Model::summarize). Use [`macro@crate::async_trait`] on the impl when overriding
@@ -320,7 +320,7 @@ pub trait Model: Send + Sync + 'static {
     /// off (a provider that supports them turns them back on), the `context_window_limit` config
     /// value, and the `model_info` config override ([`base_model_info`]). A provider that knows
     /// better overrides this method, layering its facts over [`base_model_info`] and the user's
-    /// override on top with [`merge_model_info`](crate::models::merge_model_info); it must not call
+    /// override on top with [`ModelInfo::merge`](crate::models::ModelInfo::merge); it must not call
     /// [`stateful`](Model::stateful), which reads this method.
     fn model_info(&self) -> ModelInfo {
         base_model_info(&self.get_config())
@@ -388,7 +388,7 @@ fn default_context_window_warning(default: u64) -> String {
 /// The default [`Model::model_info`] for a configuration, before any provider facts: the shared model
 /// info for the model id, `temporary_messages` off, the `context_window_limit` and the `model_info`
 /// override. A provider that overrides [`Model::model_info`] starts from it (see
-/// [`merge_model_info`](crate::models::merge_model_info)).
+/// [`ModelInfo::merge`](crate::models::ModelInfo::merge)).
 #[must_use]
 pub fn base_model_info(config: &BaseModelConfig) -> ModelInfo {
     let shared = lookup_model_info(config.model_id.as_deref().unwrap_or_default());
@@ -402,7 +402,7 @@ pub fn base_model_info(config: &BaseModelConfig) -> ModelInfo {
             ..ModelLimits::default()
         },
     };
-    merge_model_info([Some(&shared), Some(&defaults), config.model_info.as_ref()])
+    ModelInfo::merge([Some(&shared), Some(&defaults), config.model_info.as_ref()])
 }
 
 /// Fills `context_window_limit` from the model info when it is unset.
@@ -411,7 +411,7 @@ pub(crate) fn resolve_config_metadata(mut config: BaseModelConfig, model_id: &st
     if config.context_window_limit.is_some() {
         return config;
     }
-    let info = merge_model_info([Some(&lookup_model_info(model_id)), config.model_info.as_ref()]);
+    let info = ModelInfo::merge([Some(&lookup_model_info(model_id)), config.model_info.as_ref()]);
     config.context_window_limit = info.limits.context_window;
     config
 }
@@ -421,7 +421,7 @@ pub(crate) fn resolve_config_metadata(mut config: BaseModelConfig, model_id: &st
 #[allow(dead_code, reason = "providers that need a max_tokens resolve it with this")]
 pub(crate) fn resolve_max_tokens(config: &BaseModelConfig, model_id: &str) -> Option<u64> {
     config.max_tokens.or_else(|| {
-        merge_model_info([Some(&lookup_model_info(model_id)), config.model_info.as_ref()])
+        ModelInfo::merge([Some(&lookup_model_info(model_id)), config.model_info.as_ref()])
             .limits
             .max_output_tokens
     })

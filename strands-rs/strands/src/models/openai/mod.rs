@@ -83,7 +83,7 @@ use super::model_info::server_side_summary_off;
 use super::streaming::{ModelMetadataEvent, ModelStreamEvent, Usage};
 use super::{
     BaseModelConfig, BoxStream, CacheConfig, Model, ModelCapabilities, ModelInfo, ModelRequest, base_model_info,
-    merge_model_info, resolve_config_metadata,
+    resolve_config_metadata,
 };
 use crate::cancel::CancelSignal;
 use crate::error::{
@@ -636,7 +636,7 @@ fn model_info_of(api: OpenAIApi, config: &OpenAIModelConfig) -> ModelInfo {
         },
         ..ModelInfo::default()
     };
-    merge_model_info([
+    ModelInfo::merge([
         Some(&base_model_info(&base)),
         Some(&server_side_summary_off()),
         Some(&stateful),

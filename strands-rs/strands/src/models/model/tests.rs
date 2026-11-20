@@ -1379,7 +1379,7 @@ impl Model for GatewayModel {
 
     fn model_info(&self) -> ModelInfo {
         let config = self.get_config();
-        merge_model_info([
+        ModelInfo::merge([
             Some(&base_model_info(&config)),
             Some(&self.facts),
             config.model_info.as_ref(),

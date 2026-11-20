@@ -38,7 +38,7 @@ pub(crate) use model::{
     ResolvedCacheSection, is_js_whitespace, latest_user_index, resolve_cache_section, resolve_config_metadata,
     resolve_max_tokens,
 };
-pub use model_info::{ModelCapabilities, ModelInfo, ModelLimits, PromptCaching, merge_model_info};
+pub use model_info::{ModelCapabilities, ModelInfo, ModelLimits, PromptCaching};
 #[cfg(feature = "mantle")]
 pub use openai::BedrockMantleConfig;
 #[cfg(feature = "openai")]

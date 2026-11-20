@@ -629,7 +629,7 @@ The decisions that shape the public API, each with its reason and the main alter
 
 #### Decision: model helpers public
 
-**Decision.** The default bodies of `Model` methods are public functions in `strands::models`: `base_model_info`, `merge_model_info`, `estimate_tokens`, `summarize_client_side` and `BaseModelConfig::merge`. Helpers that TS marks `@internal`, such as the model info lookups, stay crate-internal.
+**Decision.** The default bodies of `Model` methods are public functions in `strands::models`: `base_model_info`, `estimate_tokens`, `summarize_client_side`, `ModelInfo::merge` and `BaseModelConfig::merge`. Helpers that TS marks `@internal`, such as the model info lookups, stay crate-internal.
 
 **Reason.** A TS provider subclass reaches the defaults through `super`. Rust has no `super`, so a provider outside the crate that overrides a method needs the default as a function it can call.
 

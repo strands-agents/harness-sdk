@@ -51,6 +51,16 @@ fn exports_zero_argument_tool_executors() {
 }
 
 #[test]
+fn exports_model_info_merge() {
+    let info = |context_window| {
+        strands::ModelInfo::builder()
+            .limits(strands::ModelLimits::builder().context_window(context_window).build())
+            .build()
+    };
+    assert_eq!(strands::ModelInfo::merge([Some(&info(1)), Some(&info(2))]), info(2));
+}
+
+#[test]
 fn exports_model_routing_values() {
     assert!(named::<ClassifierStrategy>().ends_with("ClassifierStrategy"));
     assert!(named::<FallbackStrategy>().ends_with("FallbackStrategy"));
