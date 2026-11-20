@@ -128,6 +128,7 @@ const ASK_DETAILS = paragraphs(
 
 const askCommand = (sessions: Sessions): DevChatCommand => ({
   sticky: true,
+  dock: true,
   dropPending: () => sessions().ask.cancelAll(),
   contentRows: () => wizardRequestRows(sessions().ask.pending()),
   spec: {

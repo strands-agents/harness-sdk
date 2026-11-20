@@ -262,7 +262,16 @@ function ChatViewContent({
   const hasActivity =
     snapshot.completedTurns.length > 0 || snapshot.activeTurn !== undefined || snapshot.notices.length > 0
   const composerPanel = isComposerPanel(snapshot.panel?.kind) ? snapshot.panel : undefined
-  const devPanel = snapshot.panel?.kind === 'dev' ? snapshot.panel : undefined
+  const openDevPanel = snapshot.panel?.kind === 'dev' ? snapshot.panel : undefined
+  // A docked dev panel takes the dock on the right; too small a terminal puts it back above the
+  // chat input, so the decision rests on the terminal alone and not on the inline panel's height.
+  const dockedDevPanel =
+    openDevPanel?.dock === true &&
+    terminalWidth >= CONFIG_DOCK_MIN_TERMINAL_WIDTH &&
+    terminalHeight >= CONFIG_DOCK_MIN_HEIGHT + CONFIG_DOCK_CHROME_HEIGHT
+      ? openDevPanel
+      : undefined
+  const devPanel = dockedDevPanel ? undefined : openDevPanel
   const maxEffort = composerPanel?.kind === 'effort' && isMaxEffort(composerPanel.slider)
   const composerPanelOutlined = isOutlinedComposerPanel(composerPanel)
   const showCommandPicker = resolvedCommandAssistance !== undefined && !snapshot.panel
@@ -356,13 +365,19 @@ function ChatViewContent({
           dockLanguage,
           configurationDockWidth(terminalWidth, false)
         )
+  const showDockedDevPanel = dockedDevPanel !== undefined
   const showConfigurationDock =
+    !showDockedDevPanel &&
     liveConfiguration !== undefined &&
     (explicitConfiguration || configurationTurn) &&
     (explicitConfiguration || terminalWidth >= CONFIG_DOCK_MIN_TERMINAL_WIDTH) &&
     topHeight >= (explicitConfiguration ? CONFIG_DOCK_CHROME_HEIGHT : CONFIG_DOCK_MIN_HEIGHT)
-  const wideConfigurationDock = showConfigurationDock && terminalWidth >= CONFIG_DOCK_MIN_TERMINAL_WIDTH
-  const configDockWidth = showConfigurationDock ? configurationDockWidth(terminalWidth, explicitConfiguration) : 0
+  const wideConfigurationDock =
+    (showConfigurationDock || showDockedDevPanel) && terminalWidth >= CONFIG_DOCK_MIN_TERMINAL_WIDTH
+  const configDockWidth =
+    showConfigurationDock || showDockedDevPanel
+      ? configurationDockWidth(terminalWidth, explicitConfiguration && showConfigurationDock)
+      : 0
   const configDockLeft = wideConfigurationDock ? Math.max(0, terminalWidth - 2 - configDockWidth) : 0
   const startupReservedRightWidth = wideConfigurationDock ? configDockWidth + CONFIG_DOCK_GAP : 0
   // The transcript reflows into the space left of the dock instead of running underneath it.
@@ -525,6 +540,25 @@ function ChatViewContent({
             )}
           </Box>
         ) : null}
+        {showDockedDevPanel && dockedDevPanel ? (
+          <Box
+            position="absolute"
+            marginLeft={configDockLeft}
+            width={configDockWidth}
+            height={dockAvailableHeight}
+            flexShrink={0}
+          >
+            <DevPanelFrame
+              panel={dockedDevPanel}
+              width={configDockWidth}
+              height={dockAvailableHeight}
+              {...(onPanelElement ? { onElement: onPanelElement } : {})}
+              active={panelKeyboard}
+              {...(onPanelBlur ? { blur: onPanelBlur } : {})}
+              {...(devPanelClicks ? { clicks: devPanelClicks } : {})}
+            />
+          </Box>
+        ) : null}
         {showConfigurationDock && liveConfiguration ? (
           <Box
             position="absolute"
@@ -654,14 +688,14 @@ function ChatViewContent({
               maxHeight={editorMaxHeight}
               {...(snapshot.status === 'running' || snapshot.status === 'interrupting'
                 ? {
-                    placeholder: devPanel?.sticky
+                    placeholder: openDevPanel?.sticky
                       ? 'Enter to send • ↑ back to the question'
                       : 'Enter to queue • Tab queue actions • Alt+↑ edit queue',
                   }
                 : {})}
               {...(actionableCommandToken ? { actionableCommandToken } : {})}
               {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
-              {...(snapshot.panel && !composerPanel && !devPanel?.sticky
+              {...(snapshot.panel && !composerPanel && !openDevPanel?.sticky
                 ? { panelStatus: panelEditorStatus(snapshot.panel) }
                 : {})}
               {...(focusedQueuedPrompt ? { panelStatus: 'Queue · Tab/Shift+Tab move · Enter choose · Esc back' } : {})}
@@ -756,7 +790,7 @@ function ChatViewContent({
           </Box>
         </RisingStartupCard>
       ) : null}
-      {snapshot.panel && snapshot.panel.kind !== 'config' && !devPanel && !composerPanel ? (
+      {snapshot.panel && snapshot.panel.kind !== 'config' && !openDevPanel && !composerPanel ? (
         <FadeIn key={snapshot.panel.kind} animate={settings.animations} background={canvas}>
           {panelView}
         </FadeIn>
