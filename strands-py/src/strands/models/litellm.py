@@ -31,6 +31,7 @@ from ._cache_points import (
     section_ttl,
     step_back_over_documents,
     system_with_cache_point,
+    with_placed_points_normalized,
     with_point_ttls,
 )
 from ._model_info import ModelCapabilities, ModelInfo, lookup_model_info
@@ -46,6 +47,9 @@ _CACHE_CONTROL_PROVIDERS = frozenset({"anthropic", "bedrock", "vertex_ai"})
 # Backends known to accept a cache point directly after a non-PDF document; on any other, such as Bedrock or a proxy
 # alias whose backend the id does not name, the point steps back over the document.
 _AFTER_DOCUMENT_PROVIDERS = frozenset({"anthropic", "vertex_ai"})
+
+# Providers whose LiteLLM provider lookup fetches credentials, starting a device-code login when there are none.
+_AUTHENTICATING_PROVIDERS = frozenset({"github_copilot", "chatgpt"})
 
 _LITELLM_PROVIDERS = frozenset(str(getattr(provider, "value", provider)) for provider in litellm.provider_list)
 
@@ -429,20 +433,24 @@ class LiteLLMModel(OpenAIModel):
             TypeError: If a message contains a content block type that cannot be converted to a LiteLLM-compatible
                 format.
         """
-        takes_cache_points = self.model_info.capabilities.prompt_caching == "cache_points"
+        takes_cache_points = self._takes_cache_points()
         cache_config = self.get_config().get("cache_config")
         if not takes_cache_points:
             messages = _without_message_cache_points(messages)
-        elif cache_config is not None:
+        else:
             backend = self._backend()
-            system_prompt_content, messages = _with_cache_points(
-                cache_config,
-                system_prompt,
-                system_prompt_content,
-                messages,
-                dynamic_trailing_blocks,
-                after_documents=backend is not None and backend[1] in _AFTER_DOCUMENT_PROVIDERS,
-            )
+            after_documents = backend is not None and backend[1] in _AFTER_DOCUMENT_PROVIDERS
+            messages_ttl = section_ttl(cache_config.messages_ttl, cache_config.ttl) if cache_config else None
+            messages = with_placed_points_normalized(messages, messages_ttl, step_back=not after_documents)
+            if cache_config is not None:
+                system_prompt_content, messages = _with_cache_points(
+                    cache_config,
+                    system_prompt,
+                    system_prompt_content,
+                    messages,
+                    dynamic_trailing_blocks,
+                    after_documents=after_documents,
+                )
         request = super().format_request(
             messages,
             tool_specs,
@@ -458,11 +466,27 @@ class LiteLLMModel(OpenAIModel):
         self._drop_rejected_cache_key(request)
         return request
 
+    def _takes_cache_points(self) -> bool:
+        """Whether requests carry cache points: the model takes them, or ``strategy="anthropic"`` asks for them.
+
+        ``strategy="anthropic"`` places them without the model info's say-so, as ``AnthropicModel`` and
+        ``BedrockModel`` do, except on a backend known to take none: OpenAI-family backends cache by themselves, and
+        on Gemini LiteLLM turns a cache point into a billed cached-content resource.
+        """
+        prompt_caching = self.model_info.capabilities.prompt_caching
+        if prompt_caching == "cache_points":
+            return True
+        cache_config = self.get_config().get("cache_config")
+        if cache_config is None or cache_config.strategy != "anthropic" or prompt_caching in ("auto", "unsupported"):
+            return False
+        backend = self._backend()
+        return backend is None or (backend[1] != "gemini" and "gemini" not in backend[0].lower())
+
     @override
     def _routing_cache_config(self) -> CacheConfig | None:
         """Only the routing key, for a backend that takes cache points; the other fields shape its cache points."""
         cache_config = super()._routing_cache_config()
-        if cache_config is None or self.model_info.capabilities.prompt_caching != "cache_points":
+        if cache_config is None or not self._takes_cache_points():
             return cache_config
         return CacheConfig(cache_key=cache_config.cache_key)
 
@@ -490,7 +514,7 @@ class LiteLLMModel(OpenAIModel):
         if "prompt_cache_key" in (self.client_args.get("allowed_openai_params") or []):
             return True
         # A model that takes cache points is not an OpenAI one, even when a proxy alias hides its backend.
-        if self.model_info.capabilities.prompt_caching == "cache_points":
+        if self._takes_cache_points():
             return False
         # LiteLLM versions that do not know the parameter forward it without validation.
         if not _litellm_validates_prompt_cache_key():
@@ -840,8 +864,12 @@ def _resolve_backend(model_id: str, custom_llm_provider: str | None) -> tuple[st
     """The backend model id and LiteLLM provider for a LiteLLM model id, or None when LiteLLM cannot map it.
 
     Cached because LiteLLM prints a notice each time it fails to map an id. A ``litellm_proxy/`` id that still names
-    its backend, as ``use_litellm_proxy`` produces, resolves to that backend.
+    its backend, as ``use_litellm_proxy`` produces, resolves to that backend. An id naming a provider whose lookup
+    logs in is split by hand, so building a model does no I/O.
     """
+    declared = custom_llm_provider or model_id.split("/", 1)[0]
+    if declared in _AUTHENTICATING_PROVIDERS:
+        return model_id.removeprefix(f"{declared}/"), declared
     try:
         backend_id, provider, _, _ = litellm.get_llm_provider(model_id, custom_llm_provider=custom_llm_provider)
     except BadRequestError:
@@ -871,6 +899,9 @@ def _backend_model_info(backend: tuple[str, str] | None) -> ModelInfo | None:
         return None
     backend_id, provider = backend
     prompt_caching = lookup_model_info(backend_id).capabilities.prompt_caching
+    # A Claude id the shared model info does not list yet, such as an alias or a new release, takes cache points.
+    if prompt_caching is None and provider in _CACHE_CONTROL_PROVIDERS and "claude" in backend_id.lower():
+        prompt_caching = "cache_points"
     if prompt_caching == "cache_points" and provider not in _CACHE_CONTROL_PROVIDERS:
         prompt_caching = "auto"
     return ModelInfo(capabilities=ModelCapabilities(prompt_caching=prompt_caching))
@@ -958,9 +989,9 @@ def _with_cache_points(
 ) -> tuple[list[SystemContentBlock] | None, Messages]:
     """Add the automatic cache points: one at the end of the system prompt and one in the latest user message.
 
-    The conversation point goes ahead of the latest user message's rebuilt trailing blocks. A section where the
-    caller already placed a cache point keeps it, filled with the section's TTL when it carries none, so every point
-    shares one lifetime unless configured otherwise. Neither input is changed.
+    The conversation point goes ahead of the latest user message's rebuilt trailing blocks. A system prompt where the
+    caller already placed a cache point keeps it, filled with the section's TTL when it carries none; the caller's
+    message points were already normalized. Neither input is changed.
 
     Args:
         cache_config: The provider's cache settings.
@@ -977,7 +1008,6 @@ def _with_cache_points(
     system_ttl = section_ttl(cache_config.system_prompt_ttl, cache_config.ttl)
     messages_ttl = section_ttl(cache_config.messages_ttl, cache_config.ttl)
     system_prompt_content = with_point_ttls(system_prompt_content, system_ttl)
-    messages = [{**message, "content": with_point_ttls(message["content"], messages_ttl) or []} for message in messages]
     if cache_config.system_prompt_ttl is not False:
         system_prompt_content = system_with_cache_point(system_prompt, system_prompt_content, cache_point(system_ttl))
     if cache_config.messages_ttl is not False:

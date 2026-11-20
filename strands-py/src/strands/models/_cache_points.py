@@ -4,11 +4,14 @@ Each provider decides when to cache and translates the points to its wire format
 go, how many a request carries and which TTL it gets live here so they stay the same across providers.
 """
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, TypeVar
 
 from ..types.content import CachePoint, ContentBlock, Message, Messages, SystemContentBlock
 from ._model_proxy import _latest_user_index
+
+logger = logging.getLogger(__name__)
 
 # Anthropic, Bedrock (Converse) and Vertex AI reject a request with more cache points than this.
 MAX_CACHE_POINTS = 4
@@ -84,6 +87,34 @@ def messages_with_cache_point(
         "content": [*content[:boundary], ContentBlock(cachePoint=point), *content[boundary:]],
     }
     return [*messages[:latest_user], marked, *messages[latest_user + 1 :]]
+
+
+def with_placed_points_normalized(messages: Messages, ttl: str | None, *, step_back: bool) -> Messages:
+    """The messages with each caller-placed cache point given ``ttl``, and moved back over documents where asked.
+
+    The caller's position is kept but not their TTL: the providers reject a longer TTL after a shorter one, so every
+    message point takes the messages section's TTL, as the automatic point does. With ``step_back`` a point moves
+    back over the non-PDF documents directly ahead of it; one with nothing ahead of it is dropped, since there is no
+    prefix to cache. The input is never changed.
+    """
+    if not any("cachePoint" in block for message in messages for block in message["content"]):
+        return messages
+    return [{**message, "content": _normalized_points(message["content"], ttl, step_back)} for message in messages]
+
+
+def _normalized_points(content: list[ContentBlock], ttl: str | None, step_back: bool) -> list[ContentBlock]:
+    """``content`` with its cache points normalized as :func:`with_placed_points_normalized` describes."""
+    result: list[ContentBlock] = []
+    for block in content:
+        if "cachePoint" not in block:
+            result.append(block)
+            continue
+        index = step_back_over_documents(result, len(result)) if step_back else len(result)
+        if index == 0:
+            logger.warning("removed a cache point with no content ahead of it")
+            continue
+        result.insert(index, ContentBlock(cachePoint=cache_point(ttl)))
+    return result
 
 
 def _lacks_ttl(block: Mapping[str, Any]) -> bool:

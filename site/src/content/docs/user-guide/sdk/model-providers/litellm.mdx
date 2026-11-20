@@ -104,44 +104,51 @@ If you encounter the error `ModuleNotFoundError: No module named 'litellm'`, thi
 
 ### Caching
 
-LiteLLM supports provider-agnostic caching through SystemContentBlock arrays, allowing you to define cache points that work across all supported model providers. This enables you to reuse parts of previous requests, which can significantly reduce token usage and latency.
+Set `cache_config` and Strands caches prompts for the backend LiteLLM routes to. What happens depends on that backend:
 
-#### System Prompt Caching
-
-Use SystemContentBlock arrays to define cache points in your system prompts:
+| Backend | What `cache_config=CacheConfig()` does |
+|---|---|
+| Claude through `anthropic/`, `bedrock/` or `vertex_ai/` | Places cache points on the system prompt and the latest message, and on the tools when you set `tools_ttl`. LiteLLM translates them for the backend. |
+| OpenAI-family (`openai/`, `azure/`, ...) | Nothing extra: OpenAI caches repeated prefixes by itself. Strands sends `prompt_cache_key` to route requests to the same cache. |
+| Gemini | Nothing: Gemini caches repeated prefixes implicitly, and LiteLLM would turn a cache point into a billed cached-content resource. |
 
 ```python
 from strands import Agent
+from strands.models import CacheConfig
 from strands.models.litellm import LiteLLMModel
-from strands.types.content import SystemContentBlock
 
-# Define system content with cache points
-system_content = [
-    SystemContentBlock(
-        text="You are a helpful assistant that provides concise answers. "
-             "This is a long system prompt with detailed instructions..."
-             "..." * 1000  # needs to be at least 1,024 tokens
-    ),
-    SystemContentBlock(cachePoint={"type": "default"})
-]
-
-# Create an agent with SystemContentBlock array
 model = LiteLLMModel(
-    model_id="bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+    model_id="anthropic/claude-sonnet-4-6",
+    cache_config=CacheConfig(),
 )
+agent = Agent(model=model, system_prompt="You are a helpful assistant. ...")
 
-agent = Agent(model=model, system_prompt=system_content)
-
-# First request will cache the system prompt
-response1 = agent("Tell me about Python")
-# Cache metrics like cacheWriteInputTokens will be present in response1.metrics.accumulated_usage
-
-# Second request will reuse the cached system prompt
-response2 = agent("Tell me about JavaScript")
-# Cache metrics like cacheReadInputTokens will be present in response2.metrics.accumulated_usage
+response = agent("Tell me about Python")
+# cacheWriteInputTokens and cacheReadInputTokens appear in response.metrics.accumulated_usage
 ```
 
-> **Note**: Caching availability and behavior depends on the underlying model provider accessed through LiteLLM. Some providers may have minimum token requirements or other limitations for cache creation.
+#### Proxy aliases and gateways
+
+When the model id doesn't name the backend, such as a LiteLLM proxy alias (`litellm_proxy/my-claude`) or a gateway id (`openrouter/anthropic/...`), Strands can't tell that the backend takes cache points. Declare it through `model_info`:
+
+```python
+from strands.models import CacheConfig, ModelCapabilities, ModelInfo
+from strands.models.litellm import LiteLLMModel
+
+model = LiteLLMModel(
+    model_id="litellm_proxy/my-claude",
+    cache_config=CacheConfig(),
+    model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points")),
+)
+```
+
+`CacheConfig(strategy="anthropic")` also places cache points without checking the model, except on OpenAI-family and Gemini backends. Declaring the backend this way also stops Strands sending the session-derived `prompt_cache_key`, which non-OpenAI backends behind a proxy reject.
+
+#### Hand-placed cache points
+
+You can place cache points yourself with `SystemContentBlock(cachePoint={"type": "default"})` in the system prompt, or a `cachePoint` block in a message. Strands keeps their position, and gives message points the messages TTL, since the backends reject a longer TTL after a shorter one. On Bedrock, a point directly after a non-PDF document moves back over the document. On backends that don't take cache points, message cache points are dropped.
+
+> **Note**: Each backend has a minimum cacheable prompt size, and a prompt shorter than that is not cached. For example, Claude Haiku 4.5 needs about 4,096 tokens.
 
 ### Structured Output
 

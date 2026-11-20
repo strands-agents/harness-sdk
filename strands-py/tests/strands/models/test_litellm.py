@@ -115,14 +115,14 @@ def litellm_supported_params():
 
 
 def test_format_request_drops_session_cache_key_litellm_rejects(litellm_supported_params, messages):
-    model = LiteLLMModel(client_args={"custom_llm_provider": "bedrock"}, model_id="claude", cache_config=CacheConfig())
+    model = LiteLLMModel(client_args={"custom_llm_provider": "bedrock"}, model_id="m1", cache_config=CacheConfig())
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         request = model.format_request(messages, agent_metadata=AgentMetadata(session_id="s1"))
 
     assert "prompt_cache_key" not in request
-    litellm_supported_params.assert_called_once_with(model="claude", custom_llm_provider="bedrock")
+    litellm_supported_params.assert_called_once_with(model="m1", custom_llm_provider="bedrock")
 
 
 def test_format_request_drops_configured_cache_key_litellm_rejects_with_warning(litellm_supported_params, messages):
@@ -1498,11 +1498,24 @@ def test_format_request_places_cache_points_for_a_proxy_alias_declared_through_m
     assert _marked(model.format_request(injected_loop_messages, system_prompt="s1"))[0] == ("system", "s1")
 
 
-@pytest.mark.parametrize("model_id", ["litellm_proxy/claude-alias", "gemini/gemini-3.5-flash"])
-def test_format_request_anthropic_strategy_does_not_override_model_info(model_id, injected_loop_messages):
+@pytest.mark.parametrize(
+    ("model_id", "exp_marked"),
+    [
+        ("litellm_proxy/claude-alias", [("system", "s1"), ("tool", "s1")]),
+        ("openrouter/anthropic/claude-sonnet-4.5", [("system", "s1"), ("tool", "s1")]),
+        ("gemini/gemini-3.5-flash", []),
+        ("openai/gpt-6-luna", []),
+    ],
+    ids=["proxy_alias", "gateway", "gemini", "openai"],
+)
+def test_format_request_anthropic_strategy_places_points_except_on_backends_that_take_none(
+    model_id, exp_marked, injected_loop_messages
+):
     model = LiteLLMModel(model_id=model_id, cache_config=CacheConfig(strategy="anthropic"))
 
-    assert _marked(model.format_request(injected_loop_messages, system_prompt="s1")) == []
+    tru_marked = _marked(model.format_request(injected_loop_messages, system_prompt="s1", dynamic_trailing_blocks=1))
+
+    assert tru_marked == exp_marked
 
 
 def test_format_request_keeps_the_callers_cache_points_and_applies_ttls(injected_loop_messages):
@@ -1644,3 +1657,59 @@ def test_format_request_does_not_mark_the_callers_tool_dicts(read_tool_spec):
 
     assert "cache_control" in request["tools"][-1]
     assert "cache_control" not in tool
+
+
+@pytest.mark.parametrize(
+    ("model_id", "exp_prompt_caching"),
+    [
+        ("anthropic/claude-sonnet-4-0", "cache_points"),
+        ("anthropic/claude-3-7-sonnet-latest", "cache_points"),
+        ("vertex_ai/claude-sonnet-4@20250514", "cache_points"),
+        ("openrouter/anthropic/claude-sonnet-4.5", None),
+    ],
+)
+def test_model_info_treats_unlisted_claude_ids_on_cache_control_backends_as_taking_cache_points(
+    model_id, exp_prompt_caching
+):
+    assert LiteLLMModel(model_id=model_id).model_info.capabilities.prompt_caching == exp_prompt_caching
+
+
+@pytest.mark.parametrize("model_id", ["github_copilot/gpt-4.1", "chatgpt/gpt-5"])
+def test_model_info_does_not_resolve_providers_whose_lookup_logs_in(model_id):
+    with unittest.mock.patch.object(strands.models.litellm.litellm, "get_llm_provider") as get_llm_provider:
+        _ = LiteLLMModel(model_id=model_id, cache_config=CacheConfig()).model_info
+
+    get_llm_provider.assert_not_called()
+
+
+def test_format_request_gives_the_callers_bedrock_message_points_the_messages_ttl_and_document_rule():
+    model = LiteLLMModel(model_id="bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0", cache_config=CacheConfig())
+    document = {"document": {"format": "txt", "name": "notes", "source": {"bytes": b"hello"}}}
+    messages = [
+        {"role": "user", "content": [{"text": "a"}, {"cachePoint": {"type": "default", "ttl": "1h"}}, {"text": "b"}]},
+        {"role": "assistant", "content": [{"text": "ok"}]},
+        {"role": "user", "content": [{"text": "c"}, document, {"cachePoint": {"type": "default"}}, {"text": "d"}]},
+    ]
+
+    tru_messages = model.format_request(messages, system_prompt="s1")["messages"]
+
+    marked = {"cache_control": {"type": "ephemeral"}}
+    assert tru_messages[1] == {
+        "role": "user",
+        "content": [{"text": "a", "type": "text", **marked}, {"text": "b", "type": "text"}],
+    }
+    assert tru_messages[3]["content"][0] == {"text": "c", "type": "text", **marked}
+    assert all("cache_control" not in part for part in tru_messages[3]["content"][1:])
+
+
+def test_format_request_drops_a_bedrock_message_point_with_only_documents_ahead_of_it(caplog):
+    model = LiteLLMModel(model_id="bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0")
+    document = {"document": {"format": "txt", "name": "notes", "source": {"bytes": b"hello"}}}
+
+    with caplog.at_level("WARNING", logger="strands.models._cache_points"):
+        tru_messages = model.format_request(
+            [{"role": "user", "content": [document, {"cachePoint": {"type": "default"}}, {"text": "q"}]}]
+        )["messages"]
+
+    assert all("cache_control" not in part for part in tru_messages[0]["content"])
+    assert "removed a cache point with no content ahead of it" in caplog.text

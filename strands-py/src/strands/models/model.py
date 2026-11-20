@@ -165,7 +165,8 @@ class CacheConfig:
     Attributes:
         strategy: Caching strategy to use.
             - "auto": Automatically detect model support and inject cachePoint to maximize cache coverage
-            - "anthropic": Inject cachePoint in Anthropic-compatible format without model support check
+            - "anthropic": Inject cachePoint in Anthropic-compatible format without model support check.
+              ``LiteLLMModel`` still places none on backends that take none: OpenAI-family and Gemini.
         ttl: Optional TTL duration for cache entries (e.g. "5m", "1h").
             When specified, auto-injected cache points will include this TTL value. Bedrock requires
             checkpoint TTLs to be non-increasing across toolConfig, system and messages, and rejects a
@@ -178,8 +179,8 @@ class CacheConfig:
         messages_ttl: Cache the conversation prefix, placing a cache point on durable user content. A TTL
             string sets this section's own duration; True or None derives it from ``ttl``; False disables
             the message cache point. Mirrors the TypeScript ``messagesTTL``. Read by ``BedrockModel``,
-            ``AnthropicModel`` and, on models that take cache points, ``OpenAIResponsesModel``, which
-            accepts only the OpenAI lifetimes ``"30m"`` and ``"12h"``.
+            ``AnthropicModel`` and, on models that take cache points, ``LiteLLMModel`` and
+            ``OpenAIResponsesModel``, which accepts only the OpenAI lifetimes ``"30m"`` and ``"12h"``.
         cache_key: Stable identity a prompt-cache-routing provider (OpenAI, LiteLLM, Mistral) uses as its
             cache key. Left unset, it is derived per request as ``strands-<session_id>`` if the agent has
             a session manager, so repeat runs of a session share a cache prefix with no key management.

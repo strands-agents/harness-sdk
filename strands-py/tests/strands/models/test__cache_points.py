@@ -10,6 +10,7 @@ from strands.models._cache_points import (
     section_ttl,
     step_back_over_documents,
     system_with_cache_point,
+    with_placed_points_normalized,
     with_point_ttls,
 )
 
@@ -117,3 +118,31 @@ def test_messages_with_cache_point_applies_the_boundary_rule():
     tru_messages = messages_with_cache_point(messages, 0, {"type": "default"}, step_back_over_documents)
 
     assert tru_messages == [{"role": "user", "content": [{"text": "read"}, POINT, TXT]}]
+
+
+def test_with_placed_points_normalized_sets_the_ttl_steps_back_and_drops_leading_points():
+    messages = [
+        {"role": "user", "content": [{"text": "a"}, {"cachePoint": {"type": "default", "ttl": "1h"}}]},
+        {"role": "user", "content": [{"text": "b"}, TXT, POINT, {"text": "c"}]},
+        {"role": "user", "content": [TXT, POINT]},
+    ]
+    original = copy.deepcopy(messages)
+
+    tru_messages = with_placed_points_normalized(messages, "5m", step_back=True)
+
+    five_minutes = {"cachePoint": {"type": "default", "ttl": "5m"}}
+    exp_messages = [
+        {"role": "user", "content": [{"text": "a"}, five_minutes]},
+        {"role": "user", "content": [{"text": "b"}, five_minutes, TXT, {"text": "c"}]},
+        {"role": "user", "content": [TXT]},
+    ]
+    assert tru_messages == exp_messages
+    assert messages == original
+
+
+def test_with_placed_points_normalized_keeps_positions_without_step_back():
+    messages = [{"role": "user", "content": [{"text": "b"}, TXT, {"cachePoint": {"type": "default", "ttl": "1h"}}]}]
+
+    tru_messages = with_placed_points_normalized(messages, None, step_back=False)
+
+    assert tru_messages == [{"role": "user", "content": [{"text": "b"}, TXT, POINT]}]
