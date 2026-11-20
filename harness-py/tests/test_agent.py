@@ -2,11 +2,13 @@ import json
 import logging
 import re
 import textwrap
+from importlib.metadata import version
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import boto3
 import pytest
+from packaging.version import Version
 from strands import Agent, BackgroundTasksConfig, tool
 from strands.agent.conversation_manager import NullConversationManager
 from strands.experimental.context_manager import ContextManager
@@ -920,7 +922,12 @@ def test_offloaded_tool_result_returned_in_full_on_retrieval(tmp_path):
 
     assert len(model.seen_tool_results) == 2
     assert model.seen_tool_results[0].startswith("[Truncated:")
-    assert model.seen_tool_results[1] == _LARGE_RESULT
+    retrieved = model.seen_tool_results[1]
+    # strands-agents 1.65.0 and earlier return the stashed block serialized to JSON; since #6101 the SDK returns text.
+    # TODO: drop the JSON case once harness-py requires a strands-agents release that includes #6101.
+    if Version(version("strands-agents")) <= Version("1.65.0"):
+        retrieved = json.loads(retrieved)["text"]
+    assert retrieved == _LARGE_RESULT
     assert agent.context_manager.stash_is_durable is True
     agent_scope = Path("scopes", "agent", agent.agent_id)
     snapshot_path = tmp_path / "session" / "retrieval" / agent_scope / "snapshots" / "snapshot_latest.json"
