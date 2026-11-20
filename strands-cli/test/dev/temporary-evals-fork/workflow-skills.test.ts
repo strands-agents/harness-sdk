@@ -221,7 +221,8 @@ describe('optimize-harness guidance', () => {
 
   it('shouldStartRunsThroughTheToolAndAllowThemInParallel', () => {
     expect(instructions).toContain('start the run with strands_dev_optimize once the review is confirmed')
-    expect(instructions).toContain('a run already going is not a reason to refuse a new one')
+    expect(instructions).toContain('or edits waiting on screen, are not reasons to refuse a new run')
+    expect(instructions).toContain('the one accepted last is what stays')
   })
 
   it('shouldLeaveTheReviewToTheScreenAndReportInALineOrTwo', () => {

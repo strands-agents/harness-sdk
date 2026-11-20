@@ -335,9 +335,6 @@ const reviewSummary = ({ run, baseline, best, measuredOn, edits }: OptimizeRevie
       'edit the screen no longer offers.',
   })
 
-const hasPendingEdits = ({ edits, applied }: OptimizeReview): boolean =>
-  edits.some((edit) => !edit.unavailable) && !applied?.length
-
 interface ChosenReview {
   readonly id?: string
   readonly review: OptimizeReview
@@ -348,11 +345,6 @@ const listedReviews = ({ runs = [] }: OptimizeState): ChosenReview[] =>
 
 const latestReview = (state: OptimizeState): ChosenReview | undefined =>
   listedReviews(state)[0] ?? (state.step === 'review' ? { review: state.review } : undefined)
-
-const pendingReview = (state: OptimizeState): ChosenReview | undefined =>
-  [...listedReviews(state), ...(state.step === 'review' ? [{ review: state.review }] : [])].find(({ review }) =>
-    hasPendingEdits(review)
-  )
 
 const runState = ({ runs = [] }: OptimizeState, id: string): OptimizeRunState | undefined =>
   runs.find((run) => run.id === id)?.state
@@ -830,7 +822,6 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
   },
   run: async (input): Promise<string> => {
     const { optimize } = sessions()
-    const current = optimize.snapshot()
     const tune = tuneFrom(input)
     const models = textList(input, 'models') ?? []
     if (tune.includes('model') && models.length === 0)
@@ -845,10 +836,6 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     const finalists = oneOf(input, 'finalists', TEMPORARY_DECISION_CHOICES.finalists)
     const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
     const objective = await objectiveFor(experiment, input)
-    if (pendingReview(current))
-      throw new Error(
-        'There are pending optimization edits. Review and apply them, or explicitly discard them with strands_dev_reject_optimization, before starting another run.'
-      )
     optimize.reset()
     optimize.plan(experiment)
     const planned = await until(optimize, (state) =>

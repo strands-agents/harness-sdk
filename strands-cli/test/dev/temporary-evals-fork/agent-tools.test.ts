@@ -625,13 +625,16 @@ describe('TEMPORARY dev chat part', () => {
     expect(sessions.test.run).not.toHaveBeenCalled()
   })
 
-  it('shouldPreserveUnappliedOptimizationEditsUntilExplicitlyDiscarded', async () => {
-    const { call, optimize, sessions } = setup()
+  it('shouldStartANewRunWithEditsStillPendingAndDiscardOnlyOnExplicitIntent', async () => {
+    const { call, tool, optimize, sessions, finishRun } = setup()
     optimize.set({ step: 'review', review: review() })
-    await expect(call('strands_dev_optimize', { experiment: 'refunds' })).rejects.toThrow('pending optimization edits')
-    expect(sessions.optimize.reset).not.toHaveBeenCalled()
+
+    const running = tool('strands_dev_optimize').run({ experiment: 'refunds' })
+    await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalled())
+    finishRun({ step: 'review', review: review() })
+    expect(JSON.parse(await running)).toMatchObject({ run: expect.any(String) })
+
     expect(await call('strands_dev_reject_optimization')).toMatchObject({ status: 'discarded' })
-    expect(sessions.optimize.reset).toHaveBeenCalledOnce()
     expect(sessions.optimize.apply).not.toHaveBeenCalled()
   })
 
