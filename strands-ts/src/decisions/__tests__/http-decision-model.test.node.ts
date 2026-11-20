@@ -1,9 +1,8 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 
-import { HttpRequest } from '@smithy/protocol-http'
+import { Sha256 } from '@smithy/core/checksum'
 import { SignatureV4 } from '@smithy/signature-v4'
-import { Sha256 } from '@aws-crypto/sha256-js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ModelError, ModelThrottledError } from '../../errors.js'
@@ -159,22 +158,21 @@ describe('HttpDecisionModel', () => {
     it.each([
       [
         'a sigv4 endpoint',
-        { type: 'sigv4', region: 'us-east-1', service: 'lambda', credentials: CREDENTIALS },
-        'check the credentials',
+        { auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda', credentials: CREDENTIALS } },
       ],
-      ['a bearer endpoint', { type: 'bearer', token: 't' }, 'check the credentials'],
-    ] as const)('adds a hint when %s answers 403', async (_name, auth, hint) => {
+      ['a bearer endpoint', { auth: { type: 'bearer', token: 't' } }],
+      ['an endpoint with an API key header', { headers: { 'x-api-key': 'k' } }],
+    ] as const)('adds a hint when %s answers 403', async (_name, options) => {
       const decision = create({
         endpoint: LAMBDA_ENDPOINT,
-        auth,
-        // What a Lambda Function URL answers. The shared transport reads only a lowercase `message`, so the
-        // server text is not shown and the hint is what tells the user what to check.
+        ...options,
+        // What a Lambda Function URL answers: AWS services capitalize `Message`.
         fetch: fakeFetch({ Message: 'Forbidden' }, { status: 403 }),
       })
 
       await expectModelError(
         decision.ask('state', QUESTIONS),
-        `http decision request failed with HTTP 403 | ${hint}, and for sigv4 the IAM permission, region and service`
+        'http decision request failed with HTTP 403: Forbidden | check the credentials, and for sigv4 the IAM permission, region and service'
       )
     })
 
@@ -186,7 +184,10 @@ describe('HttpDecisionModel', () => {
         fetch: fakeFetch({ message: 'boom' }, { status: 500 }),
       })
 
-      await expectModelError(unauthenticated.ask('state', QUESTIONS), 'http decision request failed with HTTP 403')
+      await expectModelError(
+        unauthenticated.ask('state', QUESTIONS),
+        'http decision request failed with HTTP 403: Forbidden'
+      )
       await expect(serverError.ask('state', QUESTIONS)).rejects.toThrow(/HTTP 500: boom$/)
     })
 
@@ -253,11 +254,19 @@ describe('HttpDecisionModel', () => {
 
   describe('timeout', () => {
     it('defaults to 60 seconds', async () => {
-      const timeout = vi.spyOn(AbortSignal, 'timeout')
+      const timer = vi.spyOn(globalThis, 'setTimeout')
 
       await create({ fetch: fakeFetch() }).ask('state', QUESTIONS)
 
-      expect(timeout).toHaveBeenCalledWith(60_000)
+      expect(timer).toHaveBeenCalledWith(expect.any(Function), 60_000)
+    })
+
+    it('clears its timer when the request settles', async () => {
+      const clear = vi.spyOn(globalThis, 'clearTimeout')
+
+      await create({ fetch: fakeFetch() }).ask('state', QUESTIONS)
+
+      expect(clear).toHaveBeenCalledTimes(1)
     })
 
     it('aborts a request that exceeds timeoutMs', async () => {
@@ -356,15 +365,16 @@ describe('HttpDecisionModel', () => {
       )
       const staticHeaders = Object.fromEntries(Object.entries(request.headers).filter(([name]) => name === 'x-api-key'))
       const signed = await signer.sign(
-        new HttpRequest({
+        {
           method: 'POST',
           protocol: url.protocol,
           hostname: url.hostname,
           ...(url.port !== '' && { port: Number(url.port) }),
           path: url.pathname,
+          query: {},
           headers: { ...staticHeaders, host: url.host, 'content-type': 'application/json' },
           body: request.rawBody,
-        }),
+        },
         { signingDate }
       )
       return signed.headers['authorization']!
@@ -468,18 +478,25 @@ describe('HttpDecisionModel', () => {
       expect(captured[0]?.headers['authorization']).toBe(await expectedSignature(captured[0]!, 'lambda', 'us-east-1'))
     })
 
-    it('resolves credentials from a provider on every request', async () => {
-      const provider = vi.fn(async () => CREDENTIALS)
+    it.each([
+      ['without an expiration', undefined, 1],
+      ['an hour from expiring', 60 * 60_000, 1],
+      ['a minute from expiring', 60_000, 3],
+    ])('calls a provider whose credentials are %s %i time(s) for three requests', async (_name, expiresIn, calls) => {
+      const provider = vi.fn(async () => ({
+        ...CREDENTIALS,
+        ...(expiresIn !== undefined && { expiration: new Date(Date.now() + expiresIn) }),
+      }))
       const decision = create({
         endpoint: LAMBDA_ENDPOINT,
         auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda', credentials: provider },
         fetch: fakeFetch(),
       })
 
-      await decision.ask('one', QUESTIONS)
-      await decision.ask('two', QUESTIONS)
+      await Promise.all([decision.ask('one', QUESTIONS), decision.ask('two', QUESTIONS)])
+      await decision.ask('three', QUESTIONS)
 
-      expect(provider).toHaveBeenCalledTimes(2)
+      expect(provider).toHaveBeenCalledTimes(calls)
     })
 
     it('uses the standard AWS credential chain when credentials are omitted', async () => {
@@ -533,6 +550,23 @@ describe('HttpDecisionModel', () => {
         'http decision request failed: The operation was aborted due to timeout'
       )
       expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('does not start signing for a request cancelled before it is sent', async () => {
+      const provider = vi.fn(async () => {
+        throw new Error('no credentials')
+      })
+      const decision = create({
+        endpoint: LAMBDA_ENDPOINT,
+        auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda', credentials: provider },
+        fetch: fakeFetch(),
+      })
+
+      await expectModelError(
+        decision.ask('state', QUESTIONS, { cancelSignal: AbortSignal.abort(new Error('stop')) }),
+        'http decision request failed: stop'
+      )
+      expect(provider).not.toHaveBeenCalled()
     })
 
     it('cancels a credential lookup that never answers', async () => {
@@ -650,21 +684,10 @@ describe('HttpDecisionModel', () => {
       expect(() => create({ headers: { 'x-amz-date': 'x' } })).not.toThrow()
     })
 
-    describe('in a browser', () => {
-      it('allows an endpoint that needs no auth or headers', () => {
-        vi.stubGlobal('window', {})
+    it('rejects construction in a browser', () => {
+      vi.stubGlobal('window', {})
 
-        expect(() => create()).not.toThrow()
-      })
-
-      it.each([
-        ['auth', { auth: bearer }],
-        ['headers', { headers: { 'x-api-key': 'k' } }],
-      ])('rejects %s', (_name, options) => {
-        vi.stubGlobal('window', {})
-
-        expect(() => create(options)).toThrow('cannot send auth or headers from a browser')
-      })
+      expect(() => create()).toThrow('HttpDecisionModel cannot run in a browser')
     })
 
     it('requires a region from the option or the environment', () => {

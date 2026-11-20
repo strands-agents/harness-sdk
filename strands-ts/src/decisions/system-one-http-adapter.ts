@@ -263,7 +263,7 @@ function translateHttpError(providerName: string, status: number, body: unknown)
 function errorDetail(body: unknown): string | undefined {
   if (typeof body === 'string') return body
   if (!isRecord(body)) return undefined
-  for (const field of ['error', 'message', 'detail']) {
+  for (const field of ['error', 'message', 'Message', 'detail']) {
     const value = body[field]
     if (typeof value === 'string') return value
     if (isRecord(value)) {

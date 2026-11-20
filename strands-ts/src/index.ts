@@ -224,7 +224,6 @@ export {
   DecisionModel,
   DecisionsAPIDecisionModel,
   defineQuestions,
-  HttpDecisionModel,
   LLMDecisionModel,
   TypeSafeDecisionModel,
   Uncertain,
@@ -236,11 +235,8 @@ export type {
   DecisionInput,
   DecisionResult,
   DecisionsAPIDecisionModelOptions,
-  HttpDecisionModelAuth,
-  HttpDecisionModelOptions,
   LLMDecisionModelOptions,
   Question,
-  SigV4Credentials,
   TypeSafeDecisionModelOptions,
 } from './decisions/index.js'
 

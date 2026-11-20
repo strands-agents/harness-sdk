@@ -44,6 +44,10 @@
       "types": "./dist/src/decisions/sagemaker.d.ts",
       "default": "./dist/src/decisions/sagemaker.js"
     },
+    "./decisions/http": {
+      "types": "./dist/src/decisions/http-decision-model.d.ts",
+      "default": "./dist/src/decisions/http-decision-model.js"
+    },
     "./models/vercel": {
       "types": "./dist/src/models/vercel.d.ts",
       "default": "./dist/src/models/vercel.js"
@@ -288,7 +292,6 @@
     "@ai-sdk/openai": "^3.0.41",
     "@ai-sdk/provider": "^3.0.0",
     "@anthropic-ai/sdk": "^1.7.0",
-    "@aws-crypto/sha256-js": "^5.2.0",
     "@aws-sdk/client-bedrock": "^3.1153.0",
     "@aws-sdk/client-bedrock-agent": "^3.1153.0",
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1153.0",
@@ -316,8 +319,6 @@
     "@opentelemetry/sdk-metrics": "^2.6.1",
     "@opentelemetry/sdk-trace-base": "^2.12.0",
     "@opentelemetry/sdk-trace-node": "^2.12.0",
-    "@smithy/protocol-http": "^5.4.6",
-    "@smithy/signature-v4": "^5.7.4",
     "@smithy/types": "^4.15.1",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.3",
@@ -350,8 +351,11 @@
   "homepage": "https://github.com/strands-agents/harness-sdk#readme",
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1154.0",
+    "@aws-sdk/credential-provider-node": "^3.972.87",
     "@modelcontextprotocol/ext-tasks": "^0.2.2",
+    "@smithy/core": "^3.36.0",
     "@smithy/fetch-http-handler": "^5.8.0",
+    "@smithy/signature-v4": "^5.7.4",
     "@types/json-schema": "^7.0.15",
     "uuid": "^14.0.3",
     "yaml": "^2.9.1"
@@ -360,13 +364,11 @@
     "@a2a-js/sdk": "^0.3.10",
     "@ai-sdk/provider": "^3.0.0",
     "@anthropic-ai/sdk": ">=0.109.1 <2.0.0",
-    "@aws-crypto/sha256-js": "^5.0.0",
     "@aws-sdk/client-bedrock-agent": "^3.1078.0",
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1078.0",
     "@aws-sdk/client-s3": "^3.1078.0",
     "@aws-sdk/client-s3vectors": "^3.1125.0",
     "@aws-sdk/client-sagemaker-runtime": "^3.1078.0",
-    "@aws-sdk/credential-providers": "^3.1078.0",
     "@aws/bedrock-token-generator": "^1.1.0",
     "@aws/dogwood-wasm": "^1.1.0",
     "@cedar-policy/cedar-wasm": "^4.0.0",
@@ -381,8 +383,6 @@
     "@opentelemetry/sdk-metrics": "^2.6.1",
     "@opentelemetry/sdk-trace-base": "^2.6.1",
     "@opentelemetry/sdk-trace-node": "^2.6.1",
-    "@smithy/protocol-http": "^5.0.0",
-    "@smithy/signature-v4": "^5.0.0",
     "@smithy/types": "^4.15.1",
     "@tobilu/qmd": "^2.8.0",
     "express": "^5.1.0",
@@ -464,18 +464,6 @@
       "optional": true
     },
     "turndown": {
-      "optional": true
-    },
-    "@aws-crypto/sha256-js": {
-      "optional": true
-    },
-    "@aws-sdk/credential-providers": {
-      "optional": true
-    },
-    "@smithy/protocol-http": {
-      "optional": true
-    },
-    "@smithy/signature-v4": {
       "optional": true
     }
   },
