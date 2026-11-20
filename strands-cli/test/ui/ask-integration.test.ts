@@ -90,7 +90,33 @@ const mount = async (broker: WizardBroker, answered: Promise<unknown>, rows = 30
   return { controller, press, screen: (): string => frame }
 }
 
+const openQuestion = async () => {
+  const broker = new WizardBroker()
+  let resolve = (): void => {}
+  const answered = new Promise<void>((done) => {
+    resolve = done
+  })
+  const view = await mount(broker, answered)
+  for (const character of 'optimize') await view.press(character)
+  await view.press('\r')
+  await new Promise((done) => setTimeout(done, 50))
+  return { ...view, broker, resolve }
+}
+
 describe('a real ask call with its question on screen', () => {
+  it('shouldShowTheCursorOnlyOnceFocusMovesIntoTheQuestion', async () => {
+    const { press, screen, resolve } = await openQuestion()
+
+    expect(screen()).not.toContain('›')
+    expect(screen()).toContain('↑ answer this')
+
+    await press('\u001b[A')
+
+    expect(screen()).toContain('›')
+    expect(screen()).not.toContain('↑ answer this')
+    resolve()
+  })
+
   it('shouldShowOnlyTheQuestion', async () => {
     const broker = new WizardBroker()
     let resolve = (): void => {}
@@ -110,6 +136,8 @@ describe('a real ask call with its question on screen', () => {
     expect(shown).not.toContain('Waiting for your answer')
     expect(shown).not.toContain('Viewing /ask')
     expect(shown).toContain('Enter to send')
+    expect(shown).toContain('↑ answer this')
+    expect(shown).not.toContain('›')
     resolve()
   })
 })

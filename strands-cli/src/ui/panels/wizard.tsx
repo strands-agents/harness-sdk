@@ -400,7 +400,8 @@ export const Wizard = ({
   const walked = steps.length > 1
   // One question is sized to its content, so it keeps its spacing; only a walked form has to crowd.
   const compact = walked && height < FULL_ROWS
-  const focused = rows[cursor.index]
+  const cursorRow = active ? cursor.index : -1
+  const focused = active ? rows[cursor.index] : undefined
   const editor = editing.value
   const firstButton = rows.findIndex((row) => row.kind === 'button')
   const toggles = step.fields.filter((field): field is WizardToggle => field.kind === 'toggle')
@@ -494,7 +495,7 @@ export const Wizard = ({
       {compact || step.listLabel === undefined ? null : <Line>{`  ${step.listLabel}`}</Line>}
       <ItemList
         items={toggles.map(toggleItem)}
-        selected={toggleRows.indexOf(cursor.index)}
+        selected={active ? toggleRows.indexOf(cursor.index) : -1}
         capacity={Math.max(
           MIN_LIST_ROWS,
           Math.min(toggles.length, height - LIST_CHROME_ROWS + (steps.length > 1 ? 0 : 1))
@@ -527,7 +528,7 @@ export const Wizard = ({
           key={field.key}
           label={field.label}
           value={field.display}
-          active={cursor.index === row}
+          active={cursorRow === row}
           {...(point ? { onPoint: point } : {})}
         />
       )
@@ -536,7 +537,7 @@ export const Wizard = ({
         label={field.label}
         value={field.detail}
         {...(field.count > 1 ? { slider: { count: field.count, position: field.position } } : {})}
-        active={cursor.index === row}
+        active={cursorRow === row}
         {...(point ? { onPoint: point } : {})}
       />
     ) : (
@@ -597,9 +598,11 @@ export const Wizard = ({
       <Fill />
       <KeyHints
         hints={
-          editor
-            ? ['Enter save', 'Esc cancel']
-            : rowHints(focused, finishHint, blocking, walked, autofill !== undefined, onLeave !== undefined)
+          active
+            ? editor
+              ? ['Enter save', 'Esc cancel']
+              : rowHints(focused, finishHint, blocking, walked, autofill !== undefined, onLeave !== undefined)
+            : ['↑ answer this']
         }
       />
     </>
