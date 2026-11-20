@@ -1,0 +1,5 @@
+error: `#[tool]` parameters must be plain identifiers; they name the input properties
+ --> tests/ui/pattern_param.rs:5:18
+  |
+5 | async fn pattern((a, b): (u32, u32)) -> u32 {
+  |                  ^^^^^^

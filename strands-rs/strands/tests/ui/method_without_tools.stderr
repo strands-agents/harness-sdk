@@ -1,0 +1,5 @@
+error: `#[tool]` on a method needs `#[tools]` on its `impl` block
+ --> tests/ui/method_without_tools.rs:8:26
+  |
+8 |     async fn check_stock(&self) -> u32 {
+  |                          ^^^^^

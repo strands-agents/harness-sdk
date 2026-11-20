@@ -1,0 +1,5 @@
+error: `#[tool]` functions must be `async`
+ --> tests/ui/not_async.rs:5:1
+  |
+5 | fn not_async(city: String) -> String {
+  | ^^

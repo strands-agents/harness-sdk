@@ -1,0 +1,17 @@
+error: `#[tool]` needs a description for the model: add a doc comment or `#[tool(description = "..")]`
+ --> tests/ui/handles_optional_description.rs:4:10
+  |
+4 | async fn undocumented(value: String) -> String {
+  |          ^^^^^^^^^^^^
+
+error: the tool description must not be empty
+ --> tests/ui/handles_optional_description.rs:9:22
+  |
+9 | #[tool(description = "")]
+  |                      ^^
+
+error: `#[tool]` needs a description for the model: add a doc comment or `#[tool(description = "..")]`
+  --> tests/ui/handles_optional_description.rs:19:14
+   |
+19 |     async fn check_stock(&self, sku: String) -> String {
+   |              ^^^^^^^^^^^

@@ -1,0 +1,5 @@
+error: Unknown field: `title`. Available values: `crate`, `description`, `name`
+ --> tests/ui/unknown_argument.rs:4:8
+  |
+4 | #[tool(title = "Weather")]
+  |        ^^^^^

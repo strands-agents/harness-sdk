@@ -1,0 +1,5 @@
+error: `#[tool]` functions cannot be generic; parameter types must be concrete
+ --> tests/ui/generic_fn.rs:5:17
+  |
+5 | async fn generic<T: serde::de::DeserializeOwned>(value: T) -> String {
+  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
