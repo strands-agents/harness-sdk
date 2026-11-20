@@ -371,7 +371,7 @@ async def test_executor_stream_with_trace_records_metrics_on_interrupt(
 
 @pytest.mark.parametrize(
     ("cancel_tool", "cancel_message"),
-    [(True, "tool cancelled by user"), ("user cancel message", "user cancel message")],
+    [(True, "Tool cancelled by hook"), ("user cancel message", "user cancel message")],
 )
 @pytest.mark.asyncio
 async def test_executor_stream_cancel(
@@ -1120,7 +1120,7 @@ async def test_executor_stream_cancel_duration_is_none(
     ("cancel_tool", "exp_message"),
     [
         (False, "Tool execution cancelled"),
-        (True, "tool cancelled by user"),
+        (True, "Tool cancelled by hook"),
         ("hook cancel message", "hook cancel message"),
     ],
 )

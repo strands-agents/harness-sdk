@@ -75,7 +75,7 @@ class ToolExecutor(abc.ABC):
         """
         cancel_tool = before_event.cancel_tool
         if cancel_tool:
-            return cancel_tool if isinstance(cancel_tool, str) else "tool cancelled by user"
+            return cancel_tool if isinstance(cancel_tool, str) else "Tool cancelled by hook"
         if not observe_agent_cancel or not ToolExecutor._is_agent(agent):
             return None
         if cast("Agent", agent)._observe_cancellation():
