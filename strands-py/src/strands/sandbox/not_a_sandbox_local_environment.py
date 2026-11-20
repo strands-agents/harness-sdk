@@ -16,6 +16,7 @@ import base64
 import os
 import shlex
 import sys
+import threading
 import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -87,6 +88,7 @@ class NotASandboxLocalEnvironment(Sandbox):
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ExecutionResult, None]:
         """Execute a command on the host in its shell (``sh -c``; PowerShell on Windows), streaming output.
@@ -97,6 +99,7 @@ class NotASandboxLocalEnvironment(Sandbox):
             cwd: Working directory for this command. Defaults to the process's
                 current working directory.
             env: Environment variables to set on top of the host environment.
+            cancel_signal: Aborts the execution when set by killing the process.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
@@ -106,6 +109,7 @@ class NotASandboxLocalEnvironment(Sandbox):
         Raises:
             ValueError: If an environment variable name is invalid.
             SandboxTimeoutError: If execution exceeds ``timeout`` seconds.
+            SandboxAbortError: If ``cancel_signal`` is set before the process exits.
         """
         target_cwd = cwd if cwd is not None else os.getcwd()
         if sys.platform == "win32":
@@ -120,12 +124,15 @@ class NotASandboxLocalEnvironment(Sandbox):
                 cwd=target_cwd,
                 env=_host_env_with(env),
                 enoent_message="PowerShell not found: powershell.exe is required to run commands on Windows",
+                cancel_signal=cancel_signal,
             ):
                 yield chunk
         else:
             env_prefix = build_shell_env_prefix(env)
             full_command = f"cd {shlex.quote(target_cwd)} && {env_prefix}{command}"
-            async for chunk in _stream_process("sh", ["-c", full_command], timeout=timeout):
+            async for chunk in _stream_process(
+                "sh", ["-c", full_command], timeout=timeout, cancel_signal=cancel_signal
+            ):
                 yield chunk
 
     async def execute_code_streaming(
@@ -136,6 +143,7 @@ class NotASandboxLocalEnvironment(Sandbox):
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ExecutionResult, None]:
         """Execute code on the host by feeding it to a language interpreter on stdin.
@@ -153,6 +161,7 @@ class NotASandboxLocalEnvironment(Sandbox):
             cwd: Working directory for execution. Defaults to the process's current
                 working directory.
             env: Environment variables to set on top of the host environment.
+            cancel_signal: Aborts the execution when set by killing the process.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
@@ -163,6 +172,7 @@ class NotASandboxLocalEnvironment(Sandbox):
             ValueError: If ``language`` contains invalid characters or an environment
                 variable name is invalid.
             SandboxTimeoutError: If execution exceeds ``timeout`` seconds.
+            SandboxAbortError: If ``cancel_signal`` is set before the process exits.
         """
         if not LANGUAGE_PATTERN.fullmatch(language):
             raise ValueError(f"language parameter contains invalid characters: {language}")
@@ -178,12 +188,15 @@ class NotASandboxLocalEnvironment(Sandbox):
                 env=_host_env_with(env),
                 input=code,
                 enoent_message=f"Language interpreter not found: {language}",
+                cancel_signal=cancel_signal,
             ):
                 yield chunk
         else:
             encoded = base64.b64encode(code.encode()).decode("ascii")
             eof = f"STRANDS_EOF_{uuid.uuid4().hex[:16]}"
             command = f"base64 -d << '{eof}' | {language}\n{encoded}\n{eof}"
+            if cancel_signal is not None:
+                kwargs["cancel_signal"] = cancel_signal
             async for chunk in self.execute_streaming(command, timeout=timeout, cwd=cwd, env=env, **kwargs):
                 yield chunk
 

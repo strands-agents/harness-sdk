@@ -5,17 +5,20 @@ Each call runs in a fresh shell; state does not persist across calls. These
 spawn ``sh`` and require POSIX, so they are skipped on Windows.
 """
 
+import asyncio
 import json
 import sys
 from types import SimpleNamespace
 
 import pytest
 
-from strands.sandbox.errors import SandboxTimeoutError
+from strands import Agent
+from strands.sandbox.errors import SandboxAbortError, SandboxTimeoutError
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from strands.types.tools import ToolContext
 from strands.vended_tools.shell import make_shell, shell
 from strands.vended_tools.shell.types import SANDBOX_SHELL_DESCRIPTION, ShellExecutionError
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell required")
 
@@ -72,6 +75,16 @@ class TestMakeShell:
         assert str(exc_info.value) == f"Execution timed out after 0.3 seconds\n{json.dumps(partial)}"
 
     @pytest.mark.asyncio
+    async def test_stops_the_command_when_the_tool_call_is_cancelled(self, sandbox_shell):
+        ctx = _tool_context()
+        asyncio.get_event_loop().call_later(0.3, ctx.cancel_signal.set)
+        # SandboxAbortError, not ShellExecutionError: cancellation is not a shell failure.
+        with pytest.raises(SandboxAbortError) as exc_info:
+            await sandbox_shell(command="echo partial; echo warn >&2; sleep 60", tool_context=ctx)
+        partial = {"output": "partial\n", "error": "warn\n", "exit_code": 130}
+        assert str(exc_info.value) == f"Execution aborted\n{json.dumps(partial)}"
+
+    @pytest.mark.asyncio
     async def test_wraps_sandbox_error_as_shell_execution_error(self):
         class _BoomSandbox(NotASandboxLocalEnvironment):
             async def execute(self, *args, **kwargs):
@@ -99,6 +112,24 @@ class TestDefaultShell:
     async def test_reads_sandbox_from_agent_context(self):
         result = await shell(command="echo via-context", tool_context=_tool_context())
         assert "via-context" in result["output"]
+
+
+class TestAgentCancel:
+    @pytest.mark.asyncio
+    async def test_agent_cancel_stops_a_running_command(self):
+        tool_use = {"toolUseId": "t1", "name": "shell", "input": {"command": "sleep 60"}}
+        model = MockedModelProvider([{"role": "assistant", "content": [{"toolUse": tool_use}]}])
+        agent = Agent(model=model, tools=[shell], callback_handler=None)
+
+        asyncio.get_event_loop().call_later(0.5, agent.cancel)
+        result = await asyncio.wait_for(agent.invoke_async("go"), timeout=30)
+
+        assert result.stop_reason == "cancelled"
+        partial = json.dumps({"output": "", "error": "", "exit_code": 130})
+        error = {"text": f"Error: SandboxAbortError - Execution aborted\n{partial}"}
+        assert agent.messages[-1]["content"] == [
+            {"toolResult": {"toolUseId": "t1", "status": "error", "content": [error]}}
+        ]
 
 
 class TestToolMetadata:

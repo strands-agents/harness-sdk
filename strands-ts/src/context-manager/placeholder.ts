@@ -12,25 +12,25 @@ const AFTER_RECEIVING = 'removed from context after it was received'
 export const REMOVED_MESSAGES = 'earlier messages'
 
 /**
- * The block that stands in for offloaded content: the preview, followed by the stash reference
+ * The block that stands in for offloaded content: the preview, followed by the archive reference
  * when the original is retrievable.
  *
  * @param method - Offload method that replaced the content
  * @param preview - Text that stands in for the original
- * @param stashRef - Reference the original is retrievable under, or undefined when it was not stashed
+ * @param archiveRef - Reference the original is retrievable under, or undefined when it was not archived
  * @param tokens - Size of the content it stands for, when the token count measured it
  * @internal
  */
 export function offloadPlaceholder(
   method: OffloadMethod,
   preview: string,
-  stashRef: string | undefined,
+  archiveRef: string | undefined,
   tokens = 0
 ): OffloadedBlock {
   return new OffloadedBlock({
-    text: stashRef === undefined ? preview : `${preview} [ref: ${stashRef}]`,
+    text: archiveRef === undefined ? preview : `${preview} [ref: ${archiveRef}]`,
     method,
-    ...(stashRef !== undefined && { ref: stashRef }),
+    ...(archiveRef !== undefined && { ref: archiveRef }),
     ...(tokens > 0 && { tokens }),
   })
 }

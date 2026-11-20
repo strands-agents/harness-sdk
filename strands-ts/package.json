@@ -56,6 +56,10 @@
       "types": "./dist/src/multiagent/index.d.ts",
       "default": "./dist/src/multiagent/index.js"
     },
+    "./context-manager": {
+      "types": "./dist/src/context-manager/index.d.ts",
+      "default": "./dist/src/context-manager/index.js"
+    },
     "./experimental": {
       "types": "./dist/src/experimental/index.d.ts",
       "default": "./dist/src/experimental/index.js"
