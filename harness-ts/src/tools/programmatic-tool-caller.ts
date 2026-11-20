@@ -13,9 +13,10 @@
  * and memory/time/recursion limits are enforced by the VM. The only way out of the sandbox is the
  * tool functions handed in here, so the sandbox reaches exactly what the agent's own tools reach.
  * Under Node the interpreter runs in a separate worker process (native addon) or, where the addon
- * cannot load, in-process as WebAssembly -- the language-level sandbox holds either way, but the
- * in-process build blocks the event loop while the guest computes, so neither the wall-clock timeout
- * nor a cancel can preempt it; guest compute is capped much lower there (`WASM_MAX_DURATION_SECS`).
+ * cannot load, as WebAssembly -- the language-level sandbox holds either way. Neither can be
+ * interrupted while the guest computes: on a timeout or cancel the tool returns at once, but the guest
+ * keeps running in its worker until the compute limit (in Python the worker is killed instead). Guest
+ * compute is capped much lower on the WebAssembly build (`WASM_MAX_DURATION_SECS`).
  * For an OS boundary around the *tools*, run the agent under a Docker/SSH sandbox.
  *
  * Inner tool calls run the way the executor runs a model-issued call (`beforeToolCall` hooks -> the
