@@ -270,7 +270,17 @@ export class Tracer {
    * @param options - Options for starting the agent span
    */
   startAgentSpan(options: StartAgentSpanOptions): Span | null {
-    const { messages, agentName, agentId, modelId, tools, traceAttributes, toolsConfig, systemPrompt } = options
+    const {
+      messages,
+      agentName,
+      agentId,
+      modelId,
+      genAIProviderName,
+      tools,
+      traceAttributes,
+      toolsConfig,
+      systemPrompt,
+    } = options
 
     // Reset local trace state for this invocation
     this._traceState.traces = []
@@ -280,7 +290,7 @@ export class Tracer {
 
     try {
       const spanName = `invoke_agent ${agentName}`
-      const attributes = this._getCommonAttributes('invoke_agent')
+      const attributes = this._getCommonAttributes('invoke_agent', genAIProviderName)
       attributes['gen_ai.agent.name'] = agentName
       attributes['name'] = spanName
       if (agentId) attributes['gen_ai.agent.id'] = agentId
@@ -363,7 +373,7 @@ export class Tracer {
    * @param options - Options for starting the model invocation span
    */
   startModelInvokeSpan(options: StartModelInvokeSpanOptions): Span | null {
-    const { messages, modelId, systemPrompt } = options
+    const { messages, modelId, genAIProviderName, systemPrompt } = options
 
     // Create local model trace as child of current cycle
     this._traceState.currentModel = new AgentTrace(
@@ -372,7 +382,7 @@ export class Tracer {
     )
 
     try {
-      const attributes = this._getCommonAttributes('chat')
+      const attributes = this._getCommonAttributes('chat', genAIProviderName)
       if (modelId) attributes['gen_ai.request.model'] = modelId
 
       const span = this._startSpan({
@@ -433,7 +443,7 @@ export class Tracer {
    * @param options - Options for starting the tool call span
    */
   startToolCallSpan(options: StartToolCallSpanOptions): Span | null {
-    const { tool } = options
+    const { tool, genAIProviderName } = options
 
     // Create local tool trace as child of current cycle
     const toolTrace = new AgentTrace(
@@ -445,7 +455,7 @@ export class Tracer {
     this._traceState.currentTool = toolTrace
 
     try {
-      const attributes = this._getCommonAttributes('execute_tool')
+      const attributes = this._getCommonAttributes('execute_tool', genAIProviderName)
       attributes['gen_ai.tool.name'] = tool.name
       attributes['gen_ai.tool.call.id'] = tool.toolUseId
 
@@ -1063,19 +1073,18 @@ export class Tracer {
 
   /**
    * Get common attributes based on semantic convention version.
-   * The attribute name changed between OTEL semconv versions:
+   * The provider attribute name changed between OTEL semconv versions:
    * - Stable: 'gen_ai.system'
    * - Latest experimental: 'gen_ai.provider.name'
+   * The provider attribute is omitted when `genAIProviderName` is undefined.
    */
-  private _getCommonAttributes(operationName: string): Record<string, AttributeValue> {
+  private _getCommonAttributes(operationName: string, genAIProviderName?: string): Record<string, AttributeValue> {
     const attributes: Record<string, AttributeValue> = {
       'gen_ai.operation.name': operationName,
     }
 
-    if (this._useLatestConventions) {
-      attributes['gen_ai.provider.name'] = getServiceName()
-    } else {
-      attributes['gen_ai.system'] = getServiceName()
+    if (genAIProviderName !== undefined) {
+      attributes[this._useLatestConventions ? 'gen_ai.provider.name' : 'gen_ai.system'] = genAIProviderName
     }
 
     return attributes

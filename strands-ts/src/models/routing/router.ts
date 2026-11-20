@@ -11,7 +11,8 @@
  *
  * `agent.model` remains the first candidate's concrete model. Opening selection runs in model input
  * middleware after continuation input is incorporated, so the opening before-model hook reports that
- * default while {@link AfterModelCallEvent} reports the effective routed model. Token estimation also
+ * default while {@link AfterModelCallEvent} reports the effective routed model. The agent span reports
+ * the default model's id and provider, and tool spans report its provider. Token estimation also
  * uses the default model, so prefer candidates with comparable context windows and tokenizers. If a
  * candidate fails after emitting part of a streamed response, consumers see that partial output
  * followed by the replacement model's full response.

@@ -317,7 +317,11 @@ export abstract class ToolExecutor {
     toolUse: ToolUseData,
     invocationState: InvocationState
   ): AsyncGenerator<AgentStreamEvent, ToolResultBlock, undefined> {
-    const toolSpan = options.tracer.startToolCallSpan({ tool: toolUse })
+    const genAIProviderName = options.agent.model.genAIProviderName
+    const toolSpan = options.tracer.startToolCallSpan({
+      tool: toolUse,
+      ...(genAIProviderName && { genAIProviderName }),
+    })
     const toolStartTime = Date.now()
 
     let toolResult: ToolResultBlock | undefined

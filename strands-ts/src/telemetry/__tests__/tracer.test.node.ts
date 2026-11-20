@@ -78,13 +78,14 @@ describe('Tracer', () => {
         messages: [textMessage('user', 'Hello')],
         agentName: 'test-agent',
         modelId: 'model-123',
+        genAIProviderName: 'aws.bedrock',
       })
 
       const [spanName, options] = getStartSpanCall()
       expect(spanName).toBe('invoke_agent test-agent')
       expect(options.attributes).toMatchObject({
         'gen_ai.operation.name': 'invoke_agent',
-        'gen_ai.system': expect.any(String),
+        'gen_ai.system': 'aws.bedrock',
         'gen_ai.agent.name': 'test-agent',
         'gen_ai.request.model': 'model-123',
         name: 'invoke_agent test-agent',
@@ -234,22 +235,45 @@ describe('Tracer', () => {
       vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
       const tracer = new Tracer()
 
-      tracer.startAgentSpan({ messages: [textMessage('user', 'Hello')], agentName: 'test-agent' })
+      tracer.startAgentSpan({
+        messages: [textMessage('user', 'Hello')],
+        agentName: 'test-agent',
+        genAIProviderName: 'aws.bedrock',
+      })
 
       const [, options] = getStartSpanCall()
-      expect(options.attributes['gen_ai.provider.name']).toBeDefined()
-      expect(options.attributes['gen_ai.system']).toBeUndefined()
+      expect(options.attributes['gen_ai.provider.name']).toBe('aws.bedrock')
+      expect(options.attributes).not.toHaveProperty('gen_ai.system')
     })
 
     it('uses gen_ai.system with stable conventions', () => {
       const tracer = new Tracer()
 
-      tracer.startAgentSpan({ messages: [textMessage('user', 'Hello')], agentName: 'test-agent' })
+      tracer.startAgentSpan({
+        messages: [textMessage('user', 'Hello')],
+        agentName: 'test-agent',
+        genAIProviderName: 'aws.bedrock',
+      })
 
       const [, options] = getStartSpanCall()
-      expect(options.attributes['gen_ai.system']).toBeDefined()
-      expect(options.attributes['gen_ai.provider.name']).toBeUndefined()
+      expect(options.attributes['gen_ai.system']).toBe('aws.bedrock')
+      expect(options.attributes).not.toHaveProperty('gen_ai.provider.name')
     })
+
+    it.each([[''], ['gen_ai_latest_experimental']])(
+      'omits the provider attribute when genAIProviderName is undefined (opt-in: %j)',
+      (optIn) => {
+        vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', optIn)
+        vi.stubEnv('OTEL_SERVICE_NAME', 'my-custom-service')
+        const tracer = new Tracer()
+
+        tracer.startAgentSpan({ messages: [textMessage('user', 'Hello')], agentName: 'test-agent' })
+
+        const [, options] = getStartSpanCall()
+        expect(options.attributes).not.toHaveProperty('gen_ai.system')
+        expect(options.attributes).not.toHaveProperty('gen_ai.provider.name')
+      }
+    )
   })
 
   describe('endAgentSpan', () => {
@@ -354,12 +378,17 @@ describe('Tracer', () => {
     it('creates span with chat operation name and model id', () => {
       const tracer = new Tracer()
 
-      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hello')], modelId: 'claude-3' })
+      tracer.startModelInvokeSpan({
+        messages: [textMessage('user', 'Hello')],
+        modelId: 'claude-3',
+        genAIProviderName: 'anthropic',
+      })
 
       const [spanName, options] = getStartSpanCall()
       expect(spanName).toBe('chat')
       expect(options.attributes).toMatchObject({
         'gen_ai.operation.name': 'chat',
+        'gen_ai.system': 'anthropic',
         'gen_ai.request.model': 'claude-3',
       })
     })
@@ -666,12 +695,14 @@ describe('Tracer', () => {
 
       tracer.startToolCallSpan({
         tool: { name: 'calculator', toolUseId: 'call-1', input: { expr: '2+2' } },
+        genAIProviderName: 'openai',
       })
 
       const [spanName, options] = getStartSpanCall()
       expect(spanName).toBe('execute_tool calculator')
       expect(options.attributes).toMatchObject({
         'gen_ai.operation.name': 'execute_tool',
+        'gen_ai.system': 'openai',
         'gen_ai.tool.name': 'calculator',
         'gen_ai.tool.call.id': 'call-1',
       })
@@ -1329,10 +1360,15 @@ describe('Tracer', () => {
       const tracer = new Tracer()
       const toolsConfig = { calc: { name: 'calc', description: 'Calculator' } }
 
-      tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent', toolsConfig })
+      tracer.startAgentSpan({
+        messages: [textMessage('user', 'Hi')],
+        agentName: 'agent',
+        genAIProviderName: 'aws.bedrock',
+        toolsConfig,
+      })
 
       const [, options] = getStartSpanCall()
-      expect(options.attributes['gen_ai.provider.name']).toBeDefined()
+      expect(options.attributes['gen_ai.provider.name']).toBe('aws.bedrock')
       expect(options.attributes['gen_ai.tool.definitions']).toBeDefined()
     })
 
@@ -1340,20 +1376,45 @@ describe('Tracer', () => {
       vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', ' gen_ai_latest_experimental , gen_ai_tool_definitions ')
       const tracer = new Tracer()
 
-      tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
+      tracer.startAgentSpan({
+        messages: [textMessage('user', 'Hi')],
+        agentName: 'agent',
+        genAIProviderName: 'aws.bedrock',
+      })
 
       const [, options] = getStartSpanCall()
-      expect(options.attributes['gen_ai.provider.name']).toBeDefined()
+      expect(options.attributes['gen_ai.provider.name']).toBe('aws.bedrock')
     })
 
     it('defaults to stable conventions when env var is empty', () => {
       const tracer = new Tracer()
 
-      tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
+      tracer.startAgentSpan({
+        messages: [textMessage('user', 'Hi')],
+        agentName: 'agent',
+        genAIProviderName: 'aws.bedrock',
+      })
 
       const [, options] = getStartSpanCall()
-      expect(options.attributes['gen_ai.system']).toBeDefined()
-      expect(options.attributes['gen_ai.provider.name']).toBeUndefined()
+      expect(options.attributes['gen_ai.system']).toBe('aws.bedrock')
+      expect(options.attributes).not.toHaveProperty('gen_ai.provider.name')
+    })
+  })
+
+  describe('multi-agent spans', () => {
+    it('omits the provider attribute on orchestrator and node spans', () => {
+      const tracer = new Tracer()
+
+      tracer.startMultiAgentSpan({ orchestratorId: 'graph-1', orchestratorType: 'graph' })
+      tracer.startNodeSpan({ nodeId: 'node-1', nodeType: 'agent' })
+
+      const attributeSets = mockStartSpan.mock.calls.map(
+        ([, options]) => (options as { attributes: Record<string, SpanAttributeValue | undefined> }).attributes
+      )
+      expect(attributeSets).toEqual([
+        expect.not.objectContaining({ 'gen_ai.system': expect.anything() }),
+        expect.not.objectContaining({ 'gen_ai.system': expect.anything() }),
+      ])
     })
   })
 
@@ -1375,6 +1436,7 @@ describe('Tracer', () => {
         'memory.store.count': 2,
         'memory.max_search_results': 5,
       })
+      expect(options.attributes).not.toHaveProperty('gen_ai.system')
       expect(eventAttr(mockSpan.getEvents('memory.query')[0]!, 'content')).toBe('dark mode preference')
     })
 

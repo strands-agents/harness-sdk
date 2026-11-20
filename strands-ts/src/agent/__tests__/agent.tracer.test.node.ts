@@ -46,6 +46,12 @@ vi.mock('../../telemetry/tracer.js', () => ({
   }),
 }))
 
+class ProviderModel extends MockMessageModel {
+  override get genAIProviderName(): string {
+    return 'aws.bedrock'
+  }
+}
+
 function getLatestTracer(): MockTracerInstance {
   return vi.mocked(Tracer).mock.results.at(-1)!.value
 }
@@ -98,7 +104,7 @@ describe('Agent tracer integration', () => {
 
   describe('agent span lifecycle', () => {
     it('starts and ends agent span on successful invocation', async () => {
-      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const model = new ProviderModel().addTurn({ type: 'textBlock', text: 'Hello' })
       const agent = new Agent({ model, name: 'TestAgent', id: 'test-id' })
       const tracer = getLatestTracer()
 
@@ -110,6 +116,7 @@ describe('Agent tracer integration', () => {
           agentName: 'TestAgent',
           agentId: 'test-id',
           modelId: 'test-model',
+          genAIProviderName: 'aws.bedrock',
         })
       )
       expect(tracer.endAgentSpan).toHaveBeenCalledTimes(1)
@@ -442,14 +449,16 @@ describe('Agent tracer integration', () => {
     })
 
     it('starts and ends model span on successful model call', async () => {
-      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const model = new ProviderModel().addTurn({ type: 'textBlock', text: 'Hello' })
       const agent = new Agent({ model })
       const tracer = getLatestTracer()
 
       await agent.invoke('Hi')
 
       expect(tracer.startModelInvokeSpan).toHaveBeenCalledTimes(1)
-      expect(tracer.startModelInvokeSpan).toHaveBeenCalledWith(expect.objectContaining({ modelId: 'test-model' }))
+      expect(tracer.startModelInvokeSpan).toHaveBeenCalledWith(
+        expect.objectContaining({ modelId: 'test-model', genAIProviderName: 'aws.bedrock' })
+      )
       expect(tracer.endModelInvokeSpan).toHaveBeenCalledTimes(1)
       expect(tracer.endModelInvokeSpan).toHaveBeenCalledWith(
         { mock: 'modelSpan' },
@@ -524,7 +533,7 @@ describe('Agent tracer integration', () => {
 
   describe('tool call span lifecycle', () => {
     it('starts and ends tool span for each tool execution', async () => {
-      const model = new MockMessageModel()
+      const model = new ProviderModel()
         .addTurn({ type: 'toolUseBlock', name: 'testTool', toolUseId: 'tool-1', input: { key: 'val' } })
         .addTurn({ type: 'textBlock', text: 'Done' })
 
@@ -550,6 +559,7 @@ describe('Agent tracer integration', () => {
           toolUseId: 'tool-1',
           input: { key: 'val' },
         }),
+        genAIProviderName: 'aws.bedrock',
       })
       expect(tracer.endToolCallSpan).toHaveBeenCalledTimes(1)
       expect(tracer.endToolCallSpan).toHaveBeenCalledWith(

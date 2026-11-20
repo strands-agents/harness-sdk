@@ -169,6 +169,11 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
     )
   }
 
+  /** `'openai'`, or `'aws.bedrock'` when `bedrockMantleConfig` routes calls to Bedrock. */
+  override get genAIProviderName(): string {
+    return this._mantleBaseUrl === undefined ? 'openai' : 'aws.bedrock'
+  }
+
   /**
    * Updates the model configuration.
    *

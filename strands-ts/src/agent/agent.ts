@@ -1762,6 +1762,8 @@ export class Agent implements LocalAgent, InvokableAgent {
       tools: this.tools,
     }
     if (agentModelId) agentSpanOptions.modelId = agentModelId
+    const agentGenAIProviderName = this.model.genAIProviderName
+    if (agentGenAIProviderName) agentSpanOptions.genAIProviderName = agentGenAIProviderName
     if (this.systemPrompt !== undefined) agentSpanOptions.systemPrompt = this.systemPrompt
     if (this.tools.length > 0) {
       agentSpanOptions.toolsConfig = Object.fromEntries(this.tools.map((tool) => [tool.name, tool.toolSpec]))
@@ -2656,9 +2658,11 @@ export class Agent implements LocalAgent, InvokableAgent {
       async function* (ctx: InvokeModelContext): AsyncGenerator<AgentStreamEvent, InvokeModelResult, undefined> {
         invokedModelRef.model = ctx.model
         const modelId = ctx.model.modelId
+        const genAIProviderName = ctx.model.genAIProviderName
         const modelSpan = self._tracer.startModelInvokeSpan({
           messages: ctx.messages as Message[],
           ...(modelId && { modelId }),
+          ...(genAIProviderName && { genAIProviderName }),
           ...(ctx.systemPrompt !== undefined && { systemPrompt: ctx.systemPrompt }),
         })
 

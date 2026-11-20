@@ -104,6 +104,13 @@ describe('VercelModel', () => {
   })
 
   describe('constructor and config', () => {
+    it('reports its gen_ai provider name from the provider namespace', () => {
+      expect(new VercelModel({ provider: createMockModel([], 'amazon-bedrock') }).genAIProviderName).toBe('aws.bedrock')
+      expect(new VercelModel({ provider: createMockModel([], 'openai.responses') }).genAIProviderName).toBe('openai')
+      expect(new VercelModel({ provider: createMockModel([], 'azure.chat') }).genAIProviderName).toBeUndefined()
+      expect(new VercelModel({ provider: createMockModel([], 'constructor.chat') }).genAIProviderName).toBeUndefined()
+    })
+
     it('uses model.modelId as default and allows override', () => {
       const mock = createMockModel([])
       expect(new VercelModel({ provider: mock }).getConfig().modelId).toBe('test-model')

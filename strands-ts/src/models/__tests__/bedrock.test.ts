@@ -452,6 +452,10 @@ describe('BedrockModel', () => {
   })
 
   describe('info', () => {
+    it('reports its gen_ai provider name', () => {
+      expect(new BedrockModel().genAIProviderName).toBe('aws.bedrock')
+    })
+
     it('reads cache points for Claude model ids from the shared model info', () => {
       const provider = new BedrockModel({ modelId: 'us.anthropic.claude-sonnet-4-6' })
 
