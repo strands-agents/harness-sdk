@@ -477,7 +477,8 @@ impl AgentToolStreamer {
     }
 
     /// Classifies a sub-agent result: interrupts to forward, an error (an interrupt stop without
-    /// interrupts, a cancel from either side, a limit stop), or success.
+    /// interrupts, a cancel from either side, a limit stop, a content-filtered or refused answer),
+    /// or success.
     fn classify(
         &self,
         child_cancel: &CancelHandle,
@@ -505,6 +506,18 @@ impl AgentToolStreamer {
             | StopReason::LimitStructuredOutputAttempts) => Classified::Error(format!(
                 "Agent '{name}' stopped early ({stop_reason}): a limit on this call was reached, so its answer is incomplete"
             )),
+            // `GuardrailIntervened` stays a success: Bedrock also reports it for masked output, which
+            // is a complete answer.
+            stop_reason @ (StopReason::ContentFiltered | StopReason::Refusal) => {
+                let message = format!("{} stopped before finishing (stopReason={stop_reason}).", self.label);
+                let partial = result.to_string();
+                let partial = partial.trim_end_matches('\n');
+                if partial.is_empty() {
+                    Classified::Error(message)
+                } else {
+                    Classified::Error(format!("{message}\n\nPartial output:\n{partial}"))
+                }
+            }
             _ => Classified::Success,
         }
     }

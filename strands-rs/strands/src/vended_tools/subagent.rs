@@ -405,9 +405,9 @@ impl Inner {
         }
     }
 
-    fn build(&self, spec: &AgentSpec, parent: &ToolAgent) -> Result<Agent> {
+    async fn build(&self, spec: &AgentSpec, parent: &ToolAgent) -> Result<Agent> {
         match &self.builder {
-            Some(builder) => builder(spec),
+            Some(builder) => builder.build(spec.clone()).await,
             None => default_builder(spec, parent),
         }
     }
@@ -495,7 +495,7 @@ impl Inner {
                 return Prepared::Done(error_result(tool_use_id, "Parameter 'instructions' must be a string."));
             }
         };
-        let child = match self.build(&spec, parent) {
+        let child = match self.build(&spec, parent).await {
             Ok(child) => child,
             Err(error) => return Prepared::Done(self.fail(tool_use_id, &error.to_string())),
         };
@@ -521,7 +521,7 @@ impl Inner {
                 return Prepared::Done(self.fail(tool_use_id, "Parameter 'instructions' must be a string."));
             }
         };
-        let mut child = match self.build(&spec, parent) {
+        let mut child = match self.build(&spec, parent).await {
             Ok(child) => Some(child),
             Err(error) => {
                 tracing::warn!(

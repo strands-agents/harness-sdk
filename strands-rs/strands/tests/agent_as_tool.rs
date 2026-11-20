@@ -229,6 +229,26 @@ mod stream {
     }
 
     #[tokio::test]
+    async fn returns_an_error_with_the_partial_output_when_the_wrapped_agent_stops_with_content_filtered_or_refusal() {
+        for stop_reason in [StopReason::ContentFiltered, StopReason::Refusal] {
+            let model = MockModel::new().with_turn(MockTurn::text("partial").with_stop_reason(stop_reason.clone()));
+            let tool = sub_agent(model, "test-agent").as_tool(AgentAsToolOptions::default());
+
+            let (_, result) = run(tool.stream(context("test-agent", "tool-1", "Hello agent"))).await;
+
+            assert_eq!(
+                result,
+                create_error_result(
+                    format!(
+                        "Agent 'test-agent' stopped before finishing (stopReason={stop_reason}).\n\nPartial output:\npartial"
+                    ),
+                    "tool-1"
+                )
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn returns_an_error_when_the_execution_signal_cancels_the_wrapped_agent() {
         let agent = sub_agent(MockModel::new().with_turn("Agent response"), "test-agent");
         let context = context("test-agent", "tool-1", "Hello agent");
