@@ -309,6 +309,12 @@ impl HttpTransport {
         })
     }
 
+    /// The API base URL paths are appended to.
+    #[allow(dead_code, reason = "the OpenAI provider reads it")]
+    pub(crate) fn base_url(&self) -> &str {
+        &self.config.base_url
+    }
+
     /// Replaces how the transport waits between attempts.
     #[must_use]
     #[allow(dead_code, reason = "tests wait without sleeping")]

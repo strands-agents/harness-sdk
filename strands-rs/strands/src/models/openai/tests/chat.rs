@@ -1305,3 +1305,225 @@ mod error_handling {
         assert_eq!(error.to_string(), "Request timed out.");
     }
 }
+
+mod tools_on_models_that_limit_them {
+    use super::*;
+    use crate::models::http::ErrorPayload;
+
+    const OPENAI_URL: &str = "https://api.openai.com/v1";
+    const MANTLE_URL: &str = "https://bedrock-mantle.us-east-1.api.aws/openai/v1";
+    const PROXY_URL: &str = "http://localhost:4000/v1";
+
+    struct Sent {
+        base_url: Option<&'static str>,
+        model_id: &'static str,
+        params: Option<JsonValue>,
+        with_tools: bool,
+    }
+
+    fn sent(base_url: Option<&'static str>, model_id: &'static str) -> Sent {
+        Sent {
+            base_url,
+            model_id,
+            params: None,
+            with_tools: true,
+        }
+    }
+
+    fn effort(mut sent: Sent, effort: &str) -> Sent {
+        sent.params = Some(json!({"reasoning_effort": effort}));
+        sent
+    }
+
+    fn without_tools(mut sent: Sent) -> Sent {
+        sent.with_tools = false;
+        sent
+    }
+
+    fn model_options(sent: &Sent) -> OpenAIModelOptions {
+        OpenAIModelOptions {
+            model_id: Some(sent.model_id.to_owned()),
+            params: sent.params.clone(),
+            ..options(OpenAIApi::Chat)
+        }
+    }
+
+    fn tools_request(with_tools: bool) -> ModelRequest {
+        let tools = with_tools
+            .then(|| ToolSpec::new("echo", "Echo a value").with_input_schema(json!({"type": "object"})))
+            .into_iter()
+            .collect::<Vec<_>>();
+        ModelRequest::builder()
+            .messages(vec![Message::user("Hi")])
+            .tool_specs(tools)
+            .build()
+    }
+
+    /// The body `format_chat_request` builds for `sent`, before any tool limit applies.
+    fn formatted(sent: &Sent) -> JsonValue {
+        let parts = model_options(sent).into_parts();
+        let config = prepare_config(parts.api, parts.config).unwrap();
+        JsonValue::Object(format_chat_request(&config, &tools_request(sent.with_tools)).unwrap())
+    }
+
+    fn warning(model_id: &str) -> String {
+        format!(
+            "model_id=<{model_id}> | this model accepts tools on the Chat Completions API only with reasoning off, sending reasoning_effort='none'; use api: OpenAIApi::Responses to keep reasoning"
+        )
+    }
+
+    async fn send(sent: &Sent) -> JsonValue {
+        let client = MockClient::at(sent.base_url, vec![role("assistant"), finish("stop")], None);
+        let model = model_with(&client, model_options(sent));
+        collect(&model, tools_request(sent.with_tools)).await.unwrap();
+        client.last()
+    }
+
+    fn api_error(status: u16, param: Option<&str>) -> HttpError {
+        let body =
+            json!({"error": {"message": "Function tools with reasoning_effort are not supported", "param": param}});
+        HttpError::status(status, Some(body), "", ErrorPayload::ErrorField)
+    }
+
+    async fn reject(sent: &Sent, status: u16, param: Option<&'static str>) -> Error {
+        let error: Box<dyn Fn() -> HttpError + Send + Sync> = Box::new(move || api_error(status, param));
+        let client = MockClient::at(sent.base_url, Vec::new(), Some(error));
+        collect_error(
+            &model_with(&client, model_options(sent)),
+            tools_request(sent.with_tools),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn turns_reasoning_off_and_warns_when_model_id_is_sent_tools_at_base_url() {
+        for sent in [
+            sent(Some(OPENAI_URL), "gpt-6-sol"),
+            sent(Some("https://API.OPENAI.COM:443/v1"), "gpt-6-sol"),
+            sent(Some(MANTLE_URL), "openai.gpt-6.1-terra"),
+        ] {
+            forget_warning(&warning(sent.model_id));
+            let (logs, _guard) = record_logs();
+            let mut expected = formatted(&sent);
+            expected["reasoning_effort"] = json!("none");
+
+            assert_eq!(send(&sent).await, expected, "{:?}", sent.base_url);
+            assert!(logs.text().contains(&warning(sent.model_id)), "{:?}", sent.base_url);
+        }
+    }
+
+    #[tokio::test]
+    async fn sends_the_request_as_formatted_unless_it_turns_reasoning_off() {
+        for (name, sent) in [
+            ("no tools", without_tools(sent(Some(OPENAI_URL), "gpt-6-sol"))),
+            ("effort none", effort(sent(Some(OPENAI_URL), "gpt-6-sol"), "none")),
+            ("effort low", effort(sent(Some(OPENAI_URL), "gpt-6-sol"), "low")),
+            ("tool-less model", sent(Some(OPENAI_URL), "gpt-6-astra")),
+            (
+                "tool-less model, effort none",
+                effort(sent(Some(OPENAI_URL), "gpt-6.1-sol"), "none"),
+            ),
+            (
+                "tool-less model on Mantle",
+                sent(Some(MANTLE_URL), "openai.gpt-6.1-sol"),
+            ),
+            ("older model", effort(sent(Some(OPENAI_URL), "gpt-5.4"), "low")),
+            ("other endpoint", sent(Some(PROXY_URL), "gpt-6-sol")),
+            (
+                "bedrock-runtime",
+                sent(
+                    Some("https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1"),
+                    "openai.gpt-6.1-terra",
+                ),
+            ),
+            (
+                "look-alike host",
+                sent(Some("https://api.openai.com.evil.example/v1"), "gpt-6-sol"),
+            ),
+            ("client without a base URL", sent(None, "gpt-6-sol")),
+        ] {
+            forget_warning(&warning(sent.model_id));
+            let (logs, _guard) = record_logs();
+
+            assert_eq!(send(&sent).await, formatted(&sent), "{name}");
+            assert!(!logs.text().contains("accepts tools"), "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn points_to_the_responses_api_when_tools_are_rejected_for_a_model_that_takes_none() {
+        for sent in [
+            sent(Some(OPENAI_URL), "gpt-6-astra"),
+            effort(sent(Some(OPENAI_URL), "gpt-6.1-sol"), "none"),
+            sent(Some(MANTLE_URL), "openai.gpt-6.1-sol"),
+        ] {
+            let error = reject(&sent, 400, Some("reasoning_effort")).await;
+
+            let Error::Model(model_error) = &error else {
+                panic!("{error:?}");
+            };
+            assert_eq!(
+                model_error.message,
+                format!(
+                    "400 Function tools with reasoning_effort are not supported {} does not accept tools on the Chat Completions API with any reasoning_effort. Use OpenAIModel with api: OpenAIApi::Responses instead.",
+                    sent.model_id
+                )
+            );
+            let source = std::error::Error::source(&error)
+                .unwrap()
+                .downcast_ref::<HttpError>()
+                .unwrap();
+            assert_eq!(
+                source.message(),
+                "400 Function tools with reasoning_effort are not supported"
+            );
+            assert_eq!(source.status_code(), Some(400));
+        }
+    }
+
+    #[tokio::test]
+    async fn passes_an_error_through_unless_tools_are_rejected_for_a_model_that_takes_none() {
+        for (name, sent, status, param) in [
+            (
+                "no tools",
+                without_tools(sent(Some(OPENAI_URL), "gpt-6-astra")),
+                400,
+                Some("reasoning_effort"),
+            ),
+            (
+                "model that takes tools",
+                effort(sent(Some(OPENAI_URL), "gpt-6-sol"), "low"),
+                400,
+                Some("reasoning_effort"),
+            ),
+            (
+                "other endpoint",
+                sent(Some(PROXY_URL), "gpt-6-astra"),
+                400,
+                Some("reasoning_effort"),
+            ),
+            (
+                "other param",
+                sent(Some(OPENAI_URL), "gpt-6-astra"),
+                400,
+                Some("max_completion_tokens"),
+            ),
+            ("no param", sent(Some(OPENAI_URL), "gpt-6-astra"), 400, None),
+            (
+                "server error",
+                sent(Some(OPENAI_URL), "gpt-6-astra"),
+                500,
+                Some("reasoning_effort"),
+            ),
+        ] {
+            let error = reject(&sent, status, param).await;
+
+            assert!(matches!(error, Error::Model(_)), "{name}: {error:?}");
+            assert_eq!(
+                error.to_string(),
+                format!("{status} Function tools with reasoning_effort are not supported"),
+                "{name}"
+            );
+        }
+    }
+}

@@ -254,17 +254,74 @@ fn strip_date_suffix(model_id: &str) -> &str {
 /// date, then with each leading dot-separated segment removed in turn
 /// (`us.anthropic.claude-x`, `anthropic.claude-x`, `claude-x`), the rule the Python SDK applies.
 pub(crate) fn lookup_model(model_id: &str) -> Option<&'static ModelInfo> {
+    lookup_key(model_id).and_then(|key| DATA.models.get(key))
+}
+
+/// Finds the key of the entry for a model id, by the rule [`lookup_model`] documents.
+fn lookup_key(model_id: &str) -> Option<&'static str> {
     let models = &DATA.models;
     let mut candidate = model_id;
     loop {
         let unversioned = strip_version_suffix(candidate);
         let keys = [candidate, unversioned, strip_date_suffix(unversioned)];
-        if let Some(entry) = keys.iter().find_map(|key| models.get(*key)) {
-            return Some(entry);
+        if let Some((key, _)) = keys.iter().find_map(|key| models.get_key_value(*key)) {
+            return Some(key.as_str());
         }
         let (_, rest) = candidate.split_once('.')?;
         candidate = rest;
     }
+}
+
+/// The values of `capabilities.chatCompletionsTools` in the data (`ChatCompletionsTools`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum ChatCompletionsTools {
+    /// The model accepts tools only with `reasoning_effort: "none"`.
+    ReasoningOff,
+    /// The model accepts no tools.
+    Unsupported,
+}
+
+/// The `capabilities` fields of the shared data that [`ModelCapabilities`] does not carry, which
+/// a single provider reads.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderCapabilities {
+    chat_completions_tools: Option<ChatCompletionsTools>,
+}
+
+#[derive(Deserialize)]
+struct ProviderEntry {
+    #[serde(default)]
+    capabilities: ProviderCapabilities,
+}
+
+#[derive(Deserialize)]
+struct ProviderData {
+    models: HashMap<String, ProviderEntry>,
+}
+
+/// [`ProviderCapabilities`] by model key.
+static PROVIDER_CAPABILITIES: LazyLock<HashMap<String, ProviderCapabilities>> = LazyLock::new(|| {
+    let data: ProviderData = serde_json::from_str(MODEL_INFO_JSON).unwrap_or_else(|error| {
+        tracing::error!("error=<{error}> | embedded model info data is invalid | using no provider capabilities");
+        ProviderData { models: HashMap::new() }
+    });
+    data.models
+        .into_iter()
+        .map(|(key, entry)| (key, entry.capabilities))
+        .collect()
+});
+
+fn provider_capabilities(model_id: &str) -> Option<&'static ProviderCapabilities> {
+    lookup_key(model_id).and_then(|key| PROVIDER_CAPABILITIES.get(key))
+}
+
+/// Whether OpenAI's Chat Completions API accepts tools for a model: `ReasoningOff` when only with
+/// reasoning off, `Unsupported` when not at all, `None` when the data does not say.
+#[allow(dead_code, reason = "the OpenAI Chat Completions provider reads it")]
+pub(crate) fn lookup_chat_completions_tools(model_id: &str) -> Option<ChatCompletionsTools> {
+    provider_capabilities(model_id)?.chat_completions_tools
 }
 
 /// What the shared model info data knows about a model; empty when it knows nothing.
@@ -376,6 +433,22 @@ mod tests {
             lookup_model("claude-3-5-haiku-20241022").unwrap().limits.context_window,
             Some(200_000)
         );
+    }
+
+    #[test]
+    fn reads_the_chat_completions_tools_fact_from_the_entry_the_id_resolves_to() {
+        let cases = [
+            ("gpt-6-sol", Some(ChatCompletionsTools::ReasoningOff)),
+            ("us.openai.gpt-6-luna", Some(ChatCompletionsTools::ReasoningOff)),
+            ("gpt-6-astra", Some(ChatCompletionsTools::Unsupported)),
+            ("openai.gpt-6.1-sol", Some(ChatCompletionsTools::Unsupported)),
+            ("openai.gpt-6.2-sol", Some(ChatCompletionsTools::Unsupported)),
+            ("gpt-5.4", None),
+            ("unknown-model", None),
+        ];
+        for (model_id, support) in cases {
+            assert_eq!(lookup_chat_completions_tools(model_id), support, "{model_id}");
+        }
     }
 
     #[test]
