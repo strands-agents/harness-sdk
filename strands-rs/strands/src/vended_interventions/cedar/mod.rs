@@ -28,7 +28,7 @@ mod schema_generator;
 
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::{Mutex, PoisonError, RwLock};
+use std::sync::{PoisonError, RwLock};
 
 use async_trait::async_trait;
 use cedar_policy::ffi::{AuthorizationCall, ValidationCall, check_parse_policy_set_json, is_authorized, validate};
@@ -228,8 +228,9 @@ struct Loaded {
 /// Authorizes each tool call against Cedar policies (`CedarAuthorization`).
 ///
 /// A denial is the tool result `DENIED: Access denied by Cedar policy[: <details>]`. The per-tool
-/// call counts behind `context.session.call_count` are kept in app state under
-/// [`CEDAR_AUTHORIZATION_STATE_KEY`]; a denied call does not count.
+/// call counts behind `context.session.call_count` are kept in each agent's app state under
+/// [`CEDAR_AUTHORIZATION_STATE_KEY`], so agents that share one handler (such as a parent and its
+/// subagents) each have their own budget; a denied call does not count.
 pub struct CedarAuthorization {
     sources: Sources,
     loaded: RwLock<Loaded>,
@@ -239,7 +240,6 @@ pub struct CedarAuthorization {
     on_error: OnError,
     action_type: String,
     resource: TypeAndId,
-    call_counts: Mutex<IndexMap<String, i64>>,
 }
 
 impl fmt::Debug for CedarAuthorization {
@@ -292,14 +292,11 @@ impl CedarAuthorization {
             principal_resolver: config.principal_resolver,
             context_enricher: config.context_enricher,
             on_error: config.on_error.unwrap_or_default(),
-            call_counts: Mutex::new(IndexMap::new()),
         })
     }
 
-    /// Clears the rate-limit call counts, in memory and in `app_state`. Pass
-    /// the agent's `app_state()`.
+    /// Clears the agent's rate-limit call counts. Pass the agent's `app_state()`.
     pub fn reset_call_counts(&self, app_state: &StateStore) {
-        self.counts().clear();
         if let Err(error) = app_state.set(CEDAR_AUTHORIZATION_STATE_KEY, json!({})) {
             tracing::warn!("error=<{error}> | failed to reset the cedar call counts");
         }
@@ -315,31 +312,6 @@ impl CedarAuthorization {
         let loaded = self.sources.load()?;
         *self.loaded.write().unwrap_or_else(PoisonError::into_inner) = loaded;
         Ok(())
-    }
-
-    fn counts(&self) -> std::sync::MutexGuard<'_, IndexMap<String, i64>> {
-        self.call_counts.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn increment_call_count(&self, app_state: &StateStore, tool_name: &str) -> i64 {
-        let mut counts = self.counts();
-        if counts.is_empty() {
-            let stored: Option<IndexMap<String, i64>> = app_state.get(CEDAR_AUTHORIZATION_STATE_KEY).ok().flatten();
-            counts.extend(stored.unwrap_or_default());
-        }
-        let next = counts.get(tool_name).copied().unwrap_or(0) + 1;
-        counts.insert(tool_name.to_owned(), next);
-        store_counts(app_state, &counts);
-        next
-    }
-
-    fn decrement_call_count(&self, app_state: &StateStore, tool_name: &str) {
-        let mut counts = self.counts();
-        let Some(current) = counts.get_mut(tool_name).filter(|current| **current > 0) else {
-            return;
-        };
-        *current -= 1;
-        store_counts(app_state, &counts);
     }
 
     fn principal(&self, invocation_state: &InvocationState) -> Result<Option<TypeAndId>, BoxError> {
@@ -359,7 +331,7 @@ impl CedarAuthorization {
         };
         let tool_name = event.tool_use().name.as_str();
         let app_state = event.agent().app_state();
-        let call_count = self.increment_call_count(app_state, tool_name);
+        let call_count = increment_call_count(app_state, tool_name);
         let tool_input = match &event.tool_use().input {
             JsonValue::Null => json!({}),
             input => input.clone(),
@@ -389,7 +361,7 @@ impl CedarAuthorization {
         match evaluate(call) {
             Decision::Allow => Ok(InterventionAction::proceed()),
             Decision::Deny(reason) => {
-                self.decrement_call_count(app_state, tool_name);
+                decrement_call_count(app_state, tool_name);
                 Ok(InterventionAction::deny(reason))
             }
         }
@@ -469,6 +441,32 @@ fn evaluate(call: JsonValue) -> Decision {
         return Decision::Deny("Access denied by Cedar policy".to_owned());
     }
     Decision::Deny(format!("Access denied by Cedar policy: {}", details.join(", ")))
+}
+
+fn increment_call_count(app_state: &StateStore, tool_name: &str) -> i64 {
+    let mut counts = stored_counts(app_state);
+    let next = counts.get(tool_name).copied().unwrap_or(0) + 1;
+    counts.insert(tool_name.to_owned(), next);
+    store_counts(app_state, &counts);
+    next
+}
+
+fn decrement_call_count(app_state: &StateStore, tool_name: &str) {
+    let mut counts = stored_counts(app_state);
+    let Some(current) = counts.get_mut(tool_name).filter(|current| **current > 0) else {
+        return;
+    };
+    *current -= 1;
+    store_counts(app_state, &counts);
+}
+
+/// The agent's call counts; anything but a map of integers counts as none.
+fn stored_counts(app_state: &StateStore) -> IndexMap<String, i64> {
+    app_state
+        .get(CEDAR_AUTHORIZATION_STATE_KEY)
+        .ok()
+        .flatten()
+        .unwrap_or_default()
 }
 
 fn store_counts(app_state: &StateStore, counts: &IndexMap<String, i64>) {
