@@ -1,0 +1,1459 @@
+import chalk from 'chalk'
+import { join } from 'node:path'
+import { createElement } from 'react'
+import { Box } from 'ink'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { WorkspaceFolderInUse } from '../../src/dev/errors.js'
+import { chooseHarness, HarnessPicker } from '../../src/dev/picker.js'
+import type { DiscoveredHarness } from '../../src/dev/search.js'
+import * as terminal from '../../src/terminal/terminal.js'
+import { sanitizeTerminalText } from '../../src/terminal/text.js'
+import { StartupContentRows } from '../../src/ui/startup.js'
+import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
+
+const harness = {
+  name: 'Project harness',
+  entrypoint: '/project/agent.py',
+  root: '/project',
+  language: 'python' as const,
+}
+
+afterEach(() => vi.restoreAllMocks())
+
+describe('HarnessPicker', () => {
+  it.each([120, 60])('shouldKeepRowsFixedWhenDescriptionsChangeAtWidth%s', async (columns) => {
+    const input = ttyInput()
+    const output = ttyOutput(columns, 40)
+    const frame = captureFrame(output)
+    render(
+      createElement(
+        Box,
+        { height: 40, width: columns, flexDirection: 'column', justifyContent: 'flex-end' },
+        createElement(HarnessPicker, {
+          cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+          folderFor: () => ({ path: '/work/base-cli', detected: false }),
+          harnesses: [harness],
+          onSelect: vi.fn(),
+        })
+      ),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Changes here also change plain strands.'))
+    const positions = (): number[] =>
+      ['Select a harness', 'Global Harness', 'Project harness', 'New Harness', '↑↓ select'].map((text) =>
+        frame().findIndex((line) => line.includes(text))
+      )
+    const initial = positions()
+    expect(initial.every((row) => row >= 0)).toBe(true)
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Local project only'))
+    expect(positions()).toEqual(initial)
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Start a separate project'))
+    expect(positions()).toEqual(initial)
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Changes here also change plain strands.'))
+    expect(positions()).toEqual(initial)
+  })
+
+  it('shouldKeepEveryChoiceReachableWhenTheTerminalIsSmall', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(60, 10)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [harness],
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Base CLI'))
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Project harness'))
+    expect(frame().join('\n')).toContain('/project/agent.py')
+    input.write('\r')
+    await vi.waitFor(() => expect(selected).toHaveBeenCalledWith({ kind: 'discovered', harness }))
+  })
+
+  it('shouldSelectTheBaseCliWhenTheFirstChoiceIsAccepted', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [harness],
+        onSelect: selected,
+      }),
+      {
+        stdin: input,
+        stdout: output,
+      }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+
+    const text = frame().join('\n')
+    expect(text.indexOf('Base CLI')).toBeLessThan(text.indexOf('Project harness'))
+    expect(text).toContain('Source: /home/test/.strands/cli.toml')
+    expect(text).toContain('Changes here also change plain strands.')
+    expect(text).toContain('They save into ~/.strands/cli.toml, or into the agent file that it uses.')
+    expect(text).toContain('Global Harness')
+    expect(text).toContain('Discovered Harnesses (1)')
+    input.write('\r')
+
+    await vi.waitFor(() => expect(selected).toHaveBeenCalledWith({ kind: 'cli' }))
+  })
+
+  it('shouldOfferCreationWhenOnlyTheBaseCliExists', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [],
+        onSelect: selected,
+      }),
+      {
+        stdin: input,
+        stdout: output,
+      }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Create a new harness'))
+
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Language: typescript'))
+    input.write('\t')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Language: python'))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'python' })
+    )
+  })
+
+  it('shouldHideTheBaseCliAndWarnWhenNoCliOptionIsGiven', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        harnesses: [harness],
+        warning: 'When you select an agent, strands dev deletes your current agent.',
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+
+    const text = frame().join('\n')
+    expect(text).toContain('When you select an agent, strands dev deletes your current agent.')
+    expect(text).not.toContain('Base CLI')
+    expect(text).not.toContain('Global Harness')
+    expect(text).toContain('1 / 2')
+    expect(text).toContain('Source: /project/agent.py')
+    input.write('\r')
+
+    await vi.waitFor(() => expect(selected).toHaveBeenCalledWith({ kind: 'discovered', harness }))
+  })
+
+  it('shouldKeepTheWarningVisibleWhileCreatingAHarness', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        harnesses: [],
+        warning: 'When you select an agent, strands dev deletes your current agent.',
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Create a harness'))
+
+    expect(frame().join('\n')).toContain('When you select an agent, strands dev deletes your current agent.')
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'typescript' })
+    )
+  })
+
+  const withFolder = (harnesses: (typeof harness)[] = [harness]) => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses,
+        folderFor: () => ({ path: '/work/strands-dev', detected: false }),
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    return { input, text: () => frame().join('\n'), selected }
+  }
+
+  it('shouldAskForThePrefilledWorkspaceFolderBeforeOpeningAChoice', async () => {
+    const { input, text, selected } = withFolder()
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('› Project harness'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
+    expect(text()).toMatch(/Workspace folder: \/work▌?\s*$/m)
+    expect(text()).toContain('A strands-dev folder will be created in this path')
+    expect(text()).toContain('Project harness')
+    expect(selected).not.toHaveBeenCalled()
+    input.write('\r')
+
+    await vi.waitFor(() => expect(selected).toHaveBeenCalledWith({ kind: 'discovered', harness }, '/work/strands-dev'))
+  })
+
+  const withDetectedWorkspace = () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [],
+        folderFor: () => ({ path: '/home/test/.strands/strands-dev', detected: true }),
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    return { input, text: () => frame().join('\n'), selected }
+  }
+
+  it('shouldOpenTheDetectedWorkspaceWithoutAskingForAFolder', async () => {
+    const { input, text, selected } = withDetectedWorkspace()
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    expect(text()).toContain('Enter open')
+
+    input.write('\r')
+
+    await vi.waitFor(() => expect(selected).toHaveBeenCalledWith({ kind: 'cli' }, '/home/test/.strands/strands-dev'))
+    expect(text()).not.toContain('Create a workspace')
+  })
+
+  it('shouldSubmitTheEditedFolderWhenTheUserChangesIt', async () => {
+    const { input, text, selected } = withFolder()
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toMatch(/Workspace folder: \/work▌?\s*$/m))
+
+    input.write('/my-agents')
+    await vi.waitFor(() => expect(text()).toContain('Workspace folder: /work/my-agents'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(selected).toHaveBeenCalledWith({ kind: 'cli' }, '/work/my-agents'))
+  })
+
+  it('shouldReturnToTheListWhenEscapeIsPressedInTheFolderStep', async () => {
+    const { input, text, selected } = withFolder()
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
+
+    input.write('\u001b')
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    expect(selected).not.toHaveBeenCalled()
+    input.write('\u001b')
+
+    await vi.waitFor(() => expect(selected).toHaveBeenCalledWith(undefined))
+  })
+
+  it.each([
+    ['BaseCli', '', '/home/test/.strands/cli.toml'],
+    ['FoundHarness', '\u001b[B', '/project/agent.py'],
+  ])('shouldShowTheSelectedProjectAboveTheFolderStepWhen%sIsChosen', async (_, move, path) => {
+    const { input, text } = withFolder()
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write(move)
+    input.write('\r')
+
+    await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
+    const lines = text().split('\n')
+    const row = (label: string): number => lines.findIndex((line) => line.includes(label))
+    expect(row('Selected project')).toBeGreaterThanOrEqual(0)
+    expect(row(`Harness path: ${path}`)).toBe(row('Selected project') + 1)
+    expect(row('Create a workspace')).toBeGreaterThan(row(`Harness path: ${path}`))
+  })
+
+  it('shouldLeaveOutTheSelectedProjectWhenANewHarnessNeedsAFolder', async () => {
+    const { input, text } = withFolder([])
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('› Create a new harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Tab language · Enter continue'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(text()).toContain('New project · new-harness'))
+    expect(text()).not.toContain('Selected project')
+  })
+
+  it('shouldColorTheHeadingAndContextGreenWhenTheFolderStepIsShown', async () => {
+    const level = chalk.level
+    chalk.level = 3
+    try {
+      const input = ttyInput()
+      const output = ttyOutput(100, 36)
+      const frame = captureFrame(output)
+      let headingRow = ''
+      output.on('data', (chunk: Buffer) => {
+        headingRow =
+          chunk
+            .toString()
+            .split('\n')
+            .find((line) => sanitizeTerminalText(line).includes('Create a workspace')) ?? headingRow
+      })
+      render(
+        createElement(HarnessPicker, {
+          harnesses: [harness],
+          folderFor: () => ({ path: '/work/strands-dev', detected: false }),
+          onSelect: vi.fn(),
+        }),
+        { stdin: input, stdout: output }
+      )
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+      input.write('\r')
+
+      const green = '\u001b[38;2;104;245;138m'
+      await vi.waitFor(() => {
+        const headingStart = headingRow.indexOf('Create a workspace')
+        expect(headingRow.lastIndexOf(green, headingStart)).toBeGreaterThanOrEqual(0)
+        expect(headingRow.lastIndexOf(green, headingRow.indexOf('Project harness'))).toBeGreaterThan(headingStart)
+      })
+    } finally {
+      chalk.level = level
+    }
+  })
+
+  it('shouldAskForTheFolderAfterTheNewHarnessForm', async () => {
+    const { input, text, selected } = withFolder([])
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('› Create a new harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Tab language · Enter continue'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(text()).toContain('New project · new-harness'))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith(
+        { kind: 'create', name: 'new-harness', language: 'typescript' },
+        '/work/strands-dev'
+      )
+    )
+  })
+
+  it('shouldRequireAFolderBeforeContinuing', async () => {
+    const { input, text, selected } = withFolder()
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toMatch(/Workspace folder: \/work▌?\s*$/m))
+
+    input.write('\u0015')
+    await vi.waitFor(() => expect(text()).not.toContain('Workspace folder: /work'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(text()).toContain('Enter a workspace folder.'))
+    expect(selected).not.toHaveBeenCalled()
+  })
+
+  it('shouldReturnToTheListWhenEscapeIsPressedAfterTheNewHarnessForm', async () => {
+    const { input, text, selected } = withFolder([])
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('› Create a new harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Create a harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
+
+    input.write('\u001b')
+
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    expect(selected).not.toHaveBeenCalled()
+  })
+
+  it('shouldKeepTheFolderStepOpenSoTheUserCanRetryAfterAFailure', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn().mockRejectedValueOnce(new Error('Folder is busy')).mockResolvedValueOnce(undefined)
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [],
+        folderFor: () => ({ path: '/work/strands-dev', detected: false }),
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Create a workspace'))
+    input.write('\r')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Folder is busy'))
+    expect(frame().join('\n')).toContain('Create a workspace')
+
+    input.write('/other')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Workspace folder: /work/other'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(selected).toHaveBeenLastCalledWith({ kind: 'cli' }, '/work/other'))
+    expect(selected).toHaveBeenNthCalledWith(1, { kind: 'cli' }, '/work/strands-dev')
+    expect(selected).toHaveBeenCalledTimes(2)
+  })
+
+  const withOccupiedFolder = (selected: Parameters<typeof HarnessPicker>[0]['onSelect']) => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 40)
+    const frame = captureFrame(output)
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [],
+        folderFor: () => ({
+          path: '/home/test/.strands/strands-dev',
+          detected: false,
+          occupiedBy: 'Strands harness (/desk/agent.py)',
+        }),
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    return { input, text: () => frame().join('\n').replace(/\s+/gu, ' ') }
+  }
+  const inUse = () => new WorkspaceFolderInUse('/home/test/.strands/strands-dev', 'Strands harness (/desk/agent.py)')
+
+  it('shouldSayTheSuggestedFolderHoldsAnotherWorkspaceBeforeTheUserContinues', async () => {
+    const { input, text } = withOccupiedFolder(vi.fn())
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(text()).toContain('strands-dev in this path holds the workspace of Strands harness (/desk/agent.py).')
+    )
+    expect(text()).toContain('Enter asks you to confirm before it is replaced.')
+  })
+
+  it('shouldReplaceTheFolderOnlyAfterTheUserTypesDelete', async () => {
+    const selected = vi.fn().mockRejectedValueOnce(inUse()).mockResolvedValueOnce(undefined)
+    const { input, text } = withOccupiedFolder(selected)
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(text()).toContain('DELETE workspace and replace?'))
+    expect(text()).toContain('Current workspace: Strands harness (/desk/agent.py)')
+    expect(text()).toContain('Replacement: Base CLI · Saved profile')
+    input.write('DELET')
+    await vi.waitFor(() => expect(text()).toContain('Type DELETE to confirm: DELET▏'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Type DELETE exactly to confirm'))
+    expect(selected).toHaveBeenCalledTimes(1)
+    input.write('E')
+    await vi.waitFor(() => expect(text()).toContain('Type DELETE to confirm: DELETE▏'))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenLastCalledWith({ kind: 'cli' }, '/home/test/.strands/strands-dev', true)
+    )
+    expect(selected).toHaveBeenNthCalledWith(1, { kind: 'cli' }, '/home/test/.strands/strands-dev')
+  })
+
+  it('shouldReturnToTheFolderStepWhenTheUserCancelsTheReplacement', async () => {
+    const selected = vi.fn().mockRejectedValueOnce(inUse())
+    const { input, text } = withOccupiedFolder(selected)
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('DELETE workspace and replace?'))
+
+    input.write('\u001b')
+
+    await vi.waitFor(() => expect(text()).toContain('Create a workspace'))
+    expect(text()).not.toContain('DELETE workspace and replace?')
+    expect(selected).toHaveBeenCalledTimes(1)
+  })
+
+  it('shouldNameTheNumberedFolderInTheNoteUntilThePathChanges', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [],
+        folderFor: () => ({ path: '/work/strands-dev-2', detected: false }),
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(frame().join('\n')).toMatch(/Workspace folder: \/work▌?\s*$/m))
+    expect(frame().join('\n')).toContain('A strands-dev-2 folder will be created in this path')
+
+    input.write('/next')
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('A strands-dev folder will be created in this path'))
+    expect(frame().join('\n')).not.toContain('strands-dev-2')
+  })
+
+  const withPlacement = () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    const other = { ...harness, name: 'Other harness', entrypoint: '/other/agent.py', root: '/other' }
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [harness, other],
+        folderFor: (choice) =>
+          choice.kind === 'cli'
+            ? { path: '/launch/strands-dev', detected: false }
+            : choice.kind === 'discovered'
+              ? { path: `${choice.harness.root}/strands-dev`, detected: false }
+              : undefined,
+        newProject: '/launch/strands-workspace',
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    return { input, text: () => frame().join('\n'), selected, other }
+  }
+
+  it('shouldPrefillTheFolderNextToEachHarnessWhenTheUserSelectsIt', async () => {
+    const { input, text, selected, other } = withPlacement()
+    await vi.waitFor(() => expect(text()).toContain('Workspace: /launch/strands-dev'))
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('Workspace: /project/strands-dev'))
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('Workspace: /other/strands-dev'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(text()).toMatch(/Workspace folder: \/other▌?\s*$/m))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith({ kind: 'discovered', harness: other }, '/other/strands-dev')
+    )
+  })
+
+  it('shouldCreateInTheLaunchFolderWithoutAFolderStepWhenTheNewHarnessHasNoFolder', async () => {
+    const { input, text, selected } = withPlacement()
+    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
+    input.write('\u001b[A')
+    await vi.waitFor(() => expect(text()).toContain('Source: /launch/strands-workspace'))
+    input.write('\r')
+    await vi.waitFor(() => expect(text()).toContain('Folder: /launch/strands-workspace'))
+    expect(text()).toContain('Enter create')
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'typescript' })
+    )
+    expect(text()).not.toContain('Create a workspace')
+  })
+
+  it.each([
+    ['↓ from the Base CLI', ['\u001b[B'], '› Project harness'],
+    ['↓ ↓ to the next discovered harness', ['\u001b[B', '\u001b[B'], '› Other harness'],
+    ['↓ ↓ ↓ past the discovered section', ['\u001b[B', '\u001b[B', '\u001b[B'], '› Create a new harness'],
+    ['↓ ↓ ↓ ↓ back to the Base CLI', ['\u001b[B', '\u001b[B', '\u001b[B', '\u001b[B'], '› Base CLI'],
+    ['↑ from the Base CLI', ['\u001b[A'], '› Create a new harness'],
+    ['↑ ↑ to the last harness', ['\u001b[A', '\u001b[A'], '› Other harness'],
+    ['↓ → that does not move', ['\u001b[B', '\u001b[C'], '› Project harness'],
+  ])('shouldMoveThroughEveryRowWithUpAndDownFor %s', async (_case, keys, row) => {
+    const { input, text } = withPlacement()
+    await vi.waitFor(() => expect(text()).toContain('› Base CLI'))
+
+    for (const key of keys) input.write(key)
+
+    await vi.waitFor(() => expect(text()).toContain(row))
+  })
+
+  it.each([
+    ['Base CLI', []],
+    ['Create a new harness', ['\u001b[A']],
+  ])('shouldIgnoreLeftAndRightWhenTheSelectionIsThe %s', async (label, keys) => {
+    const { input, text } = withPlacement()
+    await vi.waitFor(() => expect(text()).toContain('› Base CLI'))
+    for (const key of keys) input.write(key)
+    await vi.waitFor(() => expect(text()).toContain(`› ${label}`))
+
+    input.write('\u001b[C')
+    input.write('\u001b[D')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(text()).toContain(`› ${label}`)
+  })
+
+  it('shouldShowEveryHarnessWithoutALeftRightHintWhenTheSectionHoldsMoreThanOneHarness', async () => {
+    const { text } = withPlacement()
+
+    await vi.waitFor(() => expect(text()).toContain('Discovered Harnesses (2)'))
+    expect(text()).toContain('Project harness')
+    expect(text()).toContain('Other harness')
+    expect(text()).not.toContain('←→')
+  })
+
+  const createForm = async (props: Partial<Parameters<typeof HarnessPicker>[0]> = {}) => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    const instance = render(createElement(HarnessPicker, { harnesses: [], onSelect: selected, ...props }), {
+      stdin: input,
+      stdout: output,
+    })
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Name: new-harness'))
+    const press = async (key: string): Promise<void> => {
+      input.write(key)
+      await instance.waitUntilRenderFlush()
+    }
+    return { input, press, text: () => frame().join('\n'), selected }
+  }
+
+  it('shouldMoveToTheLanguageFieldAndChangeItWhenArrowsArePressed', async () => {
+    const { input, text, selected } = await createForm()
+
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('› Language: typescript'))
+    input.write('\u001b[C')
+    await vi.waitFor(() => expect(text()).toContain('› Language: python'))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'python' })
+    )
+  })
+
+  it('shouldShowTheModelNoticeOnlyForTheLanguageThatCannotLoadTheModelModule', async () => {
+    const notice = 'Python cannot load the model module custom.mjs.'
+    const { input, text } = await createForm({
+      modelNotice: (language) => (language === 'python' ? notice : undefined),
+    })
+
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('› Language: typescript'))
+    expect(text()).not.toContain(notice)
+    input.write('\u001b[C')
+
+    await vi.waitFor(() => expect(text()).toContain('› Language: python'))
+    await vi.waitFor(() => expect(text()).toContain(notice))
+  })
+
+  it('shouldEditTheNameOnlyWhenTheNameFieldIsSelected', async () => {
+    const { input, text, selected } = await createForm()
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(text()).toContain('› Language: typescript'))
+
+    input.write('x')
+    input.write('\u001b[A')
+    await vi.waitFor(() => expect(text()).toContain('› Name: new-harness'))
+    input.write('y')
+    await vi.waitFor(() => expect(text()).toContain('Name: new-harnessy'))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harnessy', language: 'typescript' })
+    )
+  })
+
+  it('shouldTypeAtTheCursorWhenTheArrowKeysMoveItInTheName', async () => {
+    const { press, text, selected } = await createForm()
+
+    for (const key of [...Array<string>(7).fill('\u001b[D'), 'my-']) await press(key)
+    await vi.waitFor(() => expect(text()).toContain('› Name: new-my-harness'))
+    await press('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-my-harness', language: 'typescript' })
+    )
+  })
+
+  it('shouldKeepTheAllowedCharactersAndSayWhatWasRemovedWhenTheInputHasOthers', async () => {
+    const { press, text } = await createForm()
+
+    await press(' /x')
+
+    await vi.waitFor(() => expect(text()).toContain('› Name: new-harnessx'))
+    expect(text()).toContain('Removed space and "/". Use letters, digits, ".", "_", and "-".')
+  })
+
+  it('shouldKeepTheAllowedPartOfAPasteWhenThePasteHasOtherCharacters', async () => {
+    const { press, text } = await createForm()
+    await press('\u0015')
+
+    await press('support agent/v2')
+
+    await vi.waitFor(() => expect(text()).toContain('› Name: supportagentv2'))
+    expect(text()).toContain('Removed space and "/".')
+  })
+
+  it('shouldShowTheAllowedCharactersAgainWhenTheNextInputIsAllowed', async () => {
+    const { press, text } = await createForm()
+    await press(' ')
+    await vi.waitFor(() => expect(text()).toContain('Removed space.'))
+
+    await press('y')
+
+    await vi.waitFor(() => expect(text()).toContain('› Name: new-harnessy'))
+    expect(text()).toContain('Use letters, digits, ".", "_", and "-". Up to 64 characters.')
+    expect(text()).not.toContain('Removed')
+  })
+
+  it.each([
+    ['an empty name', ['\u0015'], 'Enter a name.'],
+    ['a dot', ['\u0015', '.'], 'Enter a name other than "." or "..".'],
+    ['two dots', ['\u0015', '..'], 'Enter a name other than "." or "..".'],
+  ])('shouldSayWhatTheNameNeedsWhenEnterIsPressedWith %s', async (_case, keys, message) => {
+    const { press, text, selected } = await createForm()
+    for (const key of keys) await press(key)
+
+    await press('\r')
+
+    await vi.waitFor(() => expect(text()).toContain(message))
+    expect(selected).not.toHaveBeenCalled()
+  })
+
+  it('shouldShowTheProjectFolderThatTheNameDoesNotChangeWhenTheProjectGoesInTheLaunchFolder', async () => {
+    const { press, text } = await createForm({ newProject: '/launch/strands-workspace' })
+
+    await press('-bot')
+
+    await vi.waitFor(() => expect(text()).toContain('› Name: new-harness-bot'))
+    expect(text()).toContain('Folder: /launch/strands-workspace')
+  })
+
+  it('shouldSayTheFolderComesNextWhenTheNewHarnessNeedsAFolder', async () => {
+    const { text } = await createForm({ folderFor: () => ({ path: '/work/strands-dev', detected: false }) })
+
+    expect(text()).toContain('Folder: chosen in the next step')
+  })
+
+  it('shouldShowLeftAndRightInTheHintOnlyWhenTheLanguageFieldIsSelected', async () => {
+    const { input, text } = await createForm()
+    expect(text()).toContain('↑↓ field · Tab language · Enter')
+
+    input.write('\u001b[B')
+
+    await vi.waitFor(() => expect(text()).toContain('↑↓ field · ←→ or Tab language · Enter'))
+  })
+
+  it('shouldCopyTheFullOpenFailureWhenControlYIsPressed', async () => {
+    const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const reason = `Reason: ${'missing dependency '.repeat(12)}`
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [harness],
+        onSelect: vi.fn().mockRejectedValue(new Error(reason)),
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+    expect(frame().join('\n')).not.toContain('Ctrl+Y copy error')
+
+    input.write('\r')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Ctrl+Y copy error'))
+    input.write('\u0019')
+
+    await vi.waitFor(() => expect(copy).toHaveBeenCalledOnce())
+    const copied = copy.mock.calls[0]![0]
+    expect(copied).toContain('Workspace could not open.')
+    expect(copied).toContain(reason.trim())
+    await vi.waitFor(() => expect(frame().join('\n')).toContain(`${copied.length} chars copied to clipboard`))
+  })
+
+  const manyProjects = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      ...harness,
+      name: `Project ${index + 1}`,
+      entrypoint: `/project-${index + 1}/agent.py`,
+    }))
+
+  const renderProjects = (rows: number, projects: readonly DiscoveredHarness[], withFolders = false) => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 50)
+    const frame = captureFrame(output)
+    render(
+      createElement(
+        StartupContentRows,
+        { value: rows },
+        createElement(HarnessPicker, {
+          cli: { name: 'Saved profile' },
+          harnesses: projects,
+          ...(withFolders ? { folderFor: () => ({ path: '/work/strands-dev', detected: false }) } : {}),
+          onSelect: vi.fn(),
+        })
+      ),
+      { stdin: input, stdout: output }
+    )
+    const shownProjects = (): string[] => frame().flatMap((line) => line.match(/Project \d+/u) ?? [])
+    return { input, frame, shownProjects }
+  }
+
+  it.each([10, 12, 16, 24, 40])('shouldPinBothActionsWhileProjectsScrollWithin%sRows', async (rows) => {
+    const projects = manyProjects(12)
+    const { input, frame } = renderProjects(rows, projects)
+    const expectSections = (): void => {
+      const text = frame().join('\n')
+      expect(text).toContain('Base CLI')
+      expect(text).toContain('Discovered Harnesses (12)')
+      expect(text).toContain('Create a new harness')
+      expect(text).not.toContain('←→')
+      expect(frame().length).toBeLessThanOrEqual(rows)
+    }
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Base CLI'))
+    expectSections()
+    for (const project of projects) {
+      input.write('\u001b[B')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain(`› ${project.name} `))
+      expectSections()
+    }
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
+    expectSections()
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Base CLI'))
+    expectSections()
+    input.write('\u001b[A')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
+    expectSections()
+  })
+
+  it('shouldShowAsManyHarnessesAsFitWhenTheListMustScroll', async () => {
+    const { frame, shownProjects } = renderProjects(15, manyProjects(8), true)
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Base CLI'))
+
+    expect(shownProjects()).toEqual(['Project 1', 'Project 2', 'Project 3', 'Project 4', 'Project 5', 'Project 6'])
+    expect(frame().join('\n')).toContain('Discovered Harnesses (8) · 1–6 of 8')
+    expect(frame().join('\n')).toContain('Source: ')
+    expect(frame().join('\n')).toContain('Workspace: /work/strands-dev')
+    expect(frame().length).toBeLessThanOrEqual(15)
+  })
+
+  it.each([24, 40])('shouldShowEveryHarnessWithoutARangeWhenAllFitWithin%sRows', async (rows) => {
+    const { frame, shownProjects } = renderProjects(rows, manyProjects(12))
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Base CLI'))
+
+    expect(shownProjects()).toHaveLength(12)
+    expect(frame().join('\n')).not.toContain('of 12')
+    expect(frame().length).toBeLessThanOrEqual(rows)
+  })
+
+  it('shouldScrollOnlyWhenTheSelectionLeavesTheShownHarnesses', async () => {
+    const { input, frame, shownProjects } = renderProjects(12, manyProjects(12))
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Base CLI'))
+    const capacity = shownProjects().length
+    for (const _ of Array.from({ length: capacity + 1 })) input.write('\u001b[B')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain(`› Project ${capacity + 1} `))
+    const scrolled = shownProjects()
+
+    input.write('\u001b[A')
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain(`› Project ${capacity} `))
+    expect(shownProjects()).toEqual(scrolled)
+    expect(scrolled[0]).toBe('Project 2')
+  })
+
+  it.each([12, 16, 24])('shouldAlignTitlesAndWorkspaceDetailsWithin%sRows', async (rows) => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 50)
+    const frame = captureFrame(output)
+    render(
+      createElement(
+        StartupContentRows,
+        { value: rows },
+        createElement(HarnessPicker, {
+          cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+          harnesses: [harness],
+          folderFor: (choice) => ({ path: choice.kind === 'cli' ? '/work/base' : '/work/project', detected: true }),
+          onSelect: vi.fn(),
+        })
+      ),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Workspace: /work/base'))
+    const assertAlignment = (): void => {
+      const lines = frame()
+      const line = (text: string): string => lines.find((entry) => entry.includes(text))!
+      const titles = ['Global Harness', 'Discovered Harnesses', 'New Harness', 'Source:', 'Workspace:']
+      const left = line(titles[0]!).search(/\S/u)
+      for (const title of titles) expect(line(title).search(/\S/u)).toBe(left)
+      expect(line('Base CLI').indexOf('Base CLI')).toBeGreaterThan(left)
+      expect(line('Project harness').indexOf('Project harness')).toBeGreaterThan(left)
+      expect(line('Create a new harness').indexOf('Create a new harness')).toBeGreaterThan(left)
+      expect(lines.length).toBeLessThanOrEqual(rows)
+    }
+    assertAlignment()
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Workspace: /work/project'))
+    expect(frame().join('\n')).toContain('Source: /project/agent.py')
+    assertAlignment()
+  })
+
+  it.each([10, 12, 16, 24])('shouldSeparateTheSectionsAndSourceWithin%sRows', async (rows) => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 50)
+    const frame = captureFrame(output)
+    render(
+      createElement(
+        StartupContentRows,
+        { value: rows },
+        createElement(HarnessPicker, {
+          cli: { name: 'Saved profile' },
+          harnesses: [],
+          discovery: 'running',
+          onSelect: vi.fn(),
+        })
+      ),
+      { stdin: input, stdout: output }
+    )
+    const expectSpacing = (): void => {
+      const lines = frame()
+      const base = lines.findIndex((line) => line.includes('Base CLI'))
+      const projects = lines.findIndex((line) => line.includes('Discovered Harnesses'))
+      const searching = lines.findIndex((line) => line.includes('Searching for local harnesses'))
+      const create = lines.findIndex((line) => line.includes('Create a new harness'))
+      expect(projects).toBe(base + (rows >= 12 ? 2 : 1))
+      expect(lines[base - 1]).toContain('Global Harness')
+      expect(lines[create - 1]).toContain('New Harness')
+      if (rows >= 12) {
+        expect(lines[base + 1]?.trim()).toBe('')
+        expect(lines[searching + 1]?.trim()).toBe('')
+      }
+      if (rows >= 16) expect(lines[create + 1]?.trim()).toBe('')
+      expect(lines.length).toBeLessThanOrEqual(rows)
+    }
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Base CLI'))
+    expectSpacing()
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
+    expectSpacing()
+  })
+
+  it.each(['running', { failed: 'Search unavailable' }] as const)(
+    'shouldNotCountDiscoveryStatusAsAProjectWhenDiscoveryIs%j',
+    async (discovery) => {
+      const input = ttyInput()
+      const output = ttyOutput(100, 50)
+      const frame = captureFrame(output)
+      render(
+        createElement(
+          StartupContentRows,
+          { value: 12 },
+          createElement(HarnessPicker, {
+            cli: { name: 'Saved profile' },
+            harnesses: Array.from({ length: 12 }, (_, index) => ({
+              ...harness,
+              name: `Project ${index + 1}`,
+              entrypoint: `/project-${index + 1}/agent.py`,
+            })),
+            discovery,
+            onSelect: vi.fn(),
+          })
+        ),
+        { stdin: input, stdout: output }
+      )
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('› Base CLI'))
+      expect(frame().join('\n')).toMatch(/1–\d+ of 12/)
+      expect(frame().join('\n')).toContain(discovery === 'running' ? 'Searching for local harnesses' : 'Search stopped')
+      expect(frame().length).toBeLessThanOrEqual(12)
+      input.write('\u001b[A')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
+      expect(frame().join('\n')).toMatch(/1–\d+ of 12/)
+      input.write('\u001b[A')
+      input.write('\u001b[D')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('› Project 12 '))
+      expect(frame().join('\n')).toMatch(/\d+–12 of 12/)
+      expect(frame().length).toBeLessThanOrEqual(12)
+    }
+  )
+
+  it.each(['running', 'done', { failed: 'Search unavailable' }] as const)(
+    'shouldKeepAllSectionsVisibleWithoutProjectsWhenDiscoveryIs%j',
+    async (discovery) => {
+      const input = ttyInput()
+      const output = ttyOutput(100, 50)
+      const frame = captureFrame(output)
+      const onSelect = vi.fn()
+      render(
+        createElement(
+          StartupContentRows,
+          { value: 12 },
+          createElement(HarnessPicker, { cli: { name: 'Saved profile' }, harnesses: [], discovery, onSelect })
+        ),
+        { stdin: input, stdout: output }
+      )
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('› Base CLI'))
+      const text = frame().join('\n')
+      expect(text).toContain('Discovered Harnesses')
+      expect(text).toContain(
+        discovery === 'running'
+          ? 'Searching for local harnesses'
+          : discovery === 'done'
+            ? 'No local harnesses found.'
+            : 'Search stopped'
+      )
+      expect(text).toContain('Create a new harness')
+      expect(frame().length).toBeLessThanOrEqual(12)
+      input.write('\u001b[B')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
+      input.write('\u001b[A')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('› Base CLI'))
+      input.write('\r')
+      await vi.waitFor(() => expect(onSelect).toHaveBeenCalledWith({ kind: 'cli' }))
+    }
+  )
+
+  const renderWithRows = (rows: number, warning?: string): (() => string[]) => {
+    const output = ttyOutput(120, 50)
+    const frame = captureFrame(output)
+    render(
+      createElement(
+        StartupContentRows,
+        { value: rows },
+        createElement(HarnessPicker, {
+          cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+          harnesses: [harness, { ...harness, name: 'Other harness', entrypoint: '/other/agent.py' }],
+          ...(warning ? { warning } : {}),
+          onSelect: vi.fn(),
+        })
+      ),
+      { stdin: ttyInput(), stdout: output }
+    )
+    return frame
+  }
+
+  it.each([12, 16, 24])('shouldFitTheRowsTheStartupScreenGivesItWhenThereAre%sRows', async (rows) => {
+    const frame = renderWithRows(rows, 'Selecting a new agent deletes your current agent in strands dev.')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Esc cancel'))
+
+    expect(frame().length).toBeLessThanOrEqual(rows)
+    expect(frame().join('\n')).toContain('Source: /home/test/.strands/cli.toml')
+  })
+
+  it.each([
+    [14, false],
+    [40, true],
+  ])('shouldShowTheDetailNotesOnlyWhenEveryChoiceFitsAt%sRows', async (rows, notesVisible) => {
+    const frame = renderWithRows(rows)
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Esc cancel'))
+
+    expect(frame().join('\n').includes('Changes here also change plain strands.')).toBe(notesVisible)
+  })
+
+  it.each([
+    [9, false],
+    [10, true],
+  ])('shouldShowTheSelectedProjectOnlyWhenTheFolderStepFitsAt%sRows', async (rows, agentVisible) => {
+    const input = ttyInput()
+    const output = ttyOutput(120, 50)
+    const frame = captureFrame(output)
+    render(
+      createElement(
+        StartupContentRows,
+        { value: rows },
+        createElement(HarnessPicker, {
+          harnesses: [harness],
+          folderFor: () => ({ path: '/work/strands-dev', detected: false }),
+          onSelect: vi.fn(),
+        })
+      ),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Select a harness'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Create a workspace'))
+    expect(frame().join('\n').includes('Selected project')).toBe(agentVisible)
+    expect(frame().length).toBeLessThanOrEqual(rows)
+  })
+
+  it('shouldShowTheSearchLineInsideDiscoveredProjectsBelowTheCliDefault', async () => {
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const props = { cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' }, onSelect: vi.fn() }
+    const instance = render(createElement(HarnessPicker, { ...props, harnesses: [], discovery: 'running' }), {
+      stdin: ttyInput(),
+      stdout: output,
+    })
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Searching for local harnesses…'))
+    const row = (text: string): number => frame().findIndex((line) => line.includes(text))
+    expect(row('Global Harness')).toBeLessThan(row('Discovered Harnesses'))
+    expect(row('Discovered Harnesses')).toBeLessThan(row('Searching for local harnesses…'))
+    expect(row('Searching for local harnesses…')).toBeLessThan(row('New Harness'))
+    expect(frame().join('\n')).toContain('1 / 2')
+    const searchLine = frame()[row('Searching for local harnesses…')]!
+    expect(searchLine.search(/\S/u)).toBe(frame()[row('Base CLI')]!.indexOf('Base CLI'))
+
+    instance.rerender(createElement(HarnessPicker, { ...props, harnesses: [harness], discovery: 'running' }))
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('1 found'))
+    expect(row('Project harness')).toBeLessThan(row('Searching for local harnesses…'))
+
+    instance.rerender(createElement(HarnessPicker, { ...props, harnesses: [harness], discovery: 'done' }))
+
+    await vi.waitFor(() => expect(frame().join('\n')).not.toContain('Searching for local harnesses…'))
+    expect(frame().join('\n')).toContain('Discovered Harnesses (1)')
+  })
+
+  it('shouldSayNoHarnessesWereFoundWhenTheSearchEndsEmpty', async () => {
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [],
+        discovery: 'done',
+        onSelect: vi.fn(),
+      }),
+      { stdin: ttyInput(), stdout: output }
+    )
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('No local harnesses found.'))
+    expect(frame().join('\n')).toContain('Discovered Harnesses')
+  })
+
+  const skippedSource = (path: string) => ({
+    entrypoint: join(process.cwd(), path),
+    expected: 'export const agent = await createHarness(...)',
+  })
+
+  it('shouldShowTheExpectedShapeWhenTheSearchSkipsASource', async () => {
+    const output = ttyOutput(120, 36)
+    const frame = captureFrame(output)
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [],
+        skipped: [skippedSource('support/agent.ts')],
+        discovery: 'done',
+        onSelect: vi.fn(),
+      }),
+      { stdin: ttyInput(), stdout: output }
+    )
+
+    await vi.waitFor(() =>
+      expect(frame().join('\n')).toContain(
+        `Skipped ${join('support', 'agent.ts')}. Expected export const agent = await createHarness(...)`
+      )
+    )
+    expect(frame().join('\n')).not.toContain('No local harnesses found.')
+  })
+
+  it('shouldCountTheOtherSkippedSourcesWhenTheSearchAlsoFindsHarnesses', async () => {
+    const output = ttyOutput(120, 36)
+    const frame = captureFrame(output)
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [harness],
+        skipped: ['a/agent.ts', 'b/agent.ts', 'c/agent.ts'].map(skippedSource),
+        discovery: 'done',
+        onSelect: vi.fn(),
+      }),
+      { stdin: ttyInput(), stdout: output }
+    )
+
+    await vi.waitFor(() =>
+      expect(frame().join('\n')).toContain(`Skipped ${join('a', 'agent.ts')} and 2 more. Expected`)
+    )
+    expect(frame().join('\n')).toContain('Project harness')
+    expect(frame().join('\n')).toContain('1 / 3')
+  })
+
+  it('shouldShowTheFullPathWhenTheSkippedSourceIsOutsideTheLaunchFolder', async () => {
+    const output = ttyOutput(120, 36)
+    const frame = captureFrame(output)
+    render(
+      createElement(HarnessPicker, {
+        harnesses: [],
+        skipped: [{ entrypoint: '/elsewhere/agent.py', expected: 'agent = create_harness(...)' }],
+        discovery: 'done',
+        onSelect: vi.fn(),
+      }),
+      { stdin: ttyInput(), stdout: output }
+    )
+
+    await vi.waitFor(() =>
+      expect(frame().join('\n')).toContain('Skipped /elsewhere/agent.py. Expected agent = create_harness(...)')
+    )
+  })
+
+  it('shouldKeepTheSelectedRowWhenAHarnessArrivesAboveIt', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const props = { cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' }, onSelect: vi.fn() }
+    const instance = render(createElement(HarnessPicker, { ...props, harnesses: [], discovery: 'running' }), {
+      stdin: input,
+      stdout: output,
+    })
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('1 / 2'))
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
+
+    instance.rerender(createElement(HarnessPicker, { ...props, harnesses: [harness], discovery: 'running' }))
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('3 / 3'))
+    expect(frame().join('\n')).toContain('› Create a new harness')
+  })
+
+  it('shouldShowTheRefreshKeyOnTheDiscoveredHarnessesHeadingWhenThePickerCanSearchAgain', async () => {
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [harness],
+        discovery: 'done',
+        onRefresh: vi.fn(),
+        onSelect: vi.fn(),
+      }),
+      { stdin: ttyInput(), stdout: output }
+    )
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Discovered Harnesses (1)'))
+    expect(frame().find((line) => line.includes('Discovered Harnesses (1)'))).toMatch(
+      /Discovered Harnesses \(1\)\s+r refresh/u
+    )
+  })
+
+  it('shouldLeaveTheRefreshKeyOutWhenThePickerCannotSearch', async () => {
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [harness],
+        onSelect: vi.fn(),
+      }),
+      { stdin: ttyInput(), stdout: output }
+    )
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Discovered Harnesses (1)'))
+    expect(frame().join('\n')).not.toContain('r refresh')
+  })
+
+  it('shouldAskForANewSearchWhenTheUserPressesR', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const onRefresh = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [harness],
+        discovery: 'done',
+        onRefresh,
+        onSelect: vi.fn(),
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('r refresh'))
+
+    input.write('r')
+
+    await vi.waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1))
+  })
+
+  it('shouldTypeRIntoTheNameWhenTheNewHarnessFormIsOpen', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const onRefresh = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        harnesses: [],
+        discovery: 'done',
+        onRefresh,
+        onSelect: vi.fn(),
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Create a new harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Create a harness'))
+
+    input.write('r')
+
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('new-harnessr'))
+    expect(onRefresh).not.toHaveBeenCalled()
+  })
+
+  const shownPickers = (show: ReturnType<typeof vi.fn>) =>
+    show.mock.calls
+      .map(([content]) => content as { type: unknown; props: Parameters<typeof HarnessPicker>[0] } | undefined)
+      .filter((content) => content?.type === HarnessPicker)
+      .map((content) => content!.props)
+
+  it('shouldOpenTheSelectorBeforeTheSearchEndsAndAddHarnessesAsTheyAreFound', async () => {
+    const show = vi.fn()
+    let report: (found: DiscoveredHarness) => void = () => undefined
+    let finish: () => void = () => undefined
+    let searchSignal: AbortSignal | undefined
+    const running = chooseHarness(
+      {
+        cli: { name: 'Saved profile' },
+        harnesses: [],
+        search: (found, signal) => {
+          report = found
+          searchSignal = signal
+          return new Promise((resolve) => {
+            finish = () => resolve({ harnesses: [], skipped: [] })
+          })
+        },
+      },
+      { signal: new AbortController().signal, show },
+      vi.fn()
+    )
+
+    expect(shownPickers(show)).toHaveLength(1)
+    expect(shownPickers(show)[0]).toMatchObject({ harnesses: [], discovery: 'running' })
+    report(harness)
+    await vi.waitFor(() => expect(shownPickers(show).at(-1)?.harnesses).toEqual([harness]))
+    expect(shownPickers(show).at(-1)?.discovery).toBe('running')
+    finish()
+    await vi.waitFor(() => expect(shownPickers(show).at(-1)?.discovery).toBe('done'))
+    await shownPickers(show).at(-1)!.onSelect(undefined)
+
+    expect(await running).toBeUndefined()
+    expect(searchSignal?.aborted).toBe(true)
+  })
+
+  it('shouldPassTheSkippedSourcesToThePickerWhenTheSearchEnds', async () => {
+    const show = vi.fn()
+    const skipped = [skippedSource('support/agent.ts')]
+    const running = chooseHarness(
+      {
+        cli: { name: 'Saved profile' },
+        harnesses: [],
+        search: async () => ({ harnesses: [harness], skipped }),
+      },
+      { signal: new AbortController().signal, show },
+      vi.fn()
+    )
+
+    await vi.waitFor(() => expect(shownPickers(show).at(-1)).toMatchObject({ discovery: 'done', skipped }))
+    expect(shownPickers(show).at(-1)?.harnesses).toEqual([harness])
+    await shownPickers(show).at(-1)!.onSelect(undefined)
+    expect(await running).toBeUndefined()
+  })
+
+  it('shouldSearchAgainAndShowOnlyTheHarnessesItFindsWhenThePickerAsksForARefresh', async () => {
+    const show = vi.fn()
+    const edited = { ...harness, name: 'Edited harness' }
+    const downloaded = { ...harness, name: 'Downloaded harness', entrypoint: '/downloads/agent.ts', root: '/downloads' }
+    const results = [
+      { harnesses: [harness, { ...harness, entrypoint: '/old/agent.py', root: '/old' }], skipped: [] },
+      { harnesses: [edited, downloaded], skipped: [] },
+    ]
+    const search = vi.fn(async () => results.shift()!)
+    const running = chooseHarness(
+      { cli: { name: 'Saved profile' }, harnesses: [], search },
+      { signal: new AbortController().signal, show },
+      vi.fn()
+    )
+    await vi.waitFor(() => expect(shownPickers(show).at(-1)?.discovery).toBe('done'))
+
+    shownPickers(show).at(-1)!.onRefresh!()
+
+    expect(shownPickers(show).at(-1)).toMatchObject({ harnesses: [], discovery: 'running' })
+    await vi.waitFor(() => expect(shownPickers(show).at(-1)?.discovery).toBe('done'))
+    expect(shownPickers(show).at(-1)?.harnesses).toEqual([edited, downloaded])
+    expect(search).toHaveBeenCalledTimes(2)
+    await shownPickers(show).at(-1)!.onSelect(undefined)
+    expect(await running).toBeUndefined()
+  })
+
+  it('shouldStopTheRunningSearchAndIgnoreItsLateResultsWhenThePickerAsksForARefresh', async () => {
+    const show = vi.fn()
+    const searches: { report: (found: DiscoveredHarness) => void; signal: AbortSignal; finish: () => void }[] = []
+    const running = chooseHarness(
+      {
+        cli: { name: 'Saved profile' },
+        harnesses: [],
+        search: (found, signal) =>
+          new Promise((resolve) => {
+            searches.push({ report: found, signal, finish: () => resolve({ harnesses: [], skipped: [] }) })
+          }),
+      },
+      { signal: new AbortController().signal, show },
+      vi.fn()
+    )
+    await vi.waitFor(() => expect(searches).toHaveLength(1))
+
+    shownPickers(show).at(-1)!.onRefresh!()
+    await vi.waitFor(() => expect(searches).toHaveLength(2))
+    searches[0]!.report({ ...harness, name: 'Stale harness' })
+    searches[0]!.finish()
+    searches[1]!.report(harness)
+    searches[1]!.finish()
+
+    await vi.waitFor(() => expect(shownPickers(show).at(-1)?.discovery).toBe('done'))
+    expect(searches[0]!.signal.aborted).toBe(true)
+    expect(searches[1]!.signal.aborted).toBe(false)
+    expect(shownPickers(show).at(-1)?.harnesses).toEqual([harness])
+    await shownPickers(show).at(-1)!.onSelect(undefined)
+    expect(await running).toBeUndefined()
+    expect(searches[1]!.signal.aborted).toBe(true)
+  })
+
+  it('shouldShowWhyTheSearchStoppedWhenItFails', async () => {
+    const show = vi.fn()
+    const running = chooseHarness(
+      {
+        cli: { name: 'Saved profile' },
+        harnesses: [],
+        search: async () => {
+          throw new Error('EACCES: permission denied, scandir /root')
+        },
+      },
+      { signal: new AbortController().signal, show },
+      vi.fn()
+    )
+
+    await vi.waitFor(() =>
+      expect(shownPickers(show).at(-1)).toMatchObject({
+        discovery: { failed: 'EACCES: permission denied, scandir /root' },
+      })
+    )
+    await shownPickers(show).at(-1)!.onSelect(undefined)
+    expect(await running).toBeUndefined()
+  })
+})

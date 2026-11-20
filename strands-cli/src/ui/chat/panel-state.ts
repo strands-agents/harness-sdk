@@ -196,8 +196,11 @@ function formatDate(value: string): string {
     .replace(',', '')
 }
 
-export function settingsCategoryFilters(): ChatPanelFilter[] {
-  return SETTINGS_CATEGORIES.map(({ id, label }) => ({ id: `settings:${id}`, label }))
+export function settingsCategoryFilters(includeWorkspace = false): ChatPanelFilter[] {
+  return [
+    ...SETTINGS_CATEGORIES.map(({ id, label }) => ({ id: `settings:${id}`, label })),
+    ...(includeWorkspace ? [{ id: 'settings:Workspace', label: 'Strands dev workspace' }] : []),
+  ]
 }
 
 export function settingsRows(
@@ -375,6 +378,15 @@ export function makePanel(id: string, panel: NewChatPanel): ChatPanel {
         kind: panel.kind,
         configuration: panel.configuration,
         language: panel.language,
+      }
+    case 'dev':
+      return {
+        ...common,
+        kind: panel.kind,
+        command: panel.command,
+        view: panel.view,
+        close: panel.close,
+        openCommand: panel.openCommand,
       }
     default:
       return { ...common, kind: panel.kind }

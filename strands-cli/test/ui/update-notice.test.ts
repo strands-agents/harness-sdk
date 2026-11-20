@@ -14,6 +14,7 @@ import { ThemeProvider } from '../../src/ui/theme.js'
 import { UpdatePrompt } from '../../src/ui/update.js'
 import { ChatRoot, type SetupBridge } from '../../src/ui/app.js'
 import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
+import * as terminal from '../../src/terminal/terminal.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 
 const NOTICE = 'Strands CLI 0.1.3 is available! Run `strands update` to install it.'
@@ -366,6 +367,49 @@ describe('update prompt', () => {
     } finally {
       instance.unmount()
       await instance.waitUntilExit()
+    }
+  })
+
+  it('shouldCopyTheWholeDisableFailureWhenControlYIsPressed', async () => {
+    const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
+    const input = ttyInput()
+    const output = ttyOutput(80, 24)
+    const frame = captureFrame(output)
+    const failure = `EACCES: permission denied, open '${'/home/test/.strands/'.repeat(6)}cli.toml'`
+    const instance = render(
+      createElement(ThemeProvider, {
+        settings: DEFAULT_CHAT_SETTINGS,
+        children: createElement(UpdatePrompt, {
+          version: '0.1.3',
+          onExit: () => {},
+          width: 80,
+          height: 24,
+          onUpdate: vi.fn(),
+          onLater: vi.fn(),
+          onDisable: vi.fn(async () => {
+            throw new Error(failure)
+          }),
+        }),
+      }),
+      { stdin: input, stdout: output, stderr: output, interactive: true, patchConsole: false, exitOnCtrlC: false }
+    )
+    try {
+      input.write('\u001b[C')
+      await instance.waitUntilRenderFlush()
+      input.write('\u001b[C')
+      await instance.waitUntilRenderFlush()
+      input.write('\r')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('· Ctrl+Y copy error'))
+
+      input.write('\u0019')
+
+      await vi.waitFor(() => expect(copy).toHaveBeenCalledOnce())
+      expect(copy.mock.calls[0]![0]).toBe(failure)
+      expect(frame().every((line) => stringWidth(line) <= 80)).toBe(true)
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+      copy.mockRestore()
     }
   })
 })

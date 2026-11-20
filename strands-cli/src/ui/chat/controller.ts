@@ -43,11 +43,14 @@ import {
   DEFAULT_SETTINGS_CATEGORY,
   SETTINGS_CATEGORIES,
   parseSettingUpdate,
+  type SettingsCategory,
 } from '../../config/settings.js'
+import type { ProfileEffort } from '../../config/store.js'
 import { agentLaunchCommand } from '../../project/import.js'
 import { exportDirectoryName, type AgentProjectOutput } from '../../project/export.js'
 import {
   type ChatSessionRuntime,
+  type FailedTurn,
   type SessionTarget,
   sessionResumeCommand,
   type ResumeSession,
@@ -57,7 +60,9 @@ import type { McpServerInfo } from '../../agent/mcp.js'
 import { mcpFailure } from '../mcp-diagnostics.js'
 import { peerMessagePrompt, type PeerMessage } from '../../agent/messaging.js'
 import { modelDisplayName } from '../../model/metadata.js'
-import { modelControlErrorMessage } from '../../model/selection.js'
+import { modelControlErrorMessage, profileEffort } from '../../model/selection.js'
+import { isExpiredModelCredential, isModelCredentialFailure } from '../../model/credential-failure.js'
+import { devStateNotice } from '../../dev/runtime.js'
 import { presentChatStream, type StreamPresentationOptions } from './stream-presentation.js'
 import { errorMessage, sanitizeTerminalText } from '../../terminal/text.js'
 import { canUseNativePicker, chooseDirectory } from '../../terminal/directory-picker.js'
@@ -73,7 +78,7 @@ import {
   readTaskValue,
   readyBackgroundGeneration,
 } from './state.js'
-import { TurnProjector, projectMessages } from './projector.js'
+import { TurnProjector, projectFailedTurns, projectMessages } from './projector.js'
 import {
   type ChatBackend,
   type ChatAttachment,
@@ -97,12 +102,18 @@ import {
   type ChatControllerApi,
   type ChatControllerOptions,
   type ChatNotice,
+  type ChatErrorOptions,
   type ChatPanel,
   type ChatPanelRow,
   type ChatMcpStartup,
   type ChatRuntimeInfo,
   type ChatSettings,
   type ChatSnapshot,
+  type DevChatCommand,
+  type DevChatCommandContext,
+  type DevChatJobGroup,
+  type DevChatNotice,
+  type DevPanelOpening,
   type NewChatPanel,
 } from './types.js'
 
@@ -121,6 +132,15 @@ const EXPORT_SAVE_DEFAULT_PREFIX = 'export:save-default:'
 const EXPORT_SAVE_CUSTOM_PREFIX = 'export:save-custom:'
 
 type SessionList = Awaited<ReturnType<ChatSessionRuntime['list']>>
+
+type TurnFailure = 'expiredCredentials' | 'modelSetup' | 'credentials' | 'other'
+
+const TURN_FAILURE_GUIDANCE: Record<TurnFailure, string> = {
+  expiredCredentials: 'Refresh your credentials, then restart Strands so that it loads them.',
+  modelSetup: 'Press s to choose a model provider, then resend your message.',
+  credentials: 'Refresh your credentials, then resend your message.',
+  other: 'Check your connection and provider, then resend your message.',
+}
 
 interface PendingUserSubmission {
   kind: 'user'
@@ -143,6 +163,7 @@ export class ChatController implements ChatControllerApi {
   readonly peerEndpointId: string | undefined
   private readonly _listeners = new Set<() => void>()
   private _completedTurns: ChatTurn[] = []
+  private _failedTurns: readonly FailedTurn[]
   private readonly _panelStack: ChatPanel[] = []
   private readonly _skillDetails = new Map<string, SkillInfo>()
   private readonly _sessions: ChatSessionRuntime | undefined
@@ -155,6 +176,7 @@ export class ChatController implements ChatControllerApi {
   private readonly _skills: ChatSkillsRuntime | undefined
   private _skillRefresh: Promise<readonly SkillInfo[]> | undefined
   private readonly _skillNames = new Set<string>()
+  private readonly _skillsWithoutCommands: ReadonlySet<string>
   private readonly _mcp: ChatControllerOptions['mcp']
   private readonly _mcpDetails = new Map<string, McpServerInfo>()
   private _mcpStartup: ChatMcpStartup | undefined
@@ -163,11 +185,16 @@ export class ChatController implements ChatControllerApi {
   private readonly _streamPresentation: StreamPresentationOptions | undefined
   private readonly _setSettings: ((settings: Partial<ChatSettings>) => Promise<void>) | undefined
   private readonly _requestSetup: ChatControllerOptions['requestSetup']
+  private readonly _workspaceAction: ChatControllerOptions['workspaceAction']
+  private readonly _devCommands: readonly DevChatCommand[]
+  private readonly _devCommandAbort = new AbortController()
+  private _stopWatchingDevJobs: readonly (() => void)[] = []
   private readonly _awsProfile: ChatControllerOptions['awsProfile']
   private readonly _builtinTools: ChatControllerOptions['builtinTools']
   private _builtinToolSelection = new Set<string>()
   private readonly _exportAgentProject: ChatControllerOptions['exportAgentProject']
   private readonly _useExportedProject: ChatControllerOptions['useExportedProject']
+  private readonly _saveAgentOptions: ChatControllerOptions['saveAgentOptions']
   private readonly _configurationSource: ChatControllerOptions['configurationSource']
   private readonly _project: ChatControllerOptions['project']
   private readonly _copyText: (text: string) => Promise<boolean>
@@ -224,16 +251,20 @@ export class ChatController implements ChatControllerApi {
     for (const name of options.skillNames ?? []) {
       this._skillNames.add(name.toLowerCase())
     }
+    this._skillsWithoutCommands = new Set(options.skillsWithoutCommands?.map((name) => name.toLowerCase()))
     this._mcp = options.mcp
     this._watchMcpStartup()
     this._settings = globalThis.structuredClone({ ...DEFAULT_CHAT_SETTINGS, ...options.settings })
     this._streamPresentation = options.streamPresentation
     this._setSettings = options.setSettings
     this._requestSetup = options.requestSetup
+    this._workspaceAction = options.workspaceAction
+    this._devCommands = options.devCommands ?? []
     this._awsProfile = options.awsProfile
     this._builtinTools = options.builtinTools
     this._exportAgentProject = options.exportAgentProject
     this._useExportedProject = options.useExportedProject
+    this._saveAgentOptions = options.saveAgentOptions
     this._configurationSource = options.configurationSource
     this._project = options.project
     this._copyText = options.copyText ?? copyTerminalText
@@ -253,10 +284,14 @@ export class ChatController implements ChatControllerApi {
       tools: info?.tools ?? [],
       ...options.runtime,
     }
+    this._failedTurns = options.failedTurns ?? []
     if (options.initialTurns) {
       this._completedTurns = [...options.initialTurns]
-    } else if (options.initialMessages) {
-      this._completedTurns.push(...projectMessages(options.initialMessages, this.name))
+    } else {
+      this._completedTurns.push(
+        ...projectMessages(options.initialMessages ?? [], this.name),
+        ...projectFailedTurns(this._failedTurns, this.name)
+      )
     }
     this._nextTurn = this._completedTurns.length + 1
     this._context = { ...(backend.contextUsage?.() ?? {}) }
@@ -265,7 +300,27 @@ export class ChatController implements ChatControllerApi {
       this._configurationBaseline = options.initialConfigurationBaseline
       this._configurationDiffs = configurationDiffs(options.initialConfigurationBaseline.source, this._configuration)
     }
+    if (this._runtime.devWorkspace) {
+      const { root, entrypoint, origin } = this._runtime.devWorkspace
+      this._notices.push({
+        id: 'dev-workspace',
+        status: 'success',
+        text: `strands dev · ${backend.name}\nWorkspace: ${root}\nHarness: ${entrypoint} (${origin})\nModel, tools, and instructions come from this workspace.`,
+      })
+      const stateNotice = devStateNotice(options.turnedOffState ?? [])
+      if (stateNotice) this._notices.push({ id: 'dev-state', status: 'error', text: stateNotice })
+    }
     this._snapshot = this._createSnapshot()
+    for (const command of this._devCommands) command.attach?.(this._devCommandContext())
+    this._stopWatchingDevJobs = this._devCommands.flatMap(({ jobs }) =>
+      jobs
+        ? [
+            jobs.subscribe(() => {
+              if (!this._closed) this._emit()
+            }),
+          ]
+        : []
+    )
     this._stopWatchingTasks = this._backend.watchTasks?.((tasks) => {
       if (this._closed) {
         return
@@ -344,8 +399,28 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
-  showError(title: string, message: string): void {
-    this._openError(title, '', message)
+  clearReloadStatus(): void {
+    if (this._runtime.reloadStatus === undefined) return
+    delete this._runtime.reloadStatus
+    this._emit()
+  }
+
+  markReloaded(paths: readonly string[]): void {
+    const changed = [...new Set(paths)]
+    const label = changed.length > 1 ? `${changed.length} files` : changed[0]?.split(/[\\/]/u).at(-1) || 'agent source'
+    const status = `↻ ${sanitizeTerminalText(label)} reloaded · session kept`
+    this._runtime.reloadStatus = status
+    this._addNotice('success', status)
+    this._emit()
+  }
+
+  showError(title: string, message: string, options: ChatErrorOptions = {}): void {
+    this._openError(title, '', message, options.fixDirectory)
+  }
+
+  notify(status: ChatNotice['status'], text: string): void {
+    this._addNotice(status, text)
+    this._emit()
   }
 
   get backend(): ChatBackend {
@@ -372,11 +447,14 @@ export class ChatController implements ChatControllerApi {
   get resumeSession(): ResumeSession | undefined {
     const session = this._sessions?.currentTarget ?? this._backend.sessionIdentity
     if (!session?.sessionId) return undefined
+    const dev = this._runtime.devWorkspace
+    const ranBoundAgent = dev !== undefined && dev.entrypoint === dev.boundEntrypoint
     return {
       sessionId: session.sessionId,
       sessionDirectory: session.sessionDirectory,
       workspace: session.workspace,
-      ...(this._project ? { agentProject: this._project.entrypoint } : {}),
+      ...(dev ? { devWorkspace: dev.root } : {}),
+      ...(this._project && !ranBoundAgent ? { agentProject: this._project.entrypoint } : {}),
     }
   }
 
@@ -388,10 +466,15 @@ export class ChatController implements ChatControllerApi {
     if (!invocation) {
       return undefined
     }
-    if (invocation.prefix === '/' && LOCAL_COMMAND_NAMES.has(invocation.name.toLowerCase())) {
+    if (
+      invocation.prefix === '/' &&
+      (LOCAL_COMMAND_NAMES.has(invocation.name.toLowerCase()) || this._devCommand(invocation.name))
+    ) {
       return invocation.token
     }
-    return this._backend.protocol === 'strands' && this._skillNames.has(invocation.name.toLowerCase())
+    return this._backend.protocol === 'strands' &&
+      this._skillNames.has(invocation.name.toLowerCase()) &&
+      (invocation.prefix === '$' || this._isSkillCommand(invocation.name))
       ? invocation.token
       : undefined
   }
@@ -401,7 +484,12 @@ export class ChatController implements ChatControllerApi {
     if (!input.startsWith('/')) {
       return undefined
     }
-    return resolveCommandAssistance(input, this.actionableCommandToken(input), this._skillCommands())
+    return resolveCommandAssistance(
+      input,
+      this.actionableCommandToken(input),
+      this._skillCommands(),
+      this._devCommands.filter((command) => !command.hidden).map((command) => command.spec)
+    )
   }
 
   async start(firstRequest?: string): Promise<void> {
@@ -456,11 +544,17 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _skillCommands(): LocalCommandSpec[] {
-    return [...this._skillDetails.values()].map((skill) => ({
-      name: skill.name,
-      usage: `/${sanitizeTerminalText(skill.name)} [request]`,
-      description: skill.description,
-    }))
+    return [...this._skillDetails.values()]
+      .filter(({ name }) => this._isSkillCommand(name))
+      .map((skill) => ({
+        name: skill.name,
+        usage: `/${sanitizeTerminalText(skill.name)} [request]`,
+        description: skill.description,
+      }))
+  }
+
+  private _isSkillCommand(name: string): boolean {
+    return !this._skillsWithoutCommands.has(name.toLowerCase())
   }
 
   async submit(input: ChatInput): Promise<ChatTurn | undefined> {
@@ -479,7 +573,7 @@ export class ChatController implements ChatControllerApi {
     }
     if (
       attachments.length === 0 &&
-      isLiveLocalCommand(prompt) &&
+      (isLiveLocalCommand(prompt) || this._isDevCommandPrompt(prompt)) &&
       !this._resourceChanging &&
       (this._panel?.kind !== 'permission' ||
         ['settings', 'permissions'].includes(parseCommandInvocation(prompt)?.name.toLowerCase() ?? ''))
@@ -642,8 +736,7 @@ export class ChatController implements ChatControllerApi {
       )
       return undefined
     }
-    this._panel = undefined
-    this._panelStack.length = 0
+    this._closePanelsForTurn()
     return this._runStream(prompt, this._backend.streamShell(command), 'shell')
   }
 
@@ -652,8 +745,7 @@ export class ChatController implements ChatControllerApi {
       return undefined
     }
     const submission = normalizeChatInput(input)
-    this._panel = undefined
-    this._panelStack.length = 0
+    this._closePanelsForTurn()
     const prompt =
       submission.attachments.length === 0 ? submission.text : attachmentContent(submission.text, submission.attachments)
     return this._runStream(
@@ -670,8 +762,7 @@ export class ChatController implements ChatControllerApi {
     if (this._closed || this._execution || this._resourceChanging || !this._backend.streamPeer) {
       return undefined
     }
-    this._panel = undefined
-    this._panelStack.length = 0
+    this._closePanelsForTurn()
     return this._runStream(message.body, this._backend.streamPeer(message), 'model', 'peer', message.from)
   }
 
@@ -759,6 +850,7 @@ export class ChatController implements ChatControllerApi {
       this._context = contextBeforeTurn
       const recovery = mode === 'shell' ? undefined : this._failureRecoveryHint(error)
       projector.fail(error, recovery)
+      if (mode === 'model') this._offerDevFix(projector.snapshot())
     } finally {
       clearTimeout(toolOutputEmitTimer)
       clearTimeout(responseDelayTimer)
@@ -766,8 +858,9 @@ export class ChatController implements ChatControllerApi {
       if (steeringDrain) {
         await steeringDrain
       }
-      if (execution.phase === 'running') {
-        this._completedTurns.push(projector.snapshot())
+      const finished = execution.phase === 'running' ? projector.snapshot() : undefined
+      if (finished) {
+        this._completedTurns.push(finished)
       }
       if (this._execution === execution) {
         this._execution = undefined
@@ -775,6 +868,7 @@ export class ChatController implements ChatControllerApi {
       this._steeringDrain = undefined
       this._clearDeliveredBackgroundTaskNotices()
       this._emit()
+      if (finished && mode === 'model') await this._updateFailedTurns(finished)
       if (!this._closed) {
         await this._applyDeferredModelRestart()
         this._startBackgroundContinuation()
@@ -785,14 +879,46 @@ export class ChatController implements ChatControllerApi {
     return projector.snapshot()
   }
 
+  private _offerDevFix(turn: ChatTurn): void {
+    if (turn.status !== 'error' || !this._runtime.devWorkspace) return
+    const message = turn.error ?? ''
+    const failure = this._turnFailure(message)
+    if (failure === 'expiredCredentials') return
+    if (failure === 'modelSetup') {
+      this._openPanel({
+        kind: 'error',
+        title: 'Model provider needs setup',
+        rows: [{ label: '', description: message, tone: 'danger' }],
+        modelSetup: true,
+      })
+      return
+    }
+    this._openError('Agent turn failed', '', message, this._runtime.cwd)
+  }
+
+  private _turnFailure(message: string): TurnFailure {
+    if (!isModelCredentialFailure(message)) return 'other'
+    if (isExpiredModelCredential(message)) return 'expiredCredentials'
+    return this._runtime.devWorkspace && this._requestSetup ? 'modelSetup' : 'credentials'
+  }
+
   private _failureRecoveryHint(error: unknown): string {
-    const message = errorMessage(error)
-    const credentials = /credentials?|expiredtoken|security token|sso.*expired/i.test(message)
-    const guidance = credentials
-      ? 'Refresh your credentials, then resend your message.'
-      : 'Check your connection and provider, then resend your message.'
+    const guidance = TURN_FAILURE_GUIDANCE[this._turnFailure(errorMessage(error))]
     const session = this.resumeSession
     return session ? `${guidance}\nTo resume after restarting: ${sessionResumeCommand(session)}` : guidance
+  }
+
+  private async _updateFailedTurns(turn: ChatTurn): Promise<void> {
+    if (turn.status === 'error' && turn.source) return
+    if (turn.status !== 'error' && this._failedTurns.length === 0) return
+    this._failedTurns =
+      turn.status === 'error' ? [...this._failedTurns, { prompt: turn.prompt, error: turn.error ?? '' }] : []
+    try {
+      await this._sessions?.saveFailedTurns?.(this._failedTurns)
+    } catch (error) {
+      this._addNotice('error', `The failed message could not be saved for a resume: ${errorMessage(error)}`)
+      this._emit()
+    }
   }
 
   private _watchTurnUsage(
@@ -871,6 +997,8 @@ export class ChatController implements ChatControllerApi {
     }
     this._closed = true
     this._sessionNaming?.abort()
+    this._devCommandAbort.abort()
+    this._stopDevJobs()
     this._stopWatchingUsage()
     this._backgroundContinuationPending = false
     const interrupted = this._execution !== undefined
@@ -890,6 +1018,8 @@ export class ChatController implements ChatControllerApi {
   async dispose(): Promise<void> {
     this._closed = true
     this._sessionNaming?.abort()
+    this._devCommandAbort.abort()
+    this._stopDevJobs()
     this._stopWatchingUsage()
     if (this._execution) {
       this._execution.presentationAbort.abort()
@@ -1055,8 +1185,7 @@ export class ChatController implements ChatControllerApi {
       if (!pending) {
         return
       }
-      this._panel = undefined
-      this._panelStack.length = 0
+      this._closePanelsForTurn()
       if (pending.kind === 'peer') {
         await this._runPeerMessage(pending.message)
       } else {
@@ -1125,6 +1254,16 @@ export class ChatController implements ChatControllerApi {
       case 'mcp':
         return row.value.startsWith('mcp:toggle:') ? this._toggleMcpServer(row.value) : false
       case 'settings':
+        if (row.value.startsWith('workspace:')) {
+          const action = row.value.slice('workspace:'.length)
+          if (!this._workspaceAction || !this._runtime.devWorkspace || action !== 'edit') return false
+          if (this.busy || this._hasUnresolvedBackgroundTasks()) {
+            this._openError('Workspace busy', '', 'Finish or cancel running work before changing this workspace.')
+            return false
+          }
+          this._workspaceAction(action)
+          return true
+        }
         if (row.value === SETTINGS_SETUP_ACTION) {
           if (!this._requestSetup) {
             return false
@@ -1236,12 +1375,25 @@ export class ChatController implements ChatControllerApi {
       this._updateOpenModelPanel(modelId)
       this._openEffortPanelIfAvailable()
       this._emit()
+      await this._saveToAgent('model', { model: modelId })
       return true
     } catch (error) {
       this._openError('model change failed', modelId, modelControlErrorMessage(error, 'model'))
       return false
     } finally {
       this._finishResourceChange()
+    }
+  }
+
+  private async _saveToAgent(
+    option: 'model' | 'effort',
+    change: { model?: string; effort?: ProfileEffort }
+  ): Promise<void> {
+    if (!this._saveAgentOptions) return
+    try {
+      await this._saveAgentOptions(change)
+    } catch (error) {
+      this._openError(`${option} kept for this session only`, change[option] ?? option, errorMessage(error))
     }
   }
 
@@ -1300,6 +1452,7 @@ export class ChatController implements ChatControllerApi {
 
   private _createSnapshot(): ChatSnapshot {
     const activeTurn = this._activeProjector?.snapshot()
+    const devJobs = this._devJobs()
     return {
       completedTurns: [...this._completedTurns],
       ...(activeTurn ? { activeTurn } : {}),
@@ -1336,6 +1489,7 @@ export class ChatController implements ChatControllerApi {
       ...(this._permissionMode ? { permissionMode: this._permissionMode } : {}),
       ...(this._permissionPreset ? { permissionPreset: this._permissionPreset } : {}),
       settings: globalThis.structuredClone(this._settings),
+      ...(devJobs.length > 0 ? { devJobs } : {}),
       ...(this._exitCode !== undefined ? { exitCode: this._exitCode } : {}),
     }
   }
@@ -1363,6 +1517,7 @@ export class ChatController implements ChatControllerApi {
             tools: this._builtinTools !== undefined,
             export: this._exportAgentProject !== undefined,
             config: this._configurationSource !== undefined,
+            devCommands: this._devCommands.filter((command) => !command.hidden).map((command) => command.spec),
           }),
           searchable: true,
           filters: [
@@ -1433,7 +1588,13 @@ export class ChatController implements ChatControllerApi {
         this.close()
         break
       default: {
-        const turn = await this._activateSkillAndRun(command, prompt)
+        const devCommand = this._devCommand(command)
+        if (devCommand) {
+          if (devCommand.run) devCommand.run(this._devCommandContext())
+          else this._openDevPanel(devCommand)
+          break
+        }
+        const turn = this._isSkillCommand(command) ? await this._activateSkillAndRun(command, prompt) : null
         if (turn === null) {
           this._openError('unknown command', `/${command}`, 'Type / to browse commands or use /skills to list skills.')
         }
@@ -1642,6 +1803,7 @@ export class ChatController implements ChatControllerApi {
       this._updateOpenModelPanel(modelId)
       this._openEffortPanelIfAvailable()
       this._emit()
+      await this._saveToAgent('model', { model: modelId })
       return true
     } catch (error) {
       this._openError('model switch failed', modelId, modelControlErrorMessage(error, 'model'))
@@ -1682,6 +1844,7 @@ export class ChatController implements ChatControllerApi {
         }
       }
       this._emit()
+      if (selected !== undefined) await this._saveToAgent('effort', { effort: profileEffort(effort) })
       return selected !== undefined
     } catch (error) {
       this._openError('effort change failed', effort, modelControlErrorMessage(error, 'effort'))
@@ -1978,6 +2141,7 @@ export class ChatController implements ChatControllerApi {
       await this._backend.clear()
       this._stopWatchingUsage()
       this._completedTurns = []
+      this._failedTurns = []
       this._notices = []
       this._tasks = []
       this._context = {}
@@ -2512,13 +2676,7 @@ export class ChatController implements ChatControllerApi {
       if (this._panel?.kind === 'settings') {
         this._panel = {
           ...this._panel,
-          rows: sanitizeRows(
-            settingsRows(
-              this._settings,
-              this._panel.settingsCategory ?? DEFAULT_SETTINGS_CATEGORY,
-              this._requestSetup !== undefined
-            )
-          ),
+          rows: sanitizeRows(this._settingsCategoryRows(this._panel.settingsCategory ?? DEFAULT_SETTINGS_CATEGORY)),
         }
       }
       return true
@@ -2530,17 +2688,34 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
+  private _settingsCategoryRows(category: SettingsCategory): ChatPanelRow[] {
+    const rows = settingsRows(this._settings, category, this._requestSetup !== undefined)
+    if (category !== 'Workspace') return rows
+    return [
+      { label: 'Workspace folder', description: this._runtime.devWorkspace!.root },
+      { label: 'Current agent', description: this._runtime.devWorkspace!.entrypoint },
+      {
+        label: 'Edit workspace configuration',
+        description: 'Open .config; changes apply on next launch',
+        value: 'workspace:edit',
+      },
+      ...rows,
+    ]
+  }
+
   private _openSettingsCategory(value: string, replace = false): boolean {
-    const category = SETTINGS_CATEGORIES.find(({ id }) => value === `settings:${id}`)
+    const category =
+      value === 'settings:Workspace' && this._workspaceAction && this._runtime.devWorkspace
+        ? { id: 'Workspace' as const, label: 'Strands dev workspace' }
+        : SETTINGS_CATEGORIES.find(({ id }) => value === `settings:${id}`)
     if (!category) {
       return false
     }
-    const rows = settingsRows(this._settings, category.id, this._requestSetup !== undefined)
     const panel = {
       kind: 'settings',
       title: category.label,
-      rows,
-      filters: settingsCategoryFilters(),
+      rows: this._settingsCategoryRows(category.id),
+      filters: settingsCategoryFilters(Boolean(this._workspaceAction && this._runtime.devWorkspace)),
       settingsCategory: category.id,
     } satisfies NewChatPanel
     if (replace) {
@@ -2855,6 +3030,86 @@ export class ChatController implements ChatControllerApi {
     this._deliveredBackgroundTaskIds.clear()
   }
 
+  private _closePanelsForTurn(): void {
+    if (this._panel?.kind === 'dev') return
+    this._panel = undefined
+    this._panelStack.length = 0
+  }
+
+  private _stopDevJobs(): void {
+    for (const stop of this._stopWatchingDevJobs) stop()
+    this._stopWatchingDevJobs = []
+  }
+
+  openDevCommand(name: string, opening?: DevPanelOpening): boolean {
+    const devCommand = this._devCommand(name)
+    if (!devCommand || this._closed || this._panel?.kind === 'permission') return false
+    this._openDevPanel(devCommand, opening)
+    return true
+  }
+
+  private _openDevPanel(devCommand: DevChatCommand, opening?: DevPanelOpening): void {
+    if (this._panel?.kind === 'dev' && this._panel.command === devCommand.spec.name && !opening?.job) return
+    const opened = this._openPanel({
+      kind: 'dev',
+      command: devCommand.spec.name,
+      title: `/${devCommand.spec.name}`,
+      rows: [],
+      view: devCommand.open(this._devCommandContext(), opening),
+      close: () => {
+        if (this._panel?.id === opened.id) this.dismissPanel()
+      },
+      openCommand: (name) => this.openDevCommand(name),
+      ...(devCommand.sticky ? { sticky: true } : {}),
+      ...(devCommand.dock ? { dock: (): boolean => devCommand.dock!() } : {}),
+      ...(devCommand.wideDock ? { wideDock: (): boolean => devCommand.wideDock!() } : {}),
+      ...(devCommand.dropPending ? { dropPending: (): void => devCommand.dropPending!() } : {}),
+      ...(devCommand.contentRows ? { contentRows: (): number | undefined => devCommand.contentRows!() } : {}),
+    })
+  }
+
+  private _devJobs(): DevChatJobGroup[] {
+    return this._devCommands.flatMap(({ spec, jobs }) => {
+      const running = jobs?.snapshot() ?? []
+      return running.length > 0
+        ? [{ command: spec.name, jobs: running.map((job) => ({ ...job, label: jobLabel(job.label) })) }]
+        : []
+    })
+  }
+
+  private _isDevCommandPrompt(prompt: string): boolean {
+    const invocation = parseCommandInvocation(prompt)
+    return invocation?.prefix === '/' && this._devCommand(invocation.name) !== undefined
+  }
+
+  private _devCommand(name: string): DevChatCommand | undefined {
+    const requested = name.toLowerCase()
+    return this._devCommands.find((command) => command.spec.name.toLowerCase() === requested)
+  }
+
+  private _devCommandContext(): DevChatCommandContext {
+    return {
+      signal: this._devCommandAbort.signal,
+      report: (status, text): DevChatNotice => {
+        let notice = this._addNotice(status, text)
+        this._emit()
+        return {
+          update: (nextStatus, nextText): void => {
+            if (this._closed) return
+            this._notices = this._notices.filter((candidate) => candidate !== notice)
+            notice = this._addNotice(nextStatus, nextText)
+            this._emit()
+          },
+        }
+      },
+      fail: (title, detail): void => this._openError(title, '', detail),
+      submit: (prompt): void => {
+        void this.submit(prompt)
+      },
+      openPanel: (name): boolean => this.openDevCommand(name),
+    }
+  }
+
   private _addNotice(status: ChatNotice['status'], text: string, taskId?: string): ChatNotice {
     const afterTurnId = this._activeProjector?.snapshot().id ?? this._completedTurns.at(-1)?.id
     const notice = {
@@ -2899,6 +3154,7 @@ export class ChatController implements ChatControllerApi {
         notice.text = `Model changed to ${modelDisplayName(modelId)}`
       }
       this._openEffortPanelIfAvailable()
+      await this._saveToAgent('model', { model: modelId })
     } catch (error) {
       if (notice) {
         notice.status = 'error'
@@ -2967,8 +3223,13 @@ export class ChatController implements ChatControllerApi {
     return makePanel(`panel-${this._nextPanel++}`, input)
   }
 
-  private _openError(title: string, label: string, description: string): void {
-    this._openPanel({ kind: 'error', title, rows: [{ label, description, tone: 'danger' }] })
+  private _openError(title: string, label: string, description: string, fixDirectory?: string): void {
+    this._openPanel({
+      kind: 'error',
+      title,
+      rows: [{ label, description, tone: 'danger' }],
+      ...(fixDirectory ? { fixDirectory } : {}),
+    })
   }
 }
 
@@ -2985,6 +3246,10 @@ function skillInvocationPrompt(activation: SkillActivation, displayPrompt: strin
     '',
     displayPrompt,
   ].join('\n')
+}
+
+function jobLabel(label: string): string {
+  return sanitizeTerminalText(label).replace(/\s+/gu, ' ').trim()
 }
 
 function isLiveLocalCommand(prompt: string): boolean {

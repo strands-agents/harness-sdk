@@ -7,7 +7,7 @@ import type { Instance } from 'ink'
 import { Message, TextBlock } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ChatController, type ChatControllerApi } from '../../src/ui/chat/controller.js'
+import { ChatController, type ChatControllerApi, type DevChatCommand } from '../../src/ui/chat/controller.js'
 import { type ChatConversation, type ChatConversations } from '../../src/agent/types.js'
 import { applyProviderEnvironmentValues, CliConfigStore } from '../../src/config/store.js'
 import { configurationFromStore, type RequestSetup, type SetupChange } from '../../src/agent/configuration.js'
@@ -347,8 +347,10 @@ describe('runInkChat', () => {
     })
     try {
       await vi.waitFor(() => expect(rendered).toContain('Fork history'))
+      previous.markReloaded(['earlier.ts'])
       requestSetup({
         conversationId: 'agent-1',
+        reloadedFiles: ['agent.ts'],
         ...(kind === 'profile' ? { profile: configuration.profile } : { configuration, agentProject }),
         onFailure,
       })
@@ -409,10 +411,12 @@ describe('runInkChat', () => {
       if (fails) {
         expect(await readFile(configPath, 'utf8')).toBe(saved)
         expect(onFailure).toHaveBeenCalledExactlyOnceWith(replacementError)
+        expect(previous.getSnapshot().runtime.reloadStatus).toBeUndefined()
         expect(rendered).toContain('error: Failed to apply setup: Replacement failed')
         expect(rendered).not.toContain(replacementError)
       } else {
         expect(onFailure).not.toHaveBeenCalled()
+        expect(replacement?.getSnapshot().runtime.reloadStatus).toBe('↻ agent.ts reloaded · session kept')
       }
     } finally {
       release()
@@ -420,6 +424,156 @@ describe('runInkChat', () => {
       instance.unmount()
       await running
       await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it.each<[string, string, Partial<SetupChange>, number]>([
+    ['SaveTheProfile', 'AProfileChangeArrives', {}, 1],
+    ['KeepCliTomlAsItIs', 'CliTomlIsReloaded', { reloadedFiles: ['cli.toml'], profileSaved: true }, 0],
+  ])('should%sWhen%s', async (_outcome, _event, reload, saves) => {
+    const config = CliConfigStore.memory()
+    const saveProfile = vi.spyOn(config, 'saveProfile').mockResolvedValue()
+    const unusedFork = async (): Promise<ChatController> => {
+      throw new Error('Unused')
+    }
+    const snapshot: ChatConversation['snapshot'] = {
+      scope: 'agent',
+      schemaVersion: '1.0',
+      createdAt: new Date().toISOString(),
+      data: {},
+      appData: {},
+    }
+    const conversation = (): ChatController =>
+      new ChatController({ ...idleBackend(), captureConversation: async () => snapshot })
+    const previous = new ConversationManager(conversation(), { fork: unusedFork })
+    const disposed = vi.spyOn(previous, 'dispose')
+    let requestSetup: RequestSetup | undefined
+    const source = async (
+      _signal: AbortSignal,
+      setup: RequestSetup,
+      conversations?: ChatConversations
+    ): Promise<ChatControllerApi> => {
+      requestSetup = setup
+      return conversations ? new ConversationManager(conversation(), { fork: unusedFork }) : previous
+    }
+    const output = Object.assign(new PassThrough(), {
+      isTTY: true,
+      columns: 100,
+      rows: 30,
+    }) as unknown as NodeJS.WriteStream
+    output.resume()
+    let instance!: Instance
+    const running = runInkChat(source, {
+      config,
+      intro: false,
+      alternateScreen: false,
+      input: Object.assign(new PassThrough(), {
+        isTTY: true,
+        setRawMode: vi.fn(),
+        ref: vi.fn(),
+        unref: vi.fn(),
+      }) as unknown as NodeJS.ReadStream,
+      output,
+      errorOutput: output,
+      renderApp: (element, options) => {
+        instance = render(element, { ...options, interactive: true, patchConsole: false })
+        return instance
+      },
+    })
+    try {
+      await vi.waitFor(() => expect(requestSetup).toBeDefined())
+
+      requestSetup!({ profile: config.snapshot().profile, ...reload } as SetupChange)
+
+      await vi.waitFor(() => expect(disposed).toHaveBeenCalled())
+      expect(saveProfile).toHaveBeenCalledTimes(saves)
+    } finally {
+      instance.unmount()
+      await running
+    }
+  })
+
+  it('shouldReopenTheDevPanelWhenAFileChangeReloadsTheAgent', async () => {
+    const snapshot: ChatConversation['snapshot'] = {
+      scope: 'agent',
+      schemaVersion: '1.0',
+      createdAt: new Date().toISOString(),
+      data: {},
+      appData: {},
+    }
+    const open = vi.fn<DevChatCommand['open']>(() => () => null)
+    const devCommands: DevChatCommand[] = [
+      { spec: { name: 'optimize', usage: '/optimize', description: 'Tune this agent' }, open },
+    ]
+    const conversation = (): ChatController =>
+      new ChatController({ ...idleBackend(), captureConversation: async () => snapshot }, { devCommands })
+    const unusedFork = async (): Promise<ChatController> => {
+      throw new Error('Unused')
+    }
+    const previous = new ConversationManager(conversation(), { fork: unusedFork })
+    let replacement: ConversationManager | undefined
+    let requestSetup: RequestSetup | undefined
+    const source = async (
+      _signal: AbortSignal,
+      setup: RequestSetup,
+      conversations?: ChatConversations
+    ): Promise<ChatControllerApi> => {
+      requestSetup = setup
+      if (!conversations) return previous
+      replacement = new ConversationManager(
+        {
+          activeId: conversations.activeId,
+          entries: conversations.entries.map(({ id, title, description }) => ({
+            id,
+            title,
+            description,
+            controller: conversation(),
+          })),
+        },
+        { fork: unusedFork }
+      )
+      return replacement
+    }
+    const input = Object.assign(new PassThrough(), {
+      isTTY: true,
+      setRawMode: vi.fn(),
+      ref: vi.fn(),
+      unref: vi.fn(),
+    }) as unknown as NodeJS.ReadStream
+    const output = Object.assign(new PassThrough(), {
+      isTTY: true,
+      columns: 100,
+      rows: 30,
+    }) as unknown as NodeJS.WriteStream
+    output.resume()
+    let instance!: Instance
+    const running = runInkChat(source, {
+      config: CliConfigStore.memory(),
+      intro: false,
+      alternateScreen: false,
+      input,
+      output,
+      errorOutput: output,
+      renderApp: (element, options) => {
+        instance = render(element, { ...options, interactive: true, patchConsole: false })
+        return instance
+      },
+    })
+    try {
+      await vi.waitFor(() => expect(requestSetup).toBeDefined())
+      await previous.submit('/optimize')
+      expect(previous.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'optimize' })
+
+      requestSetup!({ agentProject: '/w/agent.ts', reloadedFiles: ['agent.ts'] })
+
+      await vi.waitFor(() =>
+        expect(replacement?.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'optimize' })
+      )
+      expect(replacement?.getSnapshot().runtime.reloadStatus).toBe('↻ agent.ts reloaded · session kept')
+      expect(open.mock.calls.map(([, options]) => options)).toEqual([undefined, { restore: true }])
+    } finally {
+      instance.unmount()
+      await running
     }
   })
 

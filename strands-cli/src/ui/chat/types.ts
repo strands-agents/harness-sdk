@@ -1,4 +1,5 @@
 import type { Message } from '@strands-agents/sdk'
+import type { ComponentType } from 'react'
 import type {
   ChatAttachmentSummary,
   ChatBackend,
@@ -20,14 +21,18 @@ import type {
 } from '../../agent/types.js'
 
 import type { BackgroundAgentActivity } from '../../agent/background.js'
+import type { WorkspaceAction } from '../../agent/configuration.js'
 import type { LoadedMcp } from '../../agent/mcp.js'
 import type { PeerMessage } from '../../agent/messaging.js'
 import type { ChatSkillsRuntime } from '../../agent/skills.js'
 import type { VoiceSessionSnapshot } from '../../agent/voice.js'
 import type { ChatSettings, SettingsCategory } from '../../config/settings.js'
+import type { ProfileEffort } from '../../config/store.js'
 import type { AgentProjectOutput } from '../../project/export.js'
 import type { ImportedAgentProject } from '../../project/import.js'
-import type { ChatSessionRuntime, ResumeSession } from '../../session/sessions.js'
+import type { DevStateManager } from '../../dev/runtime.js'
+import type { ChatSessionRuntime, FailedTurn, ResumeSession } from '../../session/sessions.js'
+import type { LocalCommandSpec } from './commands.js'
 import type { CommandAssistance } from './commands.js'
 import type { StreamPresentationOptions } from './stream-presentation.js'
 
@@ -52,6 +57,80 @@ export interface ChatNotice {
   taskId?: string
   text: string
   status: 'running' | 'success' | 'error' | 'delivered'
+}
+
+export interface DevChatNotice {
+  update(status: ChatNotice['status'], text: string): void
+}
+
+export interface DevChatCommandContext {
+  readonly signal: AbortSignal
+  report(status: ChatNotice['status'], text: string): DevChatNotice
+  fail(title: string, detail: string): void
+  submit(prompt: string): void
+  /** Opens another dev command's panel, so a tool can put a question on screen. */
+  openPanel(name: string): boolean
+}
+
+export interface DevChatPanelProps {
+  readonly width: number
+  readonly height: number
+  readonly close: () => void
+  readonly openCommand: (name: string) => boolean
+  /** False while the chat input holds the keyboard, so a sticky panel stays visible but idle. */
+  readonly active?: boolean
+  /** Hands the keyboard to the chat input without closing this panel. */
+  readonly blur?: () => void
+}
+
+export type DevChatPanelView = ComponentType<DevChatPanelProps>
+
+export interface DevChatJob {
+  readonly id: string
+  readonly label: string
+  readonly done?: number
+  readonly total?: number
+}
+
+export interface DevChatJobs {
+  subscribe(listener: () => void): () => void
+  snapshot(): readonly DevChatJob[]
+}
+
+export interface DevChatJobGroup {
+  readonly command: string
+  readonly jobs: readonly DevChatJob[]
+}
+
+export interface DevJobTarget {
+  readonly command: string
+  readonly id: string
+}
+
+export interface DevPanelOpening {
+  readonly restore?: boolean
+  readonly job?: string
+}
+
+export interface DevChatCommand {
+  spec: LocalCommandSpec
+  /** Left out of the slash list and /help: it exists for its jobs line and for openCommand. */
+  hidden?: boolean
+  /** Typing the command runs this instead of opening the panel; the panel stays for its jobs line. */
+  run?(context: DevChatCommandContext): void
+  /** Keeps the panel open when the developer clicks away, for a panel something is waiting on. */
+  sticky?: boolean
+  /** Renders beside the transcript at the dock's width, when its content needs that width right now. */
+  dock?(): boolean
+  /** Widens that dock, for a panel holding lines to read rather than rows to pick. */
+  wideDock?(): boolean
+  /** Called when the developer submits a chat message instead of answering. */
+  dropPending?(): void
+  /** The rows this panel's content needs right now, to shrink the frame to it. */
+  contentRows?(): number | undefined
+  open(context: DevChatCommandContext, opening?: DevPanelOpening): DevChatPanelView
+  attach?(context: DevChatCommandContext): void
+  jobs?: DevChatJobs
 }
 
 export interface ChatPanelRow {
@@ -104,7 +183,12 @@ export interface ChatPanelBase {
 
 export type NewChatPanel =
   | (ChatPanelBase & {
-      kind: 'context' | 'skills' | 'tools' | 'voice' | 'help' | 'error'
+      kind: 'context' | 'skills' | 'tools' | 'voice' | 'help'
+    })
+  | (ChatPanelBase & {
+      kind: 'error'
+      fixDirectory?: string
+      modelSetup?: boolean
     })
   | (ChatPanelBase & {
       kind: 'agents'
@@ -166,6 +250,23 @@ export type NewChatPanel =
       configuration: ChatConfigurationSource
       language: ChatConfigurationLanguage
     })
+  | (ChatPanelBase & {
+      kind: 'dev'
+      command: string
+      view: DevChatPanelView
+      close: () => void
+      openCommand: (name: string) => boolean
+      /** A click outside moves the keyboard to the chat input instead of closing this panel. */
+      sticky?: boolean
+      /** Renders beside the transcript at the dock's width rather than above the chat input. */
+      dock?: () => boolean
+      /** Widens that dock, for a panel holding lines to read rather than rows to pick. */
+      wideDock?: () => boolean
+      /** Resolves whatever this panel is waiting on, so a chat message can be sent instead. */
+      dropPending?: () => void
+      /** The rows its content needs, when that is fewer than the panel's usual share of the screen. */
+      contentRows?: () => number | undefined
+    })
 
 export type ChatPanel = NewChatPanel & { id: string }
 export type ChatModelPanel = Extract<ChatPanel, { kind: 'models' }>
@@ -174,6 +275,7 @@ export type ChatTasksPanel = Extract<ChatPanel, { kind: 'tasks' }>
 export type ChatPermissionsPanel = Extract<ChatPanel, { kind: 'permissions' }>
 export type ChatPermissionPanel = Extract<ChatPanel, { kind: 'permission' }>
 export type ChatDetailPanel = Extract<ChatPanel, { kind: 'detail' | 'help-detail' }>
+export type ChatDevPanel = Extract<ChatPanel, { kind: 'dev' }>
 
 export interface ChatRuntimeInfo {
   agent: string
@@ -187,6 +289,9 @@ export interface ChatRuntimeInfo {
   cwd: string
   tools: readonly ChatToolInfo[]
   configuration?: readonly { label: string; value: string }[]
+  devWorkspace?: { root: string; entrypoint: string; boundEntrypoint: string; origin: string }
+  sourceWatching?: boolean
+  reloadStatus?: string
 }
 
 export interface ChatVoiceStore {
@@ -231,6 +336,7 @@ export interface ChatSnapshot {
   permissionPreset?: ChatPermissionPreset
   settings: ChatSettings
   voice?: VoiceSessionSnapshot
+  devJobs?: readonly DevChatJobGroup[]
   exitCode?: number
 }
 
@@ -243,12 +349,17 @@ export interface ChatControllerOptions {
   sessions?: ChatSessionRuntime
   skills?: ChatSkillsRuntime
   skillNames?: readonly string[]
+  skillsWithoutCommands?: readonly string[]
   mcp?: Omit<LoadedMcp, 'clients'>
   initialMessages?: readonly Message[]
   initialTurns?: readonly ChatTurn[]
+  failedTurns?: readonly FailedTurn[]
+  turnedOffState?: readonly DevStateManager[]
   initialConfigurationBaseline?: ChatConfigurationBaseline
   setSettings?: (settings: Partial<ChatSettings>) => Promise<void>
   requestSetup?: () => void
+  workspaceAction?: (action: WorkspaceAction) => void
+  devCommands?: readonly DevChatCommand[]
   awsProfile?: {
     get(): Omit<NonNullable<ChatModelPanel['awsProfile']>, 'open'>
     select(profile: string): void
@@ -262,7 +373,12 @@ export interface ChatControllerOptions {
   configurationSource?: () => ChatConfigurationSource
   /** Reload this session from an exported project directory, keeping the conversation. */
   useExportedProject?: (path: string) => void
+  saveAgentOptions?: (change: { model?: string; effort?: ProfileEffort }) => Promise<unknown>
   peerEndpointId?: string
+}
+
+export interface ChatErrorOptions {
+  fixDirectory?: string
 }
 
 export interface ChatControllerApi {
@@ -274,7 +390,10 @@ export interface ChatControllerApi {
   readonly resumeSession?: ResumeSession | undefined
   captureConversations?(): Promise<ChatConversations>
   pauseVoiceInput?(): () => void
-  showError?(title: string, message: string): void
+  showError?(title: string, message: string, options?: ChatErrorOptions): void
+  notify?(status: ChatNotice['status'], text: string): void
+  markReloaded?(paths: readonly string[]): void
+  clearReloadStatus?(): void
   setSettings?(settings: Partial<ChatSettings>): Promise<boolean>
   toggleVoiceMute?(): boolean
   actionableCommandToken(input: string): string | undefined
@@ -299,4 +418,5 @@ export interface ChatControllerApi {
   retryMcpServer(name: string): Promise<boolean>
   openModelPanel(): Promise<void>
   openContextPanel(): void
+  openDevCommand?(name: string, opening?: DevPanelOpening): boolean
 }

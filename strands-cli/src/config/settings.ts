@@ -49,7 +49,7 @@ export const SETTINGS_CATEGORIES = [
   },
 ] as const
 
-export type SettingsCategory = (typeof SETTINGS_CATEGORIES)[number]['id']
+export type SettingsCategory = (typeof SETTINGS_CATEGORIES)[number]['id'] | 'Workspace'
 
 export const DEFAULT_SETTINGS_CATEGORY = 'Appearance' satisfies SettingsCategory
 
@@ -92,6 +92,10 @@ export interface ChatSettings {
   updatePrompts: boolean
   /** Tool-result token cutoff for context offloading, or the selected context-manager preset's default. */
   contextOffloadThreshold: ContextOffloadThreshold
+  /** Apply model changes made in a strands dev session to existing saved sessions. */
+  sessionModelSync: boolean
+  /** Answer an agent's on-screen question with its own defaults instead of showing it. */
+  uiAutofill: boolean
 }
 
 export type ThemeSettings = Pick<ChatSettings, 'frogTheme'>
@@ -109,6 +113,8 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   telemetry: true,
   updatePrompts: true,
   contextOffloadThreshold: 'default',
+  sessionModelSync: false,
+  uiAutofill: false,
 }
 
 export type SettingKey =
@@ -123,6 +129,8 @@ export type SettingKey =
   | 'telemetry'
   | 'updatePrompts'
   | 'contextOffloadThreshold'
+  | 'sessionModelSync'
+  | 'uiAutofill'
 
 export interface SettingDefinition {
   key: SettingKey
@@ -229,6 +237,26 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     ],
   },
   {
+    key: 'uiAutofill',
+    label: 'Autofill agent questions',
+    section: 'Workspace',
+    control: 'toggle',
+    options: [
+      { label: 'On', value: true },
+      { label: 'Off', value: false },
+    ],
+  },
+  {
+    key: 'sessionModelSync',
+    label: 'Sync model to existing sessions',
+    section: 'Workspace',
+    control: 'toggle',
+    options: [
+      { label: 'On', value: true },
+      { label: 'Off', value: false },
+    ],
+  },
+  {
     key: 'telemetry',
     label: 'Send anonymous usage data',
     section: 'Telemetry',
@@ -268,6 +296,14 @@ export function settingDescription(settings: ChatSettings, key: SettingKey): str
       return settings.updatePrompts
         ? 'on · asks before installing an available update'
         : 'off · available updates remain visible in the footer'
+    case 'uiAutofill':
+      return settings.uiAutofill
+        ? 'on · the agent answers its own questions with their defaults, and they never appear'
+        : 'off · the agent asks, and you answer on screen'
+    case 'sessionModelSync':
+      return settings.sessionModelSync
+        ? 'on · existing sessions use the current model configuration'
+        : 'off · existing sessions keep their saved model configuration'
     case 'contextOffloadThreshold':
       return `${CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value }) => value === settings.contextOffloadThreshold)!.label} · tool-result tokens · applies at next launch`
     default:
@@ -317,6 +353,8 @@ export function parseSettings(value: unknown): ChatSettings {
     telemetry: booleanSetting('telemetry'),
     updatePrompts: booleanSetting('updatePrompts'),
     contextOffloadThreshold,
+    sessionModelSync: booleanSetting('sessionModelSync'),
+    uiAutofill: booleanSetting('uiAutofill'),
   }
 }
 
@@ -340,6 +378,8 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     case 'agentMessaging':
     case 'telemetry':
     case 'updatePrompts':
+    case 'sessionModelSync':
+    case 'uiAutofill':
       return { [name]: !current[name] }
     case 'toolOutput':
       if (selected !== undefined && selected !== 'hidden' && selected !== 'compact' && selected !== 'full') {

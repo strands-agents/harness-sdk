@@ -13,6 +13,7 @@ import { DEFAULT_CHAT_SETTINGS } from '../../src/ui/chat/types.js'
 import { enabledProfileTools } from '../../src/agent/tools.js'
 import { sanitizeTerminalText } from '../../src/terminal/text.js'
 import * as directoryPicker from '../../src/terminal/directory-picker.js'
+import * as terminal from '../../src/terminal/terminal.js'
 import { SetupWizard } from '../../src/ui/setup/wizard.js'
 import { ChatRoot } from '../../src/ui/app.js'
 import { getTheme } from '../../src/ui/theme.js'
@@ -1536,6 +1537,105 @@ describe('setup presentation', () => {
     }
   })
 
+  it('shouldCopyAStepErrorWhenControlYIsPressed', async () => {
+    const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
+    const input = ttyInput()
+    const output = ttyOutput(80, 24)
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('\n')) {
+        frame = sanitizeTerminalText(chunk.toString())
+      }
+    })
+    const instance = render(
+      createElement(SetupWizard, {
+        config: CliConfigStore.memory({}, { animations: false }),
+        onComplete: () => {},
+      }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
+    )
+    const press = async (key: string): Promise<void> => {
+      input.push(key)
+      await instance.waitUntilRenderFlush()
+    }
+    try {
+      await instance.waitUntilRenderFlush()
+      await press('\u001b[B')
+      await press('\u001b[C')
+      await press('\r')
+      await press('\r')
+      await press('\r')
+      expect(frame).toContain('This field cannot be empty. · Ctrl+Y copy error')
+
+      await press('\u0019')
+
+      await vi.waitFor(() => expect(copy).toHaveBeenCalledExactlyOnceWith('This field cannot be empty.', output))
+      await vi.waitFor(() => expect(frame).toContain('This field cannot be empty. · 27 chars copied to clipboard'))
+      expect(frame.split('\n').every((line) => stringWidth(line) <= 80)).toBe(true)
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+      copy.mockRestore()
+    }
+  })
+
+  it('shouldCopyTheModelCatalogErrorWhenControlYIsPressed', async () => {
+    const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
+    vi.stubEnv('AWS_BEARER_TOKEN_BEDROCK', 'test-token')
+    vi.stubEnv('AWS_REGION', 'us-east-1')
+    vi.mocked(discoverProviderModels).mockResolvedValue({
+      available: false,
+      models: [],
+      error: 'AccessDeniedException: no catalog access',
+    })
+    const config = CliConfigStore.memory({}, { animations: false }, { profile: { model: 'bedrock/catalog-test' } })
+    const input = ttyInput()
+    const output = ttyOutput(120, 32)
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.includes('\n')) frame = sanitizeTerminalText(chunk.toString())
+    })
+    const instance = render(createElement(SetupWizard, { config, deferred: true, onComplete: vi.fn() }), {
+      stdin: input,
+      stdout: output,
+      stderr: output,
+    })
+    try {
+      await instance.waitUntilRenderFlush()
+      const lines = frame.split('\n')
+      const row = lines.findIndex((line) => line.includes('Quickstart'))
+      const column = lines[row]!.indexOf('Quickstart')
+      input.push(mouseInputSequence(0, column, row, 'M'))
+      input.push(mouseInputSequence(3, column, row, 'm'))
+      await vi.waitFor(() => expect(frame).toContain('Model catalog unavailable'))
+      expect(frame).toContain('Ctrl+Y copy')
+
+      input.push('\u0019')
+
+      await vi.waitFor(() =>
+        expect(copy).toHaveBeenCalledExactlyOnceWith(
+          'Model catalog unavailable: AccessDeniedException: no catalog access',
+          output
+        )
+      )
+    } finally {
+      instance.unmount()
+      await instance.waitUntilExit()
+      copy.mockRestore()
+      vi.mocked(discoverProviderModels).mockResolvedValue({ available: true, models: [] })
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('cycles opening focus and activates Esc through onCancel', async () => {
     const colorLevel = chalk.level
     chalk.level = 3
@@ -2250,6 +2350,112 @@ describe('setup theme', () => {
     } finally {
       instance.unmount()
       await instance.waitUntilExit()
+      vi.mocked(discoverProviderModels).mockResolvedValue({ available: true, models: [] })
+    }
+  })
+})
+
+describe('provider-only setup', () => {
+  const renderProviderOnly = (config: CliConfigStore, props: Partial<Parameters<typeof SetupWizard>[0]> = {}) => {
+    const input = ttyInput()
+    const output = ttyOutput(180, 36)
+    const onComplete = vi.fn()
+    const onCancel = vi.fn()
+    let frame = ''
+    output.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('\n')) frame = sanitizeTerminalText(chunk.toString())
+    })
+    const instance = render(
+      createElement(SetupWizard, { config, deferred: true, onComplete, onCancel, providerOnly: true, ...props }),
+      {
+        stdin: input,
+        stdout: output,
+        stderr: output,
+        interactive: true,
+        debug: true,
+        incrementalRendering: false,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      }
+    )
+    const press = async (key: string): Promise<void> => {
+      input.push(key)
+      await instance.waitUntilRenderFlush()
+    }
+    const click = async (text: string): Promise<void> => {
+      const lines = frame.split('\n')
+      const row = lines.findIndex((line) => line.includes(text))
+      expect(row).toBeGreaterThanOrEqual(0)
+      const column = lines[row]!.indexOf(text)
+      await press(mouseInputSequence(0, column, row, 'M'))
+      await press(mouseInputSequence(3, column, row, 'm'))
+    }
+    return { instance, onComplete, onCancel, press, click, frame: (): string => frame }
+  }
+
+  it('shouldOpenOnTheModelPageForTheRunningModelWithoutHarnessChoicesWhenProviderOnly', async () => {
+    const config = CliConfigStore.memory({}, { animations: false })
+    const view = renderProviderOnly(config, { initialModel: 'anthropic/claude-sonnet-4-5' })
+    try {
+      await view.instance.waitUntilRenderFlush()
+
+      await vi.waitFor(() => expect(view.frame()).toContain('Pick a model for your agent'))
+      expect(view.frame()).toContain('Enter API Key')
+      expect(view.frame()).not.toContain('Customize')
+      expect(view.frame()).not.toContain('Load in your custom harness')
+    } finally {
+      view.instance.unmount()
+      await view.instance.waitUntilExit()
+    }
+  })
+
+  it('shouldReturnToTheChatWithoutChangesWhenEscIsPressedOnTheProviderOnlyPage', async () => {
+    const config = CliConfigStore.memory({}, { animations: false })
+    const view = renderProviderOnly(config)
+    try {
+      await view.instance.waitUntilRenderFlush()
+      await vi.waitFor(() => expect(view.frame()).toContain('Pick a model for your agent'))
+
+      await view.press('\u001b')
+
+      await vi.waitFor(() => expect(view.onCancel).toHaveBeenCalledWith(0))
+      expect(view.onComplete).not.toHaveBeenCalled()
+      expect(view.frame()).not.toContain('Quickstart')
+    } finally {
+      view.instance.unmount()
+      await view.instance.waitUntilExit()
+    }
+  })
+
+  it('shouldChangeOnlyTheModelAndKeepThePermissionsWhenProviderOnlySetupSaves', async () => {
+    vi.mocked(discoverProviderModels).mockResolvedValue({
+      available: true,
+      models: [
+        { id: 'model-alpha', name: 'Model Alpha' },
+        { id: 'model-beta', name: 'Model Beta' },
+      ],
+    })
+    const config = CliConfigStore.memory(
+      { mode: 'bypassPermissions' },
+      { animations: false },
+      { profile: { model: 'bedrock/model-alpha' } }
+    )
+    const view = renderProviderOnly(config, { initialModel: 'bedrock/model-alpha' })
+    try {
+      await view.instance.waitUntilRenderFlush()
+      await vi.waitFor(() => expect(view.frame()).toContain('Model Beta'))
+
+      await view.click('Model Beta')
+      await vi.waitFor(() => expect(view.frame()).toContain('✓ Model Beta'))
+      await view.click('Save and Launch')
+
+      await vi.waitFor(() => expect(view.onComplete).toHaveBeenCalledOnce())
+      expect(view.onComplete.mock.calls[0]![0]).toMatchObject({
+        configuration: { permissionMode: 'bypassPermissions', profile: { model: 'bedrock/model-beta' } },
+      })
+    } finally {
+      view.instance.unmount()
+      await view.instance.waitUntilExit()
       vi.mocked(discoverProviderModels).mockResolvedValue({ available: true, models: [] })
     }
   })

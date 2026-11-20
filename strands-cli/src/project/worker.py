@@ -27,18 +27,20 @@ from strands.models import Model
 from strands.session import FileSessionManager, S3SessionManager, SnapshotSessionManager
 from strands.storage import InMemoryStorage, LocalFileStorage, S3Storage
 from strands.storage import storage as storage_types
+from strands.tools import PythonAgentTool
 from strands.tools.mcp import MCPClient
 from strands.types.tools import ToolContext
 from strands.vended_memory_stores.file_memory_store import FileMemoryStore
 from strands.vended_plugins.context_offloader import ContextOffloader
 from strands.vended_plugins.context_offloader import storage as offloader_storage
-from strands.vended_plugins.skills import AgentSkills
+from strands.vended_plugins.skills import AgentSkills, Skill
 from strands_harness import define_harness_agent_config, harness_agent_kwargs_from_config
 from strands_harness.defaults import DEFAULT_MODEL
 
 channel = os.fdopen(3, "w", buffering=1)
 commands = os.fdopen(4, encoding="utf-8")
 pending_permissions = {}
+pending_tools = {}
 COMPACT_PRESERVE_RECENT_MESSAGES = 2
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
 
@@ -158,6 +160,33 @@ async def authorize_tool(event):
     approved = await permission(request)
     if not approved:
         event.cancel_tool = "DENIED: Tool call denied by the user"
+
+
+def host_tool(spec):
+    async def call(tool_use, **_):
+        request_id = str(uuid4())
+        future = asyncio.get_running_loop().create_future()
+        pending_tools[request_id] = future
+        try:
+            send({"type": "tool", "id": request_id, "name": spec["name"], "input": tool_use.get("input", {})})
+            ok, text = await future
+        finally:
+            pending_tools.pop(request_id, None)
+        return {"toolUseId": tool_use["toolUseId"], "status": "success" if ok else "error", "content": [{"text": text}]}
+
+    return PythonAgentTool(
+        spec["name"],
+        {"name": spec["name"], "description": spec["description"], "inputSchema": {"json": spec["inputSchema"]}},
+        call,
+    )
+
+
+def replace_instructions(agent, instructions):
+    if not instructions:
+        return
+    heading = instructions.split("\n", 1)[0]
+    kept = [block for block in agent.system_prompt_content or [] if not block.get("text", "").startswith(heading)]
+    agent.system_prompt = [*kept, {"text": instructions}]
 
 
 async def permission(request):
@@ -378,6 +407,12 @@ class Runtime:
         if flags.get("sessionId") is not None and (session is True or isinstance(session, dict)):
             self.options["session"] = {**(session if isinstance(session, dict) else {}), "id": flags["sessionId"]}
         self.explicit_option_keys = set(self.options)
+        self.turned_off_state = getattr(module, "_strands_turned_off_state", [])
+        if command.get("devWorkspace"):
+            isolated, _ = isolate_dev_options({**authored, **self.options}, Path(command["devWorkspace"]).resolve())
+            for key in ("session", "memory"):
+                self.options[key] = isolated.get(key, False)
+                self.explicit_option_keys.add(key)
         model = self.options.get("model", authored.get("model"))
         if model is None and hasattr(module, "_strands_options"):
             model = DEFAULT_MODEL
@@ -431,6 +466,7 @@ class Runtime:
         self.interactive = command.get("interactive", False)
         self.mcp_servers = command.get("mcpServers", {})
         self.skill_paths = command.get("skillPaths", []) if self.options.get("skills", authored.get("skills", True)) else []
+        self.extension = command.get("extension") or {}
         self.cancel_signal = threading.Event()
         self.reload_requested = False
         self.context_estimates = None
@@ -506,7 +542,28 @@ class Runtime:
                 )
             else:
                 agent._plugin_registry.add_and_init(AgentSkills(skills=self.skill_paths))
+        await self.extend(agent)
         self.attach_context_capture(agent)
+
+    async def extend(self, agent):
+        registered = {spec["name"] for spec in agent.tool_registry.get_all_tool_specs()}
+        tools = [host_tool(spec) for spec in self.extension.get("tools", []) if spec["name"] not in registered]
+        if tools:
+            agent.tool_registry.process_tools(tools)
+        added = [Skill(**skill) for skill in self.extension.get("skills", [])]
+        if added:
+            skills = next(
+                (plugin for plugin in agent._plugin_registry._plugins.values() if isinstance(plugin, AgentSkills)),
+                None,
+            )
+            if skills:
+                names = {skill.name for skill in added}
+                current = [skill for skill in skills.get_available_skills(agent) if skill.name not in names]
+                skills.set_available_skills([*current, *added])
+                await skills.init_agent(agent)
+            else:
+                agent._plugin_registry.add_and_init(AgentSkills(skills=added))
+        replace_instructions(agent, self.extension.get("instructions", ""))
 
     def attach_context_capture(self, agent):
         # Python exposes effective model requests only through the optional middleware registry.
@@ -665,6 +722,7 @@ class Runtime:
             ),
             "messages": display_messages(self.agent),
             "privatePaths": agent_private_paths(self.agent),
+            "turnedOffState": self.turned_off_state,
             "tools": [
                 {"name": spec["name"], "description": spec.get("description", "")}
                 for spec in self.agent.tool_registry.get_all_tool_specs()
@@ -965,6 +1023,24 @@ class ProjectImports(importlib.abc.MetaPathFinder):
 def direct_harness_assignment(entrypoint):
     with tokenize.open(entrypoint) as source:
         tree = ast.parse(source.read(), filename=str(entrypoint))
+    constructors = {"create_harness"}
+    namespaces = set()
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "strands_harness" and not node.level:
+            constructors.update(alias.asname or alias.name for alias in node.names if alias.name == "create_harness")
+        elif isinstance(node, ast.Import):
+            namespaces.update(alias.asname or alias.name for alias in node.names if alias.name == "strands_harness")
+
+    def constructs(function):
+        if isinstance(function, ast.Name):
+            return function.id in constructors
+        return (
+            isinstance(function, ast.Attribute)
+            and function.attr == "create_harness"
+            and isinstance(function.value, ast.Name)
+            and function.value.id in namespaces
+        )
+
     return any(
         isinstance(node, (ast.Assign, ast.AnnAssign))
         and (
@@ -973,13 +1049,55 @@ def direct_harness_assignment(entrypoint):
             else isinstance(node.target, ast.Name) and node.target.id == "agent"
         )
         and isinstance(node.value, ast.Call)
-        and isinstance(node.value.func, ast.Name)
-        and node.value.func.id == "create_harness"
+        and constructs(node.value.func)
         for node in tree.body
     )
 
 
-def load_project(entrypoint, root):
+def isolate_dev_options(options, root):
+    result = dict(options)
+    turned_off = []
+    for key, directory in (("session", "sessions"), ("memory", "memory")):
+        configured = options.get(key, True)
+        manager = options.get(f"{key}_manager")
+        custom = (
+            manager is not None
+            or (configured not in (True, False, None) and not isinstance(configured, dict))
+            or (isinstance(configured, dict) and bool(configured.get("stores")))
+        )
+        if custom:
+            turned_off.append(key)
+            result[key] = False
+            if manager is not None:
+                result[f"{key}_manager"] = None
+        elif configured is not False and configured is not None:
+            result[key] = {
+                **(configured if isinstance(configured, dict) else {}),
+                "dir": str(root / ".strands" / "state" / directory),
+            }
+    if options.get("storage") is not None:
+        turned_off.append("storage")
+        result["storage"] = None
+    return result, turned_off
+
+
+def installed_project_module(entrypoint, root):
+    parts = list(entrypoint.relative_to(root).with_suffix("").parts)
+    for index in range(1, len(parts) - 1):
+        name = parts[index]
+        if not name.isidentifier():
+            continue
+        spec = importlib.machinery.PathFinder.find_spec(name)
+        if spec is None:
+            continue
+        expected = root.joinpath(*parts[: index + 1]).resolve()
+        locations = spec.submodule_search_locations or []
+        if any(Path(location).resolve() == expected for location in locations):
+            return ".".join(parts[index:])
+    return None
+
+
+def load_project(entrypoint, root, dev_root=None):
     sys.meta_path.insert(0, ProjectImports(root))
     sys.path[:0] = [str(root), str(entrypoint.parent)]
     relative = entrypoint.relative_to(root)
@@ -989,19 +1107,23 @@ def load_project(entrypoint, root):
     packaged = bool(module_parts) and all(
         (root.joinpath(*module_parts[:index], "__init__.py")).is_file() for index in range(1, len(module_parts))
     )
+    installed_name = installed_project_module(entrypoint, root) if not packaged else None
     captured = []
     original_create_harness = strands_harness.create_harness
 
     def capture_create_harness(*args, **options):
+        turned_off = []
+        if dev_root is not None:
+            options, turned_off = isolate_dev_options(options, dev_root)
         agent = original_create_harness(*args, **options)
         if captured is not None:
-            captured.append((agent, args, options))
+            captured.append((agent, args, options, turned_off))
         return agent
 
     strands_harness.create_harness = capture_create_harness
     try:
-        if packaged:
-            module = importlib.import_module(".".join(module_parts))
+        if packaged or installed_name:
+            module = importlib.import_module(installed_name or ".".join(module_parts))
         else:
             spec = importlib.util.spec_from_file_location(f"harness_project_agent_{uuid4().hex}", entrypoint)
             if spec is None or spec.loader is None:
@@ -1014,13 +1136,16 @@ def load_project(entrypoint, root):
     agent = getattr(module, "agent", None)
     if not isinstance(agent, Agent):
         raise TypeError('Export a Strands Agent as "agent".')
-    construction = next(((args, options) for candidate, args, options in captured if candidate is agent), None)
+    construction = next(
+        ((args, options, turned_off) for candidate, args, options, turned_off in captured if candidate is agent), None
+    )
     captured = None
     if construction is not None:
         module._strands_options = construction[1]
+        module._strands_turned_off_state = construction[2]
     if not callable(getattr(module, "create_agent", None)) and direct_harness_assignment(entrypoint):
         if construction is not None:
-            args, options = construction
+            args, options, _ = construction
 
             def create_agent(**overrides):
                 return original_create_harness(*args, **{**options, **overrides})
@@ -1030,8 +1155,9 @@ def load_project(entrypoint, root):
 
 
 async def main():
-    module = load_project(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve())
     command = json.loads(await asyncio.to_thread(commands.readline))
+    dev_root = Path(command["devWorkspace"]).resolve() if command.get("devWorkspace") else None
+    module = load_project(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), dev_root)
     runtime = Runtime(module, command)
     await runtime.build(runtime.options, resume=command.get("resume", False))
     send({"type": "ready", "state": runtime.state()})
@@ -1044,6 +1170,10 @@ async def main():
                 future = pending_permissions.get(command["requestId"])
                 if future and not future.done():
                     future.set_result(command["approved"])
+            elif kind == "toolResult":
+                future = pending_tools.get(command["id"])
+                if future and not future.done():
+                    future.set_result((command["ok"], command["text"]))
             elif kind in ("cancel", "close"):
                 runtime.cancel_signal.set()
                 if running:

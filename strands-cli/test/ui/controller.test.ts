@@ -1,6 +1,6 @@
 import { setImmediate } from 'node:timers'
 
-import type { ContentBlockData } from '@strands-agents/sdk'
+import { Message, TextBlock, type ContentBlockData } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ChatController } from '../../src/ui/chat/controller.js'
@@ -1870,13 +1870,306 @@ describe('ChatController', () => {
         {
           status: 'error',
           error: 'The security token included in the request is expired',
-          recoveryHint: expect.stringContaining('Refresh your credentials, then resend your message.'),
+          recoveryHint: expect.stringContaining(
+            'Refresh your credentials, then restart Strands so that it loads them.'
+          ),
         },
       ],
     })
     expect(controller.getSnapshot().completedTurns[0]?.recoveryHint).toContain('strands --session-id saved-session')
     expect(controller.getSnapshot().activeTurn).toBeUndefined()
     expect(controller.busy).toBe(false)
+    await controller.dispose()
+  })
+
+  it('shouldOpenAFixPanelWhenATurnFailsInADevChat', async () => {
+    const backend = idleBackend({
+      async *stream() {
+        yield* []
+        throw new Error('Python agent exited (1). Traceback: boom')
+      },
+    })
+    const controller = new ChatController(backend, {
+      streamPresentation: {},
+      runtime: {
+        devWorkspace: {
+          root: '/project/strands-dev',
+          entrypoint: '/project/agent.py',
+          boundEntrypoint: '/project/agent.py',
+          origin: 'discovered',
+        },
+        cwd: '/project',
+      },
+    })
+
+    await controller.submit('hello')
+
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'error',
+      title: 'Agent turn failed',
+      fixDirectory: '/project',
+      rows: [{ description: 'Python agent exited (1). Traceback: boom' }],
+    })
+    await controller.dispose()
+  })
+
+  it.each([
+    ['missing AWS credentials', 'Could not load credentials from any providers'],
+    ['an invalid security token', 'The security token included in the request is invalid.'],
+  ])('shouldOfferModelSetupWhenADevChatTurnFailsWith %s', async (_, message) => {
+    const backend = idleBackend({
+      async *stream() {
+        yield* []
+        throw new Error(message)
+      },
+    })
+    const controller = new ChatController(backend, {
+      streamPresentation: {},
+      requestSetup: vi.fn(),
+      runtime: {
+        devWorkspace: {
+          root: '/project/strands-dev',
+          entrypoint: '/project/agent.ts',
+          boundEntrypoint: '/project/agent.ts',
+          origin: 'discovered',
+        },
+        cwd: '/project',
+      },
+    })
+
+    await controller.submit('hello')
+
+    const panel = controller.getSnapshot().panel
+    expect(panel).toMatchObject({
+      kind: 'error',
+      title: 'Model provider needs setup',
+      modelSetup: true,
+      rows: [{ description: message }],
+    })
+    expect(panel).not.toHaveProperty('fixDirectory')
+    expect(controller.getSnapshot().completedTurns[0]?.recoveryHint).toContain(
+      'Press s to choose a model provider, then resend your message.'
+    )
+    await controller.dispose()
+  })
+
+  it('shouldKeepTheFixPanelForACredentialFailureWhenTheDevChatCannotOpenSetup', async () => {
+    const backend = idleBackend({
+      async *stream() {
+        yield* []
+        throw new Error('Could not load credentials from any providers')
+      },
+    })
+    const controller = new ChatController(backend, {
+      streamPresentation: {},
+      runtime: {
+        devWorkspace: {
+          root: '/project/strands-dev',
+          entrypoint: '/project/agent.ts',
+          boundEntrypoint: '/project/agent.ts',
+          origin: 'discovered',
+        },
+        cwd: '/project',
+      },
+    })
+
+    await controller.submit('hello')
+
+    expect(controller.getSnapshot().panel).toMatchObject({ title: 'Agent turn failed', fixDirectory: '/project' })
+    expect(controller.getSnapshot().completedTurns[0]?.recoveryHint).toContain(
+      'Refresh your credentials, then resend your message.'
+    )
+    await controller.dispose()
+  })
+
+  it('shouldAdviseARestartWithoutAPanelWhenADevChatTurnFailsWithAnExpiredToken', async () => {
+    const backend = idleBackend({
+      async *stream() {
+        yield* []
+        throw new Error('The security token included in the request is expired')
+      },
+    })
+    Object.assign(backend, {
+      sessionIdentity: {
+        sessionId: 'saved-session',
+        sessionDirectory: '/project/strands-dev/.strands/state/sessions',
+        workspace: '/project',
+        configured: { sessionId: null, sessionDir: '/project/strands-dev/.strands/state/sessions' },
+      },
+    })
+    const controller = new ChatController(backend, {
+      streamPresentation: {},
+      requestSetup: vi.fn(),
+      runtime: {
+        devWorkspace: {
+          root: '/project/strands-dev',
+          entrypoint: '/project/agent.ts',
+          boundEntrypoint: '/project/agent.ts',
+          origin: 'discovered',
+        },
+        cwd: '/project',
+      },
+    })
+
+    await controller.submit('hello')
+
+    const hint = controller.getSnapshot().completedTurns[0]?.recoveryHint
+    expect(controller.getSnapshot().panel).toBeUndefined()
+    expect(hint).toContain('Refresh your credentials, then restart Strands so that it loads them.')
+    expect(hint).toMatch(/strands dev --workspace '?\S*strands-dev'? --session-id saved-session/u)
+    expect(hint).not.toContain('Press s')
+    await controller.dispose()
+  })
+
+  it('shouldSaveTheFailedPromptForAResumeWhenAUserTurnFails', async () => {
+    const saveFailedTurns = vi.fn(async () => {})
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield* []
+          throw new Error('The security token included in the request is expired')
+        },
+      }),
+      {
+        streamPresentation: {},
+        sessions: {
+          current: 'saved-session',
+          directory: '/sessions',
+          list: vi.fn(),
+          resolve: vi.fn(),
+          saveFailedTurns,
+        },
+      }
+    )
+
+    await controller.submit('first question')
+    await controller.submit('second question')
+
+    expect(saveFailedTurns).toHaveBeenLastCalledWith([
+      { prompt: 'first question', error: 'The security token included in the request is expired' },
+      { prompt: 'second question', error: 'The security token included in the request is expired' },
+    ])
+    await controller.dispose()
+  })
+
+  it('shouldClearTheSavedFailedPromptsWhenALaterTurnCompletes', async () => {
+    const saveFailedTurns = vi.fn(async () => {})
+    let fail = true
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield* []
+          if (fail) throw new Error('socket hang up')
+          return { stopReason: 'endTurn' }
+        },
+      }),
+      {
+        streamPresentation: {},
+        sessions: {
+          current: 'saved-session',
+          directory: '/sessions',
+          list: vi.fn(),
+          resolve: vi.fn(),
+          saveFailedTurns,
+        },
+      }
+    )
+
+    await controller.submit('first question')
+    fail = false
+    await controller.submit('first question')
+    await controller.submit('next question')
+
+    expect(saveFailedTurns.mock.calls).toEqual([[[{ prompt: 'first question', error: 'socket hang up' }]], [[]]])
+    await controller.dispose()
+  })
+
+  it('shouldReportANoticeWhenTheFailedPromptCannotBeSaved', async () => {
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield* []
+          throw new Error('socket hang up')
+        },
+      }),
+      {
+        streamPresentation: {},
+        sessions: {
+          current: 'saved-session',
+          directory: '/sessions',
+          list: vi.fn(),
+          resolve: vi.fn(),
+          saveFailedTurns: async () => Promise.reject(new Error('disk full')),
+        },
+      }
+    )
+
+    await controller.submit('hello')
+
+    expect(controller.getSnapshot().notices).toContainEqual(
+      expect.objectContaining({
+        status: 'error',
+        text: 'The failed message could not be saved for a resume: disk full',
+      })
+    )
+    await controller.dispose()
+  })
+
+  it('shouldShowTheSavedFailedPromptsAfterTheRestoredConversationWhenASessionResumes', async () => {
+    const controller = new ChatController(idleBackend(), {
+      initialMessages: [
+        new Message({ role: 'user', content: [new TextBlock('earlier question')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('earlier answer')] }),
+      ],
+      failedTurns: [{ prompt: 'failed question', error: 'The security token included in the request is expired' }],
+    })
+
+    expect(controller.getSnapshot().completedTurns).toMatchObject([
+      { prompt: 'earlier question', status: 'complete' },
+      {
+        prompt: 'failed question',
+        status: 'error',
+        error: 'The security token included in the request is expired',
+        recoveryHint: 'The conversation does not include this message. Send it again to retry.',
+      },
+    ])
+    await controller.dispose()
+  })
+
+  it('shouldShowWhatDevDeactivatedWhenADevChatOpensAnAgentWithCustomState', async () => {
+    const controller = new ChatController(idleBackend(), {
+      turnedOffState: ['session', 'memory'],
+      runtime: {
+        devWorkspace: {
+          root: '/project/strands-dev',
+          entrypoint: '/project/agent.ts',
+          boundEntrypoint: '/project/agent.ts',
+          origin: 'discovered',
+        },
+      },
+    })
+
+    expect(controller.getSnapshot().notices).toContainEqual({
+      id: 'dev-state',
+      status: 'error',
+      text: 'Dev deactivated the custom session manager and memory of this agent in this chat. Thus the chat cannot write into the stores of the agent. Dev does not save this chat.',
+    })
+    await controller.dispose()
+  })
+
+  it('shouldNotOpenAFixPanelWhenATurnFailsOutsideADevChat', async () => {
+    const backend = idleBackend({
+      async *stream() {
+        yield* []
+        throw new Error('The security token included in the request is expired')
+      },
+    })
+    const controller = new ChatController(backend, { streamPresentation: {}, runtime: { cwd: '/project' } })
+
+    await controller.submit('hello')
+
+    expect(controller.getSnapshot().completedTurns[0]?.status).toBe('error')
+    expect(controller.getSnapshot().panel).toBeUndefined()
     await controller.dispose()
   })
 
@@ -3329,6 +3622,71 @@ describe('ChatController', () => {
     expect(list).toHaveBeenCalledOnce()
   })
 
+  describe('skills without commands', () => {
+    const tune = { name: 'optimize-harness', description: 'Tune this agent', instructions: 'Tune.', active: false }
+    const review = { name: 'review', description: 'Review code', instructions: 'Inspect carefully.', active: false }
+    const setup = () => {
+      const prompts: string[] = []
+      const activate = vi.fn(async (name: string) => {
+        const skill = [tune, review].find((candidate) => candidate.name === name)
+        return skill ? { skill: { ...skill, active: true }, content: skill.instructions } : undefined
+      })
+      const controller = new ChatController(
+        backend(async function* (prompt) {
+          prompts.push(prompt)
+          yield { type: 'textDelta', text: 'done' }
+          return { stopReason: 'endTurn' }
+        }),
+        {
+          skills: { list: async () => [tune, review], activate },
+          skillNames: [tune.name, review.name],
+          skillsWithoutCommands: ['Optimize-Harness'],
+        }
+      )
+      return { controller, activate, prompts }
+    }
+    const listedCommands = (controller: ChatController, input: string): string[] =>
+      controller.commandAssistance(input)?.completions.map(({ name }) => name) ?? []
+
+    it('shouldLeaveTheSkillOutOfTheSlashCommandsWhenTheHostGivesItNoCommand', async () => {
+      const { controller } = setup()
+
+      await controller.start()
+
+      await vi.waitFor(() => expect(listedCommands(controller, '/')).toContain('review'))
+      expect(listedCommands(controller, '/')).not.toContain('optimize-harness')
+      expect(controller.commandAssistance('/optimize-harness')).toEqual({ message: 'not found', completions: [] })
+      expect(controller.actionableCommandToken('/optimize-harness')).toBeUndefined()
+      expect(controller.actionableCommandToken('/review')).toBe('/review')
+    })
+
+    it('shouldReportAnUnknownCommandWithoutActivatingTheSkillWhenTheDeveloperTypesItsSlashName', async () => {
+      const { controller, activate, prompts } = setup()
+
+      await controller.submit('/optimize-harness improve refunds')
+
+      expect(activate).not.toHaveBeenCalled()
+      expect(prompts).toEqual([])
+      expect(controller.getSnapshot().panel).toMatchObject({
+        kind: 'error',
+        title: 'unknown command',
+        rows: [{ label: '/optimize-harness' }],
+      })
+    })
+
+    it('shouldActivateTheSkillAndKeepItOutOfTheSlashCommandsWhenTheDeveloperUsesTheDollarPrefix', async () => {
+      const { controller, activate, prompts } = setup()
+
+      expect(controller.actionableCommandToken('$optimize-harness')).toBe('$optimize-harness')
+      await controller.submit('$optimize-harness improve refunds')
+
+      expect(activate).toHaveBeenCalledWith('optimize-harness')
+      expect(prompts).toHaveLength(1)
+      expect(prompts[0]).toContain('</strands_skill_activation>\n\n$optimize-harness improve refunds')
+      expect(listedCommands(controller, '/opt')).toEqual([])
+    })
+  })
+
   it('represents an empty MCP configuration as zero servers with its checked path', async () => {
     const list = vi.fn(async () => [])
     const controller = new ChatController(backend(), {
@@ -3482,5 +3840,71 @@ describe('ChatController', () => {
     expect(await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)).toBe(true)
     expect(setSettings).toHaveBeenLastCalledWith({ disabledMcpServers: [] })
     expect(controller.getSnapshot().panel?.rows[0]?.badge?.text).toBe('failed')
+  })
+})
+
+describe('saving model choices into the dev agent', () => {
+  const modelBackend = (mode: 'live' | 'restart') => {
+    const target = backend()
+    target.info = () => ({ model: 'bedrock/current-model' })
+    target.modelChangeMode = () => mode
+    target.switchModel = vi.fn(async (model: string) => model)
+    target.restartModel = vi.fn(async (model: string) => model)
+    target.listEfforts = () => [
+      { id: 'low', label: 'Low' },
+      { id: 'high', label: 'High', active: true },
+    ]
+    target.setEffort = vi.fn(async (effort: string) => effort)
+    return target
+  }
+
+  it.each(['live', 'restart'] as const)('shouldSaveTheChosenModelIntoTheAgentWhenTheModelChangeIs%s', async (mode) => {
+    const saveAgentOptions = vi.fn(async () => true)
+    const controller = new ChatController(modelBackend(mode), { saveAgentOptions })
+
+    await controller.submit('/model bedrock/next-model')
+
+    expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ model: 'bedrock/next-model' })
+    expect(controller.getSnapshot().panel?.kind).not.toBe('error')
+  })
+
+  it('shouldSaveTheChosenEffortIntoTheAgent', async () => {
+    const saveAgentOptions = vi.fn(async () => true)
+    const controller = new ChatController(modelBackend('live'), { saveAgentOptions })
+
+    await controller.submit('/effort LOW')
+
+    expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ effort: 'low' })
+  })
+
+  it('shouldKeepTheModelForThisSessionAndSayWhyWhenTheAgentCannotSaveIt', async () => {
+    const target = modelBackend('live')
+    const saveAgentOptions = vi.fn(async () => {
+      throw new Error('agent.ts sets model in code. Set it to "bedrock/next-model" there yourself.')
+    })
+    const controller = new ChatController(target, { saveAgentOptions })
+
+    await controller.submit('/model bedrock/next-model')
+
+    expect(target.switchModel).toHaveBeenCalledWith('bedrock/next-model')
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'error',
+      title: 'model kept for this session only',
+      rows: [{ description: 'agent.ts sets model in code. Set it to "bedrock/next-model" there yourself.' }],
+    })
+  })
+
+  it('shouldNotSaveTheModelWhenTheModelChangeFails', async () => {
+    const target = modelBackend('live')
+    target.switchModel = vi.fn(async () => {
+      throw new ModelControlError('Model unavailable.')
+    })
+    const saveAgentOptions = vi.fn(async () => true)
+    const controller = new ChatController(target, { saveAgentOptions })
+
+    await controller.submit('/model bedrock/next-model')
+
+    expect(saveAgentOptions).not.toHaveBeenCalled()
+    expect(controller.getSnapshot().panel?.title).toBe('model switch failed')
   })
 })

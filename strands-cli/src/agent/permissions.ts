@@ -7,6 +7,7 @@ import { CliConfigStore, type CliConfigSnapshot, type PermissionMode, type Runti
 import { containsPath } from '../paths.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { isRecord } from '../values.js'
+import { AcceptedChanges } from './accepted-changes.js'
 import { buildFileChangePreview, sanitizeDiffPreview } from './file-changes.js'
 import { canonicalPath, permissionAction, permissionRuleDecision, permissionScopes } from './permission-rules.js'
 import { type ChatDiffPreview, type ChatPermissionOption, type ChatPermissionRequest } from './types.js'
@@ -183,6 +184,7 @@ interface CedarPermissionsOptions {
   broker: ToolPermissionBroker
   config?: PermissionConfig
   cwd: string
+  acceptedChanges?: AcceptedChanges
   policies?: string
   configurationPreview?: () => ChatDiffPreview | undefined
   configurationDenied?: (revision: number) => void
@@ -197,6 +199,7 @@ export class CedarPermissions extends InterventionHandler {
   private readonly _cedar: CedarAuthorization
   private readonly _configurationPreview: CedarPermissionsOptions['configurationPreview']
   private readonly _configurationDenied: CedarPermissionsOptions['configurationDenied']
+  private readonly _acceptedChanges: AcceptedChanges | undefined
   private readonly _workspace: string
 
   constructor(options: CedarPermissionsOptions) {
@@ -205,6 +208,7 @@ export class CedarPermissions extends InterventionHandler {
     this._config = options.config ?? CliConfigStore.memory()
     this._configurationPreview = options.configurationPreview
     this._configurationDenied = options.configurationDenied
+    this._acceptedChanges = options.acceptedChanges
     const workspace = canonicalPath(options.cwd)
     this._workspace = workspace
     this._cedar = new CedarAuthorization({
@@ -254,6 +258,9 @@ export class CedarPermissions extends InterventionHandler {
     }
     if (saved === 'allow') {
       return InterventionActions.proceed({ reason: `Tool always allowed by user configuration: ${toolName}` })
+    }
+    if (this._acceptedChanges?.spend(this._workspace, toolName, input)) {
+      return InterventionActions.proceed({ reason: 'Change accepted by the developer in a review panel' })
     }
     const cedarDecision = this._cedar.beforeToolCall(event)
     if (cedarDecision.type !== 'deny' || !cedarDecision.reason.startsWith('Access denied by Cedar policy')) {

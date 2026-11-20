@@ -29,6 +29,18 @@ export function cloneRuntime(runtime: ChatRuntimeInfo): ChatRuntimeInfo {
     session: sanitizeTerminalText(runtime.session),
     ...(runtime.sessionName !== undefined ? { sessionName: sanitizeTerminalText(runtime.sessionName) } : {}),
     cwd: runtime.cwd,
+    ...(runtime.reloadStatus ? { reloadStatus: sanitizeTerminalText(runtime.reloadStatus) } : {}),
+    ...(runtime.devWorkspace
+      ? {
+          devWorkspace: {
+            root: sanitizeTerminalText(runtime.devWorkspace.root),
+            entrypoint: sanitizeTerminalText(runtime.devWorkspace.entrypoint),
+            boundEntrypoint: sanitizeTerminalText(runtime.devWorkspace.boundEntrypoint),
+            origin: sanitizeTerminalText(runtime.devWorkspace.origin),
+          },
+        }
+      : {}),
+    ...(runtime.sourceWatching !== undefined ? { sourceWatching: runtime.sourceWatching } : {}),
     tools: runtime.tools.map((tool) => ({
       name: sanitizeTerminalText(tool.name),
       description: sanitizeTerminalText(tool.description),
@@ -73,6 +85,11 @@ export function isUnresolvedBackgroundTask(task: ChatTask): boolean {
 
 export function isConfigurationTool(name: string): boolean {
   return name.replaceAll('-', '_').toLowerCase() === 'strands_config'
+}
+
+/** Its question is already a panel on screen, so the transcript does not preview it while it waits. */
+export function isOnScreenQuestionTool(name: string): boolean {
+  return name.replaceAll('-', '_').toLowerCase() === 'strands_dev_ask'
 }
 
 export function readConversationValue(value: string | undefined): string | undefined {
