@@ -22,8 +22,11 @@ export type {
   OffloadTarget,
   OffloadConditions,
   OffloadStrategy,
+  /** @experimental Deferred tool loading may change in future versions. */
   DeferTarget,
+  /** @experimental Deferred tool loading may change in future versions. */
   DeferConditions,
+  /** @experimental Deferred tool loading may change in future versions. */
   DeferStrategy,
 } from './strategies/offload/index.js'
 export type { TruncateConfig } from './methods/truncate.js'
