@@ -7,7 +7,7 @@
 import type { Plugin } from '../plugins/plugin.js'
 import type { Tool } from '../tools/tool.js'
 import type { ToolSpec } from '../tools/types.js'
-import type { Model, StreamOptions } from '../models/model.js'
+import type { CallTools, Model } from '../models/model.js'
 import { createAuxiliaryInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import type { LocalAgent } from '../types/agent.js'
 import { AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent } from '../hooks/events.js'
@@ -24,6 +24,7 @@ import { resolveStrategies } from './presets.js'
 import { Archive } from './archive.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from './retrieval-tool.js'
 import { createLoadTools, LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
+import { createSearchTools, SEARCH_TOOLS_TOOL_NAME } from '../tools/search-tools.js'
 import { ToolUseBlock, type Message } from '../types/messages.js'
 
 /**
@@ -142,15 +143,13 @@ export class ContextManager implements Plugin {
    * @param agent - The agent making the call
    * @param toolSpecs - The tool specs of the call
    * @param model - The call's model
+   * @param messages - The messages of the call
    * @returns The call's tool specs, and the names of the ones it defers; every spec without an `Offload.defer` strategy
    * @internal
    */
-  callTools(
-    agent: LocalAgent,
-    toolSpecs: readonly ToolSpec[],
-    model: Model
-  ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools'> {
-    return toolLoadingStrategy(this._strategies)?.callTools(agent, toolSpecs, model) ?? { toolSpecs: [...toolSpecs] }
+  callTools(agent: LocalAgent, toolSpecs: readonly ToolSpec[], model: Model, messages?: readonly Message[]): CallTools {
+    const strategy = toolLoadingStrategy(this._strategies)
+    return strategy?.callTools(agent, toolSpecs, model, messages) ?? { toolSpecs: [...toolSpecs] }
   }
 
   async initAgent(agent: LocalAgent): Promise<void> {
@@ -185,7 +184,7 @@ export class ContextManager implements Plugin {
     }
 
     const retrievalTools = this._enableRetrievalTool && this._archive ? [createRetrievalTool(this._archive)] : []
-    this._tools = [...retrievalTools, ...loadToolsFor(toolLoadingStrategy(this._strategies), agent)]
+    this._tools = [...retrievalTools, ...loaderFor(toolLoadingStrategy(this._strategies), agent)]
 
     agent.addHook(BeforeModelCallEvent, async (event) => {
       await this._runStrategies(event.agent, event.projectedInputTokens, undefined, event.invocationContext)
@@ -291,20 +290,22 @@ export class ContextManager implements Plugin {
 }
 
 /**
- * The `load_tools` tool for the `Offload.defer` strategy, if there is one. It loads the tools the strategy deferred on
- * the agent's latest model call.
+ * The loader for the `Offload.defer` strategy, if there is one: `search_tools` when the model searches, `load_tools`
+ * otherwise. It loads the tools the strategy deferred on the agent's latest model call.
  *
  * @throws Error when the agent already has a tool with the loader's name
  */
-function loadToolsFor(strategy: DeferredToolLoadingStrategy | undefined, agent: LocalAgent): Tool[] {
+function loaderFor(strategy: DeferredToolLoadingStrategy | undefined, agent: LocalAgent): Tool[] {
   if (!strategy) return []
-  if (agent.toolRegistry.get(LOAD_TOOLS_TOOL_NAME)) {
+  const name = strategy.searches ? SEARCH_TOOLS_TOOL_NAME : LOAD_TOOLS_TOOL_NAME
+  if (agent.toolRegistry.get(name)) {
     throw new Error(
-      `contextManager adds a tool named '${LOAD_TOOLS_TOOL_NAME}' for Offload.defer and the ` +
-        "'deferredToolLoading' preset, and the agent already has one; rename the agent's tool"
+      `contextManager adds a tool named '${name}' for Offload.defer and the 'deferredToolLoading' preset, and the ` +
+        "agent already has one; rename the agent's tool"
     )
   }
-  return [createLoadTools((callingAgent) => strategy.deferredTools(callingAgent))]
+  const deferredTools = (callingAgent: LocalAgent): string[] => strategy.deferredTools(callingAgent)
+  return [strategy.searches ? createSearchTools(deferredTools, strategy.searcher) : createLoadTools(deferredTools)]
 }
 
 /** The `Offload.defer` strategy among these, if there is one. */
@@ -314,7 +315,7 @@ function toolLoadingStrategy(strategies: ContextStrategy[]): DeferredToolLoading
   )
 }
 
-/** Two `Offload.defer` strategies can't share an agent's tools list, which holds one `load_tools`. */
+/** Two `Offload.defer` strategies can't share an agent's tools list, which holds one loader. */
 function checkOneToolLoadingStrategy(strategies: ContextStrategy[]): void {
   if (strategies.filter((strategy) => strategy instanceof DeferredToolLoadingStrategy).length < 2) return
   throw new Error(

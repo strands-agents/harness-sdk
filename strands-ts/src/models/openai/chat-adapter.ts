@@ -396,6 +396,8 @@ function formatChatMessages(messages: Message[]): OpenAI.Chat.Completions.ChatCo
             }
             break
           }
+          // Only the provider that ran the tool reads it.
+          case 'serverToolBlock':
           case 'unknownBlock':
             break
           default: {

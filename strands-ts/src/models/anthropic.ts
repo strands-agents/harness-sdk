@@ -2,6 +2,7 @@ import Anthropic, { type ClientOptions } from '@anthropic-ai/sdk'
 import { VERSION as ANTHROPIC_SDK_VERSION } from '@anthropic-ai/sdk/version'
 import {
   Model,
+  deferralOptions,
   type BaseModelConfig,
   type CountTokensOptions,
   type StreamOptions,
@@ -21,11 +22,13 @@ import {
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
+import { isLoaderName, toolListing, withToolListing } from '../tools/search-tools.js'
 import type { ToolSpec } from '../tools/types.js'
 import { lookupModelInfo, ModelInfo } from './model-info.js'
 import { withToolReferenceText } from './tool-references.js'
-import { Message, SummaryBlock } from '../types/messages.js'
+import { Message, ServerToolBlock, SummaryBlock } from '../types/messages.js'
 import type { ContentBlock, SystemPrompt, ToolResultContent } from '../types/messages.js'
+import type { JSONValue } from '../types/json.js'
 import type { ModelStreamEvent, Usage } from '../models/streaming.js'
 import { accumulateUsage, createEmptyUsage } from '../models/streaming.js'
 import type { SummarizeResult } from './summarize.js'
@@ -35,7 +38,12 @@ import type { ImageBlock, DocumentBlock } from '../types/media.js'
 import { encodeBase64, decodeBase64 } from '../types/media.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
-import { MODEL_DEFAULTS, defaultMaxTokensWarningMessage, defaultModelWarningMessage } from './defaults.js'
+import {
+  DEFAULT_CONTEXT_WINDOW_LIMIT,
+  MODEL_DEFAULTS,
+  defaultMaxTokensWarningMessage,
+  defaultModelWarningMessage,
+} from './defaults.js'
 
 // Union of overflow phrases observed across Anthropic responses, matched
 // case-insensitively. Kept in lowercase so the comparison is a single
@@ -49,7 +57,7 @@ const CONTEXT_WINDOW_OVERFLOW_ERRORS = [
   'input and output tokens exceed your context limit',
 ]
 // Content blocks for tools Anthropic executes server side. They have no toolUse/toolResult equivalent
-// (the agent never runs them), so they are not streamed.
+// (the agent never runs them), so they are not streamed, but for tool search's, which ServerToolBlocks keeps.
 const SERVER_TOOL_BLOCK_TYPES = new Set([
   'bash_code_execution_tool_result',
   'code_execution_tool_result',
@@ -129,20 +137,184 @@ function validateAnthropicTools(anthropicTools: Anthropic.ToolUnion[]): void {
 }
 
 /**
- * Formats tool specs as function tools. Each deferred tool goes with `defer_loading`, and `load_tools` lists
- * the deferred tools, since the API hides them until they are loaded.
+ * Formats tool specs as function tools, each deferred one with `defer_loading`. The `listing` of the deferred tools goes
+ * in the loader's description, since the API hides them until they are loaded.
  */
-function formatFunctionTools(toolSpecs: ToolSpec[], deferredTools: ReadonlySet<string>): Anthropic.Tool[] {
-  const loadable = toolSpecs
-    .filter((tool) => deferredTools.has(tool.name))
-    .map((tool) => `- ${tool.name}: ${tool.description}`)
-  const listing = loadable.length > 0 ? `\n\nTools you can load:\n${loadable.join('\n')}` : ''
+function formatFunctionTools(
+  toolSpecs: ToolSpec[],
+  deferredTools: ReadonlySet<string>,
+  listing: string | undefined
+): Anthropic.Tool[] {
   return toolSpecs.map((tool) => ({
     name: tool.name,
-    description: tool.name === LOAD_TOOLS_TOOL_NAME ? `${tool.description}${listing}` : tool.description,
+    description: isLoaderName(tool.name) && listing ? withToolListing(tool.description, listing) : tool.description,
     input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
     ...(deferredTools.has(tool.name) && { defer_loading: true }),
   }))
+}
+
+/** The API's own tool search, which takes natural-language queries. */
+const TOOL_SEARCH_TOOL: Anthropic.ToolSearchToolBm25_20251119 = {
+  type: 'tool_search_tool_bm25_20251119',
+  name: 'tool_search_tool_bm25',
+}
+
+/** Names the API gives its tool search tools in `server_tool_use` blocks. */
+const TOOL_SEARCH_TOOL_NAMES: ReadonlySet<string> = new Set(['tool_search_tool_bm25', 'tool_search_tool_regex'])
+
+/** How a request sends its deferred tools. */
+interface DeferredToolsRequest {
+  /** The request's tool specs, the loader left out where the API's own tool search takes its place. */
+  readonly toolSpecs: ToolSpec[]
+  /** The tools sent with `defer_loading`. */
+  readonly deferredTools: ReadonlySet<string>
+  /** The listing of the deferred tools for the loader's description. */
+  readonly loaderListing?: string
+  /** The listing of the deferred tools for the system prompt, for the API's own tool search. */
+  readonly systemListing?: string
+  /** The server tools the deferred tools need: the API's own tool search, or none. */
+  readonly serverTools: readonly Anthropic.ToolUnion[]
+}
+
+/** These server tools, without a tool search when the caller configured one, since a request takes one. */
+function withoutConfigured(
+  needed: readonly Anthropic.ToolUnion[],
+  configured: readonly Anthropic.ToolUnion[]
+): readonly Anthropic.ToolUnion[] {
+  return configured.some(isToolSearchTool) ? needed.filter((tool) => !isToolSearchTool(tool)) : needed
+}
+
+/** Whether a server tool is one of the API's tool search tools. */
+function isToolSearchTool(tool: Anthropic.ToolUnion): boolean {
+  return 'type' in tool && typeof tool.type === 'string' && tool.type.startsWith('tool_search_tool_')
+}
+
+/** The system prompt with the listing of the deferred tools after it, for the API's own tool search to find. */
+function withSystemToolListing(
+  system: string | Anthropic.TextBlockParam[] | undefined,
+  listing: string
+): string | Anthropic.TextBlockParam[] {
+  const text = `Tools you can search for and load:\n${listing}`
+  if (system === undefined) return text
+  const blocks = typeof system === 'string' ? [{ type: 'text' as const, text: system }] : system
+  return [...blocks, { type: 'text', text }]
+}
+
+/**
+ * The messages with each tool search result from this API naming only tools the request lists, since the API rejects
+ * a reference to any other.
+ */
+function withListedToolSearchResults(messages: Message[], listed: ReadonlySet<string>): Message[] {
+  const unlisted = (block: ContentBlock): block is ServerToolBlock =>
+    isAnthropicServerTool(block) && (block.loadedTools ?? []).some((name) => !listed.has(name))
+  if (!messages.some((message) => message.content.some(unlisted))) return messages
+  return messages.map((message) =>
+    message.content.some(unlisted)
+      ? new Message({
+          role: message.role,
+          content: message.content.map((block) => (unlisted(block) ? listedToolSearchResult(block, listed) : block)),
+          trackingId: message.trackingId,
+          ...(message.metadata !== undefined && { metadata: message.metadata }),
+        })
+      : message
+  )
+}
+
+/** A tool search result citing only the listed tools. */
+function listedToolSearchResult(block: ServerToolBlock, listed: ReadonlySet<string>): ServerToolBlock {
+  const data = block.data as unknown as Anthropic.ToolSearchToolResultBlockParam
+  const content = data.content as Anthropic.ToolSearchToolSearchResultBlockParam
+  const references = content.tool_references.filter((reference) => listed.has(reference.tool_name))
+  return new ServerToolBlock({
+    provider: block.provider,
+    data: { ...data, content: { ...content, tool_references: references } } as unknown as JSONValue,
+    loadedTools: references.map((reference) => reference.tool_name),
+  })
+}
+
+/** A server tool block as this API sent it, or undefined for another provider's. */
+function formatServerTool(block: ServerToolBlock): Anthropic.ContentBlockParam | undefined {
+  return isAnthropicServerTool(block) ? (block.data as unknown as Anthropic.ContentBlockParam) : undefined
+}
+
+/** Whether a block is a server tool block this API wrote. */
+function isAnthropicServerTool(block: ContentBlock): block is ServerToolBlock {
+  return block.type === 'serverToolBlock' && block.provider === 'anthropic'
+}
+
+/**
+ * The server tool blocks of a stream. The API's tool search blocks are collected whole, so each reaches the history:
+ * the call, whose input streams in parts, and the result, which names the tools it loaded. Every other one is left out,
+ * since it has no toolUse/toolResult equivalent and the agent never runs the tool.
+ */
+class ServerToolBlocks {
+  private readonly _skipped = new Set<number>()
+  private readonly _collected = new Map<number, { block: Record<string, unknown>; input: string }>()
+
+  /** Takes the block at this index when it is a server tool block, and reports whether it is. */
+  start(index: number, block: { type: string; name?: string; content?: unknown }): boolean {
+    const isSearchCall = block.type === 'server_tool_use' && TOOL_SEARCH_TOOL_NAMES.has(block.name ?? '')
+    if (isSearchCall || block.type === 'tool_search_tool_result') {
+      this._collected.set(index, { block: block as unknown as Record<string, unknown>, input: '' })
+      return true
+    }
+    if (!SERVER_TOOL_BLOCK_TYPES.has(block.type)) return false
+    this._skipped.add(index)
+    logServerToolBlock(block)
+    return true
+  }
+
+  /** Takes a delta of the server tool block at this index, and reports whether there is one. */
+  delta(index: number, delta: { type: string; partial_json?: string }): boolean {
+    const collected = this._collected.get(index)
+    if (collected && delta.type === 'input_json_delta') collected.input += delta.partial_json ?? ''
+    return collected !== undefined || this._skipped.has(index)
+  }
+
+  /**
+   * The events of the server tool block at this index once it stops: none for one left out, and undefined when the
+   * block is not a server tool's.
+   */
+  stop(index: number): ModelStreamEvent[] | undefined {
+    if (this._skipped.delete(index)) return []
+    const collected = this._collected.get(index)
+    if (!collected) return undefined
+    this._collected.delete(index)
+    const { block, input } = collected
+    const data = (
+      block.type === 'server_tool_use' ? { ...block, input: input ? JSON.parse(input) : {} } : block
+    ) as JSONValue
+    const loadedTools = loadedByToolSearch(block)
+    return [
+      { type: 'modelContentBlockStartEvent' },
+      {
+        type: 'modelContentBlockDeltaEvent',
+        delta: { type: 'serverToolDelta', provider: 'anthropic', data, ...(loadedTools && { loadedTools }) },
+      },
+      { type: 'modelContentBlockStopEvent' },
+    ]
+  }
+}
+
+/**
+ * Logs a skipped server-side tool block, at warn level when the tool returned an error.
+ *
+ * @param contentBlock - The `content_block` of a `content_block_start` event
+ */
+function logServerToolBlock(contentBlock: { type: string; content?: unknown }): void {
+  const errorCode = (contentBlock.content as { error_code?: string } | undefined)?.error_code
+  if (errorCode !== undefined) {
+    logger.warn(`block_type=<${contentBlock.type}>, error_code=<${errorCode}> | server-side tool failed`)
+  } else {
+    logger.debug(`block_type=<${contentBlock.type}> | skipping server-side tool block`)
+  }
+}
+
+/** The tools a tool search result loaded, or undefined for the call or a failed search. */
+function loadedByToolSearch(block: Record<string, unknown>): string[] | undefined {
+  const content = block.content as { type?: string; tool_references?: { tool_name: string }[] } | undefined
+  if (block.type !== 'tool_search_tool_result' || content?.type !== 'tool_search_tool_search_result') return undefined
+  return (content.tool_references ?? []).map((reference) => reference.tool_name)
 }
 
 /** A server tool's `name`, or its `type` for a toolset, which has none. */
@@ -520,7 +692,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         let messageStopped = false
         const responseUsage: Record<string, number> = {}
 
-        const serverToolBlockIndexes = new Set<number>()
+        const serverToolBlocks = new ServerToolBlocks()
 
         for await (const event of stream) {
           switch (event.type) {
@@ -537,11 +709,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
             }
 
             case 'content_block_start':
-              if (SERVER_TOOL_BLOCK_TYPES.has(event.content_block.type)) {
-                serverToolBlockIndexes.add(event.index)
-                this._logServerToolBlock(event.content_block)
-                break
-              }
+              if (serverToolBlocks.start(event.index, event.content_block)) break
 
               if (event.content_block.type === 'tool_use') {
                 yield {
@@ -585,7 +753,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
               break
 
             case 'content_block_delta':
-              if (serverToolBlockIndexes.has(event.index)) break
+              if (serverToolBlocks.delta(event.index, event.delta)) break
 
               if (event.delta.type === 'text_delta') {
                 yield {
@@ -619,9 +787,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
               break
 
             case 'content_block_stop':
-              if (serverToolBlockIndexes.delete(event.index)) break
-
-              yield { type: 'modelContentBlockStopEvent' }
+              yield* serverToolBlocks.stop(event.index) ?? [{ type: 'modelContentBlockStopEvent' as const }]
               break
 
             case 'message_delta':
@@ -771,7 +937,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     const request = this._formatRequest(messages, {
       ...(options?.systemPrompt !== undefined && { systemPrompt: options.systemPrompt }),
       ...(options?.toolSpecs !== undefined && { toolSpecs: options.toolSpecs }),
-      ...(options?.deferredTools !== undefined && { deferredTools: options.deferredTools }),
+      ...deferralOptions(options),
     })
     // The API rejects these on a compaction request.
     const {
@@ -1021,14 +1187,41 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     return systemBlocks
   }
 
+  /**
+   * How a request sends its deferred tools. A model that defers natively gets them with `defer_loading`, and a listing
+   * of them, since the API hides them until they are loaded: in the loader's description, or in the system prompt when
+   * the API's own tool search takes the loader's place. `load_tools` lists every deferred tool with its description;
+   * a search lists them within 1% of the context window.
+   */
+  private _deferredToolsRequest(options: StreamOptions | undefined): DeferredToolsRequest {
+    const defersTools = this.modelInfo.capabilities?.deferredToolLoading === 'native'
+    const deferredTools: ReadonlySet<string> = (defersTools && options?.deferredTools) || new Set()
+    const allSpecs = options?.toolSpecs ?? []
+    const deferred = allSpecs.filter((spec) => deferredTools.has(spec.name))
+    if (deferred.length === 0) return { toolSpecs: allSpecs, deferredTools, serverTools: [] }
+    if (allSpecs.some((spec) => spec.name === LOAD_TOOLS_TOOL_NAME)) {
+      const loaderListing = deferred.map((spec) => `- ${spec.name}: ${spec.description}`).join('\n')
+      return { toolSpecs: allSpecs, deferredTools, loaderListing, serverTools: [] }
+    }
+    const listing = toolListing(deferred, this.modelInfo.limits?.contextWindow || DEFAULT_CONTEXT_WINDOW_LIMIT)
+    if (!options?.serverToolSearch)
+      return { toolSpecs: allSpecs, deferredTools, loaderListing: listing, serverTools: [] }
+    return {
+      toolSpecs: allSpecs.filter((spec) => !isLoaderName(spec.name)),
+      deferredTools,
+      systemListing: listing,
+      serverTools: [TOOL_SEARCH_TOOL],
+    }
+  }
+
   private _formatRequest(messages: Message[], options?: StreamOptions): Anthropic.MessageStreamParams {
     if (!this._config.modelId) throw new Error('Model ID is required')
     if (this._serverSideSummary()) messages = fromLastCompaction(messages)
-    const defersTools = this.modelInfo.capabilities?.deferredToolLoading === 'native'
-    const deferredTools: ReadonlySet<string> = (defersTools && options?.deferredTools) || new Set()
-    const toolSpecs = options?.toolSpecs ?? []
+    const deferral = this._deferredToolsRequest(options)
+    const { toolSpecs, deferredTools } = deferral
     // Requests that skip ModelProxy, such as server-side summaries and native token counts, can carry references too.
     messages = withToolReferenceText(messages, toolSpecs, deferredTools)
+    messages = withListedToolSearchResults(messages, new Set(toolSpecs.map((spec) => spec.name)))
 
     const messagesCache = this._cacheSection('messagesTTL')
     // The cache point goes on the last user message with content, not counting cache point blocks.
@@ -1053,8 +1246,9 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       const system = this._formatSystemPrompt(options.systemPrompt)
       if (system !== undefined) request.system = system
     }
+    if (deferral.systemListing) request.system = withSystemToolListing(request.system, deferral.systemListing)
 
-    const tools: Anthropic.ToolUnion[] = formatFunctionTools(toolSpecs, deferredTools)
+    const tools: Anthropic.ToolUnion[] = formatFunctionTools(toolSpecs, deferredTools, deferral.loaderListing)
     const serverTools = [
       ...(this._config.anthropicTools ?? []),
       ...((this._config.params?.tools as Anthropic.ToolUnion[] | undefined) ?? []),
@@ -1062,7 +1256,9 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     // Forcing a tool means this turn must call a function tool, so server tools are left out.
     if (!options?.toolChoice || 'auto' in options.toolChoice) {
       // Copied so the cache_control below never lands on the caller's config.
-      tools.push(...serverTools.map((tool) => ({ ...tool })))
+      tools.push(
+        ...[...serverTools, ...withoutConfigured(deferral.serverTools, serverTools)].map((tool) => ({ ...tool }))
+      )
     } else if (serverTools.length > 0) {
       logger.warn(
         `tool_choice=<${Object.keys(options.toolChoice)[0]}>, server_tools=<${serverTools.map(serverToolName).join(',')}> | forced tool call, omitting server tools`
@@ -1209,6 +1405,9 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
       case 'summaryBlock':
         return this._formatSummary(block)
+
+      case 'serverToolBlock':
+        return formatServerTool(block)
 
       case 'imageBlock': {
         const imgBlock = block as ImageBlock
@@ -1455,20 +1654,6 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       default:
         logger.warn(`citation_type=<${(citation as { type: string }).type}> | unsupported citation location | skipping`)
         return undefined
-    }
-  }
-
-  /**
-   * Logs a skipped server-side tool block, at warn level when the tool returned an error.
-   *
-   * @param contentBlock - The `content_block` of a `content_block_start` event
-   */
-  private _logServerToolBlock(contentBlock: { type: string; content?: unknown }): void {
-    const errorCode = (contentBlock.content as { error_code?: string } | undefined)?.error_code
-    if (errorCode !== undefined) {
-      logger.warn(`block_type=<${contentBlock.type}>, error_code=<${errorCode}> | server-side tool failed`)
-    } else {
-      logger.debug(`block_type=<${contentBlock.type}> | skipping server-side tool block`)
     }
   }
 

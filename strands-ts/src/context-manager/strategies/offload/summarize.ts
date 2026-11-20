@@ -333,7 +333,9 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
    * The tools a replay sends: those of the agent's latest model call, since the replay shares that call's prompt cache
    * only with the same tools. Before the first call, the ones it would send with the registry's tools.
    */
-  private _replayedTools(agent: LocalAgent): Pick<SummarizeOptions, 'toolSpecs' | 'deferredTools'> {
+  private _replayedTools(
+    agent: LocalAgent
+  ): Pick<SummarizeOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'> {
     const recorded = latestCallTools(agent)
     if (recorded) return recorded
     const toolSpecs = agent.toolRegistry.toolSpecs()

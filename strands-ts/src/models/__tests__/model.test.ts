@@ -8,6 +8,7 @@ import {
   GuardContentBlock,
   InjectedBlock,
   SummaryBlock,
+  ServerToolBlock,
   CachePointBlock,
   type StopReason,
 } from '../../types/messages.js'
@@ -779,6 +780,35 @@ describe('Model', () => {
           new CitationsBlock({ citations: [citation], content: [{ text: 'cited' }] }),
         ])
       })
+    })
+
+    it('aggregates a server tool delta into a ServerToolBlock, and keeps the namespace of a tool use', async () => {
+      const data = { type: 'tool_search_output', tools: [] }
+      const provider = new TestModelProvider(async function* () {
+        yield { type: 'modelMessageStartEvent', role: 'assistant' }
+        yield { type: 'modelContentBlockStartEvent' }
+        yield {
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'serverToolDelta', provider: 'openai', data, loadedTools: ['get_weather'] },
+        }
+        yield { type: 'modelContentBlockStopEvent' }
+        yield {
+          type: 'modelContentBlockStartEvent',
+          start: { type: 'toolUseStart', name: 'get_weather', toolUseId: 'call_1', namespace: 'get_weather' },
+        }
+        yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: '{}' } }
+        yield { type: 'modelContentBlockStopEvent' }
+        yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+      })
+
+      const { result } = await collectGenerator(
+        provider.streamAggregated([new Message({ role: 'user', content: [new TextBlock('Hi')] })])
+      )
+
+      expect(result.message.content).toEqual([
+        new ServerToolBlock({ provider: 'openai', data, loadedTools: ['get_weather'] }),
+        new ToolUseBlock({ name: 'get_weather', toolUseId: 'call_1', input: {}, namespace: 'get_weather' }),
+      ])
     })
 
     describe('when content blocks have no start events', () => {

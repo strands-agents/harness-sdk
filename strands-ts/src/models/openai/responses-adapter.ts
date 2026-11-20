@@ -15,14 +15,23 @@
  */
 
 import type {
+  FunctionTool,
   ResponseStreamEvent,
   ResponseInputItem,
   ResponseFunctionToolCall,
   ResponseFunctionCallOutputItem,
   ResponseCreateParamsStreaming,
+  ResponseOutputItem,
   ResponseUsage,
+  Tool,
 } from 'openai/resources/responses/responses'
-import { Message, type StopReason, type ToolResultBlock } from '../../types/messages.js'
+import {
+  Message,
+  type ServerToolBlock,
+  type StopReason,
+  type ToolResultBlock,
+  type ToolUseBlock,
+} from '../../types/messages.js'
 import type { ImageBlock, DocumentBlock } from '../../types/media.js'
 import { encodeBase64 } from '../../types/media.js'
 import { toMimeType } from '../../mime.js'
@@ -36,6 +45,11 @@ import { applyCacheConfig, CACHE_LIFETIMES } from './cache.js'
 import type { OpenAIResponsesConfig } from './types.js'
 import { lookupSystemPromptPlacement } from '../model-info.js'
 import type { ModelInfo } from '../model-info.js'
+import { referenceText } from '../tool-references.js'
+import { isLoaderName, SEARCH_TOOLS_TOOL_NAME, toolListing, withToolListing } from '../../tools/search-tools.js'
+import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../defaults.js'
+import type { ToolSpec } from '../../tools/types.js'
+import type { JSONValue } from '../../types/json.js'
 
 export const DEFAULT_RESPONSES_MODEL_ID = MODEL_DEFAULTS.openai.modelId
 
@@ -45,6 +59,26 @@ const CACHEABLE_INPUT_TYPES = new Set(['input_text', 'input_image', 'input_file'
 type InputPart = { type: string; prompt_cache_breakpoint?: { mode: 'explicit'; ttl?: string } }
 
 const MANAGED_PARAMS: ReadonlySet<string> = new Set(['model', 'input', 'stream', 'store'])
+
+/** Provider name of the server tool blocks this API writes. */
+const PROVIDER = 'openai'
+
+/**
+ * How a request to a model that defers tools natively sends its deferred tools and their loads: with `defer_loading`,
+ * and loaded by the API's tool search, or by the SDK's loader (`load_tools` or `search_tools`) as a client tool search.
+ */
+interface ToolSearchContext {
+  /** The tools the request defers. */
+  readonly deferred: ReadonlySet<string>
+  /** Whether the API searches the deferred tools itself, in place of the loader. */
+  readonly onServer: boolean
+  /** The request's tool specs by name, which a client tool search output loads. */
+  readonly toolSpecs: ReadonlyMap<string, ToolSpec>
+  /** The listing of the deferred tools, which the client tool search shows. */
+  readonly listing: string
+  /** IDs of the loader calls in the messages that loaded tools, which go as client tool searches. */
+  readonly searchCalls: ReadonlySet<string>
+}
 
 /**
  * Logs a warning for each responses-managed key present in `params`.
@@ -71,9 +105,10 @@ export function formatResponsesRequest(
   const { cacheConfig } = config
   const cachePoints = modelInfo.capabilities?.promptCaching === 'cachePoints'
   const cacheMessages = cachePoints && cacheConfig !== undefined && cacheConfig.messagesTTL !== false
+  const toolSearch = toolSearchContext(messages, options, modelInfo)
   const { input, explicitCache } = cacheMessages
-    ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks, cacheConfig.messagesTTL)
-    : { input: formatResponsesMessages(messages), explicitCache: false }
+    ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks, cacheConfig.messagesTTL, toolSearch)
+    : { input: formatResponsesMessages(messages, toolSearch), explicitCache: false }
 
   // User `params` are spread first so provider-managed fields (asserted
   // required by `ResponseCreateParamsStreaming` below) always win. The
@@ -105,19 +140,7 @@ export function formatResponsesRequest(
 
   if (options?.toolSpecs && options.toolSpecs.length > 0) {
     const existingTools = request.tools ?? []
-    request.tools = [
-      ...existingTools,
-      ...options.toolSpecs.map((spec) => ({
-        type: 'function' as const,
-        name: spec.name,
-        description: spec.description ?? '',
-        parameters: (spec.inputSchema ?? {}) as Record<string, unknown>,
-        // `null` defers to the OpenAI server default. The SDK's typed
-        // contract requires a value; omitting it (as the Python SDK does)
-        // is not an option here.
-        strict: null,
-      })),
-    ]
+    request.tools = [...existingTools, ...formatTools(options.toolSpecs, toolSearch, existingTools)]
 
     if (options.toolChoice) {
       if ('auto' in options.toolChoice) {
@@ -145,6 +168,91 @@ export function formatResponsesRequest(
   return request
 }
 
+/**
+ * The request's tools: a function per spec, each deferred one with `defer_loading`. When the request defers tools,
+ * the loader becomes a client tool search, or the API's own tool search takes its place under `serverToolSearch`
+ * unless the caller configured one.
+ */
+function formatTools(
+  toolSpecs: ToolSpec[],
+  toolSearch: ToolSearchContext | undefined,
+  existingTools: readonly Tool[]
+): Tool[] {
+  const deferred = toolSearch?.deferred ?? new Set<string>()
+  const tools = toolSpecs.flatMap((spec): Tool[] => {
+    if (!toolSearch || deferred.size === 0 || !isLoaderName(spec.name)) {
+      return [functionTool(spec, deferred.has(spec.name))]
+    }
+    return toolSearch.onServer ? [] : [clientToolSearch(spec, toolSearch.listing)]
+  })
+  const configured = existingTools.some((tool) => tool.type === 'tool_search')
+  if (toolSearch?.onServer && !configured) tools.push({ type: 'tool_search' })
+  return tools
+}
+
+/** The loader as a client tool search that lists the deferred tools, since the model can't see them. */
+function clientToolSearch(spec: ToolSpec, listing: string): Tool {
+  const description = withToolListing(spec.description, listing)
+  return { type: 'tool_search', execution: 'client', description, parameters: spec.inputSchema ?? {} }
+}
+
+/** A tool spec as a function tool. */
+function functionTool(spec: ToolSpec, deferred: boolean): FunctionTool {
+  return {
+    type: 'function',
+    name: spec.name,
+    description: spec.description ?? '',
+    parameters: (spec.inputSchema ?? {}) as Record<string, unknown>,
+    // `null` defers to the OpenAI server default. The SDK's typed
+    // contract requires a value; omitting it (as the Python SDK does)
+    // is not an option here.
+    strict: null,
+    ...(deferred && { defer_loading: true }),
+  }
+}
+
+/** How the request sends deferred tools and their loads, or undefined when the model doesn't defer tools natively. */
+function toolSearchContext(
+  messages: Message[],
+  options: StreamOptions | undefined,
+  modelInfo: ModelInfo
+): ToolSearchContext | undefined {
+  if (modelInfo.capabilities?.deferredToolLoading !== 'native') return undefined
+  const deferred = options?.deferredTools ?? new Set<string>()
+  const toolSpecs = options?.toolSpecs ?? []
+  const contextWindow = modelInfo.limits?.contextWindow || DEFAULT_CONTEXT_WINDOW_LIMIT
+  return {
+    deferred,
+    onServer: deferred.size > 0 && options?.serverToolSearch === true,
+    toolSpecs: new Map(toolSpecs.map((spec) => [spec.name, spec])),
+    listing: toolListing(
+      toolSpecs.filter((spec) => deferred.has(spec.name)),
+      contextWindow
+    ),
+    searchCalls: loadingSearchCalls(messages),
+  }
+}
+
+/**
+ * IDs of the loader calls whose result loaded tools: it holds only tool references. Any other, such as a failed load,
+ * goes as a function call with its text.
+ */
+function loadingSearchCalls(messages: Message[]): Set<string> {
+  const searches = new Set<string>()
+  const ids = new Set<string>()
+  for (const block of messages.flatMap((message) => message.content)) {
+    if (block.type === 'toolUseBlock' && isLoaderName(block.name)) searches.add(block.toolUseId)
+    if (block.type === 'toolResultBlock' && searches.has(block.toolUseId) && onlyReferences(block)) {
+      ids.add(block.toolUseId)
+    }
+  }
+  return ids
+}
+
+function onlyReferences(block: ToolResultBlock): boolean {
+  return block.content.length > 0 && block.content.every((content) => content.type === 'toolReferenceBlock')
+}
+
 function systemPromptText(systemPrompt: StreamOptions['systemPrompt']): string | undefined {
   if (typeof systemPrompt === 'string') return systemPrompt
   if (!Array.isArray(systemPrompt)) return undefined
@@ -164,7 +272,8 @@ function systemPromptText(systemPrompt: StreamOptions['systemPrompt']): string |
 function formatCacheableResponsesMessages(
   messages: Message[],
   dynamicTrailingBlocks = 0,
-  messagesTTL?: boolean | string
+  messagesTTL: boolean | string | undefined,
+  toolSearch: ToolSearchContext | undefined
 ): { input: ResponseInputItem[]; explicitCache: boolean } {
   const ttl = typeof messagesTTL === 'string' && CACHE_LIFETIMES.has(messagesTTL) ? { ttl: messagesTTL } : {}
   const input: ResponseInputItem[] = []
@@ -172,7 +281,7 @@ function formatCacheableResponsesMessages(
   for (const [index, { role, content }] of messages.entries()) {
     const dynamicCount = role === 'user' && index === messages.length - 1 ? dynamicTrailingBlocks : 0
     const boundary = Math.max(0, content.length - dynamicCount)
-    const items = formatResponsesMessages([new Message({ role, content: content.slice(0, boundary) })])
+    const items = formatResponsesMessages([new Message({ role, content: content.slice(0, boundary) })], toolSearch)
     normalizeToolOutputs(items)
     const part = role === 'user' ? lastCacheablePart(items) : undefined
     if (part) {
@@ -182,7 +291,10 @@ function formatCacheableResponsesMessages(
       hasCheckpoints = true
     }
     if (dynamicCount > 0) {
-      const tail = formatResponsesMessages([new Message({ role: 'user', content: content.slice(boundary) })])
+      const tail = formatResponsesMessages(
+        [new Message({ role: 'user', content: content.slice(boundary) })],
+        toolSearch
+      )
       normalizeToolOutputs(tail)
       appendDynamicContent(items, tail)
     }
@@ -226,17 +338,19 @@ function appendDynamicContent(items: ResponseInputItem[], tail: ResponseInputIte
 /**
  * Formats SDK messages into Responses API input items.
  *
- * Per message, content blocks are split into three buckets:
+ * Per message, content blocks are split into four buckets:
  * - Text/media → grouped in `{ role, content: [...] }`
- * - Tool calls → separate `{ type: 'function_call', ... }` items
- * - Tool results → separate `{ type: 'function_call_output', ... }` items
+ * - This API's own tool items, such as a hosted tool search → sent as they came
+ * - Tool calls → separate `{ type: 'function_call', ... }` items, or client tool search calls
+ * - Tool results → separate `{ type: 'function_call_output', ... }` items, or client tool search outputs
  */
-function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
+function formatResponsesMessages(messages: Message[], toolSearch?: ToolSearchContext): ResponseInputItem[] {
   const input: ResponseInputItem[] = []
 
   for (const message of messages) {
     const role = message.role === 'assistant' ? 'assistant' : 'user'
     const contentItems: Array<Record<string, unknown>> = []
+    const serverItems: ResponseInputItem[] = []
     const toolCallItems: ResponseInputItem[] = []
     const toolResultItems: ResponseInputItem[] = []
 
@@ -271,28 +385,17 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
           break
         }
 
-        case 'toolUseBlock': {
-          const toolBlock = block as { name: string; toolUseId: string; input: unknown }
-          const call: ResponseFunctionToolCall = {
-            type: 'function_call',
-            call_id: toolBlock.toolUseId,
-            name: toolBlock.name,
-            arguments: JSON.stringify(toolBlock.input),
-          }
-          toolCallItems.push(call)
+        case 'toolUseBlock':
+          toolCallItems.push(formatToolCall(block, toolSearch))
           break
-        }
 
-        case 'toolResultBlock': {
-          const resultBlock = block as ToolResultBlock
-          const result: ResponseInputItem.FunctionCallOutput = {
-            type: 'function_call_output',
-            call_id: resultBlock.toolUseId,
-            output: formatToolResultOutput(resultBlock),
-          }
-          toolResultItems.push(result)
+        case 'toolResultBlock':
+          toolResultItems.push(formatToolCallOutput(block, toolSearch))
           break
-        }
+
+        case 'serverToolBlock':
+          serverItems.push(...formatServerTool(block))
+          break
 
         case 'reasoningBlock': {
           logger.warn(
@@ -340,11 +443,56 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
       }
     }
 
+    input.push(...serverItems)
     input.push(...toolCallItems)
     input.push(...toolResultItems)
   }
 
   return input
+}
+
+/** A tool call as a function call with its namespace, or as a client tool search for a loader call that loaded tools. */
+function formatToolCall(block: ToolUseBlock, toolSearch: ToolSearchContext | undefined): ResponseInputItem {
+  if (toolSearch?.searchCalls.has(block.toolUseId)) {
+    return {
+      type: 'tool_search_call',
+      call_id: block.toolUseId,
+      execution: 'client',
+      status: 'completed',
+      arguments: block.input,
+    }
+  }
+  const call: ResponseFunctionToolCall = {
+    type: 'function_call',
+    call_id: block.toolUseId,
+    name: block.name,
+    arguments: JSON.stringify(block.input),
+  }
+  return block.namespace ? { ...call, namespace: block.namespace } : call
+}
+
+/** A tool result as a function call output, or as the client tool search output of a loader call that loaded tools. */
+function formatToolCallOutput(block: ToolResultBlock, toolSearch: ToolSearchContext | undefined): ResponseInputItem {
+  if (toolSearch?.searchCalls.has(block.toolUseId)) return toolSearchOutput(block, toolSearch)
+  return {
+    type: 'function_call_output',
+    call_id: block.toolUseId,
+    output: formatToolResultOutput(block, toolSearch?.toolSpecs),
+  }
+}
+
+/** A server tool block this API wrote, as the item it came as; another provider's is left out. */
+function formatServerTool(block: ServerToolBlock): ResponseInputItem[] {
+  return block.provider === PROVIDER ? [block.data as unknown as ResponseInputItem] : []
+}
+
+/** A loader result as the client tool search output that loads its tools, each the request still has. */
+function toolSearchOutput(block: ToolResultBlock, toolSearch: ToolSearchContext): ResponseInputItem {
+  const tools = block.content.flatMap((content) => {
+    const spec = content.type === 'toolReferenceBlock' ? toolSearch.toolSpecs.get(content.name) : undefined
+    return spec ? [functionTool(spec, true)] : []
+  })
+  return { type: 'tool_search_output', call_id: block.toolUseId, execution: 'client', status: 'completed', tools }
 }
 
 /**
@@ -353,7 +501,10 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
  * newlines) or the content-item array shape when the result carries image or
  * document data.
  */
-function formatToolResultOutput(resultBlock: ToolResultBlock): string | ResponseFunctionCallOutputItem[] {
+function formatToolResultOutput(
+  resultBlock: ToolResultBlock,
+  toolSpecs?: ReadonlyMap<string, ToolSpec>
+): string | ResponseFunctionCallOutputItem[] {
   const parts: ResponseFunctionCallOutputItem[] = []
   const texts: string[] = []
   let hasMedia = false
@@ -402,6 +553,13 @@ function formatToolResultOutput(resultBlock: ToolResultBlock): string | Response
         }
         break
       }
+      // A function call output can't load a tool, so a reference goes as its parameters.
+      case 'toolReferenceBlock': {
+        const text = referenceText(c.name, toolSpecs?.get(c.name))
+        texts.push(text)
+        parts.push({ type: 'input_text', text })
+        break
+      }
       case 'unknownBlock':
         break
       default:
@@ -448,7 +606,10 @@ function formatDocumentInput(docBlock: DocumentBlock): Record<string, unknown> |
  */
 export interface ResponsesStreamState {
   dataType: string | null
-  toolCalls: Map<string, { name: string; arguments: string; callId: string; itemId: string }>
+  toolCalls: Map<
+    string,
+    { name: string; arguments: string; callId: string; itemId: string; namespace?: string | undefined }
+  >
   finalUsage: {
     inputTokens: number
     outputTokens: number
@@ -457,6 +618,8 @@ export interface ResponsesStreamState {
     cacheWriteInputTokens?: number
   } | null
   stopReason: StopReason
+  /** The loader a client tool search call runs: the one the request sent as its client tool search. */
+  loader: string
 }
 
 /**
@@ -464,12 +627,13 @@ export interface ResponsesStreamState {
  *
  * @internal
  */
-export function createResponsesStreamState(): ResponsesStreamState {
+export function createResponsesStreamState(options?: StreamOptions): ResponsesStreamState {
   return {
     dataType: null,
     toolCalls: new Map(),
     finalUsage: null,
     stopReason: 'endTurn',
+    loader: options?.toolSpecs?.find((spec) => isLoaderName(spec.name))?.name ?? SEARCH_TOOLS_TOOL_NAME,
   }
 }
 
@@ -600,13 +764,18 @@ export function mapResponsesEventToSDK(
         // `id` is optional in the SDK type but load-bearing here: it keys
         // subsequent argument delta/done events. Skip rather than collapse
         // to an empty string, which would let distinct calls share a key.
-        const { id: itemId, call_id: callId, name } = event.item
+        const { id: itemId, call_id: callId, name, namespace } = event.item
         if (!itemId) {
           logger.warn(`call_id=<${callId}> name=<${name}> | function_call event missing item id — skipping`)
           break
         }
-        state.toolCalls.set(itemId, { name, arguments: '', callId, itemId })
+        state.toolCalls.set(itemId, { name, arguments: '', callId, itemId, namespace })
       }
+      break
+    }
+
+    case 'response.output_item.done': {
+      events.push(...toolSearchItemEvents(event.item, state))
       break
     }
 
@@ -680,7 +849,12 @@ export function finalizeResponsesStream(state: ResponsesStreamState): ModelStrea
   for (const [, tc] of state.toolCalls) {
     events.push({
       type: 'modelContentBlockStartEvent',
-      start: { type: 'toolUseStart', name: tc.name, toolUseId: tc.callId },
+      start: {
+        type: 'toolUseStart',
+        name: tc.name,
+        toolUseId: tc.callId,
+        ...(tc.namespace && { namespace: tc.namespace }),
+      },
     })
     events.push({
       type: 'modelContentBlockDeltaEvent',
@@ -702,6 +876,46 @@ export function finalizeResponsesStream(state: ResponsesStreamState): ModelStrea
   events.push({ type: 'modelMessageStopEvent', stopReason })
 
   return events
+}
+
+/**
+ * The events for a finished tool search item. A client tool search is a call to the loader the agent runs, sent with
+ * the other calls at the end; the API's own search becomes a server tool block where it happened.
+ */
+function toolSearchItemEvents(item: ResponseOutputItem, state: ResponsesStreamState): ModelStreamEvent[] {
+  if (item.type !== 'tool_search_call' && item.type !== 'tool_search_output') return []
+  if (item.type === 'tool_search_call' && item.execution === 'client') {
+    const callId = item.call_id ?? item.id
+    const args = JSON.stringify(item.arguments ?? {})
+    state.toolCalls.set(item.id, { name: state.loader, arguments: args, callId, itemId: item.id })
+    return []
+  }
+  const events: ModelStreamEvent[] = state.dataType !== null ? [{ type: 'modelContentBlockStopEvent' }] : []
+  state.dataType = null
+  const loadedTools = item.type === 'tool_search_output' ? loadedFunctions(item.tools) : undefined
+  events.push(
+    { type: 'modelContentBlockStartEvent' },
+    {
+      type: 'modelContentBlockDeltaEvent',
+      delta: {
+        type: 'serverToolDelta',
+        provider: PROVIDER,
+        data: item as unknown as JSONValue,
+        ...(loadedTools && { loadedTools }),
+      },
+    },
+    { type: 'modelContentBlockStopEvent' }
+  )
+  return events
+}
+
+/** Names of the functions a tool search output loaded, those in a namespace included. */
+function loadedFunctions(tools: Tool[]): string[] {
+  return tools.flatMap((tool) => {
+    if (tool.type === 'function') return [tool.name]
+    if (tool.type !== 'namespace') return []
+    return tool.tools.flatMap((inner) => (inner.type === 'function' ? [inner.name] : []))
+  })
 }
 
 function switchContent(newType: string, prevType: string | null): ModelStreamEvent[] {

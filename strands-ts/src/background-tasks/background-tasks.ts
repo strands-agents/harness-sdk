@@ -10,6 +10,7 @@ import { logger } from '../logging/logger.js'
 import { InvokeModelStage, type ExecuteToolContext } from '../middleware/index.js'
 import type { Plugin } from '../plugins/plugin.js'
 import { isLoadTools } from '../tools/load-tools.js'
+import { isSearchTools } from '../tools/search-tools.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import { tool } from '../tools/tool-factory.js'
 import type { Tool, ToolContext } from '../tools/tool.js'
@@ -423,6 +424,7 @@ export class BackgroundTasks implements Plugin {
       tool.name !== this._manageTool.name &&
       !FOREGROUND_TOOL_NAMES.has(tool.name) &&
       !isLoadTools(tool) &&
+      !isSearchTools(tool) &&
       !(tool instanceof AgentAsTool && tool.delegate)
     )
   }

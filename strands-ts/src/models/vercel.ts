@@ -929,6 +929,8 @@ function formatAssistantMessage(message: Message, prompt: LanguageModelV3Prompt)
       case 'videoBlock':
         content.push(...formatMediaBlock(block))
         break
+      // Only the provider that ran the tool reads it.
+      case 'serverToolBlock':
       case 'unknownBlock':
         break
       default:
