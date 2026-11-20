@@ -5,6 +5,7 @@ Mirrors ``strands-ts/src/sandbox/ssh.ts``.
 
 import re
 import shlex
+import threading
 import warnings
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -131,6 +132,7 @@ class SshSandbox(PosixShellSandbox):
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ExecutionResult, None]:
         """Execute a command on the remote host, streaming output.
@@ -140,6 +142,8 @@ class SshSandbox(PosixShellSandbox):
             timeout: Maximum execution time in seconds. ``None`` means no timeout.
             cwd: Working directory for this command, overriding ``working_dir``.
             env: Environment variables to set, applied via a shell ``export`` prefix.
+            cancel_signal: Aborts the call when set by killing the local ``ssh`` client.
+                As with ``timeout``, the command may keep running on the remote host.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
@@ -149,6 +153,7 @@ class SshSandbox(PosixShellSandbox):
         Raises:
             ValueError: If an environment variable name is invalid.
             SandboxTimeoutError: If execution exceeds ``timeout`` seconds.
+            SandboxAbortError: If ``cancel_signal`` is set before the command exits.
         """
         effective_cwd = cwd if cwd is not None else self.working_dir
         env_prefix = build_shell_env_prefix(env)
@@ -182,7 +187,11 @@ class SshSandbox(PosixShellSandbox):
         args += ["--", self.host, remote_command]
 
         async for chunk in _stream_process(
-            "ssh", args, timeout=timeout, enoent_message="ssh is not installed or not on PATH"
+            "ssh",
+            args,
+            timeout=timeout,
+            enoent_message="ssh is not installed or not on PATH",
+            cancel_signal=cancel_signal,
         ):
             yield chunk
 
