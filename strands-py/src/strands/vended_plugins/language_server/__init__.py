@@ -1,23 +1,34 @@
-"""Language server clients for Strands Agents.
+"""Language server context relevance for Strands Agents.
 
-This module provides ``LspClient``, the language server queries a context strategy makes, and ``StdioLspClient``,
-which runs any stdio language server and implements them.
+This module provides ``LspStrategy``, a ``ContextManager`` strategy that offloads old tool results about code the agent
+is no longer working on, judged by a language server rather than by size or age. It adds no tools.
 
 Example Usage:
     ```python
-    from strands.vended_plugins.language_server import StdioLspClient
+    from strands import Agent
+    from strands.experimental.context_manager import ContextManager
+    from strands.storage import LocalFileStorage
+    from strands.vended_plugins.language_server import LspStrategy, StdioLspClient
 
-    with StdioLspClient(["pyright-langserver", "--stdio"], root="/work/repo") as client:
-        symbols = await client.document_symbols("file:///work/repo/app.py")
+    client = StdioLspClient(["pyright-langserver", "--stdio"], root="/work/repo")
+    agent = Agent(
+        context_manager=ContextManager(
+            strategies=[LspStrategy(client, root="/work/repo"), "large_tool_offloading", "proactive_summarization"],
+            stash={"storage": LocalFileStorage("./.stash")},
+        ),
+    )
     ```
 """
 
 from .client import LanguageServerError, LanguageServerNotFoundError, LspClient, Position, StdioLspClient
+from .strategy import LspPassReport, LspStrategy
 
 __all__ = [
     "LanguageServerError",
     "LanguageServerNotFoundError",
     "LspClient",
+    "LspPassReport",
+    "LspStrategy",
     "Position",
     "StdioLspClient",
 ]
