@@ -53,6 +53,7 @@ export class BackgroundTasks implements Plugin {
   private readonly _policy: ReturnType<typeof resolvePolicy>
   private readonly _manageTool: Tool
   private readonly _tasks = new Map<string, BackgroundTask>()
+  private _raisedInterrupt = false
   private _agent!: Agent
   private _manager!: BackgroundTaskManager
 
@@ -254,13 +255,19 @@ export class BackgroundTasks implements Plugin {
 
     const tasks = [...this._tasks.values()]
     const interrupts = tasks.flatMap((task) => (task.status === 'input_required' ? (task.interrupts ?? []) : []))
-    if (interrupts.length > 0) throw new InterruptError([...interrupts])
+    if (interrupts.length > 0) {
+      this._raisedInterrupt = true
+      throw new InterruptError([...interrupts])
+    }
     this._deliverReady(event, tasks)
   }
 
   private async _afterInvocation(event: AfterInvocationEvent): Promise<void> {
     const agent = event.agent as Agent
-    if (agent._interruptState.activated) return
+    // A cancel can drop the interrupt this invocation already returns, so the interrupt state is not enough.
+    const raisedInterrupt = this._raisedInterrupt
+    this._raisedInterrupt = false
+    if (raisedInterrupt || agent._interruptState.activated) return
     let tasks = [...this._tasks.values()]
     while (
       this._config.waitForCompletion !== false &&
@@ -275,6 +282,8 @@ export class BackgroundTasks implements Plugin {
       event.resume ??= []
       return
     }
+    // Delivering would start another pass; after a cancel the results wait for the next invocation instead.
+    if (agent._cancelRequested) return
     this._deliverReady(event, tasks)
   }
 
@@ -351,11 +360,28 @@ export class BackgroundTasks implements Plugin {
       }
       this._tasks.set(task.taskId, recoverTask(task))
     }
-    for (const interruptId of recoveredInterruptIds) delete this._agent._interruptState.interrupts[interruptId]
+    this._dropInterrupts(recoveredInterruptIds)
+    this._persistTasks()
+  }
+
+  /**
+   * Cancels every non-terminal task and drops the agent interrupts they raised. The tasks are recorded as
+   * cancelled before this returns; it does not wait for their tools to stop.
+   */
+  cancelAll(): void {
+    const interruptIds = [...this._tasks.values()]
+      .filter((task) => !isTaskStatusTerminal(task.status))
+      .flatMap((task) => (task.interrupts ?? []).map((interrupt) => interrupt.id))
+    for (const task of this._manager.cancelAll()) this._tasks.set(task.taskId, task)
+    this._dropInterrupts(interruptIds)
+    this._persistTasks()
+  }
+
+  private _dropInterrupts(interruptIds: Iterable<string>): void {
+    for (const interruptId of interruptIds) delete this._agent._interruptState.interrupts[interruptId]
     if (this._agent._interruptState.activated && this._agent._interruptState.getInterruptsList().length === 0) {
       this._agent._interruptState.deactivate()
     }
-    this._persistTasks()
   }
 
   private _persistTasks(): void {
