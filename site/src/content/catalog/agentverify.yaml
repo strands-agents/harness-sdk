@@ -1,0 +1,9 @@
+name: agentverify
+description: pytest plugin that records a Strands agent's model and tool calls into a cassette and replays them in CI, with assertions on tool calls and data flow.
+integrationType: integration
+languages:
+  python:
+    package: agentverify
+github: https://github.com/simukappu/agentverify
+docsUrl: https://github.com/simukappu/agentverify/tree/main/examples/strands-weather-forecaster
+addedDate: 2026-10-22
