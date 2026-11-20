@@ -170,7 +170,6 @@ Everything above is a default, not a constraint. Here's how to adjust each piece
 Pass a `provider/model` string, a bare Bedrock model id, or a ready-made model or `ModelRouter`:
 
 ```rust,no_run
-use strands::models::openai::OpenAIModel;
 use strands_harness::HarnessAgentOptions;
 
 HarnessAgentOptions::builder().model("anthropic/claude-opus-5").build(); // Anthropic's API directly
@@ -178,7 +177,10 @@ HarnessAgentOptions::builder().model("openai/gpt-5.6-sol").build(); // OpenAI
 HarnessAgentOptions::builder().model("bedrock/global.anthropic.claude-opus-5").build(); // the default, spelled out
 HarnessAgentOptions::builder().model("bedrock-mantle/openai.gpt-5.6-sol").build(); // Bedrock's OpenAI-compatible API
 
+# #[cfg(feature = "openai")]
 fn full_control() -> strands::Result<HarnessAgentOptions> {
+    use strands::models::openai::OpenAIModel;
+
     let model = OpenAIModel::builder().model_id("gpt-5.6-sol").build()?;
     Ok(HarnessAgentOptions::builder().model(model).build())
 }
