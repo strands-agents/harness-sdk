@@ -1,0 +1,712 @@
+{
+  "$comment": "JSON schemas strands-ts builds from the zod schemas in models/__tests__/native-output.test.ts (zodSchemaToJsonSchema), with the Anthropic SDK transformJSONSchema output where it succeeds.",
+  "Person": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "age": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "name",
+        "age"
+      ],
+      "additionalProperties": false
+    },
+    "anthropic": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "age": {
+          "type": "integer",
+          "description": "{minimum: -9007199254740991, maximum: 9007199254740991}"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "age"
+      ]
+    }
+  },
+  "Roster": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "members": {
+          "minItems": 2,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "age": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "name",
+              "age"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "lead": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "age": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "name",
+                "age"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z]+$",
+          "description": "Team code"
+        },
+        "founded": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "members",
+        "code",
+        "founded",
+        "score"
+      ],
+      "additionalProperties": false,
+      "description": "A team of people"
+    },
+    "anthropic": {
+      "type": "object",
+      "description": "A team of people",
+      "properties": {
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "age": {
+                "type": "integer",
+                "description": "{minimum: -9007199254740991, maximum: 9007199254740991}"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "age"
+            ]
+          },
+          "description": "{minItems: 2}"
+        },
+        "lead": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "age": {
+                  "type": "integer",
+                  "description": "{minimum: -9007199254740991, maximum: 9007199254740991}"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "age"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code": {
+          "type": "string",
+          "description": "Team code\n\n{pattern: \"^[A-Z]+$\"}"
+        },
+        "founded": {
+          "type": "string",
+          "format": "date",
+          "description": "{pattern: \"^(?:(?:\\\\d\\\\d[2468][048]|\\\\d\\\\d[13579][26]|\\\\d\\\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\\\d|30)|(?:02)-(?:0[1-9]|1\\\\d|2[0-8])))$\"}"
+        },
+        "score": {
+          "type": "number",
+          "description": "{minimum: 0}"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "members",
+        "code",
+        "founded",
+        "score"
+      ]
+    }
+  },
+  "Team": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "members": {
+          "minItems": 2,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "age": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "name",
+              "age"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "lead": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "age": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "name",
+                "age"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z]+$",
+          "description": "Team code"
+        },
+        "founded": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0
+        },
+        "color": {
+          "type": "string",
+          "enum": [
+            "red",
+            "blue"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "a",
+            "b"
+          ]
+        }
+      },
+      "required": [
+        "members",
+        "code",
+        "founded",
+        "score",
+        "color",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "anthropic": {
+      "type": "object",
+      "properties": {
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "age": {
+                "type": "integer",
+                "description": "{minimum: -9007199254740991, maximum: 9007199254740991}"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "age"
+            ]
+          },
+          "description": "{minItems: 2}"
+        },
+        "lead": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "age": {
+                  "type": "integer",
+                  "description": "{minimum: -9007199254740991, maximum: 9007199254740991}"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "age"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code": {
+          "type": "string",
+          "description": "Team code\n\n{pattern: \"^[A-Z]+$\"}"
+        },
+        "founded": {
+          "type": "string",
+          "format": "date",
+          "description": "{pattern: \"^(?:(?:\\\\d\\\\d[2468][048]|\\\\d\\\\d[13579][26]|\\\\d\\\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\\\d|30)|(?:02)-(?:0[1-9]|1\\\\d|2[0-8])))$\"}"
+        },
+        "score": {
+          "type": "number",
+          "description": "{minimum: 0}"
+        },
+        "color": {
+          "type": "string",
+          "description": "{enum: [\"red\",\"blue\"]}"
+        },
+        "kind": {
+          "type": "string",
+          "description": "{enum: [\"a\",\"b\"]}"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "members",
+        "code",
+        "founded",
+        "score",
+        "color",
+        "kind"
+      ]
+    }
+  },
+  "WithRecord": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "scores": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "number"
+          }
+        }
+      },
+      "required": [
+        "scores"
+      ],
+      "additionalProperties": false
+    },
+    "anthropic": {
+      "type": "object",
+      "properties": {
+        "scores": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false,
+          "description": "{propertyNames: {\"type\":\"string\"}}"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "scores"
+      ]
+    }
+  },
+  "WithNestedRecord": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "team": {
+          "type": "object",
+          "properties": {
+            "members": {
+              "minItems": 2,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "age": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "name",
+                  "age"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "lead": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "age": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "age"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "code": {
+              "type": "string",
+              "pattern": "^[A-Z]+$",
+              "description": "Team code"
+            },
+            "founded": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            },
+            "score": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "members",
+            "code",
+            "founded",
+            "score"
+          ],
+          "additionalProperties": false,
+          "description": "A team of people"
+        },
+        "extra": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "scores": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "number"
+                }
+              }
+            },
+            "required": [
+              "scores"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "team",
+        "extra"
+      ],
+      "additionalProperties": false
+    },
+    "anthropic": {
+      "type": "object",
+      "properties": {
+        "team": {
+          "type": "object",
+          "description": "A team of people",
+          "properties": {
+            "members": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "age": {
+                    "type": "integer",
+                    "description": "{minimum: -9007199254740991, maximum: 9007199254740991}"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "age"
+                ]
+              },
+              "description": "{minItems: 2}"
+            },
+            "lead": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "age": {
+                      "type": "integer",
+                      "description": "{minimum: -9007199254740991, maximum: 9007199254740991}"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "age"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "code": {
+              "type": "string",
+              "description": "Team code\n\n{pattern: \"^[A-Z]+$\"}"
+            },
+            "founded": {
+              "type": "string",
+              "format": "date",
+              "description": "{pattern: \"^(?:(?:\\\\d\\\\d[2468][048]|\\\\d\\\\d[13579][26]|\\\\d\\\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\\\d|30)|(?:02)-(?:0[1-9]|1\\\\d|2[0-8])))$\"}"
+            },
+            "score": {
+              "type": "number",
+              "description": "{minimum: 0}"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "members",
+            "code",
+            "founded",
+            "score"
+          ]
+        },
+        "extra": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "scores": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false,
+                "description": "{propertyNames: {\"type\":\"string\"}}"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "scores"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "team",
+        "extra"
+      ]
+    }
+  },
+  "WithTuple": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "point": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "required": [
+        "point"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "WithAny": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {}
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "WithMixedLiteral": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "enum": [
+            "a",
+            1
+          ]
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "WithCatchall": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "anthropic": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    }
+  },
+  "Color": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "color": {
+          "type": "string",
+          "enum": [
+            "red",
+            "blue"
+          ]
+        }
+      },
+      "required": [
+        "color"
+      ],
+      "additionalProperties": false
+    },
+    "anthropic": {
+      "type": "object",
+      "properties": {
+        "color": {
+          "type": "string",
+          "description": "{enum: [\"red\",\"blue\"]}"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "color"
+      ]
+    }
+  }
+}
