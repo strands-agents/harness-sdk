@@ -381,7 +381,6 @@
     "@opentelemetry/sdk-metrics": "^2.6.1",
     "@opentelemetry/sdk-trace-base": "^2.6.1",
     "@opentelemetry/sdk-trace-node": "^2.6.1",
-    "@pydantic/monty": "^1.6.0",
     "@smithy/types": "^4.15.1",
     "@tobilu/qmd": "^2.8.0",
     "express": "^5.1.0",
@@ -433,9 +432,6 @@
       "optional": true
     },
     "@opentelemetry/sdk-trace-node": {
-      "optional": true
-    },
-    "@pydantic/monty": {
       "optional": true
     },
     "@opentelemetry/sdk-metrics": {

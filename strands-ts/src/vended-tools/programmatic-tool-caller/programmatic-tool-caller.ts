@@ -135,7 +135,7 @@ function loadMonty(): Promise<MontyModule> {
       } catch {
         throw new Error(
           "programmatic_tool_caller requires the '@pydantic/monty' package. " +
-            'Install it with: npm install @pydantic/monty',
+            'Install it with: npm install @pydantic/monty@^1.6.0',
           { cause }
         )
       }

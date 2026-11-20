@@ -54,7 +54,7 @@ describe('programmatic_tool_caller Monty runtime', () => {
 
     expect(result.status).toBe('error')
     expect(text(result)).toContain(
-      "requires the '@pydantic/monty' package. Install it with: npm install @pydantic/monty"
+      "requires the '@pydantic/monty' package. Install it with: npm install @pydantic/monty@^1.6.0"
     )
   })
 })
