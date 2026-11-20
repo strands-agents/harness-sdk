@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DocumentBlock, ImageBlock } from '@strands-agents/sdk'
-import type { Agent, ToolContext } from '@strands-agents/sdk'
+import type { Agent, Tool, ToolContext } from '@strands-agents/sdk'
 
 import { createHarness } from '../../src/agent.js'
 import { edit, makeRead, read, write } from '../../src/tools/file-tools.js'
@@ -180,6 +180,15 @@ describe('read media capability', () => {
     expect(out).toContain(path)
     expect(out).toContain('png')
     expect(out).toContain('cannot view')
+  })
+
+  // https://github.com/strands-agents/harness-sdk/issues/5556
+  it('defaults to a text placeholder for Bedrock Grok', async () => {
+    agent = await createHarness({ model: 'bedrock/global.xai.grok-4.7', skills: false })
+    const path = join(dir, 'shot.png')
+    writeFileSync(path, new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    const readTool = agent.tools.find((tool) => tool.name === 'read') as Tool
+    expect(await readTool.invoke({ path }, ctx())).toContain('cannot view')
   })
 
   it('describes a document in text when media is off', async () => {
