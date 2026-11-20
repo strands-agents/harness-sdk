@@ -27,7 +27,7 @@ import { logger } from '../../logging/logger.js'
 
 /**
  * Mapping of Gemini finish reasons to SDK stop reasons.
- * Only MAX_TOKENS needs explicit mapping; everything else defaults to endTurn.
+ * Finish reasons not listed here default to endTurn.
  * Tool use stop reason is determined by the hasToolCalls flag in GoogleStreamState,
  * since Gemini does not have a tool use finish reason.
  *
@@ -35,6 +35,8 @@ import { logger } from '../../logging/logger.js'
  */
 export const FINISH_REASON_MAP: Partial<Record<GeminiFinishReason, StopReason>> = {
   [GeminiFinishReason.MAX_TOKENS]: 'maxTokens',
+  [GeminiFinishReason.SAFETY]: 'guardrailIntervened',
+  [GeminiFinishReason.RECITATION]: 'contentFiltered',
 }
 
 // =============================================================================
