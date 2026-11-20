@@ -778,3 +778,34 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
     messages_logged = [record.getMessage() for record in caplog.records]
     assert len(messages_logged) == 1
     assert "count=<3> | Location sources are not supported by Writer" in messages_logged[0]
+
+
+def test_format_request_skips_cache_point(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.writer")
+    messages = [
+        {"role": "user", "content": [{"text": "doc"}, {"cachePoint": {"type": "default"}}, {"text": "question"}]},
+        {"role": "user", "content": [{"cachePoint": {"type": "default"}}]},
+    ]
+
+    tru_messages = model.format_request(messages)["messages"]
+
+    assert tru_messages == [
+        {"role": "user", "content": [{"text": "doc", "type": "text"}, {"text": "question", "type": "text"}]},
+    ]
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert messages_logged == ["count=<2> | cachePoint content block is not supported by Writer | skipping"]
+
+
+def test_format_request_skips_cache_point_non_vision_model(model, caplog):
+    model.update_config(model_id="palmyra-x4")
+    caplog.set_level(logging.WARNING, logger="strands.models.writer")
+    messages = [
+        {"role": "user", "content": [{"text": "doc"}, {"cachePoint": {"type": "default"}}]},
+        {"role": "user", "content": [{"cachePoint": {"type": "default"}}]},
+    ]
+
+    tru_messages = model.format_request(messages)["messages"]
+
+    assert tru_messages == [{"role": "user", "content": "doc"}]
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert messages_logged == ["count=<2> | cachePoint content block is not supported by Writer | skipping"]

@@ -578,7 +578,7 @@ async def test_stream_request_with_empty_content(gemini_client, model, model_id)
 
     exp_request = {
         "config": {},
-        "contents": [{"parts": [], "role": "user"}],
+        "contents": [],
         "model": model_id,
     }
     gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
@@ -1953,6 +1953,21 @@ def test_format_request_skips_message_cache_point(model, caplog):
 
     assert request["contents"][0]["parts"] == [{"text": "durable prefix"}]
     assert "cachePoint content block is not supported by Gemini" in caplog.text
+
+
+def test_format_request_omits_cache_point_only_message(model, caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.gemini")
+
+    messages = [
+        {"role": "user", "content": [{"text": "doc"}, {"cachePoint": {"type": "default"}}, {"text": "question"}]},
+        {"role": "user", "content": [{"cachePoint": {"type": "default"}}]},
+    ]
+
+    request = model._format_request(messages, None, None, None)
+
+    assert request["contents"] == [{"parts": [{"text": "doc"}, {"text": "question"}], "role": "user"}]
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert messages_logged == ["count=<2> | cachePoint content block is not supported by Gemini | skipping"]
 
 
 def test_format_request_filters_location_source_document(model, caplog):

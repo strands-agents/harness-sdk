@@ -1143,3 +1143,19 @@ def test_format_request_logs_skipped_blocks_once_per_request(caplog):
     messages_logged = [record.getMessage() for record in caplog.records]
     assert len(messages_logged) == 1
     assert "count=<3> | Location sources are not supported by llama.cpp" in messages_logged[0]
+
+
+def test_format_request_skips_cache_point(caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="strands.models.llamacpp")
+    messages = [
+        {"role": "user", "content": [{"text": "doc"}, {"cachePoint": {"type": "default"}}, {"text": "question"}]},
+        {"role": "user", "content": [{"cachePoint": {"type": "default"}}]},
+    ]
+
+    tru_messages = LlamaCppModel()._format_request(messages)["messages"]
+
+    assert tru_messages == [
+        {"role": "user", "content": [{"text": "doc", "type": "text"}, {"text": "question", "type": "text"}]},
+    ]
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert messages_logged == ["count=<2> | cachePoint content block is not supported by llama.cpp | skipping"]
