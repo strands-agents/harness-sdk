@@ -1,0 +1,132 @@
+---
+title: Prompt caching
+description: "How Strands caches tools, system prompts, and messages on model providers with explicit or implicit prompt caching, and where caching falls short today."
+tags: [caching]
+sourceLinks:
+  - path: strands-py/src/strands/injection/_message_injection.py
+  - path: strands-ts/src/injection/message-injection.ts
+---
+
+Your agent sends the same tools, system prompt, and earlier messages to the model on
+every call. Prompt caching lets the model provider reuse that static part instead of
+processing it again. Model providers handle this in one of two ways: some let the
+request carry explicit cache points, while others support only implicit caching and
+decide on their own what to reuse. This page covers how Strands caches tools, system
+prompts, and messages, and where caching falls short today. For pricing on cache writes
+and reads, see your model provider's documentation.
+
+## Models that support explicit caching
+
+To get the most savings from the cache, use a model that supports explicit cache points
+and set the cache configuration strategy to `auto`. Strands then places the cache points
+for you.
+
+Strands puts the static content (tools, system prompt, and messages) before the cache
+point. Ephemeral content, such as the text a
+[context injector](../plugins/context-injector.md) adds for one model call, goes after
+it. The injected text never enters the cache, and the static prefix still reads from it
+on the next call.
+
+## Models that support implicit caching
+
+If your model supports only implicit caching, the model provider decides what to cache.
+Strands can't put dynamic content after a cache point, because there isn't one. Content
+that changes between calls changes the prefix the provider compares, so some of the
+[harness's default settings](../../harness/configure/context-and-caching.md) break the
+cache through normal use.
+
+Gemini supports only implicit caching on its latest models. See
+[Gemini context caching](https://aistudio.google.com/docs/caching). OpenAI models through
+the Amazon Bedrock Converse API also support only implicit caching. Amazon Bedrock lists
+which APIs take explicit cache points for each OpenAI model in
+[Prompt caching for models from OpenAI](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html#prompt-caching-openai).
+
+## Known gaps
+
+In the following cases, caching silently does nothing or costs more than leaving it off.
+Context injection and memory injected for a single call both come from content that
+changes between calls, so the fix is the same: use a model with explicit caching, where
+Strands keeps that content after the cache point.
+
+### Context injection
+
+A [context injector](../plugins/context-injector.md) and the
+[context manager](../context-management.md) both add ephemeral content to the context
+window before a model call. On a model with explicit caching, Strands keeps that content
+out of the cached prefix, but on a model with implicit caching, the injected content is
+removed from history on the next call, so the next request no longer starts with the
+previous one and the cache misses.
+
+### Memory injection
+
+Middleware that adds text to the latest message for a single call, which is how the
+[memory manager](../memory/managing-memory.md) injects retrieved memories, breaks the
+cache on a model with implicit caching because the injected text changes between calls.
+With explicit caching, Strands places the injected text after the cache point, so it
+isn't cached and the [context manager](../context-management.md) can change it on later
+turns.
+
+### OpenAI models on the Converse API
+
+Converse takes no cache points for OpenAI models. A request reads the cache only if it
+starts with an entire earlier request, and Strands removes earlier injected content from
+history, so each injection stops the next request from extending the previous one. With
+a context injector that fires on every model call, every call writes to the cache and
+none reads from it. The harness defaults inject once per user turn, which costs one
+partial rewrite per turn. On GPT-5.6 and later, writes cost 1.25 times the input rate,
+so a rewrite on every call costs more than not caching.
+
+Don't place cache points on these models: a hand-placed cache point or the
+<Syntax py='"anthropic"' ts="'anthropic'" /> strategy makes Amazon Bedrock reject the
+request with an `AccessDeniedException`. The default `auto` strategy places none.
+
+To cache these models, use the Responses API through
+<Syntax py="OpenAIResponsesModel" ts="OpenAIModel" /> with Bedrock Mantle and a cache
+configuration. To stay on Converse and stop the extra cost, turn implicit caching off
+with `prompt_cache_options` set to `explicit` mode:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+
+model = BedrockModel(
+    model_id="us.openai.gpt-6-luna",
+    # Converse forwards this to the model; with no cache points it caches nothing.
+    additional_request_fields={"prompt_cache_options": {"mode": "explicit"}},
+)
+
+agent = Agent(model=model)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/prompt-caching_imports.ts:converse_implicit_caching_off_imports"
+
+--8<-- "user-guide/sdk/model-providers/prompt-caching.ts:converse_implicit_caching_off"
+```
+</Tab>
+</Tabs>
+
+This also turns off reads when a request does extend the previous one, so use it only
+when your agent's context changes on every call.
+
+### OpenAI Chat Completions
+
+Strands places no cache points on the Chat Completions API, so it behaves like a model
+provider with implicit caching, even for models that take cache points on other APIs.
+
+## Provider limits
+
+Each model provider sets its own limits on caching, such as which models cache, the
+minimum prompt size that is cached, the maximum number of cache points per request, and
+how long a cache entry lasts. Strands doesn't change these limits. For the limits that
+apply to your model, see the model provider's documentation:
+
+- [Amazon Bedrock prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)
+- [Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+- [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+- [Gemini context caching](https://aistudio.google.com/docs/caching)
