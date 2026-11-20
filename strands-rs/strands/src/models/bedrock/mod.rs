@@ -737,12 +737,7 @@ enum Response {
 
 impl Call {
     fn formatter(&self) -> Formatter<'_> {
-        let drop_stale = self
-            .drop_stale_thinking_model_id
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        Formatter::new(&self.config, &self.model_info, drop_stale)
+        Formatter::new(&self.config, &self.model_info)
     }
 
     fn events(self, request: ModelRequest) -> BoxStream<'static, Result<ModelStreamEvent>> {
@@ -824,38 +819,43 @@ impl Call {
     }
 
     /// Sends the request, retrying once with `drop_block` when an edit before replayed thinking
-    /// made it stale (`_send`). The retry turns `drop_block` on for later requests to this model.
+    /// made it stale (`_send`). An accepted retry turns `drop_block` on for later requests to this
+    /// model.
     async fn send(&self, request: crate::types::JsonObject, api: Api) -> Result<Response, SendError> {
-        let error = match self.send_once(request.clone(), api).await {
-            Ok(response) => return Ok(response),
-            Err(error) => error,
-        };
-        let binding_error =
-            error.name == "ValidationException" && super::thinking_binding::is_thinking_binding_error(&error.message);
-        let retry_fields = binding_error
-            .then(|| format::fields_with_drop_block(request.get("additionalModelRequestFields")))
-            .flatten();
-        let Some(retry_fields) = retry_fields else {
-            return Err(error.into());
-        };
         let model_id = request
             .get("modelId")
             .and_then(JsonValue::as_str)
             .unwrap_or_default()
             .to_owned();
+        let drops_stale = self
+            .drop_stale_thinking_model_id
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_deref()
+            == Some(model_id.as_str());
+        let sent = drops_stale
+            .then(|| format::request_with_drop_block(&request))
+            .flatten()
+            .unwrap_or(request);
+        let error = match self.send_once(sent.clone(), api).await {
+            Ok(response) => return Ok(response),
+            Err(error) => error,
+        };
+        let binding_error =
+            error.name == "ValidationException" && super::thinking_binding::is_thinking_binding_error(&error.message);
+        let Some(retry) = binding_error.then(|| format::request_with_drop_block(&sent)).flatten() else {
+            return Err(error.into());
+        };
         tracing::warn!(
             "model_id=<{model_id}> | history edit invalidated replayed thinking blocks, retrying with drop_block"
         );
+        let response = self.send_once(retry, api).await?;
+        // Latched only once the retry is accepted, so a rejected retry does not alter later requests.
         *self
             .drop_stale_thinking_model_id
             .write()
             .unwrap_or_else(PoisonError::into_inner) = Some(model_id);
-        let mut retry = request;
-        retry.insert(
-            "additionalModelRequestFields".to_owned(),
-            JsonValue::Object(retry_fields),
-        );
-        Ok(self.send_once(retry, api).await?)
+        Ok(response)
     }
 
     async fn send_once(&self, request: crate::types::JsonObject, api: Api) -> Result<Response, BedrockError> {

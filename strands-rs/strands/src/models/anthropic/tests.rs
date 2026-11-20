@@ -902,11 +902,21 @@ mod stale_thinking_recovery {
         assert_eq!(client.calls(), 2);
     }
 
+    fn forced() -> ModelRequest {
+        ModelRequest {
+            tool_specs: vec![
+                ToolSpec::new("calc", "Calculator").with_input_schema(json!({"type": "object", "properties": {}})),
+            ],
+            tool_choice: Some(ToolChoice::Any),
+            ..hi()
+        }
+    }
+
     #[tokio::test]
-    async fn re_throws_the_binding_error() {
+    async fn re_throws_the_binding_error_with_name() {
         let caller_set =
             json!({"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "error"}}});
-        for params in [Some(caller_set), None] {
+        for (params, request) in [(Some(caller_set), hi()), (None, forced())] {
             let client = rejecting_once(binding_error, None);
             let provider = model(
                 &client,
@@ -917,11 +927,47 @@ mod stale_thinking_recovery {
                 },
             );
 
-            let error = collect(&provider, hi()).await.unwrap_err();
+            let error = collect(&provider, request).await.unwrap_err();
 
             assert!(error.to_string().contains("bound to a different conversation"));
             assert_eq!(client.calls(), 1);
         }
+    }
+
+    #[tokio::test]
+    async fn retries_with_adaptive_thinking_when_no_thinking_config_is_set() {
+        let client = rejecting_once(binding_error, None);
+        let provider = model(&client, config().model_id("m1").build());
+
+        collect(&provider, hi()).await.unwrap();
+        collect(&provider, hi()).await.unwrap();
+        collect(&provider, forced()).await.unwrap();
+
+        let beta = Some("thinking-binding-controls-2026-08-01".to_owned());
+        assert_eq!(
+            sent(&client),
+            vec![
+                (JsonValue::Null, None),
+                (drop_block_thinking(), beta.clone()),
+                (drop_block_thinking(), beta.clone()),
+                (JsonValue::Null, beta),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn does_not_keep_drop_block_on_after_a_rejected_retry() {
+        let client = rejecting_once(
+            binding_error,
+            Some(|| api_error(400, "`temperature` may only be set to 1")),
+        );
+        let provider = model(&client, config().model_id("m1").temperature(0.2).build());
+
+        let error = collect(&provider, hi()).await.unwrap_err();
+        assert!(error.to_string().contains("temperature"), "{error}");
+        collect(&provider, hi()).await.unwrap();
+
+        assert_eq!(sent(&client).last().unwrap().0, JsonValue::Null);
     }
 
     #[tokio::test]

@@ -596,32 +596,98 @@ async fn retries_a_mode_request_once_with_drop_block_and_keeps_it_on() {
     }
 }
 
+fn forced() -> Options {
+    Options {
+        tool_specs: vec![ToolSpec::new("calc", "Calculator")],
+        tool_choice: Some(ToolChoice::Any),
+        ..Options::default()
+    }
+}
+
 #[tokio::test]
 async fn re_throws_the_binding_error_with_name() {
     let cases = [
         (
             "a caller-set block_binding",
             Some(json!({"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "error"}}})),
+            Options::default(),
         ),
-        (
-            "no thinking config",
-            Some(json!({"reasoning_config": {"type": "enabled"}})),
-        ),
-        ("no additional request fields", None),
+        ("a forced tool and no thinking config", None, forced()),
     ];
-    for (name, fields) in cases {
+    for (name, fields, options) in cases {
         let (model, transport) = provider(BedrockModelConfig {
             additional_request_fields: fields,
             ..with_model_id("m1")
         });
         transport.reject(validation(BINDING_ERROR));
-        let error = run_error(&model, request(hello(), Options::default())).await;
+        let error = run_error(&model, request(hello(), options)).await;
         assert!(
             error.to_string().contains("bound to a different conversation"),
             "{name}"
         );
         assert_eq!(transport.call_count(), 1, "{name}");
     }
+}
+
+#[tokio::test]
+async fn retries_with_adaptive_thinking_when_no_thinking_config_is_set() {
+    let (model, transport) = provider(with_model_id("m1"));
+    transport.reject(validation(BINDING_ERROR));
+    transport.set_default(Vec::new());
+
+    run(&model, request(hello(), Options::default())).await;
+    run(&model, request(hello(), Options::default())).await;
+    run(&model, request(hello(), forced())).await;
+
+    let synthetic = json!({
+        "thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}},
+        "anthropic_beta": ["thinking-binding-controls-2026-08-01"]
+    });
+    assert_eq!(
+        sent_fields(&transport, Command::ConverseStream),
+        [JsonValue::Null, synthetic.clone(), synthetic, JsonValue::Null]
+    );
+}
+
+#[tokio::test]
+async fn keeps_drop_block_on_for_thinking_set_in_additional_args() {
+    let (model, transport) = provider(BedrockModelConfig {
+        additional_args: Some(json!({
+            "additionalModelRequestFields": {"thinking": thinking(), "anthropic_beta": ["other-beta"]}
+        })),
+        ..with_model_id("m1")
+    });
+    transport.reject(validation(BINDING_ERROR));
+    transport.set_default(Vec::new());
+
+    run(&model, request(hello(), Options::default())).await;
+    run(&model, request(hello(), Options::default())).await;
+
+    assert_eq!(transport.call_count(), 3);
+    assert_eq!(
+        sent_fields(&transport, Command::ConverseStream).last().unwrap(),
+        &drop_block_fields()
+    );
+}
+
+#[tokio::test]
+async fn does_not_keep_drop_block_on_after_a_rejected_retry() {
+    let (model, transport) = provider(BedrockModelConfig {
+        temperature: Some(0.2),
+        ..with_model_id("m1")
+    });
+    transport.reject(validation(BINDING_ERROR));
+    transport.reject(validation("`temperature` may only be set to 1"));
+    transport.set_default(Vec::new());
+
+    let error = run_error(&model, request(hello(), Options::default())).await;
+    assert!(error.to_string().contains("temperature"), "{error}");
+    run(&model, request(hello(), Options::default())).await;
+
+    assert_eq!(
+        sent_fields(&transport, Command::ConverseStream).last().unwrap(),
+        &JsonValue::Null
+    );
 }
 
 #[tokio::test]
@@ -678,11 +744,7 @@ async fn keeps_thinking_off_when_a_forced_tool_choice_follows_the_retry() {
     transport.reject(validation(BINDING_ERROR));
     transport.set_default(Vec::new());
     run(&model, request(hello(), Options::default())).await;
-    let options = Options {
-        tool_choice: Some(ToolChoice::Any),
-        ..Options::default()
-    };
-    run(&model, request(hello(), options)).await;
+    run(&model, request(hello(), forced())).await;
     assert_eq!(
         sent_fields(&transport, Command::ConverseStream).last().unwrap(),
         &JsonValue::Null
