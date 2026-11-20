@@ -13,11 +13,13 @@ import subprocess
 import sys
 import threading
 import time
+from unittest.mock import ANY
 
 import pytest
 
 from strands import Agent
 from strands.hooks import BeforeToolCallEvent
+from strands.interrupt import Interrupt
 from strands.tools.decorator import tool
 from strands.types.tools import ToolContext
 from strands.vended_tools.programmatic_tool_caller import (
@@ -102,8 +104,7 @@ def test_lazy_export_resolves_to_the_tool_on_every_access(first_access):
 
 def test_single_call():
     result = _run(_agent(calculator), 'print(await calculator(expression="10 * 2"))')
-    assert result["status"] == "success"
-    assert _text(result) == "20"
+    assert result == {"toolUseId": ANY, "status": "success", "content": [{"text": "20"}]}
 
 
 def test_loop_over_calls():
@@ -151,8 +152,7 @@ def test_only_printed_output_is_returned():
 
 def test_comment_only_code_is_no_output():
     result = _run(_agent(calculator), "# nothing here")
-    assert result["status"] == "success"
-    assert _text(result) == "(no output)"
+    assert result == {"toolUseId": ANY, "status": "success", "content": [{"text": "(no output)"}]}
 
 
 def test_stdlib_subset_is_importable():
@@ -419,8 +419,10 @@ def test_no_agent_context_is_an_error():
         tool_use={"toolUseId": "x", "name": "programmatic_tool_caller", "input": {}}, agent=None, invocation_state={}
     )
     result = asyncio.run(_events(programmatic_tool_caller, "print(1)", context))[-1]
-    assert result["status"] == "error"
-    assert "No agent available" in _text(result)
+    assert result == {
+        "status": "error",
+        "content": [{"text": "No agent available. The programmatic tool caller requires an agent context."}],
+    }
 
 
 # --- exposure --------------------------------------------------------------------------------------
@@ -507,8 +509,11 @@ def test_hook_that_cancels_the_inner_call_blocks_the_tool():
     agent.hooks.add_callback(BeforeToolCallEvent, deny)
     code = "try:\n    print(await shell_like(command='rm -rf /'))\nexcept RuntimeError as e:\n    print('ERR', e)"
     result = _run(agent, code)
-    assert result["status"] == "success"
-    assert "shell is off" in _text(result)
+    assert result == {
+        "toolUseId": ANY,
+        "status": "success",
+        "content": [{"text": "ERR Tool 'shell_like' error: shell is off"}],
+    }
     assert calls == []
 
 
@@ -530,9 +535,57 @@ def test_hook_that_needs_approval_refuses_the_inner_call():
     agent.hooks.add_callback(BeforeToolCallEvent, ask)
     code = "try:\n    print(await shell_like(command='ls'))\nexcept RuntimeError as e:\n    print('ERR', e)"
     result = _run(agent, code)
-    assert result["status"] == "success"
-    assert "approval" in _text(result)
+    refusal = (
+        "ERR Tool 'shell_like' needs approval, which programmatic_tool_caller cannot prompt for; "
+        "call it as a normal tool call instead."
+    )
+    assert result == {"toolUseId": ANY, "status": "success", "content": [{"text": refusal}]}
     assert calls == []
+    assert agent._interrupt_state.interrupts == {}
+
+
+def test_refused_approval_leaves_the_interrupts_of_sibling_tool_calls_alone():
+    @tool
+    def shell_like(command: str) -> str:
+        """Never runs."""
+        return f"ran:{command}"
+
+    agent = _agent(shell_like)
+
+    def ask(event: BeforeToolCallEvent) -> None:
+        if event.tool_use["name"] == "shell_like":
+            event.interrupt("approve-shell", reason="Run shell?")
+
+    agent.hooks.add_callback(BeforeToolCallEvent, ask)
+    sibling = Interrupt(id="sibling", name="approve-sibling")
+    agent._interrupt_state.interrupts["sibling"] = sibling
+    agent._interrupt_state.context["sibling_state"] = {"kept": True}
+
+    _run(agent, "try:\n    await shell_like(command='ls')\nexcept RuntimeError:\n    print('refused')")
+
+    assert agent._interrupt_state.interrupts == {"sibling": sibling}
+    assert agent._interrupt_state.context == {"sibling_state": {"kept": True}}
+
+
+def test_child_agent_that_pauses_leaves_nothing_on_the_parent():
+    @tool(context="tool_context")
+    def needs_approval(tool_context: ToolContext) -> str:
+        """Ask for approval."""
+        return str(tool_context.interrupt("approve-child"))
+
+    child_tool_use = {"toolUseId": "c1", "name": "needs_approval", "input": {}}
+    child = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"toolUse": child_tool_use}]}]),
+        tools=[needs_approval],
+        callback_handler=None,
+    )
+    agent = _agent(child.as_tool(name="child"))
+
+    result = _run(agent, "try:\n    await child(input='go')\nexcept RuntimeError as e:\n    print('ERR', e)")
+
+    assert _text(result).startswith("ERR Tool 'child' needs approval")
+    assert agent._interrupt_state.interrupts == {}
+    assert not agent._interrupt_state.context.get("sub_agent_interrupted_turns")
 
 
 # --- streaming -------------------------------------------------------------------------------------
@@ -815,6 +868,24 @@ def test_tool_timeout_none_leaves_only_the_run_timeout():
 def test_non_positive_or_non_finite_timeouts_are_rejected(option, value):
     with pytest.raises(ValueError, match=option):
         make_programmatic_tool_caller(**{option: value})
+
+
+def test_cancellation_keeps_what_the_code_printed():
+    @tool(context="tool_context")
+    def stop_the_agent(tool_context: ToolContext) -> str:
+        """Cancel the agent from inside a tool call."""
+        tool_context.agent.cancel()
+        time.sleep(0.2)
+        return "cancelled"
+
+    result = _run(
+        _agent(stop_the_agent), "print('before')\nawait stop_the_agent()\nimport asyncio\nawait asyncio.sleep(5)"
+    )
+    assert result == {
+        "toolUseId": ANY,
+        "status": "error",
+        "content": [{"text": "before\n\nExecution cancelled."}],
+    }
 
 
 def test_cancellation_is_honored():
