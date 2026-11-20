@@ -116,7 +116,7 @@
         "promptCaching": "cachePoints",
         "forcedToolChoice": false,
         "serverSideSummary": true,
-        "temporaryMessages": true,
+        "temporaryMessages": false,
         "defaultEffort": "high"
       }
     },

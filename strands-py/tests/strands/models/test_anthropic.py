@@ -3866,6 +3866,7 @@ def _turn_scoped(*texts):
         ("claude-opus-5-5", True),
         ("claude-opus-5-5-20260401", True),
         ("claude-haiku-5-5", False),  # the API takes them, the model rarely uses their text (#6227)
+        ("claude-fable-5-1", False),  # the API takes them, the model often ignores their text (#6227)
         ("claude-sonnet-5", False),
         ("claude-sonnet-4-6", False),
     ],
