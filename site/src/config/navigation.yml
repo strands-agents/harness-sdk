@@ -643,6 +643,8 @@ sidebar:
                 slug: docs/user-guide/evals-sdk/evaluators/deterministic_evaluators
               - label: "Structured output similarity"
                 slug: docs/user-guide/evals-sdk/evaluators/structured_output_evaluator
+              - label: "Typed rubric"
+                slug: docs/user-guide/evals-sdk/evaluators/typed_rubric_evaluator
               - label: "Custom"
                 slug: docs/user-guide/evals-sdk/evaluators/custom_evaluator
           - label: Detectors
