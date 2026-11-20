@@ -1,0 +1,137 @@
+import { createElement, useState, type ReactElement } from 'react'
+import { Text, useInput, type Instance } from 'ink'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import {
+  ChatController,
+  type ChatControllerApi,
+  type DevChatCommand,
+  type DevChatPanelProps,
+} from '../../src/ui/chat/controller.js'
+import { sanitizeTerminalText } from '../../src/terminal/text.js'
+import { ChatApp } from '../../src/ui/chat/screen.js'
+import { idleBackend } from '../fixtures/chat-backend.js'
+import { render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
+
+const mounted: { instance: Instance; controller: ChatControllerApi }[] = []
+
+afterEach(async () => {
+  for (const { instance, controller } of mounted.splice(0)) {
+    instance.unmount()
+    await instance.waitUntilExit()
+    await controller.dispose()
+  }
+})
+
+const askCommand = (): DevChatCommand => {
+  const Panel = ({ close, active = true, blur }: DevChatPanelProps): ReactElement => {
+    const [keys, setKeys] = useState('')
+    useInput(
+      (input, key) => {
+        if (key.escape) close()
+        else if (key.tab) blur?.()
+        else setKeys((current) => current + input)
+      },
+      { isActive: active }
+    )
+    return createElement(Text, null, `question keys:[${keys}]`)
+  }
+  return { spec: { name: 'ask', usage: '/ask', description: 'Ask' }, sticky: true, open: () => Panel }
+}
+
+const mount = async (command: DevChatCommand, rows = 40) => {
+  const controller = new ChatController(idleBackend(), {
+    settings: { animations: false },
+    runtime: { model: 'model-00', cwd: '/work' },
+    devCommands: [command],
+  })
+  const input = ttyInput()
+  const output = ttyOutput(120, rows)
+  let frame = ''
+  output.on('data', (chunk: Buffer) => {
+    if (chunk.toString().includes('\n')) frame = sanitizeTerminalText(chunk.toString())
+  })
+  const instance = render(createElement(ChatApp, { controller }), {
+    stdin: input,
+    stdout: output,
+    stderr: output,
+    interactive: true,
+    debug: true,
+    patchConsole: false,
+    exitOnCtrlC: false,
+  })
+  mounted.push({ instance, controller })
+  await instance.waitUntilRenderFlush()
+  const press = async (key: string): Promise<void> => {
+    input.write(key)
+    await instance.waitUntilRenderFlush()
+  }
+  return { controller, press, screen: (): string => frame }
+}
+
+describe('a sticky question panel', () => {
+  it('shouldTypeIntoTheChatInputAfterTabWhileTheQuestionStaysOnScreen', async () => {
+    const { controller, press, screen } = await mount(askCommand())
+    await press('/ask')
+    await press('\r')
+    expect(screen()).toContain('question keys:[]')
+
+    await press('\t')
+    await press('h')
+    await press('i')
+
+    expect(screen()).toContain('question keys:[]')
+    expect(screen()).toContain('hi')
+    expect(controller.getSnapshot().panel?.kind).toBe('dev')
+  })
+
+  it('shouldSubmitToTheAgentWhileTheQuestionStaysOnScreen', async () => {
+    const { controller, press, screen } = await mount(askCommand())
+    await press('/ask')
+    await press('\r')
+    await press('\t')
+
+    await press('h')
+    await press('e')
+    await press('y')
+    await press('\r')
+
+    expect(screen()).toContain('question keys:[]')
+    expect(controller.getSnapshot().panel?.kind).toBe('dev')
+    expect(screen()).toContain('hey')
+  })
+
+  it('shouldLeaveTheQuestionOpenWhenTheDeveloperClicksTheInput', async () => {
+    const { controller, press } = await mount(askCommand())
+    await press('/ask')
+    await press('\r')
+
+    await press('\u001b[<0;10;37M')
+    await press('\u001b[<0;10;37m')
+
+    expect(controller.getSnapshot().panel?.kind).toBe('dev')
+  })
+
+  it('shouldSendKeysToTheQuestionBeforeTab', async () => {
+    const { press, screen } = await mount(askCommand())
+    await press('/ask')
+    await press('\r')
+
+    await press('x')
+
+    expect(screen()).toContain('question keys:[x]')
+  })
+
+  it('shouldTakeTheKeyboardBackOnTabFromTheInput', async () => {
+    const { press, screen } = await mount(askCommand())
+    await press('/ask')
+    await press('\r')
+    await press('\t')
+    await press('a')
+
+    await press('\t')
+    await press('z')
+
+    expect(screen()).toContain('question keys:[z]')
+  })
+})

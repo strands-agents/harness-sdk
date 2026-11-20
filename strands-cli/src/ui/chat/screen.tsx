@@ -1409,9 +1409,10 @@ export function ChatApp({
         handleExit(character === 'c' ? 130 : 0)
         return
       }
+      // A sticky panel can hand the keyboard to the input; Tab takes it back.
+      const inputHasKeyboard = snapshot.panel?.kind === 'dev' && snapshot.panel.sticky === true && !panelKeyboard
       if (snapshot.panel?.kind === 'dev') {
-        // A sticky panel can hand the keyboard to the input; Tab takes it back.
-        if (panelKeyboard || !snapshot.panel.sticky) return
+        if (!inputHasKeyboard) return
         if (key.tab) {
           setPanelKeyboard(true)
           return
@@ -1434,7 +1435,7 @@ export function ChatApp({
         return
       }
 
-      if (snapshot.panel) {
+      if (snapshot.panel && !inputHasKeyboard) {
         if (snapshot.panel.kind === 'agents' && snapshot.panel.renameInput) {
           if (key.escape) {
             controller.dismissPanel()

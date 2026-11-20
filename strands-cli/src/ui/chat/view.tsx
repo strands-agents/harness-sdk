@@ -263,6 +263,8 @@ function ChatViewContent({
     snapshot.completedTurns.length > 0 || snapshot.activeTurn !== undefined || snapshot.notices.length > 0
   const composerPanel = isComposerPanel(snapshot.panel?.kind) ? snapshot.panel : undefined
   const devPanel = snapshot.panel?.kind === 'dev' ? snapshot.panel : undefined
+  // A sticky panel that gave up the keyboard leaves the composer editable, so the developer can still type.
+  const inputHoldsKeyboard = devPanel?.sticky === true && !panelKeyboard
   const maxEffort = composerPanel?.kind === 'effort' && isMaxEffort(composerPanel.slider)
   const composerPanelOutlined = isOutlinedComposerPanel(composerPanel)
   const showCommandPicker = resolvedCommandAssistance !== undefined && !snapshot.panel
@@ -654,7 +656,9 @@ function ChatViewContent({
                 : {})}
               {...(actionableCommandToken ? { actionableCommandToken } : {})}
               {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
-              {...(snapshot.panel && !composerPanel ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
+              {...(snapshot.panel && !composerPanel && !inputHoldsKeyboard
+                ? { panelStatus: panelEditorStatus(snapshot.panel) }
+                : {})}
               {...(focusedQueuedPrompt ? { panelStatus: 'Queue · Tab/Shift+Tab move · Enter choose · Esc back' } : {})}
               {...(focusedBackgroundTask || focusedDevJob ? { panelStatus: '←→ choose · Enter view · Esc back' } : {})}
               party={party}
