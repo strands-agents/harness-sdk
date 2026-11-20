@@ -1,0 +1,9 @@
+name: agent-budget
+description: "Caps what a Strands agent spends in USD: each model call reserves its worst case before it is sent, and agents used as tools draw from the caller's budget."
+integrationType: plugin
+languages:
+  python:
+    package: llm-agent-budget[strands]
+github: https://github.com/Mattbusel/agent-budget
+docsUrl: https://github.com/Mattbusel/agent-budget/blob/main/docs/strands.md
+addedDate: 2026-11-18
