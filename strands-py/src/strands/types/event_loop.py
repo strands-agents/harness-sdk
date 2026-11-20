@@ -54,6 +54,7 @@ StopReason = Literal[
     "end_turn",
     "guardrail_intervened",
     "interrupt",
+    "limit_cost_usd",
     "limit_output_tokens",
     "limit_structured_output_attempts",
     "limit_total_tokens",
@@ -70,6 +71,8 @@ StopReason = Literal[
 - "end_turn": Normal completion of the response
 - "guardrail_intervened": Guardrail system intervened
 - "interrupt": Agent was interrupted for human input
+- "limit_cost_usd": Agent loop stopped because the request's estimated cost reached the ``max_cost_usd`` of a
+  ``GenAIPricesEstimator`` plugin
 - "limit_output_tokens": Agent loop stopped because the ``limits["output_tokens"]`` cap was reached
 - "limit_structured_output_attempts": Agent loop stopped because the ``limits["structured_output_attempts"]`` cap
   was reached
@@ -82,9 +85,9 @@ StopReason = Literal[
 
 
 _LIMIT_STOP_REASONS: frozenset[StopReason] = frozenset(
-    {"limit_turns", "limit_total_tokens", "limit_output_tokens", "limit_structured_output_attempts"}
+    {"limit_turns", "limit_total_tokens", "limit_output_tokens", "limit_structured_output_attempts", "limit_cost_usd"}
 )
-"""Stop reasons for a call that stopped because a limit (``limits``) was reached."""
+"""Stop reasons for a call that stopped because a limit (``limits`` or a plugin's) was reached."""
 
 
 def _limit_stop_message(agent_name: str, stop_reason: StopReason) -> str:

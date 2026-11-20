@@ -111,6 +111,9 @@ Each model invocation ends with a stop reason that determines what happens next:
   (<Syntax py="limit_structured_output_attempts" ts="limitStructuredOutputAttempts" />):
   The model failed to produce structured output as many times as the limit allows. See
   [Limit attempts](./structured-output-behavior.md#limit-attempts).
+- **Limit cost** (`limit_cost_usd`, Python only): The request's estimated cost reached the
+  limit of a GenAI Prices Estimator plugin. See
+  [Limit the Cost of a Request](../plugins/genai-prices-estimator.mdx#limit-the-cost-of-a-request).
 - **Max tokens** (<Syntax py="max_tokens" ts="maxTokens" />): The model's response was
   truncated because it hit the token limit. This is unrecoverable within the current loop.
   The model cannot continue from a partial response, and the loop terminates with an

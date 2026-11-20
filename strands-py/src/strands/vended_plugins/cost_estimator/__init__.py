@@ -1,4 +1,4 @@
-"""Cost estimate plugin for Strands Agents (experimental).
+"""Cost estimate plugin for Strands Agents.
 
 Estimates what a request cost in USD from its token usage per model and the list prices bundled in the
 third-party ``genai-prices`` package. The estimate is not a bill.
@@ -9,7 +9,7 @@ Python 3.11+; importing this module without it raises :class:`ImportError`.
 Example Usage:
     ```python
     from strands import Agent
-    from strands.experimental.cost_estimator import GenAIPricesEstimator
+    from strands.vended_plugins.cost_estimator import GenAIPricesEstimator
 
     cost = GenAIPricesEstimator()
     agent = Agent(plugins=[cost])
@@ -22,7 +22,6 @@ Example Usage:
     ```
 """
 
-from ...agent.invocation_context import ModelUsage
 from .plugin import CostEstimate, CostEstimateEvent, GenAIPricesEstimator, ModelCostEstimate, ModelPrice
 
 __all__ = [
@@ -31,5 +30,4 @@ __all__ = [
     "GenAIPricesEstimator",
     "ModelCostEstimate",
     "ModelPrice",
-    "ModelUsage",
 ]

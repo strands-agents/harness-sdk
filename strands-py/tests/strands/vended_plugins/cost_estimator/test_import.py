@@ -25,12 +25,12 @@ import pytest
     ids=["python-3.10", "package-missing", "package-incompatible"],
 )
 def test_import_error_says_what_to_change(python_version, genai_prices, exp_reason, monkeypatch):
-    for module in ("strands.experimental.cost_estimator", "strands.experimental.cost_estimator.plugin"):
+    for module in ("strands.vended_plugins.cost_estimator", "strands.vended_plugins.cost_estimator.plugin"):
         monkeypatch.delitem(sys.modules, module, raising=False)
     monkeypatch.setitem(sys.modules, "genai_prices", genai_prices)
     monkeypatch.setattr(sys, "version_info", python_version)
 
     with pytest.raises(ImportError) as error:
-        importlib.import_module("strands.experimental.cost_estimator")
+        importlib.import_module("strands.vended_plugins.cost_estimator")
 
-    assert str(error.value) == f"strands.experimental.cost_estimator {exp_reason}"
+    assert str(error.value) == f"strands.vended_plugins.cost_estimator {exp_reason}"

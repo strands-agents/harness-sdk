@@ -2,20 +2,16 @@
 title: GenAI Prices Estimator
 description: "Estimate what a request cost in USD: the GenAIPricesEstimator plugin prices each model's token usage with the genai-prices package and streams the estimate after every model call."
 languages: Python
-experimental: true
 tags: [token-management]
 sourceLinks:
-  - path: strands-py/src/strands/experimental/cost_estimator/plugin.py
+  - path: strands-py/src/strands/vended_plugins/cost_estimator/plugin.py
   - path: strands-py/src/strands/agent/invocation_context.py
 addedDate: 2026-11-19
 ---
 
-:::caution[Experimental]
-The cost estimator is experimental and may change in future versions.
-:::
-
 The `GenAIPricesEstimator` plugin estimates what a request cost in USD. It multiplies the
-tokens each model used by that model's list price and adds the results.
+tokens each model used by that model's list price and adds the results. It can also
+[stop a request](#limit-the-cost-of-a-request) once the estimate reaches an amount you set.
 
 The number is an estimate, not a bill. The prices come from
 [genai-prices](https://github.com/pydantic/genai-prices), a third-party package that
@@ -46,7 +42,7 @@ Attach the plugin to your agent. After every model call, the agent's stream carr
 import asyncio
 
 from strands import Agent
-from strands.experimental.cost_estimator import GenAIPricesEstimator
+from strands.vended_plugins.cost_estimator import GenAIPricesEstimator
 
 cost = GenAIPricesEstimator()
 agent = Agent(plugins=[cost], callback_handler=None)
@@ -103,7 +99,7 @@ agents your tools run. An agent started by your own tool counts only when the to
 
 ```python
 from strands import Agent, ToolContext, tool
-from strands.experimental.cost_estimator import GenAIPricesEstimator
+from strands.vended_plugins.cost_estimator import GenAIPricesEstimator
 
 
 @tool(context=True)
@@ -148,9 +144,7 @@ the whole request. The parent's events and `estimate()` still include it.
 The token counts behind the estimate are on the request itself, with or without the
 plugin. `result.invocation_context.usage_by_model` is a list of `ModelUsage` records, one
 per model, each with a `provider_name`, a `model_id`, and the model's summed `usage`. You
-can save the records and pass them to `estimate()` later. `usage_by_model` and `ModelUsage`
-are experimental like the plugin, so they may change. Import `ModelUsage` from
-`strands.experimental.cost_estimator`.
+can save the records and pass them to `estimate()` later.
 
 For the SDK's model classes, `provider_name` is one of `anthropic`, `bedrock`, `google`,
 `litellm`, `llamaapi`, `llamacpp`, `mistral`, `ollama`, `openai`, `sagemaker`, or `writer`.
@@ -160,13 +154,49 @@ its own metadata. The name is `None` when the SDK cannot tell, as for a custom m
 OpenAI-compatible endpoint with its own base URL. A SageMaker model's `model_id` is its
 endpoint name.
 
+## Limit the Cost of a Request
+
+Pass `max_cost_usd` to stop a request once its estimate reaches that amount:
+
+```python
+from strands import Agent
+from strands.vended_plugins.cost_estimator import GenAIPricesEstimator
+
+cost = GenAIPricesEstimator(max_cost_usd=0.50)
+agent = Agent(plugins=[cost])
+
+result = agent("Research the three proposals and compare them.")
+
+if result.stop_reason == "limit_cost_usd":
+    print("Stopped at", cost.estimate(result).total_usd)
+```
+
+The limit works like the request's [invocation limits](../agents/agent-loop.mdx#invocation-limits):
+
+- It covers the whole request the agent runs in. Every agent in the request checks it and
+  stops with `limit_cost_usd`, including nested agents that do not have the plugin.
+- It is checked before each turn, so the turn that crosses the limit finishes first and
+  the estimate can end above the limit. The history stays valid to invoke again.
+- Each top-level call starts from zero. A call you continue by passing
+  `invocation_context` continues the same spend.
+- Auxiliary calls, such as summarization, add to the estimate but are never stopped.
+
+The limit needs a price for every model in the request. When a model has none, the request
+stops with `limit_cost_usd` after that model's first call and the plugin logs a warning
+that names the model, because the limit can no longer be checked.
+[Pass your own price](#use-your-own-prices) for it, such as a price of zero for a local
+model.
+
+The limit compares an estimate, not your bill. See
+[What the Estimate Leaves Out](#what-the-estimate-leaves-out).
+
 ## Use Your Own Prices
 
 Pass your own prices for a model genai-prices does not list, or for a rate you negotiated.
 Prices are in USD per one million tokens:
 
 ```python
-from strands.experimental.cost_estimator import GenAIPricesEstimator, ModelPrice
+from strands.vended_plugins.cost_estimator import GenAIPricesEstimator, ModelPrice
 
 cost = GenAIPricesEstimator(
     prices=[

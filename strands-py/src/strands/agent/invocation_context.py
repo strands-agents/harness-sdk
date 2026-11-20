@@ -31,14 +31,13 @@ class InvocationContextUsage(Usage):
 class ModelUsage:
     """Token usage of one model in a request.
 
-    Experimental: this record and its provider names may change.
-
     Attributes:
         provider_name: Name of the model's provider. For the SDK's own model classes it is one of
             ``anthropic``, ``bedrock``, ``google``, ``litellm``, ``llamaapi``, ``llamacpp``, ``mistral``,
             ``ollama``, ``openai``, ``sagemaker``, or ``writer``. A decision model reports the provider name
             from its own metadata, or its wrapped model's name when it has one. ``None`` when the SDK cannot
-            tell. It is not the OpenTelemetry provider value.
+            tell. Existing names do not change, more may be added, and a ``None`` may later get a name. It is
+            not the OpenTelemetry provider value.
         model_id: The model id the calls were made with, or the endpoint name for a SageMaker model; ``None``
             when not known.
         usage: The summed usage of every call to this model.
@@ -50,7 +49,8 @@ class ModelUsage:
 
 
 # Contexts are shared across threads: sync tools, and the agents they call, run on worker threads.
-_usage_lock = threading.Lock()
+# Reentrant, because a limit check that runs while a turn is taken reads ``usage_by_model``.
+_usage_lock = threading.RLock()
 
 
 class InvocationContext:
@@ -77,6 +77,7 @@ class InvocationContext:
     _auxiliary: bool
     _usage: InvocationContextUsage
     _usage_by_model: dict[tuple[str | None, str | None], Usage]
+    _limit_checks: list[Callable[[InvocationContext], StopReason | None]]
     _structured_output_failures: int
 
     def __init__(self) -> None:
@@ -98,8 +99,6 @@ class InvocationContext:
     @property
     def usage_by_model(self) -> list[ModelUsage]:
         """The token usage in :attr:`usage`, split by the model that produced it.
-
-        Experimental: this property and :class:`ModelUsage` may change.
 
         One record per distinct ``(provider_name, model_id)``, in the order they first recorded usage. Each is
         a snapshot taken when this property is read. Their token counts add up to :attr:`usage`. Usage whose
@@ -189,6 +188,7 @@ def _create_invocation_context(
     context._auxiliary = auxiliary
     context._usage = InvocationContextUsage(turns_taken=0, inputTokens=0, outputTokens=0, totalTokens=0)
     context._usage_by_model = {}
+    context._limit_checks = []
     context._structured_output_failures = 0
     return context
 
@@ -276,7 +276,8 @@ def _reached_limit(invocation_context: InvocationContext) -> StopReason | None:
     """Return the stop reason for the first limit reached, or ``None`` if none is reached.
 
     Checks this instance's own limits first and then each parent's. Within one instance the
-    order is turns, then total_tokens, then output_tokens, then structured_output_attempts.
+    order is turns, then total_tokens, then output_tokens, then structured_output_attempts, then
+    the limits a plugin added, such as a cost limit.
     """
     own = _reached_own_limit(invocation_context)
     if own is not None:
@@ -286,9 +287,7 @@ def _reached_limit(invocation_context: InvocationContext) -> StopReason | None:
 
 
 def _reached_own_limit(invocation_context: InvocationContext) -> StopReason | None:
-    limits = invocation_context._limits
-    if not limits:
-        return None
+    limits: Limits = invocation_context._limits or {}
     turns = limits.get("turns")
     usage = invocation_context.usage
     if turns is not None and usage["turns_taken"] >= turns:
@@ -305,4 +304,8 @@ def _reached_own_limit(invocation_context: InvocationContext) -> StopReason | No
         and invocation_context._structured_output_failures >= structured_output_attempts
     ):
         return "limit_structured_output_attempts"
+    for check in invocation_context._limit_checks:
+        stop_reason = check(invocation_context)
+        if stop_reason is not None:
+            return stop_reason
     return None

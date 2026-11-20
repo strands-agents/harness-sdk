@@ -15,19 +15,19 @@ from genai_prices.types import Tier, TieredPrices  # noqa: E402
 
 from strands import Agent, tool  # noqa: E402
 from strands.agent.invocation_context import ModelUsage, _create_invocation_context  # noqa: E402
-from strands.experimental.cost_estimator import (  # noqa: E402
+from strands.middleware import InvokeModelStage, ModelStopReason  # noqa: E402
+from strands.models._provider_name import _model_key  # noqa: E402
+from strands.models.sagemaker import SageMakerAIModel  # noqa: E402
+from strands.multiagent.base import MultiAgentResult  # noqa: E402
+from strands.types.tools import ToolContext  # noqa: E402
+from strands.vended_plugins.cost_estimator import (  # noqa: E402
     CostEstimate,
     CostEstimateEvent,
     GenAIPricesEstimator,
     ModelCostEstimate,
     ModelPrice,
 )
-from strands.experimental.cost_estimator import plugin as plugin_module  # noqa: E402
-from strands.middleware import InvokeModelStage, ModelStopReason  # noqa: E402
-from strands.models._provider_name import _model_key  # noqa: E402
-from strands.models.sagemaker import SageMakerAIModel  # noqa: E402
-from strands.multiagent.base import MultiAgentResult  # noqa: E402
-from strands.types.tools import ToolContext  # noqa: E402
+from strands.vended_plugins.cost_estimator import plugin as plugin_module  # noqa: E402
 from tests.fixtures.mocked_model_provider import MockedModelProvider  # noqa: E402
 
 MAIN_PRICE = ModelPrice(
@@ -238,6 +238,12 @@ def test_init_loads_the_price_data_and_never_raises(monkeypatch):
     GenAIPricesEstimator()
 
     assert len(lookups) == 1
+
+
+@pytest.mark.parametrize("max_cost_usd", [0, -1.0, math.inf, math.nan, True, "1"])
+def test_init_rejects_a_max_cost_usd_that_is_not_a_finite_positive_number(max_cost_usd):
+    with pytest.raises(ValueError, match="the cost limit must be a finite, positive number"):
+        GenAIPricesEstimator(max_cost_usd=max_cost_usd)
 
 
 @pytest.mark.parametrize("model_id", ["", None])
@@ -577,3 +583,99 @@ async def test_stream_finishes_without_an_estimate_when_pricing_raises(monkeypat
     assert (
         tru_messages == ["error=<pricing failed> | cost estimate failed | no estimate emitted for this model call"] * 2
     )
+
+
+DOLLAR_PRICES = [_price("main", 1.0), _price("small", 1.0)]
+
+
+def _looping_agent(model_id, plugins=(), tools=None):
+    """An agent that calls a tool on each of five turns and then answers, at a million input tokens a turn."""
+
+    @tool
+    def ping() -> str:
+        """Pings."""
+        return "pong"
+
+    tools = tools or [ping]
+    model = NamedModel(model_id, [_tool_use(tools[0].tool_name)] * 5 + [_text("done")], [_usage(1_000_000, 0)] * 6)
+    return Agent(model=model, tools=tools, plugins=list(plugins), callback_handler=None)
+
+
+def test_max_cost_usd_stops_the_request_before_the_turn_after_the_estimate_reaches_it():
+    cost = GenAIPricesEstimator(prices=DOLLAR_PRICES, max_cost_usd=2.5)
+    agent = _looping_agent("main", [cost])
+
+    tru_result = agent("go")
+
+    assert tru_result.stop_reason == "limit_cost_usd"
+    assert cost.estimate(tru_result).total_usd == 3.0
+    assert agent.messages[-1]["role"] == "user"
+
+
+def test_max_cost_usd_lets_a_request_that_stays_under_it_finish():
+    cost = GenAIPricesEstimator(prices=DOLLAR_PRICES, max_cost_usd=6.5)
+
+    tru_result = _looping_agent("main", [cost])("go")
+
+    assert (tru_result.stop_reason, cost.estimate(tru_result).total_usd) == ("end_turn", 6.0)
+
+
+def test_max_cost_usd_stops_a_nested_agent_that_joined_the_request():
+    sub_results = []
+
+    @tool(context=True)
+    async def research(tool_context: ToolContext) -> str:
+        """Researches with a smaller model."""
+        sub_agent = _looping_agent("small")
+        sub_results.append(await sub_agent.invoke_async("go", invocation_context=tool_context.invocation_context))
+        return str(sub_results[-1])
+
+    cost = GenAIPricesEstimator(prices=DOLLAR_PRICES, max_cost_usd=2.5)
+
+    tru_result = _looping_agent("main", [cost], [research])("go")
+
+    assert [result.stop_reason for result in sub_results] == ["limit_cost_usd"]
+    assert tru_result.stop_reason == "limit_cost_usd"
+    assert cost.estimate(tru_result).total_usd == 3.0
+
+
+def test_max_cost_usd_counts_from_zero_on_a_new_request_and_on_from_a_continued_one():
+    cost = GenAIPricesEstimator(prices=DOLLAR_PRICES, max_cost_usd=2.5)
+    spent = _looping_agent("main", [cost])("go")
+
+    tru_new = _looping_agent("main", [cost])("go")
+    tru_continued = _looping_agent("main")("go", invocation_context=spent.invocation_context)
+
+    assert (tru_new.stop_reason, cost.estimate(tru_new).total_usd) == ("limit_cost_usd", 3.0)
+    assert (tru_continued.stop_reason, cost.estimate(tru_continued).total_usd) == ("limit_cost_usd", 3.0)
+
+
+def test_max_cost_usd_stops_a_request_with_a_model_that_has_no_price(caplog):
+    cost = GenAIPricesEstimator(max_cost_usd=100.0)
+
+    with caplog.at_level(logging.WARNING, logger=plugin_module.__name__):
+        tru_result = _looping_agent("unpriced", [cost])("go")
+
+    assert tru_result.stop_reason == "limit_cost_usd"
+    assert tru_result.invocation_context.usage["turns_taken"] == 1
+    assert "model_ids=<['unpriced']> | a model in the request has no price" in caplog.text
+
+
+def test_max_cost_usd_stops_a_request_when_the_estimate_fails(monkeypatch):
+    cost = GenAIPricesEstimator(prices=DOLLAR_PRICES, max_cost_usd=100.0)
+    monkeypatch.setattr(cost, "estimate", unittest.mock.Mock(side_effect=RuntimeError("pricing failed")))
+
+    tru_result = _looping_agent("main", [cost])("go")
+
+    assert tru_result.stop_reason == "limit_cost_usd"
+
+
+def test_cost_limit_is_added_once_to_a_request_and_only_with_max_cost_usd():
+    cost = GenAIPricesEstimator(prices=DOLLAR_PRICES, max_cost_usd=100.0)
+    first = _looping_agent("main", [cost])("go")
+    _looping_agent("main", [cost])("go", invocation_context=first.invocation_context)
+
+    tru_unlimited = _looping_agent("main", [GenAIPricesEstimator(prices=DOLLAR_PRICES)])("go")
+
+    assert len(first.invocation_context._limit_checks) == 1
+    assert tru_unlimited.invocation_context._limit_checks == []
