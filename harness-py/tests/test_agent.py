@@ -5,6 +5,7 @@ import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import boto3
 import pytest
 from strands import Agent, BackgroundTasksConfig, tool
 from strands.agent.conversation_manager import NullConversationManager
@@ -511,7 +512,7 @@ def test_root_exports_match_the_spec_table():
     for name in expected:
         assert getattr(strands_harness, name) is not None
     assert strands_harness.supports_web_search("openai/gpt-5.6-sol") is True
-    assert strands_harness.supports_web_search(BedrockModel(model_id="x")) is False
+    assert strands_harness.supports_web_search(BedrockModel(model_id="x")) is True
 
 
 def test_web_search_is_not_a_tool():
@@ -524,11 +525,76 @@ def test_web_search_enabled_on_supported_provider_from_default():
     assert agent.model.config["params"]["tools"] == [{"type": "web_search"}]
 
 
-def test_web_search_default_on_bedrock_logs_info_not_warning_and_builds(caplog):
+@pytest.fixture
+def agentcore_factory_calls(monkeypatch):
+    """The keyword arguments ``create_harness`` builds each AgentCore ``web_search`` tool with."""
+    calls = []
+    real = agent_module.make_agentcore_web_search
+    monkeypatch.setattr(agent_module, "make_agentcore_web_search", lambda **kw: calls.append(kw) or real(**kw))
+    return calls
+
+
+def test_web_search_on_bedrock_is_the_agentcore_tool(agentcore_factory_calls):
+    # The default Claude model runs on Anthropic's Bedrock client; other families run on BedrockModel.
+    assert "web_search" in create_harness().tool_names
+    explicit = create_harness(model="bedrock/us.amazon.nova-2-lite-v1:0", builtin_tools=["read", "web_search"])
+    assert "web_search" in explicit.tool_names
+    mantle = create_harness(model="bedrock-mantle/qwen.qwen3-32b-v1:0")
+    assert "web_search" in mantle.tool_names
+    assert "tools" not in mantle.model.config.get("params", {})
+    assert agentcore_factory_calls == [{}, {}, {}]
+
+
+def test_web_search_on_bedrock_model_instances_takes_nothing_from_the_model(agentcore_factory_calls):
+    from anthropic import AsyncAnthropicBedrock
+    from strands.models.anthropic import AnthropicModel
+
+    # Search resolves its own region and credentials, so a model's region or session is not copied.
+    session = boto3.Session(region_name="ap-south-1")
+    anthropic_model = AnthropicModel(client=AsyncAnthropicBedrock(aws_region="eu-west-1"), model_id="c", max_tokens=10)
+    models = [
+        BedrockModel(model_id="x", region_name="eu-west-1"),
+        BedrockModel(model_id="x", boto_session=session),
+        anthropic_model,
+        ModelRouter([BedrockModel(model_id="fast", region_name="eu-west-1"), BedrockModel(model_id="deep")]),
+    ]
+    for model in models:
+        assert "web_search" in create_harness(model=model).tool_names
+    assert agentcore_factory_calls == [{}] * len(models)
+
+
+def test_web_search_on_a_mixed_router_is_off_and_names_the_router(caplog):
     import logging
 
     with caplog.at_level(logging.INFO, logger="strands_harness.agent"):
-        agent = create_harness()
+        mixed = create_harness(model=ModelRouter([BedrockModel(model_id="fast"), _RetrievingModel()]))
+    assert "web_search" not in mixed.tool_names
+    assert any("A pre-built ModelRouter has no built-in web search" in r.getMessage() for r in caplog.records)
+
+
+def test_web_search_on_bedrock_collides_with_a_passed_web_search_tool_like_any_built_in():
+    @tool(name="web_search")
+    def my_search(query: str) -> str:
+        """Search."""
+        return query
+
+    with pytest.raises(ValueError, match=r"Tool name 'web_search' is registered more than once"):
+        create_harness(tools=[my_search])
+    agent = create_harness(tools=[my_search], builtin_tools={"web_search": False})
+    assert agent.tool_registry.registry["web_search"] is my_search
+    # Delegates follow the parent: the caller's tool when inherited, none when narrowed away.
+    from strands_harness.tools import AgentSpec
+
+    builder = agent.tool_registry.registry["subagent"]._builder
+    assert builder(AgentSpec(name="subagent")).tool_registry.registry["web_search"] is my_search
+    assert "web_search" not in builder(AgentSpec(name="subagent", tools=["read"])).tool_names
+
+
+def test_web_search_default_without_a_backend_logs_info_not_warning_and_builds(caplog):
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="strands_harness.agent"):
+        agent = create_harness(model="ollama/llama3")
     assert "web_search" not in agent.tool_names
     notes = [r for r in caplog.records if "has no built-in web search" in r.getMessage()]
     assert notes and all(r.levelno == logging.INFO for r in notes)
@@ -537,9 +603,9 @@ def test_web_search_default_on_bedrock_logs_info_not_warning_and_builds(caplog):
 
 def test_web_search_explicit_on_unsupported_provider_raises():
     with pytest.raises(ValueError, match="has no built-in web search"):
-        create_harness(builtin_tools=["read", "web_search"])
+        create_harness(model="ollama/llama3", builtin_tools=["read", "web_search"])
     with pytest.raises(ValueError, match="has no built-in web search"):
-        create_harness(builtin_tools={"web_search": True})
+        create_harness(model=_RetrievingModel(), builtin_tools={"web_search": True})
 
 
 def test_web_search_exa_fallback_builds_the_tool_and_warns_about_the_third_party(caplog):
@@ -578,9 +644,9 @@ def test_web_search_native_on_anthropic_and_mantle_gpt():
     agent = create_harness(model="bedrock-mantle/openai.gpt-5.6-luna")
     assert "web_search" not in agent.tool_names
     assert agent.model.config["params"]["tools"] == [{"type": "web_search", "external_web_access": True}]
-    # Other Mantle families have no native search: the default warns and drops it.
+    # Other Mantle families have no native search, so they get the AgentCore tool instead.
     agent = create_harness(model="bedrock-mantle/openai.gpt-oss-120b-1:0")
-    assert "web_search" not in agent.tool_names
+    assert "web_search" in agent.tool_names
     assert "tools" not in agent.model.config["params"]
 
 
@@ -861,8 +927,7 @@ def test_offloaded_tool_result_returned_in_full_on_retrieval(tmp_path):
 
     assert len(model.seen_tool_results) == 2
     assert model.seen_tool_results[0].startswith("[Truncated:")
-    # The Python SDK returns a full retrieval as the stashed block serialized to JSON.
-    assert json.loads(model.seen_tool_results[1]) == {"text": _LARGE_RESULT}
+    assert model.seen_tool_results[1] == _LARGE_RESULT
     assert agent.context_manager.stash_is_durable is True
     agent_scope = Path("scopes", "agent", agent.agent_id)
     snapshot_path = tmp_path / "session" / "retrieval" / agent_scope / "snapshots" / "snapshot_latest.json"
@@ -1358,6 +1423,22 @@ def test_subagent_child_inherits_exa_fallback():
     parent = create_harness(builtin_tools={"web_search": "exa"})
     child = parent.tool_registry.registry["subagent"]._builder(AgentSpec(name="subagent", tools=["read"]))
     assert "web_search" in child.tool_names
+
+
+def test_exa_wins_over_agentcore_on_bedrock():
+    from strands_harness.tools import exa_web_search
+
+    agent = create_harness(builtin_tools={"web_search": "exa"})
+    assert agent.tool_registry.registry["web_search"] is exa_web_search
+
+
+def test_subagent_child_on_bedrock_gets_agentcore_web_search():
+    from strands_harness.tools import AgentSpec, exa_web_search
+
+    builder = create_harness().tool_registry.registry["subagent"]._builder
+    for child in (builder(AgentSpec(name="subagent", tools=["read"])), builder(AgentSpec(name="subagent"))):
+        assert "web_search" in child.tool_names
+        assert child.tool_registry.registry["web_search"] is not exa_web_search
 
 
 class _ScriptedModel(Model):

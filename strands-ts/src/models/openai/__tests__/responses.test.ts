@@ -262,6 +262,29 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.instructions).toBe('Be helpful.')
     })
 
+    it.each([
+      ['gpt-6.2-sol', { cacheConfig: {} }, true],
+      ['openai.gpt-6.2-astra', {}, true],
+      ['gpt-6.1-sol', { cacheConfig: {} }, false],
+      ['gpt-6.2-sol', { stateful: true }, false],
+    ])(
+      // Guards against GPT-6.2 never caching instructions (#6367).
+      'sends the system prompt as a developer message only where instructions never cache: %s %o',
+      async (modelId, modelOptions, expectDeveloperMessage) => {
+        const systemPrompt = [new TextBlock('Be '), new TextBlock('helpful.')]
+        const req = await runOnce({ modelId, ...modelOptions }, [mkUserMessage()], { systemPrompt })
+        const withoutSystemPrompt = await runOnce({ modelId, ...modelOptions })
+
+        const developer = { role: 'developer', content: [{ type: 'input_text', text: 'Be helpful.' }] }
+        expect(req).toStrictEqual({
+          ...withoutSystemPrompt,
+          ...(expectDeveloperMessage
+            ? { input: [developer, ...withoutSystemPrompt.input] }
+            : { instructions: 'Be helpful.' }),
+        })
+      }
+    )
+
     it('merges toolSpecs with built-in tools from params', async () => {
       const req = await runOnce({ params: { tools: [{ type: 'web_search' }] } }, [mkUserMessage()], {
         toolSpecs: [

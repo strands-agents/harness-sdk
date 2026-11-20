@@ -37,6 +37,10 @@ classifiers = [
 dependencies = [
     "strands-agents[otel]>=1.65.0,<2.0.0",
     "anthropic[bedrock]>=1.7.0,<3.0.0",
+    # The first release with bedrock-agentcore InvokeWebSearch, which backs web_search on Bedrock;
+    # botocore is imported directly there too.
+    "boto3>=1.43.127,<2.0.0",
+    "botocore>=1.43.127,<2.0.0",
     "pydantic-monty==0.0.23",
     "pydantic>=2.5,<3",
 ]

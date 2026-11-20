@@ -48,6 +48,7 @@ export {
   exaWebSearch,
   Fixed,
   Inherit,
+  makeAgentCoreWebSearch,
   makeExaWebSearch,
   makeProgrammaticToolCaller,
   makeSubagent,
@@ -61,6 +62,7 @@ export {
 } from './tools/index.js'
 export type {
   AgentBuilder,
+  MakeAgentCoreWebSearchOptions,
   MakeProgrammaticToolCallerOptions,
   MakeSubagentOptions,
   MakeWebFetchOptions,

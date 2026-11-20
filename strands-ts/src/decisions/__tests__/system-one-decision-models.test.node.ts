@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { InvocationContextImpl } from '../../agent/invocation-context.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
-import { ImageBlock } from '../../types/media.js'
-import { Message, TextBlock } from '../../types/messages.js'
+import { DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
+import { GuardContentBlock, JsonBlock, Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
 import { DecisionModel } from '../decision-model.js'
 import { DecisionsAPIDecisionModel } from '../decisions-api-decision-model.js'
 import { TypeSafeDecisionModel } from '../typesafe-decision-model.js'
 import { Uncertain } from '../types.js'
+import type { Question } from '../types.js'
 
 interface CapturedRequest {
   url: string
@@ -81,6 +83,42 @@ afterEach(() => {
 
 describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerName, apiKeyEnvironmentVariable }) => {
   describe('ask', () => {
+    it.each([1, 0.5])('preserves prototype-named question ids with noul probability %s', async (noul) => {
+      const ids = ['__proto__', 'constructor', 'toString']
+      const questions = Object.fromEntries(
+        ids.map((id) => [id, { question: 'ok?', choices: 'boolean' } satisfies Question])
+      )
+      const decision = create({
+        apiKey: 'test-key',
+        fetch: fakeFetch(responseBody(Object.fromEntries(ids.map((id) => [id, { type: 'noul', noul }])))),
+      })
+
+      const result = await decision.ask('state', questions)
+
+      expect(result).toEqual({
+        answers: Object.fromEntries(ids.map((id) => [id, noul === 1 ? true : new Uncertain()])),
+        usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 },
+        metadata: {
+          latencyMs: expect.any(Number),
+          providerName,
+          modelId: 'resolved-model',
+          probabilities: Object.fromEntries(ids.map((id) => [id, { true: noul, false: 1 - noul }])),
+          confidence: Object.fromEntries(ids.map((id) => [id, Math.abs(2 * noul - 1)])),
+        },
+      })
+      for (const map of [result.answers, result.metadata.probabilities, result.metadata.confidence]) {
+        expect(Object.keys(map!)).toEqual(ids)
+        expect(Object.getPrototypeOf(map)).toBe(Object.prototype)
+      }
+    })
+
+    it.each(['__proto__', 'constructor', 'toString'])('rejects a missing own answer for %s', async (id) => {
+      const decision = create({ apiKey: 'test-key', fetch: fakeFetch(responseBody({})) })
+      const questions = Object.fromEntries([[id, { question: 'ok?', choices: 'boolean' } satisfies Question]])
+
+      await expect(decision.ask('state', questions)).rejects.toThrow(`omitted answer for question id=<${id}>`)
+    })
+
     it('maps questions and returns typed answers with confidence metadata', async () => {
       const captured: CapturedRequest[] = []
       const fetch = fakeFetch(
@@ -242,6 +280,59 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       expect(fetch).not.toHaveBeenCalled()
     })
 
+    it.each([
+      new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } }),
+      new VideoBlock({ format: 'mp4', source: { bytes: new Uint8Array([1, 2, 3]) } }),
+      new DocumentBlock({ format: 'pdf', name: 'fixture', source: { bytes: new Uint8Array([1, 2, 3]) } }),
+    ])('rejects a binary $type inside a tool result before sending', async (media) => {
+      const fetch = fakeFetch(responseBody({}))
+      const decision = create({ apiKey: 'test-key', fetch })
+      const toolResult = new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [media] })
+
+      for (const state of [[toolResult], [new Message({ role: 'user', content: [toolResult] })]]) {
+        await expect(decision.ask(state, { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+          /do not support binary ContentBlock state/
+        )
+      }
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('rejects byte-backed guard content before sending', async () => {
+      const fetch = fakeFetch(responseBody({}))
+      const decision = create({ apiKey: 'test-key', fetch })
+      const guard = new GuardContentBlock({
+        image: { format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } },
+      })
+
+      await expect(decision.ask([guard], { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        /do not support binary ContentBlock state/
+      )
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('preserves JSON fields named bytes and text in tool results', async () => {
+      const captured: CapturedRequest[] = []
+      const fetch = fakeFetch(responseBody({ q: { type: 'noul', noul: 1 } }), { captured })
+      const decision = create({ apiKey: 'test-key', fetch })
+      const toolResult = new ToolResultBlock({
+        toolUseId: 'tool-1',
+        status: 'success',
+        content: [new JsonBlock({ json: { bytes: [1, 2, 3] } }), new TextBlock('hello')],
+      })
+
+      await decision.ask([toolResult], { q: { question: 'ok?', choices: 'boolean' } })
+
+      expect(captured[0]?.body['state']).toEqual([
+        {
+          toolResult: {
+            toolUseId: 'tool-1',
+            status: 'success',
+            content: [{ json: { bytes: [1, 2, 3] } }, { text: 'hello' }],
+          },
+        },
+      ])
+    })
+
     it('honors an explicit model id', async () => {
       const captured: CapturedRequest[] = []
       const fetch = fakeFetch(responseBody({ q: { type: 'noul', noul: 1 } }), { captured })
@@ -310,7 +401,33 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       )
 
       expect(error).toBeInstanceOf(ContextWindowOverflowError)
+      expect((error as Error).cause).toMatchObject({ status: 413, body: { error: 'request body too large' } })
       expect(fetch).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+      {
+        status: 400,
+        errorType: 'max_tokens_exceeded',
+        expectedClass: { typesafe: ContextWindowOverflowError, decisionsApi: ModelError },
+      },
+      { status: 400, errorType: 'invalid_request', expectedClass: { typesafe: ModelError, decisionsApi: ModelError } },
+      {
+        status: 500,
+        errorType: 'max_tokens_exceeded',
+        expectedClass: { typesafe: ModelError, decisionsApi: ModelError },
+      },
+    ])('scopes vendor context overflow for HTTP $status/$errorType', async ({ status, errorType, expectedClass }) => {
+      const body = { detail: { error_type: errorType } }
+      const decision = create({ apiKey: 'test-key', fetch: fakeFetch(body, { status }) })
+      const error = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } }).then(
+        () => undefined,
+        (caught: unknown) => caught
+      )
+
+      expect((error as Error).constructor).toBe(expectedClass[providerName as 'typesafe' | 'decisionsApi'])
+      expect((error as Error).message).toBe(`${providerName} decision request failed with HTTP ${status}: ${errorType}`)
+      expect((error as Error).cause).toMatchObject({ status, body })
     })
 
     it('wraps transport failures as ModelError with the original cause', async () => {
@@ -337,6 +454,27 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
 
       expect(result.usage).toBeUndefined()
+    })
+
+    it.each([
+      '{"input_tokens":1e999,"output_tokens":3}',
+      '{"input_tokens":12,"output_tokens":1e999}',
+      '{"input_tokens":-1e999,"output_tokens":3}',
+      '{"input_tokens":1e308,"output_tokens":1e308}',
+      '{"input_tokens":12.5,"output_tokens":3}',
+    ])('omits non-integer usage %s without changing invocation counters', async (usage) => {
+      const raw = `{"model":"resolved-model","answers":{"q":{"type":"noul","noul":1}},"usage":${usage}}`
+      const fetch = vi.fn(async (): Promise<Response> => new Response(raw)) as typeof globalThis.fetch
+      const decision = create({ apiKey: 'test-key', fetch })
+      const invocationContext = new InvocationContextImpl()
+      invocationContext.recordUsage({ inputTokens: 5, outputTokens: 2, totalTokens: 7 })
+      const originalUsage = { ...invocationContext.usage }
+
+      const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } }, { invocationContext })
+
+      expect(result.answers).toEqual({ q: true })
+      expect(result.usage).toBeUndefined()
+      expect(invocationContext.usage).toEqual(originalUsage)
     })
 
     it('rejects an invalid response model id', async () => {

@@ -30,6 +30,7 @@
             "type": "string",
             "enum": [
               "model-provider",
+              "decision-model",
               "tool",
               "session-manager",
               "memory-store",

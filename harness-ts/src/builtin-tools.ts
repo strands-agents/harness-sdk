@@ -4,7 +4,7 @@
  * from the same record.
  */
 
-import { type Agent, McpClient, MemoryManager, Tool, type ToolList } from '@strands-agents/sdk'
+import { type Agent, McpClient, MemoryManager, ModelRouter, Tool, type ToolList } from '@strands-agents/sdk'
 import { type AgentBuilder, type AgentSpec, Choice, Fixed } from '@strands-agents/sdk/multiagent'
 import { makeShell } from '@strands-agents/sdk/vended-tools/bash'
 import { GENERALIST, makeSubagent } from '@strands-agents/sdk/vended-tools/subagent'
@@ -19,8 +19,8 @@ import {
 import { DEFAULT_BUILTIN_TOOLS, DEFAULT_MODEL, DEFAULT_SUBAGENT_MAX_DEPTH } from './defaults.js'
 import { logger } from './logging.js'
 import { resolveMemory } from './memory.js'
-import { resolveWebFetchModel, supportsMedia, supportsWebSearch } from './models.js'
-import { edit, exaWebSearch, makeRead, makeWebFetch, write } from './tools/index.js'
+import { resolveWebFetchModel, supportsMedia, webSearchKind } from './models.js'
+import { edit, exaWebSearch, makeAgentCoreWebSearch, makeRead, makeWebFetch, write } from './tools/index.js'
 import { makeProgrammaticToolCaller } from './tools/programmatic-tool-caller.js'
 import type { BuiltinToolsConfig, SubagentConfig, ToolConfig, WebSearchSetting } from './types/agent.js'
 
@@ -105,11 +105,12 @@ export function webSearchExplicit(value: readonly BuiltinToolName[] | BuiltinToo
     : (value as BuiltinToolsConfig | undefined)?.web_search !== undefined
 }
 
-export type WebSearchMode = 'native' | 'exa'
+export type WebSearchMode = 'native' | 'agentcore' | 'exa'
 
 /**
  * How `web_search` is served for `model`: `'exa'` (the third-party tool, whenever opted into with
- * `'exa'`), `'native'` (a model flag), or `undefined` (off).
+ * `'exa'`), `'native'` (a model flag), `'agentcore'` (the AgentCore tool, on Bedrock), or
+ * `undefined` (off).
  */
 export function webSearchMode(
   setting: WebSearchSetting,
@@ -125,11 +126,16 @@ export function webSearchMode(
     )
     return 'exa'
   }
-  if (supportsWebSearch(model)) {
-    return 'native'
+  const kind = webSearchKind(model)
+  if (kind !== undefined) {
+    return kind
   }
   const target =
-    typeof model === 'string' || model === undefined ? `Model ${model ?? DEFAULT_MODEL}` : 'A pre-built Model instance'
+    typeof model === 'string' || model === undefined
+      ? `Model ${model ?? DEFAULT_MODEL}`
+      : model instanceof ModelRouter
+        ? 'A pre-built ModelRouter'
+        : 'A pre-built Model instance'
   if (explicit) {
     throw new Error(
       `${target} has no built-in web search. Pass builtinTools: { web_search: 'exa' } to search ` +
@@ -148,12 +154,13 @@ export function webSearchMode(
 export type BuildAgent = (options: HarnessAgentOptions) => Promise<Agent>
 
 // `web_fetch` needs the agent's model to pick its default summarizer, and `subagent` the whole
-// parent config to rebuild a child. `web_search` here is the Exa tool; `createHarness` selects
-// it only when the setting is `'exa'`.
+// parent config to rebuild a child. `web_search` is the AgentCore tool when that is its mode
+// (`webSearchMode`) and the Exa tool otherwise.
 export async function buildBuiltinTools(
   buildAgent: BuildAgent,
   parentConfig: HarnessAgentOptions,
-  builtins: ResolvedBuiltinTools
+  builtins: ResolvedBuiltinTools,
+  webSearch: WebSearchMode | undefined
 ): Promise<Record<BuiltinToolName, Tool>> {
   const webFetch = builtinToolConfig(builtins, 'web_fetch')
   const caller = builtinToolConfig(builtins, 'programmatic_tool_caller') ?? {}
@@ -171,7 +178,7 @@ export async function buildBuiltinTools(
       model: await resolveWebFetchModel(parentConfig.model, webFetch?.model),
       transport: webFetch?.transport,
     }),
-    web_search: exaWebSearch,
+    web_search: webSearch === 'agentcore' ? makeAgentCoreWebSearch() : exaWebSearch,
     // The portable config spells the bound in seconds (`timeout`); the factory takes `timeoutMs`.
     programmatic_tool_caller: makeProgrammaticToolCaller({
       ...(caller.allowedTools === undefined || caller.allowedTools === null
