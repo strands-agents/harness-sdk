@@ -11,7 +11,7 @@ import type {
 import { ExperimentPanel } from '../panels/experiment.js'
 import { TestPanel } from '../panels/test.js'
 import { WizardRequestPanel } from '../../ui/panels/wizard-request-panel.js'
-import { wizardRequestHasDiff, wizardRequestRows } from '../../ui/panels/wizard-request.js'
+import { wizardRequestRows } from '../../ui/panels/wizard-request.js'
 import type { DevChatPart } from '../chat-extension.js'
 import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryAgentFacts } from './agent-context.js'
@@ -134,7 +134,7 @@ const ASK_DETAILS = paragraphs(
 
 const askCommand = (sessions: Sessions): DevChatCommand => ({
   sticky: true,
-  dock: () => wizardRequestHasDiff(sessions().ask.pending()),
+  // A diff is read line by line, so every question takes the full width above the chat input.
   dropPending: () => sessions().ask.cancelAll(),
   contentRows: () => wizardRequestRows(sessions().ask.pending()),
   spec: {

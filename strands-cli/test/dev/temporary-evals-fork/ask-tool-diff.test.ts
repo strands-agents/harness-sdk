@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
+import { createDiffPreview } from '../../../src/agent/file-changes.js'
 import { askRequestFrom } from '../../../src/dev/temporary-evals-fork/ask-tool.js'
+import { diffRows } from '../../../src/ui/diff-rows.js'
 
 const CHANGE = { path: 'agent/agent.ts', before: 'one\ntwo\n', after: 'one\nthree\n' }
 
@@ -62,5 +64,13 @@ describe('a question that carries a file change', () => {
     const request = askRequestFrom({ ask: 'confirm', question: 'Go ahead?' } as never)
 
     expect(request.steps[0]!.fields.map(({ kind }) => kind)).toEqual(['select'])
+  })
+})
+
+describe('the rows a change draws', () => {
+  it('shouldSeparateTheChangeCountFromItsLabel', () => {
+    const rows = diffRows(createDiffPreview('a.ts', 'one\n', 'two\n'))
+
+    expect(rows[0]).toMatchObject({ label: 'Changes', text: '+1 -1 lines' })
   })
 })

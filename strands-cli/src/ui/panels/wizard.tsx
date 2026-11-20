@@ -75,6 +75,8 @@ export interface WizardStep {
   readonly notice?: WizardNotice
   readonly listLabel?: string
   readonly body?: (room: number) => ReactNode
+  /** Draws the body above the fields, for a body the fields are about. */
+  readonly bodyFirst?: boolean
   readonly footnote?: string
   readonly editFootnote?: string
 }
@@ -571,8 +573,11 @@ export const Wizard = ({
       {steps.length > 1 ? <StepBar steps={steps} at={index} right={status} onPick={pickStep} /> : null}
       {question === undefined ? null : <Line>{`  ${question}`}</Line>}
       {compact ? null : <Gap />}
+      {step.bodyFirst && step.body ? step.body(height - (compact ? COMPACT_BODY_CHROME_ROWS : BODY_CHROME_ROWS)) : null}
       {step.fields.map(fieldView)}
-      {step.body ? step.body(height - (compact ? COMPACT_BODY_CHROME_ROWS : BODY_CHROME_ROWS)) : null}
+      {!step.bodyFirst && step.body
+        ? step.body(height - (compact ? COMPACT_BODY_CHROME_ROWS : BODY_CHROME_ROWS))
+        : null}
       {editor && step.editFootnote ? <Line tone="muted">{`  ${step.editFootnote}`}</Line> : null}
       {step.footnote !== undefined && !compact ? (
         <Line tone="muted">{`${' '.repeat(LABEL_WIDTH + 2)}${step.footnote}`}</Line>

@@ -1,6 +1,7 @@
 import { createElement, useEffect, useState, type ReactElement } from 'react'
 
-import { diffRows } from '../diff-rows.js'
+import { wrapCells } from '../../terminal/text.js'
+import { diffRows, DIFF_SUMMARY_LABEL, type DiffRow } from '../diff-rows.js'
 import { Line, PanelTitle, useSyncedState } from './kit.js'
 import { useWizardPosition, Wizard, type WizardField, type WizardStep } from './wizard.js'
 import {
@@ -121,22 +122,37 @@ const diffOf = (spec: WizardStepSpec): WizardDiffSpec | undefined =>
   spec.fields.flatMap((field) => (field.kind === 'diff' ? [field] : []))[0]
 
 const DIFF_HEADER_ROWS = 2
+const DIFF_INDENT = 2
+
+/** A long line wraps under its own gutter rather than being cut, the way the permission prompt shows a change. */
+const diffTextRows = (rows: readonly DiffRow[], width: number): DiffRow[] => {
+  const gutter = DIFF_SUMMARY_LABEL.length + 1
+  const room = Math.max(1, width - DIFF_INDENT - gutter)
+  return rows.flatMap((row) =>
+    wrapCells(row.text, room).map((text, index) => ({
+      ...row,
+      label: index === 0 ? row.label : '',
+      text,
+    }))
+  )
+}
 
 /** Shows as many diff rows as the room allows, and says how many it held back. */
-const DiffBody = ({ spec, room }: { spec: WizardDiffSpec; room: number }): ReactElement => {
-  const rows = diffRows(spec.diff)
+const DiffBody = ({ spec, room, width }: { spec: WizardDiffSpec; room: number; width: number }): ReactElement => {
+  const rows = diffTextRows(diffRows(spec.diff), width)
   const capacity = Math.max(1, room - DIFF_HEADER_ROWS)
   const shown = rows.slice(0, capacity)
   const hidden = rows.length - shown.length
+  const gutter = DIFF_SUMMARY_LABEL.length + 1
   return (
     <>
-      <Line tone="muted">{`  ${spec.path}`}</Line>
+      <Line tone="muted">{`${' '.repeat(DIFF_INDENT)}${spec.path}`}</Line>
       {shown.map((row, index) => (
         <Line key={`${row.label}-${index}`} {...(row.tone ? { tone: row.tone } : {})}>
-          {`  ${row.label.padEnd(2)}${row.text}`}
+          {`${' '.repeat(DIFF_INDENT)}${row.label.padEnd(gutter)}${row.text}`}
         </Line>
       ))}
-      {hidden > 0 ? <Line tone="muted">{`  ${hidden} more lines`}</Line> : null}
+      {hidden > 0 ? <Line tone="muted">{`${' '.repeat(DIFF_INDENT)}${hidden} more lines`}</Line> : null}
     </>
   )
 }
@@ -145,7 +161,8 @@ const toStep = (
   spec: WizardStepSpec,
   answers: Answers,
   live: () => Answers,
-  update: (key: string, value: WizardAnswer) => void
+  update: (key: string, value: WizardAnswer) => void,
+  width: number
 ): WizardStep => ({
   key: spec.key,
   title: spec.title,
@@ -155,7 +172,9 @@ const toStep = (
       ? selectFields(field, answers, live, update)
       : [toField(field, answers, live, update)]
   }),
-  ...(diffOf(spec) ? { body: (room: number) => createElement(DiffBody, { spec: diffOf(spec)!, room }) } : {}),
+  ...(diffOf(spec)
+    ? { bodyFirst: true, body: (room: number) => createElement(DiffBody, { spec: diffOf(spec)!, room, width }) }
+    : {}),
   ...(spec.notice ? { notice: spec.notice } : {}),
   ...(selectLabel(spec) === undefined ? {} : { listLabel: selectLabel(spec)! }),
   ...(spec.footnote === undefined ? {} : { footnote: spec.footnote }),
@@ -183,7 +202,7 @@ const RequestView = ({
   const answers = useSyncedState<Answers>(() => defaultAnswers(request.steps))
   const position = useWizardPosition()
   const update = (key: string, value: WizardAnswer): void => answers.set((current) => ({ ...current, [key]: value }))
-  const steps = request.steps.map((step) => toStep(step, answers.value, answers.current, update))
+  const steps = request.steps.map((step) => toStep(step, answers.value, answers.current, update, width))
   return (
     <Wizard
       name={request.name}
