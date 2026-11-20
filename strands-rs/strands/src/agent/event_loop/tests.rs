@@ -10,14 +10,14 @@ fn agent() -> Agent {
     test_agent(MockModel::new().with_turn("Response"))
 }
 
-mod redact_last_message {
+mod redact_last_user_message {
     use super::*;
 
     #[test]
     fn redacts_last_user_message_with_only_text_blocks() {
         let mut agent = agent();
         agent.messages_mut().push(Message::user("sensitive content"));
-        agent.redact_last_message(REDACT_MESSAGE);
+        agent.redact_last_user_message(REDACT_MESSAGE);
         let last = agent.messages().last().unwrap();
         assert_eq!(last.role, Role::User);
         assert_eq!(last.content, vec![ContentBlock::text(REDACT_MESSAGE)]);
@@ -29,7 +29,7 @@ mod redact_last_message {
         agent
             .messages_mut()
             .push(Message::user("sensitive content").with_tracking_id("durable-1"));
-        agent.redact_last_message(REDACT_MESSAGE);
+        agent.redact_last_user_message(REDACT_MESSAGE);
         assert_eq!(agent.messages().last().unwrap().tracking_id(), "durable-1");
     }
 
@@ -45,7 +45,7 @@ mod redact_last_message {
                 ToolResultBlock::error("tool-2", vec![ToolResultContent::text("error content")]).into(),
             ],
         ));
-        agent.redact_last_message(REDACT_MESSAGE);
+        agent.redact_last_user_message(REDACT_MESSAGE);
         let last = agent.messages().last().unwrap();
         assert_eq!(last.role, Role::User);
         assert_eq!(
@@ -58,19 +58,62 @@ mod redact_last_message {
     }
 
     #[test]
-    fn does_not_redact_when_last_message_is_not_from_user() {
+    fn does_not_redact_when_there_is_no_user_message() {
+        let (logs, _guard) = crate::test_support::record_logs();
         let mut agent = agent();
         let assistant = Message::assistant("assistant response");
         agent.messages_mut().push(assistant.clone());
-        agent.redact_last_message(REDACT_MESSAGE);
-        assert_eq!(agent.messages().last().unwrap(), &assistant);
+        agent.redact_last_user_message(REDACT_MESSAGE);
+        assert_eq!(agent.messages(), &[assistant]);
+        assert!(
+            logs.text()
+                .contains("received input redaction but no user message found | redaction skipped")
+        );
     }
 
     #[test]
     fn handles_empty_messages_array_gracefully() {
+        let (logs, _guard) = crate::test_support::record_logs();
         let mut agent = agent();
-        agent.redact_last_message(REDACT_MESSAGE);
+        agent.redact_last_user_message(REDACT_MESSAGE);
         assert!(agent.messages().is_empty());
+        assert!(
+            logs.text()
+                .contains("received input redaction but no user message found | redaction skipped")
+        );
+    }
+
+    #[tokio::test]
+    async fn redacts_the_user_message_when_a_hook_appends_an_assistant_message_after_it() {
+        let events: Vec<crate::models::streaming::ModelStreamEvent> = [
+            json!({"type": "modelMessageStartEvent", "role": "assistant"}),
+            json!({"type": "modelContentBlockStartEvent"}),
+            json!({"type": "modelContentBlockDeltaEvent", "delta": {"type": "textDelta", "text": "INPUT BLOCKED!"}}),
+            json!({"type": "modelContentBlockStopEvent"}),
+            json!({"type": "modelMessageStopEvent", "stopReason": "guardrailIntervened"}),
+            json!({"type": "modelRedactionEvent", "inputRedaction": {"replaceContent": REDACT_MESSAGE}}),
+        ]
+        .into_iter()
+        .map(|event| serde_json::from_value(event).unwrap())
+        .collect();
+        let mut agent = test_agent(MockModel::new().with_turn(crate::testing::MockTurn::events(events)));
+        let context = Message::assistant("<user_context>likes cats</user_context>");
+        let appended = context.clone();
+        agent.add_hook(move |event: &mut crate::hooks::MessageAddedEvent<'_>| {
+            if event.message().role == Role::User {
+                event.agent_mut().messages_mut().push(appended.clone());
+            }
+        });
+
+        agent.invoke("Tell me something bad").await.unwrap();
+
+        let messages = agent.messages();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[0].content, vec![ContentBlock::text(REDACT_MESSAGE)]);
+        assert_eq!(messages[1], context);
+        assert_eq!(messages[2].role, Role::Assistant);
+        assert_eq!(messages[2].content, vec![ContentBlock::text("INPUT BLOCKED!")]);
     }
 }
 
