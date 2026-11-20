@@ -20,6 +20,7 @@ use futures::StreamExt;
 use serde_json::json;
 use strands::hooks::{
     AfterInvocationEvent, AfterModelCallEvent, AfterToolCallEvent, AgentResultEvent, BeforeModelCallEvent,
+    BeforeToolCallEvent,
 };
 use strands::models::streaming::{ModelMessageStartEvent, ModelStreamEvent};
 use strands::models::{BaseModelConfig, BoxStream, Model, ModelRequest};
@@ -533,6 +534,73 @@ async fn cancels_via_external_abort_signal() {
         .unwrap();
 
     assert_eq!(result.stop_reason(), StopReason::Cancelled);
+}
+
+#[tokio::test]
+async fn skips_the_tool_when_cancel_arrives_during_before_tool_call_event() {
+    for executor in [ToolExecutorStrategy::Sequential, ToolExecutorStrategy::Concurrent] {
+        for external in [false, true] {
+            let executed = Executed::default();
+            let model =
+                MockModel::from_turns([tool_use_turn("firstTool", "t1", json!({}))]).with_turn("Should not reach");
+            let mut agent = agent_with(
+                model,
+                vec![recording_tool(&executed, "firstTool", "Done", |_| {})],
+                Some(executor),
+            );
+            let controller = CancelHandle::new();
+            let hook_controller = controller.clone();
+            agent.add_hook(move |event: &mut BeforeToolCallEvent| {
+                if external {
+                    hook_controller.cancel(CancelOptions::default());
+                } else {
+                    event.agent().cancel(CancelOptions::default());
+                }
+            });
+
+            let options = InvokeOptions {
+                cancel_signal: Some(controller.signal()),
+                ..InvokeOptions::default()
+            };
+            let result = agent.invoke_with("Go", options).await.unwrap();
+
+            assert_eq!(result.stop_reason(), StopReason::Cancelled, "{executor:?} {external}");
+            assert!(executed.lock().unwrap().is_empty());
+            assert_eq!(
+                agent.messages()[2].content,
+                vec![ContentBlock::ToolResult(error("t1", "Tool execution cancelled"))]
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn keeps_the_hook_cancel_message_when_the_signal_is_also_aborted() {
+    let executed = Executed::default();
+    let model = MockModel::from_turns([tool_use_turn("marker", "marker-1", json!({}))]).with_turn("Done");
+    let mut agent = agent_with(
+        model,
+        vec![recording_tool(&executed, "marker", "wrote", |_| {})],
+        Some(ToolExecutorStrategy::Sequential),
+    );
+    let controller = CancelHandle::new();
+    let hook_controller = controller.clone();
+    agent.add_hook(move |event: &mut BeforeToolCallEvent| {
+        event.set_cancel("hook cancel message");
+        hook_controller.cancel(CancelOptions::default());
+    });
+
+    let options = InvokeOptions {
+        cancel_signal: Some(controller.signal()),
+        ..InvokeOptions::default()
+    };
+    agent.invoke_with("Go", options).await.unwrap();
+
+    assert!(executed.lock().unwrap().is_empty());
+    assert_eq!(
+        agent.messages()[2].content,
+        vec![ContentBlock::ToolResult(error("marker-1", "hook cancel message"))]
+    );
 }
 
 /// A model that starts a message, then waits on the request's cancel signal and fails the way a
