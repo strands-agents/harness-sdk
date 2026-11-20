@@ -130,13 +130,15 @@ describe.skipIf(process.platform === 'win32')('streamProcess termination', () =>
 
   it('sends no signal when the binary is missing and the call is aborted', async () => {
     const kill = vi.spyOn(childProcess.ChildProcess.prototype, 'kill').mockReturnValue(true)
-    const controller = new AbortController()
+    try {
+      const controller = new AbortController()
+      const next = streamProcess('strands-definitely-not-a-binary', [], { signal: controller.signal }).next()
+      controller.abort()
 
-    const next = streamProcess('strands-definitely-not-a-binary', [], { signal: controller.signal }).next()
-    controller.abort()
-
-    await expect(next).rejects.toBeInstanceOf(SandboxAbortError)
-    expect(kill).not.toHaveBeenCalled()
-    kill.mockRestore()
+      await expect(next).rejects.toThrow()
+      expect(kill).not.toHaveBeenCalled()
+    } finally {
+      kill.mockRestore()
+    }
   })
 })

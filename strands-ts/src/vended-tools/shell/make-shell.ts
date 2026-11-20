@@ -78,7 +78,7 @@ export function makeShell(
         return { output: result.stdout, error: result.stderr, exit_code: result.exitCode } as ShellOutput
       } catch (err) {
         if (err instanceof SandboxAbortError) {
-          // Cancellation is not a shell failure, so it propagates as-is. 130 is the shell convention for an interrupt.
+          // Not a shell failure: rethrown unwrapped, with the partial output appended. 130 is the interrupt convention.
           const partial: ShellOutput = { output: err.stdout, error: err.stderr, exit_code: 130 }
           err.message = `${err.message}\n${JSON.stringify(partial)}`
           throw err
