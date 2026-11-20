@@ -112,6 +112,14 @@ export interface InvokeModelContext {
    */
   readonly deferredTools?: ReadonlySet<string>
 
+  /**
+   * Whether the provider may search the deferred tools with its own tool search, set by deferred tool loading and
+   * passed to the provider in `StreamOptions.serverToolSearch`.
+   *
+   * @internal
+   */
+  readonly serverToolSearch?: boolean
+
   /** The request this model call belongs to, if any. See {@link InvokeOptions.invocationContext}. */
   readonly invocationContext?: InvocationContext
 }

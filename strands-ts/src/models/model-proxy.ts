@@ -2,10 +2,11 @@ import { unwrapInvocationContext, type InvocationContext } from '../agent/invoca
 import type { LocalAgent } from '../types/agent.js'
 import { Message, TextBlock, ToolResultBlock, type ContentBlock } from '../types/messages.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
-import { latestUserIndex } from './model.js'
+import { SEARCH_TOOLS_TOOL_NAME } from '../tools/search-tools.js'
+import { deferralOptions, latestUserIndex } from './model.js'
 import { hasToolReferences, withToolReferenceSchemas, withToolReferenceText } from './tool-references.js'
 import type { ToolSpec } from '../tools/types.js'
-import type { CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
+import type { CallTools, CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
 import type { ModelStreamEvent } from './streaming.js'
 import { wellFormedRequest } from './well-formed-request.js'
 
@@ -24,9 +25,10 @@ import { wellFormedRequest } from './well-formed-request.js'
  *
  * Deferred tools take one of two paths, by the model's `modelInfo.capabilities.deferredToolLoading`. With `'native'`,
  * the call's `deferredTools` and every `ToolReferenceBlock` reach the provider as they are, and the provider sends them
- * its API's way. With `'stubs'`, each deferred spec becomes a stub: its name, its description with a pointer to
- * `load_tools`, and an open schema, so the model can call the tool before it loads the schema. Every model but
- * a `'native'` one gets each `ToolReferenceBlock` as the parameters of the call's tool with that name, in text.
+ * its API's way. With `'stubs'`, each deferred spec becomes a stub: its name, its description with a pointer to the
+ * call's loader (`load_tools`, or `search_tools` when the model searches), and an open schema, so the model can call
+ * the tool before it loads the schema. Every model but a `'native'` one gets each `ToolReferenceBlock` as the
+ * parameters of the call's tool with that name, in text.
  *
  * A tool result whose content is all `UnknownBlock`s gets a placeholder text, since providers skip unknown blocks and
  * some reject an empty tool result. Lone UTF-16 surrogates in the messages, system prompt, and tool specs are sent as
@@ -92,7 +94,11 @@ export class ModelProxy {
     const deferred = options?.deferredTools
     if (!deferred?.size || !options?.toolSpecs) return options
     if (this._model.modelInfo.capabilities?.deferredToolLoading !== 'stubs') return options
-    return { ...options, toolSpecs: options.toolSpecs.map((spec) => (deferred.has(spec.name) ? stub(spec) : spec)) }
+    const loader = loaderOf(options.toolSpecs)
+    return {
+      ...options,
+      toolSpecs: options.toolSpecs.map((spec) => (deferred.has(spec.name) ? stub(spec, loader) : spec)),
+    }
   }
 
   /** Records the tools an agent's own call sends, before any stubs. */
@@ -100,7 +106,7 @@ export class ModelProxy {
     if (!this._agent) return
     latestTools.set(this._agent, {
       toolSpecs: [...(options?.toolSpecs ?? [])],
-      ...(options?.deferredTools && { deferredTools: options.deferredTools }),
+      ...deferralOptions(options),
     })
   }
 
@@ -162,19 +168,19 @@ export class ModelProxy {
  */
 export async function countRequestTokens(agent: LocalAgent, messages: Message[]): Promise<number> {
   const registered = agent.toolRegistry.toolSpecs()
-  const tools = agent.contextManager?.callTools(agent, registered, agent.model)
+  const tools = agent.contextManager?.callTools(agent, registered, agent.model, messages)
   const toolSpecs = tools?.toolSpecs ?? registered
   const deferred = tools?.deferredTools
   return new ModelProxy(agent.model).countTokens(withToolReferenceSchemas(messages, toolSpecs), {
     ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
     toolSpecs: deferred
-      ? toolSpecs.map((spec) => (deferred.has(spec.name) ? unloadedSpec(spec, agent.model) : spec))
+      ? toolSpecs.map((spec) => (deferred.has(spec.name) ? unloadedSpec(spec, agent.model, loaderOf(toolSpecs)) : spec))
       : toolSpecs,
   })
 }
 
 /** Each agent's latest model call tools, as the call passed them, before any stubs. */
-const latestTools = new WeakMap<LocalAgent, Pick<StreamOptions, 'toolSpecs' | 'deferredTools'>>()
+const latestTools = new WeakMap<LocalAgent, CallTools>()
 
 /**
  * The tools the agent's latest model call sent.
@@ -183,20 +189,27 @@ const latestTools = new WeakMap<LocalAgent, Pick<StreamOptions, 'toolSpecs' | 'd
  * @returns The tools, or undefined before the agent's first model call
  * @internal
  */
-export function latestCallTools(agent: LocalAgent): Pick<StreamOptions, 'toolSpecs' | 'deferredTools'> | undefined {
+export function latestCallTools(agent: LocalAgent): CallTools | undefined {
   return latestTools.get(agent)
 }
 
-const STUB_HINT = `Call ${LOAD_TOOLS_TOOL_NAME} with this name for its parameters first.`
+/** The loader a call's tools carry: `search_tools` when the model searches, `load_tools` otherwise. */
+function loaderOf(toolSpecs: readonly ToolSpec[]): string {
+  return toolSpecs.some((spec) => spec.name === SEARCH_TOOLS_TOOL_NAME) ? SEARCH_TOOLS_TOOL_NAME : LOAD_TOOLS_TOOL_NAME
+}
 
-/** A deferred tool's spec as a model that takes stubs receives it: its name and description, and an open schema. */
-function stub(spec: ToolSpec): ToolSpec {
-  return { name: spec.name, description: `${spec.description}\n${STUB_HINT}`, inputSchema: { type: 'object' } }
+/**
+ * A deferred tool's spec as a model that takes stubs receives it: its name and description with a pointer to the
+ * loader, and an open schema.
+ */
+function stub(spec: ToolSpec, loader: string): ToolSpec {
+  const description = `${spec.description}\nCall ${loader} with this name for its parameters first.`
+  return { name: spec.name, description, inputSchema: { type: 'object' } }
 }
 
 /** A deferred tool's spec as the model sees it before loading it: a stub, or its name and description. */
-function unloadedSpec(spec: ToolSpec, model: Model): ToolSpec {
-  if (model.modelInfo.capabilities?.deferredToolLoading === 'stubs') return stub(spec)
+function unloadedSpec(spec: ToolSpec, model: Model, loader: string): ToolSpec {
+  if (model.modelInfo.capabilities?.deferredToolLoading === 'stubs') return stub(spec, loader)
   return { name: spec.name, description: spec.description, inputSchema: { type: 'object' } }
 }
 

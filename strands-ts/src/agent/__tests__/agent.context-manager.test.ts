@@ -141,9 +141,12 @@ describe('Agent contextManager', () => {
       expect(agent.contextManager?.getTools()).toEqual([retrieval, loader])
     })
 
-    it('rejects an agent tool named load_tools when it defers tools', async () => {
+    it.each([
+      ['load_tools', 'Offload.defer', Offload.defer('toolSpecs')],
+      ['search_tools', 'the deferredToolLoading preset, which searches', 'deferredToolLoading' as const],
+    ])('rejects an agent tool named %s when %s defers tools', async (name, _strategyName, strategy) => {
       const loadTools = tool({
-        name: 'load_tools',
+        name,
         description: 'Load data.',
         inputSchema: z.object({}),
         callback: () => 'done',
@@ -151,11 +154,11 @@ describe('Agent contextManager', () => {
       const agent = new Agent({
         model: new MockMessageModel(),
         tools: [loadTools],
-        contextManager: { strategies: ['deferredToolLoading'] },
+        contextManager: { strategies: [strategy] },
       })
 
       await expect(agent.initialize()).rejects.toThrow(
-        "contextManager adds a tool named 'load_tools' for Offload.defer and the 'deferredToolLoading' preset, and " +
+        `contextManager adds a tool named '${name}' for Offload.defer and the 'deferredToolLoading' preset, and ` +
           "the agent already has one; rename the agent's tool"
       )
     })

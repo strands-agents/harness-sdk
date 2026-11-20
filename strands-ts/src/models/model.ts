@@ -5,6 +5,7 @@ import {
   ReasoningBlock,
   type Role,
   type StopReason,
+  ServerToolBlock,
   type SystemPrompt,
   TextBlock,
   ToolUseBlock,
@@ -24,6 +25,7 @@ import {
   ModelMetadataEvent,
   ModelRedactionEvent,
   type ModelStreamEvent,
+  type ServerToolDelta,
 } from './streaming.js'
 import { MaxTokensError, ModelError, normalizeError } from '../errors.js'
 import type { Redaction } from '../hooks/events.js'
@@ -299,6 +301,35 @@ export interface StreamOptions {
    * @internal
    */
   deferredTools?: ReadonlySet<string>
+
+  /**
+   * Whether a provider whose model defers tools natively may search the call's `deferredTools` with its API's own tool
+   * search, in place of the `search_tools` spec in `toolSpecs`; every other provider sends `search_tools`.
+   *
+   * @internal
+   */
+  serverToolSearch?: boolean
+}
+
+/**
+ * The tools of a model call, as deferred tool loading sends them.
+ *
+ * @internal
+ */
+export type CallTools = Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'>
+
+/**
+ * The deferral fields of a model call's options: none when the call defers no tool.
+ *
+ * @param options - Options that may defer tools
+ * @returns The `deferredTools` and `serverToolSearch` to pass on
+ * @internal
+ */
+export function deferralOptions(
+  options: Pick<StreamOptions, 'deferredTools' | 'serverToolSearch'> | undefined
+): Pick<StreamOptions, 'deferredTools' | 'serverToolSearch'> {
+  if (!options?.deferredTools?.size) return {}
+  return { deferredTools: options.deferredTools, ...(options.serverToolSearch && { serverToolSearch: true }) }
 }
 
 /**
@@ -354,6 +385,13 @@ export interface SummarizeOptions {
    * @internal
    */
   deferredTools?: ReadonlySet<string>
+
+  /**
+   * Whether the provider may search the deferred tools itself, as in {@link StreamOptions.serverToolSearch}.
+   *
+   * @internal
+   */
+  serverToolSearch?: boolean
 }
 
 /**
@@ -601,6 +639,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
       let toolName = ''
       let toolUseId = ''
       let toolReasoningSignature = ''
+      let toolNamespace = ''
+      let serverTool: ServerToolDelta | undefined
       let accumulatedReasoning: {
         text?: string
         signature?: string
@@ -629,11 +669,13 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               toolName = event.start.name
               toolUseId = event.start.toolUseId
               toolReasoningSignature = event.start.reasoningSignature ?? ''
+              toolNamespace = event.start.namespace ?? ''
             }
             accumulatedToolInput = ''
             accumulatedText = ''
             accumulatedReasoning = {}
             accumulatedCitations.reset()
+            serverTool = undefined
             break
 
           case 'modelContentBlockDeltaEvent': {
@@ -652,6 +694,9 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               case 'citationsDelta':
                 accumulatedCitations.push(event.delta.citations, event.delta.content)
                 break
+              case 'serverToolDelta':
+                serverTool = event.delta
+                break
             }
             break
           }
@@ -666,10 +711,15 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
                   toolUseId: toolUseId,
                   input: accumulatedToolInput ? JSON.parse(accumulatedToolInput) : {},
                   ...(toolReasoningSignature && { reasoningSignature: toolReasoningSignature }),
+                  ...(toolNamespace && { namespace: toolNamespace }),
                 })
                 toolUseId = '' // Reset
                 toolName = ''
                 toolReasoningSignature = ''
+                toolNamespace = ''
+              } else if (serverTool) {
+                block = new ServerToolBlock(serverTool)
+                serverTool = undefined
               } else if (Object.keys(accumulatedReasoning).length > 0) {
                 block = new ReasoningBlock({
                   ...accumulatedReasoning,
@@ -836,6 +886,9 @@ function estimateContentBlockTokens(block: ContentBlock): number {
       break
     case 'summaryBlock':
       total += heuristicText(block.text)
+      break
+    case 'serverToolBlock':
+      total += heuristicJson(block.data)
       break
     default:
       break

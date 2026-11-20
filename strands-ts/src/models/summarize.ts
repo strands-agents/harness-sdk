@@ -7,7 +7,7 @@ import { MaxTokensError } from '../errors.js'
 import { logger } from '../logging/logger.js'
 import { ModelProxy } from './model-proxy.js'
 import { createEmptyUsage, type Usage } from './streaming.js'
-import type { Model, StreamOptions, SummarizeOptions } from './model.js'
+import { deferralOptions, type Model, type StreamOptions, type SummarizeOptions } from './model.js'
 
 // A reply that stopped for any other reason, such as a cancellation or a guardrail, holds no summary.
 const SUMMARY_STOP_REASONS = new Set<StopReason>(['endTurn', 'maxTokens', 'stopSequence'])
@@ -63,7 +63,7 @@ export async function summarizeWithStream(
   const streamOptions: StreamOptions = {
     ...(options?.systemPrompt !== undefined && { systemPrompt: options.systemPrompt }),
     ...(options?.toolSpecs?.length ? { toolSpecs: options.toolSpecs } : {}),
-    ...(options?.deferredTools?.size ? { deferredTools: options.deferredTools } : {}),
+    ...deferralOptions(options),
     ...(cancelSignal && { cancelSignal }),
     ...(options?.agentMetadata && { agentMetadata: options.agentMetadata }),
   }

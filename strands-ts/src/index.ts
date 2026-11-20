@@ -75,6 +75,7 @@ export type {
   CachePointBlockData,
   GuardContentBlockData,
   SummaryBlockData,
+  ServerToolBlockData,
   GuardContentText,
   GuardContentImage,
   GuardQualifier,
@@ -102,6 +103,7 @@ export {
   GuardContentBlock,
   InjectedBlock,
   SummaryBlock,
+  ServerToolBlock,
   ToolReferenceBlock,
   UnknownBlock,
   Message,
@@ -185,6 +187,7 @@ export type {
   ToolUseInputDelta,
   ReasoningContentDelta,
   CitationsDelta,
+  ServerToolDelta,
   ContentBlockDelta,
   ModelContentBlockDeltaEventData,
   ModelMessageStopEventData,
@@ -336,8 +339,12 @@ export type {
   OffloadStrategy,
   DeferTarget,
   DeferConditions,
+  DeferConfig,
   DeferStrategy,
+  ToolSearch,
 } from './context-manager/strategies/offload/index.js'
+export { KeywordToolSearcher } from './tools/search-tools.js'
+export type { ToolSearcher, ToolSearchRequest } from './tools/search-tools.js'
 export type { TruncateConfig } from './context-manager/methods/truncate.js'
 export type { SummarizeConfig } from './context-manager/strategies/offload/summarize.js'
 export type { StrategyPresetName } from './context-manager/presets.js'

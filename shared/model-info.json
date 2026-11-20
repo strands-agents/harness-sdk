@@ -408,7 +408,8 @@
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "unsupported",
         "systemPromptPlacement": "message",
-        "defaultEffort": "low"
+        "defaultEffort": "low",
+        "deferredToolLoading": "native"
       }
     },
     "gpt-6.2-sol": {
@@ -420,7 +421,8 @@
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "unsupported",
         "systemPromptPlacement": "message",
-        "defaultEffort": "low"
+        "defaultEffort": "low",
+        "deferredToolLoading": "native"
       }
     },
     "gpt-6-astra": {
@@ -430,7 +432,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "unsupported",
-        "defaultEffort": "low"
+        "defaultEffort": "low",
+        "deferredToolLoading": "native"
       }
     },
     "gpt-6.1-sol": {
@@ -440,7 +443,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "unsupported",
-        "defaultEffort": "low"
+        "defaultEffort": "low",
+        "deferredToolLoading": "native"
       }
     },
     "openai.gpt-6.1-sol": {
@@ -460,7 +464,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "low"
+        "defaultEffort": "low",
+        "deferredToolLoading": "native"
       }
     },
     "openai.gpt-6.1-terra": {
@@ -479,7 +484,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "deferredToolLoading": "native"
       }
     },
     "gpt-6-luna": {
@@ -489,7 +495,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "deferredToolLoading": "native"
       }
     },
     "gpt-6-cyber": {
@@ -504,7 +511,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "deferredToolLoading": "native"
       }
     },
     "gpt-5.6-sol": {
@@ -514,7 +522,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "low"
+        "defaultEffort": "low",
+        "deferredToolLoading": "native"
       }
     },
     "gpt-5.6-terra": {
@@ -524,7 +533,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "deferredToolLoading": "native"
       }
     },
     "gpt-5.6-luna": {
@@ -534,7 +544,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "deferredToolLoading": "native"
       }
     },
     "openai.gpt-5.6-cyber": {
@@ -552,12 +563,16 @@
         "contextWindow": 1050000
       },
       "capabilities": {
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "deferredToolLoading": "native"
       }
     },
     "gpt-5.5-pro": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "deferredToolLoading": "native"
       }
     },
     "gpt-5.4": {
@@ -565,12 +580,16 @@
         "contextWindow": 1050000
       },
       "capabilities": {
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "deferredToolLoading": "native"
       }
     },
     "gpt-5.4-pro": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "deferredToolLoading": "native"
       }
     },
     "gpt-5.4-mini": {
@@ -578,7 +597,8 @@
         "contextWindow": 272000
       },
       "capabilities": {
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "deferredToolLoading": "native"
       }
     },
     "gpt-5.4-nano": {

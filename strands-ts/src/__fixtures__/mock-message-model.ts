@@ -220,7 +220,12 @@ export class MockMessageModel extends Model<BaseModelConfig> {
       case 'toolUseBlock':
         yield {
           type: 'modelContentBlockStartEvent',
-          start: { type: 'toolUseStart', name: block.name, toolUseId: block.toolUseId },
+          start: {
+            type: 'toolUseStart',
+            name: block.name,
+            toolUseId: block.toolUseId,
+            ...(block.namespace && { namespace: block.namespace }),
+          },
         }
         yield {
           type: 'modelContentBlockDeltaEvent',
@@ -286,6 +291,19 @@ export class MockMessageModel extends Model<BaseModelConfig> {
         yield { type: 'modelContentBlockStopEvent' }
         break
 
+      case 'serverToolBlock':
+        yield { type: 'modelContentBlockStartEvent' }
+        yield {
+          type: 'modelContentBlockDeltaEvent',
+          delta: {
+            type: 'serverToolDelta',
+            provider: block.provider,
+            data: block.data,
+            ...(block.loadedTools && { loadedTools: block.loadedTools }),
+          },
+        }
+        yield { type: 'modelContentBlockStopEvent' }
+        break
       case 'imageBlock':
       case 'videoBlock':
       case 'documentBlock':
