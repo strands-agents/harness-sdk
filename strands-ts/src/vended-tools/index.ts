@@ -11,6 +11,7 @@
  *   handoffToUser,
  *   httpRequest,
  *   notebook,
+ *   programmaticToolCaller,
  *   pythonRepl,
  *   read,
  *   sleep,
@@ -37,6 +38,7 @@ export * from './mcp-router/index.js'
 export * from './shell/index.js'
 export * from './http-request/index.js'
 export * from './notebook/index.js'
+export * from './programmatic-tool-caller/index.js'
 export * from './python-repl/index.js'
 export * from './read/index.js'
 export * from './sleep/index.js'

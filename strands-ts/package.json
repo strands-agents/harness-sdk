@@ -112,6 +112,10 @@
       "types": "./dist/src/vended-tools/stop/index.d.ts",
       "default": "./dist/src/vended-tools/stop/index.js"
     },
+    "./vended-tools/programmatic-tool-caller": {
+      "types": "./dist/src/vended-tools/programmatic-tool-caller/index.d.ts",
+      "default": "./dist/src/vended-tools/programmatic-tool-caller/index.js"
+    },
     "./vended-tools/web-fetch": {
       "types": "./dist/src/vended-tools/web-fetch/index.d.ts",
       "default": "./dist/src/vended-tools/web-fetch/index.js"
@@ -315,6 +319,7 @@
     "@opentelemetry/sdk-metrics": "^2.6.1",
     "@opentelemetry/sdk-trace-base": "^2.12.0",
     "@opentelemetry/sdk-trace-node": "^2.12.0",
+    "@pydantic/monty": "^1.6.0",
     "@smithy/types": "^4.15.1",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.3",
@@ -376,6 +381,7 @@
     "@opentelemetry/sdk-metrics": "^2.6.1",
     "@opentelemetry/sdk-trace-base": "^2.6.1",
     "@opentelemetry/sdk-trace-node": "^2.6.1",
+    "@pydantic/monty": "^1.6.0",
     "@smithy/types": "^4.15.1",
     "@tobilu/qmd": "^2.8.0",
     "express": "^5.1.0",
@@ -427,6 +433,9 @@
       "optional": true
     },
     "@opentelemetry/sdk-trace-node": {
+      "optional": true
+    },
+    "@pydantic/monty": {
       "optional": true
     },
     "@opentelemetry/sdk-metrics": {
