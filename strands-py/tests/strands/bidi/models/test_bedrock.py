@@ -15,6 +15,7 @@ import asyncio
 import base64
 import concurrent.futures
 import json
+import warnings
 from dataclasses import asdict
 from unittest.mock import ANY, AsyncMock, Mock, patch
 
@@ -490,6 +491,109 @@ def test__get_prompt_start_event_audio_output_config(boto_session, options, rate
         "audioType": "SPEECH",
     }
     assert tru_config == exp_config
+
+
+@pytest.fixture
+def weather_tool_specs():
+    return [{"name": "get_weather", "description": "Get weather", "inputSchema": {"json": {"type": "object"}}}]
+
+
+@pytest.fixture
+def exp_weather_tools():
+    return [
+        {
+            "toolSpec": {
+                "name": "get_weather",
+                "description": "Get weather",
+                "inputSchema": {"json": json.dumps({"type": "object"})},
+            }
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("tool_choice", "exp_choice"),
+    [
+        pytest.param(None, {}, id="unset"),
+        pytest.param({}, {}, id="empty"),
+        pytest.param({"auto": {}}, {"toolChoice": {"auto": {}}}, id="auto"),
+        pytest.param({"any": {}}, {"toolChoice": {"any": {}}}, id="any"),
+        pytest.param({"tool": {"name": "get_weather"}}, {"toolChoice": {"tool": {"name": "get_weather"}}}, id="tool"),
+    ],
+)
+def test__get_prompt_start_event_tool_configuration(
+    boto_session, weather_tool_specs, exp_weather_tools, tool_choice, exp_choice
+):
+    """Prompt start sends tool choice alongside tools only when it is set."""
+    model = BedrockNovaSonicModel(
+        model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, tool_choice=tool_choice
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        prompt_start = json.loads(model._get_prompt_start_event(weather_tool_specs))["event"]["promptStart"]
+
+    tru_config = prompt_start["toolConfiguration"]
+    exp_config = {"tools": exp_weather_tools, **exp_choice}
+    assert tru_config == exp_config
+
+
+def test__get_prompt_start_event_warns_on_unknown_tool_choice_name(boto_session, weather_tool_specs, exp_weather_tools):
+    """Nova Sonic ignores a forced tool name that matches no provided tool, so the SDK warns."""
+    model = BedrockNovaSonicModel(
+        model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, tool_choice={"tool": {"name": "lookup_order"}}
+    )
+
+    with pytest.warns(UserWarning, match="lookup_order"):
+        prompt_start = json.loads(model._get_prompt_start_event(weather_tool_specs))["event"]["promptStart"]
+
+    tru_config = prompt_start["toolConfiguration"]
+    exp_config = {"tools": exp_weather_tools, "toolChoice": {"tool": {"name": "lookup_order"}}}
+    assert tru_config == exp_config
+
+
+@pytest.mark.parametrize(
+    "tool_choice",
+    [
+        pytest.param({"any": {}}, id="any"),
+        pytest.param({"tool": {"name": "get_weather"}}, id="tool"),
+    ],
+)
+def test__get_prompt_start_event_tool_choice_without_tools(boto_session, tool_choice):
+    """Tool choice is not sent when there are no tools to choose from."""
+    model = BedrockNovaSonicModel(
+        model_id="amazon.nova-2-sonic-v1:0", boto_session=boto_session, tool_choice=tool_choice
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        prompt_start = json.loads(model._get_prompt_start_event([]))["event"]["promptStart"]
+
+    tru_keys = set(prompt_start)
+    exp_keys = {"promptName", "textOutputConfiguration", "audioOutputConfiguration"}
+    assert tru_keys == exp_keys
+
+
+@pytest.mark.asyncio
+async def test_restart_resends_tool_choice(
+    model_id, boto_session, mock_client, mock_stream, weather_tool_specs, exp_weather_tools
+):
+    """Tool choice is re-sent in the prompt start of every new connection."""
+    _ = mock_client
+    model = BedrockNovaSonicModel(
+        model_id=model_id, boto_session=boto_session, tool_choice={"tool": {"name": "get_weather"}}
+    )
+
+    await model.start(tools=weather_tool_specs)
+    await model.restart(tools=weather_tool_specs)
+
+    events = [json.loads(call.args[0].value.bytes_)["event"] for call in mock_stream.input_stream.send.call_args_list]
+    tru_configs = [event["promptStart"]["toolConfiguration"] for event in events if "promptStart" in event]
+    exp_config = {"tools": exp_weather_tools, "toolChoice": {"tool": {"name": "get_weather"}}}
+    exp_configs = [exp_config, exp_config]
+    assert tru_configs == exp_configs
+
+    await model.stop()
 
 
 @pytest.mark.asyncio
