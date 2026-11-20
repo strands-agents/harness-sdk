@@ -207,6 +207,11 @@ class FunctionToolMetadata:
             if self._is_special_parameter(name):
                 continue
 
+            # *args and **kwargs are not tool inputs; including them would add spurious
+            # required `args`/`kwargs` fields to the schema.
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+
             # Handle PEP 563 (from __future__ import annotations):
             # - When PEP 563 is active, param.annotation is a string literal that needs resolution
             # - When PEP 563 is not active, param.annotation is the actual type object (may include Annotated)
