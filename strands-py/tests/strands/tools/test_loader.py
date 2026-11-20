@@ -7,7 +7,7 @@ import textwrap
 import pytest
 
 from strands.tools.decorator import DecoratedFunctionTool
-from strands.tools.loader import _TOOL_MODULE_PREFIX, ToolLoader, load_tools_from_file_path
+from strands.tools.loader import _TOOL_MODULE_PREFIX, ToolLoader, load_tool_from_string, load_tools_from_file_path
 from strands.tools.tools import PythonAgentTool
 
 # Suppress deprecation warnings for deprecated ToolLoader methods being tested
@@ -40,6 +40,38 @@ def tool_path(request, tmp_path, monkeypatch):
 @pytest.fixture
 def tool_module(tool_path):
     return ".".join(os.path.splitext(tool_path)[0].split(os.sep)[-2:])
+
+
+@pytest.mark.parametrize(
+    "tool_path",
+    [
+        textwrap.dedent("""
+            import strands
+
+            @strands.tools.tool
+            def identity(a: int):
+                return a
+        """)
+    ],
+    indirect=True,
+)
+@pytest.mark.parametrize(
+    "separator",
+    ["/", pytest.param("\\", marks=pytest.mark.skipif(os.name != "nt", reason="Windows path separator"))],
+)
+def test_load_tool_from_string_home_relative(tool_path, separator, monkeypatch):
+    """Home-relative tool paths follow the current platform's home directory convention."""
+    if os.name == "nt":
+        monkeypatch.delenv("HOME", raising=False)
+        monkeypatch.setenv("USERPROFILE", os.path.dirname(tool_path))
+    else:
+        monkeypatch.setenv("HOME", os.path.dirname(tool_path))
+
+    tools = load_tool_from_string(f"~{separator}{os.path.basename(tool_path)}")
+
+    tru_results = [(tool.tool_name, tool(7)) for tool in tools]
+    exp_results = [("identity", 7)]
+    assert tru_results == exp_results
 
 
 @pytest.mark.parametrize(
