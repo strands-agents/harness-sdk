@@ -5,11 +5,6 @@ import { wrapWords } from '../../terminal/text.js'
 import type { EvalsBrowser, EvalsBrowserNotice, EvalsBrowserPlace } from './model.js'
 import { Fill, Gap, KeyHints, Line, PanelTitle, shortcut, type Tone } from './ui.js'
 
-export const BROWSER_KEY = 'o'
-export const BROWSER_HINT = 'o browser'
-
-export const browserHints = (browser: EvalsBrowser | undefined): string[] => (browser ? [BROWSER_HINT] : [])
-
 const NOTICE_INDENT = 4
 const NOTICE_TONES: Readonly<Record<EvalsBrowserNotice['tone'], Tone | undefined>> = {
   normal: undefined,
@@ -49,7 +44,7 @@ export const BrowserView = ({
   readonly onBack: () => void
 }): ReactElement => {
   useInput((input, key) => {
-    if (shortcut(input, key) === BROWSER_KEY) onRetry()
+    if (shortcut(input, key) === 'r') onRetry()
     else if (key.escape || key.return) onBack()
   })
   const rows = notice.lines.flatMap((line) => wrapWords(line, Math.max(1, width - NOTICE_INDENT)))
