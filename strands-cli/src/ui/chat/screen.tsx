@@ -1413,8 +1413,8 @@ export function ChatApp({
       const inputHasKeyboard = snapshot.panel?.kind === 'dev' && snapshot.panel.sticky === true && !panelKeyboard
       if (snapshot.panel?.kind === 'dev') {
         if (!inputHasKeyboard) return
-        // Tab always returns to the question; ↑ does too, but only with nothing typed, so history still works.
-        if (key.tab || (key.upArrow && currentEditor.input.length === 0)) {
+        // ↑ returns to the question, but only with nothing typed, so prompt history still works.
+        if (key.upArrow && currentEditor.input.length === 0) {
           setPanelKeyboard(true)
           return
         }

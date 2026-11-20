@@ -215,11 +215,11 @@ describe('optimize-harness guidance', () => {
     expect(instructions).toContain('Explain this once per chat')
   })
 
-  it('shouldAskWhichExperimentWithAWayToDecline', () => {
+  it('shouldAskWhichExperimentAndLetEscDecline', () => {
     expect(instructions).toContain('call strands_dev_status for the saved experiments')
     expect(instructions).toContain('ask selectOne, key "experiment"')
-    expect(instructions).toContain('labelled "not now"')
-    expect(instructions).toContain('Stop without planning anything when they pick "not now" or cancel')
+    expect(instructions).toContain('Do not add a decline option')
+    expect(instructions).toContain('Stop without planning anything when they cancel')
   })
 
   it('shouldAlwaysAskWhatTheRunOptimizes', () => {

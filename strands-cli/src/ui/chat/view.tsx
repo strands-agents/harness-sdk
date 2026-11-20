@@ -652,7 +652,11 @@ function ChatViewContent({
               maxRows={editorMaxRows}
               maxHeight={editorMaxHeight}
               {...(snapshot.status === 'running' || snapshot.status === 'interrupting'
-                ? { placeholder: 'Enter to queue • Tab queue actions • Alt+↑ edit queue' }
+                ? {
+                    placeholder: inputHoldsKeyboard
+                      ? 'Enter to queue • your message is sent once you answer the question above • ↑ back to it'
+                      : 'Enter to queue • Tab queue actions • Alt+↑ edit queue',
+                  }
                 : {})}
               {...(actionableCommandToken ? { actionableCommandToken } : {})}
               {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}

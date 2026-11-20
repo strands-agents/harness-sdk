@@ -29,7 +29,7 @@ const askCommand = (): DevChatCommand => {
     useInput(
       (input, key) => {
         if (key.escape) close()
-        else if (key.tab || key.downArrow) blur?.()
+        else if (key.downArrow) blur?.()
         else setKeys((current) => current + input)
       },
       { isActive: active }
@@ -70,13 +70,13 @@ const mount = async (command: DevChatCommand, rows = 40) => {
 }
 
 describe('a sticky question panel', () => {
-  it('shouldTypeIntoTheChatInputAfterTabWhileTheQuestionStaysOnScreen', async () => {
+  it('shouldTypeIntoTheChatInputAfterLeavingWhileTheQuestionStaysOnScreen', async () => {
     const { controller, press, screen } = await mount(askCommand())
     await press('/ask')
     await press('\r')
     expect(screen()).toContain('question keys:[]')
 
-    await press('\t')
+    await press('\u001b[B')
     await press('h')
     await press('i')
 
@@ -89,7 +89,7 @@ describe('a sticky question panel', () => {
     const { controller, press, screen } = await mount(askCommand())
     await press('/ask')
     await press('\r')
-    await press('\t')
+    await press('\u001b[B')
 
     await press('h')
     await press('e')
@@ -129,7 +129,7 @@ describe('a sticky question panel', () => {
     expect(screen()).toContain('question keys:[z]')
   })
 
-  it('shouldSendKeysToTheQuestionBeforeTab', async () => {
+  it('shouldSendKeysToTheQuestionBeforeLeavingIt', async () => {
     const { press, screen } = await mount(askCommand())
     await press('/ask')
     await press('\r')
@@ -139,16 +139,28 @@ describe('a sticky question panel', () => {
     expect(screen()).toContain('question keys:[x]')
   })
 
-  it('shouldTakeTheKeyboardBackOnTabFromTheInput', async () => {
+  it('shouldTakeTheKeyboardBackOnUpFromAnEmptyInput', async () => {
     const { press, screen } = await mount(askCommand())
     await press('/ask')
     await press('\r')
-    await press('\t')
-    await press('a')
+    await press('\u001b[B')
 
-    await press('\t')
+    await press('\u001b[A')
     await press('z')
 
     expect(screen()).toContain('question keys:[z]')
+  })
+
+  it('shouldKeepTheInputWhenUpArrivesWithTextTyped', async () => {
+    const { press, screen } = await mount(askCommand())
+    await press('/ask')
+    await press('\r')
+    await press('\u001b[B')
+    await press('a')
+
+    await press('\u001b[A')
+    await press('z')
+
+    expect(screen()).toContain('question keys:[]')
   })
 })

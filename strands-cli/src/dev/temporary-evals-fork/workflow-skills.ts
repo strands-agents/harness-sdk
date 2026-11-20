@@ -61,7 +61,7 @@ A developer who has not optimized before cannot judge the questions that follow,
 - It changes no file. It ends with proposed edits that you accept or reject.
 - It makes many paid model calls and can take a long time.
 
-Then ask whether they want one: call strands_dev_status for the saved experiments, then strands_dev_ask with ask selectOne, key "experiment", question "Which experiment should the run use?", one option per saved experiment with its case count as the detail, and a last option with value "none" labelled "not now". Stop without planning anything when they pick "not now" or cancel.
+Then ask which experiment to use: call strands_dev_status for the saved experiments, then strands_dev_ask with ask selectOne, key "experiment", question "Which experiment should the run use?", and one option per saved experiment with its case count as the detail. Do not add a decline option: Esc already declines, and a cancelled question is a no. Stop without planning anything when they cancel.
 
 Explain this once per chat. Skip it when the developer has already set up a run in this chat, or when they named the experiment and the scope themselves and clearly know the flow; ask the experiment question anyway unless they named the experiment.
 
