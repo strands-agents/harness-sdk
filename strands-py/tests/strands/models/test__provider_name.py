@@ -78,6 +78,24 @@ def test_model_key_names_the_provider_of_each_vended_class_and_of_its_subclasses
             ),
             ("bedrock", "openai.gpt-a"),
         ),
+        (
+            lambda: OpenAIResponsesModel(
+                client=openai.AsyncOpenAI(base_url="https://bedrock-mantle.us-east-1.api.aws/v1"),
+                model_id="openai.gpt-a",
+            ),
+            ("bedrock", "openai.gpt-a"),
+        ),
+        (
+            lambda: OpenAIModel(
+                client_args={"base_url": "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1"},
+                model_id="openai.gpt-a",
+            ),
+            ("bedrock", "openai.gpt-a"),
+        ),
+        (
+            lambda: OpenAIModel(client_args={"base_url": "https://bedrock-mantle.example.com/v1"}, model_id="m"),
+            (None, "m"),
+        ),
         (lambda: LiteLLMModel(client_args={"base_url": "https://llm.example.com"}, model_id="a/b"), ("litellm", "a/b")),
         (
             lambda: AnthropicModel(client_args={"api_key": "k"}, model_id="claude-a", max_tokens=1),
@@ -90,6 +108,18 @@ def test_model_key_names_the_provider_of_each_vended_class_and_of_its_subclasses
                 max_tokens=1,
             ),
             ("bedrock", "anthropic.claude-a"),
+        ),
+        pytest.param(
+            lambda: AnthropicModel(
+                client=anthropic.AsyncAnthropicBedrockMantle(aws_region="us-west-2"),
+                model_id="anthropic.claude-a",
+                max_tokens=1,
+            ),
+            ("bedrock", "anthropic.claude-a"),
+            marks=pytest.mark.skipif(
+                not hasattr(anthropic, "AsyncAnthropicBedrockMantle"),
+                reason="anthropic before 0.91 has no Mantle client",
+            ),
         ),
         (lambda: AnthropicModel(client=object(), model_id="claude-a", max_tokens=1), (None, "claude-a")),
         (lambda: MockedModelProvider([]), (None, None)),
@@ -106,9 +136,13 @@ def test_model_key_names_the_provider_of_each_vended_class_and_of_its_subclasses
         "openai-client-without-base-url",
         "openai-responses-on-mantle",
         "openai-on-bedrock-runtime",
+        "openai-responses-client-with-mantle-base-url",
+        "openai-with-bedrock-runtime-base-url",
+        "openai-with-a-bedrock-lookalike-base-url",
         "litellm-is-not-openai",
         "anthropic",
         "anthropic-on-bedrock-client",
+        "anthropic-on-mantle-client",
         "anthropic-on-unknown-client",
         "custom-model",
         "no-model",

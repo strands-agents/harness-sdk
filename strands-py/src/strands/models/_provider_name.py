@@ -4,6 +4,7 @@ Internal: the names are derived from the vended model classes until a model repo
 """
 
 import os
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -22,6 +23,7 @@ _PROVIDER_NAMES = {
     "strands.models.sagemaker.SageMakerAIModel": "sagemaker",
     "strands.models.writer.WriterModel": "writer",
 }
+_BEDROCK_HOSTS = re.compile(r"bedrock-mantle\.[a-z0-9-]+\.api\.aws|bedrock-runtime\.[a-z0-9-]+\.amazonaws\.com")
 _ANTHROPIC_CLIENTS = {
     "AsyncAnthropic": "anthropic",
     "AsyncAnthropicBedrock": "bedrock",
@@ -61,11 +63,14 @@ def _provider_name(model: Any) -> str | None:
 
 
 def _openai_provider_name(model: Any) -> str | None:
-    """Name an OpenAI-class model by its endpoint; any base URL other than OpenAI's or Bedrock's may be any vendor."""
+    """Name an OpenAI-class model by its endpoint; a base URL other than OpenAI's or Bedrock's may be any vendor."""
     if model._bedrock_mantle_config is not None:
         return "bedrock"
     if model._custom_client is not None:
         base_url = model._custom_client.base_url
     else:
         base_url = model.client_args.get("base_url") or os.environ.get("OPENAI_BASE_URL")
-    return "openai" if base_url is None or urlparse(str(base_url)).hostname == "api.openai.com" else None
+    host = "api.openai.com" if base_url is None else urlparse(str(base_url)).hostname or ""
+    if host == "api.openai.com":
+        return "openai"
+    return "bedrock" if _BEDROCK_HOSTS.fullmatch(host) else None

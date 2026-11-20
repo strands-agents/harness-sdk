@@ -148,7 +148,7 @@ can save the records and pass them to `estimate()` later.
 For the SDK's model classes, `provider_name` is one of `anthropic`, `bedrock`, `google`,
 `litellm`, `llamaapi`, `llamacpp`, `mistral`, `ollama`, `openai`, `sagemaker`, or `writer`.
 A model that reaches Bedrock through another class, such as `OpenAIModel` with
-`bedrock_mantle_config`, is `bedrock` too. A decision model reports the provider name from
+`bedrock_mantle_config` or a Bedrock base URL, is `bedrock` too. A decision model reports the provider name from
 its own metadata. The name is `None` when the SDK cannot tell, as for a custom model or an
 OpenAI-compatible endpoint with its own base URL. A SageMaker model's `model_id` is its
 endpoint name.

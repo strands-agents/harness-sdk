@@ -385,11 +385,13 @@ def test_estimate_leaves_a_bundled_price_with_a_fee_per_request_unpriced():
     assert tru_estimate.unpriced == tru_estimate.models
 
 
-def test_estimate_leaves_a_model_id_the_bundled_data_does_not_match_unpriced():
+@pytest.mark.parametrize(("provider_name", "provider_id"), [("bedrock", "aws"), ("litellm", None)])
+def test_estimate_leaves_a_model_id_the_bundled_data_does_not_match_unpriced(provider_name, provider_id):
+    usage = genai_prices.Usage(input_tokens=1, output_tokens=1)
     with pytest.raises(LookupError):
-        genai_prices.calc_price(genai_prices.Usage(input_tokens=1, output_tokens=1), "no-such-model", provider_id="aws")
+        genai_prices.calc_price(usage, "no-such-model", provider_id=provider_id)
 
-    tru_estimate = GenAIPricesEstimator().estimate(_request((_usage(1, 1), "bedrock", "no-such-model")))
+    tru_estimate = GenAIPricesEstimator().estimate(_request((_usage(1, 1), provider_name, "no-such-model")))
 
     assert tru_estimate.unpriced == tru_estimate.models
 
