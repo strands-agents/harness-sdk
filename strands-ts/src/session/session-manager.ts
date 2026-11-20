@@ -364,11 +364,14 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
   }
 
   private async _restoreArchiveData(agent: LocalAgent, snapshot: Snapshot): Promise<void> {
-    if (!('archive' in snapshot.data) || !snapshot.data.archive) return
+    // `stash` is the pre-rename key. An inline snapshot under it holds the only copy of content the
+    // agent had already offloaded, so a read falls back to it; writes only ever go to `archive`.
+    const raw = snapshot.data.archive ?? snapshot.data.stash
+    if (!raw) return
     const archive = agent.contextManager?.archive
     if (!archive) return
 
-    const archiveData = snapshot.data.archive as ArchiveSnapshotData
+    const archiveData = raw as ArchiveSnapshotData
     if (archiveData.location === 'external') {
       const currentType = archive.storageTypeName
       if (archiveData.storageType && currentType && archiveData.storageType !== currentType) {

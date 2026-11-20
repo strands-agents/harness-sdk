@@ -23,7 +23,7 @@ export type {
   /** @deprecated Import `ContextState` from `@strands-agents/sdk/context-manager`. */
   ContextState,
   /** @deprecated Renamed to `ArchiveConfig`; import it from `@strands-agents/sdk/context-manager`. */
-  ArchiveConfig,
+  ArchiveConfig as StashConfig,
 } from '../context-manager/types.js'
 export {
   /** @deprecated Import `Offload` from `@strands-agents/sdk/context-manager`. */

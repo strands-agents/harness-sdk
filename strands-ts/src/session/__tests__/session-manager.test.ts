@@ -878,6 +878,54 @@ describe('SessionManager — archive integration', () => {
       expect(restored2?.data).toEqual({ text: 'world' })
     })
 
+    it('restores inline archive data written under the pre-rename stash key', async () => {
+      const snapshot = createTestSnapshot()
+      snapshot.data.stash = { location: 'inline', entries: { 'tool-1_0': { text: 'hello' } } } as JSONValue
+      await snapshotStorage.saveSnapshot({
+        location: { sessionId: 'test-session', scope: 'agent', scopeId: 'agent' },
+        snapshotId: 'latest',
+        isLatest: true,
+        snapshot,
+      })
+
+      sessionManager = new SessionManager({
+        sessionId: 'test-session',
+        storage: { snapshot: snapshotStorage },
+      })
+      sessionManager.initAgent(createMockAgentWithHooks())
+
+      const { agent, archive } = createAgentWithArchive('test-session')
+      const result = await sessionManager.restoreSnapshot({ target: agent })
+
+      expect(result).toBe(true)
+      // The inline entries are the only copy of content already offloaded, so a snapshot written
+      // before the rename has to keep resolving or every ref in it dangles.
+      expect((await archive.retrieve('tool-1_0'))?.data).toEqual({ text: 'hello' })
+    })
+
+    it('prefers the archive key when a snapshot carries both', async () => {
+      const snapshot = createTestSnapshot()
+      snapshot.data.stash = { location: 'inline', entries: { 'tool-1_0': { text: 'stale' } } } as JSONValue
+      snapshot.data.archive = { location: 'inline', entries: { 'tool-1_0': { text: 'current' } } } as JSONValue
+      await snapshotStorage.saveSnapshot({
+        location: { sessionId: 'test-session', scope: 'agent', scopeId: 'agent' },
+        snapshotId: 'latest',
+        isLatest: true,
+        snapshot,
+      })
+
+      sessionManager = new SessionManager({
+        sessionId: 'test-session',
+        storage: { snapshot: snapshotStorage },
+      })
+      sessionManager.initAgent(createMockAgentWithHooks())
+
+      const { agent, archive } = createAgentWithArchive('test-session')
+      await sessionManager.restoreSnapshot({ target: agent })
+
+      expect((await archive.retrieve('tool-1_0'))?.data).toEqual({ text: 'current' })
+    })
+
     it('skips archive restore when location is external', async () => {
       const snapshot = createTestSnapshot()
       snapshot.data.archive = { location: 'external' } as JSONValue

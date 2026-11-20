@@ -23,6 +23,9 @@ export interface ContextStrategy {
   /**
    * Called once when the ContextManager is attached to an agent.
    * Strategies can use this to register hooks (e.g., eager offloading on message arrival).
+   *
+   * `archive` is `@internal` — it is not exported, so its shape is not a stable contract for
+   * strategies outside the SDK. Pass it to `Offload` strategies rather than calling it directly.
    */
   init?(agent: LocalAgent, archive?: Archive): void
 
@@ -53,7 +56,12 @@ export interface ContextState {
    */
   overflow?: boolean
 
-  /** L1 archive for persisting offloaded content. Present when storage is configured. */
+  /**
+   * L1 archive for persisting offloaded content. Present when storage is configured.
+   *
+   * `Archive` is `@internal` and not exported, so its shape is not a stable contract for strategies
+   * outside the SDK.
+   */
   archive?: Archive
 
   /** The request this reduction runs for, if any; a nested call that joins it adds to the request's usage, but the request's limits don't apply. */
