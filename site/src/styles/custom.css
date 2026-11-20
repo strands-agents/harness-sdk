@@ -103,9 +103,11 @@ a[aria-current="page"]:hover {
 	color: var(--sl-color-text-accent, var(--strands-green));
 }
 
-/* Layout */
+/* Layout: 55rem halves the code blocks that scroll sideways at 50rem
+   (about 13% of them down to 6%) and keeps prose near 110 characters a line.
+   Wider buys little for code and makes prose lines long. */
 :root {
-	--sl-content-width: 50rem;
+	--sl-content-width: 55rem;
 }
 
 /* Scroll shadows on wide tables, code, and tab lists: the surface-colored
