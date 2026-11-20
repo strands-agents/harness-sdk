@@ -14,6 +14,7 @@ from ..models._model_proxy import ModelProxy
 from ..types.content import ContentBlock, Message, MessageMetadata, Messages, Role, _ensure_tracking_id
 from ..types.offload import OffloadMethod
 from .placeholder import carried_tokens, offload_placeholder
+from .types import is_tool_use_block
 
 if TYPE_CHECKING:
     from ..models.model import Model
@@ -113,18 +114,30 @@ def new_message(role: Role, content: list[ContentBlock]) -> Message:
 def insert_marker(messages: Messages, index: int, marker: ContentBlock) -> None:
     """Add a marker as assistant content at the gap left by removed messages.
 
-    The marker is appended to an assistant message beside the gap, which keeps that message's tracking id and block
-    indices for stash refs, or becomes its own assistant message. It never joins message 0, and the last message is
-    never removed, so a new marker never ends the history.
+    The marker joins an assistant message beside the gap, before any trailing ``toolUse`` blocks, which keeps that
+    message's tracking id for stash refs; otherwise it becomes its own assistant message. It never joins message 0,
+    and the last message is never removed, so a new marker never ends the history.
     """
     index = max(1, min(index, len(messages)))
     for neighbor in (index - 1, index):
         if 0 < neighbor < len(messages) and messages[neighbor]["role"] == "assistant":
             carrier = messages[neighbor].copy()
-            carrier["content"] = [*carrier["content"], marker]
+            carrier["content"] = _content_with_marker(carrier["content"], marker)
             messages[neighbor] = carrier
             return
     messages.insert(index, new_message("assistant", [marker]))
+
+
+def _content_with_marker(content: list[ContentBlock], marker: ContentBlock) -> list[ContentBlock]:
+    """The carrier's content with the marker added before any trailing ``toolUse`` blocks.
+
+    Anthropic models with thinking enabled reject a request whose assistant message carries a text block after a
+    ``toolUse`` block, as assistant prefill.
+    """
+    end = len(content)
+    while end > 0 and is_tool_use_block(content[end - 1]):
+        end -= 1
+    return [*content[:end], marker, *content[end:]]
 
 
 def repair_alternation(messages: Messages) -> None:

@@ -22,7 +22,7 @@
   max-width: none;
 }
 
-/* The catalog is a grid, not prose, so give it more room than the 50rem prose
+/* The catalog is a grid, not prose, so give it more room than the 55rem prose
    column and let it widen on large screens: cards stay wide enough to show full
    titles and descriptions. Scoped to this page with :has() (catalog.css only
    loads on /integrations). */
