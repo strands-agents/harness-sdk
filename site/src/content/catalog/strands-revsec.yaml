@@ -1,0 +1,9 @@
+name: strands-revsec
+description: RevSec security checks for Strands Agents via lifecycle hooks, covering tool calls before they run and prompts and tool results before the model reads them.
+integrationType: plugin
+maintainedBy: partner
+languages:
+  python:
+    package: strands-revsec
+github: https://github.com/RevUp-AI/strands-revsec
+addedDate: 2026-11-20
