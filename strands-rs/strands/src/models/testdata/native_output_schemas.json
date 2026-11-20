@@ -1,5 +1,5 @@
 {
-  "$comment": "JSON schemas strands-ts builds from the zod schemas in models/__tests__/native-output.test.ts (zodSchemaToJsonSchema), with the Anthropic SDK transformJSONSchema output where it succeeds.",
+  "$comment": "JSON schemas strands-ts builds from the zod schemas in models/__tests__/native-output.test.ts (zodSchemaToJsonSchema), with the Anthropic SDK (@anthropic-ai/sdk 1.7.0) transformJSONSchema output where it succeeds.",
   "Person": {
     "schema": {
       "type": "object",
@@ -262,6 +262,10 @@
             "a",
             "b"
           ]
+        },
+        "version": {
+          "type": "number",
+          "const": 1
         }
       },
       "required": [
@@ -270,7 +274,8 @@
         "founded",
         "score",
         "color",
-        "kind"
+        "kind",
+        "version"
       ],
       "additionalProperties": false
     },
@@ -336,12 +341,19 @@
           "description": "{minimum: 0}"
         },
         "color": {
-          "type": "string",
-          "description": "{enum: [\"red\",\"blue\"]}"
+          "enum": [
+            "red",
+            "blue"
+          ]
         },
         "kind": {
-          "type": "string",
-          "description": "{enum: [\"a\",\"b\"]}"
+          "enum": [
+            "a",
+            "b"
+          ]
+        },
+        "version": {
+          "const": 1
         }
       },
       "additionalProperties": false,
@@ -351,7 +363,8 @@
         "founded",
         "score",
         "color",
-        "kind"
+        "kind",
+        "version"
       ]
     }
   },
@@ -648,6 +661,21 @@
         "value"
       ],
       "additionalProperties": false
+    },
+    "anthropic": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "enum": [
+            "a",
+            1
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "value"
+      ]
     }
   },
   "WithCatchall": {
@@ -688,10 +716,15 @@
             "red",
             "blue"
           ]
+        },
+        "version": {
+          "type": "number",
+          "const": 1
         }
       },
       "required": [
-        "color"
+        "color",
+        "version"
       ],
       "additionalProperties": false
     },
@@ -699,13 +732,19 @@
       "type": "object",
       "properties": {
         "color": {
-          "type": "string",
-          "description": "{enum: [\"red\",\"blue\"]}"
+          "enum": [
+            "red",
+            "blue"
+          ]
+        },
+        "version": {
+          "const": 1
         }
       },
       "additionalProperties": false,
       "required": [
-        "color"
+        "color",
+        "version"
       ]
     }
   }
