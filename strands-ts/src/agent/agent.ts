@@ -51,6 +51,12 @@ import { PluginRegistry } from '../plugins/registry.js'
 import { SlidingWindowConversationManager } from '../conversation-manager/sliding-window-conversation-manager.js'
 import { NullConversationManager } from '../conversation-manager/null-conversation-manager.js'
 import { ConversationManager } from '../conversation-manager/conversation-manager.js'
+import {
+  InvocationQueue,
+  validateConcurrentInvocationMode,
+  type ConcurrentInvocationMode,
+  type PendingInvocation,
+} from './invocation-queue.js'
 import { AgentDelegation } from './agent-delegation.js'
 import type { Storage } from '../storage/storage.js'
 import { HookRegistryImplementation } from '../hooks/registry.js'
@@ -350,6 +356,47 @@ export type AgentConfig = {
    * this agent-level default.
    */
   storage?: Storage
+
+  /**
+   * Behavior when `invoke()` or `stream()` is called while an invocation is already
+   * in progress.
+   *
+   * - `'throw'` (default): reject the new call with {@link ConcurrentInvocationError}.
+   * - `'cancelPrevious'`: latest wins — cancel the running invocation (in-flight model
+   *   call and tools are aborted) and displace any queued `'cancelPrevious'` /
+   *   `'stopPrevious'` predecessors (they reject with
+   *   {@link PendingInvocationCancelledError}); the new call runs next.
+   * - `'stopPrevious'`: latest wins, without aborting work in flight — the running
+   *   invocation is stopped with `cancel({ afterCurrentTools: true })`: it finishes its
+   *   current step (model call and tool batch), then ends `'cancelled'` instead of calling
+   *   the model again, or with its natural `stopReason` if the model answered without
+   *   tools. Queued `'cancelPrevious'` / `'stopPrevious'` predecessors are displaced; the
+   *   new call runs next, so it waits for the slowest in-flight tool. The stop is issued
+   *   when the call is queued and stays in effect if the caller then leaves the queue.
+   * - `'queue'`: wait FIFO; the call runs as its own invocation when the current one
+   *   finishes. The queue is unbounded; a queued call leaves it when its `cancelSignal`
+   *   aborts (rejecting with {@link PendingInvocationCancelledError}). Bound it host-side
+   *   via {@link Agent.pendingInvocations} and `ifBusy: 'throw'`.
+   *
+   * An agent awaiting an interrupt response counts as busy: under any mode other than
+   * `'throw'`, a non-resume call parks in the queue and runs once the resume completes
+   * (the resume stops for a parked `'stopPrevious'` / `'cancelPrevious'` caller after its
+   * current step: the pending tool batch for a tool interrupt, or the model call and tool
+   * batch that consume the response for a hook-raised one). Abandoning the interrupt
+   * releases the parked callers: by loading a snapshot taken before it (a snapshot that
+   * excludes `interrupts` leaves the interrupt in place), or with
+   * `cancel({ cancelBackgroundTasks: true })` when background tasks raised every open
+   * interrupt. A resume cancelled before its pending tool batch leaves the interrupt in
+   * place, so parked callers wait for a later resume; a plain `cancel()` does not release
+   * them, each caller's own `cancelSignal` does. Under `'throw'` such a call rejects at once.
+   *
+   * Callers can override per call via {@link InvokeOptions.ifBusy}. Under any mode
+   * other than `'throw'`, a tool or hook of the running invocation must not `await`
+   * its own agent's `invoke()`/`stream()` — the inner call would wait for the
+   * invocation it is part of (cancellation is cooperative and cannot rescue it) and
+   * deadlock.
+   */
+  concurrentInvocationMode?: ConcurrentInvocationMode
 }
 
 /**
@@ -558,9 +605,20 @@ export class Agent implements LocalAgent, InvokableAgent {
   private _mcpClients: McpClient[]
   private _initialized: boolean
   private _isInvoking: boolean = false
+  /** The invocation that raised the pending interrupt, so a resume continues the same request. Cleared with the interrupt state. */
+  private _interruptedInvocationContext: InvocationContextImpl | undefined
+  private readonly _concurrentInvocationMode: ConcurrentInvocationMode
+  private readonly _invocationQueue: InvocationQueue
+  /** TrackingIds minted when the current call was queued, reused for its input messages when it runs. */
+  private _queuedInputTrackingIds: readonly string[] | undefined
   private _abortController = new AbortController()
   private _abortSignal: AbortSignal = this._abortController.signal
   private _deferredCancel: boolean = false
+  /**
+   * Whether the pending deferred cancel was issued for a waiting latest-wins caller.
+   * @internal
+   */
+  _stoppedForCaller: boolean = false
   private _cancelMessage?: string | undefined
   private _printer?: Printer
   private _structuredOutputSchema?: z.ZodSchema | undefined
@@ -672,6 +730,13 @@ export class Agent implements LocalAgent, InvokableAgent {
     // when a delegate tool is added (construction, plugin getTools, MCP, runtime).
     // The plugin is a no-op when no delegation tools fire.
     const hasAgentDelegation = (config?.plugins ?? []).some((p) => p.name === 'strands:agent-delegation')
+
+    this._concurrentInvocationMode = validateConcurrentInvocationMode(
+      config?.concurrentInvocationMode ?? 'throw',
+      'concurrentInvocationMode'
+    )
+    this._invocationQueue = new InvocationQueue()
+
     this._backgroundTasks = config?.backgroundTasks
       ? new BackgroundTasks(
           config.backgroundTasks === true ? {} : config.backgroundTasks,
@@ -948,16 +1013,111 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Acquires the invocation lock. Throws if an invocation is already in progress.
-   * Callers must release via try/finally with `this._isInvoking = false`.
+   * Acquires the invocation turn, following `options.ifBusy` (falling back to the
+   * agent's `concurrentInvocationMode`) when the agent is busy. Callers must release
+   * via try/finally with {@link _releaseTurn}.
    */
-  private acquireLock(): void {
-    if (this._isInvoking) {
+  private async _acquireTurn(args: InvokeArgs, options?: InvokeOptions): Promise<void> {
+    if (options?.ifBusy !== undefined) validateConcurrentInvocationMode(options.ifBusy, 'ifBusy')
+    const strategy = options?.ifBusy ?? this._concurrentInvocationMode
+    // An agent awaiting an interrupt response counts as busy for every caller but the resume
+    // (and for 'throw', which fails fast on the input instead).
+    const awaitingResume =
+      !this._isInvoking &&
+      this._interruptState.activated &&
+      strategy !== 'throw' &&
+      this._extractInterruptResponses(args).length === 0
+    if (!this._isInvoking && !awaitingResume) {
+      this._isInvoking = true
+      this.resetCancelState()
+      this._queuedInputTrackingIds = undefined
+      return
+    }
+    if (strategy === 'throw') {
       throw new ConcurrentInvocationError(
-        'Agent is already processing an invocation. Wait for the current invoke() or stream() call to complete before invoking again.'
+        "Agent is already processing an invocation. Wait for the current invoke() or stream() call to complete, or set concurrentInvocationMode / ifBusy to 'queue', 'stopPrevious', or 'cancelPrevious'."
       )
     }
-    this._isInvoking = true
+    // Normalized up front so the queue can show the waiting input and a blank prompt is
+    // rejected now rather than when its turn comes. The call still runs on its raw args
+    // (middleware sees the same shape as for a direct call); only the trackingIds the queue
+    // showed are carried over, so a queued message keeps its id in the transcript.
+    const messages = this._normalizeInput(args)
+    // A resume continues the interrupted request, so it never displaces, stops, or cancels
+    // anything; and with nothing running to cancel while an interrupt awaits its response, a
+    // 'cancelPrevious' caller parks like 'stopPrevious'.
+    const resumesInterrupt = this._extractInterruptResponses(args).length > 0
+    const mode = resumesInterrupt
+      ? 'queue'
+      : awaitingResume && strategy === 'cancelPrevious'
+        ? 'stopPrevious'
+        : strategy
+    const turn = this._invocationQueue.wait({
+      mode,
+      messages,
+      resumesInterrupt,
+      ...(options?.cancelSignal !== undefined && { cancelSignal: options.cancelSignal }),
+    })
+    // An already-aborted caller never enters the queue; don't cancel the running
+    // invocation on its behalf.
+    if (options?.cancelSignal?.aborted !== true) {
+      if (mode === 'cancelPrevious') this.cancel()
+      if (mode === 'stopPrevious') this._stopForCaller()
+    }
+    await turn
+    this._queuedInputTrackingIds = messages.map((message) => message.trackingId)
+  }
+
+  /**
+   * Registers a listener invoked whenever an invocation enters the pending queue.
+   *
+   * @returns A function that detaches the listener
+   * @internal
+   */
+  _onInvocationEnqueued(listener: () => void): () => void {
+    return this._invocationQueue.onEnqueue(listener)
+  }
+
+  /**
+   * Releases the invocation turn: hands the lock to the next queued invocation, or
+   * clears the busy flag when the queue is empty.
+   */
+  private _releaseTurn(): void {
+    // While an interrupt awaits its response, queued callers stay parked: only a resume can
+    // run (one may already be queued), and the rest are handed the turn once it completes
+    // (or the interrupt is abandoned).
+    this._queuedInputTrackingIds = undefined
+    const handedOff = this._interruptState.activated
+      ? this._invocationQueue.handoffResume()
+      : this._invocationQueue.handoff()
+    // Reset here, after AgentResultEvent, so consumers can still read cancelSignal on it. On
+    // handoff this also installs the successor's controller synchronously, so a cancel()
+    // arriving before its first loop pass targets the successor, not the predecessor's.
+    this.resetCancelState()
+    if (!handedOff) {
+      this._isInvoking = false
+    }
+  }
+
+  /**
+   * Gives a queued call's input messages the trackingIds `pendingInvocations` showed for them,
+   * so a queued message keeps its identity when it lands in the transcript. Ids are matched by
+   * position and cleared when the pass ends; a middleware that changed the number of messages
+   * gets fresh ids, and one that reorders them is not reconciled.
+   */
+  private _withQueuedTrackingIds(messages: Message[]): Message[] {
+    const queuedIds = this._queuedInputTrackingIds
+    if (!queuedIds || queuedIds.length !== messages.length) return messages
+    return messages.map((message, index) =>
+      message.trackingId === queuedIds[index]
+        ? message
+        : new Message({
+            role: message.role,
+            content: message.content,
+            trackingId: queuedIds[index]!,
+            ...(message.metadata !== undefined && { metadata: message.metadata }),
+          })
+    )
   }
 
   /**
@@ -1001,8 +1161,9 @@ export class Agent implements LocalAgent, InvokableAgent {
 
   /**
    * Whether a hook's `resume` starts another pass. Never once one of the
-   * request's limits is reached: it stays reached for the rest of the request,
-   * so that pass would stop at once.
+   * request's limits is reached, unless the pass finishes an interrupted turn:
+   * the limit stays reached for the rest of the request, so any other pass
+   * would stop at once.
    *
    * @param event - The event whose callbacks may have set `resume`
    * @param invocationContext - The state of the request the pass ran in
@@ -1012,6 +1173,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     if (event.resume === undefined) return false
     const limitStopReason = reachedLimit(invocationContext)
     if (limitStopReason === undefined) return true
+    if (this._interruptState.pendingToolExecution && invocationContext.hasInterruptedTurn) return true
     logger.debug(`limit=<${limitStopReason}> | ignoring resume because the request reached its limit`)
     return false
   }
@@ -1061,6 +1223,24 @@ export class Agent implements LocalAgent, InvokableAgent {
     return this._isInvoking
   }
 
+  /** The agent-level concurrency mode ({@link AgentConfig.concurrentInvocationMode}). */
+  get concurrentInvocationMode(): ConcurrentInvocationMode {
+    return this._concurrentInvocationMode
+  }
+
+  /**
+   * Calls waiting for the agent's turn, in run order (a point-in-time snapshot with each
+   * call's input messages, e.g. to render a queue). A queued message keeps its `trackingId`
+   * when it lands in the transcript, so a rendered bubble can become the transcript entry.
+   * Empty under `'throw'`. A waiting call is removed by aborting the `cancelSignal` its caller
+   * passed. The queue lives in memory only:
+   * it is not part of {@link takeSnapshot}, so after a restart the host re-submits what it
+   * still shows as pending.
+   */
+  get pendingInvocations(): readonly PendingInvocation[] {
+    return this._invocationQueue.list()
+  }
+
   /**
    * Direct tool calling accessor.
    *
@@ -1106,6 +1286,12 @@ export class Agent implements LocalAgent, InvokableAgent {
    * For cancellation driven from outside the agent, prefer the `cancelSignal`
    * option on `invoke` / `stream`.
    *
+   * After an immediate cancel, a hook's `AfterInvocationEvent.resume` still starts
+   * another pass.
+   *
+   * Only the *running* invocation is cancelled; a queued invocation is removed by
+   * aborting the `cancelSignal` its caller passed.
+   *
    * @param options - See {@link CancelOptions} for `message`, `afterCurrentTools`, and `cancelBackgroundTasks`.
    *
    * @example
@@ -1126,10 +1312,14 @@ export class Agent implements LocalAgent, InvokableAgent {
       this._backgroundTasks?.cancelAll()
     }
     if (!this._isInvoking) {
+      // Cancelling the tasks may have dropped the last interrupt.
+      this._releaseParkedCallers()
       return
     }
     if (options?.message !== undefined) {
       this._cancelMessage = options.message
+      // Whoever wrote the final message owns the stop: it is no longer one issued for a waiting caller.
+      this._stoppedForCaller = false
     }
     if (options?.afterCurrentTools) {
       this._deferredCancel = true
@@ -1176,7 +1366,15 @@ export class Agent implements LocalAgent, InvokableAgent {
     this._abortController = new AbortController()
     this._abortSignal = this._abortController.signal
     this._deferredCancel = false
+    this._stoppedForCaller = false
     this._cancelMessage = undefined
+  }
+
+  /** Stops the running invocation after its current step for a waiting caller; a stop already pending is left as is. */
+  private _stopForCaller(): void {
+    if (!this._isInvoking || this._deferredCancel) return
+    this.cancel({ message: 'Superseded by a new request', afterCurrentTools: true })
+    this._stoppedForCaller = true
   }
 
   /**
@@ -1248,6 +1446,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * assistant messages containing tool uses are only added after tool execution succeeds
    * with valid toolResponses
    *
+   * Generators are lazy: the invocation starts (and, under queueing concurrency,
+   * enters the invocation queue) at the first iteration, not when stream() returns.
+   *
    * @param args - Arguments for invoking the agent
    * @param options - Optional per-invocation options
    * @returns Async generator that yields AgentStreamEvent objects and returns AgentResult
@@ -1297,7 +1498,9 @@ export class Agent implements LocalAgent, InvokableAgent {
     args: InvokeArgs,
     options?: InvokeOptions
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
-    this.acquireLock()
+    await this._acquireTurn(args, options)
+    // A latest-wins caller still parked behind the interrupt this call resumes: stop after its step.
+    if (this._invocationQueue.hasTakeoverRequest()) this._stopForCaller()
     let continuationEvent: AfterInvocationEvent | undefined
     try {
       await this.initialize()
@@ -1306,13 +1509,33 @@ export class Agent implements LocalAgent, InvokableAgent {
       const invocationState: InvocationState = options?.invocationState ?? {}
       const resolvedOptions: InvokeOptions = options?.invocationState ? options : { ...options, invocationState }
 
-      const invocationContext = resolveInvocationContext(options)
+      // A resume continues the request that raised the interrupt unless the caller joins
+      // another one explicitly.
+      const resumedContext =
+        this._interruptState.activated && options?.invocationContext === undefined
+          ? this._interruptedInvocationContext
+          : undefined
+      const invocationContext = resolveInvocationContext(
+        resumedContext ? { ...options, invocationContext: resumedContext } : options
+      )
+
+      // Reject non-resume input while interrupted before any hook fires, so a rejected call is
+      // never observed as an invocation (a plugin would otherwise see a Before/After pair with no result).
+      if (this._interruptState.activated && this._extractInterruptResponses(args).length === 0) {
+        throw new TypeError(INTERRUPTED_STATE_MESSAGE)
+      }
 
       let currentArgs: InvokeArgs = args
+      let firstPass = true
 
       while (true) {
-        // Fresh AbortController per iteration, composed with any external signal.
-        this.resetCancelState()
+        // Fresh cancel state per iteration, composed with any external signal. The first
+        // pass adopts the state installed at turn acquisition, so a cancel that landed
+        // between acquiring the turn and this point is observed, not wiped.
+        if (!firstPass) {
+          this.resetCancelState()
+        }
+        firstPass = false
         if (resolvedOptions?.cancelSignal) {
           this._abortSignal = AbortSignal.any([this._abortController.signal, resolvedOptions.cancelSignal])
         }
@@ -1323,7 +1546,7 @@ export class Agent implements LocalAgent, InvokableAgent {
           this._interruptState.resume(interruptResponses)
         }
 
-        const inputMessages = this._normalizeInput(currentArgs)
+        const inputMessages = this._withQueuedTrackingIds(this._normalizeInput(currentArgs))
 
         // Hooks fire outside middleware — always, even on short-circuit.
         const beforeInvocationEvent = new BeforeInvocationEvent({
@@ -1341,15 +1564,7 @@ export class Agent implements LocalAgent, InvokableAgent {
               : 'invocation denied by hook'
           const message = new Message({ role: 'assistant', content: [new TextBlock(cancelText)] })
           yield this._appendMessage(message, invocationState, invocationContext)
-          const afterEvent = new AfterInvocationEvent({ agent: this, invocationContext, invocationState })
-          await continuations.abandon(
-            continuationEvent,
-            new Error('Continuation was not incorporated into agent history')
-          )
-          continuationEvent = afterEvent
-          await this._invokeCallbacks(afterEvent)
-          yield afterEvent
-          return new AgentResult({
+          const deniedResult = new AgentResult({
             invocationContext,
             stopReason: 'endTurn',
             lastMessage: message,
@@ -1357,11 +1572,25 @@ export class Agent implements LocalAgent, InvokableAgent {
             metrics: this._meter.metrics,
             invocationState,
           })
+          const afterEvent = new AfterInvocationEvent({
+            agent: this,
+            invocationContext,
+            invocationState,
+            result: deniedResult,
+          })
+          await continuations.abandon(
+            continuationEvent,
+            new Error('Continuation was not incorporated into agent history')
+          )
+          continuationEvent = afterEvent
+          await this._invokeCallbacks(afterEvent)
+          yield afterEvent
+          return deniedResult
         }
 
         let result: AgentResult | undefined
         let caughtError: Error | undefined
-        const afterInvocationEvent = new AfterInvocationEvent({ agent: this, invocationContext, invocationState })
+        let afterInvocationEvent!: AfterInvocationEvent
         try {
           result = yield* this._streamWithMiddleware(
             currentArgs,
@@ -1374,6 +1603,8 @@ export class Agent implements LocalAgent, InvokableAgent {
         } catch (error) {
           caughtError = error as Error
         } finally {
+          // Queued ids belong to this pass's input only, even if middleware skipped the append.
+          this._queuedInputTrackingIds = undefined
           // AfterInvocationEvent always fires — even on error or consumer break. Outside middleware.
           // Invoke hooks (so .resume can be set) but don't yield in finally (yields in finally
           // suspend the generator on consumer break instead of completing cleanup).
@@ -1381,6 +1612,12 @@ export class Agent implements LocalAgent, InvokableAgent {
             continuationEvent,
             new Error('Continuation was not incorporated into agent history')
           )
+          afterInvocationEvent = new AfterInvocationEvent({
+            agent: this,
+            invocationContext,
+            invocationState,
+            ...(result !== undefined && { result }),
+          })
           continuationEvent = afterInvocationEvent
           await this._invokeCallbacks(afterInvocationEvent)
         }
@@ -1409,7 +1646,18 @@ export class Agent implements LocalAgent, InvokableAgent {
           )) !== undefined
         continuationEvent = hasContinuation ? afterInvocationEvent : undefined
 
-        if (hasContinuation || this._shouldResume(afterInvocationEvent, invocationContext)) {
+        // A requested cancel drops the continuation (it re-delivers in a later invocation). A hook's
+        // `resume` survives an immediate cancel (BackgroundTasks surfaces interrupts that way), not a deferred one.
+        const cancelRequested = this._deferredCancel || this._abortSignal.aborted
+        if (cancelRequested && hasContinuation) {
+          await continuations.abandon(afterInvocationEvent, new Error('Continuation abandoned after cancel'))
+          continuationEvent = undefined
+        }
+        const resumeDropped = this._deferredCancel || this._invocationQueue.hasTakeoverRequest()
+        if (
+          (hasContinuation && !cancelRequested) ||
+          (!resumeDropped && this._shouldResume(afterInvocationEvent, invocationContext))
+        ) {
           currentArgs = afterInvocationEvent.resume ?? []
           continue
         }
@@ -1430,9 +1678,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         continuationEvent,
         new Error('Agent stream closed before continuation input was incorporated into agent history')
       )
-      // Reset here, after AgentResultEvent, so consumers can still read cancelSignal on it.
-      this.resetCancelState()
-      this._isInvoking = false
+      this._releaseTurn()
     }
   }
 
@@ -1493,6 +1739,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         !this._interruptState.pendingToolExecution
       ) {
         this._interruptState.deactivate()
+        this._interruptedInvocationContext = undefined
       }
       return result
     } catch (error) {
@@ -1501,6 +1748,7 @@ export class Agent implements LocalAgent, InvokableAgent {
           this._interruptState.registerInterrupt(interrupt)
         }
         this._interruptState.activate()
+        this._interruptedInvocationContext = invocationContext
         for (const interrupt of error.interrupts) {
           yield new InterruptEvent({ agent: this, invocationContext, interrupt, invocationState })
         }
@@ -1585,7 +1833,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * as a tool by another agent.
    *
    * The returned tool accepts a single `input` string parameter, invokes
-   * this agent, and returns the text response as a tool result.
+   * this agent, and returns the text response as a tool result. A call made while
+   * the tool is already running returns an error result; {@link AgentConfig.concurrentInvocationMode}
+   * does not apply to it.
    *
    * **Note:** You can also pass an Agent directly in another agent's
    * {@link AgentConfig.tools | tools} array — it will be wrapped
@@ -1614,6 +1864,8 @@ export class Agent implements LocalAgent, InvokableAgent {
    *
    * Use snapshots to checkpoint agent state for later restoration, enabling
    * use cases like undo/redo, branching conversations, and session persistence.
+   * Queued invocations ({@link pendingInvocations}) are not captured — they belong to the
+   * live process; after a restart the host re-submits what it still shows as pending.
    *
    * Fields are selected via a preset/include/exclude model:
    * 1. Start with preset fields (e.g. `'session'` captures all fields)
@@ -1671,7 +1923,18 @@ export class Agent implements LocalAgent, InvokableAgent {
   public loadSnapshot(snapshot: Snapshot): void {
     if (this._initialized) this._backgroundTasks?.assertCanLoadSnapshot()
     loadSnapshotInternal(this, snapshot)
+    // A restored interrupt belongs to a request this instance never ran; a resume starts a fresh one.
+    this._interruptedInvocationContext = undefined
     if (this._initialized && 'state' in snapshot.data) this._backgroundTasks?._loadAppState()
+    this._releaseParkedCallers()
+  }
+
+  /** Hands the turn to a caller parked behind an interrupt once that interrupt is abandoned. */
+  private _releaseParkedCallers(): void {
+    if (!this._isInvoking && !this._interruptState.activated && this._invocationQueue.handoff()) {
+      this._isInvoking = true
+      this.resetCancelState()
+    }
   }
 
   /**
@@ -1742,7 +2005,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
     // Reject non-interrupt input while in interrupted state
     if (this._interruptState.activated && interruptResponses.length === 0) {
-      throw new TypeError('Agent is in an interrupted state. Resume by invoking with interruptResponse content blocks.')
+      throw new TypeError(INTERRUPTED_STATE_MESSAGE)
     }
 
     // Control-only resumes continue an existing cycle and must not append new hook input.
@@ -1770,24 +2033,45 @@ export class Agent implements LocalAgent, InvokableAgent {
     const agentSpan = this._tracer.startAgentSpan(agentSpanOptions)
 
     let caughtError: Error | undefined
+    let turnStarted = false
     try {
       // Register structured output tool if schema provided
       if (structuredOutputTool) {
         this._toolRegistry.add(structuredOutputTool)
       }
 
+      // A resume in the request that counted the interrupted turn runs that turn's pending tools
+      // without counting it or checking limits again.
+      let finishesInterruptedTurn =
+        this._interruptState.pendingToolExecution !== undefined && invocationContext.resumeInterruptedTurn()
+      turnStarted = finishesInterruptedTurn
+
       // Main agent loop - continues until model stops without requesting tools
+      let stepRan = false
       while (true) {
         this._throwIfCancelled()
+        // A deferred cancel ends the pass once a step has run, on the paths that skip the post-batch check.
+        if (this._deferredCancel && stepRan) throw new CancelledError()
+        stepRan = true
 
-        const limitStopReason = reachedLimit(invocationContext)
-        if (limitStopReason) {
-          result = this._buildLimitStopResult(limitStopReason, invocationState, invocationContext, messageCountAtStart)
-          return result
+        if (finishesInterruptedTurn) {
+          finishesInterruptedTurn = false
+        } else {
+          const limitStopReason = reachedLimit(invocationContext)
+          if (limitStopReason) {
+            result = this._buildLimitStopResult(
+              limitStopReason,
+              invocationState,
+              invocationContext,
+              messageCountAtStart
+            )
+            return result
+          }
+
+          // Count this turn before it runs, so nested calls started by its tools see it already counted.
+          invocationContext.recordTurn()
+          turnStarted = true
         }
-
-        // Count this turn before it runs, so nested calls started by its tools see it already counted.
-        invocationContext.recordTurn()
 
         // Start metrics cycle tracking
         const { cycleId, startTime: cycleStartTime } = this._meter.startCycle()
@@ -1819,7 +2103,8 @@ export class Agent implements LocalAgent, InvokableAgent {
         try {
           // Normalize input and append user messages on first invocation only
           if (currentArgs !== undefined || pendingInputMessages !== undefined) {
-            const messagesToAppend = pendingInputMessages ?? this._normalizeInput(currentArgs)
+            const messagesToAppend =
+              pendingInputMessages ?? this._withQueuedTrackingIds(this._normalizeInput(currentArgs))
             if (continuationEvent) {
               yield* await this._appendContinuationMessages(
                 messagesToAppend,
@@ -1834,6 +2119,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             }
             currentArgs = undefined
             pendingInputMessages = undefined
+            this._queuedInputTrackingIds = undefined
           }
 
           // Check if we're resuming from a tool interrupt
@@ -2000,6 +2286,7 @@ export class Agent implements LocalAgent, InvokableAgent {
           // cycle starts with a clean slate (new interrupts can be raised again).
           if (this._interruptState.activated) {
             this._interruptState.deactivate()
+            this._interruptedInvocationContext = undefined
           }
 
           closeCycle()
@@ -2122,6 +2409,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         }
         // Activate before yielding so a consumer that stops at an InterruptEvent can still resume.
         this._interruptState.activate()
+        this._interruptedInvocationContext = invocationContext
         // Fan out one event per interrupt. Each event exposes `interrupt.source` so
         // consumers can filter by origin (tool callback vs hook callback) without
         // subscribing to separate event types.
@@ -2156,6 +2444,9 @@ export class Agent implements LocalAgent, InvokableAgent {
       if (structuredOutputTool) {
         this._toolRegistry.remove(STRUCTURED_OUTPUT_TOOL_NAME)
       }
+
+      // Tools still pending belong to a turn this request counted; a resume finishes that turn.
+      if (turnStarted && this._interruptState.pendingToolExecution) invocationContext.recordInterruptedTurn()
     }
   }
 
@@ -3067,6 +3358,8 @@ function isBlankTextBlock(block: ContentBlock): boolean {
 }
 
 const INVALID_TOOL_NAME_PLACEHOLDER = 'INVALID_TOOL_NAME'
+const INTERRUPTED_STATE_MESSAGE =
+  'Agent is in an interrupted state. Resume by invoking with interruptResponse content blocks.'
 const BLANK_TEXT_PLACEHOLDER = '[blank text]'
 
 /**

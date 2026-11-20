@@ -10,7 +10,11 @@ export interface BackgroundTasksConfig {
    * so keep it stable across a saved session. Defaults to `strands_manage_background_task`.
    */
   readonly manageToolName?: string
-  /** Wait for background work before an invocation returns. Defaults to `true`. */
+  /**
+   * Wait for background work before an invocation returns. Defaults to `true`.
+   * Skipped while another invocation is queued: the queued caller runs immediately
+   * and outstanding task results are delivered during a later invocation's passes.
+   */
   readonly waitForCompletion?: boolean
   /** Tools or registered tool names whose execution mode is selected by the model. Defaults to `['*']`. */
   readonly agentic?: readonly (Tool | string)[]

@@ -10,6 +10,7 @@ import type { Checkpoint, CheckpointResumeContent } from '../experimental/checkp
 import type { AgentTrace } from '../telemetry/tracer.js'
 import type { Snapshot } from './snapshot.js'
 import type { TakeSnapshotOptions } from '../agent/snapshot.js'
+import type { ConcurrentInvocationMode } from '../agent/invocation-queue.js'
 import type {
   BeforeInvocationEvent,
   AfterInvocationEvent,
@@ -142,6 +143,13 @@ export interface InvokeOptions {
   invocationContext?: InvocationContext
 
   /**
+   * Behavior when the agent is already processing an invocation, overriding the
+   * agent's `concurrentInvocationMode` for this call only. Same values: `'throw'`,
+   * `'cancelPrevious'`, `'stopPrevious'`, or `'queue'`.
+   */
+  ifBusy?: ConcurrentInvocationMode
+
+  /**
    * Limits for the whole request this `invoke()` / `stream()` call starts. They
    * apply to this agent's loop and to every nested call: agents passed as tools,
    * and any Graph or Swarm you pass the request's `invocationContext` to. A Graph
@@ -163,9 +171,10 @@ export interface InvokeOptions {
    * limits and usage.
    *
    * Limits are checked before each turn, so tools requested by the previous turn
-   * finish first and `agent.messages` stays reinvokable. Each limit, when set,
-   * must be a positive finite number; omit a field (or `limits` itself) for no
-   * limit on that dimension.
+   * finish first and `agent.messages` stays reinvokable. That holds across an
+   * interrupt: a resume runs the interrupted turn's tools as part of that turn,
+   * before limits are checked again. Each limit, when set, must be a positive
+   * finite number; omit a field (or `limits` itself) for no limit on that dimension.
    *
    * Priority when several are reached at once (highest first): `turns`,
    * `totalTokens`, `outputTokens`, `structuredOutputAttempts`, with `stopReason`
@@ -269,10 +278,12 @@ export interface CancelOptions {
 
   /**
    * Defer cancellation until the running tool batch finishes, letting sibling
-   * tools complete normally instead of receiving cancellation errors. A
-   * deferred cancel that never gets to apply — the model answers with plain
-   * text and no tools in the same turn — is a no-op, and the invocation
-   * returns its natural `stopReason`.
+   * tools complete normally instead of receiving cancellation errors. When
+   * the model answers with plain text and no tools in the same turn, the
+   * invocation returns its natural `stopReason` (`'cancelled'` if a
+   * structured-output schema still required a tool call). The step in progress,
+   * or the first one if none has started, still runs; no further model call
+   * follows, and an `AfterInvocationEvent.resume` set by a hook is ignored.
    */
   afterCurrentTools?: boolean
 

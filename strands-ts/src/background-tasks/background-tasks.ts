@@ -67,6 +67,11 @@ export class BackgroundTasks implements Plugin {
   private readonly _policy: ReturnType<typeof resolvePolicy>
   private readonly _manageTool: Tool
   private readonly _tasks = new Map<string, BackgroundTask>()
+  /**
+   * Dispatching invocation by task id, used to mark results delivered in a later
+   * invocation with `startedBy`. Recovered tasks have no entry and count as earlier.
+   */
+  private readonly _taskDispatchInvocation = new Map<string, InvocationContext | undefined>()
   private _raisedInterrupt = false
   private _agent!: Agent
   private _manager!: BackgroundTaskManager
@@ -103,7 +108,7 @@ export class BackgroundTasks implements Plugin {
         if (!taskId) throw new TypeError(`Task ID is required for mode '${mode}'`)
         const task = this._tasks.get(taskId)
         if (!task) throw new BackgroundTaskNotFoundError(taskId)
-        if (mode === 'get') return taskResultContent(task)
+        if (mode === 'get') return taskResultContent(task, true)
         const cancelled = isTaskStatusTerminal(task.status) ? task : await this._manager.cancel(taskId)
         return { taskId: cancelled.taskId, status: cancelled.status }
       },
@@ -211,6 +216,7 @@ export class BackgroundTasks implements Plugin {
 
     try {
       const task = await this._manager.submit(toolUse, invocationState, passId, tool, invocationContext)
+      this._taskDispatchInvocation.set(task.taskId, invocationContext)
       return new ToolResultBlock({
         toolUseId: toolUse.toolUseId,
         status: 'success',
@@ -287,23 +293,28 @@ export class BackgroundTasks implements Plugin {
     while (
       this._config.waitForCompletion !== false &&
       !agent.cancelSignal.aborted &&
+      agent.pendingInvocations.length === 0 &&
       !tasks.some((task) => task.status === 'input_required') &&
       tasks.some((task) => !isTaskStatusTerminal(task.status))
     ) {
-      await this._awaitNextSettlement(tasks, agent.cancelSignal)
+      await this._awaitNextSettlement(tasks, agent)
       tasks = [...this._tasks.values()]
     }
     if (tasks.some((task) => task.status === 'input_required')) {
       event.resume ??= []
       return
     }
+    // A pending caller takes priority over settlement and delivery: it takes the turn,
+    // and task results stay persisted to be delivered in a later invocation's passes.
+    if (agent.pendingInvocations.length > 0) return
     // Delivering would start another pass; after a cancel the results wait for the next invocation instead.
     if (agent._cancelRequested) return
     this._deliverReady(event, tasks)
   }
 
-  /** Races pending-task settlement against invocation cancellation. */
-  private async _awaitNextSettlement(tasks: readonly BackgroundTask[], cancelSignal: AbortSignal): Promise<void> {
+  /** Races pending-task settlement against invocation cancellation and queue arrivals. */
+  private async _awaitNextSettlement(tasks: readonly BackgroundTask[], agent: Agent): Promise<void> {
+    const cancelSignal = agent.cancelSignal
     let abort: () => void
     const cancelled = new Promise<void>((resolve) => {
       abort = resolve
@@ -313,13 +324,23 @@ export class BackgroundTasks implements Plugin {
         cancelSignal.addEventListener('abort', abort, { once: true })
       }
     })
+    let detachEnqueued = (): void => {}
+    const enqueued = new Promise<void>((resolve) => {
+      if (agent.pendingInvocations.length > 0) {
+        resolve()
+      } else {
+        detachEnqueued = agent._onInvocationEnqueued(resolve)
+      }
+    })
     try {
       await Promise.race([
         cancelled,
+        enqueued,
         ...tasks.filter((task) => !isTaskStatusTerminal(task.status)).map((task) => this._manager.wait(task.taskId)),
       ])
     } finally {
       cancelSignal.removeEventListener('abort', abort!)
+      detachEnqueued()
     }
   }
 
@@ -330,6 +351,9 @@ export class BackgroundTasks implements Plugin {
     const taskIds = terminalTasks.map((task) => task.taskId)
     continuations.addInput(event, {
       args: terminalTasks.flatMap((task) => {
+        // Results delivered in a later invocation carry provenance, so the model does
+        // not fold them into its answer to the current caller.
+        const dispatchedHere = this._taskDispatchInvocation.get(task.taskId) === event.invocationContext
         return [
           new Message({
             role: 'assistant',
@@ -348,7 +372,7 @@ export class BackgroundTasks implements Plugin {
                 toolUseId: task.taskId,
                 // The get succeeds even if the task failed; task status and errors are in the metadata.
                 status: 'success',
-                content: taskResultContent(task),
+                content: taskResultContent(task, dispatchedHere),
               }),
             ],
           }),
@@ -358,7 +382,10 @@ export class BackgroundTasks implements Plugin {
         const liveTaskIds = new Set((await this._manager.list()).map((task) => task.taskId))
         const managerTaskIds = taskIds.filter((taskId) => liveTaskIds.has(taskId))
         await this._manager.remove(managerTaskIds)
-        for (const taskId of taskIds) this._tasks.delete(taskId)
+        for (const taskId of taskIds) {
+          this._tasks.delete(taskId)
+          this._taskDispatchInvocation.delete(taskId)
+        }
         this._persistTasks()
       },
     })
@@ -366,6 +393,7 @@ export class BackgroundTasks implements Plugin {
 
   _loadAppState(): void {
     this._tasks.clear()
+    this._taskDispatchInvocation.clear()
     const storedTasks =
       (this._agent.appState.get(BACKGROUND_TASKS_STATE_KEY) as unknown as BackgroundTask[] | undefined) ?? []
     const recoveredInterruptIds = new Set<string>()
@@ -428,9 +456,13 @@ export class BackgroundTasks implements Plugin {
   }
 }
 
-function taskResultContent(task: BackgroundTask): ToolResultContent[] {
+function taskResultContent(task: BackgroundTask, dispatchedHere: boolean): ToolResultContent[] {
   const { result, ...metadata } = task
-  return [new JsonBlock({ json: deepCopy(metadata) }), ...(result?.content.map(toolResultContentFromData) ?? [])]
+  const json = deepCopy({
+    ...metadata,
+    ...(!dispatchedHere && { startedBy: 'an earlier request in this conversation' }),
+  })
+  return [new JsonBlock({ json }), ...(result?.content.map(toolResultContentFromData) ?? [])]
 }
 
 function toolError(toolUseId: string, message: string): ToolResultBlock {

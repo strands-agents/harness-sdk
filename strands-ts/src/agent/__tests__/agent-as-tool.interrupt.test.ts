@@ -69,6 +69,19 @@ function storedTurns(agent: Agent): Record<string, JSONValue> {
 }
 
 describe('AgentAsTool interrupts', () => {
+  it('a resume finishes the interrupted turn of a sub-agent whose request is at its turn limit', async () => {
+    const { orch, confirmedCount } = nested()
+    const interrupted = await orch.invoke('Test', { limits: { turns: 2 } })
+    expect(interrupted.stopReason).toBe('interrupt')
+
+    const resumed = await orch.invoke([
+      new InterruptResponseContent({ interruptId: interrupted.interrupts![0]!.id, response: 'yes' }),
+    ])
+
+    expect(confirmedCount()).toBe(1)
+    expect(resumed.stopReason).toBe('limitTurns')
+  })
+
   it('propagates a sub-agent interrupt to the orchestrator with an id scoped to the tool call', async () => {
     const { orch } = nested()
 
