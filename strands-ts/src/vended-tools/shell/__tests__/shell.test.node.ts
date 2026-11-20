@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { makeBash, makeShell, ShellTimeoutError, ShellExecutionError, type ShellOutput } from '../index.js'
 import { BashTimeoutError, BashSessionError } from '../../bash/types.js'
-import type { ToolContext } from '../../../index.js'
+import { Agent, TextBlock, ToolResultBlock, type ToolContext } from '../../../index.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
+import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { TestSandbox } from '../../../__fixtures__/test-sandbox.node.js'
 import type { ExecuteOptions } from '../../../sandbox/base.js'
 import type { ExecutionResult } from '../../../sandbox/types.js'
+import { SandboxAbortError } from '../../../sandbox/errors.js'
 import { mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -97,6 +99,36 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
     const text = (result.content[0] as { text: string }).text
     expect(text).toMatch(/^Error: Execution timed out after 0.3 seconds\n/)
     expect(JSON.parse(text.split('\n')[1]!)).toStrictEqual({ output: 'partial\n', error: '', exit_code: 124 })
+  })
+
+  it('stops the command when the tool call is cancelled', async () => {
+    const { sandboxShell, context } = createSandboxShell()
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(), 100)
+
+    // SandboxAbortError, not ShellExecutionError: cancellation is not a shell failure.
+    await expect(
+      sandboxShell.invoke({ command: 'sleep 60' }, { ...context, cancelSignal: controller.signal })
+    ).rejects.toBeInstanceOf(SandboxAbortError)
+  })
+
+  it('agent.cancel() stops a running command', async () => {
+    const { sandboxShell } = createSandboxShell()
+    const toolUse = { type: 'toolUseBlock' as const, name: 'shell', toolUseId: 't1', input: { command: 'sleep 60' } }
+    const agent = new Agent({ model: new MockMessageModel().addTurn(toolUse), tools: [sandboxShell], printer: false })
+    setTimeout(() => agent.cancel(), 300)
+
+    const result = await agent.invoke('go')
+
+    expect(result.stopReason).toBe('cancelled')
+    expect(agent.messages[2]!.content).toEqual([
+      new ToolResultBlock({
+        toolUseId: 't1',
+        status: 'error',
+        content: [new TextBlock('Error: Execution aborted')],
+        error: new SandboxAbortError(),
+      }),
+    ])
   })
 
   it('timeout error still matches the pre-rename BashTimeoutError', async () => {

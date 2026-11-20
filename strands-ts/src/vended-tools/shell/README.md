@@ -64,8 +64,10 @@ interface ShellOutput {
   `error.partial` (`{ output, error, exit_code: 124 }`) and appended to the message as JSON, so the model still sees
   it on the failed tool result
 - **`ShellExecutionError`**: thrown when the sandbox fails to execute the command
+- **`SandboxAbortError`**: thrown when the agent cancels the call (`context.cancelSignal`); the sandbox stops the
+  command and the error propagates unwrapped
 
-Both extend the `Bash*` error types from [`../bash`](../bash/), so `catch` clauses written before the rename keep matching.
+The two `Shell*` errors extend the `Bash*` error types from [`../bash`](../bash/), so `catch` clauses written before the rename keep matching.
 
 ### Deprecated aliases
 

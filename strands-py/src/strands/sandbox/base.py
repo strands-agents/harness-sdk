@@ -266,9 +266,10 @@ class Sandbox(ABC):
             RuntimeError: If ``execute_streaming`` did not yield an
                 :class:`ExecutionResult`.
         """
-        async for chunk in self.execute_streaming(
-            command, timeout=timeout, cwd=cwd, env=env, cancel_signal=cancel_signal, **kwargs
-        ):
+        # Forwarded only when given, so an override without ``**kwargs`` still serves callers that never cancel.
+        if cancel_signal is not None:
+            kwargs["cancel_signal"] = cancel_signal
+        async for chunk in self.execute_streaming(command, timeout=timeout, cwd=cwd, env=env, **kwargs):
             if isinstance(chunk, ExecutionResult):
                 return chunk
         raise RuntimeError("execute_streaming() did not yield an ExecutionResult")
@@ -310,9 +311,9 @@ class Sandbox(ABC):
             RuntimeError: If ``execute_code_streaming`` did not yield an
                 :class:`ExecutionResult`.
         """
-        async for chunk in self.execute_code_streaming(
-            code, language, timeout=timeout, cwd=cwd, env=env, cancel_signal=cancel_signal, **kwargs
-        ):
+        if cancel_signal is not None:
+            kwargs["cancel_signal"] = cancel_signal
+        async for chunk in self.execute_code_streaming(code, language, timeout=timeout, cwd=cwd, env=env, **kwargs):
             if isinstance(chunk, ExecutionResult):
                 return chunk
         raise RuntimeError("execute_code_streaming() did not yield an ExecutionResult")

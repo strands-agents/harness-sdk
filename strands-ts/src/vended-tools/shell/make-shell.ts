@@ -11,7 +11,7 @@
 
 import { tool } from '../../tools/tool-factory.js'
 import { z } from 'zod'
-import { SandboxTimeoutError } from '../../sandbox/errors.js'
+import { SandboxAbortError, SandboxTimeoutError } from '../../sandbox/errors.js'
 import { Sandbox } from '../../sandbox/base.js'
 import { ShellTimeoutError, ShellExecutionError, SANDBOX_SHELL_DESCRIPTION, type ShellOutput } from './types.js'
 
@@ -71,9 +71,14 @@ export function makeShell(
 
       const sandbox = boundSandbox ?? context.agent.sandbox
       try {
-        const result = await sandbox.execute(input.command, { timeout: input.timeout ?? defaultTimeout })
+        const result = await sandbox.execute(input.command, {
+          timeout: input.timeout ?? defaultTimeout,
+          signal: context.cancelSignal,
+        })
         return { output: result.stdout, error: result.stderr, exit_code: result.exitCode } as ShellOutput
       } catch (err) {
+        // Let cancellation propagate as-is rather than reporting it as a shell failure.
+        if (err instanceof SandboxAbortError) throw err
         // Shell* extends Bash* so pre-rename catch clauses keep matching.
         if (err instanceof SandboxTimeoutError) {
           // Thrown errors reach the model as `Error: <message>`, so the partial output rides in the message.

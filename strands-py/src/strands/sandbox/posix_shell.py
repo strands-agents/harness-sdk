@@ -146,9 +146,9 @@ class PosixShellSandbox(Sandbox, ABC):
         encoded = base64.b64encode(code.encode()).decode("ascii")
         eof = _eof_marker()
         command = f"base64 -d << '{eof}' | {language}\n{encoded}\n{eof}"
-        async for chunk in self.execute_streaming(
-            command, timeout=timeout, cwd=cwd, env=env, cancel_signal=cancel_signal, **kwargs
-        ):
+        if cancel_signal is not None:
+            kwargs["cancel_signal"] = cancel_signal
+        async for chunk in self.execute_streaming(command, timeout=timeout, cwd=cwd, env=env, **kwargs):
             yield chunk
 
     async def read_file(self, path: str, **kwargs: Any) -> bytes:

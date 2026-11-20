@@ -123,9 +123,10 @@ class TestAgentCancel:
         result = await asyncio.wait_for(agent.invoke_async("go"), timeout=30)
 
         assert result.stop_reason == "cancelled"
-        tool_result = agent.messages[-1]["content"][0]["toolResult"]
-        assert tool_result["status"] == "error"
-        assert "SandboxAbortError" in tool_result["content"][0]["text"]
+        error = {"text": "Error: SandboxAbortError - Execution aborted"}
+        assert agent.messages[-1]["content"] == [
+            {"toolResult": {"toolUseId": "t1", "status": "error", "content": [error]}}
+        ]
 
 
 class TestToolMetadata:

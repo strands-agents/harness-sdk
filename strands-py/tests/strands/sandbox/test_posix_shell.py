@@ -726,6 +726,17 @@ async def test_execute_and_execute_code_forward_cancel_signal_to_execute_streami
     assert seen == [cancel_signal, cancel_signal]
 
 
+@pytest.mark.asyncio
+async def test_calls_without_a_cancel_signal_work_on_an_override_without_kwargs():
+    class _NoKwargs(PosixShellSandbox):
+        async def execute_streaming(self, command, *, timeout=None, cwd=None, env=None):
+            yield ExecutionResult(exit_code=0, stdout="", stderr="")
+
+    result = ExecutionResult(exit_code=0, stdout="", stderr="")
+    assert await _NoKwargs().execute("noop") == result
+    assert await _NoKwargs().execute_code("pass", "python3") == result
+
+
 def test_file_info_defaults():
     info = FileInfo(name="x")
     assert info.is_dir is None

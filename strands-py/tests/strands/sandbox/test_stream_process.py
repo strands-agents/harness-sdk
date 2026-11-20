@@ -192,8 +192,7 @@ async def test_cancel_signal_already_set_does_not_spawn():
 @pytest.mark.asyncio
 async def test_unset_cancel_signal_leaves_the_result_alone():
     _, result = await _collect(_stream_process("sh", ["-c", "echo done"], cancel_signal=threading.Event()))
-    assert result.exit_code == 0
-    assert result.stdout == "done\n"
+    assert result == ExecutionResult(exit_code=0, stdout="done\n", stderr="")
 
 
 @pytest.mark.asyncio
