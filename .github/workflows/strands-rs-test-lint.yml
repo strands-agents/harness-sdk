@@ -10,6 +10,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  # rustfmt and clippy are pinned so lints and formatting rules added in a new stable release don't fail unrelated PRs.
+  # Bump deliberately, together with the lint commands in CONTRIBUTING.md, README.md and strands-rs/AGENTS.md.
+  RUST_LINT_TOOLCHAIN: '1.100.0'
 
 jobs:
   test-lint:
@@ -34,14 +37,15 @@ jobs:
       - name: Install toolchain
         shell: bash
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup toolchain install stable --profile minimal
           rustup default stable
+          rustup toolchain install "$RUST_LINT_TOOLCHAIN" --profile minimal --component rustfmt,clippy
 
       - name: Format
-        run: cargo fmt --all --check
+        run: cargo +${{ env.RUST_LINT_TOOLCHAIN }} fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo +${{ env.RUST_LINT_TOOLCHAIN }} clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Examples
         run: cargo build --workspace --examples --all-features
