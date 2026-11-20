@@ -10,13 +10,12 @@ sourceLinks:
 ---
 
 Your agent sends the same tools, system prompt, and earlier messages to the model on
-every call. Prompt caching lets the model provider reuse that static part of the request
-instead of processing it again. This page covers how Strands caches tools, system
-prompts, and messages, and where caching falls short today.
-
-Model providers handle the cache in one of two ways. Some let the request carry explicit
-cache points. Others support only implicit caching and decide on their own what to
-reuse. For pricing on cache writes and reads, see your model provider's documentation.
+every call. Prompt caching lets the model provider reuse that static part instead of
+processing it again. Model providers handle this in one of two ways: some let the
+request carry explicit cache points, while others support only implicit caching and
+decide on their own what to reuse. This page covers how Strands caches tools, system
+prompts, and messages, and where caching falls short today. For pricing on cache writes
+and reads, see your model provider's documentation.
 
 ## Models that support explicit caching
 
@@ -56,7 +55,7 @@ Strands keeps that content after the cache point.
 A [context injector](../plugins/context-injector.md) and the
 [context manager](../context-management.md) both add ephemeral content to the context
 window before a model call. On a model with explicit caching, Strands keeps that content
-out of the cached prefix. On a model with implicit caching, the injected content is
+out of the cached prefix, but on a model with implicit caching, the injected content is
 removed from history on the next call, so the next request no longer starts with the
 previous one and the cache misses.
 
@@ -64,25 +63,58 @@ previous one and the cache misses.
 
 Middleware that adds text to the latest message for a single call, which is how the
 [memory manager](../memory/managing-memory.md) injects retrieved memories, breaks the
-cache on a model with implicit caching. With explicit caching, Strands places the
-injected text after the cache point, so it isn't cached and the
-[context manager](../context-management.md) can change it on later turns.
+cache on a model with implicit caching because the injected text changes between calls.
+With explicit caching, Strands places the injected text after the cache point, so it
+isn't cached and the [context manager](../context-management.md) can change it on later
+turns.
 
 ### OpenAI models on the Converse API
 
-The Converse API doesn't support cache points for OpenAI models. The provider caches
-each request as a whole, and a later request reads that cache only if it starts with the
-entire earlier request. Strands removes earlier injected content from the conversation
-history before each call, so with a context injector or the harness defaults, no request
-starts with the previous one. Every call is written to the cache and none is read. On
-GPT-5.6 and later, cache writes cost 1.25 times the input rate, so this costs more than
-not caching.
+Converse takes no cache points for OpenAI models. A request reads the cache only if it
+starts with an entire earlier request, and Strands removes earlier injected content from
+history, so each injection stops the next request from extending the previous one. With
+a context injector that fires on every model call, every call writes to the cache and
+none reads from it. The harness defaults inject once per user turn, which costs one
+partial rewrite per turn. On GPT-5.6 and later, writes cost 1.25 times the input rate,
+so a rewrite on every call costs more than not caching.
 
-To cache these models on Amazon Bedrock, use the Responses API through
-<Syntax py="OpenAIResponsesModel" ts="OpenAIModel" /> with Bedrock Mantle, and set a cache
-configuration. To stop the extra cost on Converse instead, turn implicit caching off by
-passing `prompt_cache_options` with `mode` set to `explicit` in the model's
-<Syntax py="additional_request_fields" ts="additionalRequestFields" />.
+Don't place cache points on these models: a hand-placed cache point or the
+<Syntax py='"anthropic"' ts="'anthropic'" /> strategy makes Amazon Bedrock reject the
+request with an `AccessDeniedException`. The default `auto` strategy places none.
+
+To cache these models, use the Responses API through
+<Syntax py="OpenAIResponsesModel" ts="OpenAIModel" /> with Bedrock Mantle and a cache
+configuration. To stay on Converse and stop the extra cost, turn implicit caching off
+with `prompt_cache_options` set to `explicit` mode:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+
+model = BedrockModel(
+    model_id="us.openai.gpt-6-luna",
+    # Converse forwards this to the model; with no cache points it caches nothing.
+    additional_request_fields={"prompt_cache_options": {"mode": "explicit"}},
+)
+
+agent = Agent(model=model)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/prompt-caching_imports.ts:converse_implicit_caching_off_imports"
+
+--8<-- "user-guide/sdk/model-providers/prompt-caching.ts:converse_implicit_caching_off"
+```
+</Tab>
+</Tabs>
+
+This also turns off reads when a request does extend the previous one, so use it only
+when your agent's context changes on every call.
 
 ### OpenAI Chat Completions
 
