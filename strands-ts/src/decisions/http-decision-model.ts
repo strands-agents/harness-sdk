@@ -10,7 +10,8 @@ import {
   httpTransport,
   resolveDefaultMinConfidence,
   SystemOneHttpError,
-  type SystemOneProviderConfig,
+  type SystemOneRequestConfig,
+  type SystemOneTransport,
 } from './system-one-http-adapter.js'
 import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
 
@@ -31,26 +32,17 @@ export interface SigV4Credentials {
   readonly expiration?: Date
 }
 
-/** How an {@link HttpDecisionModel} authenticates its requests. */
-export type HttpDecisionModelAuth =
-  /** Sends `Authorization: Bearer <token>`. */
-  | { readonly type: 'bearer'; readonly token: string }
-  /** Signs each request with AWS Signature Version 4. */
-  | {
-      readonly type: 'sigv4'
-      /**
-       * Service to sign for: `lambda` for a Lambda Function URL with `AWS_IAM` auth, `execute-api` for API
-       * Gateway with IAM auth.
-       */
-      readonly service: string
-      /** AWS region to sign for. Defaults to the `AWS_REGION` or `AWS_DEFAULT_REGION` environment variable. */
-      readonly region?: string
-      /**
-       * Static credentials or a provider such as `fromTemporaryCredentials()`. A provider's result is reused
-       * until it nears its `expiration`, as in an AWS SDK client. Defaults to the standard AWS credential chain.
-       */
-      readonly credentials?: SigV4Credentials | (() => Promise<SigV4Credentials>)
-    }
+/**
+ * Returns the headers that authenticate one request, given the request about to be sent: the endpoint URL,
+ * the static headers with the `content-type`, and the JSON body. It runs on every request, under the
+ * request's timeout and cancellation, and its headers replace static headers of the same name.
+ * Use {@link sigV4Auth} for AWS Signature Version 4.
+ */
+export type HttpDecisionModelAuth = (request: {
+  readonly url: string
+  readonly headers: Readonly<Record<string, string>>
+  readonly body: string
+}) => Promise<Record<string, string>>
 
 /** Options for constructing an {@link HttpDecisionModel}. */
 export interface HttpDecisionModelOptions {
@@ -62,28 +54,26 @@ export interface HttpDecisionModelOptions {
    * so a credential is never sent in clear text. A server on a private network needs https as well.
    */
   readonly endpoint: string
-  /** How requests authenticate. Omit for a server that needs no authentication, such as a local one. */
+  /**
+   * Authenticates each request, such as `sigV4Auth({ service: 'lambda' })`. A static token goes in `headers`
+   * instead. Omit for a server that needs no authentication, such as a local one.
+   */
   readonly auth?: HttpDecisionModelAuth
   /**
-   * Static request headers, such as `x-api-key` for API Gateway. They are treated as secrets: they need an
-   * `https` endpoint unless the host is loopback.
+   * Static request headers, such as `Authorization: Bearer <token>` or `x-api-key` for API Gateway. They are
+   * treated as secrets: they need an `https` endpoint unless the host is loopback.
    */
   readonly headers?: Readonly<Record<string, string>>
-  /** Sent as the request's `model`. Omitted when unset, so the server uses its own. */
-  readonly modelId?: string
   /** Default minimum confidence. Defaults to `0.5`. */
   readonly defaultMinConfidence?: number
   /**
-   * Aborts a request that takes longer than this many milliseconds, counting credential lookup and the
-   * response body. An integer from 1 to 2147483647. Defaults to `60000`, which is longer than API Gateway's
-   * 29 second limit.
+   * Aborts a request that takes longer than this many milliseconds, counting `auth` and the response body.
+   * An integer from 1 to 2147483647. Defaults to `60000`, which is longer than API Gateway's 29 second limit.
    */
   readonly timeoutMs?: number
   /** Custom fetch implementation, primarily for transport configuration and tests. */
   readonly fetch?: typeof globalThis.fetch
 }
-
-type Signer = (body: string, headers: Record<string, string>) => Promise<Record<string, string>>
 
 /**
  * Decision model backed by any server that speaks the System One wire format over HTTP, such as a
@@ -93,7 +83,7 @@ type Signer = (body: string, headers: Record<string, string>) => Promise<Record<
  *
  * @example
  * ```typescript
- * import { HttpDecisionModel } from '@strands-agents/sdk/decisions/http'
+ * import { HttpDecisionModel, sigV4Auth } from '@strands-agents/sdk/decisions/http'
  *
  * // A local server needs no authentication.
  * const local = new HttpDecisionModel({ endpoint: 'http://localhost:8000/v1/systemone' })
@@ -101,12 +91,19 @@ type Signer = (body: string, headers: Record<string, string>) => Promise<Record<
  * // A Lambda Function URL with AWS_IAM auth, signed with the standard AWS credential chain.
  * const lambda = new HttpDecisionModel({
  *   endpoint: 'https://abc123.lambda-url.us-east-1.on.aws/v1/systemone',
- *   auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda' },
+ *   auth: sigV4Auth({ service: 'lambda', region: 'us-east-1' }),
+ * })
+ *
+ * // An API Gateway route with a bearer token.
+ * const gateway = new HttpDecisionModel({
+ *   endpoint: 'https://api.example.com/v1/systemone',
+ *   headers: { Authorization: `Bearer ${token}` },
  * })
  * ```
  */
 export class HttpDecisionModel extends DecisionModel {
-  private readonly _providerConfig: SystemOneProviderConfig
+  private readonly _requestConfig: SystemOneRequestConfig
+  private readonly _transport: SystemOneTransport
   private readonly _sendsCredentials: boolean
 
   /**
@@ -123,6 +120,9 @@ export class HttpDecisionModel extends DecisionModel {
     const endpoint = parseEndpoint(options.endpoint)
     const headers = parseHeaders(options.headers)
     const { auth } = options
+    if (auth !== undefined && typeof auth !== 'function') {
+      throw new Error(`${CLASS_NAME} auth must be a function, such as sigV4Auth()`)
+    }
     this._sendsCredentials = auth !== undefined || Object.keys(headers).length > 0
     // A credential, signature or secret header sent in clear text is readable on the network.
     if (this._sendsCredentials && endpoint.protocol !== 'https:' && !LOOPBACK_HOSTS.includes(endpoint.hostname)) {
@@ -130,24 +130,18 @@ export class HttpDecisionModel extends DecisionModel {
     }
     const baseFetch = options.fetch ?? globalThis.fetch
     if (typeof baseFetch !== 'function') throw new Error(`${CLASS_NAME} requires a fetch implementation`)
-    const apiKey = auth?.type === 'bearer' ? parseBearerToken(auth.token) : undefined
-    const sign = auth?.type === 'sigv4' ? sigV4Signer(endpoint, auth) : undefined
-    if (auth !== undefined && apiKey === undefined && sign === undefined) {
-      throw new Error(`${CLASS_NAME} auth type must be 'bearer' or 'sigv4'`)
-    }
-    const modelId = options.modelId?.trim()
 
-    this._providerConfig = {
+    const config = {
       providerName: PROVIDER_NAME,
       endpoint: endpoint.href,
       defaultMinConfidence: resolveDefaultMinConfidence(
         options.defaultMinConfidence ?? DEFAULT_MIN_CONFIDENCE,
         CLASS_NAME
       ),
-      fetch: guardedFetch(baseFetch, headers, sign, parseTimeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS)),
-      ...(apiKey !== undefined && { apiKey }),
-      ...(modelId && { modelId }),
+      fetch: guardedFetch(baseFetch, headers, auth, parseTimeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS)),
     }
+    this._requestConfig = config
+    this._transport = httpTransport(config)
   }
 
   protected async _ask<const Q extends Record<string, Question>>(
@@ -156,13 +150,7 @@ export class HttpDecisionModel extends DecisionModel {
     options: DecisionCallOptions
   ): Promise<DecisionResult<Q>> {
     try {
-      return await askSystemOne(
-        this._providerConfig,
-        httpTransport(this._providerConfig),
-        state,
-        questions,
-        options.cancelSignal
-      )
+      return await askSystemOne(this._requestConfig, this._transport, state, questions, options.cancelSignal)
     } catch (error) {
       // The server's own message, such as a Lambda's "Forbidden", does not say what to check.
       if (this._sendsCredentials && isAuthFailure(error)) {
@@ -211,13 +199,6 @@ function parseHeaders(headers: HttpDecisionModelOptions['headers']): Record<stri
   }
 }
 
-function parseBearerToken(token: string | undefined): string {
-  const trimmed = token?.trim()
-  if (!trimmed || /\s/.test(trimmed))
-    throw new Error(`${CLASS_NAME} bearer token must be non-empty text without spaces`)
-  return trimmed
-}
-
 function parseTimeout(timeoutMs: number): number {
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) {
     throw new Error(`${CLASS_NAME} timeoutMs must be an integer from 1 to ${MAX_TIMEOUT_MS}`)
@@ -226,40 +207,55 @@ function parseTimeout(timeoutMs: number): number {
 }
 
 /**
- * Returns a function that gives the headers signing one POST of `body` to `url`, including the static `headers`
- * it is given. They omit `host` and `content-type`: fetch derives the first and the transport sets the second.
+ * Returns an {@link HttpDecisionModelAuth} that signs each request with AWS Signature Version 4.
+ *
+ * @param options - What to sign for and with.
+ * @throws Error if the service is empty, or no region is given or set in the environment.
  */
-function sigV4Signer(url: URL, auth: Extract<HttpDecisionModelAuth, { type: 'sigv4' }>): Signer {
-  const service = auth.service?.trim()
-  if (!service) throw new Error(`${CLASS_NAME} sigv4 auth requires a service`)
+export function sigV4Auth(options: {
+  /**
+   * Service to sign for: `lambda` for a Lambda Function URL with `AWS_IAM` auth, `execute-api` for API
+   * Gateway with IAM auth.
+   */
+  readonly service: string
+  /** AWS region to sign for. Defaults to the `AWS_REGION` or `AWS_DEFAULT_REGION` environment variable. */
+  readonly region?: string
+  /**
+   * Static credentials or a provider such as `fromTemporaryCredentials()`. A provider's result is reused until
+   * it nears its `expiration`, as in an AWS SDK client. Defaults to the standard AWS credential chain.
+   */
+  readonly credentials?: SigV4Credentials | (() => Promise<SigV4Credentials>)
+}): HttpDecisionModelAuth {
+  const service = options.service?.trim()
+  if (!service) throw new Error('sigV4Auth requires a service')
   const env = globalThis.process?.env
-  const region = auth.region?.trim() || env?.AWS_REGION || env?.AWS_DEFAULT_REGION
-  if (!region) {
-    throw new Error(`${CLASS_NAME} sigv4 auth requires a region: pass region or set AWS_REGION or AWS_DEFAULT_REGION`)
-  }
+  const region = options.region?.trim() || env?.AWS_REGION || env?.AWS_DEFAULT_REGION
+  if (!region) throw new Error('sigV4Auth requires a region: pass region or set AWS_REGION or AWS_DEFAULT_REGION')
   const signer = new SignatureV4({
     service,
     region,
     sha256: Sha256,
     // Defined, because the provider passed in is.
     credentials: memoizeIdentityProvider(
-      auth.credentials ?? defaultProvider(),
+      options.credentials ?? defaultProvider(),
       isIdentityExpired,
       doesIdentityRequireRefresh
     )!,
   })
 
-  return async (body, headers) => {
+  return async ({ url, headers, body }) => {
+    const { protocol, hostname, host, pathname } = new URL(url)
+    // The signed `host` carries a non-default port, as fetch's does.
     const signed = await signer.sign({
       method: 'POST',
-      protocol: url.protocol,
-      hostname: url.hostname,
-      path: url.pathname,
+      protocol,
+      hostname,
+      path: pathname,
       query: {},
-      // The signed `host` carries a non-default port, as fetch's does.
-      headers: { ...headers, host: url.host, 'content-type': 'application/json' },
+      headers: { ...headers, host },
       body,
     })
+    // fetch sets `host` and the transport sets `content-type`.
     return Object.fromEntries(
       Object.entries(signed.headers).filter(([name]) => !['host', 'content-type'].includes(name.toLowerCase()))
     )
@@ -267,13 +263,13 @@ function sigV4Signer(url: URL, auth: Extract<HttpDecisionModelAuth, { type: 'sig
 }
 
 /**
- * Wraps `fetch` with the static headers, signing, the timeout and redirect handling, so the shared transport
- * stays unaware of them. The timeout covers signing, the request and the response body.
+ * Wraps `fetch` with the static headers, `auth`, the timeout and redirect handling, so the shared transport
+ * stays unaware of them. The timeout covers `auth`, the request and the response body.
  */
 function guardedFetch(
   baseFetch: typeof globalThis.fetch,
   headers: Record<string, string>,
-  sign: Signer | undefined,
+  auth: HttpDecisionModelAuth | undefined,
   timeoutMs: number
 ): typeof globalThis.fetch {
   return async (input, init) => {
@@ -288,12 +284,22 @@ function guardedFetch(
     const cancel = (): void => controller.abort(cancelSignal?.reason)
     cancelSignal?.addEventListener('abort', cancel, { once: true })
     try {
-      // A credential lookup can stall, so it runs under the same timeout and cancel signal as the request.
-      const signed = sign ? await abortable(sign(String(init?.body), headers), signal) : {}
+      // `auth` can stall on a credential lookup, so it runs under the same timeout and cancel signal as the
+      // request. It sees the `content-type` the transport sends, so a signature can cover it.
+      const authHeaders = auth
+        ? await abortable(
+            auth({
+              url: String(input),
+              headers: { ...headers, 'content-type': 'application/json' },
+              body: String(init?.body),
+            }),
+            signal
+          )
+        : {}
       // `redirect: 'manual'`: following a redirect would replay the request's headers and body to another host.
       const response = await baseFetch(input, {
         ...init,
-        headers: mergeHeaders(headers, signed, init?.headers),
+        headers: mergeHeaders(headers, authHeaders, init?.headers),
         redirect: 'manual',
         signal,
       })

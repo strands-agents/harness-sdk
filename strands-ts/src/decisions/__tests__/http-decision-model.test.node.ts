@@ -6,7 +6,12 @@ import { SignatureV4 } from '@smithy/signature-v4'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ModelError, ModelThrottledError } from '../../errors.js'
-import { HttpDecisionModel, type HttpDecisionModelOptions } from '../http-decision-model.js'
+import {
+  HttpDecisionModel,
+  sigV4Auth,
+  type HttpDecisionModelAuth,
+  type HttpDecisionModelOptions,
+} from '../http-decision-model.js'
 import { Uncertain } from '../types.js'
 
 const LOCAL_ENDPOINT = 'http://localhost:8000/v1/systemone'
@@ -120,17 +125,12 @@ describe('HttpDecisionModel', () => {
       })
     })
 
-    it('sends modelId only when one is configured', async () => {
+    it('sends no model, so the server answers with its own', async () => {
       const captured: CapturedRequest[] = []
-      const fetch = fakeFetch(systemOneBody(), { captured })
 
-      await create({ fetch, modelId: ' my-model ' }).ask('state', QUESTIONS)
+      await create({ fetch: fakeFetch(systemOneBody(), { captured }) }).ask('state', QUESTIONS)
 
-      expect(captured[0]?.body).toEqual({
-        state: 'state',
-        model: 'my-model',
-        questions: { urgent: { type: 'noul', instructions: 'Is this urgent?' } },
-      })
+      expect(captured[0]?.body).not.toHaveProperty('model')
     })
 
     it('applies defaultMinConfidence to the answers', async () => {
@@ -156,11 +156,8 @@ describe('HttpDecisionModel', () => {
     })
 
     it.each([
-      [
-        'a sigv4 endpoint',
-        { auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda', credentials: CREDENTIALS } },
-      ],
-      ['a bearer endpoint', { auth: { type: 'bearer', token: 't' } }],
+      ['a sigv4 endpoint', { auth: sigV4Auth({ service: 'lambda', region: 'us-east-1', credentials: CREDENTIALS }) }],
+      ['an endpoint with a custom auth function', { auth: async () => ({ authorization: 'Bearer t' }) }],
       ['an endpoint with an API key header', { headers: { 'x-api-key': 'k' } }],
     ] as const)('adds a hint when %s answers 403', async (_name, options) => {
       const decision = create({
@@ -180,7 +177,7 @@ describe('HttpDecisionModel', () => {
       const unauthenticated = create({ fetch: fakeFetch({ Message: 'Forbidden' }, { status: 403 }) })
       const serverError = create({
         endpoint: LAMBDA_ENDPOINT,
-        auth: { type: 'bearer', token: 't' },
+        headers: { Authorization: 'Bearer t' },
         fetch: fakeFetch({ message: 'boom' }, { status: 500 }),
       })
 
@@ -313,13 +310,12 @@ describe('HttpDecisionModel', () => {
     })
   })
 
-  describe('bearer auth', () => {
-    it('sends the token and static headers', async () => {
+  describe('static headers and auth', () => {
+    it('sends a bearer token from the static headers, trimmed', async () => {
       const captured: CapturedRequest[] = []
       const decision = create({
         endpoint: 'https://gateway.example.com/prod/v1/systemone',
-        auth: { type: 'bearer', token: ' tok \n' },
-        headers: { 'x-api-key': 'key-1' },
+        headers: { Authorization: ' Bearer tok \n', 'x-api-key': 'key-1' },
         fetch: fakeFetch(systemOneBody(), { captured }),
       })
 
@@ -332,10 +328,28 @@ describe('HttpDecisionModel', () => {
       })
     })
 
-    it('lets the transport own Content-Type and the auth header owns Authorization', async () => {
+    it('passes auth the request about to be sent', async () => {
+      const captured: CapturedRequest[] = []
+      const auth = vi.fn<HttpDecisionModelAuth>(async () => ({}))
+      const decision = create({
+        auth,
+        headers: { 'x-api-key': 'key-1' },
+        fetch: fakeFetch(systemOneBody(), { captured }),
+      })
+
+      await decision.ask('state', QUESTIONS)
+
+      expect(auth).toHaveBeenCalledWith({
+        url: LOCAL_ENDPOINT,
+        headers: { 'x-api-key': 'key-1', 'content-type': 'application/json' },
+        body: captured[0]?.rawBody,
+      })
+    })
+
+    it('lets auth headers replace static ones and the transport own Content-Type', async () => {
       const captured: CapturedRequest[] = []
       const decision = create({
-        auth: { type: 'bearer', token: 'tok' },
+        auth: async () => ({ Authorization: 'Bearer tok' }),
         headers: { 'content-type': 'text/plain', Authorization: 'Bearer other' },
         fetch: fakeFetch(systemOneBody(), { captured }),
       })
@@ -343,6 +357,19 @@ describe('HttpDecisionModel', () => {
       await decision.ask('state', QUESTIONS)
 
       expect(captured[0]?.headers).toEqual({ authorization: 'Bearer tok', 'content-type': 'application/json' })
+    })
+
+    it('reports an auth failure as a model error without sending the request', async () => {
+      const fetch = fakeFetch()
+      const decision = create({
+        auth: async () => {
+          throw new Error('token expired')
+        },
+        fetch,
+      })
+
+      await expectModelError(decision.ask('state', QUESTIONS), 'http decision request failed: token expired')
+      expect(fetch).not.toHaveBeenCalled()
     })
 
     it('sends static headers without auth', async () => {
@@ -388,7 +415,7 @@ describe('HttpDecisionModel', () => {
       const captured: CapturedRequest[] = []
       const decision = create({
         endpoint: LAMBDA_ENDPOINT,
-        auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda', credentials: CREDENTIALS },
+        auth: sigV4Auth({ service: 'lambda', region: 'us-east-1', credentials: CREDENTIALS }),
         fetch: fakeFetch(systemOneBody(), { captured }),
       })
 
@@ -426,7 +453,7 @@ describe('HttpDecisionModel', () => {
       const captured: CapturedRequest[] = []
       const decision = create({
         endpoint: LAMBDA_ENDPOINT,
-        auth: { type: 'sigv4', service: 'lambda', credentials: CREDENTIALS },
+        auth: sigV4Auth({ service: 'lambda', credentials: CREDENTIALS }),
         fetch: fakeFetch(systemOneBody(), { captured }),
       })
 
@@ -440,7 +467,7 @@ describe('HttpDecisionModel', () => {
       const captured: CapturedRequest[] = []
       const decision = create({
         endpoint: LAMBDA_ENDPOINT,
-        auth: { type: 'sigv4', region: 'ap-south-1', service: 'lambda', credentials: CREDENTIALS },
+        auth: sigV4Auth({ service: 'lambda', region: 'ap-south-1', credentials: CREDENTIALS }),
         fetch: fakeFetch(systemOneBody(), { captured }),
       })
 
@@ -453,7 +480,7 @@ describe('HttpDecisionModel', () => {
       const captured: CapturedRequest[] = []
       const decision = create({
         endpoint: 'http://127.0.0.1:8123/prod/v1/system%20one',
-        auth: { type: 'sigv4', region: 'eu-west-1', service: 'execute-api', credentials: CREDENTIALS },
+        auth: sigV4Auth({ service: 'execute-api', region: 'eu-west-1', credentials: CREDENTIALS }),
         headers: { 'x-api-key': 'key-1' },
         fetch: fakeFetch(systemOneBody(), { captured }),
       })
@@ -469,7 +496,7 @@ describe('HttpDecisionModel', () => {
       const captured: CapturedRequest[] = []
       const decision = create({
         endpoint: LAMBDA_ENDPOINT,
-        auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda', credentials: CREDENTIALS },
+        auth: sigV4Auth({ service: 'lambda', region: 'us-east-1', credentials: CREDENTIALS }),
         fetch: fakeFetch(systemOneBody(), { captured }),
       })
 
@@ -489,7 +516,7 @@ describe('HttpDecisionModel', () => {
       }))
       const decision = create({
         endpoint: LAMBDA_ENDPOINT,
-        auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda', credentials: provider },
+        auth: sigV4Auth({ service: 'lambda', region: 'us-east-1', credentials: provider }),
         fetch: fakeFetch(),
       })
 
@@ -508,7 +535,7 @@ describe('HttpDecisionModel', () => {
       const captured: CapturedRequest[] = []
       const decision = create({
         endpoint: LAMBDA_ENDPOINT,
-        auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda' },
+        auth: sigV4Auth({ service: 'lambda', region: 'us-east-1' }),
         fetch: fakeFetch(systemOneBody(), { captured }),
       })
 
@@ -525,7 +552,7 @@ describe('HttpDecisionModel', () => {
         .mockResolvedValue(CREDENTIALS)
       const decision = create({
         endpoint: LAMBDA_ENDPOINT,
-        auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda', credentials: provider },
+        auth: sigV4Auth({ service: 'lambda', region: 'us-east-1', credentials: provider }),
         fetch,
       })
 
@@ -539,7 +566,7 @@ describe('HttpDecisionModel', () => {
 
   describe('stalled credentials', () => {
     const stalled = (): Promise<typeof CREDENTIALS> => new Promise(() => {})
-    const sigv4 = { type: 'sigv4', region: 'us-east-1', service: 'lambda', credentials: stalled } as const
+    const sigv4 = sigV4Auth({ service: 'lambda', region: 'us-east-1', credentials: stalled })
 
     it('times out a credential lookup that never answers', async () => {
       const fetch = fakeFetch()
@@ -558,7 +585,7 @@ describe('HttpDecisionModel', () => {
       })
       const decision = create({
         endpoint: LAMBDA_ENDPOINT,
-        auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda', credentials: provider },
+        auth: sigV4Auth({ service: 'lambda', region: 'us-east-1', credentials: provider }),
         fetch: fakeFetch(),
       })
 
@@ -581,16 +608,11 @@ describe('HttpDecisionModel', () => {
   })
 
   describe('constructor validation', () => {
-    const bearer = { type: 'bearer', token: 't' } as const
+    const auth: HttpDecisionModelAuth = async () => ({ authorization: 'Bearer t' })
 
     it.each([
       ['an invalid endpoint', { endpoint: 'not a url' }, 'endpoint must be a valid URL'],
       ['a non-http endpoint', { endpoint: 'ftp://example.com/x' }, 'endpoint must use http or https'],
-      [
-        'sigv4 without a service',
-        { endpoint: LAMBDA_ENDPOINT, auth: { type: 'sigv4', region: 'us-east-1', service: ' ' } },
-        'sigv4 auth requires a service',
-      ],
       [
         'credentials in the endpoint',
         { endpoint: 'https://user:hunter2@example.com/v1/systemone' },
@@ -601,29 +623,26 @@ describe('HttpDecisionModel', () => {
         { endpoint: 'https://example.com/v1/systemone?stage=a' },
         'endpoint must not contain a query string',
       ],
-      ['an empty bearer token', { auth: { type: 'bearer', token: '  ' } }, 'bearer token must be non-empty'],
-      ['a bearer token with a space', { auth: { type: 'bearer', token: 'a b' } }, 'bearer token must be non-empty'],
-      ['a bearer token with a newline', { auth: { type: 'bearer', token: 'a\nb' } }, 'bearer token must be non-empty'],
       [
-        'an unknown auth type',
-        { auth: { type: 'basic' } as unknown as HttpDecisionModelOptions['auth'] },
-        "auth type must be 'bearer' or 'sigv4'",
+        'an auth that is not a function',
+        { auth: { type: 'bearer', token: 't' } as unknown as HttpDecisionModelOptions['auth'] },
+        'auth must be a function, such as sigV4Auth()',
       ],
       [
-        'a bearer token over plain http to a remote host',
-        { endpoint: 'http://example.com/v1/systemone', auth: bearer },
+        'auth over plain http to a remote host',
+        { endpoint: 'http://example.com/v1/systemone', auth },
         'auth and headers require an https endpoint',
       ],
       [
-        'a bearer token over plain http to a host that only starts with localhost',
-        { endpoint: 'http://localhost.evil.com/v1/systemone', auth: bearer },
+        'auth over plain http to a host that only starts with localhost',
+        { endpoint: 'http://localhost.evil.com/v1/systemone', auth },
         'auth and headers require an https endpoint',
       ],
       [
         'sigv4 over plain http to a remote host',
         {
           endpoint: 'http://abc.lambda-url.us-east-1.on.aws/v1/systemone',
-          auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda' },
+          auth: sigV4Auth({ service: 'lambda', region: 'us-east-1' }),
         },
         'auth and headers require an https endpoint',
       ],
@@ -650,7 +669,7 @@ describe('HttpDecisionModel', () => {
     it('never echoes a secret in a validation error', () => {
       const errors = [
         () => create({ endpoint: 'https://user:hunter2@example.com/v1/systemone' }),
-        () => create({ auth: { type: 'bearer', token: 'hunter2 with space' } }),
+        () => create({ headers: { Authorization: 'Bearer hunter2\u0000' } }),
         () => create({ headers: { 'x-api-key': 'hunter2\nX-Injected: 1' } }),
       ].map((attempt) => {
         try {
@@ -673,7 +692,7 @@ describe('HttpDecisionModel', () => {
       'http://127.0.0.1:8000/v1/systemone',
       'http://[::1]:8000/v1/systemone',
     ])('allows credentials over plain http to loopback %s', (endpoint) => {
-      expect(() => create({ endpoint, auth: bearer })).not.toThrow()
+      expect(() => create({ endpoint, auth })).not.toThrow()
     })
 
     it('allows an authorization header when no auth is set', () => {
@@ -689,13 +708,19 @@ describe('HttpDecisionModel', () => {
 
       expect(() => create()).toThrow('HttpDecisionModel cannot run in a browser')
     })
+  })
+
+  describe('sigV4Auth validation', () => {
+    it('requires a service', () => {
+      expect(() => sigV4Auth({ service: ' ', region: 'us-east-1' })).toThrow('sigV4Auth requires a service')
+    })
 
     it('requires a region from the option or the environment', () => {
       vi.stubEnv('AWS_REGION', undefined)
       vi.stubEnv('AWS_DEFAULT_REGION', undefined)
 
-      expect(() => create({ endpoint: LAMBDA_ENDPOINT, auth: { type: 'sigv4', service: 'lambda' } })).toThrow(
-        'sigv4 auth requires a region: pass region or set AWS_REGION or AWS_DEFAULT_REGION'
+      expect(() => sigV4Auth({ service: 'lambda' })).toThrow(
+        'sigV4Auth requires a region: pass region or set AWS_REGION or AWS_DEFAULT_REGION'
       )
     })
   })

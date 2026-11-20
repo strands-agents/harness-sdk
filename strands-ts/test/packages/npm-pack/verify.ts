@@ -47,7 +47,7 @@ import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 import { ContextOffloader, InMemoryStorage } from '@strands-agents/sdk/vended-plugins/context-offloader'
 import { GoalLoop } from '@strands-agents/sdk/vended-plugins/goal'
 import { SageMakerDecisionModel } from '@strands-agents/sdk/decisions/sagemaker'
-import { HttpDecisionModel } from '@strands-agents/sdk/decisions/http'
+import { HttpDecisionModel, sigV4Auth } from '@strands-agents/sdk/decisions/http'
 
 import { z } from 'zod'
 
@@ -140,7 +140,7 @@ console.log('[pack-test] decisions/sagemaker constructible without its optional 
 // SigV4 signing uses only the SDK's own dependencies, so a signed model constructs with no extra install.
 const http = new HttpDecisionModel({
   endpoint: 'https://abc123.lambda-url.us-east-1.on.aws/v1/systemone',
-  auth: { type: 'sigv4', region: 'us-east-1', service: 'lambda' },
+  auth: sigV4Auth({ service: 'lambda', region: 'us-east-1' }),
 })
 if (!(http instanceof HttpDecisionModel)) {
   throw new Error('HttpDecisionModel construction failed')
