@@ -201,19 +201,46 @@ describe('a sticky question panel', () => {
     await press('/ask')
     await press('\r')
 
-    expect(screen()).toContain('Viewing /ask · ↓ chat · Enter to send there')
-
-    await press('\u001b[B')
-
     expect(screen()).toContain('Enter to send')
+    expect(screen()).not.toContain('Viewing /ask')
+
+    await press('\u001b[A')
+
+    expect(screen()).toContain('Viewing /ask · ↓ chat · Enter to send there')
+  })
+
+  it('shouldLeaveTheKeyboardWithTheChatWhenAQuestionOpens', async () => {
+    const { press, screen } = await mount(askCommand())
+
+    await press('/ask')
+    await press('\r')
+
+    expect(screen()).toContain('question keys:[]')
     expect(screen()).not.toContain('Viewing /ask')
   })
 
-  it('shouldSendKeysToTheQuestionBeforeLeavingIt', async () => {
+  it('shouldTakeTheKeyboardForAPanelThatIsNotSticky', async () => {
+    const { sticky, ...plain } = askCommand()
+    void sticky
+    const { press, screen } = await mount(plain)
+
+    await press('/ask')
+    await press('\r')
+    await press('x')
+
+    expect(screen()).toContain('question keys:[x]')
+  })
+
+  it('shouldSendKeysToTheChatUntilUpMovesIntoTheQuestion', async () => {
     const { press, screen } = await mount(askCommand())
     await press('/ask')
     await press('\r')
 
+    await press('x')
+    expect(screen()).toContain('question keys:[]')
+
+    await press('\u007f')
+    await press('\u001b[A')
     await press('x')
 
     expect(screen()).toContain('question keys:[x]')

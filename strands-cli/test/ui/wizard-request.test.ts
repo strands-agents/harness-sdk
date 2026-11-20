@@ -312,6 +312,29 @@ describe('WizardRequestPanel', () => {
     await expect(asked).resolves.toEqual({ tune: ['instructions', 'caching'] })
   })
 
+  it('shouldStartAPickOneListWithNothingPicked', () => {
+    const one: WizardStepSpec[] = [
+      {
+        key: 'a',
+        title: 'A',
+        fields: [
+          {
+            kind: 'select',
+            key: 'size',
+            multiple: false,
+            selected: ['m'],
+            options: [
+              { value: 's', label: 's' },
+              { value: 'm', label: 'm' },
+            ],
+          },
+        ],
+      },
+    ]
+
+    expect(defaultAnswers(one)).toEqual({ size: '' })
+  })
+
   it('shouldKeepOnlyTheLastPickOfASelectOne', async () => {
     const broker = new WizardBroker()
     const asked = broker.ask({
@@ -338,7 +361,7 @@ describe('WizardRequestPanel', () => {
     })
     const { text, press } = await panel(broker)
 
-    expect(text()).toContain('◉ 4')
+    expect(text()).toContain('○ 4')
     expect(text()).toContain('○ 8')
 
     await press(DOWN)

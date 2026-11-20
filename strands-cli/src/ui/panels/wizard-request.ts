@@ -152,7 +152,8 @@ export const defaultAnswers = (steps: readonly WizardStepSpec[]): Record<string,
       if (field.kind === 'select') {
         const open = field.options.filter(({ unavailable }) => unavailable === undefined).map(({ value }) => value)
         const picked = (field.selected ?? []).filter((value) => open.includes(value))
-        answers[field.key] = field.multiple === false ? (picked[0] ?? '') : picked
+        // A pick-one list starts with nothing picked, so the answer is the developer's own choice.
+        answers[field.key] = field.multiple === false ? '' : picked
         continue
       }
       // An unavailable toggle renders unchecked and refuses to flip, so it must not answer true.

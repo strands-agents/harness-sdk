@@ -170,7 +170,9 @@ export function ChatApp({
   // A sticky panel stays open when the developer clicks away; the keyboard goes to the chat input instead.
   const [panelKeyboard, setPanelKeyboard] = useState(true)
   const panelId = snapshot.panel?.id
-  useEffect(() => setPanelKeyboard(true), [panelId])
+  const panelStartsIdle = snapshot.panel?.kind === 'dev' && snapshot.panel.sticky === true
+  // A question opens beside the chat, not in front of it: the input keeps the keyboard until ↑ moves into it.
+  useEffect(() => setPanelKeyboard(!panelStartsIdle), [panelId, panelStartsIdle])
   // Counts renders, so a drag knows whether the screen moved under its captured lines.
   useEffect(() => {
     renderRevisionRef.current += 1
