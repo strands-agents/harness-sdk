@@ -1,0 +1,941 @@
+"""Unit tests for the programmatic tool caller.
+
+The tool is exercised as a direct tool call on a real ``Agent`` whose model is never invoked, so
+these are offline and fast. They cover execution shapes (single/loop/gather), the print-only output
+contract, the sandbox boundary (no host access, limits), identifier aliasing, error handling, output
+truncation, and timeout/cancellation.
+"""
+
+import asyncio
+import inspect
+import re
+import subprocess
+import sys
+import threading
+import time
+from unittest.mock import ANY
+
+import pytest
+
+from strands import Agent
+from strands.hooks import BeforeToolCallEvent
+from strands.interrupt import Interrupt
+from strands.tools.decorator import tool
+from strands.types.tools import ToolContext
+from strands.vended_tools.programmatic_tool_caller import make_programmatic_tool_caller, programmatic_tool_caller
+from strands.vended_tools.programmatic_tool_caller.programmatic_tool_caller import (
+    _MAX_CONCURRENT_TOOL_CALLS,
+    _MAX_OUTPUT_CHARS,
+    DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION,
+    _Output,
+    _unwrap_result,
+)
+from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+
+@tool
+def calculator(expression: str) -> str:
+    """Evaluate a simple arithmetic expression."""
+    return str(eval(expression, {"__builtins__": {}}, {}))  # noqa: S307 - test helper, fixed namespace
+
+
+@tool
+def boom() -> str:
+    """Always fail."""
+    raise ValueError("kaboom")
+
+
+@tool
+def info() -> dict:
+    """Return structured data (the SDK serializes it to JSON text)."""
+    return {"name": "demo", "tags": ["a", "b"]}
+
+
+@tool(name="fetch-url")
+def fetch_url(value: str) -> str:
+    """A tool whose name is not a valid identifier."""
+    return f"dash:{value}"
+
+
+@tool(name="ns.fetch")
+def ns_fetch(value: str) -> str:
+    """A tool whose name has a dot."""
+    return f"dot:{value}"
+
+
+def _agent(*tools):
+    return Agent(model=None, tools=[programmatic_tool_caller, *tools])
+
+
+def _run(agent, code, tool_name="programmatic_tool_caller"):
+    return getattr(agent.tool, tool_name)(code=code, record_direct_tool_call=False)
+
+
+def _text(result):
+    return result["content"][0]["text"]
+
+
+def _context(agent, name="programmatic_tool_caller", **fields):
+    tool_use = {"toolUseId": "x", "name": name, "input": {}}
+    return ToolContext(tool_use=tool_use, agent=agent, **{"invocation_state": {}, **fields})
+
+
+async def _events(caller, code, context):
+    """Run the tool function directly and collect what it yields; the last item is the tool result."""
+    return [event async for event in caller._tool_func(code=code, tool_context=context)]
+
+
+@pytest.mark.parametrize("first_access", ["programmatic_tool_caller", "make_programmatic_tool_caller"])
+def test_lazy_export_resolves_to_the_tool_on_every_access(first_access):
+    # A fresh interpreter: this module has already imported the subpackage, which hides the first access.
+    code = (
+        "import strands.vended_tools as vended\n"
+        "from strands.tools.decorator import DecoratedFunctionTool\n"
+        f"vended.{first_access}\n"
+        "first, second = vended.programmatic_tool_caller, vended.programmatic_tool_caller\n"
+        "assert isinstance(first, DecoratedFunctionTool) and first is second, (first, second)\n"
+        "assert callable(vended.make_programmatic_tool_caller)\n"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_single_call():
+    result = _run(_agent(calculator), 'print(await calculator(expression="10 * 2"))')
+    assert result == {"toolUseId": ANY, "status": "success", "content": [{"text": "20"}]}
+
+
+def test_loop_over_calls():
+    result = _run(_agent(calculator), "for i in range(3):\n    print(await calculator(expression=f'{i} + 10'))")
+    assert _text(result) == "10\n11\n12"
+
+
+def test_gather_runs_calls_concurrently():
+    barrier = threading.Barrier(4, timeout=5)
+
+    @tool
+    def concurrent(value: int) -> int:
+        """Wait for all four calls, then return the value."""
+        barrier.wait()
+        return value
+
+    code = "import asyncio\nprint(await asyncio.gather(*[concurrent(value=i) for i in range(4)]))"
+    result = _run(_agent(concurrent), code)
+    assert _text(result) == "['0', '1', '2', '3']"
+
+
+def test_inner_call_concurrency_is_bounded():
+    in_flight = {"now": 0, "peak": 0}
+
+    # Async on purpose: a sync tool runs on the SDK's thread pool, whose own size would mask the semaphore.
+    @tool
+    async def slow(value: int) -> int:
+        """Track how many calls overlap."""
+        in_flight["now"] += 1
+        in_flight["peak"] = max(in_flight["peak"], in_flight["now"])
+        await asyncio.sleep(0.05)
+        in_flight["now"] -= 1
+        return value
+
+    count = _MAX_CONCURRENT_TOOL_CALLS * 3
+    code = f"import asyncio\nprint(len(await asyncio.gather(*[slow(value=i) for i in range({count})])))"
+    assert _text(_run(_agent(slow), code)) == str(count)
+    assert 1 < in_flight["peak"] <= _MAX_CONCURRENT_TOOL_CALLS
+
+
+def test_only_printed_output_is_returned():
+    result = _run(_agent(calculator), 'x = await calculator(expression="6 * 7")\nprint("done")')
+    assert _text(result) == "done"
+
+
+def test_comment_only_code_is_no_output():
+    result = _run(_agent(calculator), "# nothing here")
+    assert result == {"toolUseId": ANY, "status": "success", "content": [{"text": "(no output)"}]}
+
+
+def test_stdlib_subset_is_importable():
+    code = (
+        "import json, re, math, datetime, collections, itertools, functools, dataclasses, typing, base64\n"
+        "print(json.dumps({'ok': math.floor(2.5)}))"
+    )
+    result = _run(_agent(calculator), code)
+    assert _text(result) == '{"ok": 2}'
+
+
+def test_positional_arguments_are_rejected_with_a_hint():
+    result = _run(_agent(calculator), 'print(await calculator("1 + 1"))')
+    assert result["status"] == "error"
+    assert "keyword arguments only" in _text(result)
+    assert "calculator(key=value)" in _text(result)
+
+
+def test_json_text_result_is_parsed():
+    result = _run(_agent(info), "r = await info()\nprint(type(r).__name__, r['tags'][1])")
+    assert _text(result) == "dict b"
+
+
+def test_non_json_text_result_is_a_string():
+    result = _run(_agent(calculator), "r = await calculator(expression='1 + 1')\nprint(type(r).__name__, r)")
+    assert _text(result) == "str 2"
+
+
+def test_inner_calls_carry_the_parent_invocation_state_not_guest_kwargs():
+    seen = []
+
+    @tool(context="tool_context")
+    def whoami(label: str, tool_context: ToolContext) -> str:
+        """Record the invocation state the inner call ran with."""
+        seen.append(dict(tool_context.invocation_state))
+        return label
+
+    agent = _agent(whoami)
+    context = ToolContext(
+        tool_use={"toolUseId": "x", "name": "programmatic_tool_caller", "input": {}},
+        agent=agent,
+        invocation_state={"principal": "alice"},
+    )
+    # A guest kwarg named like an invocation_state key must not override the parent's value (a Cedar
+    # principal resolver reads from invocation_state), and the parent's state must reach the inner call.
+    code = "print(await whoami(label='ok', principal='admin'))"
+    result = asyncio.run(_events(programmatic_tool_caller, code, context))[-1]
+    assert _text(result) == "ok"
+    assert seen[0]["principal"] == "alice"
+
+
+def test_inner_calls_join_the_parent_request():
+    seen = []
+
+    @tool(context="tool_context")
+    def whoami(tool_context: ToolContext) -> str:
+        """Record the request the inner call belongs to."""
+        seen.append(tool_context.invocation_context)
+        return "ok"
+
+    request = object()
+    context = ToolContext(
+        tool_use={"toolUseId": "x", "name": "programmatic_tool_caller", "input": {}},
+        agent=_agent(whoami),
+        invocation_state={},
+        invocation_context=request,
+    )
+    asyncio.run(_events(programmatic_tool_caller, "await whoami()", context))
+    assert seen == [request]
+
+
+def test_inner_call_to_a_background_tool_runs_inline_and_returns_its_result():
+    code = "print(await calculator(expression='20 + 1'))"
+    tool_use = {"toolUseId": "t1", "name": "programmatic_tool_caller", "input": {"code": code}}
+    model = MockedModelProvider(
+        [
+            {"role": "assistant", "content": [{"toolUse": tool_use}]},
+            {"role": "assistant", "content": [{"text": "done"}]},
+        ]
+    )
+    agent = Agent(
+        model=model,
+        tools=[programmatic_tool_caller, calculator],
+        background_tasks={"always": ["calculator"]},
+        callback_handler=None,
+    )
+
+    agent("go")
+
+    tool_result = agent.messages[2]["content"][0]["toolResult"]
+    assert tool_result["content"] == [{"text": "21"}]
+
+
+def test_inner_calls_do_not_change_the_parent_state():
+    @tool(context="tool_context")
+    def whoami(tool_context: ToolContext) -> str:
+        """Write to the invocation state the inner call ran with."""
+        tool_context.invocation_state["written_by_inner_call"] = True
+        return "ok"
+
+    parent_state = {"principal": "alice"}
+    context = ToolContext(
+        tool_use={"toolUseId": "x", "name": "programmatic_tool_caller", "input": {}},
+        agent=_agent(whoami),
+        invocation_state=parent_state,
+    )
+    result = asyncio.run(_events(programmatic_tool_caller, "print(await whoami())", context))[-1]
+    assert _text(result) == "ok"
+    assert parent_state == {"principal": "alice"}
+
+
+def test_unwrap_prefers_structured_content():
+    result = {"status": "success", "content": [{"text": '{"a": 1}'}], "structuredContent": {"a": 1, "b": 2}}
+    assert _unwrap_result("t", result) == {"a": 1, "b": 2}
+
+
+def test_unwrap_returns_a_lone_json_block_as_data():
+    assert _unwrap_result("t", {"status": "success", "content": [{"json": {"a": [1]}}]}) == {"a": [1]}
+
+
+def test_unwrap_parses_a_lone_json_text_block():
+    assert _unwrap_result("t", {"status": "success", "content": [{"text": '{"a": [1]}'}]}) == {"a": [1]}
+    assert _unwrap_result("t", {"status": "success", "content": [{"text": "[1, 2]"}]}) == [1, 2]
+    assert _unwrap_result("t", {"status": "success", "content": [{"text": "{not json"}]}) == "{not json"
+    assert _unwrap_result("t", {"status": "success", "content": [{"text": "42"}]}) == "42"
+
+
+def test_unwrap_joins_mixed_blocks_as_text():
+    result = {"status": "success", "content": [{"text": "x"}, {"json": {"a": 1}}]}
+    assert _unwrap_result("t", result) == 'x\n{"a": 1}'
+
+
+def test_unwrap_raises_runtime_error_for_error_results():
+    with pytest.raises(RuntimeError, match="Tool 't' error: nope"):
+        _unwrap_result("t", {"status": "error", "content": [{"text": "nope"}]})
+    with pytest.raises(RuntimeError, match=r"Tool 't' error: \{\"code\": 1\}"):
+        _unwrap_result("t", {"status": "error", "content": [{"json": {"code": 1}}]})
+    with pytest.raises(RuntimeError, match="Unknown error"):
+        _unwrap_result("t", {"status": "error", "content": None})
+
+
+# --- sandbox boundary ------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("import os\nprint(os.listdir('/'))", "PermissionError"),
+        ("import os\nprint(os.environ['HOME'])", "not supported"),
+        ("print(open('/etc/passwd').read())", "PermissionError"),
+        ("import subprocess", "ModuleNotFoundError"),
+        ("import socket", "ModuleNotFoundError"),
+        ("import sys\nprint(sys.modules)", "AttributeError"),
+        ("print(().__class__.__bases__)", "AttributeError"),
+        ("print(__builtins__)", "NameError"),
+        ("import os\nprint(os.getenv('HOME'))", "not supported"),
+        ("import os\nos.system('id')", "AttributeError"),
+        ("print(eval(\"__import__('os')\"))", "NameError"),
+        ("exec(\"import os\\nprint(os.listdir('/'))\")", "PermissionError"),
+        ("open('/tmp/programmatic_tool_caller_probe', 'w')", "PermissionError"),
+        ("def f(): pass\nprint(f.__globals__)", "AttributeError"),
+        ("from pathlib import Path\nprint(Path('/etc/passwd').read_text())", "PermissionError"),
+    ],
+)
+def test_host_is_unreachable(code, expected):
+    result = _run(_agent(calculator), code)
+    assert result["status"] == "error"
+    assert expected in _text(result)
+
+
+def test_memory_limit_is_enforced():
+    result = _run(_agent(calculator), "x = 'a' * 10**9\nprint(len(x))")
+    assert result["status"] == "error"
+    assert "MemoryError" in _text(result)
+
+
+def test_recursion_limit_is_catchable():
+    code = "def f(n):\n    return f(n + 1)\ntry:\n    f(0)\nexcept RecursionError:\n    print('bounded')"
+    assert _text(_run(_agent(calculator), code)) == "bounded"
+
+
+# The package attribute of this name is the tool, so the module is taken from sys.modules.
+_module = sys.modules["strands.vended_tools.programmatic_tool_caller.programmatic_tool_caller"]
+
+
+def test_synchronous_busy_loop_is_bounded(monkeypatch):
+    monkeypatch.setattr(_module, "_LIMITS", {**_module._LIMITS, "max_feed_duration_secs": 0.2})
+    start = time.monotonic()
+    result = _run(_agent(calculator), "while True:\n    pass")
+    assert result["status"] == "error"
+    assert "TimeoutError" in _text(result)
+    assert time.monotonic() - start < 5
+
+
+def test_suspension_limit_bounds_tool_calls(monkeypatch):
+    monkeypatch.setattr(_module, "_LIMITS", {**_module._LIMITS, "max_suspensions": 3})
+    result = _run(_agent(calculator), "for i in range(10):\n    await calculator(expression='1')")
+    assert result["status"] == "error"
+    assert "suspension limit" in _text(result)
+
+
+def test_unsupported_python_is_reported_as_an_error():
+    result = _run(_agent(calculator), "def g():\n    yield 1\nprint(list(g()))")
+    assert result["status"] == "error"
+    assert "yield" in _text(result)
+
+
+# --- errors ----------------------------------------------------------------------------------------
+
+
+def test_tool_error_is_catchable():
+    code = "try:\n    await boom()\nexcept RuntimeError as e:\n    print('caught:', e)"
+    result = _run(_agent(boom), code)
+    assert result["status"] == "success"
+    assert _text(result).startswith("caught: Tool 'boom' error:")
+    assert "kaboom" in _text(result)
+
+
+def test_tool_error_inside_gather_propagates():
+    code = (
+        "import asyncio\n"
+        "try:\n"
+        "    await asyncio.gather(calculator(expression='1 + 1'), boom())\n"
+        "except RuntimeError as e:\n"
+        "    print('caught:', e)"
+    )
+    assert _text(_run(_agent(calculator, boom), code)).startswith("caught: Tool 'boom' error:")
+
+
+def test_output_printed_before_an_error_is_kept():
+    result = _run(_agent(calculator), "print('step 1')\nprint('step 2')\nraise ValueError('late')")
+    assert result["status"] == "error"
+    text = _text(result)
+    assert text.startswith("step 1\nstep 2\n\nExecution error:")
+    assert "ValueError: late" in text
+
+
+def test_error_without_prior_output_has_no_output_prefix():
+    result = _run(_agent(calculator), "raise ValueError('early')")
+    assert _text(result).startswith("Execution error:\nTraceback")
+
+
+def test_syntax_error_is_reported():
+    result = _run(_agent(calculator), "def broken(:\n    pass")
+    assert result["status"] == "error"
+    assert _text(result).startswith("Syntax error:")
+    assert "SyntaxError" in _text(result)
+
+
+def test_runtime_error_traceback_uses_user_line_numbers():
+    result = _run(_agent(calculator), "x = 1\ny = 2\nz = {}['missing']")
+    assert result["status"] == "error"
+    assert "line 3" in _text(result)
+    assert "KeyError" in _text(result)
+
+
+def test_multiline_string_is_preserved():
+    code = 'text = """line one\n  indented two\nthree"""\nprint(text)'
+    assert _text(_run(_agent(calculator), code)) == "line one\n  indented two\nthree"
+
+
+def test_no_agent_context_is_an_error():
+    context = ToolContext(
+        tool_use={"toolUseId": "x", "name": "programmatic_tool_caller", "input": {}}, agent=None, invocation_state={}
+    )
+    result = asyncio.run(_events(programmatic_tool_caller, "print(1)", context))[-1]
+    assert result == {
+        "status": "error",
+        "content": [{"text": "No agent available. The programmatic tool caller requires an agent context."}],
+    }
+
+
+# --- exposure --------------------------------------------------------------------------------------
+
+
+def test_self_is_not_exposed():
+    result = _run(_agent(calculator), "programmatic_tool_caller")
+    assert result["status"] == "error"
+    assert "NameError" in _text(result)
+
+
+def test_another_caller_is_not_exposed():
+    other = make_programmatic_tool_caller(name="run_code", allowed_tools=["programmatic_tool_caller", "calculator"])
+    agent = Agent(model=None, tools=[programmatic_tool_caller, other, calculator])
+    for caller, target in (("run_code", "programmatic_tool_caller"), ("programmatic_tool_caller", "run_code")):
+        result = _run(agent, f"await {target}(code='print(1)')", caller)
+        assert result["status"] == "error"
+        assert "NameError" in _text(result)
+    assert _text(_run(agent, 'print(await calculator(expression="1 + 1"))', "run_code")) == "2"
+
+
+def test_allowed_tools_filters_exposed_tools():
+    restricted = make_programmatic_tool_caller(allowed_tools=["calculator"], name="run_code")
+    agent = Agent(model=None, tools=[restricted, calculator, boom])
+    assert _text(_run(agent, 'print(await calculator(expression="1 + 1"))', "run_code")) == "2"
+    result = _run(agent, "await boom()", "run_code")
+    assert result["status"] == "error"
+    assert "NameError" in _text(result)
+
+
+def test_allowed_tools_ignores_unregistered_names():
+    caller = make_programmatic_tool_caller(allowed_tools=["calculator", "not_registered"], name="run_code")
+    agent = Agent(model=None, tools=[caller, calculator])
+    assert _text(_run(agent, 'print(await calculator(expression="2 + 2"))', "run_code")) == "4"
+
+
+def test_description_states_the_contract():
+    for phrase in ("await", "print()", "RuntimeError", "keyword arguments", "fetch_url"):
+        assert phrase in DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION
+
+
+def test_hyphenated_tool_is_callable_via_alias():
+    assert _text(_run(_agent(fetch_url), 'print(await fetch_url(value="x"))')) == "dash:x"
+
+
+def test_dotted_tool_is_callable_via_alias():
+    assert _text(_run(_agent(ns_fetch), 'print(await ns_fetch(value="y"))')) == "dot:y"
+
+
+def test_ambiguous_alias_is_dropped():
+    @tool(name="a-b")
+    def dash(value: str) -> str:
+        """Dash."""
+        return "dash"
+
+    @tool(name="a.b")
+    def dot(value: str) -> str:
+        """Dot."""
+        return "dot"
+
+    result = _run(_agent(dash, dot), 'print(await a_b(value="x"))')
+    assert result["status"] == "error"
+    assert "NameError" in _text(result)
+
+
+# --- interventions ---------------------------------------------------------------------------------
+
+
+def test_hook_that_cancels_the_inner_call_blocks_the_tool():
+    calls = []
+
+    @tool
+    def shell_like(command: str) -> str:
+        """Record that it ran."""
+        calls.append(command)
+        return f"ran:{command}"
+
+    agent = _agent(shell_like)
+
+    def deny(event: BeforeToolCallEvent) -> None:
+        if event.tool_use["name"] == "shell_like":
+            event.cancel_tool = "shell is off"
+
+    agent.hooks.add_callback(BeforeToolCallEvent, deny)
+    code = "try:\n    print(await shell_like(command='rm -rf /'))\nexcept RuntimeError as e:\n    print('ERR', e)"
+    result = _run(agent, code)
+    assert result == {
+        "toolUseId": ANY,
+        "status": "success",
+        "content": [{"text": "ERR Tool 'shell_like' error: shell is off"}],
+    }
+    assert calls == []
+
+
+def test_hook_that_needs_approval_refuses_the_inner_call():
+    calls = []
+
+    @tool
+    def shell_like(command: str) -> str:
+        """Record that it ran."""
+        calls.append(command)
+        return f"ran:{command}"
+
+    agent = _agent(shell_like)
+
+    def ask(event: BeforeToolCallEvent) -> None:
+        if event.tool_use["name"] == "shell_like":
+            event.interrupt("approve-shell", reason="Run shell?")
+
+    agent.hooks.add_callback(BeforeToolCallEvent, ask)
+    code = "try:\n    print(await shell_like(command='ls'))\nexcept RuntimeError as e:\n    print('ERR', e)"
+    result = _run(agent, code)
+    refusal = (
+        "ERR Tool 'shell_like' needs approval, which programmatic_tool_caller cannot prompt for; "
+        "call it as a normal tool call instead."
+    )
+    assert result == {"toolUseId": ANY, "status": "success", "content": [{"text": refusal}]}
+    assert calls == []
+    assert agent._interrupt_state.interrupts == {}
+
+
+def test_refused_approval_leaves_the_interrupts_of_sibling_tool_calls_alone():
+    @tool
+    def shell_like(command: str) -> str:
+        """Never runs."""
+        return f"ran:{command}"
+
+    agent = _agent(shell_like)
+
+    def ask(event: BeforeToolCallEvent) -> None:
+        if event.tool_use["name"] == "shell_like":
+            event.interrupt("approve-shell", reason="Run shell?")
+
+    agent.hooks.add_callback(BeforeToolCallEvent, ask)
+    sibling = Interrupt(id="sibling", name="approve-sibling")
+    agent._interrupt_state.interrupts["sibling"] = sibling
+    agent._interrupt_state.context["sibling_state"] = {"kept": True}
+
+    _run(agent, "try:\n    await shell_like(command='ls')\nexcept RuntimeError:\n    print('refused')")
+
+    assert agent._interrupt_state.interrupts == {"sibling": sibling}
+    assert agent._interrupt_state.context == {"sibling_state": {"kept": True}}
+
+
+def test_child_agent_that_pauses_leaves_nothing_on_the_parent():
+    @tool(context="tool_context")
+    def needs_approval(tool_context: ToolContext) -> str:
+        """Ask for approval."""
+        return str(tool_context.interrupt("approve-child"))
+
+    child_tool_use = {"toolUseId": "c1", "name": "needs_approval", "input": {}}
+    child = Agent(
+        model=MockedModelProvider([{"role": "assistant", "content": [{"toolUse": child_tool_use}]}]),
+        tools=[needs_approval],
+        callback_handler=None,
+    )
+    agent = _agent(child.as_tool(name="child"))
+
+    result = _run(agent, "try:\n    await child(input='go')\nexcept RuntimeError as e:\n    print('ERR', e)")
+
+    assert _text(result).startswith("ERR Tool 'child' needs approval")
+    assert agent._interrupt_state.interrupts == {}
+    assert not agent._interrupt_state.context.get("sub_agent_interrupted_turns")
+
+
+# --- streaming -------------------------------------------------------------------------------------
+
+
+def test_prints_are_streamed_while_the_code_runs():
+    async def scenario():
+        release = asyncio.Event()
+
+        @tool
+        async def gate() -> str:
+            """Block until the test has seen the first print."""
+            await release.wait()
+            return "open"
+
+        code = "print('before')\nawait gate()\nprint('after')"
+        stream = programmatic_tool_caller._tool_func(code=code, tool_context=_context(_agent(gate)))
+        first = await asyncio.wait_for(anext(stream), 5)
+        release.set()
+        return [first, *[event async for event in stream]]
+
+    assert asyncio.run(scenario()) == [
+        {"type": "print", "text": "before\n"},
+        {"type": "print", "text": "after\n"},
+        {"status": "success", "content": [{"text": "before\nafter"}]},
+    ]
+
+
+def test_a_print_from_the_sandbox_thread_reaches_the_loop_thread_safely(monkeypatch):
+    unsafe_calls = []
+
+    async def print_from_a_thread(code, tool_context, output, *limits):
+        loop, loop_thread = asyncio.get_running_loop(), threading.get_ident()
+        call_soon = loop.call_soon
+
+        def checked_call_soon(*args, **kwargs):
+            if threading.get_ident() != loop_thread:
+                unsafe_calls.append(args)
+            return call_soon(*args, **kwargs)
+
+        monkeypatch.setattr(loop, "call_soon", checked_call_soon)
+        await asyncio.to_thread(output, "stdout", "threaded\n")
+        return {"status": "success", "content": [{"text": "threaded"}]}
+
+    monkeypatch.setattr(_module, "_run_code", print_from_a_thread)
+    events = asyncio.run(_events(programmatic_tool_caller, "", _context(_agent(calculator))))
+    assert events == [{"type": "print", "text": "threaded\n"}, {"status": "success", "content": [{"text": "threaded"}]}]
+    assert unsafe_calls == []
+
+
+def test_output_printed_as_the_run_ends_is_streamed(monkeypatch):
+    async def print_and_finish(code, tool_context, output, *limits):
+        output("stdout", "late\n")
+        return {"status": "success", "content": [{"text": "late"}]}
+
+    monkeypatch.setattr(_module, "_run_code", print_and_finish)
+    events = asyncio.run(_events(programmatic_tool_caller, "", _context(_agent(calculator))))
+    assert events == [{"type": "print", "text": "late\n"}, {"status": "success", "content": [{"text": "late"}]}]
+
+
+def test_prints_reach_the_agent_stream_as_tool_stream_events():
+    code = "print('one')\nprint(await calculator(expression='1 + 1'))"
+    model = MockedModelProvider(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {"toolUse": {"toolUseId": "t1", "name": "programmatic_tool_caller", "input": {"code": code}}}
+                ],
+            },
+            {"role": "assistant", "content": [{"text": "done"}]},
+        ]
+    )
+    agent = Agent(model=model, tools=[programmatic_tool_caller, calculator], callback_handler=None)
+
+    async def collect():
+        return [event["tool_stream_event"] async for event in agent.stream_async("go") if "tool_stream_event" in event]
+
+    stream_events = asyncio.run(collect())
+    prints = [event["data"] for event in stream_events if event["data"].get("type") == "print"]
+    assert {event["tool_use"]["toolUseId"] for event in stream_events} == {"t1"}
+    assert {tuple(data) for data in prints} == {("type", "text")}
+    assert "".join(data["text"] for data in prints) == "one\n2\n"
+
+
+def test_streamed_prints_stop_at_the_output_cap():
+    output = _Output()
+    output("stdout", "x" * (_MAX_OUTPUT_CHARS - 10))
+    assert len(output.take()) == _MAX_OUTPUT_CHARS - 10
+    output("stdout", "y" * 500)
+    output("stdout", "z" * 500)
+    assert output.take() == "y" * 10
+    assert output.take() == ""
+
+
+def test_closing_the_stream_stops_the_run():
+    async def scenario():
+        started = asyncio.Event()
+        cancelled = []
+
+        @tool
+        async def hang() -> str:
+            """Never return."""
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+            return "unreachable"
+
+        code = "print('started')\nawait hang()"
+        stream = programmatic_tool_caller._tool_func(code=code, tool_context=_context(_agent(hang)))
+        first = await asyncio.wait_for(anext(stream), 5)
+        await asyncio.wait_for(started.wait(), 5)
+        await stream.aclose()
+        return first, cancelled, asyncio.all_tasks() - {asyncio.current_task()}
+
+    assert asyncio.run(scenario()) == ({"type": "print", "text": "started\n"}, [True], set())
+
+
+# --- output, timeout, cancellation -----------------------------------------------------------------
+
+
+def test_output_is_truncated_when_too_long():
+    result = _run(_agent(calculator), f"print('x' * {_MAX_OUTPUT_CHARS + 500})")
+    text = _text(result)
+    assert text.endswith(f"[output truncated at {_MAX_OUTPUT_CHARS} characters]")
+    assert len(text) < _MAX_OUTPUT_CHARS + 100
+
+
+def test_oversized_print_is_not_buffered_in_full():
+    output = _Output()
+    output("stdout", "a" * (_MAX_OUTPUT_CHARS * 20))
+    output("stdout", "b" * 100)
+    assert sum(len(chunk) for chunk in output.chunks) <= _MAX_OUTPUT_CHARS + 1
+    assert output.text().endswith(f"[output truncated at {_MAX_OUTPUT_CHARS} characters]")
+
+
+def test_error_output_is_truncated_when_too_long():
+    result = _run(_agent(calculator), f"print('before')\nraise ValueError('x' * {_MAX_OUTPUT_CHARS * 3})")
+    text = _text(result)
+    assert result["status"] == "error"
+    assert text.startswith("before\n\nExecution error:")
+    assert re.search(r"\[output truncated at \d+ characters\]$", text)
+    assert len(text) < _MAX_OUTPUT_CHARS + 100
+
+
+def test_printed_output_and_error_share_the_cap():
+    code = f"print('p' * {_MAX_OUTPUT_CHARS + 10_000})\nraise ValueError('e' * {_MAX_OUTPUT_CHARS + 10_000})"
+    text = _text(_run(_agent(calculator), code))
+    assert text.startswith("ppp")
+    assert "ValueError: eee" in text
+    assert len(text) < _MAX_OUTPUT_CHARS + 100
+
+
+def test_syntax_error_output_is_truncated_when_too_long():
+    long_line = "A" * (_MAX_OUTPUT_CHARS * 2)
+    text = _text(_run(_agent(calculator), f"x = '{long_line}' +"))
+    assert text.startswith("Syntax error:")
+    assert len(text) < _MAX_OUTPUT_CHARS + 100
+
+
+def test_tool_function_can_be_passed_around_as_a_value():
+    code = (
+        'async def twice(fn):\n    return [await fn(expression="1 + 1"), await fn(expression="2 + 2")]\n'
+        "print(await twice(calculator))"
+    )
+    assert _text(_run(_agent(calculator), code)) == "['2', '4']"
+
+
+def test_run_timeout_returns_while_the_code_is_still_computing(monkeypatch):
+    monkeypatch.setattr(_module, "_LIMITS", {**_module._LIMITS, "max_feed_duration_secs": 3.0})
+    quick = make_programmatic_tool_caller(name="quick", timeout=0.3)
+    started = time.monotonic()
+    result = _run(Agent(model=None, tools=[quick]), "print('start')\nwhile True:\n    pass", "quick")
+    assert time.monotonic() - started < 2
+    assert _text(result) == "start\n\nExecution error: timed out after 0.3 seconds."
+
+
+def test_timeout_is_enforced():
+    @tool
+    def slow() -> str:
+        """Block longer than the timeout."""
+        time.sleep(5)
+        return "late"
+
+    quick = make_programmatic_tool_caller(name="quick", timeout=0.3)
+    result = _run(Agent(model=None, tools=[quick, slow]), "print('start')\nawait slow()", "quick")
+    assert result["status"] == "error"
+    assert _text(result).startswith("start\n\nExecution error: timed out after 0.3 seconds.")
+
+
+def test_default_timeouts_are_an_hour_per_run_and_half_an_hour_per_tool_call():
+    parameters = inspect.signature(make_programmatic_tool_caller).parameters
+    assert (parameters["timeout"].default, parameters["tool_timeout"].default) == (3600.0, 1800.0)
+
+
+def test_tool_timeout_raises_a_catchable_error_and_the_run_continues():
+    cancelled = []
+
+    @tool
+    async def slow() -> str:
+        """Run longer than the tool timeout."""
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+        return "late"
+
+    quick = make_programmatic_tool_caller(name="quick", tool_timeout=0.2)
+    code = (
+        "try:\n    await slow()\nexcept RuntimeError as e:\n    print('ERR', e)\n"
+        "print(await calculator(expression='1 + 1'))"
+    )
+    started = time.monotonic()
+    result = _run(Agent(model=None, tools=[quick, slow, calculator]), code, "quick")
+    assert time.monotonic() - started < 4
+    assert result["status"] == "success"
+    assert _text(result) == "ERR Tool 'slow' timed out after 0.2 seconds; it may still be running.\n2"
+    assert cancelled == [True]
+
+
+def test_tool_timeout_does_not_count_time_queued_for_a_slot():
+    @tool
+    async def slow(value: int) -> int:
+        """Take a moment."""
+        await asyncio.sleep(0.1)
+        return value
+
+    # Eight rounds of slots: the later rounds start after the tool timeout has passed since they were queued.
+    count = _MAX_CONCURRENT_TOOL_CALLS * 8
+    quick = make_programmatic_tool_caller(name="quick", tool_timeout=0.5)
+    code = f"import asyncio\nprint(len(await asyncio.gather(*[slow(value=i) for i in range({count})])))"
+    assert _text(_run(Agent(model=None, tools=[quick, slow]), code, "quick")) == str(count)
+
+
+def test_no_tool_call_starts_or_keeps_running_after_the_run_ends():
+    started, finished = [], []
+
+    @tool
+    async def record(value: int) -> int:
+        """Record when the call starts and finishes."""
+        started.append(value)
+        await asyncio.sleep(0.4)
+        finished.append(value)
+        return value
+
+    quick = make_programmatic_tool_caller(name="quick", timeout=0.2)
+    agent = Agent(model=None, tools=[quick, record])
+    context = ToolContext(tool_use={"toolUseId": "x", "name": "quick", "input": {}}, agent=agent, invocation_state={})
+    code = "import asyncio\nawait asyncio.gather(*[record(value=i) for i in range(30)])"
+
+    async def run_then_wait() -> dict:
+        result = (await _events(quick, code, context))[-1]
+        await asyncio.sleep(0.6)
+        return result
+
+    result = asyncio.run(run_then_wait())
+    assert _text(result) == "Execution error: timed out after 0.2 seconds."
+    assert len(started) <= _MAX_CONCURRENT_TOOL_CALLS
+    assert finished == []
+
+
+def test_tool_timeout_none_leaves_only_the_run_timeout():
+    @tool
+    async def slow() -> str:
+        """Run longer than the default-shortened tool timeout would allow."""
+        await asyncio.sleep(0.4)
+        return "done"
+
+    unbounded = make_programmatic_tool_caller(name="unbounded", tool_timeout=None)
+    result = _run(Agent(model=None, tools=[unbounded, slow]), "print(await slow())", "unbounded")
+    assert _text(result) == "done"
+
+
+@pytest.mark.parametrize("option", ["timeout", "tool_timeout"])
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
+def test_non_positive_or_non_finite_timeouts_are_rejected(option, value):
+    with pytest.raises(ValueError, match=option):
+        make_programmatic_tool_caller(**{option: value})
+
+
+def test_cancellation_keeps_what_the_code_printed():
+    @tool(context="tool_context")
+    def stop_the_agent(tool_context: ToolContext) -> str:
+        """Cancel the agent from inside a tool call."""
+        tool_context.agent.cancel()
+        time.sleep(0.2)
+        return "cancelled"
+
+    result = _run(
+        _agent(stop_the_agent), "print('before')\nawait stop_the_agent()\nimport asyncio\nawait asyncio.sleep(5)"
+    )
+    assert result == {
+        "toolUseId": ANY,
+        "status": "error",
+        "content": [{"text": "before\n\nExecution cancelled."}],
+    }
+
+
+def test_cancellation_is_honored():
+    agent = _agent(calculator)
+    agent.cancel()
+    result = _run(agent, "import asyncio\nawait asyncio.sleep(5)\nprint('late')")
+    assert result["status"] == "error"
+    assert _text(result) == "Execution cancelled."
+
+
+def test_in_flight_cancellation_stops_promptly():
+    @tool
+    def hang() -> str:
+        """Block for a while."""
+        time.sleep(3)
+        return "late"
+
+    # Driven on a loop of our own: the SDK's sync direct-call bridge tears its loop down with
+    # ``asyncio.run``, which waits for the worker thread the blocked inner call is parked on.
+    agent = _agent(hang)
+    context = ToolContext(
+        tool_use={"toolUseId": "x", "name": "programmatic_tool_caller", "input": {}},
+        agent=agent,
+        invocation_state={},
+        cancel_signal=agent.cancel_signal,
+    )
+    threading.Timer(0.1, agent.cancel).start()
+    start = time.monotonic()
+    loop = asyncio.new_event_loop()
+    result = loop.run_until_complete(_events(programmatic_tool_caller, "await hang()", context))[-1]
+    elapsed = time.monotonic() - start
+    pending = asyncio.all_tasks(loop)
+    loop.close()
+    assert pending == set()
+    assert elapsed < 2
+    assert result["status"] == "error"
+    assert _text(result) == "Execution cancelled."
+
+
+def test_no_inner_tool_calls_after_cancel():
+    calls = []
+
+    @tool
+    def bump() -> str:
+        """Record a call."""
+        calls.append(time.monotonic())
+        time.sleep(0.05)
+        return "ok"
+
+    agent = _agent(bump)
+    threading.Timer(0.3, agent.cancel).start()
+    result = _run(agent, "while True:\n    await bump()")
+    cancelled_at = time.monotonic()
+    time.sleep(0.5)
+    assert result["status"] == "error"
+    assert not [t for t in calls if t > cancelled_at + 0.1], "inner tool calls continued after cancel"
