@@ -24,7 +24,7 @@ function createOptions(
     agent,
     middlewareRegistry,
     tracer: new Tracer(),
-    meter: new Meter(),
+    meter: new Meter(agent.id),
     cancelSignal,
   }
 }
