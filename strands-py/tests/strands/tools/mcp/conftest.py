@@ -70,10 +70,13 @@ def mock_session():
     mock_session = AsyncMock()
     mock_init_result = MagicMock()
     mock_init_result.instructions = None
+    mock_init_result.serverInfo = None
     mock_session.initialize = AsyncMock(return_value=mock_init_result)
-    # The 2.x negotiation reads instructions from the session itself; without an
-    # explicit default the AsyncMock would hand back an auto-created attribute.
+    # The 2.x negotiation reads instructions and server info from the session
+    # itself; without explicit defaults the AsyncMock would hand back
+    # auto-created attributes.
     mock_session.instructions = None
+    mock_session.server_info = None
     # Default: no task support (get_server_capabilities is sync, not async!)
     mock_session.get_server_capabilities = MagicMock(return_value=None)
 

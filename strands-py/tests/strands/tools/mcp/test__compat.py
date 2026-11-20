@@ -702,18 +702,20 @@ def test_installed_v2_session_exposes_negotiation_attributes():
 
 @pytest.mark.asyncio
 async def test_negotiate_session_v1_runs_the_initialize_handshake(monkeypatch):
-    """Test that the 1.x handshake is initialize(), with instructions read from its result."""
+    """Test that the 1.x handshake is initialize(), with instructions and server info read from its result."""
     monkeypatch.setattr(_compat, "MCP_V2", False)
     server_capabilities = MagicMock()
+    server_info = MagicMock()
     session = MagicMock()
-    session.initialize = AsyncMock(return_value=MagicMock(instructions="use the tools"))
+    session.initialize = AsyncMock(return_value=MagicMock(instructions="use the tools", serverInfo=server_info))
     session.get_server_capabilities = MagicMock(return_value=server_capabilities)
 
-    instructions, capabilities = await negotiate_session(session)
+    instructions, capabilities, negotiated_server_info = await negotiate_session(session)
 
     session.initialize.assert_awaited_once_with()
     assert instructions == "use the tools"
     assert capabilities is server_capabilities
+    assert negotiated_server_info is server_info
 
 
 @pytest.mark.asyncio
@@ -729,16 +731,19 @@ async def test_negotiate_session_v2_negotiates_and_reads_session_properties(monk
     client_module.negotiate_auto = negotiate_auto  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "mcp.client.client", client_module)
     server_capabilities = MagicMock()
+    server_info = MagicMock()
     session = MagicMock()
     session.instructions = "use the tools"
     session.server_capabilities = server_capabilities
+    session.server_info = server_info
 
-    instructions, capabilities = await negotiate_session(session)
+    instructions, capabilities, negotiated_server_info = await negotiate_session(session)
 
     negotiate_auto.assert_awaited_once_with(session)
     session.initialize.assert_not_called()
     assert instructions == "use the tools"
     assert capabilities is server_capabilities
+    assert negotiated_server_info is server_info
 
 
 @requires_mcp_v1
