@@ -7,7 +7,7 @@ sourceLinks:
   - path: strands-py/src/strands/vended_tools/edit/edit.py
 ---
 
-Lets your agent make surgical, in-place changes to a text file by replacing an exact, unique string (`old_str` must appear in the file exactly once).
+Lets your agent make surgical, in-place changes to a text file by replacing an exact, unique string (`old_str` must appear in the file exactly once). Line breaks in `old_str` match LF or CRLF, and `new_str` is written with the file's line ending.
 
 The `edit` tool pairs with the `read` and `write` vended tools and supersedes `file_editor`.
 

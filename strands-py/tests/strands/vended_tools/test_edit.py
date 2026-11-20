@@ -141,3 +141,106 @@ class TestSandboxBinding:
         file_path = _write(tmp_path / "f.txt", "hello")
         await edit(path=file_path, tool_context=_tool_context(), old_str="hello", new_str="world")
         assert (tmp_path / "f.txt").read_text() == "world"
+
+
+@posix_only
+class TestLineEndings:
+    @pytest.mark.asyncio
+    async def test_multiline_old_str_matches_crlf_file(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"a\r\nb\r\nc\r\n")
+        result = await edit_tool(path=str(file_path), tool_context=ctx, old_str="a\nb", new_str="x\ny")
+        assert result == f"Edited {file_path}."
+        assert file_path.read_bytes() == b"x\r\ny\r\nc\r\n"
+
+    @pytest.mark.asyncio
+    async def test_lf_old_str_matches_crlf_file_single_line(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"alpha\r\nbeta\r\n")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="beta", new_str="BETA")
+        assert file_path.read_bytes() == b"alpha\r\nBETA\r\n"
+
+    @pytest.mark.asyncio
+    async def test_single_line_match_takes_file_line_ending(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"alpha\r\nbeta\r\n")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="beta", new_str="b1\nb2")
+        assert file_path.read_bytes() == b"alpha\r\nb1\r\nb2\r\n"
+
+    @pytest.mark.asyncio
+    async def test_crlf_old_str_matches_lf_file(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"a\nb\nc\n")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="a\r\nb", new_str="x\r\ny")
+        assert file_path.read_bytes() == b"x\ny\nc\n"
+
+    @pytest.mark.asyncio
+    async def test_untouched_bytes_keep_their_line_endings(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"head\r\na\nb\r\ntail\r\n")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="a\nb", new_str="X")
+        assert file_path.read_bytes() == b"head\r\nX\r\ntail\r\n"
+
+    @pytest.mark.asyncio
+    async def test_lf_match_in_crlf_file_keeps_lf(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"head\r\na\nb\r\ntail\r\n")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="a\nb", new_str="x\ny")
+        assert file_path.read_bytes() == b"head\r\nx\ny\r\ntail\r\n"
+
+    @pytest.mark.asyncio
+    async def test_single_line_match_takes_its_own_line_ending(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"a\nb\nc\nlast\r\n")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="b", new_str="b1\nb2")
+        assert file_path.read_bytes() == b"a\nb1\nb2\nc\nlast\r\n"
+
+    @pytest.mark.asyncio
+    async def test_match_on_unterminated_last_line_takes_previous_line_ending(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"a\r\nb")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="b", new_str="b1\nb2")
+        assert file_path.read_bytes() == b"a\r\nb1\r\nb2"
+
+    @pytest.mark.asyncio
+    async def test_regex_metacharacters_in_old_str_match_literally(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"f(a.b)\r\n[x]\r\n")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="f(a.b)\n[x]", new_str="ok")
+        assert file_path.read_bytes() == b"ok\r\n"
+
+    @pytest.mark.asyncio
+    async def test_lf_file_is_unchanged_in_behaviour(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"a\nb\nc\n")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="b\nc", new_str="B\nC")
+        assert file_path.read_bytes() == b"a\nB\nC\n"
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_match_on_crlf_file_still_rejected(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"foo\r\nfoo\r\nfoo\r\n")
+        with pytest.raises(ValueError, match="appears 3 times"):
+            await edit_tool(path=str(file_path), tool_context=ctx, old_str="foo", new_str="bar")
+        assert file_path.read_bytes() == b"foo\r\nfoo\r\nfoo\r\n"
+
+    @pytest.mark.asyncio
+    async def test_missing_match_on_crlf_file_still_rejected(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"alpha\r\nbeta\r\n")
+        with pytest.raises(ValueError, match="did not appear verbatim"):
+            await edit_tool(path=str(file_path), tool_context=ctx, old_str="zeta", new_str="x")
+
+    @pytest.mark.asyncio
+    async def test_multiline_ambiguous_match_on_crlf_file(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"a\r\nb\r\na\r\nb\r\n")
+        with pytest.raises(ValueError, match="appears 2 times"):
+            await edit_tool(path=str(file_path), tool_context=ctx, old_str="a\nb", new_str="x")
+
+    @pytest.mark.asyncio
+    async def test_empty_new_str_deletes_across_crlf(self, edit_tool, ctx, tmp_path):
+        file_path = tmp_path / "f.txt"
+        file_path.write_bytes(b"keep\r\nremove-me\r\nkeep\r\n")
+        await edit_tool(path=str(file_path), tool_context=ctx, old_str="remove-me\n", new_str="")
+        assert file_path.read_bytes() == b"keep\r\nkeep\r\n"
