@@ -219,6 +219,10 @@ def test_stateful_false(model):
     assert not model.stateful
 
 
+def test_gen_ai_provider_name_defaults_to_none(model):
+    assert model.gen_ai_provider_name is None
+
+
 class ConfigurableModel(SAModel):
     def __init__(self, context_window_limit=None):
         self._config = {"context_window_limit": context_window_limit}

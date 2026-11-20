@@ -2216,3 +2216,9 @@ def test_format_tool_result_after_restart(content, exp_result):
     tru_text = _format_tool_result_after_restart(tool_use, ToolResultBlock("call-1", "error", content))
 
     assert tru_text.endswith(f'Arguments: {{"zone": "UTC"}}\nStatus: error\nResult:\n{exp_result}')
+
+
+def test_gen_ai_provider_name(nova_model):
+    tru_name = nova_model.gen_ai_provider_name
+    exp_name = "aws.bedrock"
+    assert tru_name == exp_name

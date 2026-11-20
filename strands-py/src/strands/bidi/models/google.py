@@ -167,6 +167,12 @@ class GoogleGeminiLiveModel(BidiModel, AudioCapable):
         self._connection_id: str | None = None
         self._turn_state = _TurnState()
 
+    @property
+    @override
+    def gen_ai_provider_name(self) -> str:
+        """Identifies Google Gemini in GenAI telemetry."""
+        return "gcp.gen_ai"
+
     @override
     def update_config(self, **model_config: Unpack[ModelUpdateConfig]) -> None:  # type: ignore[override]
         """Update the model configuration with the provided arguments.

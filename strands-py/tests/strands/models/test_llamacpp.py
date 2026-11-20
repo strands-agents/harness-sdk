@@ -1143,3 +1143,9 @@ def test_format_request_logs_skipped_blocks_once_per_request(caplog):
     messages_logged = [record.getMessage() for record in caplog.records]
     assert len(messages_logged) == 1
     assert "count=<3> | Location sources are not supported by llama.cpp" in messages_logged[0]
+
+
+def test_gen_ai_provider_name():
+    tru_name = LlamaCppModel().gen_ai_provider_name
+    exp_name = "llama_cpp"
+    assert tru_name == exp_name

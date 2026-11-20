@@ -3978,3 +3978,9 @@ async def test_count_tokens_counts_the_system_message_natively_with_the_beta(ant
         tools=[],
         extra_headers={"anthropic-beta": "mid-conversation-system-clear-at-2026-08-21"},
     )
+
+
+def test_gen_ai_provider_name(model):
+    tru_name = model.gen_ai_provider_name
+    exp_name = "anthropic"
+    assert tru_name == exp_name

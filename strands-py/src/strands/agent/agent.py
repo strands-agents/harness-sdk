@@ -1210,14 +1210,15 @@ class Agent(AgentBase, LocalAgent):
 
                 temp_messages: Messages = self.messages + await self._convert_prompt_to_messages(prompt)
 
-                structured_output_span.set_attributes(
-                    {
-                        "gen_ai.system": "strands-agents",
-                        "gen_ai.agent.name": self.name,
-                        "gen_ai.agent.id": self.agent_id,
-                        "gen_ai.operation.name": "execute_structured_output",
-                    }
-                )
+                span_attributes: dict[str, AttributeValue] = {
+                    "gen_ai.agent.name": self.name,
+                    "gen_ai.agent.id": self.agent_id,
+                    "gen_ai.operation.name": "execute_structured_output",
+                }
+                gen_ai_provider_name = getattr(self.model, "gen_ai_provider_name", None)
+                if gen_ai_provider_name is not None:
+                    span_attributes["gen_ai.system"] = gen_ai_provider_name
+                structured_output_span.set_attributes(span_attributes)
                 if self.system_prompt:
                     structured_output_span.add_event(
                         "gen_ai.system.message",
@@ -2156,6 +2157,7 @@ class Agent(AgentBase, LocalAgent):
             system_prompt_content=self.system_prompt_content,
             custom_trace_attributes=self.trace_attributes,
             tools_config=self.tool_registry.get_all_tools_config(),
+            gen_ai_provider_name=getattr(self.model, "gen_ai_provider_name", None),
         )
 
     def _end_agent_trace_span(

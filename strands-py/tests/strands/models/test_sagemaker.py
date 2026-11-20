@@ -1362,3 +1362,9 @@ async def test_structured_output_container_non_throttling_error_raises_value_err
 
     with pytest.raises(ValueError, match="SageMaker structured output error"):
         await alist(model.structured_output(TestOutputModel, messages))
+
+
+def test_gen_ai_provider_name(model):
+    tru_name = model.gen_ai_provider_name
+    exp_name = "aws.sagemaker"
+    assert tru_name == exp_name

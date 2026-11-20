@@ -92,6 +92,12 @@ class LiteLLMModel(OpenAIModel):
         """
         return cast(LiteLLMModel.LiteLLMConfig, self.config)
 
+    @property
+    @override
+    def gen_ai_provider_name(self) -> str:
+        """Identifies LiteLLM in GenAI telemetry."""
+        return "litellm"
+
     @override
     @classmethod
     def format_request_message_content(cls, content: ContentBlock, **kwargs: Any) -> dict[str, Any]:

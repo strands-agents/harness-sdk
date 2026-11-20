@@ -299,6 +299,12 @@ class SageMakerAIModel(OpenAIModel):
         """
         return self.endpoint_config
 
+    @property
+    @override
+    def gen_ai_provider_name(self) -> str:
+        """Identifies Amazon SageMaker AI in GenAI telemetry."""
+        return "aws.sagemaker"
+
     @override
     def format_request(
         self,

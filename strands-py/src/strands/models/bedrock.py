@@ -475,6 +475,12 @@ class BedrockModel(Model):
         )
 
     @property
+    @override
+    def gen_ai_provider_name(self) -> str:
+        """Identifies Amazon Bedrock in GenAI telemetry."""
+        return "aws.bedrock"
+
+    @property
     def _limits_cache_points(self) -> bool:
         """Whether Converse limits where this model takes cache points (Nova: no tools point, no TTL, text only)."""
         return _converse_limits_cache_points(str(self.config.get("model_id", "")))

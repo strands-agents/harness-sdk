@@ -1056,3 +1056,9 @@ def test_format_request_skips_reasoning_content(model, caplog):
     messages_logged = [record.getMessage() for record in caplog.records]
     assert len(messages_logged) == 1
     assert "count=<2> | reasoningContent is not supported" in messages_logged[0]
+
+
+def test_gen_ai_provider_name(model):
+    tru_name = model.gen_ai_provider_name
+    exp_name = "ollama"
+    assert tru_name == exp_name

@@ -171,10 +171,14 @@ class _AgentLoop:
             model_id=model_id,
             tools=self._agent.tool_names,
             system_prompt=self._agent.system_prompt,
+            gen_ai_provider_name=getattr(self._agent.model, "gen_ai_provider_name", None),
         )
 
         connection_span = _telemetry.start_connection_span(
-            self._tracer, parent_span=self._session_span, model_id=model_id
+            self._tracer,
+            parent_span=self._session_span,
+            model_id=model_id,
+            gen_ai_provider_name=getattr(self._agent.model, "gen_ai_provider_name", None),
         )
         try:
             await self._agent.model.start(
@@ -488,6 +492,7 @@ class _AgentLoop:
             parent_span=self._session_span,
             reason=reason,
             error_message=str(timeout_error) if timeout_error is not None else None,
+            gen_ai_provider_name=getattr(self._agent.model, "gen_ai_provider_name", None),
         )
 
         restart_kwargs = timeout_error.restart_config if timeout_error is not None else {}
@@ -614,7 +619,10 @@ class _AgentLoop:
                             time_to_first_audio_ms=time_to_first_audio_ms,
                         )
                     response_span = _telemetry.start_response_span(
-                        self._tracer, event.response_id, parent_span=self._session_span
+                        self._tracer,
+                        event.response_id,
+                        parent_span=self._session_span,
+                        gen_ai_provider_name=getattr(self._agent.model, "gen_ai_provider_name", None),
                     )
                     response_start_time = time.perf_counter()
                     time_to_first_audio_ms = None
@@ -786,7 +794,11 @@ class _AgentLoop:
 
         tool_results: list[ToolResult] = []
 
-        tool_call_span = self._tracer.start_tool_call_span(tool_use, parent_span=self._session_span)
+        tool_call_span = self._tracer.start_tool_call_span(
+            tool_use,
+            parent_span=self._session_span,
+            gen_ai_provider_name=getattr(self._agent.model, "gen_ai_provider_name", None),
+        )
         tool_result: ToolResult | None = None
         tool_error: Exception | None = None
 

@@ -92,6 +92,7 @@ def agent():
     model = unittest.mock.AsyncMock(spec=BidiModel)
     model.get_connection_config.return_value = {}
     model.restart = unittest.mock.AsyncMock()
+    model.gen_ai_provider_name = "aws.bedrock"
     return BidiAgent(model=model, tools=[mock_tool_func])
 
 
@@ -115,6 +116,7 @@ async def test_session_span_created_on_start(loop, agent, agenerator, otel_setup
     session_spans = [s for s in spans if "bidi_session" in s.name]
     assert len(session_spans) == 1
     assert session_spans[0].attributes["gen_ai.operation.name"] == "bidi_session"
+    assert session_spans[0].attributes["gen_ai.system"] == "aws.bedrock"
 
 
 @pytest.mark.asyncio
@@ -164,6 +166,7 @@ async def test_connection_span_created_during_start(loop, agent, agenerator, ote
     connect_spans = [s for s in spans if "bidi_connect" in s.name]
     assert len(connect_spans) == 1
     assert connect_spans[0].attributes["gen_ai.operation.name"] == "bidi_connect"
+    assert connect_spans[0].attributes["gen_ai.system"] == "aws.bedrock"
 
 
 @pytest.mark.asyncio
@@ -209,6 +212,7 @@ async def test_response_span_records_response_id(loop, agent, agenerator, otel_s
     response_spans = [s for s in spans if "bidi_response" in s.name]
     assert len(response_spans) == 1
     assert response_spans[0].attributes["gen_ai.response.id"] == "resp-2"
+    assert response_spans[0].attributes["gen_ai.system"] == "aws.bedrock"
 
 
 @pytest.mark.asyncio
@@ -275,11 +279,16 @@ async def test_tool_call_span_created(loop, agent, agenerator, otel_setup, tool_
     await loop.stop()
 
     tru_spans = sorted(
-        (span.attributes["gen_ai.tool.call.id"], span.attributes["gen_ai.tool.name"], span.status.status_code)
+        (
+            span.attributes["gen_ai.tool.call.id"],
+            span.attributes["gen_ai.tool.name"],
+            span.attributes["gen_ai.system"],
+            span.status.status_code,
+        )
         for span in otel_setup.get_finished_spans()
         if "execute_tool" in span.name
     )
-    exp_spans = [(call["toolUseId"], "mock_tool", StatusCode.OK) for call in tool_uses]
+    exp_spans = [(call["toolUseId"], "mock_tool", "aws.bedrock", StatusCode.OK) for call in tool_uses]
     assert tru_spans == exp_spans
 
 
@@ -328,6 +337,7 @@ async def test_connection_restart_span(loop, agent, agenerator, otel_setup):
     assert len(restart_spans) == 1
     assert restart_spans[0].attributes["gen_ai.bidi.restart_reason"] == "timeout"
     assert restart_spans[0].attributes["gen_ai.bidi.restart_error_message"] == "8 minute timeout"
+    assert restart_spans[0].attributes["gen_ai.system"] == "aws.bedrock"
 
 
 @pytest.mark.asyncio

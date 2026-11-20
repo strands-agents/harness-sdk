@@ -39,9 +39,9 @@ Known limitation: routing applies to ``InvokeModelStage``, so ``agent.model`` st
 candidate and subsystems reading it reason about that model rather than the one running. Proactive
 compression sizes against ``agent.model``'s context window, so routing among candidates with
 materially different windows can under-compress and overflow the routed model; the agent span reports
-the first candidate's model id; and ``Agent.structured_output()`` calls the model directly, bypassing
-routing entirely. Prefer candidates with comparable context windows and tokenizers until the selected
-model is threaded to those consumers.
+the first candidate's model id and provider, and tool spans report its provider; and
+``Agent.structured_output()`` calls the model directly, bypassing routing entirely. Prefer candidates with
+comparable context windows and tokenizers until the selected model is threaded to those consumers.
 """
 
 from __future__ import annotations

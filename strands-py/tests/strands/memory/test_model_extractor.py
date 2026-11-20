@@ -186,6 +186,7 @@ async def test_wraps_the_model_call_in_a_model_invoke_span():
 
     assert entries == [ExtractionResult(content="fact")]
     tracer.start_model_invoke_span.assert_called_once()
+    assert tracer.start_model_invoke_span.call_args.kwargs["gen_ai_provider_name"] is None
     # The terminal stop tuple's usage/metrics/stop_reason are passed through on end.
     end_call = tracer.end_model_invoke_span.call_args
     span, message, usage, metrics, stop_reason = end_call.args

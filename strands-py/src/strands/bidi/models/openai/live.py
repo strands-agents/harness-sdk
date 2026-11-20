@@ -166,6 +166,12 @@ class OpenAILiveModel(BidiModel, AudioCapable, Restartable):
         self._state = _LiveSessionState()
         self._started = False
 
+    @property
+    @override
+    def gen_ai_provider_name(self) -> str:
+        """Identifies OpenAI in GenAI telemetry."""
+        return "openai"
+
     @override
     def update_config(self, **model_config: Unpack[ModelUpdateConfig]) -> None:  # type: ignore[override]
         """Merge shared model configuration while stopped.

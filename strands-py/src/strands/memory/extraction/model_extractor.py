@@ -86,7 +86,12 @@ class ModelExtractor:
 
         tracer = get_tracer()
         model_id = model.config.get("model_id") if hasattr(model, "config") else None
-        span = tracer.start_model_invoke_span(messages=[prompt], model_id=model_id, system_prompt=self._system_prompt)
+        span = tracer.start_model_invoke_span(
+            messages=[prompt],
+            model_id=model_id,
+            system_prompt=self._system_prompt,
+            gen_ai_provider_name=getattr(model, "gen_ai_provider_name", None),
+        )
 
         final_message: Message | None = None
         stop: Any = None

@@ -826,6 +826,7 @@ async def test_event_loop_cycle_creates_spans(
     mock_tracer.start_event_loop_cycle_span.return_value = cycle_span
     model_span = MagicMock()
     mock_tracer.start_model_invoke_span.return_value = model_span
+    model.gen_ai_provider_name = "aws.bedrock"
 
     model.stream.return_value = agenerator(
         [
@@ -844,10 +845,12 @@ async def test_event_loop_cycle_creates_spans(
     # Verify tracer methods were called correctly
     mock_get_tracer.assert_called_once()
     mock_tracer.start_event_loop_cycle_span.assert_called_once()
+    assert mock_tracer.start_event_loop_cycle_span.call_args[1]["gen_ai_provider_name"] == "aws.bedrock"
     mock_tracer.start_model_invoke_span.assert_called_once()
     call_kwargs = mock_tracer.start_model_invoke_span.call_args[1]
     assert call_kwargs["system_prompt"] == agent.system_prompt
     assert call_kwargs["system_prompt_content"] == [{"text": agent.system_prompt}]
+    assert call_kwargs["gen_ai_provider_name"] == "aws.bedrock"
     mock_tracer.end_model_invoke_span.assert_called_once()
     mock_tracer.end_event_loop_cycle_span.assert_called_once()
 
@@ -1094,6 +1097,7 @@ async def test_event_loop_cycle_with_parent_span(
 
     # Set the parent span for this test
     agent.trace_span = parent_span
+    model.gen_ai_provider_name = "aws.bedrock"
 
     # Call event_loop_cycle with a parent span
     stream = strands.event_loop.event_loop.event_loop_cycle(
@@ -1108,6 +1112,7 @@ async def test_event_loop_cycle_with_parent_span(
         parent_span=parent_span,
         messages=messages,
         custom_trace_attributes=unittest.mock.ANY,
+        gen_ai_provider_name="aws.bedrock",
     )
 
 

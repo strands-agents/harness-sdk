@@ -1212,3 +1212,9 @@ async def test_stream_non_streaming_splits_list_content_into_reasoning_and_text(
         {"messageStop": {"stopReason": "end_turn"}},
     ]
     assert tru_chunks == exp_chunks
+
+
+def test_gen_ai_provider_name(model):
+    tru_name = model.gen_ai_provider_name
+    exp_name = "mistral_ai"
+    assert tru_name == exp_name

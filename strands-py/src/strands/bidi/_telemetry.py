@@ -17,6 +17,7 @@ def start_session_span(
     model_id: str | None = None,
     tools: list[str] | None = None,
     system_prompt: str | None = None,
+    gen_ai_provider_name: str | None = None,
 ) -> Span:
     """Start a span for the bidi session lifecycle.
 
@@ -26,11 +27,14 @@ def start_session_span(
         model_id: Model identifier.
         tools: List of tool names available to the agent.
         system_prompt: System prompt configured on the agent.
+        gen_ai_provider_name: GenAI provider of the bidi model; omitted when None.
 
     Returns:
         The session span.
     """
-    attributes: dict[str, AttributeValue] = tracer._get_common_attributes(operation_name="bidi_session")
+    attributes: dict[str, AttributeValue] = tracer._get_common_attributes(
+        operation_name="bidi_session", gen_ai_provider_name=gen_ai_provider_name
+    )
     attributes["gen_ai.agent.name"] = agent_name
 
     if model_id:
@@ -79,18 +83,23 @@ def end_session_span(
     tracer._end_span(span, attributes=attributes, error=error)
 
 
-def start_response_span(tracer: Tracer, response_id: str, parent_span: Span | None = None) -> Span:
+def start_response_span(
+    tracer: Tracer, response_id: str, parent_span: Span | None = None, gen_ai_provider_name: str | None = None
+) -> Span:
     """Start a span for a model response.
 
     Args:
         tracer: Tracer instance.
         response_id: Unique identifier for the response.
         parent_span: Parent session span.
+        gen_ai_provider_name: GenAI provider of the bidi model; omitted when None.
 
     Returns:
         The response span.
     """
-    attributes: dict[str, AttributeValue] = tracer._get_common_attributes(operation_name="bidi_response")
+    attributes: dict[str, AttributeValue] = tracer._get_common_attributes(
+        operation_name="bidi_response", gen_ai_provider_name=gen_ai_provider_name
+    )
     attributes["gen_ai.response.id"] = response_id
 
     # Static span name (response_id is recorded as an attribute) to avoid high-cardinality names.
@@ -125,6 +134,7 @@ def start_restart_span(
     parent_span: Span | None = None,
     reason: str = "timeout",
     error_message: str | None = None,
+    gen_ai_provider_name: str | None = None,
 ) -> Span:
     """Start a span for a connection restart.
 
@@ -133,11 +143,14 @@ def start_restart_span(
         parent_span: Parent session span.
         reason: What triggered the restart ("timeout" reactively, "scheduled" proactively).
         error_message: The timeout error message that triggered a reactive restart, if any.
+        gen_ai_provider_name: GenAI provider of the bidi model; omitted when None.
 
     Returns:
         The restart span.
     """
-    attributes: dict[str, AttributeValue] = tracer._get_common_attributes(operation_name="bidi_connection_restart")
+    attributes: dict[str, AttributeValue] = tracer._get_common_attributes(
+        operation_name="bidi_connection_restart", gen_ai_provider_name=gen_ai_provider_name
+    )
     attributes["gen_ai.bidi.restart_reason"] = reason
 
     # The message of the timeout that triggered a reactive restart. Namespaced under
@@ -160,18 +173,26 @@ def end_restart_span(tracer: Tracer, span: Span, error: Exception | None = None)
     tracer._end_span(span, error=error)
 
 
-def start_connection_span(tracer: Tracer, parent_span: Span | None = None, model_id: str | None = None) -> Span:
+def start_connection_span(
+    tracer: Tracer,
+    parent_span: Span | None = None,
+    model_id: str | None = None,
+    gen_ai_provider_name: str | None = None,
+) -> Span:
     """Start a span for the model connection establishment.
 
     Args:
         tracer: Tracer instance.
         parent_span: Parent session span.
         model_id: Model identifier being connected to.
+        gen_ai_provider_name: GenAI provider of the bidi model; omitted when None.
 
     Returns:
         The connection span.
     """
-    attributes: dict[str, AttributeValue] = tracer._get_common_attributes(operation_name="bidi_connect")
+    attributes: dict[str, AttributeValue] = tracer._get_common_attributes(
+        operation_name="bidi_connect", gen_ai_provider_name=gen_ai_provider_name
+    )
 
     if model_id:
         attributes["gen_ai.request.model"] = model_id
