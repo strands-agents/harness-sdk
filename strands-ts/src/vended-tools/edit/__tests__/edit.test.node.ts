@@ -148,5 +148,23 @@ describe('edit tool', () => {
       await edit.invoke({ path: filePath, old_str: 'hello', new_str: 'world' }, context)
       expect(await readFile(filePath)).toBe('world')
     })
+
+    it('bound sandbox does not require context', async () => {
+      const boundTool = makeEdit(new NotASandboxLocalEnvironment())
+      const filePath = await writeFile('hello')
+      await boundTool.invoke({ path: filePath, old_str: 'hello', new_str: 'world' })
+      expect(await readFile(filePath)).toBe('world')
+    })
+
+    it('unbound sandbox requires context', async () => {
+      const filePath = await writeFile('hello')
+      await expect(edit.invoke({ path: filePath, old_str: 'hello', new_str: 'world' })).rejects.toThrow(
+        'Tool context is required for edit operations'
+      )
+    })
+
+    it('validates the path before requiring context', async () => {
+      await expect(edit.invoke({ path: 'relative.txt', old_str: 'a', new_str: 'b' })).rejects.toThrow('is not absolute')
+    })
   })
 })

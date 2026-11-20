@@ -132,4 +132,22 @@ describe.skipIf(process.platform === 'win32')('write tool sandbox binding', () =
     await write.invoke({ path: filePath, content: 'from-agent' }, toolContext(agentSandbox as unknown as Sandbox))
     expect(agentSandbox.writeText).toHaveBeenCalledExactlyOnceWith(filePath, 'from-agent')
   })
+
+  it('bound sandbox does not require context', async () => {
+    const boundTool = makeWrite(new NotASandboxLocalEnvironment())
+    const filePath = join(tmpPath, 'f.txt')
+    await boundTool.invoke({ path: filePath, content: 'no-context' })
+    expect(readFileSync(filePath, 'utf-8')).toBe('no-context')
+  })
+
+  it('unbound sandbox requires context', async () => {
+    const filePath = join(tmpPath, 'f.txt')
+    await expect(write.invoke({ path: filePath, content: 'x' })).rejects.toThrow(
+      'Tool context is required for write operations'
+    )
+  })
+
+  it('validates the path before requiring context', async () => {
+    await expect(write.invoke({ path: 'relative.txt', content: 'x' })).rejects.toThrow('is not absolute')
+  })
 })
