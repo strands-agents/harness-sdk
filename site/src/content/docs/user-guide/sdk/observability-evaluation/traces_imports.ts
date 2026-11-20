@@ -50,3 +50,8 @@ import { setupTracer, getTracer } from '@strands-agents/sdk/telemetry'
 import { Agent } from '@strands-agents/sdk'
 import { setupTracer } from '@strands-agents/sdk/telemetry'
 // --8<-- [end:end_to_end_imports]
+
+// --8<-- [start:cloudwatch_otlp_imports]
+import { Agent } from '@strands-agents/sdk'
+import { setupTracer } from '@strands-agents/sdk/telemetry'
+// --8<-- [end:cloudwatch_otlp_imports]
