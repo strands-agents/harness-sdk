@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 import pytest
 
+from strands.agent.invocation_context import _create_invocation_context
 from strands.decisions import DecisionModel, DecisionsAPIDecisionModel, TypeSafeDecisionModel, Uncertain
 from strands.types.exceptions import (
     ContextWindowOverflowException,
@@ -474,6 +475,47 @@ class TestAsk:
         result = await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
         assert result.usage is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "usage",
+        [
+            '{"input_tokens":1e999,"output_tokens":3}',
+            '{"input_tokens":12,"output_tokens":1e999}',
+            '{"input_tokens":-1e999,"output_tokens":3}',
+            '{"input_tokens":1e308,"output_tokens":1e308}',
+            '{"input_tokens":12.5,"output_tokens":3}',
+            '{"input_tokens":9007199254740992,"output_tokens":3}',
+        ],
+    )
+    async def test_omits_non_integer_usage_without_changing_invocation_counters(
+        self, provider: _ProviderCase, usage: str
+    ):
+        raw = f'{{"model":"resolved-model","answers":{{"q":{{"type":"noul","noul":1}}}},"usage":{usage}}}'
+        decision = provider.model_cls(api_key="test-key", http_client=_fake_text_client(raw))
+        invocation_context = _create_invocation_context()
+        invocation_context._record_usage({"inputTokens": 5, "outputTokens": 2, "totalTokens": 7})
+        original_usage = dict(invocation_context.usage)
+
+        result = await decision.ask(
+            "state", {"q": {"question": "ok?", "choices": "boolean"}}, invocation_context=invocation_context
+        )
+
+        assert result.answers == {"q": True}
+        assert result.usage is None
+        assert invocation_context.usage == original_usage
+
+    @pytest.mark.asyncio
+    async def test_reports_integral_float_token_counters_as_integers(self, provider: _ProviderCase):
+        raw = (
+            '{"model":"resolved-model","answers":{"q":{"type":"noul","noul":1}},'
+            '"usage":{"input_tokens":12.0,"output_tokens":3}}'
+        )
+        decision = provider.model_cls(api_key="test-key", http_client=_fake_text_client(raw))
+
+        result = await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+        assert result.usage == {"inputTokens": 12, "outputTokens": 3, "totalTokens": 15}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

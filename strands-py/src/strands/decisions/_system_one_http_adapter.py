@@ -8,7 +8,6 @@ their endpoints, credentials, defaults, and limits and delegate the wire work he
 import json
 import math
 import os
-import sys
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -26,6 +25,8 @@ from ..types.exceptions import (
 from .types import DecisionInput, DecisionMetadata, DecisionResult, Question, Uncertain
 
 _MAX_CHOICE_COUNT = 255
+# The largest count TypeScript reports (Number.MAX_SAFE_INTEGER), so both SDKs omit the same usage.
+_MAX_SAFE_INTEGER = 2**53 - 1
 _PROBABILITY_TOLERANCE = 1e-6
 # System One servers such as strands-decider round each probability to 4 decimals,
 # so a distribution over N choices may sum to 1 within N * 5e-5.
@@ -375,9 +376,10 @@ def _parse_usage(value: Any) -> Usage | None:
 
 
 def _is_token_count(value: Any) -> TypeGuard[float]:
-    # Int/float comparison is exact, so this rejects inf, nan, and ints too large for a float
-    # without the OverflowError math.isfinite raises on them.
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= sys.float_info.max
+    # The bound check runs first so int() never sees inf or nan; int/float comparison is exact.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return 0 <= value <= _MAX_SAFE_INTEGER and value == int(value)
 
 
 def _require_record(value: Any, name: str) -> dict[str, Any]:
