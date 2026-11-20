@@ -22,14 +22,11 @@ from strands.hooks import BeforeToolCallEvent
 from strands.interrupt import Interrupt
 from strands.tools.decorator import tool
 from strands.types.tools import ToolContext
-from strands.vended_tools.programmatic_tool_caller import (
-    DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION,
-    make_programmatic_tool_caller,
-    programmatic_tool_caller,
-)
+from strands.vended_tools.programmatic_tool_caller import make_programmatic_tool_caller, programmatic_tool_caller
 from strands.vended_tools.programmatic_tool_caller.programmatic_tool_caller import (
     _MAX_CONCURRENT_TOOL_CALLS,
     _MAX_OUTPUT_CHARS,
+    DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION,
     _Output,
     _unwrap_result,
 )

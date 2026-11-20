@@ -423,8 +423,8 @@ def make_programmatic_tool_caller(
 
     The returned tool executes agent-authored Python code in a Monty sandbox in which the agent's
     other tools are exposed as ``async`` functions (``await tool_name(...)``). Only ``print()``
-    output is returned. While the code runs, the tool also streams that output as
-    :class:`ProgrammaticToolCallerPrintEvent` tool stream events.
+    output is returned. While the code runs, the tool also streams that output as tool stream
+    events whose data is ``{"type": "print", "text": "..."}``.
 
     Args:
         allowed_tools: Registry names of the tools to expose to the code. ``None`` (the default)
