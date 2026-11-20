@@ -9,6 +9,7 @@ import {
   InjectedBlock,
   SummaryBlock,
   CachePointBlock,
+  type ContentBlock,
   type StopReason,
 } from '../../types/messages.js'
 import { CitationsBlock } from '../../types/citations.js'
@@ -488,6 +489,136 @@ describe('Model', () => {
           expect(error).not.toBeInstanceOf(MaxTokensError)
           expect((error as ModelError).message).toBe('Stream ended without completing a message')
           expect((error as ModelError).cause).toBeInstanceOf(SyntaxError)
+        }
+      })
+
+      it('resets tool-use state after malformed tool input so a following text block is preserved on maxTokens', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield {
+            type: 'modelContentBlockStartEvent',
+            start: { type: 'toolUseStart', toolUseId: 'tool-1', name: 'calculator' },
+          }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'toolUseInputDelta', input: '{"expr": ' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelContentBlockStartEvent' }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'textDelta', text: 'after' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'maxTokens' }
+        })
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+        const yieldedBlocks: ContentBlock[] = []
+
+        try {
+          for await (const item of provider.streamAggregated(messages)) {
+            if (!isModelStreamEvent(item)) {
+              yieldedBlocks.push(item)
+            }
+          }
+          expect.fail('Expected MaxTokensError to be thrown')
+        } catch (error) {
+          expect(error).toBeInstanceOf(MaxTokensError)
+          expect(yieldedBlocks).toEqual([new TextBlock('after')])
+          expect((error as MaxTokensError).partialMessage.content).toEqual([new TextBlock('after')])
+        }
+      })
+
+      it('resets tool-use state after malformed tool input and still surfaces parse error on endTurn', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield {
+            type: 'modelContentBlockStartEvent',
+            start: { type: 'toolUseStart', toolUseId: 'tool-1', name: 'calculator' },
+          }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'toolUseInputDelta', input: '{invalid json' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelContentBlockStartEvent' }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'textDelta', text: 'after' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+        })
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+        const yieldedBlocks: ContentBlock[] = []
+
+        try {
+          for await (const item of provider.streamAggregated(messages)) {
+            if (!isModelStreamEvent(item)) {
+              yieldedBlocks.push(item)
+            }
+          }
+          expect.fail('Expected ModelError to be thrown')
+        } catch (error) {
+          expect(yieldedBlocks).toEqual([new TextBlock('after')])
+          expect(error).toBeInstanceOf(ModelError)
+          expect(error).not.toBeInstanceOf(MaxTokensError)
+          expect((error as ModelError).message).toBe('unable to parse tool input JSON')
+          expect((error as ModelError).cause).toBeInstanceOf(SyntaxError)
+        }
+      })
+
+      it('resets tool-use state after malformed tool input before a subsequent valid tool-use block', async () => {
+        const provider = new TestModelProvider(async function* () {
+          yield { type: 'modelMessageStartEvent', role: 'assistant' }
+          yield {
+            type: 'modelContentBlockStartEvent',
+            start: {
+              type: 'toolUseStart',
+              toolUseId: 'tool-1',
+              name: 'calculator',
+              reasoningSignature: 'sig-1',
+            },
+          }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'toolUseInputDelta', input: '{invalid json' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield {
+            type: 'modelContentBlockStartEvent',
+            start: { type: 'toolUseStart', toolUseId: 'tool-2', name: 'get_weather' },
+          }
+          yield {
+            type: 'modelContentBlockDeltaEvent',
+            delta: { type: 'toolUseInputDelta', input: '{"city": "Paris"}' },
+          }
+          yield { type: 'modelContentBlockStopEvent' }
+          yield { type: 'modelMessageStopEvent', stopReason: 'maxTokens' }
+        })
+
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+        const yieldedBlocks: ContentBlock[] = []
+        const expectedToolUse = new ToolUseBlock({
+          toolUseId: 'tool-2',
+          name: 'get_weather',
+          input: { city: 'Paris' },
+        })
+
+        try {
+          for await (const item of provider.streamAggregated(messages)) {
+            if (!isModelStreamEvent(item)) {
+              yieldedBlocks.push(item)
+            }
+          }
+          expect.fail('Expected MaxTokensError to be thrown')
+        } catch (error) {
+          expect(error).toBeInstanceOf(MaxTokensError)
+          expect(yieldedBlocks).toEqual([expectedToolUse])
+          expect((error as MaxTokensError).partialMessage.content).toEqual([expectedToolUse])
+          expect((yieldedBlocks[0] as ToolUseBlock).reasoningSignature).toBeUndefined()
         }
       })
     })

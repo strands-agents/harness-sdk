@@ -613,6 +613,16 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
       let redactionMessage: string | undefined = undefined
       let toolInputParseError: SyntaxError | undefined = undefined
 
+      const resetContentBlockState = (): void => {
+        accumulatedText = ''
+        accumulatedToolInput = ''
+        toolName = ''
+        toolUseId = ''
+        toolReasoningSignature = ''
+        accumulatedReasoning = {}
+        accumulatedCitations.reset()
+      }
+
       for await (const event_data of this.stream(messages, options)) {
         const event = this._convert_to_class_event(event_data)
         yield event // Pass through immediately
@@ -622,18 +632,16 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
           case 'modelMessageStartEvent':
             messageRole = event.role
             contentBlocks.length = 0 // Reset
+            resetContentBlockState()
             break
 
           case 'modelContentBlockStartEvent':
+            resetContentBlockState()
             if (event.start?.type === 'toolUseStart') {
               toolName = event.start.name
               toolUseId = event.start.toolUseId
               toolReasoningSignature = event.start.reasoningSignature ?? ''
             }
-            accumulatedToolInput = ''
-            accumulatedText = ''
-            accumulatedReasoning = {}
-            accumulatedCitations.reset()
             break
 
           case 'modelContentBlockDeltaEvent': {
@@ -667,14 +675,10 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
                   input: accumulatedToolInput ? JSON.parse(accumulatedToolInput) : {},
                   ...(toolReasoningSignature && { reasoningSignature: toolReasoningSignature }),
                 })
-                toolUseId = '' // Reset
-                toolName = ''
-                toolReasoningSignature = ''
               } else if (Object.keys(accumulatedReasoning).length > 0) {
                 block = new ReasoningBlock({
                   ...accumulatedReasoning,
                 })
-                accumulatedReasoning = {} // Reset after creating reasoning block
               } else if (accumulatedCitations.hasData()) {
                 block = new CitationsBlock({
                   citations: accumulatedCitations.citations,
@@ -686,11 +690,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
                         ? [{ text: accumulatedText }]
                         : [],
                 })
-                accumulatedText = ''
-                accumulatedCitations.reset()
               } else {
                 block = new TextBlock(accumulatedText)
-                accumulatedText = ''
               }
               contentBlocks.push(block)
               yield block
@@ -699,6 +700,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
                 logger.error('unable to parse tool input JSON', e)
                 toolInputParseError = e
               }
+            } finally {
+              resetContentBlockState()
             }
             break
           }
