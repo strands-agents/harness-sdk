@@ -6,5 +6,5 @@ import { Agent } from '@strands-agents/sdk'
 
 // --8<-- [start:mixing_imports]
 import { Agent } from '@strands-agents/sdk'
-import { Offload } from '@strands-agents/sdk/experimental'
+import { Offload } from '@strands-agents/sdk/context-manager'
 // --8<-- [end:mixing_imports]

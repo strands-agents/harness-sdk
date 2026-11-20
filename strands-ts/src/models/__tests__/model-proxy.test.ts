@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ModelProxy } from '../model-proxy.js'
-import type { StreamAggregatedResult } from '../model.js'
+import type { StreamAggregatedResult, StreamOptions } from '../model.js'
+import type { DeferredToolLoading } from '../model-info.js'
+import type { ToolSpec } from '../../tools/types.js'
 import { type ModelStreamEvent } from '../streaming.js'
 import { InvocationContextImpl } from '../../agent/invocation-context.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
@@ -10,7 +12,9 @@ import {
   Message,
   SummaryBlock,
   TextBlock,
+  ToolReferenceBlock,
   ToolResultBlock,
+  UnknownBlock,
   type ContentBlock,
 } from '../../types/messages.js'
 
@@ -112,6 +116,46 @@ describe('ModelProxy', () => {
         ...direct.result,
         message: { ...direct.result.message, trackingId: anyTrackingId },
       })
+    })
+  })
+
+  describe('unknown blocks', () => {
+    it('gives a tool result whose content is all unknown a placeholder text', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const streamSpy = vi.spyOn(model, 'stream')
+      const unknown = new UnknownBlock({ futureBlock: { name: 'shell' } })
+      const kept = new ToolResultBlock({
+        toolUseId: 't-2',
+        status: 'success',
+        content: [new TextBlock('done'), unknown],
+      })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 't-1', status: 'success', content: [unknown, unknown] }), kept],
+          trackingId: 'msg-1',
+        }),
+      ]
+
+      await drain(new ModelProxy(model).streamAggregated(messages))
+
+      expect(streamSpy.mock.calls[0]![0]).toEqual([
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 't-1',
+              status: 'success',
+              content: [new TextBlock('[unsupported content omitted]')],
+            }),
+            kept,
+          ],
+          trackingId: 'msg-1',
+        }),
+      ])
+      expect(messages[0]!.content[0]).toEqual(
+        new ToolResultBlock({ toolUseId: 't-1', status: 'success', content: [unknown, unknown] })
+      )
     })
   })
 
@@ -326,6 +370,96 @@ describe('ModelProxy', () => {
     })
   })
 
+  describe('deferred tools', () => {
+    const definition = {
+      name: 'shell',
+      description: 'Run a command',
+      inputSchema: { type: 'object' as const, properties: { command: { type: 'string' as const } } },
+    }
+    const history = (): Message[] => [
+      new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 't-1',
+            status: 'success',
+            content: [new ToolReferenceBlock({ name: 'shell' })],
+          }),
+        ],
+        trackingId: 'msg-1',
+      }),
+    ]
+
+    /** Sends the history through the proxy and returns the tool result content the model received. */
+    async function sentContent(
+      deferredToolLoading?: DeferredToolLoading,
+      toolSpecs: ToolSpec[] = [definition]
+    ): Promise<ToolResultBlock['content']> {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      model.updateConfig({ modelInfo: { capabilities: { deferredToolLoading } } })
+      const streamSpy = vi.spyOn(model, 'stream')
+      await drain(new ModelProxy(model).streamAggregated(history(), { toolSpecs }))
+      return (streamSpy.mock.calls[0]![0][0]!.content[0] as ToolResultBlock).content
+    }
+
+    /** Sends a call that defers `shell` and pins `load_tools`, and returns the options the model received. */
+    async function sentOptions(deferredToolLoading: DeferredToolLoading): Promise<StreamOptions | undefined> {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      model.updateConfig({ modelInfo: { capabilities: { deferredToolLoading } } })
+      const streamSpy = vi.spyOn(model, 'stream')
+      await drain(
+        new ModelProxy(model).streamAggregated([userMessage('go')], {
+          toolSpecs: [definition, pinned],
+          deferredTools: new Set(['shell']),
+        })
+      )
+      return streamSpy.mock.calls[0]![1]
+    }
+    const pinned = { name: 'load_tools', description: 'Load tools.', inputSchema: { type: 'object' as const } }
+
+    it('sends a deferred spec as a stub with an open schema to a model that takes stubs', async () => {
+      expect((await sentOptions('stubs'))?.toolSpecs).toEqual([
+        {
+          name: 'shell',
+          description: 'Run a command\nCall load_tools with this name for its parameters first.',
+          inputSchema: { type: 'object' },
+        },
+        pinned,
+      ])
+    })
+
+    it.each([
+      ['a model that defers natively', 'native' as const],
+      ['a model without deferred tools', 'unsupported' as const],
+    ])('sends the deferred spec as it is to %s', async (_name, deferredToolLoading) => {
+      expect(await sentOptions(deferredToolLoading)).toMatchObject({
+        toolSpecs: [definition, pinned],
+        deferredTools: new Set(['shell']),
+      })
+    })
+
+    it('passes the reference to a model that defers tools natively, whose provider sends it', async () => {
+      expect(await sentContent('native')).toEqual([new ToolReferenceBlock({ name: 'shell' })])
+    })
+
+    it.each([
+      ['a model that takes stubs', 'stubs' as const],
+      ['a model without deferred tools', 'unsupported' as const],
+    ])("sends the call's parameters for the tool as text to %s", async (_name, deferredToolLoading) => {
+      const changed = { ...definition, inputSchema: { type: 'object' as const, properties: {} } }
+
+      expect(await sentContent(deferredToolLoading, [changed])).toEqual([
+        new TextBlock(`shell parameters: ${JSON.stringify(changed.inputSchema)}`),
+      ])
+    })
+
+    it('names the tool when the call does not include it', async () => {
+      expect(await sentContent(undefined, [])).toEqual([
+        new TextBlock("Loaded tool shell, which this request doesn't include."),
+      ])
+    })
+  })
+
   describe('summary blocks', () => {
     const summaryHistory = (): Message[] => [
       new Message({
@@ -364,6 +498,28 @@ describe('ModelProxy', () => {
       await drain(new ModelProxy(model).streamAggregated(messages))
 
       expect(streamSpy.mock.calls[0]![0]).toBe(messages)
+    })
+  })
+
+  // https://github.com/strands-agents/harness-sdk/issues/5937: a lone surrogate must never reach a provider
+  describe('lone surrogates', () => {
+    it('sends and counts well-formed text and leaves the messages it was given unchanged', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const streamSpy = vi.spyOn(model, 'stream')
+      const countSpy = vi.spyOn(model, 'countTokens')
+      const messages = [new Message({ role: 'user', content: [new TextBlock('a\ud83d')], trackingId: 'msg-1' })]
+      const proxy = new ModelProxy(model)
+
+      await drain(proxy.streamAggregated(messages, { systemPrompt: 's\ud83d' }))
+      await proxy.countTokens(messages, { systemPrompt: 's\ud83d' })
+
+      const wellFormed = [
+        [new Message({ role: 'user', content: [new TextBlock('a\ufffd')], trackingId: 'msg-1' })],
+        { systemPrompt: 's\ufffd' },
+      ]
+      expect(streamSpy.mock.calls[0]).toEqual(wellFormed)
+      expect(countSpy.mock.calls[0]).toEqual(wellFormed)
+      expect(messages[0]!.content).toEqual([new TextBlock('a\ud83d')])
     })
   })
 })

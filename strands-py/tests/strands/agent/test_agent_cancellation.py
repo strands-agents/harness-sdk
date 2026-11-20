@@ -9,6 +9,7 @@ import pytest
 
 from strands import Agent, LocalAgent, ToolContext, tool
 from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, BeforeToolsEvent
+from strands.tools.executors import ConcurrentToolExecutor, SequentialToolExecutor
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 # Default agent response for simple tests
@@ -517,6 +518,55 @@ async def test_tool_context_cancel_signal_set_by_external_signal():
 
     assert signal_states == [True]
     assert result.stop_reason == "cancelled"
+
+
+@pytest.mark.parametrize("executor_cls", [SequentialToolExecutor, ConcurrentToolExecutor])
+@pytest.mark.parametrize("external_signal", [False, True])
+@pytest.mark.asyncio
+async def test_cancel_during_before_tool_call_hook_skips_the_tool(external_signal, executor_cls):
+    """A cancellation that lands while a BeforeToolCallEvent hook runs skips the tool (#5665)."""
+    ran = []
+    cancel_signal = threading.Event()
+
+    @tool
+    def write_marker() -> str:
+        """Record that the tool ran."""
+        ran.append("write_marker")
+        return "wrote"
+
+    def cancel_during_hook(event: BeforeToolCallEvent):
+        if external_signal:
+            cancel_signal.set()
+        else:
+            agent.cancel()
+
+    tool_use_response = {
+        "role": "assistant",
+        "content": [{"toolUse": {"toolUseId": "tool_1", "name": "write_marker", "input": {}}}],
+    }
+    agent = Agent(
+        model=MockedModelProvider([tool_use_response, DEFAULT_RESPONSE]),
+        tools=[write_marker],
+        tool_executor=executor_cls(),
+        callback_handler=None,
+    )
+    agent.add_hook(cancel_during_hook, BeforeToolCallEvent)
+
+    result = await agent.invoke_async("Use the tool", cancel_signal=cancel_signal)
+
+    tru_content = agent.messages[-1]["content"]
+    exp_content = [
+        {
+            "toolResult": {
+                "toolUseId": "tool_1",
+                "status": "error",
+                "content": [{"text": "Tool execution cancelled"}],
+            }
+        }
+    ]
+    assert ran == []
+    assert result.stop_reason == "cancelled"
+    assert tru_content == exp_content
 
 
 _CHARGE_TOOL_USE = {

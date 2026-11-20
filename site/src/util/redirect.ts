@@ -34,8 +34,8 @@ export const STATIC_SLUG_REDIRECTS: Record<string, string> = {
   'docs/user-guide/box/reference/cli': 'docs/user-guide/box/reference/configuration',
   'docs/user-guide/box/security/agent-and-tool-containment': 'docs/user-guide/box/security',
 
-  // Decider's manifest does not yet publish a landing page.
-  'docs/labs/strands-decider': 'docs/labs/strands-decider/inference',
+  // Preserve the product root as the short route to Decider's landing page.
+  'docs/labs/strands-decider': 'docs/labs/strands-decider/overview',
 
   // gemini was renamed to google (concepts/ was later consolidated under harness/)
   'docs/user-guide/concepts/model-providers/gemini': 'docs/user-guide/sdk/model-providers/google',

@@ -1,20 +1,30 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import threading
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
-from unittest.mock import ANY, AsyncMock
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 
 from strands import Agent, ToolContext, tool
-from strands.hooks import AfterToolCallEvent, AgentInitializedEvent, BeforeModelCallEvent, BeforeToolCallEvent
+from strands.hooks import (
+    AfterInvocationEvent,
+    AfterToolCallEvent,
+    AgentInitializedEvent,
+    BeforeModelCallEvent,
+    BeforeToolCallEvent,
+)
 from strands.interrupt import Interrupt
 from strands.middleware.stages import ExecuteToolStage, InvokeModelStage
+from strands.session import FileSessionManager
+from strands.tools.executors import SequentialToolExecutor
 from strands.tools.tools import PythonAgentTool
 from strands.types._events import ToolResultEvent
+from strands.types.agent import ConcurrentInvocationMode
 from strands.types.content import Messages
 from strands.types.tools import ToolResult, ToolSpec, ToolUse
 from tests.fixtures.mocked_model_provider import MockedModelProvider
@@ -34,12 +44,12 @@ def _assistant_tool_use(tool_name: str, tool_use_id: str, tool_input: dict[str, 
     }
 
 
-def _deliveries(messages: Messages) -> list[ToolUse]:
+def _deliveries(messages: Messages, tool_name: str = _MANAGE_TOOL_NAME) -> list[ToolUse]:
     return [
         block["toolUse"]
         for message in messages
         for block in message["content"]
-        if "toolUse" in block and block["toolUse"]["name"] == _MANAGE_TOOL_NAME
+        if "toolUse" in block and block["toolUse"]["name"] == tool_name
     ]
 
 
@@ -138,6 +148,40 @@ def work() -> str:
 def test__init__registers_management_tool_only_when_enabled(background_tasks: Any, enabled: bool) -> None:
     agent = Agent(model=MockedModelProvider([]), background_tasks=background_tasks, callback_handler=None)
     assert (_MANAGE_TOOL_NAME in agent.tool_registry.registry) is enabled
+
+
+@pytest.mark.parametrize(
+    ("background_tasks", "tool_name"),
+    [(True, _MANAGE_TOOL_NAME), ({"manage_tool_name": "lookup"}, "lookup")],
+)
+def test__init__rejects_management_tool_name_collision(background_tasks: Any, tool_name: str) -> None:
+    existing_tool = tool(name=tool_name)(lambda: "original")
+    with pytest.raises(ValueError, match=rf"manage_tool_name=<{tool_name}> \| tool already registered"):
+        Agent(
+            model=MockedModelProvider([]),
+            tools=[existing_tool],
+            background_tasks=background_tasks,
+            callback_handler=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_manage_tool_name_controls_foreground_calls() -> None:
+    tool_name = "manage_background_task"
+    agent = Agent(
+        model=MockedModelProvider(
+            [_assistant_tool_use(tool_name, "management-use", {"mode": "list"}), _assistant_text("Listed.")]
+        ),
+        background_tasks={"manage_tool_name": tool_name, "always": ["*"]},
+        callback_handler=None,
+    )
+
+    await agent.invoke_async("List tasks.")
+
+    assert list(agent.tool_registry.registry) == [tool_name]
+    tru_result = _tool_result(agent, "management-use")
+    exp_result = {"toolUseId": "management-use", "status": "success", "content": [{"json": {"tasks": []}}]}
+    assert tru_result == exp_result
 
 
 @pytest.mark.parametrize(
@@ -368,6 +412,8 @@ async def test_surfaces_and_resumes_interrupts_raised_by_background_tools() -> N
 
 @pytest.mark.asyncio
 async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_results() -> None:
+    tool_name = "task_admin"
+
     @tool(name="work")
     def work(value: str) -> str:
         """Perform work."""
@@ -380,7 +426,12 @@ async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_resu
             _assistant_text("Result received."),
         ]
     )
-    agent = Agent(model=model, tools=[work], background_tasks={"agentic": [work]}, callback_handler=None)
+    agent = Agent(
+        model=model,
+        tools=[work],
+        background_tasks={"manage_tool_name": tool_name, "agentic": [work]},
+        callback_handler=None,
+    )
     tool_specs = _capture_tool_specs(agent)
     middleware_calls = 0
     retried = False
@@ -417,13 +468,13 @@ async def test_dispatches_selected_calls_through_tool_pipeline_and_delivers_resu
     exp_requested_input = {"value": "background", "_background_execution": True}
     assert tru_requested_input == exp_requested_input
 
-    tru_deliveries = _deliveries(agent.messages)
-    exp_deliveries = [{"name": _MANAGE_TOOL_NAME, "toolUseId": ANY, "input": {"mode": "get", "task_id": ANY}}]
+    tru_deliveries = _deliveries(agent.messages, tool_name)
+    exp_deliveries = [{"name": tool_name, "toolUseId": ANY, "input": {"mode": "get", "task_id": ANY}}]
     assert tru_deliveries == exp_deliveries
     assert tru_deliveries[0]["name"] in {spec["name"] for spec in tool_specs[0]}
     assert tru_deliveries[0]["input"]["task_id"] == tru_deliveries[0]["toolUseId"]
 
-    tru_result = _delivered_result(agent)
+    tru_result = _tool_result(agent, tru_deliveries[0]["toolUseId"])
     exp_result = {
         "toolUseId": ANY,
         "status": "success",
@@ -615,7 +666,11 @@ def test_origin_loop_shutdown_settles_background_execution() -> None:
 @pytest.mark.asyncio
 async def test_delivers_work_that_finishes_between_invocations() -> None:
     released = asyncio.Event()
-    content = [{"text": "done"}, {"image": {"format": "png", "source": {"location": {"uri": "s3://bucket/image.png"}}}}]
+    content = [
+        {"text": "done"},
+        {"image": {"format": "png", "source": {"location": {"uri": "s3://bucket/image.png"}}}},
+        {"image": {"format": "png", "source": {"bytes": b"png"}}},
+    ]
 
     @tool(name="work")
     async def work() -> dict[str, Any]:
@@ -654,7 +709,12 @@ async def test_delivers_work_that_finishes_between_invocations() -> None:
             "status": "completed",
             "created_at": ANY,
             "last_updated_at": ANY,
-            "result": {"content": content},
+            "result": {
+                "content": [
+                    *content[:2],
+                    {"image": {"format": "png", "source": {"bytes": {"__strands_background_task_bytes__": "cG5n"}}}},
+                ]
+            },
         }
     ]
     assert tru_tasks == exp_tasks
@@ -784,6 +844,44 @@ async def test_load_state_fails_restored_non_terminal_work() -> None:
         {"name": _MANAGE_TOOL_NAME, "toolUseId": "working", "input": {"mode": "get", "task_id": "working"}}
     ]
     assert tru_deliveries == exp_deliveries
+
+
+@pytest.mark.asyncio
+async def test_restored_result_bytes_survive_a_session_round_trip(tmp_path) -> None:
+    image = {"image": {"format": "png", "source": {"bytes": b"png"}}}
+    source = Agent(
+        model=MockedModelProvider([]),
+        background_tasks={},
+        session_manager=FileSessionManager(session_id="bytes", storage_dir=str(tmp_path)),
+        callback_handler=None,
+    )
+    source._background_tasks._tasks["done"] = {
+        "task_id": "done",
+        "tool_use_id": "done-use",
+        "tool_name": "work",
+        "status": "completed",
+        "created_at": "2026-08-27T12:00:00Z",
+        "last_updated_at": "2026-08-27T12:00:00Z",
+        "result": {"content": [image]},
+    }
+    source._background_tasks._persist_tasks()
+    source._session_manager.sync_agent(source)
+
+    agent = Agent(
+        model=MockedModelProvider([_assistant_text("Results received.")]),
+        background_tasks={},
+        session_manager=FileSessionManager(session_id="bytes", storage_dir=str(tmp_path)),
+        callback_handler=None,
+    )
+    await agent.invoke_async("Continue.")
+
+    tru_content = next(
+        block["toolResult"]["content"]
+        for message in agent.messages
+        for block in message["content"]
+        if "toolResult" in block and block["toolResult"]["toolUseId"] == "done"
+    )
+    assert tru_content[1:] == [image]
 
 
 @pytest.mark.asyncio
@@ -1005,3 +1103,305 @@ async def test_hands_after_tool_call_hooks_the_request_that_submitted_the_task()
 
     assert submitting_contexts[0] is not None
     assert after_tool_contexts == [submitting_contexts[0]]
+
+
+async def _wait_for_task_statuses(agent: Agent, statuses: list[str]) -> None:
+    while [task["status"] for task in _persisted_tasks(agent) or []] != statuses:
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cancel_background_tasks", "exp_statuses", "exp_stop_reason"),
+    [(False, ["completed", "completed"], "cancelled"), (True, ["cancelled", "cancelled"], "end_turn")],
+)
+async def test_cancel_background_tasks_on_an_idle_agent_cancels_only_the_tasks(
+    cancel_background_tasks: bool, exp_statuses: list[str], exp_stop_reason: str
+) -> None:
+    released = threading.Event()
+
+    @tool(name="work")
+    async def work() -> str:
+        """Perform deferred work."""
+        while not released.is_set():  # the task may run on another event loop
+            await asyncio.sleep(0.001)
+        return "done"
+
+    dispatch = {
+        "role": "assistant",
+        "content": [
+            {"toolUse": {"name": "work", "toolUseId": f"work-{index}", "input": {"_background_execution": True}}}
+            for index in range(2)
+        ],
+    }
+    agent = Agent(
+        model=MockedModelProvider([dispatch, _assistant_text("Tasks admitted."), _assistant_text("Results.")]),
+        tools=[work],
+        background_tasks={"wait_for_completion": False, "max_concurrency": 1},
+        callback_handler=None,
+    )
+    await agent.invoke_async("Run work.")
+    await asyncio.wait_for(_wait_for_task_statuses(agent, ["working", "queued"]), timeout=5)
+
+    agent.cancel(cancel_background_tasks=cancel_background_tasks)
+    released.set()
+
+    await asyncio.wait_for(_wait_for_task_statuses(agent, exp_statuses), timeout=5)
+
+    continued = await agent.invoke_async("Continue.")
+    assert continued.stop_reason == exp_stop_reason
+    tru_delivered_statuses = [
+        _tool_result(agent, delivery["toolUseId"])["content"][0]["json"]["status"]
+        for delivery in _deliveries(agent.messages)
+    ]
+    assert tru_delivered_statuses == exp_statuses
+    assert _persisted_tasks(agent) is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_background_tasks_cancels_input_required_task_and_drops_its_interrupt() -> None:
+    @tool(name="approval", context=True)
+    def approval(tool_context: ToolContext) -> str:
+        """Ask before finishing."""
+        return tool_context.interrupt("approve", reason="Approve work?")
+
+    agent = _background_agent(approval, responses=[_assistant_text("Task admitted."), _assistant_text("Continued.")])
+    interrupted = await agent.invoke_async("Run approval.")
+    assert interrupted.stop_reason == "interrupt"
+
+    agent.cancel(cancel_background_tasks=True)
+
+    assert not agent._interrupt_state.activated
+    assert [task["status"] for task in _persisted_tasks(agent) or []] == ["cancelled"]
+    resumed = await agent.invoke_async("Continue.")
+    assert resumed.stop_reason != "interrupt"
+    assert not agent._interrupt_state.activated
+    tru_status = _delivered_result(agent)["content"][0]["json"]["status"]
+    exp_status = "cancelled"
+    assert tru_status == exp_status
+
+
+def test_cancel_background_tasks_on_an_idle_agent_without_background_tasks_is_a_no_op() -> None:
+    agent = Agent(model=MockedModelProvider([_assistant_text("Hi.")]), callback_handler=None)
+
+    agent.cancel(message="Stopped.", cancel_background_tasks=True)
+
+    tru_result = agent("Hello.")
+    assert tru_result.stop_reason == "end_turn"
+    assert tru_result.message["content"] == [{"text": "Hi."}]
+
+
+@pytest.mark.asyncio
+async def test_cancel_background_tasks_from_another_thread_settles_the_waiting_invocation() -> None:
+    started = threading.Event()
+    cancelled = threading.Event()
+
+    @tool(name="work")
+    async def work() -> str:
+        """Wait until cancelled."""
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+        return "unreachable"
+
+    agent = _background_agent(
+        work, responses=[_assistant_text("Task admitted."), _assistant_text("Result."), _assistant_text("Result.")]
+    )
+
+    def cancel_once_started() -> None:
+        started.wait(timeout=1)
+        agent.cancel(cancel_background_tasks=True)
+
+    canceller = threading.Thread(target=cancel_once_started)
+    canceller.start()
+    await asyncio.wait_for(agent.invoke_async("Run work."), timeout=2)
+    canceller.join(timeout=1)
+    assert await asyncio.to_thread(cancelled.wait, 1)
+
+    await agent.invoke_async("Continue.")
+    tru_status = _delivered_result(agent)["content"][0]["json"]["status"]
+    exp_status = "cancelled"
+    assert tru_status == exp_status
+
+
+@pytest.mark.asyncio
+async def test_cancel_background_tasks_from_a_tool_on_the_agent_loop() -> None:
+    @tool(name="work")
+    async def work() -> str:
+        """Wait until cancelled."""
+        await asyncio.Event().wait()
+        return "unreachable"
+
+    @tool(name="stop_all", context=True)
+    async def stop_all(tool_context: ToolContext) -> str:
+        """Stop the agent and its background work."""
+        tool_context.agent.cancel(cancel_background_tasks=True)
+        return "stopped"
+
+    agent = _background_agent(
+        work, stop_all, responses=[_assistant_tool_use("stop_all", "stop-use", {}), _assistant_text("Unreached.")]
+    )
+
+    result = await asyncio.wait_for(agent.invoke_async("Run work, then stop."), timeout=2)
+
+    tru_stop_reason = result.stop_reason
+    exp_stop_reason = "cancelled"
+    assert tru_stop_reason == exp_stop_reason
+    await asyncio.wait_for(_wait_for_task_statuses(agent, ["cancelled"]), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_cancel_background_tasks_lands_immediately_while_after_current_tools_finishes_the_batch() -> None:
+    statuses_at_stop: list[str] = []
+
+    @tool(name="work")
+    async def work() -> str:
+        """Wait until cancelled."""
+        await asyncio.Event().wait()
+        return "unreachable"
+
+    @tool(name="stop_all", context=True)
+    def stop_all(tool_context: ToolContext) -> str:
+        """Stop after this batch, and stop background work now."""
+        tool_context.agent.cancel(after_current_tools=True, cancel_background_tasks=True)
+        statuses_at_stop.extend(task["status"] for task in _persisted_tasks(agent) or [])
+        return "stopped"
+
+    @tool(name="after")
+    def after() -> str:
+        """Run after stop_all in the same batch."""
+        return "ran"
+
+    batch = {
+        "role": "assistant",
+        "content": [
+            {"toolUse": {"name": "stop_all", "toolUseId": "stop-use", "input": {}}},
+            {"toolUse": {"name": "after", "toolUseId": "after-use", "input": {}}},
+        ],
+    }
+    agent = _background_agent(
+        work, stop_all, after, responses=[batch, _assistant_text("Unreached.")], wait_for_completion=False
+    )
+    agent.tool_executor = SequentialToolExecutor()
+
+    result = await asyncio.wait_for(agent.invoke_async("Run work, then stop."), timeout=2)
+
+    assert result.stop_reason == "cancelled"
+    assert statuses_at_stop == ["cancelled"]
+    assert _tool_result(agent, "after-use")["content"] == [{"text": "ran"}]
+
+
+@pytest.mark.asyncio
+async def test_cancel_background_tasks_after_a_nested_reentrant_invocation_still_cancels_the_outer_one() -> None:
+    @tool(name="nest", context=True)
+    async def nest(tool_context: ToolContext) -> str:
+        """Run a nested invocation, then stop."""
+        await tool_context.agent.invoke_async("Nested.")
+        tool_context.agent.cancel(cancel_background_tasks=True)
+        return "stopped"
+
+    agent = Agent(
+        model=MockedModelProvider(
+            [_assistant_tool_use("nest", "nest-use", {}), _assistant_text("Nested."), _assistant_text("Unreached.")]
+        ),
+        tools=[nest],
+        concurrent_invocation_mode=ConcurrentInvocationMode.UNSAFE_REENTRANT,
+        callback_handler=None,
+    )
+
+    result = await asyncio.wait_for(agent.invoke_async("Nest."), timeout=2)
+
+    assert result.stop_reason == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_background_tasks_while_interrupt_responses_are_applied_finishes_as_cancelled() -> None:
+    @tool(name="approval", context=True)
+    def approval(tool_context: ToolContext) -> str:
+        """Ask before finishing."""
+        return tool_context.interrupt("approve", reason="Approve work?")
+
+    agent = _background_agent(approval, responses=[_assistant_text("Task admitted."), _assistant_text("Unreached.")])
+    interrupted = await agent.invoke_async("Run approval.")
+    manager = agent._background_tasks._manager
+    list_tasks = manager.list
+
+    async def list_then_cancel() -> list[Any]:
+        tasks = await list_tasks()
+        await asyncio.to_thread(agent.cancel, cancel_background_tasks=True)
+        return tasks
+
+    with patch.object(manager, "list", list_then_cancel):
+        result = await agent.invoke_async(
+            [{"interruptResponse": {"interruptId": interrupted.interrupts[0].id, "response": "yes"}}]
+        )
+
+    assert result.stop_reason == "cancelled"
+    assert not agent._interrupt_state.activated
+    tru_status = _delivered_result(agent)["content"][0]["json"]["status"]
+    exp_status = "cancelled"
+    assert tru_status == exp_status
+
+
+@pytest.mark.asyncio
+async def test_cancel_background_tasks_after_a_task_interrupt_is_raised_delivers_the_cancelled_result_once() -> None:
+    @tool(name="approval", context=True)
+    def approval(tool_context: ToolContext) -> str:
+        """Ask before finishing."""
+        return tool_context.interrupt("approve", reason="Approve work?")
+
+    agent = _background_agent(approval, responses=[_assistant_text("Task admitted."), _assistant_text("Continued.")])
+
+    def cancel_once_interrupted(event: AfterInvocationEvent) -> None:
+        if event.result is not None and event.result.stop_reason == "interrupt":
+            agent.cancel(cancel_background_tasks=True)
+
+    agent.hooks.add_callback(AfterInvocationEvent, cancel_once_interrupted)  # runs before the plugin's callback
+
+    await agent.invoke_async("Run approval.")
+    continued = await agent.invoke_async("Continue.")
+
+    assert continued.stop_reason == "end_turn"
+    assert not agent._interrupt_state.activated
+    tru_status = _delivered_result(agent)["content"][0]["json"]["status"]
+    exp_status = "cancelled"
+    assert tru_status == exp_status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("from_another_thread", "after_current_tools"), [(False, False), (True, False), (False, True)])
+async def test_cancel_background_tasks_while_waiting_for_completion_returns_without_another_model_call(
+    from_another_thread: bool, after_current_tools: bool
+) -> None:
+    @tool(name="work")
+    async def work() -> str:
+        """Wait until cancelled."""
+        await asyncio.Event().wait()
+        return "unreachable"
+
+    agent = _background_agent(work, responses=[_assistant_text("Task admitted."), _assistant_text("Result received.")])
+
+    async def admitted() -> None:
+        while not agent.messages or agent.messages[-1]["content"] != [{"text": "Task admitted."}]:
+            await asyncio.sleep(0)
+
+    invocation = asyncio.create_task(agent.invoke_async("Run work."))
+    await asyncio.wait_for(admitted(), timeout=2)
+    cancel = functools.partial(agent.cancel, after_current_tools=after_current_tools, cancel_background_tasks=True)
+    if from_another_thread:
+        await asyncio.to_thread(cancel)
+    else:
+        cancel()
+    result = await asyncio.wait_for(invocation, timeout=2)
+
+    assert result.stop_reason == "end_turn"
+    assert result.message["content"] == [{"text": "Task admitted."}]
+    assert _deliveries(agent.messages) == []
+    assert agent.model.index == 2
+
+    await agent.invoke_async("Continue.")
+    tru_status = _delivered_result(agent)["content"][0]["json"]["status"]
+    exp_status = "cancelled"
+    assert tru_status == exp_status

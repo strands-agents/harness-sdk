@@ -46,26 +46,26 @@ The default tool, produced by `makeSwarm()`: no presets, free-form `instructions
 
 ### `makeSwarm(options?)`
 
-| Option                             | Type                         | Default                     | Description                                                                 |
-| ---------------------------------- | ---------------------------- | --------------------------- | --------------------------------------------------------------------------- |
-| `builder`                          | `(spec: AgentSpec) => Agent` | (inherits from parent)      | Turns a resolved spec into an agent. The agent's `id` is its swarm node id. |
-| `presets`                          | `Record<string, Preset>`     | `{}`                        | Named roles the model selects via `agent_type`.                             |
-| `defaultPreset`                    | `string`                     | first preset                | Preset used when the model omits `agent_type`.                              |
-| `instructions`                     | `Open \| Choice \| Fixed`    | `new Open()`                | Policy for each agent's system prompt.                                      |
-| `tools`                            | `Choice \| Fixed \| Inherit` | `new Inherit()`             | Policy for each agent's tools. A `Choice` must be `multiple`.               |
-| `model`                            | `Inherit \| Choice \| Fixed` | `new Inherit()`             | Policy for each agent's model.                                              |
-| `maxAgents`                        | `number`                     | `20`                        | Upper bound on agents per call. Must be a positive integer.                 |
-| `maxSteps`                         | `number`                     | `20`                        | Max total agent executions.                                                 |
-| `timeout`                          | `number`                     | `900_000`                   | Wall-clock ceiling for the whole swarm, in milliseconds.                    |
-| `nodeTimeout`                      | `number`                     | `300_000`                   | Per-agent wall-clock ceiling, in milliseconds.                              |
-| `repetitiveHandoffDetectionWindow` | `number`                     | `Swarm` default             | Window size for repetitive-handoff detection.                               |
-| `repetitiveHandoffMinUniqueAgents` | `number`                     | `Swarm` default             | Minimum unique agents required in the window.                               |
-| `name`                             | `string`                     | `swarm`                     | Tool name.                                                                  |
-| `description`                      | `string`                     | `DEFAULT_SWARM_DESCRIPTION` | Tool description.                                                           |
+| Option                             | Type                                           | Default                     | Description                                                                 |
+| ---------------------------------- | ---------------------------------------------- | --------------------------- | --------------------------------------------------------------------------- |
+| `builder`                          | `(spec: AgentSpec) => Agent \| Promise<Agent>` | (inherits from parent)      | Turns a resolved spec into an agent. The agent's `id` is its swarm node id. |
+| `presets`                          | `Record<string, Preset>`                       | `{}`                        | Named roles the model selects via `agent_type`.                             |
+| `defaultPreset`                    | `string`                                       | first preset                | Preset used when the model omits `agent_type`.                              |
+| `instructions`                     | `Open \| Choice \| Fixed`                      | `new Open()`                | Policy for each agent's system prompt.                                      |
+| `tools`                            | `Choice \| Fixed \| Inherit`                   | `new Inherit()`             | Policy for each agent's tools. A `Choice` must be `multiple`.               |
+| `model`                            | `Inherit \| Choice \| Fixed`                   | `new Inherit()`             | Policy for each agent's model.                                              |
+| `maxAgents`                        | `number`                                       | `20`                        | Upper bound on agents per call. Must be a positive integer.                 |
+| `maxSteps`                         | `number`                                       | `20`                        | Max total agent executions.                                                 |
+| `timeout`                          | `number`                                       | `900_000`                   | Wall-clock ceiling for the whole swarm, in milliseconds.                    |
+| `nodeTimeout`                      | `number`                                       | `300_000`                   | Per-agent wall-clock ceiling, in milliseconds.                              |
+| `repetitiveHandoffDetectionWindow` | `number`                                       | `Swarm` default             | Window size for repetitive-handoff detection.                               |
+| `repetitiveHandoffMinUniqueAgents` | `number`                                       | `Swarm` default             | Minimum unique agents required in the window.                               |
+| `name`                             | `string`                                       | `swarm`                     | Tool name.                                                                  |
+| `description`                      | `string`                                       | `DEFAULT_SWARM_DESCRIPTION` | Tool description.                                                           |
 
 Throws if `name` or `description` is empty, `maxAgents` is not a positive integer, `defaultPreset` is not one of `presets`, or a `Choice` axis has no options, or a `tools` `Choice` is not `multiple`.
 
-The default builder gives each agent the parent's model and tools (narrowed by the resolved spec), sandbox, printer setting, and trace attributes, plus `contextManager: 'auto'` unless the agent's model is stateful. The agent's `name` and `id` are its spec name.
+The default builder gives each agent the parent's model and tools (narrowed by the resolved spec), sandbox, interventions, printer setting, and trace attributes, plus `contextManager: 'auto'` unless the agent's model is stateful. The agent's `name` and `id` are its spec name. The parent's hooks and plugins are not passed to the agents; pass a custom `builder` for agents that need them.
 
 ### Input
 

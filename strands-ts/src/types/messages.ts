@@ -5,6 +5,7 @@ import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, encodeBase64, decode
 import type { CitationsBlockData } from './citations.js'
 import { CitationsBlock } from './citations.js'
 import type { Usage, Metrics } from '../models/streaming.js'
+import { logger } from '../logging/logger.js'
 
 /**
  * Message types and content blocks for conversational AI interactions.
@@ -110,14 +111,20 @@ export class Message implements JSONSerializable<MessageData> {
   }
 
   /**
-   * Creates a Message instance from MessageData.
+   * Creates a Message instance from MessageData. Use {@link Message.fromJSON} for data {@link Message.toJSON} produced.
+   *
+   * @param data - MessageData to convert
+   * @returns Message instance
+   * @throws Error if a content block type, at any depth, is unknown
    */
   public static fromMessageData(data: MessageData): Message {
-    const contentBlocks: ContentBlock[] = data.content.map(contentBlockFromData)
+    return Message._fromData(data, (block) => contentBlockFromData(block))
+  }
 
+  private static _fromData(data: MessageData, toContentBlock: (block: ContentBlockData) => ContentBlock): Message {
     return new Message({
       role: data.role,
-      content: contentBlocks,
+      content: data.content.map(toContentBlock),
       // A missing trackingId (e.g. legacy serialized data) is backfilled by the constructor.
       ...(data.trackingId !== undefined && { trackingId: data.trackingId }),
       ...(data.metadata !== undefined && { metadata: data.metadata }),
@@ -138,21 +145,44 @@ export class Message implements JSONSerializable<MessageData> {
   }
 
   /**
-   * Creates a Message instance from MessageData.
-   * Alias for fromMessageData for API consistency.
+   * Creates a Message from data {@link Message.toJSON} produced, such as a saved session. Unlike
+   * {@link Message.fromMessageData}, it keeps a content block of a type this version does not recognize, also inside
+   * a tool result, as an {@link UnknownBlock}, so data a newer SDK version saved still loads.
    *
    * @param data - MessageData to deserialize
    * @returns Message instance
    */
   static fromJSON(data: MessageData): Message {
-    return Message.fromMessageData(data)
+    return Message._fromData(data, (block) => contentBlockFromSavedData(block))
   }
 
   /**
    * Creates a deep copy of this Message (round-trips through serialization).
    */
   clone(): Message {
-    return Message.fromMessageData(deepCopy(this.toJSON()) as unknown as MessageData)
+    return Message._fromData(deepCopy(this.toJSON()) as unknown as MessageData, (block) =>
+      contentBlockFromSavedData(block, { warn: false })
+    )
+  }
+
+  /**
+   * A shallow copy of this message with the given content or metadata in place of its own. The copy keeps this
+   * message's role and tracking id, and shares its blocks. A field left out, or set to `undefined`, keeps this
+   * message's value.
+   *
+   * @param overrides - The content or metadata of the copy
+   * @returns The copy
+   *
+   * @experimental
+   */
+  with(overrides: { content?: ContentBlock[]; metadata?: MessageMetadata }): Message {
+    const metadata = overrides.metadata ?? this.metadata
+    return new Message({
+      role: this.role,
+      content: overrides.content ?? this.content,
+      trackingId: this.trackingId,
+      ...(metadata !== undefined && { metadata }),
+    })
   }
 }
 
@@ -204,6 +234,14 @@ export type ContentBlock =
   | CitationsBlock
   | InjectedBlock
   | SummaryBlock
+  | UnknownBlock
+
+/**
+ * Offload method that replaced content with a placeholder.
+ *
+ * @experimental
+ */
+export type OffloadMethod = 'drop' | 'truncate' | 'summarize'
 
 /**
  * Data for a text block.
@@ -250,6 +288,96 @@ export class TextBlock implements TextBlockData, JSONSerializable<TextBlockData>
   static fromJSON(data: TextBlockData): TextBlock {
     return new TextBlock(data.text)
   }
+}
+
+/**
+ * Data for an offloaded block, as its constructor takes it. Serialization groups everything but the text under an
+ * `offloaded` key, so these names stay free for {@link TextBlockData}.
+ *
+ * @experimental
+ */
+export interface OffloadedBlockData extends TextBlockData {
+  /**
+   * Offload method that left the placeholder.
+   */
+  method: OffloadMethod
+
+  /**
+   * Archive reference under which the original is retrievable; absent when it was not archived.
+   */
+  ref?: string
+
+  /**
+   * Size of the content this placeholder stands for, in tokens, including any placeholder it replaced; absent when
+   * the token count could not measure it.
+   */
+  tokens?: number
+}
+
+/**
+ * The text a context-manager strategy left in place of content it offloaded, recording what that content was.
+ *
+ * A text block to every reader of `agent.messages` and to every model provider — `type` stays `'textBlock'`, since
+ * the content really is text — so only code that cares about the provenance narrows to it with `instanceof`.
+ *
+ * @experimental
+ */
+export class OffloadedBlock extends TextBlock implements OffloadedBlockData {
+  /**
+   * Offload method that left the placeholder.
+   */
+  readonly method: OffloadMethod
+
+  /**
+   * Archive reference under which the original is retrievable; absent when it was not archived.
+   */
+  readonly ref?: string
+
+  /**
+   * Size of the content this placeholder stands for, in tokens, including any placeholder it replaced; absent when
+   * the token count could not measure it.
+   */
+  readonly tokens?: number
+
+  constructor(data: OffloadedBlockData) {
+    super(data.text)
+    this.method = data.method
+    if (data.ref !== undefined) this.ref = data.ref
+    if (data.tokens !== undefined) this.tokens = data.tokens
+  }
+
+  /**
+   * Serializes the OffloadedBlock to a JSON-compatible object, with its provenance under `offloaded`.
+   * Called automatically by JSON.stringify().
+   *
+   * One key holds the provenance so a text block's own data keeps the rest of the namespace, and so the presence of
+   * that key alone decides whether stored data is a placeholder.
+   */
+  override toJSON(): TextBlockData & { offloaded: Omit<OffloadedBlockData, 'text'> } {
+    return {
+      text: this.text,
+      offloaded: {
+        method: this.method,
+        ...(this.ref !== undefined && { ref: this.ref }),
+        ...(this.tokens !== undefined && { tokens: this.tokens }),
+      },
+    }
+  }
+
+  /**
+   * Creates an OffloadedBlock instance from its serialized form.
+   *
+   * @param data - Serialized placeholder to deserialize
+   * @returns OffloadedBlock instance
+   */
+  static override fromJSON(data: TextBlockData & { offloaded: Omit<OffloadedBlockData, 'text'> }): OffloadedBlock {
+    return new OffloadedBlock({ text: data.text, ...data.offloaded })
+  }
+}
+
+/** Whether stored text-block data records an offload, so it deserializes back to an {@link OffloadedBlock}. */
+function recordsOffload(data: TextBlockData): data is TextBlockData & { offloaded: Omit<OffloadedBlockData, 'text'> } {
+  return 'offloaded' in data
 }
 
 /**
@@ -347,7 +475,7 @@ export class ToolUseBlock implements ToolUseBlockData, JSONSerializable<{ toolUs
 
 /**
  * Content within a tool result.
- * Can be text, structured JSON data, or media blocks (image, video, document).
+ * Can be text, structured JSON data, media blocks (image, video, document), or a tool reference.
  *
  * This is a discriminated union where the object key determines the content format.
  */
@@ -357,8 +485,70 @@ export type ToolResultContentData =
   | { image: ImageBlockData }
   | { video: VideoBlockData }
   | { document: DocumentBlockData }
+  | { toolReference: ToolReferenceBlockData }
 
-export type ToolResultContent = TextBlock | JsonBlock | ImageBlock | VideoBlock | DocumentBlock
+export type ToolResultContent =
+  TextBlock | JsonBlock | ImageBlock | VideoBlock | DocumentBlock | ToolReferenceBlock | UnknownBlock
+
+/**
+ * Data for a tool reference block.
+ */
+export interface ToolReferenceBlockData {
+  /**
+   * Name of the tool the result loads.
+   */
+  name: string
+}
+
+/**
+ * A tool whose input schema a tool result loads. `load_tools` returns one for each tool it loads, and any
+ * tool can return them too, such as a custom loader that searches the tool catalog.
+ *
+ * It reaches the model as a reference only when the model defers tools natively
+ * (`modelInfo.capabilities.deferredToolLoading` is `'native'`), the request defers this tool, and the tool result holds
+ * only such references; the provider then sends a reference the API expands into the tool's definition. Otherwise the
+ * model gets the parameters of the request's tool with this name as text, so a tool that changed is shown as it is now.
+ *
+ * @example
+ * ```typescript
+ * new ToolReferenceBlock({ name: weatherTool.name })
+ * ```
+ */
+export class ToolReferenceBlock
+  implements ToolReferenceBlockData, JSONSerializable<{ toolReference: ToolReferenceBlockData }>
+{
+  /**
+   * Discriminator for tool reference content.
+   */
+  readonly type = 'toolReferenceBlock' as const
+
+  /**
+   * Name of the tool the result loads.
+   */
+  readonly name: string
+
+  constructor(data: ToolReferenceBlockData) {
+    this.name = data.name
+  }
+
+  /**
+   * Serializes the ToolReferenceBlock to a JSON-compatible ToolResultContentData object.
+   * Called automatically by JSON.stringify().
+   */
+  toJSON(): { toolReference: ToolReferenceBlockData } {
+    return { toolReference: { name: this.name } }
+  }
+
+  /**
+   * Creates a ToolReferenceBlock instance from its wrapped data format.
+   *
+   * @param data - Wrapped ToolReferenceBlockData to deserialize
+   * @returns ToolReferenceBlock instance
+   */
+  static fromJSON(data: { toolReference: ToolReferenceBlockData }): ToolReferenceBlock {
+    return new ToolReferenceBlock({ name: data.toolReference.name })
+  }
+}
 
 /**
  * Data for a tool result block.
@@ -428,6 +618,24 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
   }
 
   /**
+   * A shallow copy of this result with the given content in place of its own. The copy keeps this result's tool use
+   * id, status, and error. Content left out, or set to `undefined`, keeps this result's content.
+   *
+   * @param overrides - The content of the copy
+   * @returns The copy
+   *
+   * @experimental
+   */
+  with(overrides: { content?: ToolResultContent[] }): ToolResultBlock {
+    return new ToolResultBlock({
+      toolUseId: this.toolUseId,
+      status: this.status,
+      content: overrides.content ?? this.content,
+      ...(this.error !== undefined && { error: this.error }),
+    })
+  }
+
+  /**
    * Serializes the ToolResultBlock to a JSON-compatible ContentBlockData object.
    * Called automatically by JSON.stringify().
    * Note: The error field is not serialized (deferred for future implementation).
@@ -443,19 +651,23 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
   }
 
   /**
-   * Creates a ToolResultBlock instance from its wrapped data format.
+   * Creates a ToolResultBlock instance from its wrapped data format. Content of a type this version does not
+   * recognize becomes an {@link UnknownBlock}, so data a newer SDK version saved still loads.
    *
    * @param data - Wrapped ToolResultBlockData to deserialize
    * @returns ToolResultBlock instance
    */
   static fromJSON(data: { toolResult: ToolResultBlockData }): ToolResultBlock {
-    const content = data.toolResult.content.map(toolResultContentFromData)
-    return new ToolResultBlock({
-      toolUseId: data.toolResult.toolUseId,
-      status: data.toolResult.status,
-      content,
-    })
+    return toolResultBlockFromData(data, keepUnknown())
   }
+}
+
+function toolResultBlockFromData(data: { toolResult: ToolResultBlockData }, onUnknown: OnUnknown): ToolResultBlock {
+  return new ToolResultBlock({
+    toolUseId: data.toolResult.toolUseId,
+    status: data.toolResult.status,
+    content: data.toolResult.content.map((entry) => parseToolResultContent(entry, onUnknown)),
+  })
 }
 
 /**
@@ -466,12 +678,19 @@ export class ToolResultBlock implements JSONSerializable<{ toolResult: ToolResul
  * @throws Error if the content data type is unknown
  */
 export function toolResultContentFromData(data: ToolResultContentData): ToolResultContent {
-  if ('text' in data) return new TextBlock(data.text)
+  return parseToolResultContent(data, rejectUnknown)
+}
+
+function parseToolResultContent(data: ToolResultContentData, onUnknown: OnUnknown): ToolResultContent {
+  // An instance records its offload in its own fields, not under `offloaded`, so converting it would strip them.
+  if (data instanceof OffloadedBlock) return data
+  if ('text' in data) return recordsOffload(data) ? OffloadedBlock.fromJSON(data) : new TextBlock(data.text)
   if ('json' in data) return new JsonBlock(data)
   if ('image' in data) return ImageBlock.fromJSON(data as { image: ImageBlockData })
   if ('video' in data) return VideoBlock.fromJSON(data as { video: VideoBlockData })
   if ('document' in data) return DocumentBlock.fromJSON(data as { document: DocumentBlockData })
-  throw new Error('Unknown ToolResultContentData type')
+  if ('toolReference' in data) return ToolReferenceBlock.fromJSON(data)
+  return onUnknown(data, 'ToolResultContentData')
 }
 
 /**
@@ -1141,6 +1360,44 @@ export class InjectedBlock implements JSONSerializable<{ injected: InjectedBlock
 }
 
 /**
+ * Content block of a type this SDK version does not recognize, kept when restoring data a newer version saved.
+ * Holds the raw data so it serializes back unchanged. Model providers skip it.
+ */
+export class UnknownBlock implements JSONSerializable<Record<string, unknown>> {
+  /**
+   * Discriminator for unrecognized content.
+   */
+  readonly type = 'unknownBlock' as const
+
+  /**
+   * The raw content block data.
+   */
+  readonly data: Record<string, unknown>
+
+  constructor(data: Record<string, unknown>) {
+    this.data = data
+  }
+
+  /**
+   * Returns the raw content block data unchanged.
+   * Called automatically by JSON.stringify().
+   */
+  toJSON(): Record<string, unknown> {
+    return this.data
+  }
+
+  /**
+   * Creates an UnknownBlock instance from raw content block data.
+   *
+   * @param data - Raw content block data
+   * @returns UnknownBlock instance
+   */
+  static fromJSON(data: Record<string, unknown>): UnknownBlock {
+    return new UnknownBlock(data)
+  }
+}
+
+/**
  * Converts ContentBlockData to a ContentBlock instance.
  * Handles all content block types including text, tool use/result, reasoning, cache points, guard content, injected, and media blocks.
  *
@@ -1149,12 +1406,53 @@ export class InjectedBlock implements JSONSerializable<{ injected: InjectedBlock
  * @throws Error if the content block type is unknown
  */
 export function contentBlockFromData(data: ContentBlockData): ContentBlock {
+  return parseContentBlock(data, rejectUnknown)
+}
+
+/**
+ * Converts content block data the SDK saved earlier, such as in a snapshot, to a ContentBlock instance.
+ * Unlike {@link contentBlockFromData}, data of a type this version does not recognize becomes an
+ * {@link UnknownBlock}, also inside a tool result, so data saved by a newer version still loads.
+ *
+ * @param data - The saved content block data
+ * @param options - `warn: false` skips the warning, for a block that was already loaded once
+ * @returns A ContentBlock instance of the appropriate type
+ * @internal
+ */
+export function contentBlockFromSavedData(data: ContentBlockData, options: { warn?: boolean } = {}): ContentBlock {
+  return parseContentBlock(data, keepUnknown(options))
+}
+
+/**
+ * What a parser does with data of a type this version does not recognize, at any depth: caller input throws, and
+ * data the SDK saved becomes an {@link UnknownBlock}.
+ */
+type OnUnknown = (data: object, kind: string) => UnknownBlock
+
+const rejectUnknown: OnUnknown = (_data, kind) => {
+  throw new Error(`Unknown ${kind} type`)
+}
+
+function keepUnknown(options: { warn?: boolean } = {}): OnUnknown {
+  return (data) => {
+    if (options.warn !== false) {
+      logger.warn(
+        `block_keys=<${Object.keys(data).join(',')}> | unrecognized content block type | keeping it in history and leaving it out of model requests | if a newer sdk version saved it, upgrade to use it`
+      )
+    }
+    return UnknownBlock.fromJSON(data as Record<string, unknown>)
+  }
+}
+
+function parseContentBlock(data: ContentBlockData, onUnknown: OnUnknown): ContentBlock {
+  // An instance records its offload in its own fields, not under `offloaded`, so converting it would strip them.
+  if (data instanceof OffloadedBlock) return data
   if ('text' in data) {
-    return new TextBlock(data.text)
+    return recordsOffload(data) ? OffloadedBlock.fromJSON(data) : new TextBlock(data.text)
   } else if ('toolUse' in data) {
     return new ToolUseBlock(data.toolUse)
   } else if ('toolResult' in data) {
-    return ToolResultBlock.fromJSON(data)
+    return toolResultBlockFromData(data, onUnknown)
   } else if ('reasoning' in data) {
     return ReasoningBlock.fromJSON(data)
   } else if ('cachePoint' in data) {
@@ -1175,7 +1473,6 @@ export function contentBlockFromData(data: ContentBlockData): ContentBlock {
     return InjectedBlock.fromJSON(data)
   } else if ('summary' in data) {
     return SummaryBlock.fromJSON(data)
-  } else {
-    throw new Error('Unknown ContentBlockData type')
   }
+  return onUnknown(data, 'ContentBlockData')
 }

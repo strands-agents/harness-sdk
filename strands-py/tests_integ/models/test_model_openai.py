@@ -1,6 +1,7 @@
 import os
 import tempfile
 import time
+import uuid
 from urllib.parse import urlparse
 
 import openai as openai_sdk
@@ -320,6 +321,20 @@ def test_responses_server_side_conversation():
 
     result = agent("What is my name?")
     assert "alice" in result.message["content"][0]["text"].lower()
+
+
+@pytest.mark.skipif(not _openai_responses_available, reason="OpenAI Responses API not available")
+def test_responses_caches_the_system_prompt_on_gpt_6_2():
+    """Guards against https://github.com/strands-agents/harness-sdk/issues/6367: GPT-6.2 never caches instructions."""
+    model = OpenAIResponsesModel(model_id="gpt-6.2-sol", client_args={"api_key": os.getenv("OPENAI_API_KEY")})
+    # A nonce per run makes turn 1 a cold write, so turn 2's read is caused by this run.
+    system_prompt = f"Session {uuid.uuid4()}. " + "You answer arithmetic questions with only the number. " * 300
+    agent = Agent(model=model, system_prompt=system_prompt, callback_handler=None)
+
+    agent("What is 2+2?")
+    result = agent("What is 3+3?")
+
+    assert result.metrics.latest_agent_invocation.usage.get("cacheReadInputTokens", 0) > 0
 
 
 @pytest.mark.skipif(not _openai_responses_available, reason="OpenAI Responses API not available")
