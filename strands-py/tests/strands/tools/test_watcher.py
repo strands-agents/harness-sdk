@@ -5,6 +5,7 @@ Tests for the SDK tool watcher module.
 from unittest.mock import MagicMock, patch
 
 import pytest
+from watchdog.events import FileMovedEvent
 
 from strands.tools.registry import ToolRegistry
 from strands.tools.watcher import ToolWatcher
@@ -96,3 +97,38 @@ def test_on_modified_error_handling(mock_reload_tool):
 
     # Verify that reload_tool was called
     mock_reload_tool.assert_called_once_with("test_tool")
+
+
+@patch.object(ToolRegistry, "reload_tool")
+def test_master_handler_on_created_reloads_new_tool(mock_reload_tool):
+    """Regression for #264: the master handler forwards on_created to registry handlers."""
+    tool_registry = ToolRegistry()
+    watcher = ToolWatcher(tool_registry)
+
+    dir_path = "/path/to/empty_tools_dir"
+    with patch.dict(ToolWatcher._registry_handlers, {dir_path: {id(tool_registry): watcher.tool_change_handler}}):
+        master_handler = ToolWatcher.MasterChangeHandler(dir_path)
+
+        event = MagicMock()
+        event.src_path = f"{dir_path}/first_tool.py"
+
+        master_handler.on_created(event)
+
+    mock_reload_tool.assert_called_once_with("first_tool")
+
+
+@patch.object(ToolRegistry, "reload_tool")
+def test_master_handler_on_moved_reloads_renamed_tool(mock_reload_tool):
+    """Regression for #264: the master handler forwards on_moved to registry handlers by destination path."""
+    tool_registry = ToolRegistry()
+    watcher = ToolWatcher(tool_registry)
+
+    dir_path = "/path/to/empty_tools_dir"
+    with patch.dict(ToolWatcher._registry_handlers, {dir_path: {id(tool_registry): watcher.tool_change_handler}}):
+        master_handler = ToolWatcher.MasterChangeHandler(dir_path)
+
+        event = FileMovedEvent(f"{dir_path}/.first_tool.py.tmp", f"{dir_path}/first_tool.py")
+
+        master_handler.on_moved(event)
+
+    mock_reload_tool.assert_called_once_with("first_tool")
