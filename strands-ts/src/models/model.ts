@@ -290,6 +290,15 @@ export interface StreamOptions {
    * whose text is exactly one JSON object that validates against this schema.
    */
   structuredOutputSchema?: z.ZodSchema
+
+  /**
+   * Names of the tools in `toolSpecs` this call defers. A provider whose model defers tools natively
+   * (`modelInfo.capabilities.deferredToolLoading` is `'native'`) keeps their input schemas out of the model's context
+   * until the model loads them; every other provider ignores it.
+   *
+   * @internal
+   */
+  deferredTools?: ReadonlySet<string>
 }
 
 /**
@@ -338,6 +347,13 @@ export interface SummarizeOptions {
    * routing key, so a replay can share the agent's cache.
    */
   agentMetadata?: AgentMetadata
+
+  /**
+   * Names of the tools in `toolSpecs` the request defers, as in {@link StreamOptions.deferredTools}.
+   *
+   * @internal
+   */
+  deferredTools?: ReadonlySet<string>
 }
 
 /**
@@ -416,9 +432,11 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
-   * Everything the SDK knows about the configured model, resolved on each read. Layers, later
-   * ones winning: the shared model info for `modelId`, `temporaryMessages` off (a provider that supports
-   * them turns them back on), the `contextWindowLimit` config value, and the `modelInfo` config override. Each read returns a new record, so do not compare reads by reference.
+   * Everything the SDK knows about the configured model, resolved on each read. Layers, later ones winning: the shared
+   * model info for `modelId`, `temporaryMessages` off (a provider that sends them turns them back on),
+   * `deferredToolLoading` as `'stubs'` unless the shared info says `'unsupported'` (a provider that defers natively
+   * says `'native'`), the `contextWindowLimit` config value, and the `modelInfo` config override. Each read returns a
+   * new record, so do not compare reads by reference.
    *
    * A provider that knows better than the shared model info overrides this getter: put its facts over
    * `super.modelInfo`, then the user's `getConfig().modelInfo` over those so the override still wins:
@@ -427,10 +445,12 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    */
   get modelInfo(): ModelInfo {
     const config = this.getConfig()
+    const shared = lookupModelInfo(this.modelId ?? '')
+    const deferredToolLoading = shared.capabilities?.deferredToolLoading === 'unsupported' ? 'unsupported' : 'stubs'
     return ModelInfo.merge(
-      lookupModelInfo(this.modelId ?? ''),
+      shared,
       {
-        capabilities: { temporaryMessages: false },
+        capabilities: { temporaryMessages: false, deferredToolLoading },
         limits: { contextWindow: config.contextWindowLimit },
       },
       config.modelInfo
@@ -879,7 +899,14 @@ function heuristicText(text: string): number {
   return Math.ceil(text.length / 4)
 }
 
-function heuristicJson(obj: unknown): number {
+/**
+ * Estimates the tokens of a JSON value the way {@link Model.countTokens} does by default.
+ *
+ * @param obj - The value to estimate
+ * @returns The estimated token count, or 0 when the value can't be serialized
+ * @internal
+ */
+export function heuristicJson(obj: unknown): number {
   try {
     return Math.ceil(JSON.stringify(obj).length / 2)
   } catch {
