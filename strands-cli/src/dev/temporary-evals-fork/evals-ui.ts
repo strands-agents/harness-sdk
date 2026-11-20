@@ -263,21 +263,13 @@ export class TemporaryEvalsUi implements EvalsBrowser {
     this.set({ status: 'ready' })
     if (this.announced) return
     this.announced = true
-    announce(
-      this.host(),
-      'success',
-      'evals UI ready · press o in /experiment, /evaluate, or /optimize to open it in a browser'
-    )
+    announce(this.host(), 'success', 'evals UI ready · press o in /experiment or /evaluate to open it in a browser')
   }
 
   private fail(reason: string): void {
     const detail = firstLine(reason)
     this.set({ status: 'unavailable', detail })
-    announce(
-      this.host(),
-      'error',
-      `evals UI unavailable · ${detail} · press o in /experiment, /evaluate, or /optimize to retry`
-    )
+    announce(this.host(), 'error', `evals UI unavailable · ${detail} · press o in /experiment or /evaluate to retry`)
   }
 }
 

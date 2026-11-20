@@ -1263,7 +1263,7 @@ describe('TEMPORARY dev sessions', () => {
     })
     expect(notices.at(-1)).toEqual({
       status: 'error',
-      text: `optimize · run ${optimizationName(record)} failed · /optimize shows why`,
+      text: `optimize · run ${optimizationName(record)} failed · ask in the chat why`,
     })
   })
 
@@ -1569,7 +1569,7 @@ describe('TEMPORARY dev sessions', () => {
       }),
     ])
     expect(reloaded.instructions).toContain('Changes that strands dev made to this agent in this session.')
-    expect(reloaded.instructions).toContain('/optimize applied 1 edit from run')
+    expect(reloaded.instructions).toContain('an optimization applied 1 edit from run')
     expect(reloaded.instructions).toContain(`now ${JSON.stringify(WINNER)}`)
   })
 

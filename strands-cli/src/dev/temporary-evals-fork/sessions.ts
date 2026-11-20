@@ -1325,7 +1325,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
         message: `${sentence(outcome.error)} The full optimizer output is in ${log}.`,
         record,
       })
-      announce(this.host(), 'error', `optimize · run ${name} failed · /optimize shows why`)
+      announce(this.host(), 'error', `optimize · run ${name} failed · ask in the chat why`)
       return
     }
     try {
@@ -1334,7 +1334,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       entry.changes = changes
       this.updateRun(entry, { step: 'review', review })
       this.watchSources(entry)
-      announce(this.host(), 'success', `optimize · run ${review.run} finished · open it in /optimize`)
+      announce(this.host(), 'success', `optimize · run ${review.run} finished · ask in the chat to review its edits`)
     } catch (error) {
       if (cancelled) return this.reportCancelled(entry, plan, record)
       this.updateRun(entry, { step: 'failed', message: errorMessage(error), record })

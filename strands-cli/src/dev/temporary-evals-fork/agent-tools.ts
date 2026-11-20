@@ -64,7 +64,7 @@ Experiments, evaluations, and optimization:
 - experiments/<name>/optimizations/<time>/: one optimization run, with the optimizer record in optimizer/ and run.log.
 - tmp/.state/drafts/: generated cases that wait for a review in /experiment.
 
-The developer can open a panel with /experiment, /evaluate, or /optimize, or ask you in plain words. A plain-words request still belongs to a skill: activate manage-experiments, run-evaluations, or optimize-harness before you answer one, and use these tools:
+The developer can open a panel with /experiment or /evaluate, or ask you in plain words. Optimization has no panel: you guide it with strands_dev_ask. A plain-words request still belongs to a skill: activate manage-experiments, run-evaluations, or optimize-harness before you answer one, and use these tools:
 - strands_dev_status: the experiments, the drafts, the running jobs, and the last results. Call it again in every turn that asks what exists. The developer, the panels, and finished runs change these files between turns, so an answer from an earlier turn is stale and repeating it is a false claim about the workspace.
 - strands_dev_evaluators: the evaluators that can score this agent, with what each one checks and the settings it needs.
 - strands_dev_create_experiment: generate test cases and save them as an experiment. Use the create-experiment skill to help the developer shape a test goal naturally; keep technical defaults in the background.
@@ -77,9 +77,9 @@ The developer can open a panel with /experiment, /evaluate, or /optimize, or ask
 - strands_dev_reject_optimization: discard pending optimization edits without applying them when the developer asks.
 - strands_dev_apply_optimization: write the edits that the developer accepts into the agent source.
 
-The evals UI is a local browser page with larger views of experiments, reports, and optimization runs. In /experiment, /evaluate, and /optimize, the developer presses o to open the current item there. Never write the page address yourself; strands dev gives it to the developer.
+The evals UI is a local browser page with larger views of experiments, reports, and optimization runs. In /experiment and /evaluate, the developer presses o to open the current item there. Never write the page address yourself; strands dev gives it to the developer.
 
-Apply optimization edits only when the developer says which edits to apply. A run continues when the turn is cancelled; its progress shows below the chat input, and /evaluate or /optimize shows the result.
+Apply optimization edits only when the developer says which edits to apply. A run continues when the turn is cancelled; its progress shows below the chat input, and strands_dev_status gives the result.
 
 Answer the question that was asked, from the tool output of this turn. Do not add settings, defaults, generator details, or a menu of next steps that the developer did not ask for.`
 
@@ -378,7 +378,7 @@ const lastRun = (runs: readonly ExperimentRun[], path: string): object | undefin
   return found ? runStatus(found.run) : undefined
 }
 
-const EVALS_UI_OPENING = 'The developer presses o in /experiment, /evaluate, or /optimize to open the current item.'
+const EVALS_UI_OPENING = 'The developer presses o in /experiment or /evaluate to open the current item.'
 
 const evalsUiStatus = (ui: EvalsBrowser): object => {
   const { status, detail } = ui.snapshot()
@@ -620,8 +620,7 @@ const planTool = (sessions: Sessions): DevChatTool => ({
     'Read what an optimization of one experiment could tune, and what it would cost, without starting anything. ' +
     'Call it before you ask the developer to set up a run, so the knobs, the choices, and the estimate you show ' +
     'them are this agent’s own and not a guess. A knob with a reason cannot be tuned: show the reason and do not ' +
-    'offer it. Call it again after the developer changes a setting if you want a fresh estimate. ' +
-    'It plans a fresh run, so it clears a setup that the developer already has open in /optimize.',
+    'offer it. Call it again after the developer changes a setting if you want a fresh estimate.',
   inputSchema: {
     type: 'object',
     properties: { experiment: { type: 'string', description: 'The name of a saved experiment.' } },
@@ -965,7 +964,7 @@ const testCheckText = (check: TestCheck | undefined): string => {
 }
 
 const changeSummary = (change: TemporaryAppliedChange): string =>
-  `- ${new Date(change.appliedAt).toISOString()}: /optimize applied ${counted(change.edits.length, 'edit')} ` +
+  `- ${new Date(change.appliedAt).toISOString()}: an optimization applied ${counted(change.edits.length, 'edit')} ` +
   `from run ${change.run} of the experiment ${change.experiment}. ` +
   `The best candidate scored ${change.baseline.toFixed(2)} → ${change.best.toFixed(2)} on the ${change.measuredOn}.` +
   testCheckText(change.testCheck) +

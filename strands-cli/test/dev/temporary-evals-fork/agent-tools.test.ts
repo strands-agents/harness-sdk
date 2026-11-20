@@ -309,7 +309,7 @@ describe('TEMPORARY dev chat instructions', () => {
     const { part } = setup(undefined, [APPLIED])
 
     expect(part.instructions).toContain(
-      '- 2026-11-17T14:52:03.000Z: /optimize applied 2 edits from run 20261117-144415-diffs of the experiment diffs. ' +
+      '- 2026-11-17T14:52:03.000Z: an optimization applied 2 edits from run 20261117-144415-diffs of the experiment diffs. ' +
         'The best candidate scored 0.00 → 1.00 on the test cases. ' +
         'The test check gave +1.00 on 2 unseen test cases (90% confidence range +0.40 to +1.60).'
     )
@@ -322,7 +322,7 @@ describe('TEMPORARY dev chat instructions', () => {
   it('shouldSayWhereApplyStoppedWhenAnEditCouldNotBeWritten', () => {
     const { part } = setup(undefined, [{ ...APPLIED, edits: [], error: 'Could not change agent.ts: it changed.' }])
 
-    expect(part.instructions).toContain('/optimize applied 0 edits from run')
+    expect(part.instructions).toContain('an optimization applied 0 edits from run')
     expect(part.instructions).toContain('Apply stopped early: Could not change agent.ts: it changed.')
   })
 
@@ -391,7 +391,7 @@ describe('TEMPORARY dev chat part', () => {
       ],
       generations: [],
       optimization: { step: 'idle' },
-      evalsUi: { status: 'ready', open: expect.stringContaining('presses o in /experiment, /evaluate, or /optimize') },
+      evalsUi: { status: 'ready', open: expect.stringContaining('presses o in /experiment or /evaluate') },
     })
   })
 

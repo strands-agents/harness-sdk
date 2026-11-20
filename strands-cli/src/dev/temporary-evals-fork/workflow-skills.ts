@@ -8,7 +8,7 @@ Answer the question that was asked and stop. Answer it from tool output read in 
 
 Before a paid run, briefly explain the concrete scope, that model calls cost money, and that the run can take minutes; obtain approval before starting. Being asked to run, test, or improve something is not that approval: end that turn with the scope and wait for a separate answer. A specific run already approved after that explanation needs no repeated approval. Approval for one run is not permission for additional runs or a larger scope. Do not invent a price or model-call count that the tools have not supplied.
 
-The evals UI shows experiments, reports, and optimization runs in a browser. When the developer wants a closer look, tell them to press o in /experiment, /evaluate, or /optimize. strands_dev_status says if the evals UI is ready.`
+The evals UI shows experiments, reports, and optimization runs in a browser. When the developer wants a closer look, tell them to press o in /experiment or /evaluate. strands_dev_status says if the evals UI is ready.`
 
 const MANAGE_EXPERIMENTS = `# Manage experiments in dev chat
 

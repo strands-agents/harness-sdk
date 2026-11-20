@@ -33,17 +33,16 @@ const context: DevChatCommandContext = {
 }
 
 describe('TEMPORARY dev commands', () => {
-  it('shouldOfferExperimentTestOptimizeAndAskWithoutArgumentsWhenTheChatStarts', async () => {
+  it('shouldOfferExperimentEvaluateAndAskWithoutArgumentsWhenTheChatStarts', async () => {
     const { workspace, project } = await fixture()
 
     const commands = temporaryDevCommands(workspace, project)
 
-    expect(commands.map(({ spec }) => spec.usage)).toEqual(['/experiment', '/evaluate', '/optimize', '/ask'])
+    expect(commands.map(({ spec }) => spec.usage)).toEqual(['/experiment', '/evaluate', '/ask'])
     expect(commands.every(({ spec }) => spec.replacement === undefined)).toBe(true)
     expect(commands.map(({ spec }) => spec.description)).toEqual([
       'Generate test cases for this agent with strands-evals, and review them',
       'Run this agent on an experiment and show what failed',
-      'Tune this agent against an experiment and review the changes',
       'Answer the setup question that the agent is asking',
     ])
   })
@@ -56,29 +55,11 @@ describe('TEMPORARY dev commands', () => {
     expect(details.map((text) => text.match(/strands-dev\/experiments\/[\w<>/.]*[\w>/]/u)?.[0])).toEqual([
       'strands-dev/experiments/<name>/<name>.json',
       'strands-dev/experiments/<name>/runs/',
-      'strands-dev/experiments/<name>/optimizations/',
       undefined,
     ])
     expect(details[1]).toContain('the latest one as <name>.report.json')
-    expect(details.slice(0, 3).every((text) => text.includes('Experimental: a fork of strands-evals'))).toBe(true)
+    expect(details.slice(0, 2).every((text) => text.includes('Experimental: a fork of strands-evals'))).toBe(true)
     expect(details.some((text) => text.includes('TEMPORARY'))).toBe(false)
-  })
-
-  it('shouldExplainTheObjectiveAndItsConstraintsWhenOptimizeHelpShowsTheDetails', async () => {
-    const { workspace, project } = await fixture()
-
-    const [, , optimize] = temporaryDevCommands(workspace, project).map(({ spec }) => spec.details ?? '')
-
-    expect(optimize).toContain('The constraints row under it sets what the chosen candidate must meet')
-    expect(optimize).not.toContain('limit')
-  })
-
-  it('shouldNameTheUpstreamCommandsWhenOptimizeHelpShowsTheDetails', async () => {
-    const { workspace, project } = await fixture()
-
-    const [, , optimize] = temporaryDevCommands(workspace, project).map(({ spec }) => spec.details ?? '')
-
-    expect(optimize).toContain('with strands-evals optimize run and strands-evals optimize resume')
   })
 
   it('shouldReportNoRunningJobsWhenNothingRuns', async () => {
@@ -86,7 +67,7 @@ describe('TEMPORARY dev commands', () => {
 
     const commands = temporaryDevCommands(workspace, project)
 
-    expect(commands.map(({ jobs }) => jobs?.snapshot())).toEqual([[], [], [], undefined])
+    expect(commands.map(({ jobs }) => jobs?.snapshot())).toEqual([[], [], undefined])
   })
 
   it('shouldShowATestThatFinishedWhileStrandsDevWasClosedWhenTheChatAttaches', async () => {
@@ -148,34 +129,7 @@ describe('TEMPORARY dev commands', () => {
     expect(temporaryDevSessions({ workspace, agent: () => ({}) }).ui.snapshot().status).toBe('unavailable')
   })
 
-  it('shouldKeepTheOptimizePageWhenAReloadOpensThePanelAgainButNotWhenTheDeveloperOpensIt', async () => {
-    const { workspace, project } = await fixture()
-    const { optimize } = temporaryDevSessions({ workspace, agent: () => ({}) })
-    const command = temporaryDevCommands(workspace, project)[2]!
-    optimize.plan({ name: 'missing', path: join(workspace.root, 'missing.json'), caseCount: 0 })
-    await vi.waitFor(() => expect(optimize.snapshot().step).toBe('failed'))
-
-    command.open(context, { restore: true })
-    const restored = optimize.snapshot().step
-    command.open(context)
-
-    expect(restored).toBe('failed')
-    expect(optimize.snapshot().step).toBe('pick')
-  })
-
-  it('shouldOpenTheRunOfAJobWhenTheJobRowOpensTheOptimizePanel', async () => {
-    const { workspace, project } = await fixture()
-    const { optimize } = temporaryDevSessions({ workspace, agent: () => ({}) })
-    const openRun = vi.spyOn(optimize, 'openRun')
-    const command = temporaryDevCommands(workspace, project)[2]!
-
-    command.open(context, { job: 'run-1' })
-
-    expect(openRun).toHaveBeenCalledWith('run-1')
-    expect(optimize.snapshot().step).toBe('pick')
-  })
-
-  it.each([0, 1, 2])('shouldOpenAPanelViewWhenCommand%iRuns', async (index) => {
+  it.each([0, 1])('shouldOpenAPanelViewWhenCommand%iRuns', async (index) => {
     const { workspace, project } = await fixture()
 
     const view = temporaryDevCommands(workspace, project)[index]!.open(context)

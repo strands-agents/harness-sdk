@@ -727,9 +727,9 @@ const timer = setInterval(() => {
       await chat.submit('/skills')
       await vi.waitFor(() => expect(chat.getSnapshot().panel?.title).toMatch(/^Skills \(\d+\)$/))
       expect(chat.getSnapshot().panel?.rows.map(({ label }) => label)).toEqual(expect.arrayContaining(devSkills))
-      expect(listed('/')).toEqual(expect.arrayContaining(['experiment', 'evaluate', 'optimize']))
+      expect(listed('/')).toEqual(expect.arrayContaining(['experiment', 'evaluate', 'ask']))
       expect(listed('/').filter((name) => devSkills.includes(name))).toEqual([])
-      expect(listed('/opt')).toEqual(['optimize'])
+      expect(listed('/')).not.toContain('optimize')
       expect(chat.actionableCommandToken('/optimize-harness')).toBeUndefined()
     } finally {
       await chat.dispose()

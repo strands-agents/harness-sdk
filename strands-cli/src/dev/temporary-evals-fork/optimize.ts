@@ -78,7 +78,7 @@ const CONTINUING = 'Continuing the run from where it stopped.'
 const BASELINE_NEXT_STEP =
   'If the agent failed, check that it answers one of the cases in a strands dev chat. ' +
   'If a judge or the model service failed, check its credentials. Then try again.'
-const NEW_RUN_NEXT_STEP = 'Start a new run in /optimize.'
+const NEW_RUN_NEXT_STEP = 'Ask for a new run in the chat.'
 const NEXT_STEPS: readonly (readonly [marker: string, nextStep: string])[] = [
   [
     'at least 1 is needed',

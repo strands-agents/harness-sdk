@@ -9,7 +9,6 @@ import type {
   DevPanelOpening,
 } from '../../ui/chat/types.js'
 import { ExperimentPanel } from '../panels/experiment.js'
-import { OptimizePanel } from '../panels/optimize.js'
 import { TestPanel } from '../panels/test.js'
 import { WizardRequestPanel } from '../../ui/panels/wizard-request-panel.js'
 import type { DevChatPart } from '../chat-extension.js'
@@ -20,12 +19,7 @@ import { readTemporaryEvaluators } from './evaluators.js'
 import { temporaryGenerationJobs } from './experiments-session.js'
 import { temporaryJobsFeed, type TemporaryStore } from './jobs.js'
 import { temporarySessionHistory } from './session-converter.js'
-import {
-  temporaryDevSessions,
-  temporaryOptimizeJobs,
-  temporaryTestJobs,
-  type TemporaryDevSessions,
-} from './sessions.js'
+import { temporaryDevSessions, temporaryTestJobs, type TemporaryDevSessions } from './sessions.js'
 
 interface PanelSession<State> extends TemporaryStore<State> {
   show(): void
@@ -63,22 +57,6 @@ const EVALUATE_DETAILS = paragraphs(
   'An evaluation does not change the agent source. It makes paid model calls and can take minutes. strands dev saves each report in strands-dev/experiments/<name>/runs/, and the latest one as <name>.report.json.',
   'From a shell, strands dev evaluate <experiment> runs the same evaluation and prints the result.',
   'Experimental: a fork of strands-evals runs the evaluations for now.'
-)
-
-const OPTIMIZE_DETAILS = paragraphs(
-  'Tune this agent against an experiment, and then review the changes that the optimizer proposes.',
-  'Select an experiment, and then select the knobs to tune. Each option of the createHarness or create_harness call is a knob, for example the instructions, the model, the effort, the tools, and the skills. For the model, select the other models to try. A knob that strands dev cannot change shows the reason.',
-  'The setup has five tabs: Tune, Goal, Cases, Budget, and Review. Tab goes to the next tab, and Shift+Tab goes to the previous tab. A ! marks a tab with a problem. Start is on each tab. Use ↑↓ to go to a row, and ←→ to move the selected slider. The top line shows about how many rollouts and judge calls the run makes.',
-  'Goal: the objective slider sets what the run improves. Press Enter on it to type an objective, such as Minimize(tokens). The constraints row under it sets what the chosen candidate must meet, such as tokens <= 4000, Correctness >= 0.8. With constraints, the met at slider sets how sure the optimizer must be that a candidate meets them. The crashes slider sets what a crashed run scores, and the pick slider sets how the final pick values each finalist.',
-  'Cases: the cases slider sets how many cases are for training. The test slider sets how the other cases divide between validation and test. Budget: the steps, the candidates of each step, the runs of each case, the finalists, and the parallel trials. Under Pareto, at least 5 finalists go to validation. Review shows the whole run before you start it.',
-  'The optimizer divides the cases into training, validation, and test cases. It tries candidate changes on the training cases. The best candidate on the validation cases wins, and the test cases measure it at the end.',
-  'While it runs, the panel shows the baseline score, the best score, and each candidate. Stop the run to keep the best candidate so far. Esc goes back to the /optimize list, and the run continues. You can start other runs at the same time.',
-  'The run continues when you close the panel or strands dev. When strands dev opens again, the list shows the finished run, or the run continues from where it stopped. On Windows, the run stops when strands dev closes, and continues at the next start.',
-  'At the end, review each proposed edit. ←→ selects an edit, and ↑↓ scrolls its change. Accept or reject each edit, and then apply the accepted edits. The agent source does not change until you apply them. Then use /evaluate on the new version.',
-  'The test check shows the gain on test cases that the search did not use, and its 90% confidence range. If the range includes 0, the gain can be luck.',
-  '/optimize opens the list of experiments, with the number of runs of each. Select an experiment to start a new run, or to see its runs that go on and its past runs. Select a run to see its progress or to open its report again.',
-  'A run makes many paid model calls and can take a long time. strands dev saves the records in strands-dev/experiments/<name>/optimizations/. From a shell, strands dev optimize <experiment> runs the optimizer and prints the result, but it does not change the agent source.',
-  'Experimental: a fork of strands-evals runs the upstream optimizer for now, with strands-evals optimize run and strands-evals optimize resume.'
 )
 
 const devCommand = <State>(
@@ -138,23 +116,6 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
       },
       sessions
     ),
-  (sessions): DevChatCommand =>
-    devCommand(
-      {
-        name: 'optimize',
-        description: 'Tune this agent against an experiment and review the changes',
-        details: OPTIMIZE_DETAILS,
-        session: ({ optimize }) => optimize,
-        jobs: temporaryOptimizeJobs,
-        openJob: ({ optimize }, job) => optimize.openRun(job),
-        view:
-          ({ optimize, ui }) =>
-          (props) =>
-            createElement(OptimizePanel, { ...props, session: optimize, browser: ui }),
-        resume: ({ optimize }) => optimize.resume(),
-      },
-      sessions
-    ),
 ]
 
 const ASK_DETAILS = paragraphs(
@@ -187,7 +148,11 @@ const askCommand = (sessions: Sessions): DevChatCommand => ({
               : 'Autofill off · the agent asks, and you answer on screen'
           ),
       }),
-  attach: (context): void => sessions(context).ask.attachOpener(() => context.openPanel('ask')),
+  attach: (context): void => {
+    const opened = sessions(context)
+    opened.ask.attachOpener(() => context.openPanel('ask'))
+    void opened.optimize.resume()
+  },
 })
 
 const targetWorkspace = (workspace: DevWorkspace, project: ImportedAgentProject): DevWorkspace => ({
