@@ -21,7 +21,13 @@ import { temporaryGenerationJobs } from './experiments-session.js'
 import { temporaryJobsFeed, type TemporaryStore } from './jobs.js'
 import { temporarySessionHistory } from './session-converter.js'
 import { reviewOptimizeRun } from './review-run.js'
-import { temporaryDevSessions, temporaryTestJobs, type TemporaryDevSessions } from './sessions.js'
+import { OptimizeRunsView } from './optimize-runs-view.js'
+import {
+  temporaryDevSessions,
+  temporaryOptimizeJobs,
+  temporaryTestJobs,
+  type TemporaryDevSessions,
+} from './sessions.js'
 
 interface PanelSession<State> extends TemporaryStore<State> {
   show(): void
@@ -162,6 +168,17 @@ const askCommand = (sessions: Sessions): DevChatCommand => ({
   },
 })
 
+/** Hidden: it exists for the progress line under the chat input, and as that line's landing view. */
+const optimizeRunsCommand = (sessions: Sessions): DevChatCommand => ({
+  hidden: true,
+  spec: { name: 'optimize', usage: '/optimize', description: 'Optimization runs in progress, driven from the chat' },
+  jobs: temporaryJobsFeed(sessions().optimize, temporaryOptimizeJobs),
+  open:
+    (context): DevChatPanelView =>
+    (props) =>
+      createElement(OptimizeRunsView, { ...props, session: sessions(context).optimize }),
+})
+
 const targetWorkspace = (workspace: DevWorkspace, project: ImportedAgentProject): DevWorkspace => ({
   ...workspace,
   root: project.root,
@@ -196,5 +213,5 @@ export const temporaryDevCommands = (
       ...(autofill ? { autofill } : {}),
       ...(context ? { context } : {}),
     })
-  return [...PANEL_COMMANDS.map((make) => make(sessions)), askCommand(sessions)]
+  return [...PANEL_COMMANDS.map((make) => make(sessions)), askCommand(sessions), optimizeRunsCommand(sessions)]
 }

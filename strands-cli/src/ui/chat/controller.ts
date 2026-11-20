@@ -488,7 +488,7 @@ export class ChatController implements ChatControllerApi {
       input,
       this.actionableCommandToken(input),
       this._skillCommands(),
-      this._devCommands.map((command) => command.spec)
+      this._devCommands.filter((command) => !command.hidden).map((command) => command.spec)
     )
   }
 
@@ -1517,7 +1517,7 @@ export class ChatController implements ChatControllerApi {
             tools: this._builtinTools !== undefined,
             export: this._exportAgentProject !== undefined,
             config: this._configurationSource !== undefined,
-            devCommands: this._devCommands.map((command) => command.spec),
+            devCommands: this._devCommands.filter((command) => !command.hidden).map((command) => command.spec),
           }),
           searchable: true,
           filters: [
