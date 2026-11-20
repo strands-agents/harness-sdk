@@ -22,6 +22,8 @@ import {
   tool,
   type ToolContext,
 } from '@strands-agents/sdk'
+// harness-ts installs the SDK from its lockfile, which predates the './context-manager' subpath
+// and the archive rename, so these stay on names both versions resolve.
 import { ContextManager } from '@strands-agents/sdk/experimental'
 import { InMemoryStorage } from '@strands-agents/sdk/storage'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
@@ -115,7 +117,7 @@ const readLargeTool = tool({
   callback: () => LARGE_RESULT,
 })
 
-/** Calls `read_large`, then `retrieve_context` on the stash reference it gets back, recording each tool result. */
+/** Calls `read_large`, then `retrieve_context` on the archive reference it gets back, recording each tool result. */
 class RetrievingModel extends Model {
   readonly seenToolResults: string[] = []
   private _config: BaseModelConfig = { modelId: 'retrieving-model', contextWindowLimit: 1_000_000 }
@@ -742,9 +744,12 @@ describe('createHarness', () => {
     const snapshot = JSON.parse(
       readFileSync(join(dir, 'retrieval', agentScope, 'snapshots', 'snapshot_latest.json'), 'utf8')
     )
-    expect(snapshot.data.stash).toEqual({ location: 'external', storageType: 'LocalFileStorage' })
+    expect(snapshot.data.archive ?? snapshot.data.stash).toEqual({
+      location: 'external',
+      storageType: 'LocalFileStorage',
+    })
     expect(existsSync(join(dir, 'retrieval', 'context', 'retrieval', agentScope, 'tooluse-0_0'))).toBe(true)
-    // Every folder under the session dir is read as a session, so the stash stays inside this one.
+    // Every folder under the session dir is read as a session, so the archive stays inside this one.
     expect(readdirSync(dir)).toEqual(['retrieval'])
   })
 
@@ -762,14 +767,14 @@ describe('createHarness', () => {
         sessionManager: new SessionManager({ storage: { snapshot: new SessionFileStorage(makeTempDir()) } }),
       }),
     ],
-  ])('keeps the stash in memory %s', async (_, buildOptions) => {
+  ])('keeps the archive in memory %s', async (_, buildOptions) => {
     const agent = await createHarness(buildOptions())
     await agent.initialize()
     expect(agent.storage).toBeUndefined()
     expect(agent.contextManager?.stashIsDurable).toBe(false)
   })
 
-  it('backs the stash with an explicit storage', async () => {
+  it('backs the archive with an explicit storage', async () => {
     const storage = new InMemoryStorage()
     const agent = await createHarness({ storage, session: { dir: makeTempDir() } })
     await agent.initialize()

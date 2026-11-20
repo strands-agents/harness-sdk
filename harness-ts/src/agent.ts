@@ -454,7 +454,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
         storage: { snapshot: new SessionFileStorage(sessionDir) },
         saveLatestOn: 'message',
       })
-      // The context manager's stash goes to files, not into the snapshot rewritten on every message. It
+      // The context manager's archive goes to files, not into the snapshot rewritten on every message. It
       // lives in the session's own folder because each folder under the session dir is read as a session.
       storage ??= new LocalFileStorage(join(sessionDir, sessionId))
     }

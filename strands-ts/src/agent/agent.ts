@@ -239,7 +239,7 @@ export type AgentConfig = {
    * - `"agentic"`: (Experimental) Lets the model drive context management via injected tools,
    *   with a higher truncation threshold and summarization only on overflow.
    *   This mode may change in future versions.
-   * - `ContextManagerConfig` object: Custom strategy pipeline and stash configuration.
+   * - `ContextManagerConfig` object: Custom strategy pipeline and archive configuration.
    * - `ContextManager` instance: Used as-is. An instance binds to one agent; construct one per `Agent`.
    * - `false`: Explicitly disable context management (no compression, no offloading).
    *
