@@ -189,13 +189,32 @@ describe('optimize-harness guidance', () => {
     expect(instructions).toContain('Never name a knob or a choice from memory')
   })
 
-  it('shouldNotRunTheSkillsOwnCommandsOrReadItsRunFiles', () => {
+  it('shouldNotRunTheSkillsOwnCommandsOrTouchItsRunFiles', () => {
     expect(instructions).toContain('Do not ask for a workspace path or an agent path')
     expect(instructions).toContain('never run a shell command the skill gives')
     expect(instructions).toContain('not its step 1 lookups')
     expect(instructions).toContain('no hooks.py')
-    expect(instructions).toContain('starts, resumes, and stops runs through its own tools')
-    expect(instructions).toContain('never tail or parse those files')
+    expect(instructions).toContain('never read, tail, parse, or write a file in a run folder')
+    expect(instructions).toContain('strands dev already gives every case a unique name')
+  })
+
+  it('shouldSayStrandsDevCannotResumeARunYet', () => {
+    expect(instructions).toContain('skip the skill\'s "Resuming a run" section')
+    expect(instructions).toContain('strands dev cannot resume a run yet')
+    expect(instructions).toContain('never promise a resume')
+  })
+
+  it('shouldOverrideTheSkillsClaimThatATypeScriptAgentIsTraced', () => {
+    expect(TEMPORARY_OPTIMIZE_SKILL).toContain('its usage and steps are traced as a Python agent')
+    expect(instructions).toContain('that is not true here')
+    expect(instructions).toContain('records the answer and the token usage but no trace')
+  })
+
+  // Anchors of the overrides above. A re-vendor that drops one leaves a rule pointing at nothing.
+  it('shouldKeepTheVendoredAnchorsTheOverridesPointAt', () => {
+    expect(TEMPORARY_OPTIMIZE_SKILL).toContain('hooks.py')
+    expect(TEMPORARY_OPTIMIZE_SKILL).toContain('## Resuming a run')
+    expect(TEMPORARY_OPTIMIZE_SKILL).toContain('strands-evals optimize resume')
   })
 
   it('shouldSkipTheSkillsInstallChecksBecauseDevPreparesTheOptimizer', () => {
