@@ -44,13 +44,15 @@ def build_system_prompt(
     instructions: str | None = None,
     context_parts: list[str] | None = None,
 ) -> str:
-    """Assemble the harness contract, an optional domain block, and per-request context.
+    """Assemble the harness contract, an optional domain block, and conversation-level context.
 
     Args:
         instructions: A domain block appended after the contract: identity, scope, and any
             task-specific policy the consumer wants the agent to follow.
-        context_parts: Additional blocks appended last, e.g. a current timestamp or
-            request-scoped hints supplied by a serving layer.
+        context_parts: Additional blocks appended last, e.g. a deployment region supplied by a
+            serving layer. They are part of the system prompt, which prompt caching reuses across
+            turns, so keep them the same for every turn of a conversation; put per-turn values in
+            a ``ContextInjector``.
     """
     parts = [HARNESS_CONTRACT]
     if instructions:

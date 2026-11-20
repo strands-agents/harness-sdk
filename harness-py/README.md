@@ -530,14 +530,33 @@ instance), reach for the Python API. That's what it's there for.
 ## The vended prompt
 
 The system prompt is also available on its own, in case you want to build on it directly (for
-example, a serving layer that injects a timestamp or request context each turn):
+example, a serving layer that adds context that is fixed for the conversation):
 
 ```python
 from strands_harness import HARNESS_CONTRACT, build_system_prompt
 
 prompt = build_system_prompt(
     instructions="You are a data-migration assistant.",
-    context_parts=[f"Current time: {now}"],
+    context_parts=["Deployment region: eu-west-1"],
+)
+```
+
+With caching on (the harness default), the system prompt is part of the cached prefix, so keep
+`context_parts` the same for every turn of a conversation. A value that changes each turn, such as a
+timestamp, changes that prefix, so the system prompt and the conversation after it miss the cache
+on every turn. Put those values in a `ContextInjector` plugin instead. It adds them to the latest
+user message, so the system prompt stays the same and stays cached. The built-in `environment`
+plugin already does this for the current date, so add your own `ContextInjector` only for something
+finer-grained (the time of day, as below) or for other per-turn values:
+
+```python
+from datetime import datetime
+
+from strands.vended_plugins.context_injector import ContextInjector
+
+agent = create_harness(
+    instructions="You are a data-migration assistant.",
+    plugins=[ContextInjector(lambda context: f"Current time: {datetime.now().isoformat()}")],
 )
 ```
 

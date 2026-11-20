@@ -12,6 +12,6 @@ def test_instructions_appended_after_contract():
 
 
 def test_context_parts_appended_last():
-    prompt = build_system_prompt("domain block", ["Current time: noon", "Repo: acme"])
-    assert prompt.index("domain block") < prompt.index("Current time: noon")
-    assert prompt.index("Current time: noon") < prompt.index("Repo: acme")
+    prompt = build_system_prompt("domain block", ["Region: eu-west-1", "Repo: acme"])
+    assert prompt.index("domain block") < prompt.index("Region: eu-west-1")
+    assert prompt.index("Region: eu-west-1") < prompt.index("Repo: acme")
