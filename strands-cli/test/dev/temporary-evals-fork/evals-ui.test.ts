@@ -112,7 +112,9 @@ describe('TEMPORARY evals UI server', () => {
     expect(cwd).toBe(setup.workspace.directory)
     expect(env.PYTHONUNBUFFERED).toBe('1')
     expect(existsSync(folder)).toBe(true)
-    expect(setup.notices).toEqual([{ status: 'success', text: expect.stringContaining('evals UI ready') }])
+    expect(setup.notices).toEqual([
+      { status: 'success', text: expect.stringMatching(/^evals UI ready · http:\/\/127\.0\.0\.1:\d+\/\?t=/u) },
+    ])
   })
 
   it.each([
