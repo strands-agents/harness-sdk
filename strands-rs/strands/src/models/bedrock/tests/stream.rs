@@ -422,12 +422,18 @@ async fn skips_native_output_for_a_schema_it_cannot_represent() {
 }
 
 #[tokio::test]
-async fn starts_at_native_output_for_a_model_the_shared_model_info_says_cannot_be_forced() {
-    let (model, transport) = provider(with_model_id("us.anthropic.claude-opus-5-5"));
-    transport.set_default(Vec::new());
-    run(&model, request(person(), structured_output_options(person_schema()))).await;
-    assert_eq!(transport.call_count(), 1);
-    assert_eq!(mechanisms(&transport, Command::ConverseStream), ["native"]);
+async fn starts_at_native_output_for_model_id_which_the_shared_model_info_says_cannot_be_forced() {
+    for model_id in ["us.anthropic.claude-opus-5-5", "global.anthropic.claude-haiku-5-5"] {
+        let (model, transport) = provider(with_model_id(model_id));
+        transport.set_default(Vec::new());
+        run(&model, request(person(), structured_output_options(person_schema()))).await;
+        assert_eq!(transport.call_count(), 1, "{model_id}");
+        assert_eq!(
+            mechanisms(&transport, Command::ConverseStream),
+            ["native"],
+            "{model_id}"
+        );
+    }
 }
 
 #[tokio::test]
