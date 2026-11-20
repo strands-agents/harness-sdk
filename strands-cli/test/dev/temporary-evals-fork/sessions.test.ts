@@ -1574,6 +1574,40 @@ describe('TEMPORARY dev sessions', () => {
     })
   })
 
+  it('shouldShowTheEditsOnScreenWhenARunFinishesRatherThanOnlySayingSoInTheChat', async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+
+    sessions.optimize.start()
+    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+
+    const question = sessions.ask.pending()!
+    expect(question.steps[0]?.fields.map(({ kind }) => kind)).toEqual(['select', 'diff'])
+    expect(question.steps[0]?.fields[1]).toMatchObject({ kind: 'diff', proposed: WINNER })
+  })
+
+  it('shouldApplyOnlyWhatTheDeveloperAcceptsInThatQuestion', async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.start()
+    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+
+    sessions.ask.respond(sessions.ask.pending()!.id, undefined)
+
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot()).toMatchObject({
+        review: { edits: [expect.objectContaining({ accepted: false })] },
+      })
+    )
+    expect(sessions.optimize.appliedChanges()).toEqual([])
+  })
+
   it('shouldTellTheReloadedAgentWhatApplyChangedInIt', async () => {
     const optimizing = optimizingProcess()
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
