@@ -1,0 +1,8 @@
+name: Sofya
+description: "Hosted MCP server giving Strands agents web search over Sofya's own index, pages as Markdown, AI extraction from a page and cited multi-source research reports."
+integrationType: tool
+languages:
+  python: {}
+github: https://github.com/sofya-co/sofya-mcp
+docsUrl: https://sofya.co/docs/strands
+addedDate: 2026-11-03
