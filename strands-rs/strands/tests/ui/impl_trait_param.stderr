@@ -1,0 +1,5 @@
+error: `#[tool]` parameters cannot use `impl Trait`; use a concrete type
+ --> tests/ui/impl_trait_param.rs:5:32
+  |
+5 | async fn impl_trait(value: Vec<impl ToString>) -> String {
+  |                                ^^^^^^^^^^^^^
