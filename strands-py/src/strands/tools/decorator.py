@@ -387,8 +387,11 @@ class FunctionToolMetadata:
             # Validate with Pydantic model
             validated = self.input_model(**input_data)
 
-            # Return as dict
-            return validated.model_dump()
+            # Return the validated values read from the instance, keyed
+            # like model_dump(). model_dump() recursively converts nested
+            # BaseModel values to dicts; a model-typed parameter must reach
+            # the function as the validated model instance.
+            return {name: getattr(validated, name) for name in validated.model_dump()}
         except Exception as e:
             # Re-raise with more detailed error message
             error_msg = str(e)
