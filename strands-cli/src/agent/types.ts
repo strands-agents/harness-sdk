@@ -313,7 +313,11 @@ export interface ChatBackend {
   readonly protocol: 'strands' | 'acp'
   readonly sessionIdentity?: ChatConversation['session']
   reconstructable?(): boolean
-  stream(prompt: string | ContentBlockData[]): AsyncGenerator<ChatEvent, ChatRunResult, undefined>
+  /** `displayPrompt` is the prompt the transcript shows, persisted so a restored session shows the same. */
+  stream(
+    prompt: string | ContentBlockData[],
+    displayPrompt?: string
+  ): AsyncGenerator<ChatEvent, ChatRunResult, undefined>
   streamPeer?(message: PeerMessage): AsyncGenerator<ChatEvent, ChatRunResult, undefined>
   cancel(): void
   info?(): {

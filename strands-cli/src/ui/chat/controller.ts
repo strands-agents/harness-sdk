@@ -58,6 +58,7 @@ import { mcpFailure } from '../mcp-diagnostics.js'
 import { peerMessagePrompt, type PeerMessage } from '../../agent/messaging.js'
 import { modelDisplayName } from '../../model/metadata.js'
 import { modelControlErrorMessage } from '../../model/selection.js'
+import { restoredPrompt } from '../../session/desktop-profile.js'
 import { presentChatStream, type StreamPresentationOptions } from './stream-presentation.js'
 import { errorMessage, sanitizeTerminalText } from '../../terminal/text.js'
 import { canUseNativePicker, chooseDirectory } from '../../terminal/directory-picker.js'
@@ -656,9 +657,11 @@ export class ChatController implements ChatControllerApi {
     this._panelStack.length = 0
     const prompt =
       submission.attachments.length === 0 ? submission.text : attachmentContent(submission.text, submission.attachments)
+    const shown = displayPrompt ?? submission.text
+    const persistShown = restoredPrompt([submission.text], shown) !== restoredPrompt([submission.text])
     return this._runStream(
-      displayPrompt ?? submission.text,
-      this._backend.stream(prompt),
+      shown,
+      persistShown ? this._backend.stream(prompt, shown) : this._backend.stream(prompt),
       'model',
       undefined,
       undefined,

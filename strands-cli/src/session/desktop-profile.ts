@@ -1,4 +1,7 @@
-import { Message, TextBlock } from '@strands-agents/sdk'
+import { Message, TextBlock, type JSONValue } from '@strands-agents/sdk'
+
+import { sanitizeTerminalText } from '../terminal/text.js'
+import { isRecord } from '../values.js'
 
 const AGENT_PROFILE_OPEN = '<strands_agent_profile>'
 const AGENT_PROFILE_CLOSE = '</strands_agent_profile>'
@@ -14,11 +17,17 @@ const HIDDEN_DESKTOP_ENVELOPES = [
   ['<strands_reply_context>', '</strands_reply_context>'],
   ['<strands_skill_activation>', '</strands_skill_activation>'],
 ] as const
+const DISPLAY_PROMPT_METADATA_KEY = 'strands.displayPrompt'
 
 export function upgradeDesktopAgentProfileMessages(messages: Message[]): Message[] {
   let changed = false
   const upgraded = messages.map((message) => {
     if (message.role !== 'user') {
+      return message
+    }
+    // The chat stores a display prompt only when it changes what restore shows: that text was typed here, not by Desktop.
+    const texts = message.content.flatMap((block) => (block.type === 'textBlock' ? [block.text] : []))
+    if (restoredPrompt(texts, readDisplayPromptMetadata(message.metadata?.custom)) !== restoredPrompt(texts)) {
       return message
     }
     let contentChanged = false
@@ -47,7 +56,7 @@ export function upgradeDesktopAgentProfileMessages(messages: Message[]): Message
   return changed ? upgraded : messages
 }
 
-export function visibleDesktopPrompt(text: string): string {
+function visibleDesktopPrompt(text: string): string {
   const original = text.trim()
   let visible = original
   for (let index = 0; index < HIDDEN_DESKTOP_ENVELOPES.length; index += 1) {
@@ -63,6 +72,28 @@ export function visibleDesktopPrompt(text: string): string {
     visible = visible.slice(closingIndex + closing.length).trimStart()
   }
   return visible || (original ? 'Restored Desktop turn' : '')
+}
+
+/**
+ * The prompt a restored transcript shows for a saved user message's text blocks.
+ * `displayPrompt` is used only when the text starts with an envelope marker and ends with it.
+ */
+export function restoredPrompt(texts: readonly string[], displayPrompt = ''): string {
+  const saved = texts.map(sanitizeTerminalText).join('\n').trim()
+  const shown = sanitizeTerminalText(displayPrompt).trim()
+  const enveloped = HIDDEN_DESKTOP_ENVELOPES.some(([opening]) => saved.startsWith(opening))
+  const tail = texts.join('\n').trimEnd().endsWith(displayPrompt.trimEnd())
+  return shown && enveloped && tail ? shown : visibleDesktopPrompt(saved)
+}
+
+/** Message metadata recording the prompt the transcript showed, for turns the saved text alone would restore differently. */
+export function displayPromptMetadata(prompt: string): Record<string, JSONValue> {
+  return { [DISPLAY_PROMPT_METADATA_KEY]: prompt }
+}
+
+export function readDisplayPromptMetadata(value: unknown): string | undefined {
+  const prompt = isRecord(value) ? value[DISPLAY_PROMPT_METADATA_KEY] : undefined
+  return typeof prompt === 'string' ? prompt : undefined
 }
 
 function upgradeDesktopAgentProfile(text: string): string {

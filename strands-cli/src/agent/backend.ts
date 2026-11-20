@@ -13,6 +13,7 @@ import { contextWindowLimit } from '../model/metadata.js'
 import type { AgentModelRuntime } from '../model/runtime.js'
 import { effortDisplayLabel } from '../model/selection.js'
 import { clearStoredContext, persistContext, restoreContext, storeContext } from '../session/context.js'
+import { displayPromptMetadata } from '../session/desktop-profile.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { latestRootModelUsage, RunUsage } from '../usage.js'
 import type { BackgroundAgentActivity, BackgroundAgentActivityStore } from './background.js'
@@ -375,8 +376,20 @@ export class StrandsChatBackend implements ChatBackend {
     return hasReadyBackgroundResults(this._runtime.agent)
   }
 
-  async *stream(prompt: string | ContentBlockData[]): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
-    return yield* this._streamAgent(prompt)
+  async *stream(
+    prompt: string | ContentBlockData[],
+    displayPrompt?: string
+  ): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {
+    if (displayPrompt === undefined) {
+      return yield* this._streamAgent(prompt)
+    }
+    return yield* this._streamAgent([
+      {
+        role: 'user',
+        content: typeof prompt === 'string' ? [{ text: prompt }] : prompt,
+        metadata: { custom: displayPromptMetadata(displayPrompt) },
+      },
+    ])
   }
 
   async *streamPeer(message: PeerMessage): AsyncGenerator<ChatEvent, ChatRunResult, undefined> {

@@ -350,7 +350,7 @@ async function dispatch(call: TypescriptCall): Promise<unknown> {
       const input = call.input
       const generator =
         input.kind === 'model'
-          ? backend.stream(input.prompt)
+          ? backend.stream(input.prompt, input.displayPrompt)
           : input.kind === 'peer'
             ? backend.streamPeer(input.message)
             : input.kind === 'shell'
