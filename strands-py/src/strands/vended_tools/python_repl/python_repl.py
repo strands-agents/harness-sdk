@@ -73,7 +73,8 @@ def make_python_repl(
             ValueError: If ``timeout`` is not positive.
             SandboxTimeoutError: If execution exceeds ``timeout``. The message carries the partial
                 output as JSON with the success field names and ``exit_code``.
-            SandboxAbortError: If the agent is cancelled while the code runs.
+            SandboxAbortError: If the agent is cancelled while the code runs. The message carries the
+                partial output the same way.
             PythonReplError: If the sandbox fails to run the code.
         """
         # The model sets timeout; reject non-positive values rather than rely on backend-specific semantics.
@@ -84,12 +85,10 @@ def make_python_repl(
             result = await active.execute_code(
                 code, language, timeout=timeout, cancel_signal=tool_context.cancel_signal
             )
-        except SandboxAbortError:
-            # Let cancellation propagate as-is rather than reporting it as a sandbox failure.
-            raise
-        except SandboxTimeoutError as e:
+        except (SandboxTimeoutError, SandboxAbortError) as e:
             # The model only sees str(e), so the partial output rides in the message with the success field names.
-            partial: PythonReplOutput = {"output": e.stdout, "error": e.stderr, "exit_code": 124}
+            exit_code = 124 if isinstance(e, SandboxTimeoutError) else 130
+            partial: PythonReplOutput = {"output": e.stdout, "error": e.stderr, "exit_code": exit_code}
             e.args = (f"{e}\n{json.dumps(partial)}",)
             raise
         except Exception as e:

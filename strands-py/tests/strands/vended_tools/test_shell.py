@@ -77,10 +77,12 @@ class TestMakeShell:
     @pytest.mark.asyncio
     async def test_stops_the_command_when_the_tool_call_is_cancelled(self, sandbox_shell):
         ctx = _tool_context()
-        asyncio.get_event_loop().call_later(0.2, ctx.cancel_signal.set)
+        asyncio.get_event_loop().call_later(0.3, ctx.cancel_signal.set)
         # SandboxAbortError, not ShellExecutionError: cancellation is not a shell failure.
-        with pytest.raises(SandboxAbortError):
-            await sandbox_shell(command="sleep 60", tool_context=ctx)
+        with pytest.raises(SandboxAbortError) as exc_info:
+            await sandbox_shell(command="echo partial; echo warn >&2; sleep 60", tool_context=ctx)
+        partial = {"output": "partial\n", "error": "warn\n", "exit_code": 130}
+        assert str(exc_info.value) == f"Execution aborted\n{json.dumps(partial)}"
 
     @pytest.mark.asyncio
     async def test_wraps_sandbox_error_as_shell_execution_error(self):
@@ -123,7 +125,8 @@ class TestAgentCancel:
         result = await asyncio.wait_for(agent.invoke_async("go"), timeout=30)
 
         assert result.stop_reason == "cancelled"
-        error = {"text": "Error: SandboxAbortError - Execution aborted"}
+        partial = json.dumps({"output": "", "error": "", "exit_code": 130})
+        error = {"text": f"Error: SandboxAbortError - Execution aborted\n{partial}"}
         assert agent.messages[-1]["content"] == [
             {"toolResult": {"toolUseId": "t1", "status": "error", "content": [error]}}
         ]

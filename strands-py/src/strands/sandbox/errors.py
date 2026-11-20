@@ -28,15 +28,21 @@ class SandboxTimeoutError(TimeoutError):
 
 
 class SandboxAbortError(Exception):
-    """Raised by sandbox execution when the caller's ``cancel_signal`` is set."""
+    """Raised by sandbox execution when the caller's ``cancel_signal`` is set.
 
-    def __init__(self, message: str = "Execution aborted") -> None:
-        """Initialize the error.
+    ``stdout`` and ``stderr`` hold whatever the process wrote before it was killed.
+    """
+
+    def __init__(self, stdout: str = "", stderr: str = "") -> None:
+        """Initialize the error with the output captured so far.
 
         Args:
-            message: The error message.
+            stdout: Standard output captured before the kill.
+            stderr: Standard error captured before the kill.
         """
-        super().__init__(message)
+        super().__init__("Execution aborted")
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 class SandboxPathNotFoundError(FileNotFoundError):

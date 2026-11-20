@@ -110,6 +110,18 @@ async def test_execute_code_stops_when_cancel_signal_is_set(sandbox):
         await sandbox.execute_code("import time; time.sleep(60)", PYTHON, cancel_signal=cancel_signal)
 
 
+@pytest.mark.skipif(WINDOWS, reason="execute_code spawns the interpreter directly on Windows")
+@pytest.mark.asyncio
+async def test_execute_code_without_a_cancel_signal_works_on_an_override_without_kwargs():
+    class _NoKwargs(NotASandboxLocalEnvironment):
+        async def execute_streaming(self, command, *, timeout=None, cwd=None, env=None):
+            async for chunk in super().execute_streaming(command, timeout=timeout, cwd=cwd, env=env):
+                yield chunk
+
+    result = await _NoKwargs().execute_code("print(2 + 2)", PYTHON)
+    assert (result.exit_code, result.stdout) == (0, "4\n")
+
+
 # ---- execute on Windows (PowerShell) ----
 # PowerShell semantics the model relies on: native exit codes propagate, stderr output alone is not a
 # failure, a failing cmdlet is, a multi-KB command runs, and UTF-8 survives.

@@ -90,16 +90,20 @@ export async function* streamProcess(
     }
   }
 
+  // SIGTERM now, SIGKILL a second later. The timer outlives the generator, so a command that ignores SIGTERM still dies.
+  const killTree = (): void => {
+    signalTree(proc, 'SIGTERM')
+    setTimeout(() => {
+      if (!done) signalTree(proc, 'SIGKILL')
+    }, 1000).unref()
+  }
+
   const terminate = (reason: Error): void => {
     if (terminating || done) return
     terminating = true
     error = reason
-    signalTree(proc, 'SIGTERM')
+    killTree()
     wake()
-    // Left to fire after the generator returns, so a command that ignores SIGTERM is still killed.
-    setTimeout(() => {
-      if (!done) signalTree(proc, 'SIGKILL')
-    }, 1000).unref()
   }
 
   proc.stdout?.on('data', (data) => {
@@ -142,7 +146,7 @@ export async function* streamProcess(
     }
   })
 
-  const onAbort = (): void => terminate(new SandboxAbortError())
+  const onAbort = (): void => terminate(new SandboxAbortError(stdout, stderr))
 
   options?.signal?.addEventListener('abort', onAbort, { once: true })
 
@@ -192,13 +196,15 @@ export async function* streamProcess(
   } finally {
     if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
     if (options?.signal) options.signal.removeEventListener('abort', onAbort)
-    if (!done) signalTree(proc, 'SIGTERM')
+    if (!done && !terminating) killTree()
   }
 }
 
 /** Signal the child's process group on POSIX; Windows has no process groups, so only the child. */
 function signalTree(proc: ChildProcess, signal: 'SIGTERM' | 'SIGKILL'): void {
-  if (process.platform === 'win32' || proc.pid === undefined) {
+  // No pid means the spawn failed. `proc.kill` could then signal this process's own group.
+  if (proc.pid === undefined) return
+  if (process.platform === 'win32') {
     proc.kill(signal)
     return
   }

@@ -77,8 +77,12 @@ export function makeShell(
         })
         return { output: result.stdout, error: result.stderr, exit_code: result.exitCode } as ShellOutput
       } catch (err) {
-        // Let cancellation propagate as-is rather than reporting it as a shell failure.
-        if (err instanceof SandboxAbortError) throw err
+        if (err instanceof SandboxAbortError) {
+          // Cancellation is not a shell failure, so it propagates as-is. 130 is the shell convention for an interrupt.
+          const partial: ShellOutput = { output: err.stdout, error: err.stderr, exit_code: 130 }
+          err.message = `${err.message}\n${JSON.stringify(partial)}`
+          throw err
+        }
         // Shell* extends Bash* so pre-rename catch clauses keep matching.
         if (err instanceof SandboxTimeoutError) {
           // Thrown errors reach the model as `Error: <message>`, so the partial output rides in the message.

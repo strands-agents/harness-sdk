@@ -72,7 +72,9 @@ describe.skipIf(process.platform === 'win32')('streamProcess termination', () =>
       for await (const _ of streamProcess('sh', ['-c', command], { signal: controller.signal })) controller.abort()
     }
 
-    await expect(consume()).rejects.toBeInstanceOf(SandboxAbortError)
+    const error = await consume().catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(SandboxAbortError)
+    expect(error).toMatchObject({ stdout: 'started\n', stderr: '' })
     await expectChildWasKilled(marker)
   })
 
@@ -88,20 +90,53 @@ describe.skipIf(process.platform === 'win32')('streamProcess termination', () =>
     await expectChildWasKilled(marker)
   })
 
-  it('kills a command that ignores SIGTERM', async () => {
-    const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'stream-process-')), 'ran')
-    const command = `trap '' TERM; sleep 1.5; touch ${marker}`
-    await expect(run('sh', ['-c', command], { timeout: 0.1 })).rejects.toBeInstanceOf(SandboxTimeoutError)
+  describe('a command that ignores SIGTERM', () => {
+    const ignoringSigterm = (): { command: string; marker: string } => {
+      const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'stream-process-')), 'ran')
+      return { command: `trap '' TERM; echo started; sleep 1.5; touch ${marker}`, marker }
+    }
 
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    expect(fs.existsSync(marker)).toBe(false)
+    const expectWasKilled = async (marker: string): Promise<void> => {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      expect(fs.existsSync(marker)).toBe(false)
+    }
+
+    it.concurrent('is killed after a timeout', async () => {
+      const { command, marker } = ignoringSigterm()
+      await expect(run('sh', ['-c', command], { timeout: 0.1 })).rejects.toBeInstanceOf(SandboxTimeoutError)
+      await expectWasKilled(marker)
+    })
+
+    it.concurrent('is killed when the consumer stops early', async () => {
+      const { command, marker } = ignoringSigterm()
+      for await (const _ of streamProcess('sh', ['-c', command])) break
+      await expectWasKilled(marker)
+    })
   })
 
   it('does not spawn when the signal is already aborted', async () => {
-    vi.mocked(childProcess.spawn).mockClear()
-    await expect(run('sh', ['-c', 'echo hi'], { signal: AbortSignal.abort() })).rejects.toBeInstanceOf(
-      SandboxAbortError
-    )
-    expect(childProcess.spawn).not.toHaveBeenCalled()
+    // The setup file loads stream-process before the mock above registers; re-import so it sees the spy.
+    vi.resetModules()
+    const { streamProcess: freshStreamProcess } = await import('../stream-process.js')
+    const { spawn } = await import('child_process')
+
+    const error = await freshStreamProcess('sh', ['-c', 'echo hi'], { signal: AbortSignal.abort() })
+      .next()
+      .catch((e: unknown) => e)
+
+    expect(error).toMatchObject({ name: 'SandboxAbortError', stdout: '', stderr: '' })
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('sends no signal when the binary is missing and the call is aborted', async () => {
+    const kill = vi.spyOn(childProcess.ChildProcess.prototype, 'kill').mockReturnValue(true)
+    const controller = new AbortController()
+
+    const next = streamProcess('strands-definitely-not-a-binary', [], { signal: controller.signal }).next()
+    controller.abort()
+
+    await expect(next).rejects.toBeInstanceOf(SandboxAbortError)
+    expect(kill).not.toHaveBeenCalled()
+    kill.mockRestore()
   })
 })

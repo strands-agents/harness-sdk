@@ -159,7 +159,7 @@ async def _stream_process(
         if stopped_by == "timeout":
             raise SandboxTimeoutError(timeout, "".join(out_buf), "".join(err_buf))
         if stopped_by == "cancel":
-            raise SandboxAbortError()
+            raise SandboxAbortError("".join(out_buf), "".join(err_buf))
 
         returncode = proc.returncode if proc.returncode is not None else 1
         exit_code = _SIGNAL_EXIT_BASE - returncode if returncode < 0 else returncode

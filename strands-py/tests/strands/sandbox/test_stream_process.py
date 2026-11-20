@@ -153,10 +153,11 @@ async def test_cancel_signal_kills_the_process_tree_and_raises_abort(tmp_path, t
     marker = tmp_path / "ran"
     command = f"(sleep 0.5; touch {marker}) & echo started{tail}"
 
-    with pytest.raises(SandboxAbortError, match="Execution aborted"):
+    with pytest.raises(SandboxAbortError, match="Execution aborted") as exc_info:
         async for _ in _stream_process("sh", ["-c", command], timeout=30, cancel_signal=cancel_signal):
             cancel_signal.set()
 
+    assert (exc_info.value.stdout, exc_info.value.stderr) == ("started\n", "")
     await _assert_child_was_killed(marker)
 
 

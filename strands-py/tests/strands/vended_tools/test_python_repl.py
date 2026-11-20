@@ -74,10 +74,13 @@ class TestShim:
         assert isinstance(exc_info.value, RuntimeError)
 
     @pytest.mark.asyncio
-    async def test_abort_propagates_unwrapped(self):
+    async def test_abort_propagates_unwrapped_with_the_partial_output(self):
         # SandboxAbortError, not PythonReplError: cancellation is not a sandbox failure.
-        with pytest.raises(SandboxAbortError):
-            await python_repl(code="pass", tool_context=_tool_context(_mock_sandbox(side_effect=SandboxAbortError())))
+        sandbox = _mock_sandbox(side_effect=SandboxAbortError("out\n", "warn\n"))
+        with pytest.raises(SandboxAbortError) as exc_info:
+            await python_repl(code="pass", tool_context=_tool_context(sandbox))
+        partial = {"output": "out\n", "error": "warn\n", "exit_code": 130}
+        assert str(exc_info.value) == f"Execution aborted\n{json.dumps(partial)}"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell required")

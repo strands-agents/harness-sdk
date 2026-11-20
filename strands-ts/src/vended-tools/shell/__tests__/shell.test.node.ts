@@ -104,12 +104,16 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
   it('stops the command when the tool call is cancelled', async () => {
     const { sandboxShell, context } = createSandboxShell()
     const controller = new AbortController()
-    setTimeout(() => controller.abort(), 100)
+    setTimeout(() => controller.abort(), 300)
+
+    const error = await sandboxShell
+      .invoke({ command: 'echo partial; echo warn >&2; sleep 60' }, { ...context, cancelSignal: controller.signal })
+      .catch((e) => e)
 
     // SandboxAbortError, not ShellExecutionError: cancellation is not a shell failure.
-    await expect(
-      sandboxShell.invoke({ command: 'sleep 60' }, { ...context, cancelSignal: controller.signal })
-    ).rejects.toBeInstanceOf(SandboxAbortError)
+    expect(error).toBeInstanceOf(SandboxAbortError)
+    const partial = { output: 'partial\n', error: 'warn\n', exit_code: 130 }
+    expect(error.message).toBe(`Execution aborted\n${JSON.stringify(partial)}`)
   })
 
   it('agent.cancel() stops a running command', async () => {
@@ -121,12 +125,13 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
     const result = await agent.invoke('go')
 
     expect(result.stopReason).toBe('cancelled')
+    const partial = JSON.stringify({ output: '', error: '', exit_code: 130 })
     expect(agent.messages[2]!.content).toEqual([
       new ToolResultBlock({
         toolUseId: 't1',
         status: 'error',
-        content: [new TextBlock('Error: Execution aborted')],
-        error: new SandboxAbortError(),
+        content: [new TextBlock(`Error: Execution aborted\n${partial}`)],
+        error: expect.any(SandboxAbortError),
       }),
     ])
   })
