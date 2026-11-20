@@ -132,7 +132,17 @@ impl ToolCallPipeline {
                     (error, _) => Gated::Outcome(hook_failure(error)),
                 };
             }
-            let cancel_message = before.cancel().message_or("Tool cancelled by hook").map(str::to_owned);
+            // A cancellation that lands while the hooks run skips the tool like a hook's cancel.
+            let cancel_message = before
+                .cancel()
+                .message_or("Tool cancelled by hook")
+                .map(str::to_owned)
+                .or_else(|| {
+                    agent
+                        .cancel_signal()
+                        .is_cancelled()
+                        .then(|| "Tool execution cancelled".to_owned())
+                });
             sink.send(LoopEvent {
                 record: AgentStreamEvent::from(&before),
                 cancelled: cancel_message.is_some(),
