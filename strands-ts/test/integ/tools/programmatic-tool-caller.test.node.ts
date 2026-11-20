@@ -37,6 +37,8 @@ describe.skipIf(bedrock.skip)('Programmatic Tool Caller Integration', () => {
         ? block.content.map((content) => (content.type === 'textBlock' ? content.text : ''))
         : []
     )
+    // Calls made from the code never appear in the transcript, so this pins the lookups to the code.
+    expect(blocks.filter((block) => block.type === 'toolUseBlock' && block.name === 'get_stock')).toStrictEqual([])
     expect([...new Set(lookedUp)].sort()).toStrictEqual(['apples', 'pears', 'plums'])
     expect(printed.join('\n')).toContain('42')
   })
