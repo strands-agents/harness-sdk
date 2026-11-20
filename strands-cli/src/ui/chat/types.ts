@@ -116,6 +116,8 @@ export interface DevChatCommand {
   spec: LocalCommandSpec
   /** Keeps the panel open when the developer clicks away, for a panel something is waiting on. */
   sticky?: boolean
+  /** Called when the developer submits a chat message instead of answering. */
+  dropPending?(): void
   open(context: DevChatCommandContext, opening?: DevPanelOpening): DevChatPanelView
   attach?(context: DevChatCommandContext): void
   jobs?: DevChatJobs
@@ -246,6 +248,8 @@ export type NewChatPanel =
       openCommand: (name: string) => boolean
       /** A click outside moves the keyboard to the chat input instead of closing this panel. */
       sticky?: boolean
+      /** Resolves whatever this panel is waiting on, so a chat message can be sent instead. */
+      dropPending?: () => void
     })
 
 export type ChatPanel = NewChatPanel & { id: string }

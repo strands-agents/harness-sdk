@@ -654,7 +654,7 @@ function ChatViewContent({
               {...(snapshot.status === 'running' || snapshot.status === 'interrupting'
                 ? {
                     placeholder: inputHoldsKeyboard
-                      ? 'Enter to queue • your message is sent once you answer the question above • ↑ back to it'
+                      ? 'Enter drops the question above and sends • ↑ back to it'
                       : 'Enter to queue • Tab queue actions • Alt+↑ edit queue',
                   }
                 : {})}

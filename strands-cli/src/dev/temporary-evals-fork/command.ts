@@ -166,6 +166,7 @@ const ASK_DETAILS = paragraphs(
 
 const askCommand = (sessions: Sessions): DevChatCommand => ({
   sticky: true,
+  dropPending: () => sessions().ask.cancelAll(),
   spec: {
     name: 'ask',
     usage: '/ask',

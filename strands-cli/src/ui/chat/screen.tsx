@@ -661,6 +661,11 @@ export function ChatApp({
   )
   const dispatchPrompt = useCallback(
     (prompt: string): void => {
+      // A pending question holds the turn open, so sending a message instead means dropping it.
+      // Commands are not messages: /settings or /ask must leave the question waiting.
+      const panel = controller.getSnapshot().panel
+      if (prompt.trim() && !/^[!/$]/.test(prompt.trimStart()) && panel?.kind === 'dev' && panel.dropPending)
+        panel.dropPending()
       if (editingQueuedPromptId && controller.updateQueuedPrompt(editingQueuedPromptId, prompt)) {
         finishQueuedPromptEdit()
         return

@@ -23,7 +23,7 @@ afterEach(async () => {
   }
 })
 
-const askCommand = (): DevChatCommand => {
+const askCommand = (dropPending?: () => void): DevChatCommand => {
   const Panel = ({ close, active = true, blur }: DevChatPanelProps): ReactElement => {
     const [keys, setKeys] = useState('')
     useInput(
@@ -36,7 +36,12 @@ const askCommand = (): DevChatCommand => {
     )
     return createElement(Text, null, `question keys:[${keys}]`)
   }
-  return { spec: { name: 'ask', usage: '/ask', description: 'Ask' }, sticky: true, open: () => Panel }
+  return {
+    spec: { name: 'ask', usage: '/ask', description: 'Ask' },
+    sticky: true,
+    ...(dropPending ? { dropPending } : {}),
+    open: () => Panel,
+  }
 }
 
 const mount = async (command: DevChatCommand, rows = 40) => {
@@ -127,6 +132,45 @@ describe('a sticky question panel', () => {
     await press('z')
 
     expect(screen()).toContain('question keys:[z]')
+  })
+
+  it('shouldDropThePendingQuestionWhenTheDeveloperSubmitsAMessage', async () => {
+    const dropped: number[] = []
+    const { press } = await mount(askCommand(() => dropped.push(1)))
+    await press('/ask')
+    await press('\r')
+    await press('\u001b[B')
+
+    await press('h')
+    await press('i')
+    await press('\r')
+
+    expect(dropped).toEqual([1])
+  })
+
+  it('shouldKeepThePendingQuestionWhenTheDeveloperRunsACommand', async () => {
+    const dropped: number[] = []
+    const { press } = await mount(askCommand(() => dropped.push(1)))
+    await press('/ask')
+    await press('\r')
+    await press('\u001b[B')
+
+    await press('/settings')
+    await press('\r')
+
+    expect(dropped).toEqual([])
+  })
+
+  it('shouldKeepThePendingQuestionWhenTheInputIsEmpty', async () => {
+    const dropped: number[] = []
+    const { press } = await mount(askCommand(() => dropped.push(1)))
+    await press('/ask')
+    await press('\r')
+    await press('\u001b[B')
+
+    await press('\r')
+
+    expect(dropped).toEqual([])
   })
 
   it('shouldSendKeysToTheQuestionBeforeLeavingIt', async () => {
