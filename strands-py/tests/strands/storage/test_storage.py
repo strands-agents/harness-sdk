@@ -152,6 +152,97 @@ class TestNamespacedStorage:
         assert all(not r.key.startswith("scope/") for r in results)
         assert all("other" not in r.key for r in results)
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("empty_key", ["", "/", "///"])
+    async def test_rejects_empty_key_without_touching_parent(self, storage, empty_key):
+        class CustomStorage:
+            """Custom Storage without its own namespace() method."""
+
+            def __init__(self, inner):
+                self._inner = inner
+
+            async def write(self, key: str, data: bytes) -> None:
+                await self._inner.write(key, data)
+
+            async def read(self, key: str) -> bytes | None:
+                return await self._inner.read(key)
+
+            async def delete(self, key: str) -> None:
+                await self._inner.delete(key)
+
+            async def list(self, query: str = "") -> list[str]:
+                return await self._inner.list(query)
+
+        await storage.write("prefix", b"\x01")
+        view = _resolve_namespace(CustomStorage(storage), "prefix")
+
+        with pytest.raises(StorageError, match="Storage key must not be empty"):
+            await view.read(empty_key)
+        with pytest.raises(StorageError, match="Storage key must not be empty"):
+            await view.write(empty_key, b"\x09")
+        with pytest.raises(StorageError, match="Storage key must not be empty"):
+            await view.delete(empty_key)
+
+        assert await storage.read("prefix") == b"\x01"
+
+    @pytest.mark.asyncio
+    async def test_custom_storage_valid_operations_and_nested_namespace(self, storage):
+        class CustomStorage:
+            """Custom Storage without its own namespace() method."""
+
+            def __init__(self, inner):
+                self._inner = inner
+
+            async def write(self, key: str, data: bytes) -> None:
+                await self._inner.write(key, data)
+
+            async def read(self, key: str) -> bytes | None:
+                return await self._inner.read(key)
+
+            async def delete(self, key: str) -> None:
+                await self._inner.delete(key)
+
+            async def list(self, query: str = "") -> list[str]:
+                return await self._inner.list(query)
+
+        await storage.write("prefix", b"parent")
+        await storage.write("prefix/sub", b"sub-parent")
+        view = _resolve_namespace(CustomStorage(storage), "prefix")
+
+        await view.write("child", b"value")
+        assert await view.read("child") == b"value"
+        assert await view.list("") == ["child", "sub"]
+        assert await view.list("/") == ["child", "sub"]
+        await view.delete("child")
+        assert await view.read("child") is None
+
+        nested = view.namespace("sub")
+        for empty_key in ("", "/", "///"):
+            with pytest.raises(StorageError, match="Storage key must not be empty"):
+                await nested.read(empty_key)
+            with pytest.raises(StorageError, match="Storage key must not be empty"):
+                await nested.write(empty_key, b"overwrite")
+            with pytest.raises(StorageError, match="Storage key must not be empty"):
+                await nested.delete(empty_key)
+
+        assert await storage.read("prefix") == b"parent"
+        assert await storage.read("prefix/sub") == b"sub-parent"
+
+    @pytest.mark.asyncio
+    async def test_rejects_traversal_and_backslash_keys(self, storage):
+        view = _NamespacedStorage(storage, "prefix")
+
+        with pytest.raises(StorageError, match="path segments are not allowed"):
+            await view.read("../secret")
+        with pytest.raises(StorageError, match="path segments are not allowed"):
+            await view.write("../secret", b"x")
+        with pytest.raises(StorageError, match="path segments are not allowed"):
+            await view.delete("../secret")
+        with pytest.raises(StorageError, match="path segments are not allowed"):
+            await view.list("../")
+        with pytest.raises(StorageError, match="backslashes are not allowed"):
+            await view.read("a\\b")
+
 
 class TestStorageProtocol:
     def test_isinstance_check(self):
