@@ -9,6 +9,7 @@ import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { ToolRegistry } from '../../registry/tool-registry.js'
 import { ToolStreamEvent } from '../../tools/tool.js'
 import type { CountTokensOptions } from '../../models/model.js'
+import { RequestTokenAnchor } from '../../models/model-proxy.js'
 import type { Tool, ToolStreamGenerator } from '../../tools/tool.js'
 
 function makeMockAgent(overrides?: {
@@ -549,6 +550,39 @@ describe('ContextManager', () => {
       await invokeTrackedHook(agent, event)
 
       expect(receivedUtilization).toBe(0.5)
+    })
+
+    it('records a request token anchor at the end of the history a strategy rewrote', async () => {
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('a')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('b')] }),
+        new Message({ role: 'user', content: [new TextBlock('c')] }),
+      ]
+      const dropsFirstTwo = {
+        name: 'drops-first-two',
+        apply: async (context: { messages: Message[] }) => {
+          if (context.messages.length === 1) return false
+          context.messages.splice(0, 2)
+          return true
+        },
+      }
+      const cm = new ContextManager({ strategies: [dropsFirstTwo], stash: false })
+      const agent = makeMockAgent({ messages, countTokens: async (counted) => counted.length * 100 })
+      await cm.initAgent(agent)
+
+      await invokeTrackedHook(agent, makeBeforeEvent(agent, 300))
+
+      expect(agent._requestTokenAnchor).toStrictEqual(new RequestTokenAnchor(100, 1, messages[0]))
+    })
+
+    it('leaves the request token anchor unset when no strategy acts', async () => {
+      const cm = new ContextManager({ strategies: [{ name: 'noop', apply: async () => false }], stash: false })
+      const agent = makeMockAgent({ messages: [new Message({ role: 'user', content: [new TextBlock('a')] })] })
+      await cm.initAgent(agent)
+
+      await invokeTrackedHook(agent, makeBeforeEvent(agent, 300))
+
+      expect(agent._requestTokenAnchor).toBeUndefined()
     })
   })
 

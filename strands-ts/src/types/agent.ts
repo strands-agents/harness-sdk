@@ -2,6 +2,7 @@ import type { Sandbox } from '../sandbox/base.js'
 import type { AgentMetadata } from '../agent/agent-metadata.js'
 import type { Storage } from '../storage/storage.js'
 import type { ContextManager } from '../context-manager/context-manager.js'
+import type { RequestTokenAnchor } from '../models/model-proxy.js'
 import type { StateStore } from '../state-store.js'
 import type { ContentBlock, ContentBlockData, Message, MessageData, StopReason, SystemPrompt } from './messages.js'
 import type { Interrupt } from '../interrupt.js'
@@ -350,6 +351,13 @@ export interface LocalAgent {
    * @internal
    */
   readonly contextManager?: ContextManager | undefined
+
+  /**
+   * Whole-request token count recorded after a context strategy last rewrote the history.
+   *
+   * @internal
+   */
+  _requestTokenAnchor?: RequestTokenAnchor | undefined
 
   /**
    * Aggregated metrics for the agent's loop execution.

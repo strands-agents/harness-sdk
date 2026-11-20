@@ -50,6 +50,10 @@ import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 import type { StreamOptions } from '../../index.js'
 import type { ModelStreamEvent } from '../../models/streaming.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
+import { ContextManager } from '../../context-manager/context-manager.js'
+import type { ContextStrategy } from '../../context-manager/types.js'
+import { InvokeModelStage } from '../../middleware/stages.js'
+import { countRequestTokens, RequestTokenAnchor } from '../../models/model-proxy.js'
 
 describe('Agent', () => {
   describe('stream', () => {
@@ -2548,6 +2552,112 @@ describe('_estimateInputTokens', () => {
 
     // baseline (200+50) + estimated delta for new user message (15) = 265
     expect(await tokenPromise).toBe(265)
+  })
+
+  describe('with a request token anchor', () => {
+    const user = (text: string): Message => new Message({ role: 'user', content: [new TextBlock(text)] })
+    const receipt = (inputTokens: number, outputTokens: number): Message =>
+      new Message({
+        role: 'assistant',
+        content: [new TextBlock('reply')],
+        metadata: { usage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens } },
+      })
+
+    function agentWith(messages: Message[]): { agent: Agent; countTokens: ReturnType<typeof vi.spyOn> } {
+      const model = new MockMessageModel()
+      // Ten tokens per message, plus 1000 when the whole request (system prompt and tools) is counted.
+      const countTokens = vi
+        .spyOn(model, 'countTokens')
+        .mockImplementation(async (counted, options) => counted.length * 10 + (options === undefined ? 0 : 1000))
+      return { agent: new Agent({ model, printer: false, messages }), countTokens }
+    }
+
+    function estimate(agent: Agent): Promise<number> {
+      return agent['_estimateInputTokens']()
+    }
+
+    it('prefers an anchor that covers as many messages as the receipt', async () => {
+      const { agent } = agentWith([user('a'), receipt(40_000, 500), user('b')])
+      agent._requestTokenAnchor = RequestTokenAnchor.atEndOf(agent.messages.slice(0, 2), 5_000)
+
+      expect(await estimate(agent)).toBe(5_010)
+    })
+
+    it('prefers a receipt that covers more messages than the anchor', async () => {
+      const { agent } = agentWith([user('a'), user('b'), receipt(300, 20), user('c')])
+      agent._requestTokenAnchor = RequestTokenAnchor.atEndOf(agent.messages.slice(0, 2), 5_000)
+
+      expect(await estimate(agent)).toBe(330)
+    })
+
+    it('uses the anchor instead of a full count when no receipt exists', async () => {
+      const { agent, countTokens } = agentWith([user('a'), user('b')])
+      agent._requestTokenAnchor = RequestTokenAnchor.atEndOf(agent.messages.slice(0, 1), 2_000)
+
+      expect(await estimate(agent)).toBe(2_010)
+      expect(countTokens).toHaveBeenCalledTimes(1)
+      expect(countTokens).toHaveBeenCalledWith([agent.messages[1]], undefined)
+    })
+
+    it('ignores the anchor once the history is replaced', async () => {
+      const { agent } = agentWith([user('a'), receipt(300, 20), user('b')])
+      agent._requestTokenAnchor = RequestTokenAnchor.atEndOf([user('a'), receipt(1, 1)], 5_000)
+
+      expect(await estimate(agent)).toBe(330)
+    })
+
+    it('ignores the anchor once the history is cut below it', async () => {
+      const { agent } = agentWith([user('a'), user('b'), user('c')])
+      agent._requestTokenAnchor = RequestTokenAnchor.atEndOf(agent.messages, 5_000)
+      agent.messages.splice(1)
+
+      expect(await estimate(agent)).toBe(1_010)
+    })
+  })
+
+  // Regression for #6063: a strategy that drops history but keeps the usage receipt must not leave the projection
+  // charging for the dropped messages.
+  it('projects the request a context strategy left behind, not the stale receipt', async () => {
+    const big = (role: 'user' | 'assistant'): Message =>
+      new Message({ role, content: [new TextBlock('x'.repeat(40_000))] })
+    const keepFirstAndLastTwo: ContextStrategy = {
+      name: 'keep-first-and-last-two',
+      apply: async ({ messages }) => {
+        if (messages.length <= 3) return false
+        messages.splice(1, messages.length - 3)
+        return true
+      },
+    }
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+    const agent = new Agent({
+      model,
+      printer: false,
+      contextManager: new ContextManager({ strategies: [keepFirstAndLastTwo], stash: false }),
+      messages: [
+        big('user'),
+        big('assistant'),
+        big('user'),
+        big('assistant'),
+        new Message({ role: 'user', content: [new TextBlock('continue')] }),
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('done')],
+          metadata: { usage: { inputTokens: 40_000, outputTokens: 500, totalTokens: 40_500 } },
+        }),
+      ],
+    })
+    let projected: number | undefined
+    let sentRequestTokens: number | undefined
+    agent.addMiddleware(InvokeModelStage.Input, async (context) => {
+      projected = context.projectedInputTokens
+      sentRequestTokens = await countRequestTokens(context.agent, [...context.messages])
+      return context
+    })
+
+    await agent.invoke('next')
+
+    expect(agent.messages.length).toBe(4)
+    expect(projected).toBe(sentRequestTokens)
   })
 })
 
