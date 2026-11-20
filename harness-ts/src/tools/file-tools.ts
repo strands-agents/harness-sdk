@@ -208,6 +208,9 @@ export const edit = tool({
     if (!context) throw new Error('Tool context is required for edit.')
     validatePath(input.path)
     const sandbox = context.agent.sandbox
+    if (input.old_str === '') {
+      throw new Error('old_str must not be empty.')
+    }
     const content = await sandbox.readText(input.path)
 
     const occurrences = content.split(input.old_str).length - 1
@@ -218,7 +221,11 @@ export const edit = tool({
       throw new Error(`old_str appears ${occurrences} times in ${input.path}; make it unique.`)
     }
 
-    await sandbox.writeText(input.path, content.replace(input.old_str, input.new_str))
+    // Function replacer so `$$`, `$&`, `$``, and `$'` in new_str are inserted literally.
+    await sandbox.writeText(
+      input.path,
+      content.replace(input.old_str, () => input.new_str)
+    )
     return `Edited ${input.path}.`
   },
 })
