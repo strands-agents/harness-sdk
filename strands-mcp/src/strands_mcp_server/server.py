@@ -83,6 +83,32 @@ def _is_valid_doc_url(uri: str) -> bool:
         return False
 
 
+# Notice appended to content that had to be cut to fit the token budget
+TRUNCATION_NOTICE = "\n\n... (truncated: no parseable sections)"
+
+
+def _truncate_utf8(text: str, max_bytes: int) -> str:
+    """Truncate text to at most max_bytes UTF-8 bytes and mark the truncation.
+
+    The cut is made on the encoded bytes and decoded back with errors ignored, so
+    a multi-byte character is never split in half. The truncation notice is
+    included in the budget.
+
+    Args:
+        text: The text to truncate
+        max_bytes: Maximum size of the returned text, in UTF-8 bytes
+
+    Returns:
+        The (possibly unchanged) text, at most max_bytes UTF-8 bytes long
+    """
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    notice = TRUNCATION_NOTICE.encode("utf-8")
+    clipped = encoded[: max_bytes - len(notice)].decode("utf-8", errors="ignore")
+    return clipped + TRUNCATION_NOTICE
+
+
 def _section_index(sections: list[dict]) -> list[dict]:
     return [{"id": s["id"], "title": s["title"], "children": s["children"]} for s in sections]
 
@@ -262,15 +288,24 @@ def fetch_doc(
 
     sections = text_processor.parse_sections(page.content)
 
-    # No parseable sections: treat as small doc regardless of size
+    # No parseable sections: treat as small doc, but keep the content bounded.
+    # Without sections there is no way to fetch a slice of this document, so an
+    # unbounded fallback would dump the whole document into the model context.
     if not sections:
-        return {
+        content = page.content
+        truncated = len(content.encode("utf-8")) > text_processor.SMALL_DOC_THRESHOLD
+        if truncated:
+            content = _truncate_utf8(content, text_processor.SMALL_DOC_THRESHOLD)
+        result = {
             "url": uri,
             "title": page.title,
             "document_small": True,
             "reason": "no_sections",
-            "content": page.content,
+            "content": content,
         }
+        if truncated:
+            result["truncated"] = True
+        return result
 
     # Section mode: extract specific section
     if section:
