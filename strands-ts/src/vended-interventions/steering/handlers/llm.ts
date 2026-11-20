@@ -26,24 +26,7 @@ import { SteeringHandler } from './handler.js'
  */
 export type PromptBuilder = (context: SteeringContextData[], toolUse?: ToolUse) => string | ContentBlock[]
 
-/**
- * Default prompt builder. Returns content blocks with a cache point
- * between static instructions and dynamic context/event data.
- *
- * See: https://github.com/strands-agents/agent-sop
- */
-function defaultPromptBuilder(context: SteeringContextData[], toolUse?: ToolUse): ContentBlock[] {
-  const contextStr = context.length > 0 ? JSON.stringify(context, null, 2) : 'No context available'
-
-  const actionType = toolUse ? 'tool call' : 'action'
-  const actionTypeTitle = toolUse ? 'Tool Call' : 'Action'
-  const eventDescription = toolUse
-    ? `Tool: ${toolUse.name}\nArguments: ${JSON.stringify(toolUse.input, null, 2)}`
-    : 'General evaluation'
-
-  const hasLedger = context.some((c) => c.type === 'toolLedger')
-  const ledgerExplanation = hasLedger
-    ? `
+const LEDGER_EXPLANATION = `
 
 ### Understanding Ledger Tool States
 
@@ -57,7 +40,55 @@ The tool has NOT started executing yet.
 
 **IMPORTANT**: When you see a tool with status="pending" that matches the tool you're evaluating,
 that IS the current tool being evaluated. It is NOT already executing or a duplicate.`
-    : ''
+
+/**
+ * Explains tool ledger statuses when the context includes a ledger, otherwise empty.
+ *
+ * @internal
+ */
+export function ledgerExplanation(context: SteeringContextData[]): string {
+  return context.some((c) => c.type === 'toolLedger') ? LEDGER_EXPLANATION : ''
+}
+
+/**
+ * When to choose each steering decision.
+ *
+ * @internal
+ */
+export const DECISION_OPTIONS = `**Decision Options:**
+- "proceed" if context data shows no concerning patterns
+- "guide" if context data shows patterns requiring intervention
+- "confirm" if context data shows patterns requiring human input`
+
+/**
+ * Formats the per-call steering context and the event under evaluation.
+ *
+ * @internal
+ */
+export function formatEvaluationState(context: SteeringContextData[], toolUse?: ToolUse): string {
+  const contextStr = context.length > 0 ? JSON.stringify(context, null, 2) : 'No context available'
+  const eventDescription = toolUse
+    ? `Tool: ${toolUse.name}\nArguments: ${JSON.stringify(toolUse.input, null, 2)}`
+    : 'General evaluation'
+
+  return `## Context
+
+${contextStr}
+
+## Event to Evaluate
+
+${eventDescription}`
+}
+
+/**
+ * Default prompt builder. Returns content blocks with a cache point
+ * between static instructions and dynamic context/event data.
+ *
+ * See: https://github.com/strands-agents/agent-sop
+ */
+function defaultPromptBuilder(context: SteeringContextData[], toolUse?: ToolUse): ContentBlock[] {
+  const actionType = toolUse ? 'tool call' : 'action'
+  const actionTypeTitle = toolUse ? 'Tool Call' : 'Action'
 
   // Static framing (cached): role, constraints, decision criteria, ledger semantics.
   const instructions = `# Steering Evaluation
@@ -78,7 +109,7 @@ should try a different approach or get human input.
 - Base decisions ONLY on the context data provided
 - Do NOT use external knowledge about domains, URLs, or tool purposes
 - Do NOT make assumptions about what tools "should" or "shouldn't" do
-- Focus ONLY on patterns in the context data${ledgerExplanation}
+- Focus ONLY on patterns in the context data${ledgerExplanation(context)}
 
 ## Steps
 
@@ -103,19 +134,10 @@ Review ONLY the context data. Look for patterns in the data that indicate:
 - You MUST base the decision ONLY on context data patterns
 - Your reason will be shown to the AGENT as guidance
 
-**Decision Options:**
-- "proceed" if context data shows no concerning patterns
-- "guide" if context data shows patterns requiring intervention
-- "confirm" if context data shows patterns requiring human input`
+${DECISION_OPTIONS}`
 
   // Dynamic block (uncached): per-call context and event payload.
-  const dynamic = `## Context
-
-${contextStr}
-
-## Event to Evaluate
-
-${eventDescription}`
+  const dynamic = formatEvaluationState(context, toolUse)
 
   return [new TextBlock(instructions), new CachePointBlock({ cacheType: 'default' }), new TextBlock(dynamic)]
 }
