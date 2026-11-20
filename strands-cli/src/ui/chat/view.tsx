@@ -654,14 +654,18 @@ function ChatViewContent({
               {...(snapshot.status === 'running' || snapshot.status === 'interrupting'
                 ? {
                     placeholder: inputHoldsKeyboard
-                      ? 'Enter drops the question above and sends • ↑ back to it'
+                      ? 'Enter to send • ↑ back to the question'
                       : 'Enter to queue • Tab queue actions • Alt+↑ edit queue',
                   }
                 : {})}
               {...(actionableCommandToken ? { actionableCommandToken } : {})}
               {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
               {...(snapshot.panel && !composerPanel && !inputHoldsKeyboard
-                ? { panelStatus: panelEditorStatus(snapshot.panel) }
+                ? {
+                    panelStatus: devPanel?.sticky
+                      ? `${panelEditorStatus(snapshot.panel)} · ↓ chat · Enter to send there`
+                      : panelEditorStatus(snapshot.panel),
+                  }
                 : {})}
               {...(focusedQueuedPrompt ? { panelStatus: 'Queue · Tab/Shift+Tab move · Enter choose · Esc back' } : {})}
               {...(focusedBackgroundTask || focusedDevJob ? { panelStatus: '←→ choose · Enter view · Esc back' } : {})}

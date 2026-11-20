@@ -196,6 +196,19 @@ describe('a sticky question panel', () => {
     expect(composer()).toBe(before)
   })
 
+  it('shouldSayEnterSendsOnBothSidesOfAQuestion', async () => {
+    const { press, screen } = await mount(askCommand())
+    await press('/ask')
+    await press('\r')
+
+    expect(screen()).toContain('Viewing /ask · ↓ chat · Enter to send there')
+
+    await press('\u001b[B')
+
+    expect(screen()).toContain('Enter to send')
+    expect(screen()).not.toContain('Viewing /ask')
+  })
+
   it('shouldSendKeysToTheQuestionBeforeLeavingIt', async () => {
     const { press, screen } = await mount(askCommand())
     await press('/ask')
