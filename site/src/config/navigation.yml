@@ -206,7 +206,7 @@ products:
       - label: Overview
         href: /docs/labs/strands-decider/overview/
       - label: Quickstart
-        href: /docs/labs/strands-decider/inference/
+        href: /docs/labs/strands-decider/quickstart/
       - label: Images
         href: /docs/labs/strands-decider/images/
       - label: Architecture
