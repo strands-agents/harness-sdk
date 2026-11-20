@@ -1,7 +1,5 @@
 /**
  * Offload strategies — reduce content in the context window.
- *
- * @experimental
  */
 
 import type { TruncateConfig } from '../../methods/truncate.js'
@@ -25,7 +23,7 @@ export type { DeferConditions, DeferStrategy, DeferTarget } from '../deferred-to
  * - `Offload.drop(target)` — drop matching content from context window entirely
  * - `Offload.truncate(target, config)` — replace with a preview
  * - `Offload.summarize(target, config)` — replace with LLM-generated summary
- * - `Offload.defer(target)` — keep tools' input schemas out of the context until the model loads them
+ * - `Offload.defer(target)` — (Experimental) keep tools' input schemas out of the context until the model loads them
  */
 interface OffloadNamespace {
   /** Drop matching content from context window entirely. Without `.when()` conditions, drops each block on arrival. */
@@ -40,6 +38,8 @@ interface OffloadNamespace {
    * Keep tools' input schemas out of the context until the model loads them with `load_tools`. The model still
    * sees each deferred tool's name and description. Without `.when()` conditions, defers at any tool count. One per
    * agent, the `deferredToolLoading` preset included.
+   *
+   * @experimental
    */
   defer(target: DeferTarget): DeferStrategy
 }
