@@ -8,7 +8,12 @@ import { ChatController, type ChatControllerApi, type DevChatCommand } from '../
 import { sanitizeTerminalText } from '../../src/terminal/text.js'
 import { ChatApp } from '../../src/ui/chat/screen.js'
 import { WizardRequestPanel } from '../../src/ui/panels/wizard-request-panel.js'
-import { WizardBroker, wizardRequestRows, type WizardRequestSpec } from '../../src/ui/panels/wizard-request.js'
+import {
+  WizardBroker,
+  wizardRequestHasDiff,
+  wizardRequestRows,
+  type WizardRequestSpec,
+} from '../../src/ui/panels/wizard-request.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 
@@ -56,6 +61,7 @@ const askCommand = (broker: WizardBroker): DevChatCommand => ({
   sticky: true,
   dropPending: () => broker.cancelAll(),
   contentRows: () => wizardRequestRows(broker.pending()),
+  dock: () => wizardRequestHasDiff(broker.pending()),
   attach: (context) => broker.attachOpener(() => context.openPanel('ask')),
   open: () => (props) => createElement(WizardRequestPanel, { ...props, broker }),
 })
@@ -102,6 +108,38 @@ const openQuestion = async () => {
   await new Promise((done) => setTimeout(done, 50))
   return { ...view, broker, resolve }
 }
+
+describe('wizardRequestHasDiff', () => {
+  it('shouldBeFalseForAQuestionWithNoDiff', () => {
+    expect(wizardRequestHasDiff({ ...question, id: 'r1' })).toBe(false)
+    expect(wizardRequestHasDiff(undefined)).toBe(false)
+  })
+
+  it('shouldBeTrueOnlyWhenAFieldIsADiff', () => {
+    const withDiff = {
+      ...question,
+      id: 'r2',
+      steps: [
+        {
+          key: 'review',
+          title: 'Review',
+          fields: [
+            {
+              kind: 'diff' as const,
+              key: 'edit',
+              label: 'agent.ts',
+              path: '/w/agent.ts',
+              proposed: 'next',
+              diff: { path: '/w/agent.ts', lines: [] } as never,
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(wizardRequestHasDiff(withDiff)).toBe(true)
+  })
+})
 
 describe('a real ask call with its question on screen', () => {
   it('shouldShowTheCursorOnlyOnceFocusMovesIntoTheQuestion', async () => {

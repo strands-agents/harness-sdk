@@ -116,8 +116,8 @@ export interface DevChatCommand {
   spec: LocalCommandSpec
   /** Keeps the panel open when the developer clicks away, for a panel something is waiting on. */
   sticky?: boolean
-  /** Renders beside the transcript at the dock's width, for a panel holding more than a few rows. */
-  dock?: boolean
+  /** Renders beside the transcript at the dock's width, when its content needs that width right now. */
+  dock?(): boolean
   /** Called when the developer submits a chat message instead of answering. */
   dropPending?(): void
   /** The rows this panel's content needs right now, to shrink the frame to it. */
@@ -253,7 +253,7 @@ export type NewChatPanel =
       /** A click outside moves the keyboard to the chat input instead of closing this panel. */
       sticky?: boolean
       /** Renders beside the transcript at the dock's width rather than above the chat input. */
-      dock?: boolean
+      dock?: () => boolean
       /** Resolves whatever this panel is waiting on, so a chat message can be sent instead. */
       dropPending?: () => void
       /** The rows its content needs, when that is fewer than the panel's usual share of the screen. */

@@ -35,7 +35,7 @@ const probe = (dock: boolean): { command: DevChatCommand; widths: number[] } => 
     command: {
       spec: { name: 'probe', usage: '/probe', description: 'Probe' },
       sticky: true,
-      ...(dock ? { dock: true } : {}),
+      ...(dock ? { dock: (): boolean => true } : {}),
       open: () => ProbePanel,
     },
     widths,

@@ -60,12 +60,7 @@ export interface WizardDiffSpec {
   readonly diff: ChatDiffPreview
 }
 
-export type WizardFieldSpec =
-  | WizardChoiceSpec
-  | WizardToggleSpec
-  | WizardTextSpec
-  | WizardSelectSpec
-  | WizardDiffSpec
+export type WizardFieldSpec = WizardChoiceSpec | WizardToggleSpec | WizardTextSpec | WizardSelectSpec | WizardDiffSpec
 
 export type WizardAnswerableFieldSpec = Exclude<WizardFieldSpec, WizardDiffSpec>
 
@@ -150,6 +145,10 @@ const fieldRows = (field: WizardFieldSpec): number => {
   if (field.kind === 'select') return field.options.length + (field.listLabel === undefined ? 0 : 1)
   return 1
 }
+
+/** A diff needs the dock's width; everything else fits above the chat input. */
+export const wizardRequestHasDiff = (request: WizardRequest | undefined): boolean =>
+  request?.steps.some((step) => step.fields.some((field) => field.kind === 'diff')) === true
 
 /** The rows one question needs, so its panel is not half the terminal with the rest empty. */
 export const wizardRequestRows = (request: WizardRequest | undefined): number | undefined => {

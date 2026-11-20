@@ -266,7 +266,7 @@ function ChatViewContent({
   // A docked dev panel takes the dock on the right; too small a terminal puts it back above the
   // chat input, so the decision rests on the terminal alone and not on the inline panel's height.
   const dockedDevPanel =
-    openDevPanel?.dock === true &&
+    openDevPanel?.dock?.() === true &&
     terminalWidth >= CONFIG_DOCK_MIN_TERMINAL_WIDTH &&
     terminalHeight >= CONFIG_DOCK_MIN_HEIGHT + CONFIG_DOCK_CHROME_HEIGHT
       ? openDevPanel
