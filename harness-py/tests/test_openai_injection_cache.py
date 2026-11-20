@@ -49,6 +49,14 @@ class _FixedMemory:
         return [MemoryEntry(content=MEMORY)]
 
 
+def _durable_history(messages):
+    """The conversation without injected blocks, which the model reads only for their own turn."""
+    return [
+        {**message, "content": [block for block in message["content"] if "injected" not in block]}
+        for message in messages
+    ]
+
+
 def _is_temporary(block):
     return "<system-reminder>" in block["text"] or "<memory>" in block["text"]
 
@@ -204,8 +212,12 @@ async def test_openai_injections_preserve_durable_cache_boundaries(monkeypatch, 
 
     # Inspect history both while the request is being sent and after each invocation,
     # not merely at the end where a leaking injector might already have cleaned up.
+    injected_roles = [
+        message["role"] for message in agent.messages if any("injected" in block for block in message["content"])
+    ]
+    assert all(role == "user" for role in injected_roles)
     for history in histories_at_request + histories_after_invocation:
-        serialized = json.dumps(history)
+        serialized = json.dumps(_durable_history(history))
         for transient in [
             "<system-reminder>",
             "<environment>",
@@ -216,7 +228,7 @@ async def test_openai_injections_preserve_durable_cache_boundaries(monkeypatch, 
             "prompt_cache_breakpoint",
         ]:
             assert transient not in serialized
-    durable = json.dumps(agent.messages)
+    durable = json.dumps(_durable_history(agent.messages))
     assert all(prompt in durable for prompt in prompts)
     assert "Local status: ready." in durable
     assert "call_status" in durable

@@ -45,6 +45,8 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('global.xai.grok-4.7')).toBe(524_288)
     // OpenAI
     expect(getContextWindowLimit('chat-latest')).toBe(272_000)
+    expect(getContextWindowLimit('gpt-6.2-astra')).toBe(1_050_000)
+    expect(getContextWindowLimit('gpt-6.2-sol')).toBe(1_050_000)
     expect(getContextWindowLimit('gpt-6-astra')).toBe(1_050_000)
     expect(getContextWindowLimit('gpt-6.1-sol')).toBe(1_050_000)
     expect(getContextWindowLimit('gpt-6.1-terra')).toBe(1_050_000)
@@ -58,6 +60,8 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('gpt-oss-120b')).toBe(131_072)
     expect(getContextWindowLimit('gpt-oss-20b')).toBe(131_072)
     // Gemini
+    expect(getContextWindowLimit('gemini-4-neon')).toBe(1_048_576)
+    expect(getContextWindowLimit('gemini-4-hydrogen')).toBe(1_048_576)
     expect(getContextWindowLimit('gemini-4-argon')).toBe(1_048_576)
     expect(getContextWindowLimit('gemini-3.8-flash')).toBe(1_048_576)
     expect(getContextWindowLimit('gemini-3.7-flash')).toBe(1_048_576)
@@ -81,6 +85,11 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('anthropic.claude-haiku-5-5')).toBe(1_000_000)
     expect(getContextWindowLimit('eu.anthropic.claude-haiku-5-5')).toBe(1_000_000)
     expect(getContextWindowLimit('global.anthropic.claude-haiku-5-5')).toBe(1_000_000)
+    // Claude Fable 5.2 and Mythos 5.2 (#5986).
+    expect(getContextWindowLimit('claude-fable-5-2')).toBe(1_000_000)
+    expect(getContextWindowLimit('global.anthropic.claude-fable-5-2')).toBe(1_000_000)
+    expect(getContextWindowLimit('claude-mythos-5-2')).toBe(1_000_000)
+    expect(getContextWindowLimit('us.anthropic.claude-mythos-5-2')).toBe(1_000_000)
   })
 
   it('returns the Bedrock window for gpt-oss, not the OpenAI-hosted one', () => {
@@ -110,6 +119,8 @@ describe('getContextWindowLimit', () => {
     expect(getContextWindowLimit('us.openai.gpt-5.5')).toBe(1_050_000)
     expect(getContextWindowLimit('global.openai.gpt-6.1-sol')).toBe(1_000_000)
     expect(getContextWindowLimit('us.openai.gpt-6.1-terra')).toBe(1_050_000)
+    expect(getContextWindowLimit('us.openai.gpt-6.2-astra')).toBe(1_050_000)
+    expect(getContextWindowLimit('global.openai.gpt-6.2-sol')).toBe(1_050_000)
     expect(getContextWindowLimit('in.openai.gpt-5.6-luna')).toBe(1_050_000)
   })
 

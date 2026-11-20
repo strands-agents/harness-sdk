@@ -34,6 +34,7 @@ import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
 import { applyCacheConfig, CACHE_LIFETIMES } from './cache.js'
 import type { OpenAIResponsesConfig } from './types.js'
+import { lookupSystemPromptPlacement } from '../model-info.js'
 import type { ModelInfo } from '../model-info.js'
 
 export const DEFAULT_RESPONSES_MODEL_ID = MODEL_DEFAULTS.openai.modelId
@@ -77,9 +78,10 @@ export function formatResponsesRequest(
   // User `params` are spread first so provider-managed fields (asserted
   // required by `ResponseCreateParamsStreaming` below) always win. The
   // managed-params warning fires at config time to surface the collision.
+  const modelId = config.modelId ?? DEFAULT_RESPONSES_MODEL_ID
   const request = {
     ...(config.params ?? {}),
-    model: config.modelId ?? DEFAULT_RESPONSES_MODEL_ID,
+    model: modelId,
     input,
     stream: true as const,
     store: stateful,
@@ -92,20 +94,13 @@ export function formatResponsesRequest(
     }
   }
 
-  if (options?.systemPrompt !== undefined) {
-    if (typeof options.systemPrompt === 'string') {
-      request.instructions = options.systemPrompt
-    } else if (Array.isArray(options.systemPrompt)) {
-      const texts: string[] = []
-      for (const block of options.systemPrompt) {
-        if (block.type === 'textBlock') {
-          texts.push(block.text)
-        }
-      }
-      if (texts.length > 0) {
-        request.instructions = texts.join('')
-      }
-    }
+  const systemPrompt = systemPromptText(options?.systemPrompt)
+  // Some models append instructions after the input, where they never cache; a leading developer message
+  // does. A stored conversation would keep every resent copy.
+  if (systemPrompt && !stateful && lookupSystemPromptPlacement(modelId) === 'message') {
+    request.input = [{ role: 'developer', content: [{ type: 'input_text', text: systemPrompt }] }, ...input]
+  } else if (systemPrompt !== undefined) {
+    request.instructions = systemPrompt
   }
 
   if (options?.toolSpecs && options.toolSpecs.length > 0) {
@@ -148,6 +143,13 @@ export function formatResponsesRequest(
   applyCacheConfig(request, cacheConfig, options?.agentMetadata, cachePoints)
 
   return request
+}
+
+function systemPromptText(systemPrompt: StreamOptions['systemPrompt']): string | undefined {
+  if (typeof systemPrompt === 'string') return systemPrompt
+  if (!Array.isArray(systemPrompt)) return undefined
+  const texts = systemPrompt.flatMap((block) => (block.type === 'textBlock' ? [block.text] : []))
+  return texts.length > 0 ? texts.join('') : undefined
 }
 
 /**
@@ -299,6 +301,8 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
           break
         }
 
+        case 'unknownBlock':
+          break
         default: {
           logger.warn(
             `block_type=<${block.type}> | unsupported content type in responses api message formatting | skipping`
@@ -398,6 +402,8 @@ function formatToolResultOutput(resultBlock: ToolResultBlock): string | Response
         }
         break
       }
+      case 'unknownBlock':
+        break
       default:
         logger.warn(`block_type=<${c.type}> | unsupported tool result content type for responses api`)
     }

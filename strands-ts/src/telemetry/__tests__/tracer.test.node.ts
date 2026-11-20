@@ -4,11 +4,14 @@ import { SpanStatusCode, trace, context } from '@opentelemetry/api'
 import { Tracer } from '../tracer.js'
 import {
   Message,
+  ReasoningBlock,
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
   CachePointBlock,
   InjectedBlock,
+  SummaryBlock,
+  OffloadedBlock,
 } from '../../types/messages.js'
 import { MockSpan, eventAttr } from '../../__fixtures__/mock-span.js'
 import { textMessage } from '../../__fixtures__/agent-helpers.js'
@@ -117,16 +120,23 @@ describe('Tracer', () => {
     it('includes tool definitions when gen_ai_tool_definitions opt-in is set', () => {
       vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_tool_definitions')
       const tracer = new Tracer()
-      const toolsConfig = { calc: { name: 'calc', description: 'Calculator' } }
+      const inputSchema = { type: 'object' as const, properties: { expression: { type: 'string' as const } } }
+      const outputSchema = { type: 'object' as const, properties: { value: { type: 'number' as const } } }
 
       tracer.startAgentSpan({
         messages: [textMessage('user', 'Hello')],
         agentName: 'test-agent',
-        toolsConfig,
+        toolsConfig: {
+          calc: { name: 'calc', description: 'Calculator', inputSchema, outputSchema },
+          clock: { name: 'clock', description: 'Current time' },
+        },
       })
 
       const [, options] = getStartSpanCall()
-      expect(options.attributes['gen_ai.tool.definitions']).toBe(JSON.stringify(toolsConfig))
+      expect(JSON.parse(options.attributes['gen_ai.tool.definitions'] as string)).toStrictEqual([
+        { name: 'calc', description: 'Calculator', inputSchema, outputSchema },
+        { name: 'clock', description: 'Current time', inputSchema: null, outputSchema: null },
+      ])
     })
 
     it('serializes system prompt into attribute', () => {
@@ -197,6 +207,26 @@ describe('Tracer', () => {
       expect(inputMessages).toStrictEqual([
         { role: 'user', parts: [{ type: 'text', content: 'Hello' }] },
         { role: 'assistant', parts: [{ type: 'text', content: 'Hi' }] },
+      ])
+    })
+
+    it('records an offloaded block as the text the model receives', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+
+      tracer.startAgentSpan({
+        messages: [
+          new Message({
+            role: 'user',
+            content: [new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })],
+          }),
+        ],
+        agentName: 'test-agent',
+      })
+
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      expect(JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))).toStrictEqual([
+        { role: 'user', parts: [{ type: 'text', content: '[Dropped] [ref: tu-1]' }] },
       ])
     })
 
@@ -511,6 +541,72 @@ describe('Tracer', () => {
         { text: 'The answer is 42' },
         { type: 'toolUse', name: 'calc', toolUseId: 'tool-1', input: { expr: '6*7' } },
       ])
+    })
+
+    it.each([
+      {
+        name: 'stable conventions',
+        env: '',
+        expected: [{ type: 'reasoning', text: 'Multiply 17 by 23.' }, { text: '391' }],
+        read: () => JSON.parse(eventAttr(mockSpan.getEvents('gen_ai.choice')[0]!, 'message')),
+      },
+      {
+        name: 'latest conventions',
+        env: 'gen_ai_latest_experimental',
+        expected: [
+          {
+            role: 'assistant',
+            parts: [
+              { type: 'reasoning', content: 'Multiply 17 by 23.' },
+              { type: 'text', content: '391' },
+            ],
+            finish_reason: 'end_turn',
+          },
+        ],
+        read: () => {
+          const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+          const outputEvent = detailEvents.find((e) => eventAttr(e, 'gen_ai.output.messages'))
+          return JSON.parse(eventAttr(outputEvent!, 'gen_ai.output.messages'))
+        },
+      },
+    ])(
+      'keeps reasoning text as a reasoning part with $name and never exports the signature',
+      ({ env, expected, read }) => {
+        vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', env)
+        const tracer = new Tracer()
+        const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+        const output = new Message({
+          role: 'assistant',
+          content: [new ReasoningBlock({ text: 'Multiply 17 by 23.', signature: 'sig-secret' }), new TextBlock('391')],
+        })
+
+        tracer.endModelInvokeSpan(span, { output, stopReason: 'end_turn' })
+
+        expect(read()).toStrictEqual(expected)
+        expect(JSON.stringify(mockSpan.getEvents('gen_ai.choice'))).not.toContain('sig-secret')
+        expect(JSON.stringify(mockSpan.getEvents('gen_ai.client.inference.operation.details'))).not.toContain(
+          'sig-secret'
+        )
+      }
+    )
+
+    it('does not export redacted reasoning content', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')] })
+
+      const output = new Message({
+        role: 'assistant',
+        content: [new ReasoningBlock({ redactedContent: new Uint8Array([1, 2, 3]) }), new TextBlock('done')],
+      })
+
+      tracer.endModelInvokeSpan(span, { output, stopReason: 'end_turn' })
+
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      const outputEvent = detailEvents.find((e) => eventAttr(e, 'gen_ai.output.messages'))
+      const parsed = JSON.parse(eventAttr(outputEvent!, 'gen_ai.output.messages'))
+      expect(parsed[0].parts).toStrictEqual([{ type: 'reasoningBlock' }, { type: 'text', content: 'done' }])
     })
 
     it('adds output event with latest conventions for mixed content', () => {
@@ -939,6 +1035,18 @@ describe('Tracer', () => {
       ])
     })
 
+    it('maps summary blocks to text parts in latest conventions', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_latest_experimental')
+      const tracer = new Tracer()
+      const messages = [
+        new Message({ role: 'assistant', content: [new SummaryBlock({ provider: 'anthropic', text: 'compacted' })] }),
+      ]
+      tracer.startModelInvokeSpan({ messages })
+      const detailEvents = mockSpan.getEvents('gen_ai.client.inference.operation.details')
+      const parsed = JSON.parse(eventAttr(detailEvents[0]!, 'gen_ai.input.messages'))
+      expect(parsed[0].parts).toStrictEqual([{ type: 'text', content: 'compacted' }])
+    })
+
     it('serializes text block content in stable convention events', () => {
       const tracer = new Tracer()
 
@@ -1225,7 +1333,7 @@ describe('Tracer', () => {
 
       const [, options] = getStartSpanCall()
       expect(options.attributes['gen_ai.provider.name']).toBeDefined()
-      expect(options.attributes['gen_ai.tool.definitions']).toBe(JSON.stringify(toolsConfig))
+      expect(options.attributes['gen_ai.tool.definitions']).toBeDefined()
     })
 
     it('handles whitespace in opt-in values', () => {

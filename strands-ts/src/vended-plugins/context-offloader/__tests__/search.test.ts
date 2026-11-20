@@ -36,14 +36,16 @@ describe('searchContent', () => {
   describe('line_range validation', () => {
     const text = 'line 1\nline 2\nline 3\nline 4\nline 5'
 
-    it('returns error when start > end', () => {
-      const result = searchContent(text, { context_lines: 5, line_range: { start: 5, end: 2 } }, maxChars)
-      expect(result).toContain('must be <= line_range.end')
+    it('throws when start > end', () => {
+      expect(() => searchContent(text, { context_lines: 5, line_range: { start: 5, end: 2 } }, maxChars)).toThrow(
+        'must be <= line_range.end'
+      )
     })
 
-    it('returns error when start > total lines', () => {
-      const result = searchContent(text, { context_lines: 5, line_range: { start: 100, end: 200 } }, maxChars)
-      expect(result).toContain('beyond content length (5 lines)')
+    it('throws when start > total lines', () => {
+      expect(() => searchContent(text, { context_lines: 5, line_range: { start: 100, end: 200 } }, maxChars)).toThrow(
+        'beyond content length (5 lines)'
+      )
     })
 
     it('clamps end to total lines', () => {

@@ -1,7 +1,7 @@
 """Context-injection plugin for Strands Agents.
 
-This module provides the ContextInjector plugin, which folds just-in-time text into the model
-input before each call without touching durable history.
+This module provides the ContextInjector plugin, which writes just-in-time text into the latest
+user message before each model call, as an ``injected`` block that stays in the conversation.
 
 Example Usage:
     ```python

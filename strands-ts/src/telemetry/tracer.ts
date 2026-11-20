@@ -292,7 +292,13 @@ export class Tracer {
       }
 
       if (this._includeToolDefinitions && toolsConfig) {
-        attributes['gen_ai.tool.definitions'] = JSON.stringify(toolsConfig, jsonReplacer)
+        const toolDefinitions = Object.entries(toolsConfig).map(([name, spec]) => ({
+          name,
+          description: spec.description,
+          inputSchema: spec.inputSchema ?? null,
+          outputSchema: spec.outputSchema ?? null,
+        }))
+        attributes['gen_ai.tool.definitions'] = JSON.stringify(toolDefinitions, jsonReplacer)
       }
 
       if (systemPrompt !== undefined) {
@@ -1328,10 +1334,14 @@ export class Tracer {
           return { type: 'text', content: block.text }
         case 'injectedBlock':
           return { type: 'text', content: block.injected.text }
+        case 'summaryBlock':
+          return { type: 'text', content: block.text }
         case 'toolUseBlock':
           return { type: 'tool_call', name: block.name, id: block.toolUseId, arguments: block.input }
         case 'toolResultBlock':
           return { type: 'tool_call_response', id: block.toolUseId, response: block.content }
+        case 'reasoningBlock':
+          return block.text ? { type: 'reasoning', content: block.text } : { type: block.type }
         default:
           return { type: block.type }
       }
@@ -1354,6 +1364,8 @@ export class Tracer {
             return { type: 'toolUse', name: block.name, toolUseId: block.toolUseId, input: block.input }
           case 'toolResultBlock':
             return { type: 'toolResult', toolUseId: block.toolUseId, content: block.content }
+          case 'reasoningBlock':
+            return block.text ? { type: 'reasoning', text: block.text } : null
           default:
             return null
         }

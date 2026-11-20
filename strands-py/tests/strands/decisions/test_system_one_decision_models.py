@@ -322,11 +322,45 @@ class TestAsk:
 
     @pytest.mark.asyncio
     async def test_maps_http_413_to_context_window_overflow(self, provider: _ProviderCase):
-        client = _fake_client({"error": "request too large"}, status=413)
+        captured: list[httpx.Request] = []
+        client = _fake_client({"error": "request too large"}, status=413, captured=captured)
         decision = provider.model_cls(api_key="test-key", http_client=client)
 
-        with pytest.raises(ContextWindowOverflowException, match="HTTP 413: request too large"):
+        # The body is sent without a client-side size check; only the server's 413 maps it.
+        with pytest.raises(ContextWindowOverflowException, match="HTTP 413: request too large") as caught:
+            await decision.ask("x" * (64 * 1024), {"q": {"question": "ok?", "choices": "boolean"}})
+        assert len(captured) == 1
+        assert isinstance(caught.value.__cause__, httpx.HTTPStatusError)
+        assert caught.value.__cause__.response.status_code == 413
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status", "error_type", "exp_error_by_provider"),
+        [
+            (
+                400,
+                "max_tokens_exceeded",
+                {"typesafe": ContextWindowOverflowException, "decisions_api": httpx.HTTPStatusError},
+            ),
+            (400, "invalid_request", {"typesafe": httpx.HTTPStatusError, "decisions_api": httpx.HTTPStatusError}),
+            (500, "max_tokens_exceeded", {"typesafe": httpx.HTTPStatusError, "decisions_api": httpx.HTTPStatusError}),
+        ],
+    )
+    async def test_maps_only_typesafe_context_overflow(
+        self, provider: _ProviderCase, status: int, error_type: str, exp_error_by_provider: dict[str, type[Exception]]
+    ):
+        body = {"detail": {"error_type": error_type}}
+        client = _fake_client(body, status=status)
+        decision = provider.model_cls(api_key="test-key", http_client=client)
+        exp_error = exp_error_by_provider[provider.provider_name]
+
+        with pytest.raises(exp_error, match=f"HTTP {status}: {error_type}") as caught:
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+        cause = caught.value if exp_error is httpx.HTTPStatusError else caught.value.__cause__
+        assert isinstance(cause, httpx.HTTPStatusError)
+        assert cause.response.status_code == status
+        assert cause.response.json() == body
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -540,6 +574,14 @@ class TestAsk:
             await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
     @pytest.mark.asyncio
+    async def test_rejects_a_flat_response_that_omits_the_model(self, provider: _ProviderCase):
+        client = _fake_client({"answers": {"q": {"type": "noul", "noul": 1}}})
+        decision = provider.model_cls(api_key="test-key", http_client=client)
+
+        with pytest.raises(StructuredOutputException, match="model must be a non-empty string"):
+            await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+    @pytest.mark.asyncio
     async def test_rejects_a_choice_answer_that_is_not_the_most_probable(self, provider: _ProviderCase):
         client = _fake_client(
             _response_body(
@@ -557,6 +599,54 @@ class TestAsk:
             _response_body(
                 {"q": {"type": "choice", "choice": "a", "probabilities": {"a": 0.4, "b": 0.4}, "confidence": 0.1}}
             )
+        )
+        decision = provider.model_cls(api_key="test-key", http_client=client)
+
+        with pytest.raises(StructuredOutputException, match="must sum to 1"):
+            await decision.ask("state", {"q": {"question": "pick?", "choices": ["a", "b"]}})
+
+    @pytest.mark.asyncio
+    async def test_accepts_choice_probabilities_rounded_to_four_decimals(self, provider: _ProviderCase):
+        # Live strands-decider output: ten probabilities rounded to 4 decimals sum to 1.0001.
+        probabilities = {
+            "payments": 0.1056,
+            "fraud": 0.0067,
+            "onboarding": 0.0053,
+            "tax": 0.0032,
+            "identity": 0.0035,
+            "payouts": 0.8215,
+            "disputes": 0.0089,
+            "refunds": 0.0076,
+            "pricing": 0.0031,
+            "support": 0.0347,
+        }
+        client = _fake_client(
+            _response_body(
+                {"q": {"type": "choice", "choice": "payouts", "probabilities": probabilities, "confidence": 0.8017}}
+            )
+        )
+        decision = provider.model_cls(api_key="test-key", http_client=client)
+
+        result = await decision.ask("state", {"q": {"question": "pick?", "choices": list(probabilities)}})
+
+        assert result.answers == {"q": "payouts"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "probabilities",
+        [
+            # Rounded to 4 decimals, but the sum is past the rounding bound of 2 * 5e-5.
+            {"a": 0.5001, "b": 0.5001},
+            # Within the rounding bound, but rounding can't produce values off the 4-decimal grid.
+            {"a": 0.50003, "b": 0.50003},
+        ],
+        ids=["past-bound", "off-grid"],
+    )
+    async def test_rejects_choice_probabilities_that_sum_just_past_the_bound(
+        self, provider: _ProviderCase, probabilities: dict[str, float]
+    ):
+        client = _fake_client(
+            _response_body({"q": {"type": "choice", "choice": "a", "probabilities": probabilities, "confidence": 0}})
         )
         decision = provider.model_cls(api_key="test-key", http_client=client)
 
@@ -719,15 +809,118 @@ async def test_decisions_api_enforces_the_question_count_limit_before_sending():
 
 
 @pytest.mark.asyncio
-async def test_decisions_api_enforces_the_request_body_limit_before_sending():
-    captured: list[httpx.Request] = []
-    decision = DecisionsAPIDecisionModel(
-        api_key="test-key", http_client=_fake_client(_response_body({}), captured=captured)
-    )
+async def test_decisions_api_reads_the_enveloped_response_and_reports_the_requested_model():
+    payload = {
+        "code": 0,
+        "message": "ok",
+        "data": {
+            "result": {
+                "answers": {"q": {"type": "noul", "noul": 0.99}},
+                "usage": {"input_tokens": 281, "output_tokens": 23},
+                "elapsedMs": 1879,
+            },
+            "creditsUsed": 1,
+        },
+    }
+    decision = DecisionsAPIDecisionModel(api_key="test-key", http_client=_fake_client(payload))
 
-    with pytest.raises(ContextWindowOverflowException):
-        await decision.ask("x" * (33 * 1024), {"q": {"question": "ok?", "choices": "boolean"}})
-    assert captured == []
+    result = await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+    assert result.answers == {"q": True}
+    assert result.usage == {"inputTokens": 281, "outputTokens": 23, "totalTokens": 304}
+    assert result.metadata.provider_name == "decisions_api"
+    assert result.metadata.model_id == "~typesafe/jev-latest"
+    assert result.metadata.probabilities == {"q": pytest.approx({"true": 0.99, "false": 0.01})}
+    assert result.metadata.confidence == {"q": pytest.approx(0.98)}
+
+
+def _envelope(result: Any) -> dict[str, Any]:
+    return {"code": 0, "message": "ok", "data": {"result": result, "creditsUsed": 1}}
+
+
+@pytest.mark.asyncio
+async def test_decisions_api_reports_a_non_default_requested_model_for_an_enveloped_response():
+    payload = _envelope({"answers": {"q": {"type": "noul", "noul": 0.99}}})
+    decision = DecisionsAPIDecisionModel(api_key="test-key", model_id="pinned-model", http_client=_fake_client(payload))
+
+    result = await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+    assert result.metadata.model_id == "pinned-model"
+
+
+@pytest.mark.asyncio
+async def test_decisions_api_reports_the_model_named_by_an_enveloped_result():
+    payload = _envelope({"model": "served-model", "answers": {"q": {"type": "noul", "noul": 0.99}}})
+    decision = DecisionsAPIDecisionModel(api_key="test-key", model_id="pinned-model", http_client=_fake_client(payload))
+
+    result = await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+    assert result.metadata.model_id == "served-model"
+
+
+@pytest.mark.asyncio
+async def test_typesafe_rejects_the_decisions_api_envelope():
+    payload = _envelope({"answers": {"q": {"type": "noul", "noul": 0.99}}})
+    decision = TypeSafeDecisionModel(api_key="test-key", http_client=_fake_client(payload))
+
+    with pytest.raises(StructuredOutputException, match="model must be a non-empty string"):
+        await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [-1, False], ids=["negative", "bool"])
+async def test_decisions_api_rejects_an_enveloped_error_body_sent_with_http_200(code: Any):
+    payload = {"code": code, "message": "request rejected"}
+    decision = DecisionsAPIDecisionModel(api_key="test-key", http_client=_fake_client(payload))
+
+    with pytest.raises(StructuredOutputException, match=rf"error code {code}: request rejected"):
+        await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"code": 0}, "data must be an object"),
+        ({"code": 0, "data": {"result": []}}, "result must be an object"),
+    ],
+    ids=["missing-data", "non-object-result"],
+)
+async def test_decisions_api_rejects_a_malformed_envelope(payload: dict[str, Any], message: str):
+    decision = DecisionsAPIDecisionModel(api_key="test-key", http_client=_fake_client(payload))
+
+    with pytest.raises(StructuredOutputException, match=message):
+        await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+
+@pytest.mark.asyncio
+async def test_decisions_api_maps_an_enveloped_http_401_to_http_status_error():
+    payload = {"code": -1, "message": "Invalid API key."}
+    decision = DecisionsAPIDecisionModel(api_key="test-key", http_client=_fake_client(payload, status=401))
+
+    with pytest.raises(httpx.HTTPStatusError, match=r"HTTP 401: Invalid API key\.") as caught:
+        await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+    assert caught.value.response.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [429, 503, 529])
+async def test_decisions_api_maps_an_enveloped_throttling_status_to_model_throttled(status: int):
+    payload = {"code": -1, "message": "retry later"}
+    decision = DecisionsAPIDecisionModel(api_key="test-key", http_client=_fake_client(payload, status=status))
+
+    with pytest.raises(ModelThrottledException):
+        await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
+
+
+@pytest.mark.asyncio
+async def test_decisions_api_maps_an_enveloped_http_413_to_context_window_overflow():
+    payload = {"code": -1, "message": "request too large"}
+    decision = DecisionsAPIDecisionModel(api_key="test-key", http_client=_fake_client(payload, status=413))
+
+    with pytest.raises(ContextWindowOverflowException, match="HTTP 413: request too large"):
+        await decision.ask("state", {"q": {"question": "ok?", "choices": "boolean"}})
 
 
 def test_importing_strands_does_not_import_httpx():

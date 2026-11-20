@@ -34,9 +34,10 @@ describe('product identity wiring', () => {
     expect(PRODUCT_RELEASE_STREAM).toEqual({
       Harness: 'harness',
       'Harness SDK': 'sdk',
-      Shell: null,
+      Shell: 'shell',
       Box: 'box',
       Evals: 'evals',
+      Decider: null,
     })
   })
 
@@ -50,6 +51,7 @@ describe('product identity wiring', () => {
       Shell: 'shell',
       Box: 'box',
       Evals: 'evals',
+      Decider: 'strands-labs/strands-decider',
     })
   })
 
@@ -91,6 +93,13 @@ describe('docs footer links', () => {
     expect(url.pathname).toBe('/strands-agents/box/issues/new')
     expect(url.searchParams.get('template')).toBeNull()
     expect(url.searchParams.get('title')).toBe('Documentation issue')
+    expect(url.searchParams.get('body')).toContain(pageUrl)
+  })
+
+  it('routes Decider issues to the strands-labs repository', () => {
+    const pageUrl = 'https://strandsagents.com/docs/labs/strands-decider/overview/'
+    const url = new URL(documentationIssueHref(issueRepositoryForProduct('Decider'), pageUrl))
+    expect(url.pathname).toBe('/strands-labs/strands-decider/issues/new')
     expect(url.searchParams.get('body')).toContain(pageUrl)
   })
 })

@@ -3,11 +3,11 @@
   "products": [
     {
       "id": "strands-box",
-      "revision": "e39544d49188b82933264b83159c7ccc278ced5a"
+      "revision": "85c811d4e2cedb4913decf4b4b00e07c7e923743"
     },
     {
       "id": "strands-decider",
-      "revision": "3370856604960e86b9112b3a45b18a6f71854848"
+      "revision": "d30112f8c216a42b842acddcb7ed3567ab50618e"
     }
   ]
 }

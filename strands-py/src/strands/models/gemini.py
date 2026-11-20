@@ -7,9 +7,10 @@ import base64
 import json
 import logging
 import mimetypes
+import os
 import secrets
 from collections import Counter
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from typing import Any, TypeVar, cast
 
 import pydantic
@@ -19,8 +20,9 @@ from typing_extensions import Required, Unpack, override
 from ..types.content import ContentBlock, ContentBlockStartToolUse, Messages, SystemContentBlock
 from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException, ProviderTokenCountError
+from ..types.media import DocumentContent, ImageContent
 from ..types.streaming import StreamEvent
-from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolSpec
+from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolResult, ToolResultContent, ToolSpec
 from ._defaults import resolve_config_metadata
 from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
 from ._validation import _has_location_source, _log_skipped_blocks, validate_config_keys
@@ -42,6 +44,28 @@ _VIDEO_MIME_TYPES = {
     "webm": "video/webm",
     "wmv": "video/x-ms-wmv",
 }
+
+
+def _mime_type(media_format: str) -> str:
+    return mimetypes.types_map.get(f".{media_format}", "application/octet-stream")
+
+
+def _unique_display_name(name: str, taken: set[str]) -> str:
+    stem, extension = os.path.splitext(name)
+    unique_name, index = name, 0
+    while unique_name in taken:
+        index += 1
+        unique_name = f"{stem}-{index}{extension}"
+    return unique_name
+
+
+def _tool_result_media(item: ToolResultContent) -> tuple[ImageContent | DocumentContent, str]:
+    if "image" in item:
+        return item["image"], f"image.{item['image']['format']}"
+    if "document" in item:
+        document = item["document"]
+        return document, document.get("name") or f"document.{document['format']}"
+    raise TypeError(f"content_type=<{next(iter(item))}> | unsupported type")
 
 
 class GeminiModel(Model):
@@ -166,7 +190,7 @@ class GeminiModel(Model):
             return genai.Client(**self.client_args)
 
     def _format_request_content_part(
-        self, content: ContentBlock, tool_use_id_to_name: dict[str, str]
+        self, content: ContentBlock, tool_use_id_to_name: dict[str, str], skipped: Counter[str]
     ) -> genai.types.Part:
         """Format content block into a Gemini part instance.
 
@@ -178,6 +202,7 @@ class GeminiModel(Model):
                 Store the mapping from toolUseId to name for later use in toolResult formatting. This mapping is built
                 as we format the request, ensuring that when we encounter toolResult blocks (which come after toolUse
                 blocks in the message history), we can look up the function name.
+            skipped: Count of skipped tool result items per notice message.
 
         Returns:
             Gemini part.
@@ -186,7 +211,7 @@ class GeminiModel(Model):
             return genai.types.Part(
                 inline_data=genai.types.Blob(
                     data=content["document"]["source"]["bytes"],
-                    mime_type=mimetypes.types_map.get(f".{content['document']['format']}", "application/octet-stream"),
+                    mime_type=_mime_type(content["document"]["format"]),
                 ),
             )
 
@@ -194,7 +219,7 @@ class GeminiModel(Model):
             return genai.types.Part(
                 inline_data=genai.types.Blob(
                     data=content["image"]["source"]["bytes"],
-                    mime_type=mimetypes.types_map.get(f".{content['image']['format']}", "application/octet-stream"),
+                    mime_type=_mime_type(content["image"]["format"]),
                 ),
             )
 
@@ -222,24 +247,7 @@ class GeminiModel(Model):
         if "toolResult" in content:
             tool_use_id = content["toolResult"]["toolUseId"]
             function_name = tool_use_id_to_name.get(tool_use_id, tool_use_id)
-
-            return genai.types.Part(
-                function_response=genai.types.FunctionResponse(
-                    id=tool_use_id,
-                    name=function_name,
-                    response={
-                        "output": [
-                            tool_result_content
-                            if "json" in tool_result_content
-                            else self._format_request_content_part(
-                                cast(ContentBlock, tool_result_content),
-                                tool_use_id_to_name,
-                            ).to_json_dict()
-                            for tool_result_content in content["toolResult"]["content"]
-                        ],
-                    },
-                ),
-            )
+            return self._format_tool_result(content["toolResult"], function_name, skipped)
 
         if "toolUse" in content:
             tool_use_id = content["toolUse"]["toolUseId"]
@@ -257,6 +265,47 @@ class GeminiModel(Model):
             )
 
         raise TypeError(f"content_type=<{next(iter(content))}> | unsupported type")
+
+    @staticmethod
+    def _format_tool_result(tool_result: ToolResult, function_name: str, skipped: Counter[str]) -> genai.types.Part:
+        output: list[Mapping[str, Any]] = []
+        media_parts: list[genai.types.FunctionResponsePart] = []
+        display_names: set[str] = set()
+        for item in tool_result["content"]:
+            if "text" in item or "json" in item:
+                output.append(item)
+                continue
+            if "video" in item:
+                skipped["Video content in tool results is not supported by Gemini | skipping content block"] += 1
+                continue
+            media, name = _tool_result_media(item)
+            if "location" in media["source"]:
+                skipped["Location sources in tool results are not supported by Gemini | skipping content block"] += 1
+                continue
+
+            # Gemini replaces each {"$ref": display_name} with the part of that display name, which must be unique.
+            # Docs: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/function-calling#mm-fr
+            display_name = _unique_display_name(name, display_names)
+            display_names.add(display_name)
+            output.append({"$ref": display_name})
+            media_parts.append(
+                genai.types.FunctionResponsePart(
+                    inline_data=genai.types.FunctionResponseBlob(
+                        data=media["source"]["bytes"],
+                        mime_type=_mime_type(media["format"]),
+                        display_name=display_name,
+                    ),
+                )
+            )
+
+        return genai.types.Part(
+            function_response=genai.types.FunctionResponse(
+                id=tool_result["toolUseId"],
+                name=function_name,
+                response={"output": output},
+                parts=media_parts or None,
+            ),
+        )
 
     def _format_request_content(self, messages: Messages) -> list[genai.types.Content]:
         """Format message content into Gemini content instances.
@@ -285,7 +334,7 @@ class GeminiModel(Model):
                 if "cachePoint" in content:
                     skipped["cachePoint content block is not supported by Gemini | skipping"] += 1
                     continue
-                parts.append(self._format_request_content_part(content, tool_use_id_to_name))
+                parts.append(self._format_request_content_part(content, tool_use_id_to_name, skipped))
 
             contents.append(
                 genai.types.Content(
@@ -747,10 +796,10 @@ class GeminiModel(Model):
             if event and event.usage_metadata is not None:
                 yield self._format_chunk({"chunk_type": "metadata", "data": event.usage_metadata})
 
-        except genai.errors.ClientError as error:
+        except (genai.errors.ClientError, genai.errors.ServerError) as error:
             # When the response body is not JSON, google-genai sets status to the HTTP reason
             # phrase ("Too Many Requests"), so the HTTP code is the reliable throttling signal.
-            if error.code == 429:
+            if error.code in (429, 503):
                 raise ModelThrottledException(error.message or str(error)) from error
             match error.status:
                 case "RESOURCE_EXHAUSTED" | "UNAVAILABLE":

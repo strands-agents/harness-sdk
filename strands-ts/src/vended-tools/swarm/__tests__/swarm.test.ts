@@ -175,6 +175,20 @@ describe('swarm tool', () => {
       }
     )
 
+    it('awaits an async builder', async () => {
+      const builder = async (spec: AgentSpec): Promise<Agent> =>
+        new Agent({ model: handoffModel({ message: `${spec.name} done` }), printer: false, id: spec.name! })
+
+      const { result } = await run(makeSwarm({ builder, instructions: new Fixed('x') }), {
+        task: 't',
+        agents: [{ name: 'a' }],
+      })
+
+      expect(result).toEqual(
+        new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('a: a done')] })
+      )
+    })
+
     it.each([
       [
         'maxSteps',

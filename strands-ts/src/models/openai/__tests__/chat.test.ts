@@ -1,11 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import OpenAI, { APIUserAbortError } from 'openai'
+import OpenAI, { APIError, APIUserAbortError, BadRequestError } from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
+import { formatChatRequest } from '../chat-adapter.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
 import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock, GuardContentBlock } from '../../../types/messages.js'
+import {
+  Message,
+  TextBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  GuardContentBlock,
+  OffloadedBlock,
+  UnknownBlock,
+} from '../../../types/messages.js'
 import type { SystemContentBlock } from '../../../types/messages.js'
+import type { OpenAIChatConfig } from '../types.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../../types/media.js'
 import { warnOnce } from '../../../logging/warn-once.js'
 import { logger } from '../../../logging/logger.js'
@@ -351,9 +361,9 @@ describe('OpenAIModel', () => {
     it('warns on updateConfig when params contains provider-managed keys', () => {
       const model = new OpenAIModel({ api: 'chat', client: {} as OpenAI })
       const warnSpy = vi.spyOn(logger, 'warn')
-      model.updateConfig({ params: { stream_options: { include_usage: false } } })
+      model.updateConfig({ params: { stream: false } })
       expect(warnSpy).toHaveBeenCalledTimes(1)
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'stream_options'"))
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'stream'"))
       warnSpy.mockRestore()
     })
 
@@ -376,17 +386,98 @@ describe('OpenAIModel', () => {
           model: 'attacker-model',
           messages: [{ role: 'user', content: 'hijacked' }],
           stream: false,
-          stream_options: { include_usage: false },
         },
       })
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
       await collectIterator(provider.stream(messages))
       expect(captured.request.model).toBe('gpt-5.4')
       expect(captured.request.stream).toBe(true)
-      expect(captured.request.stream_options).toEqual({ include_usage: true })
       expect(Array.isArray(captured.request.messages)).toBe(true)
       expect(captured.request.messages[0]).toEqual({ role: 'user', content: [{ type: 'text', text: 'Hi' }] })
       warnSpy.mockRestore()
+    })
+
+    it('keeps managed fields when params sets them to null', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        modelId: 'gpt-5.4',
+        client: createMockClientWithCapture(captured),
+        params: { model: null, messages: null, stream: null },
+      })
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+      expect(captured.request.model).toBe('gpt-5.4')
+      expect(captured.request.stream).toBe(true)
+      expect(captured.request.messages).toStrictEqual([{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }])
+    })
+
+    it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
+      const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+      await collectIterator(
+        provider.stream([
+          new Message({ role: 'user', content: [placeholder] }),
+          new Message({ role: 'assistant', content: [placeholder] }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+          }),
+        ])
+      )
+
+      expect(captured.request.messages).toEqual([
+        { role: 'user', content: [{ type: 'text', text: '[Dropped] [ref: tu-1]' }] },
+        { role: 'assistant', content: '[Dropped] [ref: tu-1]' },
+        { role: 'tool', tool_call_id: 'tu-1', content: '[Dropped] [ref: tu-1]' },
+      ])
+    })
+  })
+
+  describe('params', () => {
+    const streamWithParams = async (config: Partial<OpenAIChatConfig>): Promise<any> => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({
+        api: 'chat',
+        modelId: 'gpt-5.4',
+        client: createMockClientWithCapture(captured),
+        ...config,
+      })
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+      return captured.request
+    }
+
+    it('defaults stream_options to include usage when params does not set it', async () => {
+      const request = await streamWithParams({ params: { seed: 42 } })
+      expect(request.stream_options).toStrictEqual({ include_usage: true })
+    })
+
+    it('keeps the stream_options default when params sets it to undefined', async () => {
+      const request = await streamWithParams({ params: { stream_options: undefined } })
+      expect(request.stream_options).toStrictEqual({ include_usage: true })
+    })
+
+    it('passes a set stream_options through without a warning', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn')
+      const request = await streamWithParams({ params: { stream_options: { include_usage: false } } })
+      expect(request.stream_options).toStrictEqual({ include_usage: false })
+      expect(warnSpy).not.toHaveBeenCalled()
+      warnSpy.mockRestore()
+    })
+
+    it('omits every params key set to null and passes set keys through', async () => {
+      const request = await streamWithParams({
+        params: { seed: null, top_p: 0.8, prompt_cache_key: null, stream_options: null },
+      })
+      expect('seed' in request).toBe(false)
+      expect('stream_options' in request).toBe(false)
+      expect('prompt_cache_key' in request).toBe(false)
+      expect(request.top_p).toBe(0.8)
+    })
+
+    it('lets dedicated config properties win over a null params key', async () => {
+      const request = await streamWithParams({ temperature: 0.5, params: { temperature: null } })
+      expect(request.temperature).toBe(0.5)
     })
   })
 
@@ -636,7 +727,44 @@ describe('OpenAIModel', () => {
       })
     })
 
-    it('emits modelMetadataEvent with usage information', async () => {
+    it.each([
+      [
+        'emits modelMetadataEvent with usage information',
+        { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      ],
+      [
+        'surfaces cacheReadInputTokens from prompt_tokens_details',
+        { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, prompt_tokens_details: { cached_tokens: 64 } },
+        { inputTokens: 100, outputTokens: 20, totalTokens: 120, cacheReadInputTokens: 64 },
+      ],
+      [
+        'omits cacheReadInputTokens when cached_tokens is zero or absent',
+        { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, prompt_tokens_details: { cached_tokens: 0 } },
+        { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+      ],
+      [
+        'surfaces cacheWriteInputTokens from prompt_tokens_details',
+        {
+          prompt_tokens: 100,
+          completion_tokens: 20,
+          total_tokens: 120,
+          prompt_tokens_details: { cached_tokens: 64, cache_write_tokens: 40 },
+        },
+        { inputTokens: 100, outputTokens: 20, totalTokens: 120, cacheReadInputTokens: 64, cacheWriteInputTokens: 40 },
+      ],
+      [
+        'omits cacheWriteInputTokens when cache_write_tokens is zero or absent',
+        {
+          prompt_tokens: 100,
+          completion_tokens: 20,
+          total_tokens: 120,
+          prompt_tokens_details: { cached_tokens: 64, cache_write_tokens: 0 },
+        },
+        { inputTokens: 100, outputTokens: 20, totalTokens: 120, cacheReadInputTokens: 64 },
+      ],
+      ['handles usage with undefined properties', {}, { inputTokens: 0, outputTokens: 0, totalTokens: 0 }],
+    ])('%s', async (_, usage, expected) => {
       const mockClient = createMockClient(async function* () {
         yield {
           choices: [{ delta: { role: 'assistant' }, index: 0 }],
@@ -646,7 +774,7 @@ describe('OpenAIModel', () => {
         }
         yield {
           choices: [],
-          usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          usage,
         }
       })
 
@@ -656,190 +784,7 @@ describe('OpenAIModel', () => {
       const events = await collectIterator(provider.stream(messages))
 
       const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
-      expect(metadataEvent).toBeDefined()
-      expect(metadataEvent).toEqual({
-        type: 'modelMetadataEvent',
-        usage: {
-          inputTokens: 10,
-          outputTokens: 5,
-          totalTokens: 15,
-        },
-      })
-    })
-
-    it('surfaces cacheReadInputTokens from prompt_tokens_details', async () => {
-      const mockClient = createMockClient(async function* () {
-        yield {
-          choices: [{ delta: { role: 'assistant' }, index: 0 }],
-        }
-        yield {
-          choices: [{ finish_reason: 'stop', delta: {}, index: 0 }],
-        }
-        yield {
-          choices: [],
-          usage: {
-            prompt_tokens: 100,
-            completion_tokens: 20,
-            total_tokens: 120,
-            prompt_tokens_details: { cached_tokens: 64 },
-          },
-        }
-      })
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      const events = await collectIterator(provider.stream(messages))
-
-      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
-      expect(metadataEvent).toEqual({
-        type: 'modelMetadataEvent',
-        usage: {
-          inputTokens: 100,
-          outputTokens: 20,
-          totalTokens: 120,
-          cacheReadInputTokens: 64,
-        },
-      })
-    })
-
-    it('omits cacheReadInputTokens when cached_tokens is zero or absent', async () => {
-      const mockClient = createMockClient(async function* () {
-        yield {
-          choices: [{ delta: { role: 'assistant' }, index: 0 }],
-        }
-        yield {
-          choices: [{ finish_reason: 'stop', delta: {}, index: 0 }],
-        }
-        yield {
-          choices: [],
-          usage: {
-            prompt_tokens: 100,
-            completion_tokens: 20,
-            total_tokens: 120,
-            prompt_tokens_details: { cached_tokens: 0 },
-          },
-        }
-      })
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      const events = await collectIterator(provider.stream(messages))
-
-      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
-      expect(metadataEvent).toEqual({
-        type: 'modelMetadataEvent',
-        usage: {
-          inputTokens: 100,
-          outputTokens: 20,
-          totalTokens: 120,
-        },
-      })
-    })
-
-    it('surfaces cacheWriteInputTokens from prompt_tokens_details', async () => {
-      const mockClient = createMockClient(async function* () {
-        yield {
-          choices: [{ delta: { role: 'assistant' }, index: 0 }],
-        }
-        yield {
-          choices: [{ finish_reason: 'stop', delta: {}, index: 0 }],
-        }
-        yield {
-          choices: [],
-          usage: {
-            prompt_tokens: 100,
-            completion_tokens: 20,
-            total_tokens: 120,
-            prompt_tokens_details: { cached_tokens: 64, cache_write_tokens: 40 },
-          },
-        }
-      })
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      const events = await collectIterator(provider.stream(messages))
-
-      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
-      expect(metadataEvent).toEqual({
-        type: 'modelMetadataEvent',
-        usage: {
-          inputTokens: 100,
-          outputTokens: 20,
-          totalTokens: 120,
-          cacheReadInputTokens: 64,
-          cacheWriteInputTokens: 40,
-        },
-      })
-    })
-
-    it('omits cacheWriteInputTokens when cache_write_tokens is zero or absent', async () => {
-      const mockClient = createMockClient(async function* () {
-        yield {
-          choices: [{ delta: { role: 'assistant' }, index: 0 }],
-        }
-        yield {
-          choices: [{ finish_reason: 'stop', delta: {}, index: 0 }],
-        }
-        yield {
-          choices: [],
-          usage: {
-            prompt_tokens: 100,
-            completion_tokens: 20,
-            total_tokens: 120,
-            prompt_tokens_details: { cached_tokens: 64, cache_write_tokens: 0 },
-          },
-        }
-      })
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      const events = await collectIterator(provider.stream(messages))
-
-      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
-      expect(metadataEvent).toEqual({
-        type: 'modelMetadataEvent',
-        usage: {
-          inputTokens: 100,
-          outputTokens: 20,
-          totalTokens: 120,
-          cacheReadInputTokens: 64,
-        },
-      })
-    })
-
-    it('handles usage with undefined properties', async () => {
-      const mockClient = createMockClient(async function* () {
-        yield {
-          choices: [{ delta: { role: 'assistant' }, index: 0 }],
-        }
-        yield {
-          choices: [{ finish_reason: 'stop', delta: {}, index: 0 }],
-        }
-        yield {
-          choices: [],
-          usage: {}, // Empty usage object
-        }
-      })
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      const events = await collectIterator(provider.stream(messages))
-
-      const metadataEvent = events.find((e) => e.type === 'modelMetadataEvent')
-      expect(metadataEvent).toBeDefined()
-      expect(metadataEvent).toEqual({
-        type: 'modelMetadataEvent',
-        usage: {
-          inputTokens: 0,
-          outputTokens: 0,
-          totalTokens: 0,
-        },
-      })
+      expect(metadataEvent).toEqual({ type: 'modelMetadataEvent', usage: expected })
     })
 
     // Guards against https://github.com/strands-agents/harness-sdk/issues/4847: OpenAI-compatible
@@ -1515,6 +1460,149 @@ describe('OpenAIModel', () => {
     })
   })
 
+  describe('tools on models that limit them', () => {
+    const OPENAI_URL = 'https://api.openai.com/v1'
+    const MANTLE_URL = 'https://bedrock-mantle.us-east-1.api.aws/openai/v1'
+    const PROXY_URL = 'http://localhost:4000/v1'
+    const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+    const toolSpecs = [{ name: 'echo', description: 'Echo a value', inputSchema: { type: 'object' as const } }]
+
+    interface Sent {
+      baseURL?: string
+      modelId: string
+      params?: Record<string, unknown>
+      withTools?: boolean
+    }
+
+    const send = async ({ baseURL, modelId, params, withTools = true }: Sent): Promise<any> => {
+      const captured: { request: any } = { request: null }
+      const client = { ...createMockClientWithCapture(captured), ...(baseURL ? { baseURL } : {}) }
+      const provider = new OpenAIModel({ api: 'chat', client, modelId, ...(params ? { params } : {}) })
+      await collectIterator(provider.stream(messages, withTools ? { toolSpecs } : {}))
+      return captured.request
+    }
+
+    it.each([
+      { baseURL: OPENAI_URL, modelId: 'gpt-6-sol' },
+      { baseURL: 'https://API.OPENAI.COM:443/v1', modelId: 'gpt-6-sol' },
+      { baseURL: MANTLE_URL, modelId: 'openai.gpt-6.1-terra' },
+    ])('turns reasoning off and warns when $modelId is sent tools at $baseURL', async (sent) => {
+      const request = await send(sent)
+
+      expect(request).toStrictEqual({
+        ...formatChatRequest({ modelId: sent.modelId }, messages, { toolSpecs }),
+        reasoning_effort: 'none',
+      })
+      expect(warnOnce).toHaveBeenCalledWith(
+        expect.objectContaining({ warn: expect.any(Function) }),
+        expect.stringContaining(`model_id=<${sent.modelId}> | this model accepts tools`)
+      )
+    })
+
+    it.each([
+      { name: 'no tools', baseURL: OPENAI_URL, modelId: 'gpt-6-sol', withTools: false },
+      { name: 'effort none', baseURL: OPENAI_URL, modelId: 'gpt-6-sol', params: { reasoning_effort: 'none' } },
+      { name: 'effort low', baseURL: OPENAI_URL, modelId: 'gpt-6-sol', params: { reasoning_effort: 'low' } },
+      { name: 'tool-less model', baseURL: OPENAI_URL, modelId: 'gpt-6-astra' },
+      {
+        name: 'tool-less model, effort none',
+        baseURL: OPENAI_URL,
+        modelId: 'gpt-6.1-sol',
+        params: { reasoning_effort: 'none' },
+      },
+      { name: 'tool-less model on Mantle', baseURL: MANTLE_URL, modelId: 'openai.gpt-6.1-sol' },
+      { name: 'older model', baseURL: OPENAI_URL, modelId: 'gpt-5.4', params: { reasoning_effort: 'low' } },
+      { name: 'other endpoint', baseURL: PROXY_URL, modelId: 'gpt-6-sol' },
+      {
+        name: 'bedrock-runtime',
+        baseURL: 'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1',
+        modelId: 'openai.gpt-6.1-terra',
+      },
+      { name: 'look-alike host', baseURL: 'https://api.openai.com.evil.example/v1', modelId: 'gpt-6-sol' },
+      { name: 'client without a base URL', modelId: 'gpt-6-sol' },
+    ])('sends the request as formatted unless it turns reasoning off: $name', async (sent) => {
+      const request = await send(sent)
+      const formatted = formatChatRequest(
+        { modelId: sent.modelId, ...(sent.params ? { params: sent.params } : {}) },
+        messages,
+        sent.withTools === false ? {} : { toolSpecs }
+      )
+
+      expect(request).toStrictEqual(formatted)
+      expect(warnOnce).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('accepts tools'))
+    })
+
+    const apiError = (status: number, param: string | null): APIError =>
+      APIError.generate(
+        status,
+        { error: { message: 'Function tools with reasoning_effort are not supported', param } },
+        undefined,
+        new Headers({ 'x-request-id': 'req_1' })
+      )
+
+    const reject = async ({ baseURL, modelId, params, withTools = true }: Sent, error: Error): Promise<any> => {
+      const client = { chat: { completions: { create: vi.fn().mockRejectedValue(error) } }, baseURL } as any
+      const provider = new OpenAIModel({ api: 'chat', client, modelId, ...(params ? { params } : {}) })
+      return collectIterator(provider.stream(messages, withTools ? { toolSpecs } : {})).catch((thrown) => thrown)
+    }
+
+    it.each([
+      { baseURL: OPENAI_URL, modelId: 'gpt-6-astra' },
+      { baseURL: OPENAI_URL, modelId: 'gpt-6.1-sol', params: { reasoning_effort: 'none' } },
+      { baseURL: MANTLE_URL, modelId: 'openai.gpt-6.1-sol' },
+    ])('points to the Responses API when tools are rejected for $modelId, which takes none', async (sent) => {
+      const error = apiError(400, 'reasoning_effort')
+
+      const thrown = await reject(sent, error)
+
+      expect(thrown).toBeInstanceOf(BadRequestError)
+      expect(thrown).not.toBe(error)
+      expect(thrown.cause).toBe(error)
+      expect({ ...thrown, message: thrown.message }).toStrictEqual({
+        ...error,
+        message: `400 Function tools with reasoning_effort are not supported ${sent.modelId} does not accept tools on the Chat Completions API with any reasoning_effort. Use OpenAIModel with api: 'responses' instead.`,
+        cause: error,
+      })
+    })
+
+    it('keeps the class of a rejection that comes from another copy of the openai package', async () => {
+      class OtherCopyBadRequestError extends APIError<400, Headers> {}
+      const error = new OtherCopyBadRequestError(
+        400,
+        { message: 'Function tools with reasoning_effort are not supported', param: 'reasoning_effort' },
+        undefined,
+        new Headers()
+      )
+
+      const thrown = await reject({ baseURL: OPENAI_URL, modelId: 'gpt-6-astra' }, error)
+
+      expect(thrown).toBeInstanceOf(OtherCopyBadRequestError)
+      expect(thrown.message).toContain('gpt-6-astra does not accept tools on the Chat Completions API')
+      expect(thrown.cause).toBe(error)
+    })
+
+    it.each([
+      { name: 'no tools', baseURL: OPENAI_URL, modelId: 'gpt-6-astra', withTools: false },
+      {
+        name: 'model that takes tools',
+        baseURL: OPENAI_URL,
+        modelId: 'gpt-6-sol',
+        params: { reasoning_effort: 'low' },
+      },
+      { name: 'other endpoint', baseURL: PROXY_URL, modelId: 'gpt-6-astra' },
+      { name: 'other param', baseURL: OPENAI_URL, modelId: 'gpt-6-astra', param: 'max_completion_tokens' },
+      { name: 'no param', baseURL: OPENAI_URL, modelId: 'gpt-6-astra', param: null },
+      { name: 'server error', baseURL: OPENAI_URL, modelId: 'gpt-6-astra', status: 500 },
+    ])(
+      'passes an error through unless tools are rejected for a model that takes none: $name',
+      async ({ status = 400, param = 'reasoning_effort', ...sent }) => {
+        const error = apiError(status, param)
+
+        expect(await reject(sent, error)).toBe(error)
+      }
+    )
+  })
+
   describe('systemPrompt handling', () => {
     it('formats array system prompt with text blocks only', async () => {
       const captured: { request: any } = { request: null }
@@ -1830,6 +1918,28 @@ describe('OpenAIModel', () => {
     })
   })
 
+  describe('unknown blocks in messages', () => {
+    it('skips unknown blocks in user and assistant messages, without a warning', async () => {
+      using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const captured: { request: any } = { request: null }
+      const mockClient = createMockClientWithCapture(captured)
+      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
+      const unknownBlock = new UnknownBlock({ futureBlock: { value: 1 } })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('Hello'), unknownBlock] }),
+        new Message({ role: 'assistant', content: [new TextBlock('Hi'), unknownBlock] }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request!.messages).toEqual([
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+        { role: 'assistant', content: 'Hi' },
+      ])
+      expect(warnSpy).not.toHaveBeenCalled()
+    })
+  })
+
   describe('media blocks', () => {
     it('formats image block in user message as image_url with base64', async () => {
       const captured: { request: any } = { request: null }
@@ -2095,18 +2205,57 @@ describe('OpenAIModel', () => {
   })
 
   describe('error handling', () => {
-    it('throws ContextWindowOverflowError for structured error with code', async () => {
+    it.each([
+      [
+        'throws ContextWindowOverflowError for structured error with code',
+        Object.assign(new Error('Context length exceeded'), { code: 'context_length_exceeded' }),
+        ContextWindowOverflowError,
+      ],
+      [
+        'throws ContextWindowOverflowError for error with message pattern',
+        new Error('maximum context length exceeded'),
+        ContextWindowOverflowError,
+      ],
+      [
+        'throws ContextWindowOverflowError for APIError instance',
+        // Simulate APIError from openai package
+        Object.assign(new Error('Context length exceeded'), {
+          name: 'APIError',
+          status: 400,
+          code: 'context_length_exceeded',
+        }),
+        ContextWindowOverflowError,
+      ],
+      [
+        'throws ModelThrottledError for HTTP 429 status',
+        Object.assign(new Error('Too many requests'), { status: 429 }),
+        ModelThrottledError,
+      ],
+      [
+        'throws ModelThrottledError for rate_limit_exceeded error code',
+        Object.assign(new Error('Rate limit reached'), { code: 'rate_limit_exceeded' }),
+        ModelThrottledError,
+      ],
+      [
+        'throws ModelThrottledError for error message containing rate limit pattern',
+        new Error('You have exceeded your rate limit'),
+        ModelThrottledError,
+      ],
+      [
+        'throws ModelThrottledError for too many requests message',
+        new Error('Too many requests, please slow down'),
+        ModelThrottledError,
+      ],
+    ])('%s', async (_name, error, expected) => {
       const mockClient = {
         chat: {
           completions: {
             create: vi.fn(async () => {
-              const error: any = new Error('Context length exceeded')
-              error.code = 'context_length_exceeded'
               throw error
             }),
           },
         },
-      } as any
+      } as unknown as OpenAI
 
       const provider = new OpenAIModel({ api: 'chat', client: mockClient })
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
@@ -2115,56 +2264,7 @@ describe('OpenAIModel', () => {
         for await (const _ of provider.stream(messages)) {
           // Should not reach here
         }
-      }).rejects.toThrow(ContextWindowOverflowError)
-    })
-
-    it('throws ContextWindowOverflowError for error with message pattern', async () => {
-      const mockClient = {
-        chat: {
-          completions: {
-            create: vi.fn(async () => {
-              throw new Error('maximum context length exceeded')
-            }),
-          },
-        },
-      } as any
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      await expect(async () => {
-        for await (const _ of provider.stream(messages)) {
-          // Should not reach here
-        }
-      }).rejects.toThrow(ContextWindowOverflowError)
-    })
-
-    it('throws ContextWindowOverflowError for APIError instance', async () => {
-      const mockClient = {
-        chat: {
-          completions: {
-            create: vi.fn(async () => {
-              // Simulate APIError from openai package
-              const error: any = new Error('Context length exceeded')
-              error.name = 'APIError'
-              error.status = 400
-              error.code = 'context_length_exceeded'
-              // Make it behave like an APIError instance
-              Object.setPrototypeOf(error, Error.prototype)
-              throw error
-            }),
-          },
-        },
-      } as any
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      await expect(async () => {
-        for await (const _ of provider.stream(messages)) {
-          // Should not reach here
-        }
-      }).rejects.toThrow(ContextWindowOverflowError)
+      }).rejects.toThrow(expected)
     })
 
     it('passes through other errors unchanged', async () => {
@@ -2204,96 +2304,6 @@ describe('OpenAIModel', () => {
           // Stream will be interrupted
         }
       }).rejects.toThrow('Network connection lost')
-    })
-
-    it('throws ModelThrottledError for HTTP 429 status', async () => {
-      const originalError: Error & { status?: number } = new Error('Too many requests')
-      originalError.status = 429
-
-      const mockClient = {
-        chat: {
-          completions: {
-            create: vi.fn(async () => {
-              throw originalError
-            }),
-          },
-        },
-      } as unknown as OpenAI
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      await expect(async () => {
-        for await (const _ of provider.stream(messages)) {
-          // Should not reach here
-        }
-      }).rejects.toThrow(ModelThrottledError)
-    })
-
-    it('throws ModelThrottledError for rate_limit_exceeded error code', async () => {
-      const originalError: Error & { code?: string } = new Error('Rate limit reached')
-      originalError.code = 'rate_limit_exceeded'
-
-      const mockClient = {
-        chat: {
-          completions: {
-            create: vi.fn(async () => {
-              throw originalError
-            }),
-          },
-        },
-      } as unknown as OpenAI
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      await expect(async () => {
-        for await (const _ of provider.stream(messages)) {
-          // Should not reach here
-        }
-      }).rejects.toThrow(ModelThrottledError)
-    })
-
-    it('throws ModelThrottledError for error message containing rate limit pattern', async () => {
-      const mockClient = {
-        chat: {
-          completions: {
-            create: vi.fn(async () => {
-              throw new Error('You have exceeded your rate limit')
-            }),
-          },
-        },
-      } as unknown as OpenAI
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      await expect(async () => {
-        for await (const _ of provider.stream(messages)) {
-          // Should not reach here
-        }
-      }).rejects.toThrow(ModelThrottledError)
-    })
-
-    it('throws ModelThrottledError for too many requests message', async () => {
-      const mockClient = {
-        chat: {
-          completions: {
-            create: vi.fn(async () => {
-              throw new Error('Too many requests, please slow down')
-            }),
-          },
-        },
-      } as unknown as OpenAI
-
-      const provider = new OpenAIModel({ api: 'chat', client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      await expect(async () => {
-        for await (const _ of provider.stream(messages)) {
-          // Should not reach here
-        }
-      }).rejects.toThrow(ModelThrottledError)
     })
 
     it('preserves original error as cause in ModelThrottledError', async () => {

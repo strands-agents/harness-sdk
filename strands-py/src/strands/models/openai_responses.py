@@ -63,7 +63,12 @@ from ..types.exceptions import ContextWindowOverflowException, ModelThrottledExc
 from ..types.streaming import StreamEvent  # noqa: E402
 from ..types.tools import ToolChoice, ToolResult, ToolSpec, ToolUse  # noqa: E402
 from ._defaults import resolve_config_metadata  # noqa: E402
-from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelCapabilities, ModelInfo  # noqa: E402
+from ._model_info import (  # noqa: E402
+    SERVER_SIDE_SUMMARY_OFF,
+    ModelCapabilities,
+    ModelInfo,
+    lookup_system_prompt_placement,
+)
 from ._openai_bedrock import BedrockMantleConfig, resolve_bedrock_client_args  # noqa: E402
 from ._openai_cache import CACHE_LIFETIMES, apply_cache_config  # noqa: E402
 from ._openai_errors import classify_openai_error  # noqa: E402
@@ -652,7 +657,7 @@ class OpenAIResponsesModel(Model):
             request["previous_response_id"] = response_id
 
         if system_prompt:
-            request["instructions"] = system_prompt
+            request.update(self._format_request_system_prompt(system_prompt, request))
 
         # Add tools if provided
         if tool_specs:
@@ -680,6 +685,28 @@ class OpenAIResponsesModel(Model):
             request["prompt_cache_options"] = {"mode": "explicit", **request.get("prompt_cache_options", {})}
 
         return request
+
+    def _format_request_system_prompt(self, system_prompt: str, request: dict[str, Any]) -> dict[str, Any]:
+        """Format the system prompt as ``instructions``, or as a leading developer message where they never cache.
+
+        Some models append ``instructions`` after the input, past every cache breakpoint. A stored conversation
+        keeps ``instructions`` because it would store every resent message, and a native input stays the caller's.
+
+        Args:
+            system_prompt: System prompt to provide context to the model.
+            request: The request so far, with its model and input.
+
+        Returns:
+            The request fields that carry the system prompt.
+        """
+        if (
+            self.stateful
+            or "input" in cast(dict[str, Any], self.config.get("params", {}))
+            or lookup_system_prompt_placement(request["model"]) != "message"
+        ):
+            return {"instructions": system_prompt}
+        developer = {"role": "developer", "content": [{"type": "input_text", "text": system_prompt}]}
+        return {"input": [developer, *request["input"]]}
 
     @classmethod
     def _format_request_tool_choice(cls, tool_choice: ToolChoice | None) -> dict[str, Any]:

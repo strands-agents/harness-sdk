@@ -1,0 +1,10 @@
+name: Todos
+description: Give the agent a todo_write tool and keep its current task list in view across a multi-step run.
+integrationType: plugin
+maintainedBy: strands
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_plugins/todos
+docsPage: docs/user-guide/sdk/plugins/todos
+addedDate: 2026-11-12

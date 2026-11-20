@@ -26,3 +26,9 @@ import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 import { Agent } from '@strands-agents/sdk'
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 // --8<-- [end:prompt_caching_imports]
+
+// --8<-- [start:server_side_summary_imports]
+import { Agent } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/experimental'
+import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
+// --8<-- [end:server_side_summary_imports]

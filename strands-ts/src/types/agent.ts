@@ -1,4 +1,5 @@
 import type { Sandbox } from '../sandbox/base.js'
+import type { AgentMetadata } from '../agent/agent-metadata.js'
 import type { Storage } from '../storage/storage.js'
 import type { ContextManager } from '../context-manager/context-manager.js'
 import type { StateStore } from '../state-store.js'
@@ -363,6 +364,13 @@ export interface LocalAgent {
 
   /** Model used for auxiliary side calls; defaults to `model`. See {@link Agent.auxModel}. */
   readonly auxModel: Model
+
+  /**
+   * Metadata the agent passes to its model on `stream()`.
+   *
+   * @internal
+   */
+  readonly agentMetadata?: AgentMetadata | undefined
 
   /**
    * The system prompt to pass to the model provider.

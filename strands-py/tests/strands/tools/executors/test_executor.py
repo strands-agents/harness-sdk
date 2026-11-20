@@ -4,6 +4,8 @@ from unittest.mock import ANY, MagicMock
 import pytest
 
 import strands
+from strands.bidi.agent import BidiAgent
+from strands.bidi.models import BidiModel
 from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent
 from strands.interrupt import Interrupt
 from strands.middleware.stages import ExecuteToolStage
@@ -1112,3 +1114,92 @@ async def test_executor_stream_cancel_duration_is_none(
     after_event = hook_events[-1]
     assert isinstance(after_event, AfterToolCallEvent)
     assert after_event.duration is None
+
+
+@pytest.mark.parametrize(
+    ("cancel_tool", "exp_message"),
+    [
+        (False, "Tool execution cancelled"),
+        (True, "tool cancelled by user"),
+        ("hook cancel message", "hook cancel message"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_executor_stream_with_trace_skips_tool_when_agent_cancelled_during_before_hook(
+    cancel_tool,
+    exp_message,
+    executor,
+    tracer,
+    agent,
+    tool_results,
+    cycle_trace,
+    cycle_span,
+    invocation_state,
+    tool_events,
+    alist,
+):
+    """An agent cancellation that lands while BeforeToolCallEvent hooks run skips the tool (#5665)."""
+
+    def cancel_callback(event):
+        event.cancel_tool = cancel_tool
+        agent._cancel_signal.set()
+
+    agent.hooks.add_callback(BeforeToolCallEvent, cancel_callback)
+    tool_use: ToolUse = {"name": "thread_tool", "toolUseId": "1", "input": {}}
+
+    stream = executor._stream_with_trace(agent, tool_use, tool_results, cycle_trace, cycle_span, invocation_state)
+
+    tru_events = await alist(stream)
+    exp_result = {"toolUseId": "1", "status": "error", "content": [{"text": exp_message}]}
+    exp_events = [ToolCancelEvent(tool_use, exp_message), ToolResultEvent(exp_result)]
+    assert tru_events == exp_events
+    assert tool_results == [exp_result]
+    assert tool_events == []
+
+
+@pytest.mark.asyncio
+async def test_executor_stream_runs_tool_cancelled_during_before_hook_without_observe_agent_cancel(
+    executor, tracer, agent, tool_results, invocation_state, tool_events, alist
+):
+    """Passing a tracer does not turn on the re-check; only observe_agent_cancel does."""
+    agent.hooks.add_callback(BeforeToolCallEvent, lambda event: agent._cancel_signal.set())
+    tool_use: ToolUse = {"name": "thread_tool", "toolUseId": "1", "input": {}}
+
+    stream = executor._stream(agent, tool_use, tool_results, invocation_state, tracer=tracer)
+
+    tru_events = await alist(stream)
+    exp_result = {"toolUseId": "1", "status": "success", "content": [{"text": "threaded"}]}
+    assert tru_events == [ToolResultEvent(exp_result)]
+    assert tool_results == [exp_result]
+    assert len(tool_events) == 1
+
+
+@pytest.mark.asyncio
+async def test_executor_stream_runs_bidi_agent_tool_cancelled_during_before_hook(
+    executor, weather_tool, tool_results, alist
+):
+    """BidiAgent observes cancellation only after a tool group completes, so the tool still runs."""
+    bidi_agent = BidiAgent(model=unittest.mock.AsyncMock(spec=BidiModel), tools=[weather_tool])
+    bidi_agent.hooks.add_callback(BeforeToolCallEvent, lambda event: bidi_agent.cancel())
+    tool_use: ToolUse = {"name": "weather_tool", "toolUseId": "1", "input": {}}
+
+    tru_events = await alist(executor._stream(bidi_agent, tool_use, tool_results, {}))
+
+    exp_result = {"toolUseId": "1", "status": "success", "content": [{"text": "sunny"}]}
+    assert tru_events == [ToolResultEvent(exp_result)]
+    assert tool_results == [exp_result]
+
+
+def test_before_tool_cancel_message_ignores_bidi_agent_cancellation(weather_tool):
+    bidi_agent = BidiAgent(model=unittest.mock.AsyncMock(spec=BidiModel), tools=[weather_tool])
+    bidi_agent.cancel()
+    before_event = BeforeToolCallEvent(
+        agent=bidi_agent,
+        selected_tool=weather_tool,
+        tool_use={"name": "weather_tool", "toolUseId": "1", "input": {}},
+        invocation_state={},
+    )
+
+    tru_message = ToolExecutor._before_tool_cancel_message(bidi_agent, before_event, observe_agent_cancel=True)
+
+    assert tru_message is None
