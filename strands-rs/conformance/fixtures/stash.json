@@ -1,5 +1,5 @@
 {
-  "source": "strands-ts/src/context-manager/stash.ts",
+  "source": "strands-ts/src/context-manager/archive.ts",
   "cases": [
     {
       "name": "storage_keys",

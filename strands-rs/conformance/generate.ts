@@ -17,9 +17,13 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = join(HERE, '..', '..')
 const FIXTURES = join(HERE, 'fixtures')
 
-const MODEL_INFO = join(REPO, 'strands-ts', 'src', 'models', 'model-info.json')
-if (!existsSync(MODEL_INFO)) {
-  copyFileSync(join(REPO, 'shared', 'model-info.json'), MODEL_INFO)
+for (const modelInfo of [
+  join(REPO, 'strands-ts', 'src', 'models', 'model-info.json'),
+  join(REPO, 'harness-ts', 'src', 'model-info.json'),
+]) {
+  if (!existsSync(modelInfo)) {
+    copyFileSync(join(REPO, 'shared', 'model-info.json'), modelInfo)
+  }
 }
 
 // --- Determinism -------------------------------------------------------------------------------
@@ -85,7 +89,7 @@ const { LocalFileStorage } = await import('../../strands-ts/src/storage/local-fi
 const { namespace } = await import('../../strands-ts/src/storage/storage.js')
 const { SessionManager } = await import('../../strands-ts/src/session/session-manager.js')
 const { SnapshotStorageAdapter } = await import('../../strands-ts/src/session/snapshot-storage-adapter.js')
-const { Stash } = await import('../../strands-ts/src/context-manager/stash.js')
+const { Archive } = await import('../../strands-ts/src/context-manager/archive.js')
 const { ContextManager } = await import('../../strands-ts/src/context-manager/context-manager.js')
 const { Interrupt, InterruptState } = await import('../../strands-ts/src/interrupt.js')
 const { takeSnapshot: takeMultiAgentSnapshot } = await import('../../strands-ts/src/multiagent/snapshot.js')
@@ -977,7 +981,7 @@ function resumedInterruptState(): unknown {
 
 async function stashCases(): Promise<Case[]> {
   const storage = new InMemoryStorage()
-  const stash = new Stash(storage, 'conformance-session', 'conformance-agent')
+  const stash = new Archive(storage, 'conformance-session', 'conformance-agent')
   await stash.storeMessage(
     new Message({
       role: 'user',
@@ -1010,7 +1014,7 @@ async function stashCases(): Promise<Case[]> {
 
   const inlineStorage = new InMemoryStorage()
   const inlineAgent = conformanceAgent({
-    contextManager: new ContextManager({ stash: { retrievalTool: false } }),
+    contextManager: new ContextManager({ archive: { retrievalTool: false } }),
     sessionManager: new SessionManager({ storage: inlineStorage, sessionId: 'stash-inline-session' }),
   })
   await inlineAgent.invoke('What is the weather in Seattle?')
@@ -1019,13 +1023,13 @@ async function stashCases(): Promise<Case[]> {
       inlineStorage,
       'session/stash-inline-session/scopes/agent/conformance-agent/snapshots/snapshot_latest.json'
     )
-  ) as { data: { stash: unknown } }
+  ) as { data: { archive: unknown } }
 
   const dir = mkdtempSync(join(tmpdir(), 'strands-conformance-'))
   try {
     const fileStorage = new LocalFileStorage(dir)
     const externalAgent = conformanceAgent({
-      contextManager: new ContextManager({ stash: { storage: fileStorage, retrievalTool: false } }),
+      contextManager: new ContextManager({ archive: { storage: fileStorage, retrievalTool: false } }),
     })
     await externalAgent.invoke('What is the weather in Seattle?')
     const externalData = await externalStashData(externalAgent)
@@ -1034,9 +1038,9 @@ async function stashCases(): Promise<Case[]> {
       ...entries,
       jsonCase('take_snapshot', await stash.takeSnapshot()),
       jsonCase('storage_type_name_in_memory', stash.storageTypeName),
-      jsonCase('storage_type_name_local_file', externalAgent.contextManager!.stash!.storageTypeName),
-      jsonCase('snapshot_stash_inline', inlineLatest.data.stash),
-      jsonCase('snapshot_stash_external', externalData.stash),
+      jsonCase('storage_type_name_local_file', externalAgent.contextManager!.archive!.storageTypeName),
+      jsonCase('snapshot_stash_inline', inlineLatest.data.archive),
+      jsonCase('snapshot_stash_external', externalData.archive),
     ]
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -1165,14 +1169,12 @@ function vendedToolCases(): Case[] {
 // --- Area: harness tool specs ------------------------------------------------------------------
 
 const harnessTools = await import('../../harness-ts/src/tools/index.js')
-const harnessSubagent = await import('../../harness-ts/src/tools/subagent.js')
+const harnessBuiltinTools = await import('../../harness-ts/src/builtin-tools.js')
 const harnessWebSearch = await import('../../harness-ts/src/tools/web-search.js')
 const harnessTodos = await import('../../harness-ts/src/plugins/todos.js')
 const harnessPrompt = await import('../../harness-ts/src/prompt.js')
 
 function harnessToolCases(): Case[] {
-  const { Choice, GENERALIST, CONTEXT_MODES, Option: ChoiceOption, Preset, makeSubagent } = harnessSubagent
-  const builder = (() => undefined) as never
   const tools: [string, { toolSpec: unknown }][] = [
     ['read', harnessTools.read],
     ['read_media_off', harnessTools.makeRead({ media: false })],
@@ -1185,31 +1187,8 @@ function harnessToolCases(): Case[] {
     ['todo_write', new harnessTodos.Todos().getTools()[0]!],
     [
       'subagent_default_harness',
-      makeSubagent({
-        builder,
-        presets: { generalist: GENERALIST },
-        inheritedTools: ['shell', 'read'],
-        inheritedMcpServers: ['docs'],
-        context: new Choice([...CONTEXT_MODES]),
-      }),
-    ],
-    ['subagent_bare', makeSubagent({ builder })],
-    [
-      'subagent_choice_axes',
-      makeSubagent({
-        builder,
-        presets: {
-          generalist: GENERALIST,
-          reviewer: new Preset({ instructions: 'review', tools: ['read'], description: 'reviews diffs' }),
-        },
-        instructions: new Choice([
-          new ChoiceOption('poet', { value: 'You are a poet.', description: 'writes verse' }),
-          'plain',
-        ]),
-        tools: new Choice([new ChoiceOption('readonly', { value: 'read', description: 'read files' }), 'shell'], true),
-        model: new Choice(['fast', 'deep']),
-        context: new Choice([new ChoiceOption('fresh', { value: 'none', description: 'start over' }), 'all']),
-        name: 'delegate',
+      harnessBuiltinTools.buildDefaultSubagent((() => undefined) as never, {
+        builtinTools: ['shell', 'read', 'subagent'],
       }),
     ],
   ]
@@ -1225,7 +1204,7 @@ writeArea('hook_events', 'strands-ts/src/hooks/events.ts', await hookEventCases(
 writeArea('snapshots', 'strands-ts/src/agent/snapshot.ts', await snapshotCases())
 writeArea('sessions', 'strands-ts/src/session/session-manager.ts', await sessionCases())
 writeArea('interrupts', 'strands-ts/src/interrupt.ts', await interruptCases())
-writeArea('stash', 'strands-ts/src/context-manager/stash.ts', await stashCases())
+writeArea('stash', 'strands-ts/src/context-manager/archive.ts', await stashCases())
 writeArea('metrics', 'strands-ts/src/telemetry/meter.ts', await metricsCases())
 writeArea('vended_tools', 'strands-ts/src/vended-tools/index.ts', vendedToolCases())
 writeArea('harness_tools', 'harness-ts/src/tools/index.ts', harnessToolCases())
