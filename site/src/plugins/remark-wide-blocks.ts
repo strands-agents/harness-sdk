@@ -12,26 +12,46 @@
  * :::
  * ```
  *
+ * Directive attributes are kept, so `:::wide{#options}` adds an anchor and `:::wide{.foo}`
+ * adds a class next to `wide-block`. A wide block has no label: `:::wide[Caption]` drops the
+ * caption and logs a warning instead of rendering it as a stray paragraph.
+ *
  * Starlight registers `remark-directive`, so the syntax works in `.md` and `.mdx` pages,
  * including imported external docs.
  */
-import { visit } from 'unist-util-visit'
 import type { Root } from 'mdast'
+import type {} from 'mdast-util-directive'
+// Adds `hName` and `hProperties` to mdast's node data types.
+import type {} from 'remark-rehype'
+import type { Transformer } from 'unified'
+import { visit } from 'unist-util-visit'
 
 export const WIDE_BLOCK_CLASS = 'wide-block'
 
-interface DirectiveLike {
-  type: string
-  name?: string
-  data?: { hName?: string; hProperties?: Record<string, unknown> }
-}
+export default function remarkWideBlocks(): Transformer<Root> {
+  return (tree, file) => {
+    visit(tree, 'containerDirective', (node) => {
+      if (node.name !== 'wide') return
 
-export default function remarkWideBlocks() {
-  return (tree: Root) => {
-    visit(tree, (node) => {
-      const directive = node as DirectiveLike
-      if (directive.type !== 'containerDirective' || directive.name !== 'wide') return
-      directive.data = { ...directive.data, hName: 'div', hProperties: { className: [WIDE_BLOCK_CLASS] } }
+      const label = node.children[0]
+      if (label?.type === 'paragraph' && label.data?.directiveLabel) {
+        node.children.shift()
+        file?.message('`:::wide` takes no label; the label was dropped', label.position)
+      }
+
+      const { class: extraClasses, ...attributes } = node.attributes ?? {}
+      const properties: Record<string, string> = {}
+      for (const [key, value] of Object.entries(attributes)) {
+        if (value != null) properties[key] = value
+      }
+      node.data = {
+        ...node.data,
+        hName: 'div',
+        hProperties: {
+          ...properties,
+          className: [WIDE_BLOCK_CLASS, ...(extraClasses?.split(/\s+/).filter(Boolean) ?? [])],
+        },
+      }
     })
   }
 }

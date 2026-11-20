@@ -155,6 +155,11 @@ column, so a wider box only scales them up. Wrap a single block; everything insi
 wrapper widens. Readers can already click any image to zoom it to full size, so a wide
 screenshot is for one readers need to read in place.
 
+Put `:::wide` at the top level of the page. Inside an aside or a `<TabItem>` it stays
+column width; to widen tabbed code, wrap the whole `<Tabs>` instead. `:::wide{#id}` sets an
+anchor for deep links. `:::wide` takes no label: `:::wide[Caption]` drops the caption and
+logs a build warning.
+
 ## Frontmatter Schema
 
 Required fields:

@@ -118,11 +118,13 @@ a[aria-current="page"]:hover {
    The maths mirrors Starlight's TwoColumnContent and ContentPanel: R = 100vw - left sidebar is
    the width beside the sidebar, W the column, S the TOC, P the content-panel padding.
    100vw counts a classic scrollbar, which overstates the room by half its width; the P gutter
-   absorbs that. Tables and code keep their own horizontal scroll inside the block. */
+   absorbs that. Tables and code keep their own horizontal scroll inside the block.
+   Only top-level blocks widen: inside an aside or a <TabItem> the maths would pull the block
+   past the aside's border or away from its tab bar, so a nested `:::wide` stays column width. */
 @media (min-width: 72rem) {
 	/* With a TOC, the column sits against the TOC, so all spare room is on the left:
 	   main pane = W + (R - W - S) / 2, minus 2P of padding, minus the column. */
-	:root[data-has-sidebar][data-has-toc] .sl-markdown-content .wide-block {
+	:root[data-has-sidebar][data-has-toc] .sl-markdown-content > .wide-block {
 		--wide-room: max(
 			0px,
 			(100vw - var(--sl-content-inline-start, 0px) - var(--sl-content-width) - var(--sl-sidebar-width)) / 2 -
@@ -131,7 +133,7 @@ a[aria-current="page"]:hover {
 		margin-inline-start: calc(-1 * min(var(--wide-room), var(--wide-block-max) - var(--sl-content-width)));
 	}
 	/* Without a TOC, the column is centred, so the block grows equally on both sides. */
-	:root[data-has-sidebar]:not([data-has-toc]) .sl-markdown-content .wide-block {
+	:root[data-has-sidebar]:not([data-has-toc]) .sl-markdown-content > .wide-block {
 		--wide-room: max(
 			0px,
 			(100vw - var(--sl-content-inline-start, 0px) - 2 * var(--sl-content-pad-x) - var(--sl-content-width)) / 2
