@@ -1698,12 +1698,13 @@ export class Agent implements LocalAgent, InvokableAgent {
     toolUse: ToolUseData,
     context: Pick<ToolContext, 'invocationState' | 'cancelSignal' | 'invocationContext' | 'interrupt'>
   ): Promise<ToolResultBlock> {
-    let refusal: unknown
+    // What `context.interrupt` last threw, so a refusal that a hook swallows still cancels the call.
+    const refused: { error?: unknown } = {}
     const interrupt: ToolContext['interrupt'] = (params) => {
       try {
         return context.interrupt(params)
       } catch (error) {
-        refusal = error
+        refused.error = error
         throw error
       }
     }
@@ -1716,35 +1717,14 @@ export class Agent implements LocalAgent, InvokableAgent {
           tracer: new Tracer(this._traceAttributes),
           meter: this._meter,
           cancelSignal: context.cancelSignal,
+          hookInterrupt: interrupt,
           toolInterrupt: interrupt,
           middlewareInterrupt: (params) => ({ response: interrupt(params) }),
           invocationContext: context.invocationContext,
         },
         toolUse,
         context.invocationState,
-        async (event) => {
-          // The tool's own stream events stay inside the call, so hooks do not see them either.
-          if (!(event instanceof HookableEvent) || event instanceof ToolStreamUpdateEvent) {
-            return
-          }
-          if (!(event instanceof BeforeToolCallEvent)) {
-            await this._hooksRegistry.invokeCallbacks(event)
-            return
-          }
-          refusal = undefined
-          event.interrupt = interrupt
-          try {
-            await this._hooksRegistry.invokeCallbacks(event)
-          } catch (error) {
-            if (refusal === undefined || error !== refusal) {
-              throw error
-            }
-          }
-          // Applied here rather than by the throw alone, which a hook's error handling may swallow.
-          if (refusal !== undefined) {
-            event.cancel = normalizeError(refusal).message
-          }
-        }
+        (event) => this._invokeDirectCallHooks(event, refused)
       )
     } catch (error) {
       // A tool can register interrupts on the agent itself, as a child agent that pauses does; nothing
@@ -1756,6 +1736,30 @@ export class Agent implements LocalAgent, InvokableAgent {
         discardInterruptedTurn(this._interruptState, toolUse.toolUseId)
       }
       throw error
+    }
+  }
+
+  /** Invokes the hooks of one event of a direct tool call; a refused interrupt cancels the call. */
+  private async _invokeDirectCallHooks(event: AgentStreamEvent, refused: { error?: unknown }): Promise<void> {
+    // The tool's own stream events stay inside the call, so hooks do not see them either.
+    if (!(event instanceof HookableEvent) || event instanceof ToolStreamUpdateEvent) {
+      return
+    }
+    if (!(event instanceof BeforeToolCallEvent)) {
+      await this._hooksRegistry.invokeCallbacks(event)
+      return
+    }
+    refused.error = undefined
+    try {
+      await this._hooksRegistry.invokeCallbacks(event)
+    } catch (error) {
+      if (refused.error === undefined || error !== refused.error) {
+        throw error
+      }
+    }
+    // Applied here rather than by the throw alone, which a hook's error handling may swallow.
+    if (refused.error !== undefined) {
+      event.cancel = normalizeError(refused.error).message
     }
   }
 

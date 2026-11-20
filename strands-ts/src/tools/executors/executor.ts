@@ -37,6 +37,8 @@ export interface ToolExecutorOptions {
   readonly cancelSignal: AbortSignal
   /** The request, set on each {@link ToolContext} so nested and auxiliary calls a tool makes join it. */
   readonly invocationContext?: InvocationContext | undefined
+  /** Answers an interrupt a `BeforeToolCallEvent` hook raises, instead of pausing the agent. */
+  readonly hookInterrupt?: ToolContext['interrupt']
   readonly toolInterrupt?: ToolContext['interrupt']
   readonly middlewareInterrupt?: ExecuteToolContext['interrupt']
   readonly toolGuard?: (tool: Tool | undefined) => void
@@ -158,6 +160,7 @@ export abstract class ToolExecutor {
         toolUse,
         tool: registryTool,
         invocationState,
+        interrupt: options.hookInterrupt,
       })
       yield beforeToolCallEvent
 
