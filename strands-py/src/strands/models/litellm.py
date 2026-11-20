@@ -9,7 +9,7 @@ import logging
 import uuid
 import warnings
 from collections import Counter
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 
 import litellm
@@ -24,6 +24,15 @@ from ..types.content import CachePoint, ContentBlock, Message, Messages, SystemC
 from ..types.exceptions import ContextWindowOverflowException
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec, ToolUse
+from ._cache_points import (
+    MAX_CACHE_POINTS,
+    cache_point,
+    messages_with_cache_point,
+    section_ttl,
+    step_back_over_documents,
+    system_with_cache_point,
+    with_point_ttls,
+)
 from ._model_info import ModelCapabilities, ModelInfo, lookup_model_info
 from ._validation import _log_skipped_blocks, validate_config_keys
 from .model import BaseModelConfig, CacheConfig
@@ -36,8 +45,6 @@ _CACHE_CONTROL_PROVIDERS = frozenset({"anthropic", "bedrock", "vertex_ai"})
 
 _LITELLM_PROVIDERS = frozenset(str(getattr(provider, "value", provider)) for provider in litellm.provider_list)
 
-# Cache points Anthropic, Bedrock and Vertex AI accept per request, across tools, system and messages.
-_CACHE_POINT_LIMIT = 4
 
 # Separator used by LiteLLM to embed thought signatures inside tool call IDs.
 # See: https://ai.google.dev/gemini-api/docs/thought-signatures
@@ -899,14 +906,14 @@ def _limit_cache_points(request: dict[str, Any]) -> None:
     The last is the conversation point that grows each call; the first are tools and system, which every call reads.
     """
     marked = [part for part in _request_parts(request) if "cache_control" in part]
-    if len(marked) <= _CACHE_POINT_LIMIT:
+    if len(marked) <= MAX_CACHE_POINTS:
         return
-    for part in marked[_CACHE_POINT_LIMIT - 1 : -1]:
+    for part in marked[MAX_CACHE_POINTS - 1 : -1]:
         del part["cache_control"]
     logger.warning(
         "count=<%d>, limit=<%d> | dropped cache points over the limit, keeping the first ones and the last",
-        len(marked) - _CACHE_POINT_LIMIT,
-        _CACHE_POINT_LIMIT,
+        len(marked) - MAX_CACHE_POINTS,
+        MAX_CACHE_POINTS,
     )
 
 
@@ -946,86 +953,14 @@ def _with_cache_points(
     Returns:
         The system prompt content and the messages to send.
     """
-    system_point = _cache_point(cache_config.system_prompt_ttl, cache_config.ttl)
-    messages_point = _cache_point(cache_config.messages_ttl, cache_config.ttl)
-    system_prompt_content = _with_point_ttls(system_prompt_content, system_point)
-    messages = [{**message, "content": _with_point_ttls(message["content"], messages_point)} for message in messages]
+    system_ttl = section_ttl(cache_config.system_prompt_ttl, cache_config.ttl)
+    messages_ttl = section_ttl(cache_config.messages_ttl, cache_config.ttl)
+    system_prompt_content = with_point_ttls(system_prompt_content, system_ttl)
+    messages = [{**message, "content": with_point_ttls(message["content"], messages_ttl) or []} for message in messages]
     if cache_config.system_prompt_ttl is not False:
-        system_prompt_content = _system_with_cache_point(system_prompt, system_prompt_content, system_point)
+        system_prompt_content = system_with_cache_point(system_prompt, system_prompt_content, cache_point(system_ttl))
     if cache_config.messages_ttl is not False:
-        boundary_rule = None if after_documents else _step_back_over_documents
-        messages = _messages_with_cache_point(messages, dynamic_trailing_blocks, messages_point, boundary_rule)
+        boundary_rule = None if after_documents else step_back_over_documents
+        point = cache_point(messages_ttl)
+        messages = messages_with_cache_point(messages, dynamic_trailing_blocks, point, boundary_rule)
     return system_prompt_content, messages
-
-
-def _with_point_ttls(blocks: Any, point: CachePoint) -> Any:
-    """The blocks with each cache point that carries no TTL given ``point``'s TTL; a caller's own TTL is kept."""
-    ttl = point.get("ttl")
-    if not ttl or blocks is None or not any("cachePoint" in b and not b["cachePoint"].get("ttl") for b in blocks):
-        return blocks
-    return [
-        {**b, "cachePoint": {**b["cachePoint"], "ttl": ttl}}
-        if "cachePoint" in b and not b["cachePoint"].get("ttl")
-        else b
-        for b in blocks
-    ]
-
-
-def _step_back_over_documents(content: list[ContentBlock], index: int) -> int:
-    """Step a cache point index back over the run of non-PDF documents directly ahead of it."""
-    while index > 0 and "document" in content[index - 1] and content[index - 1]["document"].get("format") != "pdf":
-        index -= 1
-    return index
-
-
-def _cache_point(section_ttl: bool | str | None, ttl: str | None) -> CachePoint:
-    """A cache point carrying the section's own TTL, else the config-wide one."""
-    resolved = section_ttl if isinstance(section_ttl, str) else ttl
-    return CachePoint(type="default", ttl=resolved) if resolved else CachePoint(type="default")
-
-
-def _system_with_cache_point(
-    system_prompt: str | None, system_prompt_content: list[SystemContentBlock] | None, point: CachePoint
-) -> list[SystemContentBlock] | None:
-    """The system prompt content ending in ``point``, unless it is empty or already has a cache point."""
-    content = system_prompt_content if system_prompt_content is not None else []
-    if system_prompt_content is None and system_prompt:
-        content = [SystemContentBlock(text=system_prompt)]
-    if not content or any("cachePoint" in block for block in content):
-        return system_prompt_content
-    return [*content, SystemContentBlock(cachePoint=point)]
-
-
-def _messages_with_cache_point(
-    messages: Messages,
-    dynamic_trailing_blocks: int,
-    point: CachePoint,
-    boundary_rule: Callable[[list[ContentBlock], int], int] | None = None,
-) -> Messages:
-    """The messages with ``point`` in the latest user message ahead of its rebuilt trailing blocks.
-
-    ``boundary_rule`` moves the point earlier where the backend rejects it. The latest user message is unchanged
-    when it already has a cache point or the point would come first.
-    """
-    latest_user = _latest_user_index(messages)
-    if latest_user == -1:
-        return messages
-    content = messages[latest_user]["content"]
-    boundary = len(content) - dynamic_trailing_blocks
-    if boundary_rule is not None:
-        boundary = boundary_rule(content, boundary)
-    if boundary <= 0 or any("cachePoint" in block for block in content):
-        return messages
-    marked: Message = {
-        **messages[latest_user],
-        "content": [*content[:boundary], ContentBlock(cachePoint=point), *content[boundary:]],
-    }
-    return [*messages[:latest_user], marked, *messages[latest_user + 1 :]]
-
-
-def _latest_user_index(messages: Messages) -> int:
-    """Index of the latest user message, or -1 when there is none."""
-    for index in range(len(messages) - 1, -1, -1):
-        if messages[index]["role"] == "user":
-            return index
-    return -1

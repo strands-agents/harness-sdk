@@ -34,6 +34,7 @@ from ..types.exceptions import (
 )
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolSpec
+from ._cache_points import MAX_CACHE_POINTS, step_back_over_documents
 from ._defaults import resolve_config_metadata, resolve_max_tokens
 from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelCapabilities, ModelInfo
 from ._native_output import (
@@ -118,8 +119,6 @@ _NOVA_CACHE_POINT_MODELS = (
     "amazon.nova-2-lite-v1",
 )
 
-# Converse rejects a request with more cache points than this.
-_MAX_CACHE_POINTS = 4
 # With one point on the system prompt, that is the four Converse accepts.
 _NOVA_CONVERSATION_CACHE_POINTS = 3
 
@@ -147,17 +146,6 @@ def _converse_cache_model_info(model_id: str) -> ModelInfo | None:
     if ("openai." in model_id and "gpt-oss" not in model_id) or "xai." in model_id:
         return _IMPLICIT_CACHE
     return _CACHE_POINTS if _converse_limits_cache_points(model_id) else None
-
-
-def _step_back_over_documents(content: list[dict[str, Any]], idx: int) -> int:
-    """Step a cache point index back over the adjacent run of non-PDF documents directly ahead of it.
-
-    Claude on Bedrock only rejects a cache point *directly* preceded by a non-PDF document; moving further would
-    evict durable content - usually the document itself, the expensive part - from the cached prefix for no reason.
-    """
-    while idx > 0 and "document" in content[idx - 1] and content[idx - 1]["document"].get("format", "") != "pdf":
-        idx -= 1
-    return idx
 
 
 def _step_back_to_text(content: list[dict[str, Any]], idx: int) -> int:
@@ -911,7 +899,7 @@ class BedrockModel(Model):
         if nova_rules:
             target_idx = _step_back_to_text(content, placed_idx)
         else:
-            target_idx = _step_back_over_documents(content, placed_idx)
+            target_idx = step_back_over_documents(content, placed_idx)
 
         if target_idx != placed_idx:
             del content[placed_idx]
@@ -986,7 +974,7 @@ class BedrockModel(Model):
 
             # Blocks after the caller's boundary are per-call content, so a fallback point never lands among them.
             trailing_blocks = dynamic_trailing_blocks
-            nova_points = min(_NOVA_CONVERSATION_CACHE_POINTS, _MAX_CACHE_POINTS - system_cache_points)
+            nova_points = min(_NOVA_CONVERSATION_CACHE_POINTS, MAX_CACHE_POINTS - system_cache_points)
             placed_idxs = [idx for idx, block in enumerate(content) if "cachePoint" in block]
             if placed_idxs:
                 # One boundary per message, so this message contributes a single cache point to the budget.

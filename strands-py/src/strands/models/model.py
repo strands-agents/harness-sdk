@@ -17,6 +17,7 @@ from ..plugins.plugin import Plugin
 from ..types.content import ContentBlock, Messages, SystemContentBlock
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
+from ._cache_points import section_ttl
 from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 from ._model_info import ModelCapabilities, ModelInfo, ModelLimits, lookup_model_info
 from ._model_proxy import _latest_user_index
@@ -204,7 +205,7 @@ def _messages_cache_ttl(cache_config: CacheConfig | None) -> str | None:
     """TTL for the message cache point: a ``messages_ttl`` string, else ``cache_config.ttl``."""
     if cache_config is None:
         return None
-    return cache_config.messages_ttl if isinstance(cache_config.messages_ttl, str) else cache_config.ttl
+    return section_ttl(cache_config.messages_ttl, cache_config.ttl)
 
 
 @dataclass
