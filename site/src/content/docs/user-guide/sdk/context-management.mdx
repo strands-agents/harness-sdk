@@ -148,11 +148,10 @@ The TypeScript API moved out of `@strands-agents/sdk/experimental`, and the stas
 | `{ stash: … }` | `{ archive: … }` |
 | `contextManager.stash` | `contextManager.archive` |
 | `contextManager.stashIsDurable` | `contextManager.archiveIsDurable` |
-| `ContextState.stash` | `ContextState.archive` |
 
-Every old name above except `ContextState.stash` keeps working for one more minor release, deprecated: the `@strands-agents/sdk/experimental` re-exports resolve to the same symbols, the `stash` config key is honored when `archive` is omitted and logs a warning, and `contextManager.stash` and `contextManager.stashIsDurable` still return the archive. The `stash` property on the state a custom strategy receives is gone — read `archive`. `contextManager: "auto"` and `contextManager: "agentic"` are unchanged.
+The old names still work this release, deprecated, and are removed in the next minor. `contextManager: "auto"` and `contextManager: "agentic"` are unchanged.
 
-Session snapshots record archive content under `data.archive` instead of `data.stash`. Resuming a snapshot written before the rename still restores it — the old key is read as a fallback — and new snapshots are written only under `data.archive`. That fallback goes away with the deprecated re-exports, so resume an older session once on this release to migrate it forward.
+Sessions saved before the rename still resume, but the compatibility read goes away with the deprecated names — resume each one once on this release to migrate it forward.
 
 </Tab>
 </Tabs>
