@@ -134,6 +134,77 @@ fn throws_tool_validation_error_when_a_new_tool_name_differs_only_by_dash_vs_und
     assert!(matches!(error, Error::ToolValidation(_)));
 }
 
+fn ptr_eq_all(left: &[Arc<dyn Tool>], right: &[Arc<dyn Tool>]) -> bool {
+    left.len() == right.len() && left.iter().zip(right).all(|(a, b)| Arc::ptr_eq(a, b))
+}
+
+#[test]
+fn replaces_the_current_tools_with_the_next_ones_and_keeps_every_other_tool() {
+    let mut registry = ToolRegistry::new();
+    let other = tool("other");
+    let (old_a, old_b) = (tool("tool-a"), tool("tool-b"));
+    let (new_b, new_c) = (tool("tool-b"), tool("tool-c"));
+    registry.add(vec![other.clone(), old_a.clone(), old_b.clone()]).unwrap();
+
+    assert!(
+        registry
+            .swap(&[old_a, old_b], vec![new_b.clone(), new_c.clone()])
+            .is_empty()
+    );
+
+    assert!(ptr_eq_all(&registry.list(), &[other, new_b, new_c]));
+}
+
+#[test]
+fn skips_a_next_tool_that_fails_validation_and_registers_the_rest() {
+    let cases = [
+        ("other", "Tool with name 'other' already registered"),
+        ("other_tool", "Tool name 'other_tool' already exists as 'other-tool'"),
+        ("bad name!", "Tool name must contain only alphanumeric characters"),
+    ];
+    for (name, reason) in cases {
+        let mut registry = ToolRegistry::new();
+        let others = [tool("other"), tool("other-tool")];
+        let current = tool("tool-a");
+        let (kept, rejected) = (tool("tool-b"), tool(name));
+        registry.add(others.to_vec()).unwrap();
+        registry.add(current.clone()).unwrap();
+
+        let skipped = registry.swap(&[current], vec![rejected.clone(), kept.clone()]);
+
+        assert_eq!(skipped.len(), 1, "{name}");
+        assert!(Arc::ptr_eq(&skipped[0].0, &rejected));
+        assert!(skipped[0].1.to_string().contains(reason), "{}", skipped[0].1);
+        assert!(ptr_eq_all(
+            &registry.list(),
+            &[others[0].clone(), others[1].clone(), kept]
+        ));
+    }
+}
+
+#[test]
+fn skips_a_next_tool_whose_name_an_earlier_next_tool_took() {
+    let mut registry = ToolRegistry::new();
+    let (first, second) = (tool("tool-a"), tool("tool-a"));
+
+    let skipped = registry.swap(&[], vec![first.clone(), second.clone()]);
+
+    assert_eq!(skipped.len(), 1);
+    assert!(Arc::ptr_eq(&skipped[0].0, &second));
+    assert!(ptr_eq_all(&registry.list(), &[first]));
+}
+
+#[test]
+fn leaves_a_tool_registered_under_a_current_name_by_another_source() {
+    let mut registry = ToolRegistry::new();
+    let other = tool("tool-a");
+    registry.add(other.clone()).unwrap();
+
+    registry.swap(&[tool("tool-a")], Vec::new());
+
+    assert!(Arc::ptr_eq(registry.get("tool-a").unwrap(), &other));
+}
+
 #[test]
 fn retrieves_a_tool_by_name() {
     let mut registry = ToolRegistry::new();

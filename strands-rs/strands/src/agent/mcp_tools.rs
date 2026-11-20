@@ -10,8 +10,10 @@ mod enabled {
 
     use super::{Result, SourceParts, ToolRegistry};
     use crate::mcp::{McpClient, McpTool, ToolsChangedCallback};
+    use crate::tools::Tool;
 
-    type Change = (Vec<String>, Vec<McpTool>);
+    /// A refreshed tool list and the index of the client that reported it.
+    type Change = (usize, Vec<McpTool>);
 
     /// The agent's MCP clients and the tool-list changes they reported since the last model call.
     ///
@@ -22,6 +24,9 @@ mod enabled {
         clients: Vec<McpClient>,
         initialized: bool,
         changes: Arc<Mutex<Vec<Change>>>,
+        /// Per client, the tools it has registered. A client's own list of old names includes
+        /// tools the registry skipped, so a refresh removes what was registered instead.
+        registered: Mutex<Vec<Vec<Arc<dyn Tool>>>>,
     }
 
     impl McpTools {
@@ -39,35 +44,56 @@ mod enabled {
                 return Ok(());
             }
             let listed = futures::future::try_join_all(self.clients.iter().map(McpClient::list_tools)).await?;
-            for (client, tools) in self.clients.iter().zip(listed) {
-                registry.add(tools)?;
+            let mut registered = Vec::with_capacity(self.clients.len());
+            for (index, (client, tools)) in self.clients.iter().zip(listed).enumerate() {
+                let tools = shared(tools);
+                registry.add(tools.clone())?;
+                registered.push(tools);
                 let changes = Arc::downgrade(&self.changes);
-                client.set_on_tools_changed(Some(ToolsChangedCallback::new(move |old_names, new_tools| {
+                client.set_on_tools_changed(Some(ToolsChangedCallback::new(move |_old_names, new_tools| {
                     let Some(changes) = changes.upgrade() else {
                         return;
                     };
                     changes
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner)
-                        .push((old_names, new_tools));
+                        .push((index, new_tools));
                 })));
             }
+            *self.registered.get_mut().unwrap_or_else(PoisonError::into_inner) = registered;
             self.initialized = true;
             Ok(())
         }
 
-        /// Swaps in the tools of every list change reported since the last call.
+        /// Swaps in the tools of every list change reported since the last call. A refreshed
+        /// tool that is invalid, or that takes the name of a tool from another source, is skipped
+        /// with a warning; it comes back only on its client's next refresh.
         pub(crate) fn apply_changes(&self, registry: &mut ToolRegistry) {
             let changes = std::mem::take(&mut *self.changes.lock().unwrap_or_else(PoisonError::into_inner));
-            for (old_names, new_tools) in changes {
-                for name in &old_names {
-                    registry.remove(name);
+            let mut registered = self.registered.lock().unwrap_or_else(PoisonError::into_inner);
+            for (index, new_tools) in changes {
+                let (Some(client), Some(current)) = (self.clients.get(index), registered.get_mut(index)) else {
+                    continue;
+                };
+                let refreshed = shared(new_tools);
+                let skipped = registry.swap(current, refreshed.clone());
+                for (tool, error) in &skipped {
+                    tracing::warn!(
+                        "client=<{}>, tool_name=<{}>, error=<{error}> | skipping refreshed mcp tool",
+                        client.client_name(),
+                        tool.name()
+                    );
                 }
-                if let Err(error) = registry.add_or_replace(new_tools) {
-                    tracing::warn!("error=<{error}> | failed to register refreshed mcp tools");
-                }
+                *current = refreshed
+                    .into_iter()
+                    .filter(|tool| !skipped.iter().any(|(skipped, _)| Arc::ptr_eq(skipped, tool)))
+                    .collect();
             }
         }
+    }
+
+    fn shared(tools: Vec<McpTool>) -> Vec<Arc<dyn Tool>> {
+        tools.into_iter().map(|tool| Arc::new(tool) as Arc<dyn Tool>).collect()
     }
 }
 

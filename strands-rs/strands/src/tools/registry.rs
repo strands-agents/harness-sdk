@@ -7,7 +7,9 @@ use indexmap::IndexMap;
 
 use super::source::ToolSource;
 use super::tool::{Tool, is_valid_tool_name};
-use crate::error::{Result, ToolNotFoundError, ToolValidationError};
+use crate::error::{ToolNotFoundError, ToolValidationError};
+
+type Result<T, E = crate::error::Error> = std::result::Result<T, E>;
 
 const MAX_TOOL_NAME_LENGTH: usize = 64;
 
@@ -45,15 +47,47 @@ impl ToolRegistry {
     /// registered (also under a `-`/`_` variant), or `tools` holds an MCP client.
     pub fn add(&mut self, tools: impl Into<ToolSource>) -> Result<()> {
         for tool in tools.into().into_registry_tools()? {
-            validate_properties(tool.as_ref())?;
-            let name = tool.name().to_owned();
-            if self.tools.contains_key(&name) {
-                return Err(ToolValidationError::new(format!("Tool with name '{name}' already registered")).into());
-            }
-            self.check_normalized_conflict(&name)?;
-            self.tools.insert(name, tool);
+            validate_new_tool(tool.as_ref(), &self.tools)?;
+            self.tools.insert(tool.name().to_owned(), tool);
         }
         Ok(())
+    }
+
+    /// Swaps one source's tools for its new list in a single step. Each new tool is checked
+    /// against the registry without `current` and against the new tools before it; a tool that
+    /// fails the check is skipped, so another source's tool with the same name stays registered.
+    ///
+    /// A tool in `current` that is not the one registered under its name is left alone. Returns
+    /// the tools of `next` that were skipped, each with the reason.
+    #[cfg_attr(
+        not(feature = "mcp"),
+        allow(dead_code, reason = "only MCP tool refreshes swap tools")
+    )]
+    pub(crate) fn swap(
+        &mut self,
+        current: &[Arc<dyn Tool>],
+        next: Vec<Arc<dyn Tool>>,
+    ) -> Vec<(Arc<dyn Tool>, ToolValidationError)> {
+        let mut tools = self.tools.clone();
+        for tool in current {
+            if tools
+                .get(tool.name())
+                .is_some_and(|registered| Arc::ptr_eq(registered, tool))
+            {
+                tools.shift_remove(tool.name());
+            }
+        }
+        let mut skipped = Vec::new();
+        for tool in next {
+            match validate_new_tool(tool.as_ref(), &tools) {
+                Ok(()) => {
+                    tools.insert(tool.name().to_owned(), tool);
+                }
+                Err(error) => skipped.push((tool, error)),
+            }
+        }
+        self.tools = tools;
+        skipped
     }
 
     /// Registers tools, replacing tools of the same name.
@@ -67,7 +101,7 @@ impl ToolRegistry {
             validate_properties(tool.as_ref())?;
             let name = tool.name().to_owned();
             if !self.tools.contains_key(&name) {
-                self.check_normalized_conflict(&name)?;
+                check_normalized_conflict(&name, &self.tools)?;
             }
             self.tools.insert(name, tool);
         }
@@ -130,42 +164,48 @@ impl ToolRegistry {
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }
+}
 
-    fn check_normalized_conflict(&self, name: &str) -> Result<()> {
-        let normalized = name.replace('-', "_");
-        let conflict = self
-            .tools
-            .keys()
-            .find(|existing| existing.as_str() != name && existing.replace('-', "_") == normalized);
-        match conflict {
-            Some(existing) => Err(ToolValidationError::new(format!(
-                "Tool name '{name}' already exists as '{existing}'. Cannot add a duplicate tool which differs by a '-' or '_'"
-            ))
-            .into()),
-            None => Ok(()),
-        }
+fn validate_new_tool(tool: &dyn Tool, tools: &IndexMap<String, Arc<dyn Tool>>) -> Result<(), ToolValidationError> {
+    validate_properties(tool)?;
+    let name = tool.name();
+    if tools.contains_key(name) {
+        return Err(ToolValidationError::new(format!(
+            "Tool with name '{name}' already registered"
+        )));
+    }
+    check_normalized_conflict(name, tools)
+}
+
+fn check_normalized_conflict(name: &str, tools: &IndexMap<String, Arc<dyn Tool>>) -> Result<(), ToolValidationError> {
+    let normalized = name.replace('-', "_");
+    let conflict = tools
+        .keys()
+        .find(|existing| existing.as_str() != name && existing.replace('-', "_") == normalized);
+    match conflict {
+        Some(existing) => Err(ToolValidationError::new(format!(
+            "Tool name '{name}' already exists as '{existing}'. Cannot add a duplicate tool which differs by a '-' or '_'"
+        ))),
+        None => Ok(()),
     }
 }
 
-fn validate_properties(tool: &dyn Tool) -> Result<()> {
+fn validate_properties(tool: &dyn Tool) -> Result<(), ToolValidationError> {
     let name = tool.name();
     if name.is_empty() || name.len() > MAX_TOOL_NAME_LENGTH {
         return Err(ToolValidationError::new(format!(
             "tool_name=<{name}> | Tool name must be between 1 and {MAX_TOOL_NAME_LENGTH} characters"
-        ))
-        .into());
+        )));
     }
     if !is_valid_tool_name(name) {
         return Err(ToolValidationError::new(format!(
             "tool_name=<{name}> | Tool name must contain only alphanumeric characters, hyphens, and underscores"
-        ))
-        .into());
+        )));
     }
     if tool.description().is_empty() {
         return Err(ToolValidationError::new(format!(
             "tool_name=<{name}> | Tool description must be a non-empty string"
-        ))
-        .into());
+        )));
     }
     Ok(())
 }
