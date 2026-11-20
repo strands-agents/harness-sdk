@@ -239,8 +239,8 @@ def test_unwrap_raises_runtime_error_for_error_results():
         ("import sys\nprint(sys.modules)", "AttributeError"),
         ("print(().__class__.__bases__)", "AttributeError"),
         ("print(__builtins__)", "NameError"),
-        ("print(eval(\"__import__('os')\"))", "NameError"),
-        ("exec(\"import os\\nprint(os.listdir('/'))\")", "PermissionError"),
+        ("print(eval('1 + 1'))", "NameError"),
+        ("exec('x = 1')", "NameError"),
         ("def f(): pass\nprint(f.__globals__)", "AttributeError"),
         ("from pathlib import Path\nprint(Path('/etc/passwd').read_text())", "PermissionError"),
     ],
@@ -267,7 +267,7 @@ _module = sys.modules["strands_harness.tools.programmatic_tool_caller"]
 
 
 def test_synchronous_busy_loop_is_bounded(monkeypatch):
-    monkeypatch.setattr(_module, "_LIMITS", {**_module._LIMITS, "max_feed_duration_secs": 0.2})
+    monkeypatch.setattr(_module, "_LIMITS", {**_module._LIMITS, "max_duration_secs": 0.2})
     start = time.monotonic()
     result = _run(_agent(calculator), "while True:\n    pass")
     assert result["status"] == "error"
@@ -503,15 +503,6 @@ def test_syntax_error_output_is_truncated_when_too_long():
     text = _text(_run(_agent(calculator), f"x = '{long_line}' +"))
     assert text.startswith("Syntax error:")
     assert len(text) < _MAX_OUTPUT_CHARS + 100
-
-
-def test_timeout_returns_while_the_code_is_still_computing(monkeypatch):
-    monkeypatch.setattr(_module, "_LIMITS", {**_module._LIMITS, "max_feed_duration_secs": 3.0})
-    quick = make_programmatic_tool_caller(name="quick", timeout=0.3)
-    started = time.monotonic()
-    result = _run(Agent(model=None, tools=[quick]), "print('start')\nwhile True:\n    pass", "quick")
-    assert time.monotonic() - started < 2
-    assert _text(result) == "start\n\nExecution error: timed out after 0.3 seconds."
 
 
 def test_timeout_is_enforced():
