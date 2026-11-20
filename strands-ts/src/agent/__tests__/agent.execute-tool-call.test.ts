@@ -193,6 +193,32 @@ describe('Agent._executeToolCall', () => {
     expect(seen).toEqual(['after'])
   })
 
+  it('leaves nothing on the agent when a child agent pauses', async () => {
+    const confirmTool = createMockTool('confirmTool', (context) => {
+      context.interrupt({ name: 'confirm', reason: 'Please confirm' })
+      return 'ok'
+    })
+    const child = new Agent({
+      name: 'child',
+      model: new MockMessageModel().addTurn({
+        type: 'toolUseBlock',
+        name: 'confirmTool',
+        toolUseId: 'inner-1',
+        input: {},
+      }),
+      tools: [confirmTool],
+      printer: false,
+    })
+    const agent = new Agent({ model: new MockMessageModel(), tools: [child.asTool()], printer: false })
+
+    await expect(
+      agent._executeToolCall({ name: 'child', toolUseId: 'direct-1', input: { input: 'go' } }, callContext())
+    ).rejects.toBeInstanceOf(InterruptError)
+
+    expect(agent._interruptState.interrupts).toEqual({})
+    expect(JSON.stringify(agent._interruptState.context)).not.toContain('direct-1')
+  })
+
   it('removes an interrupt the tool registered on the agent and rejects with it', async () => {
     const agent: Agent = new Agent({
       model: new MockMessageModel(),

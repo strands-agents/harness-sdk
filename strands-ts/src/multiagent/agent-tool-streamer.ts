@@ -31,6 +31,18 @@ const NO_ANSWER_STOP_REASONS: ReadonlySet<StopReason> = new Set<StopReason>(['co
 const INTERRUPTED_TURNS_KEY = 'subAgentInterruptedTurns'
 
 /**
+ * Drops the child turn stored for a tool call that will not be resumed.
+ *
+ * @param interruptState - Interrupt state of the agent that ran the tool call
+ * @param toolUseId - Id of the tool call
+ * @internal
+ */
+export function discardInterruptedTurn(interruptState: InterruptState, toolUseId: string): void {
+  const turns = interruptState.context[INTERRUPTED_TURNS_KEY] as Record<string, JSONValue> | undefined
+  delete turns?.[toolUseId]
+}
+
+/**
  * Provides persistence, interrupt, and result handling that differs between child agent types.
  *
  * @internal
