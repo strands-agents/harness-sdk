@@ -250,6 +250,39 @@ describe('concurrentInvocationMode queue × backgroundTasks', () => {
     expect(deliveryInput(agent)).toEqual({ toolName: 'work' })
   })
 
+  it('runs a caller parked behind a background-task interrupt once cancelBackgroundTasks drops it', async () => {
+    const approval = tool({
+      name: 'approval',
+      description: 'Wait for approval.',
+      inputSchema: z.object({}),
+      callback: () => 'approved',
+    })
+    const model = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: 'approval', toolUseId: 'approval-use', input: {} })
+      .addTurn({ type: 'textBlock', text: 'second done' })
+    const agent = new Agent({
+      model,
+      tools: [approval],
+      backgroundTasks: { always: [approval] },
+      concurrentInvocationMode: 'queue',
+      printer: false,
+    })
+    agent.addMiddleware(ExecuteToolStage, async function* (context, next) {
+      if (context.toolUse.name === 'approval') {
+        context.interrupt<string>({ name: 'approve', reason: 'Approve work?' })
+      }
+      return yield* next(context)
+    })
+    expect((await agent.invoke('first')).stopReason).toBe('interrupt')
+    const second = agent.invoke('second')
+    expect(agent.pendingInvocations).toHaveLength(1)
+
+    agent.cancel({ cancelBackgroundTasks: true })
+
+    expect(resultText(await second)).toBe('second done')
+    expect(agent.pendingInvocations).toHaveLength(0)
+  })
+
   it('parks a queued caller behind a background-task interrupt and runs it after the resume', async () => {
     const approval = tool({
       name: 'approval',

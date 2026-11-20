@@ -382,12 +382,13 @@ export type AgentConfig = {
    * `'throw'`, a non-resume call parks in the queue and runs once the resume completes
    * (the resume stops for a parked `'stopPrevious'` / `'cancelPrevious'` caller after its
    * current step: the pending tool batch for a tool interrupt, or the model call and tool
-   * batch that consume the response for a hook-raised one). Abandoning the interrupt by
-   * loading a snapshot taken before it releases the parked callers; a snapshot that excludes
-   * `interrupts` leaves the interrupt in place. A resume cancelled before its
-   * pending tool batch leaves the interrupt in place, so parked callers wait for a later
-   * resume or `loadSnapshot`; `cancel()` does not release them, each caller's own
-   * `cancelSignal` does. Under `'throw'` such a call rejects at once.
+   * batch that consume the response for a hook-raised one). Abandoning the interrupt
+   * releases the parked callers: by loading a snapshot taken before it (a snapshot that
+   * excludes `interrupts` leaves the interrupt in place), or with
+   * `cancel({ cancelBackgroundTasks: true })` when background tasks raised every open
+   * interrupt. A resume cancelled before its pending tool batch leaves the interrupt in
+   * place, so parked callers wait for a later resume; a plain `cancel()` does not release
+   * them, each caller's own `cancelSignal` does. Under `'throw'` such a call rejects at once.
    *
    * Callers can override per call via {@link InvokeOptions.ifBusy}. Under any mode
    * other than `'throw'`, a tool or hook of the running invocation must not `await`
@@ -1311,6 +1312,8 @@ export class Agent implements LocalAgent, InvokableAgent {
       this._backgroundTasks?.cancelAll()
     }
     if (!this._isInvoking) {
+      // Cancelling the tasks may have dropped the last interrupt.
+      this._releaseParkedCallers()
       return
     }
     if (options?.message !== undefined) {
@@ -1923,7 +1926,11 @@ export class Agent implements LocalAgent, InvokableAgent {
     // A restored interrupt belongs to a request this instance never ran; a resume starts a fresh one.
     this._interruptedInvocationContext = undefined
     if (this._initialized && 'state' in snapshot.data) this._backgroundTasks?._loadAppState()
-    // Abandoning an interrupt releases the callers parked behind it.
+    this._releaseParkedCallers()
+  }
+
+  /** Hands the turn to a caller parked behind an interrupt once that interrupt is abandoned. */
+  private _releaseParkedCallers(): void {
     if (!this._isInvoking && !this._interruptState.activated && this._invocationQueue.handoff()) {
       this._isInvoking = true
       this.resetCancelState()
