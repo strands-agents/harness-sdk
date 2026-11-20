@@ -312,7 +312,7 @@ describe('FileMemoryStore', () => {
       const [scoped] = strategy.search.mock.calls[0]!
       expect(scoped).toBeInstanceOf(InMemoryStorage)
       expect(await (scoped as InMemoryStorage).list('')).toEqual(['user-prefers-dark-mode-for-all-editors.md'])
-      expect(strategy.search).toHaveBeenCalledWith(scoped, 'editor theme')
+      expect(strategy.search).toHaveBeenCalledWith(scoped, 'editor theme', undefined)
       expect(results).toEqual([
         {
           content: 'User prefers dark mode for all editors',

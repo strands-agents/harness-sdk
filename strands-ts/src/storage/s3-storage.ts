@@ -1,5 +1,5 @@
 import type { SearchStrategy } from './search/types.js'
-import type { Storage, StorageSearchResult } from './storage.js'
+import type { Storage, StorageSearchOptions, StorageSearchResult } from './storage.js'
 
 import { StorageError } from '../errors.js'
 import { NAMESPACED, normalizeKey, normalizePrefix } from './storage.js'
@@ -194,18 +194,19 @@ export class S3Storage implements Storage {
    * token-overlap scoring when none is set.
    *
    * @param query - Natural-language search query
+   * @param options - Narrows the search to a key prefix and a result count
    * @returns All matches with relevance scores, ranked best-first
    * @throws {@link StorageError} if the search strategy fails
    */
-  async search(query: string): Promise<StorageSearchResult[]> {
+  async search(query: string, options?: StorageSearchOptions): Promise<StorageSearchResult[]> {
     if (this._searchStrategy) {
       try {
-        return await this._searchStrategy.search(this, query)
+        return await this._searchStrategy.search(this, query, options)
       } catch (error: unknown) {
         throw new StorageError(`Failed to search S3 bucket '${this._bucket}'`, { cause: error })
       }
     }
-    return KeywordSearchStrategy.search(this, query)
+    return KeywordSearchStrategy.search(this, query, options)
   }
 
   private async _getClient(): Promise<import('@aws-sdk/client-s3').S3Client> {

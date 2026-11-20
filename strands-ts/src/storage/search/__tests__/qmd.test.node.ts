@@ -66,7 +66,7 @@ describe('QmdSearchStrategy', () => {
       const results = await strategy.search(mockStorage, 'authentication flow')
 
       expect(mockQmdStore.update).toHaveBeenCalled()
-      expect(mockQmdStore.searchLex).toHaveBeenCalledWith('authentication flow')
+      expect(mockQmdStore.searchLex).toHaveBeenCalledWith('authentication flow', { limit: Number.MAX_SAFE_INTEGER })
       expect(results).toEqual([{ key: 'auth.md', score: 10 / 11 }])
     })
 
@@ -94,7 +94,9 @@ describe('QmdSearchStrategy', () => {
 
       await strategy.search(mockStorage, 'What did the charity race raise awareness for?')
 
-      expect(mockQmdStore.searchLex).toHaveBeenCalledWith('charity race raise awareness')
+      expect(mockQmdStore.searchLex).toHaveBeenCalledWith('charity race raise awareness', {
+        limit: Number.MAX_SAFE_INTEGER,
+      })
     })
 
     it('returns empty when query is only stop words', async () => {
@@ -104,6 +106,41 @@ describe('QmdSearchStrategy', () => {
 
       expect(results).toEqual([])
       expect(mockQmdStore.searchLex).not.toHaveBeenCalled()
+    })
+
+    it('asks QMD for the requested number of results rather than its own default of 20', async () => {
+      const strategy = new QmdSearchStrategy()
+
+      await strategy.search(mockStorage, 'authentication flow', { limit: 5 })
+
+      expect(mockQmdStore.searchLex).toHaveBeenCalledWith('authentication flow', { limit: 5 })
+    })
+
+    it('narrows results to a key prefix', async () => {
+      mockQmdStore.searchLex.mockResolvedValue([
+        { displayPath: 'storage/other/loud.md', score: -10 },
+        { displayPath: 'storage/notes/auth.md', score: -2 },
+      ])
+      const strategy = new QmdSearchStrategy()
+
+      const results = await strategy.search(mockStorage, 'authentication flow', { prefix: 'notes/' })
+
+      expect(results).toEqual([{ key: 'notes/auth.md', score: 2 / 3 }])
+    })
+
+    it('asks QMD for every match when narrowing to a prefix, so a limit cannot be filled by keys outside it', async () => {
+      mockQmdStore.searchLex.mockResolvedValue([
+        { displayPath: 'storage/other/loud.md', score: -10 },
+        { displayPath: 'storage/notes/auth.md', score: -2 },
+      ])
+      const strategy = new QmdSearchStrategy()
+
+      const results = await strategy.search(mockStorage, 'authentication flow', { prefix: 'notes/', limit: 1 })
+
+      expect(mockQmdStore.searchLex).toHaveBeenCalledWith('authentication flow', {
+        limit: Number.MAX_SAFE_INTEGER,
+      })
+      expect(results.map((result) => result.key)).toStrictEqual(['notes/auth.md'])
     })
   })
 
@@ -213,7 +250,7 @@ describe('QmdSearchStrategy', () => {
       await searchA
 
       expect(storeA.close).not.toHaveBeenCalled()
-      expect(storeA.searchLex).toHaveBeenCalledWith('query one')
+      expect(storeA.searchLex).toHaveBeenCalledWith('query one', { limit: Number.MAX_SAFE_INTEGER })
     })
 
     it('opens a directory once when a second search arrives while the first open is in flight', async () => {

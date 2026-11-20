@@ -1,4 +1,4 @@
-import type { Storage, StorageSearchResult } from '../storage.js'
+import type { Storage, StorageSearchOptions, StorageSearchResult } from '../storage.js'
 
 /**
  * A pluggable search strategy for storage backends.
@@ -38,9 +38,13 @@ export interface SearchStrategy<S extends Storage = Storage, SearchQuery = strin
   /**
    * Searches content in `storage` matching `query`.
    *
+   * A strategy holding its own index must apply `options` to the query it issues rather than to the
+   * results — see {@link StorageSearchOptions} for why a prefix filtered afterwards reads as empty.
+   *
    * @param storage - The storage to search over
    * @param query - A string query or strategy-specific query object
+   * @param options - Narrows the search to a key prefix and a result count
    * @returns Matched keys with relevance scores, ranked best-first
    */
-  search(storage: S, query: SearchQuery): Promise<StorageSearchResult[]>
+  search(storage: S, query: SearchQuery, options?: StorageSearchOptions): Promise<StorageSearchResult[]>
 }

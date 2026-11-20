@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
 import { Stash } from '../stash.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
+import { KeywordSearchStrategy } from '../../storage/search/keyword.js'
 import { ImageBlock } from '../../types/media.js'
-import { JsonBlock, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import { JsonBlock, Message, TextBlock, ToolResultBlock } from '../../types/messages.js'
+import type { SearchStrategy } from '../../storage/search/types.js'
 import type { JSONValue } from '../../types/json.js'
 import { collectGenerator } from '../../__fixtures__/model-test-helpers.js'
 import { createMockContext } from '../../__fixtures__/tool-helpers.js'
@@ -336,6 +338,324 @@ describe('retrieval tool', () => {
 
       expect(result.status).toBe('error')
       expect((result.content[0] as TextBlock).text).toContain('must be <= line_range.end')
+    })
+  })
+
+  describe('a query', () => {
+    /** Filler that shares no terms with the queries below, so only the planted answer can rank. */
+    function buriedAnswerLines(): string[] {
+      const lines = Array.from({ length: 80 }, (_, index) => `line ${index + 1}: nothing of note`)
+      lines[61] = 'line 62: the payment database connection pool was exhausted at peak traffic'
+      return lines
+    }
+
+    function makeStashWithBuriedAnswer(): { stash: Stash; refPromise: Promise<string> } {
+      return makeStashWithTextBlock(buriedAnswerLines().join('\n'))
+    }
+
+    it('returns the sections that answer the query', async () => {
+      const { stash, refPromise } = makeStashWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(stash)
+
+      const result = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'why was the database connection pool exhausted',
+      })) as string
+
+      expect(result).toContain('connection pool was exhausted')
+      expect(result).toMatch(/^\[showing \d+ of \d+ relevant sections? for/)
+    })
+
+    it('writes nothing to the storage to answer a query', async () => {
+      const storage = new InMemoryStorage()
+      const stash = new Stash(storage, 'test-session', 'test-agent')
+      const ref = await stash.store('tool-1', 0, encodeJSON({ text: buriedAnswerLines().join('\n') }))
+      const stored = await storage.list('')
+
+      await invoke(createRetrievalTool(stash), { reference: ref, query: 'connection pool exhausted' })
+
+      expect(await storage.list('')).toEqual(stored)
+      expect(Object.keys(await stash.takeSnapshot())).toEqual([ref])
+    })
+
+    it('ranks on a storage with no search of its own', async () => {
+      const backing = new InMemoryStorage()
+      // A minimal custom backend: the Storage contract without the optional search().
+      const stash = new Stash(
+        {
+          write: (key, data) => backing.write(key, data),
+          read: (key) => backing.read(key),
+          delete: (key) => backing.delete(key),
+          list: (prefix) => backing.list(prefix),
+        },
+        'test-session',
+        'test-agent'
+      )
+      const ref = await stash.store('tool-1', 0, encodeJSON({ text: buriedAnswerLines().join('\n') }))
+
+      const result = (await invoke(createRetrievalTool(stash), {
+        reference: ref,
+        query: 'database connection pool exhausted',
+      })) as string
+
+      expect(result).toContain('connection pool was exhausted')
+      expect(await backing.list('')).toEqual([`context/test-session/scopes/agent/test-agent/${ref}`])
+    })
+
+    it('rejects a query and a pattern together', async () => {
+      const { stash, refPromise } = makeStashWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(stash)
+
+      await expect(invoke(retrievalTool, { reference: ref, query: 'pool', pattern: 'pool' })).rejects.toThrow(
+        'pass either query or pattern, not both. Use query for a question, pattern for a literal string.'
+      )
+    })
+
+    it('keeps the result within max_tokens and reports what was withheld', async () => {
+      const { stash, refPromise } = makeStashWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(stash)
+
+      const result = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'line note exhausted',
+        max_tokens: 200,
+      })) as string
+
+      expect(result.length).toBeLessThanOrEqual(800)
+      expect(result).toContain('withheld by max_tokens')
+    })
+
+    // A budget below one section's worth returns the head of the top-ranked section, cut by line.
+    // The answer surviving the cut is not guaranteed at this budget — the body is ordered by line
+    // number, so a match late in the section is cut — hence the truncation message telling the model
+    // to raise max_tokens rather than conclude the content does not hold the answer.
+    it('cuts the top section to fit when max_tokens leaves no room for a whole one', async () => {
+      const { stash, refPromise } = makeStashWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(stash)
+
+      const result = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'line note exhausted',
+        max_tokens: 100,
+      })) as string
+
+      expect(result.length).toBeLessThanOrEqual(400)
+      expect(result).toContain('output truncated, raise max_tokens')
+      // Lines from the top-ranked section, contiguous and in order, rather than a section boundary.
+      expect(result).toMatch(/ 55\| line 55/)
+      expect(result).not.toContain('---')
+    })
+
+    it('clamps max_tokens to the configured result budget', async () => {
+      const { stash, refPromise } = makeStashWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(stash, 50)
+
+      const result = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'line note exhausted',
+        max_tokens: 100_000,
+      })) as string
+
+      expect(result.length).toBeLessThanOrEqual(200)
+    })
+
+    it('ranks only within line_range', async () => {
+      const { stash, refPromise } = makeStashWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(stash)
+
+      const result = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'why was the database connection pool exhausted',
+        line_range: { start: 1, end: 40 },
+      })) as string
+
+      expect(result).not.toContain('connection pool was exhausted')
+    })
+
+    it('widens a section with context_lines, the same parameter the pattern path takes', async () => {
+      const { stash, refPromise } = makeStashWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(stash)
+      const linesOf = (result: string): number => result.split('\n').filter((line) => /^\s*\d+\|/.test(line)).length
+
+      const narrow = (await invoke(retrievalTool, { reference: ref, query: 'connection pool exhausted' })) as string
+      const wide = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'connection pool exhausted',
+        context_lines: 12,
+      })) as string
+
+      expect(linesOf(narrow)).toBe(11)
+      expect(linesOf(wide)).toBe(25)
+    })
+
+    it('returns the best-scoring section first rather than the earliest', async () => {
+      const lines = Array.from({ length: 80 }, (_, index) => `line ${index + 1}: nothing of note`)
+      lines[19] = 'line 20: the database was briefly slow'
+      lines[61] = 'line 62: the payment database connection pool was exhausted at peak traffic'
+      const { stash, refPromise } = makeStashWithTextBlock(lines.join('\n'))
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(stash)
+
+      const result = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'database connection pool exhausted',
+        max_tokens: 150,
+      })) as string
+
+      expect(result).toContain('connection pool was exhausted')
+      expect(result).not.toContain('briefly slow')
+    })
+
+    it('reports when nothing in the entry is relevant', async () => {
+      const { stash, refPromise } = makeStashWithBuriedAnswer()
+      const ref = await refPromise
+      const retrievalTool = createRetrievalTool(stash)
+
+      const result = (await invoke(retrievalTool, {
+        reference: ref,
+        query: 'kubernetes ingress certificate',
+      })) as string
+      expect(result).toBe("No relevant content found for query 'kubernetes ingress certificate'.")
+    })
+
+    describe('delegated to the configured search strategy', () => {
+      /** Stashes `text` under `track-1_0`, the framing a strategy can report sections of. */
+      async function stashText(stash: Stash, text: string): Promise<string> {
+        await stash.storeMessage(new Message({ role: 'user', content: [new TextBlock(text)], trackingId: 'track-1' }))
+        return 'track-1_0'
+      }
+
+      /**
+       * A strategy standing in for a backend index: it reports the given lines as the matching
+       * sections of every entry, whatever the query. A result holding a line with none of the
+       * query's terms can only have come from the strategy rather than the local scan.
+       */
+      function lineStrategy(...matches: number[]): SearchStrategy<InMemoryStorage> {
+        return {
+          search: async (storage, _query, options) => {
+            const keys = await storage.list(options?.prefix ?? '')
+            const entries = await Promise.all(keys.map(async (key) => ({ key, data: (await storage.read(key))! })))
+            return entries.map(({ key, data }) => ({
+              key,
+              score: 1,
+              data,
+              byteRanges: matches.map((line) => byteRangeOfLine(data, line)),
+            }))
+          },
+        }
+      }
+
+      /** The byte offsets of one 0-indexed line of `data`, `end` exclusive, as a strategy reports them. */
+      function byteRangeOfLine(data: Uint8Array, line: number): { start: number; end: number } {
+        const encoder = new TextEncoder()
+        const lines = new TextDecoder().decode(data).split('\n')
+        const start = lines.slice(0, line).reduce((total, text) => total + encoder.encode(text).length + 1, 0)
+        return { start, end: start + encoder.encode(lines[line]!).length }
+      }
+
+      it('returns the sections the strategy ranked rather than scanning the text itself', async () => {
+        const stash = new Stash(new InMemoryStorage({ searchStrategy: lineStrategy(9) }), 'test-session', 'test-agent')
+        const ref = await stashText(stash, buriedAnswerLines().join('\n'))
+
+        const result = (await invoke(createRetrievalTool(stash), {
+          reference: ref,
+          query: 'kubernetes ingress certificate',
+        })) as string
+
+        expect(result).toContain('line 10: nothing of note')
+        expect(result).toMatch(/^\[showing 1 of 1 relevant section for/)
+      })
+
+      it('scans the text itself when the strategy ranked the entry without reporting a section', async () => {
+        const wholeEntry: SearchStrategy<InMemoryStorage> = {
+          search: async (storage, _query, options) =>
+            (await storage.list(options?.prefix ?? '')).map((key) => ({ key, score: 1 })),
+        }
+        const stash = new Stash(new InMemoryStorage({ searchStrategy: wholeEntry }), 'test-session', 'test-agent')
+        const ref = await stashText(stash, buriedAnswerLines().join('\n'))
+
+        const result = (await invoke(createRetrievalTool(stash), {
+          reference: ref,
+          query: 'why was the database connection pool exhausted',
+        })) as string
+
+        expect(result).toContain('connection pool was exhausted')
+      })
+
+      it('drops a strategy section outside line_range', async () => {
+        const stash = new Stash(new InMemoryStorage({ searchStrategy: lineStrategy(9) }), 'test-session', 'test-agent')
+        const ref = await stashText(stash, buriedAnswerLines().join('\n'))
+
+        const result = (await invoke(createRetrievalTool(stash), {
+          reference: ref,
+          query: 'kubernetes ingress certificate',
+          line_range: { start: 55, end: 70 },
+        })) as string
+
+        expect(result).toBe("No relevant content found for query 'kubernetes ingress certificate' in lines 55-70.")
+      })
+
+      it('cuts a strategy section back to line_range', async () => {
+        const stash = new Stash(
+          new InMemoryStorage({ searchStrategy: new KeywordSearchStrategy({ sectionContextLines: 5 }) }),
+          'test-session',
+          'test-agent'
+        )
+        const ref = await stashText(stash, buriedAnswerLines().join('\n'))
+
+        const result = (await invoke(createRetrievalTool(stash), {
+          reference: ref,
+          query: 'connection pool exhausted',
+          line_range: { start: 60, end: 64 },
+        })) as string
+
+        expect(result).toContain('connection pool was exhausted')
+        expect(result).toMatch(/ 60\| line 60/)
+        expect(result).toMatch(/ 64\| line 64/)
+        expect(result).not.toMatch(/ 59\| line 59/)
+        expect(result).not.toMatch(/ 65\| line 65/)
+      })
+
+      it('places each strategy section at its own entry lines across a multi-entry reference', async () => {
+        const stash = new Stash(new InMemoryStorage({ searchStrategy: lineStrategy(1) }), 'test-session', 'test-agent')
+        const toolResult = new ToolResultBlock({
+          toolUseId: 'tool-1',
+          status: 'success',
+          content: [new TextBlock('first alpha\nfirst beta'), new TextBlock('second alpha\nsecond beta')],
+        })
+        await stash.storeMessage(new Message({ role: 'user', content: [toolResult], trackingId: 'track-1' }))
+
+        const result = (await invoke(createRetrievalTool(stash), {
+          reference: 'tool-1',
+          query: 'kubernetes ingress certificate',
+        })) as string
+
+        // Line 2 of each entry: the second entry's lines are offset by the first entry's length.
+        expect(result).toContain('2| first beta')
+        expect(result).toContain('4| second beta')
+        expect(result).not.toContain('first alpha')
+      })
+    })
+
+    it('rejects a query against an entry with no text to rank', async () => {
+      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const ref = await stash.store(
+        'tool-img',
+        0,
+        encodeJSON({ image: { format: 'png', source: { bytes: 'iVBORw0=' } } })
+      )
+      const retrievalTool = createRetrievalTool(stash)
+
+      await expect(invoke(retrievalTool, { reference: ref, query: 'anything' })).rejects.toThrow(
+        'cannot search non-text content'
+      )
     })
   })
 })

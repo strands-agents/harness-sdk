@@ -1,6 +1,6 @@
 import type { Sandbox } from '../sandbox/base.js'
 import type { SearchStrategy } from './search/types.js'
-import type { Storage, StorageSearchResult } from './storage.js'
+import type { Storage, StorageSearchOptions, StorageSearchResult } from './storage.js'
 
 import { StorageError } from '../errors.js'
 import { logger } from '../logging/logger.js'
@@ -351,13 +351,14 @@ export class LocalFileStorage implements Storage {
    * to keyword token-overlap scoring.
    *
    * @param query - Natural-language search query
+   * @param options - Narrows the search to a key prefix and a result count
    * @returns All matches with relevance scores, ranked best-first
    */
-  async search(query: string): Promise<StorageSearchResult[]> {
+  async search(query: string, options?: StorageSearchOptions): Promise<StorageSearchResult[]> {
     if (this._searchStrategy) {
-      return this._searchStrategy.search(this, query)
+      return this._searchStrategy.search(this, query, options)
     }
-    return KeywordSearchStrategy.search(this, query)
+    return KeywordSearchStrategy.search(this, query, options)
   }
 
   /**
