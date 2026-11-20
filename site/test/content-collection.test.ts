@@ -6,6 +6,7 @@ import fg from 'fast-glob'
 import yaml from 'js-yaml'
 import { parseExternalDocsConfig } from '../scripts/external-docs/schema'
 import { loadSidebarFromConfig, type StarlightSidebarItem } from '../src/sidebar'
+import { leafSlugs, type GeneratedExternalDocsNavigation } from '../src/external-docs-navigation'
 import { pathToDocsSlug } from '../src/util/links'
 
 const externalDocsConfig = parseExternalDocsConfig(JSON.parse(readFileSync('external-docs.config.json', 'utf-8')))
@@ -68,10 +69,10 @@ describe('Content Collections', () => {
   it.each(externalDocsConfig.products)(
     'loads every generated $id navigation item as upstream-owned content',
     async ({ id }) => {
-      const navigation = JSON.parse(readFileSync(`.build/external-docs/${id}/navigation.json`, 'utf-8')) as {
-        groups: Array<{ items: Array<{ slug: string }> }>
-      }
-      const expectedSlugs = navigation.groups.flatMap((group) => group.items.map((item) => item.slug)).sort()
+      const navigation = JSON.parse(
+        readFileSync(`.build/external-docs/${id}/navigation.json`, 'utf-8')
+      ) as GeneratedExternalDocsNavigation
+      const expectedSlugs = navigation.groups.flatMap((group) => leafSlugs(group.items)).sort()
       const docs = await getCollection('docs')
       const productSlugs = docs
         .filter((doc) => doc.data.externalDocs?.productId === id)
