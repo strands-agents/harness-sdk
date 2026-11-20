@@ -165,6 +165,7 @@ const ASK_DETAILS = paragraphs(
 )
 
 const askCommand = (sessions: Sessions): DevChatCommand => ({
+  sticky: true,
   spec: {
     name: 'ask',
     usage: '/ask',

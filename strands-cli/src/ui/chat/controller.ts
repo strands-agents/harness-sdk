@@ -3059,6 +3059,7 @@ export class ChatController implements ChatControllerApi {
         if (this._panel?.id === opened.id) this.dismissPanel()
       },
       openCommand: (name) => this.openDevCommand(name),
+      ...(devCommand.sticky ? { sticky: true } : {}),
     })
   }
 

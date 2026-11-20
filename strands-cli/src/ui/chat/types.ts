@@ -77,6 +77,8 @@ export interface DevChatPanelProps {
   readonly height: number
   readonly close: () => void
   readonly openCommand: (name: string) => boolean
+  /** False while the chat input holds the keyboard, so a sticky panel stays visible but idle. */
+  readonly active?: boolean
 }
 
 export type DevChatPanelView = ComponentType<DevChatPanelProps>
@@ -110,6 +112,8 @@ export interface DevPanelOpening {
 
 export interface DevChatCommand {
   spec: LocalCommandSpec
+  /** Keeps the panel open when the developer clicks away, for a panel something is waiting on. */
+  sticky?: boolean
   open(context: DevChatCommandContext, opening?: DevPanelOpening): DevChatPanelView
   attach?(context: DevChatCommandContext): void
   jobs?: DevChatJobs
@@ -238,6 +242,8 @@ export type NewChatPanel =
       view: DevChatPanelView
       close: () => void
       openCommand: (name: string) => boolean
+      /** A click outside moves the keyboard to the chat input instead of closing this panel. */
+      sticky?: boolean
     })
 
 export type ChatPanel = NewChatPanel & { id: string }

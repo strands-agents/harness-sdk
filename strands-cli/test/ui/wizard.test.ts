@@ -7,6 +7,7 @@ import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.
 const ENTER = '\r'
 const TAB = '\t'
 const DOWN = '\u001b[B'
+const SPACE = ' '
 const RIGHT = '\u001b[C'
 const LEFT = '\u001b[D'
 const ESC = '\u001b'
@@ -257,7 +258,7 @@ describe('Wizard', () => {
     expect(text()).toContain('☑ instructions')
     expect(text()).toContain('not supported yet')
 
-    await press(ENTER)
+    await press(SPACE)
 
     expect(toggle).toHaveBeenCalled()
   })
@@ -279,7 +280,7 @@ describe('Wizard', () => {
     const { press } = await wizard(steps)
 
     await press(DOWN)
-    await press(ENTER)
+    await press(SPACE)
 
     expect(first).toHaveBeenCalled()
     expect(second).not.toHaveBeenCalled()

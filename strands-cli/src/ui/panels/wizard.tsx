@@ -144,7 +144,7 @@ const selectable = (field: WizardField): boolean =>
 
 const stepRows = (step: WizardStep, at: number, count: number): WizardRow[] => [
   ...step.fields.filter(selectable).map((field): WizardRow => ({ kind: 'field', field })),
-  ...stepButtons(at, count).map((button): WizardRow => ({ kind: 'button', button })),
+  ...(count > 1 ? stepButtons(at, count).map((button): WizardRow => ({ kind: 'button', button })) : []),
 ]
 
 const blockingNotice = (steps: readonly WizardStep[]): WizardNotice | undefined =>
@@ -337,6 +337,14 @@ const buttonHint = (
   return button === 'back' ? 'Enter back' : 'Enter cancel'
 }
 
+const oneQuestionActions = (field: WizardField | undefined): string[] => {
+  if (field?.kind === 'text') return ['Enter type']
+  if (field?.kind === 'choice') return [field.hint, 'Enter done']
+  if (field?.kind !== 'toggle') return ['Enter done']
+  if (field.unavailable !== undefined) return ['not available', 'Enter done']
+  return field.mark === 'radio' ? ['Enter pick'] : ['Space toggle', 'Enter done']
+}
+
 const rowHints = (
   row: WizardRow | undefined,
   finishHint: (blocking: WizardNotice | undefined) => string,
@@ -346,7 +354,8 @@ const rowHints = (
 ): string[] => {
   const tab = walked ? ['Tab next tab'] : []
   const fill = autofill ? ['ctrl+a autofill'] : []
-  const hints = (action: string): string[] => [...tab, '↑↓', action, ...fill, 'Esc cancel']
+  const hints = (...actions: string[]): string[] => [...tab, '↑↓', ...actions, ...fill, 'Esc cancel']
+  if (!walked) return hints(...oneQuestionActions(row?.kind === 'field' ? row.field : undefined))
   if (row?.kind === 'button') return hints(buttonHint(row.button, finishHint, blocking))
   if (row?.kind !== 'field') return [...tab, ...fill, 'Esc cancel']
   if (row.field.kind === 'toggle' && row.field.unavailable !== undefined) return hints('not available')
@@ -381,6 +390,7 @@ export const Wizard = ({
   const cursor = cursorIn(position?.row ?? own.row, rows.length)
   const blocking = blockingNotice(steps)
   const ready = blocking === undefined
+  const walked = steps.length > 1
   const compact = height < FULL_ROWS
   const focused = rows[cursor.index]
   const editor = editing.value
@@ -420,6 +430,13 @@ export const Wizard = ({
     cursor.set(row)
     activate(rows[row])
   }
+  // One question has no buttons: Enter answers it, and a radio row picks before it does.
+  const finishOne = (row: WizardRow | undefined): void => {
+    const field = row?.kind === 'field' ? row.field : undefined
+    if (field?.kind === 'text') return openEditor(field.key, field.edit)
+    if (field?.kind === 'toggle' && field.mark === 'radio' && field.unavailable === undefined) field.toggle()
+    if (ready) onFinish()
+  }
   useInput(
     (input, key) => {
       if (blocked?.() === true) return
@@ -429,6 +446,7 @@ export const Wizard = ({
         else if (key.return) {
           open.edit.save(open.value.input)
           editing.set(undefined)
+          if (!walked && ready) onFinish()
         } else if (!key.tab)
           editing.set((current) => current && { ...current, value: editText(current.value, input, key) })
         return
@@ -441,7 +459,8 @@ export const Wizard = ({
       else if (key.downArrow) cursor.move(1)
       else if (key.leftArrow || key.rightArrow) {
         if (row?.kind === 'field' && row.field.kind === 'choice') row.field.move(key.rightArrow ? 1 : -1)
-      } else if (key.return || shortcut(input, key) === ' ') activate(row)
+      } else if (!walked && key.return) finishOne(row)
+      else if (key.return || shortcut(input, key) === ' ') activate(row)
     },
     { isActive: active }
   )
@@ -547,21 +566,29 @@ export const Wizard = ({
         <Line tone="muted">{`${' '.repeat(LABEL_WIDTH + 2)}${step.footnote}`}</Line>
       ) : null}
       {notice ? <Line tone={notice.tone}>{`  ${notice.text}`}</Line> : compact ? null : <Gap />}
-      <WizardButtons
-        buttons={buttons}
-        ready={ready}
-        finishLabel={finishLabel}
-        estimate={footer}
-        focused={focused?.kind === 'button' ? focused.button : undefined}
-        onChoose={(button) => choose(firstButton + buttons.indexOf(button))}
-        onHover={(button) => cursor.set(firstButton + buttons.indexOf(button))}
-      />
+      {walked ? (
+        <WizardButtons
+          buttons={buttons}
+          ready={ready}
+          finishLabel={finishLabel}
+          estimate={footer}
+          focused={focused?.kind === 'button' ? focused.button : undefined}
+          onChoose={(button) => choose(firstButton + buttons.indexOf(button))}
+          onHover={(button) => cursor.set(firstButton + buttons.indexOf(button))}
+        />
+      ) : footer ? (
+        <Box height={1} flexShrink={0} justifyContent="flex-end" overflow="hidden">
+          <Text dimColor wrap="truncate-end">
+            {footer}
+          </Text>
+        </Box>
+      ) : null}
       <Fill />
       <KeyHints
         hints={
           editor
             ? ['Enter save', 'Esc cancel']
-            : rowHints(focused, finishHint, blocking, steps.length > 1, autofill !== undefined)
+            : rowHints(focused, finishHint, blocking, walked, autofill !== undefined)
         }
       />
     </>

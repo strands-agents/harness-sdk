@@ -13,6 +13,7 @@ import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.
 const ENTER = '\r'
 const TAB = '\t'
 const DOWN = '\u001b[B'
+const SPACE = ' '
 const RIGHT = '\u001b[C'
 
 const steps: WizardStepSpec[] = [
@@ -51,13 +52,14 @@ const show = async (element: ReactElement, rows = 20) => {
   return { text: (): string => frame().join('\n'), press }
 }
 
-const panel = async (broker: WizardBroker, rows = 20, onAutofill?: (on: boolean) => void) =>
+const panel = async (broker: WizardBroker, rows = 20, onAutofill?: (on: boolean) => void, active = true) =>
   show(
     createElement(WizardRequestPanel, {
       broker,
       width: 96,
       height: rows - 2,
       close: vi.fn(),
+      active,
       ...(onAutofill ? { onAutofill } : {}),
     }),
     rows
@@ -302,10 +304,9 @@ describe('WizardRequestPanel', () => {
     })
     const { press } = await panel(broker)
 
-    await press(ENTER)
+    await press(SPACE)
     await press(DOWN)
-    await press(ENTER)
-    await press(DOWN)
+    await press(SPACE)
     await press(ENTER)
 
     await expect(asked).resolves.toEqual({ tune: ['instructions', 'caching'] })
@@ -342,8 +343,6 @@ describe('WizardRequestPanel', () => {
 
     await press(DOWN)
     await press(ENTER)
-    await press(DOWN)
-    await press(ENTER)
 
     await expect(asked).resolves.toEqual({ iterations: '8' })
   })
@@ -370,10 +369,9 @@ describe('WizardRequestPanel', () => {
     })
     const { text, press } = await panel(broker)
 
-    await press(ENTER)
+    await press(SPACE)
     expect(text()).toContain('not available')
 
-    await press(DOWN)
     await press(ENTER)
 
     await expect(asked).resolves.toEqual({ tune: [] })
@@ -399,6 +397,65 @@ describe('WizardRequestPanel', () => {
     expect(broker.autofill()).toBe(true)
     expect(reported).toEqual([true])
     expect(text()).not.toContain('the agent answers the next one itself')
+  })
+
+  it('shouldAnswerOnEnterWithNoButtonsToReachFor', async () => {
+    const broker = new WizardBroker()
+    const asked = broker.ask({ name: 'optimize', question: 'Which knobs?', steps: [steps[0]!] })
+    const { text, press } = await panel(broker)
+
+    expect(text()).not.toContain('[ OK ]')
+    expect(text()).not.toContain('Cancel')
+    expect(text()).toContain('Space toggle · Enter done')
+
+    await press(ENTER)
+
+    await expect(asked).resolves.toEqual({ instructions: true, effort: false })
+  })
+
+  it('shouldPickAndAnswerOnOneEnterForARadioList', async () => {
+    const broker = new WizardBroker()
+    const asked = broker.ask({
+      name: 'optimize',
+      question: 'How many steps?',
+      steps: [
+        {
+          key: 'question',
+          title: 'Question',
+          fields: [
+            {
+              kind: 'select',
+              key: 'iterations',
+              multiple: false,
+              selected: ['4'],
+              options: [
+                { value: '4', label: '4' },
+                { value: '8', label: '8' },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    const { text, press } = await panel(broker)
+    expect(text()).toContain('Enter pick')
+
+    await press(DOWN)
+    await press(ENTER)
+
+    await expect(asked).resolves.toEqual({ iterations: '8' })
+  })
+
+  it('shouldStayIdleWhileTheChatInputHoldsTheKeyboard', async () => {
+    const broker = new WizardBroker()
+    const asked = broker.ask({ name: 'optimize', question: 'Which knobs?', steps: [steps[0]!] })
+    const { press } = await panel(broker, 20, undefined, false)
+
+    await press(ENTER)
+    await press('\u001b')
+
+    expect(broker.pending()).toBeDefined()
+    void asked
   })
 
   it('shouldSayWhenNoQuestionIsWaiting', async () => {

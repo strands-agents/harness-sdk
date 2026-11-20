@@ -167,6 +167,10 @@ export function ChatApp({
   const [suggestionSelection, setSuggestionSelection] = useState(0)
   const [dismissedSuggestions, setDismissedSuggestions] = useState<string>()
   const [panelSelection, setPanelSelection] = useState(0)
+  // A sticky panel stays open when the developer clicks away; the keyboard goes to the chat input instead.
+  const [panelKeyboard, setPanelKeyboard] = useState(true)
+  const panelId = snapshot.panel?.id
+  useEffect(() => setPanelKeyboard(true), [panelId])
   const [panelQuery, setPanelQuery] = useState('')
   const [agentNameEditor, setAgentNameEditor] = useState<EditorState>(emptyEditor)
   const [panelFilter, setPanelFilter] = useState('all')
@@ -1074,6 +1078,7 @@ export function ChatApp({
       const devJobsHit =
         snapshot.devJobs?.length && devJobsElement.current ? elementContainsMouse(devJobsElement.current, mouse) : false
       const devPanelClick = snapshot.panel?.kind === 'dev' ? devPanelClicks.at(mouse) : undefined
+      if (devPanelClick) setPanelKeyboard(true)
       const sliderElement =
         snapshot.panel?.kind === 'effort' || snapshot.panel?.kind === 'permissions' || snapshot.panel?.kind === 'voice'
           ? panelSliderElement.current
@@ -1307,7 +1312,8 @@ export function ChatApp({
           void activateRow(row)
         }
       } else if (snapshot.panel && !panelHit && !metadataTarget && !footerAction) {
-        controller.dismissPanel()
+        if (snapshot.panel.kind === 'dev' && snapshot.panel.sticky) setPanelKeyboard(false)
+        else controller.dismissPanel()
       } else if (suggestionIndex !== undefined) {
         suggestionSelectionRef.current = suggestionIndex
         setSuggestionSelection(suggestionIndex)
@@ -2285,6 +2291,7 @@ export function ChatApp({
       onBackgroundTaskElement={registerBackgroundTaskElement}
       onDevJobsElement={registerDevJobsElement}
       devPanelClicks={devPanelClicks}
+      panelKeyboard={panelKeyboard}
       onStatusElement={registerStatusElement}
       onFrogElement={registerFrogElement}
       onJumpToBottomElement={registerJumpToBottomElement}

@@ -51,12 +51,14 @@ export const DevPanelFrame = ({
   panel,
   width,
   height,
+  active = true,
   onElement,
   clicks,
 }: {
   panel: ChatDevPanel
   width: number
   height: number
+  active?: boolean
   onElement?: (element: DOMElement | null) => void
   clicks?: DevPanelClicks
 }): ReactElement => {
@@ -80,6 +82,7 @@ export const DevPanelFrame = ({
           height={Math.max(1, height - FRAME_ROWS)}
           close={close}
           openCommand={openCommand}
+          active={active}
         />
       </DevPanelClickContext>
     </Box>
