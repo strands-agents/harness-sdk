@@ -11,13 +11,18 @@ import type { OffloadTarget } from './target.js'
 import { DropStrategy } from './drop.js'
 import { TruncateStrategy } from './truncate.js'
 import { SummarizeStrategy } from './summarize.js'
-import { DeferredToolLoadingStrategy, type DeferStrategy, type DeferTarget } from '../deferred-tool-loading.js'
+import {
+  DeferredToolLoadingStrategy,
+  type DeferConfig,
+  type DeferStrategy,
+  type DeferTarget,
+} from '../deferred-tool-loading.js'
 
 export { EmergencyTruncateStrategy } from './base.js'
 export type { OffloadStrategy } from './base.js'
 export type { OffloadConditions } from './conditions.js'
 export type { OffloadTarget } from './target.js'
-export type { DeferConditions, DeferStrategy, DeferTarget } from '../deferred-tool-loading.js'
+export type { DeferConditions, DeferConfig, DeferStrategy, DeferTarget, ToolSearch } from '../deferred-tool-loading.js'
 
 /**
  * Offload strategy namespace. Each method returns a strategy; call `.when()` on it to set when and on what it acts.
@@ -25,7 +30,7 @@ export type { DeferConditions, DeferStrategy, DeferTarget } from '../deferred-to
  * - `Offload.drop(target)` — drop matching content from context window entirely
  * - `Offload.truncate(target, config)` — replace with a preview
  * - `Offload.summarize(target, config)` — replace with LLM-generated summary
- * - `Offload.defer(target)` — keep tools' input schemas out of the context until the model loads them
+ * - `Offload.defer(target, config)` — keep tools' input schemas out of the context until the model loads them
  */
 interface OffloadNamespace {
   /** Drop matching content from context window entirely. Without `.when()` conditions, drops each block on arrival. */
@@ -37,11 +42,11 @@ interface OffloadNamespace {
   /** Replace content with an LLM-generated summary. Without `.when()` conditions, summarizes each block on arrival. */
   summarize(target: OffloadTarget, config?: SummarizeConfig): OffloadStrategy
   /**
-   * Keep tools' input schemas out of the context until the model loads them with `load_tools`. The model still
-   * sees each deferred tool's name and description. Without `.when()` conditions, defers at any tool count. One per
-   * agent, the `deferredToolLoading` preset included.
+   * Keep tools' input schemas out of the context until the model loads them with `load_tools`, or with
+   * `config.search` set, until it searches for them. The model still sees each deferred tool's name and description.
+   * Without `.when()` conditions, defers at any tool count. One per agent, the `deferredToolLoading` preset included.
    */
-  defer(target: DeferTarget): DeferStrategy
+  defer(target: DeferTarget, config?: DeferConfig): DeferStrategy
 }
 
 /**
@@ -77,6 +82,11 @@ interface OffloadNamespace {
  * // Tool specs: from 20 tools, or once their schemas reach 5% of the context window, defer every one but shell's.
  * // Checked on every call, so the same tools give the same tools list
  * Offload.defer(["!shell"]).when({ toolCount: 20, schemaTokens: "5%" })
+ * // Tool specs: the same, and the model searches for them: with the provider's own tool search where the model has
+ * // one ('server' throws where it doesn't), or with search_tools ('client' on every model)
+ * Offload.defer(["!shell"], { search: "auto" }).when({ toolCount: 20, schemaTokens: "5%" })
+ * // Tool specs: search_tools on every model, ranking with your own searcher (a ToolSearcher) instead of keywords
+ * Offload.defer(["!shell"], { search: "client", searcher }).when({ toolCount: 20 })
  * ```
  */
 export const Offload: OffloadNamespace = {
@@ -91,7 +101,7 @@ export const Offload: OffloadNamespace = {
   summarize(target: OffloadTarget, config?: SummarizeConfig): OffloadStrategy {
     return new SummarizeStrategy(target, config)
   },
-  defer(target: DeferTarget): DeferStrategy {
-    return new DeferredToolLoadingStrategy(target)
+  defer(target: DeferTarget, config?: DeferConfig): DeferStrategy {
+    return new DeferredToolLoadingStrategy(target, config)
   },
 }

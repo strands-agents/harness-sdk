@@ -18,6 +18,8 @@ import {
   InjectedBlock,
   SummaryBlock,
   OffloadedBlock,
+  ServerToolBlock,
+  ToolUseBlock,
   UnknownBlock,
 } from '../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../types/media.js'
@@ -4032,5 +4034,238 @@ describe('AnthropicModel server-side summary', () => {
     expect(model.modelInfo.capabilities?.serverSideSummary).toBe(false)
     expect(captured.request.messages[1].content).toEqual([{ type: 'text', text: 'old' }])
     expect(captured.options).toBeUndefined()
+  })
+})
+
+describe('AnthropicModel tool search', () => {
+  const searchTools = { name: 'search_tools', description: 'Load tools.', inputSchema: { type: 'object' as const } }
+  const weather = { name: 'get_weather', description: 'Get the weather.', inputSchema: { type: 'object' as const } }
+  const forecast = { name: 'get_forecast', description: 'Get a forecast.', inputSchema: { type: 'object' as const } }
+  const toolSpecs = [searchTools, weather, forecast]
+  const BM25 = { type: 'tool_search_tool_bm25_20251119', name: 'tool_search_tool_bm25' }
+  const userMessage = (text: string): Message => new Message({ role: 'user', content: [new TextBlock(text)] })
+
+  function setupCapture(events: unknown[] = []): { captured: { request: any }; mockClient: Anthropic } {
+    const captured: { request: any } = { request: null }
+    const mockClient = {
+      messages: {
+        stream: vi.fn((request) => {
+          captured.request = request
+          return (async function* () {
+            yield* events
+          })()
+        }),
+      },
+    } as unknown as Anthropic
+    return { captured, mockClient }
+  }
+
+  const serverOptions = (extra: Partial<StreamOptions> = {}): StreamOptions => ({
+    toolSpecs,
+    deferredTools: new Set(['get_weather', 'get_forecast']),
+    serverToolSearch: true,
+    ...extra,
+  })
+
+  it('sends the API tool search in place of search_tools, and lists the deferred tools after the system prompt cache point', async () => {
+    const { captured, mockClient } = setupCapture()
+    const provider = new AnthropicModel({ client: mockClient, cacheConfig: { messagesTTL: false, toolsTTL: false } })
+
+    await collectIterator(provider.stream([userMessage('Hi')], serverOptions({ systemPrompt: 'Be brief.' })))
+
+    expect(captured.request.tools).toEqual([
+      { name: 'get_weather', description: 'Get the weather.', input_schema: { type: 'object' }, defer_loading: true },
+      { name: 'get_forecast', description: 'Get a forecast.', input_schema: { type: 'object' }, defer_loading: true },
+      BM25,
+    ])
+    expect(captured.request.system).toEqual([
+      { type: 'text', text: 'Be brief.', cache_control: { type: 'ephemeral' } },
+      {
+        type: 'text',
+        text: 'Tools you can search for and load:\n- get_weather: Get the weather.\n- get_forecast: Get a forecast.',
+      },
+    ])
+  })
+
+  it('sends the listing as the system prompt when the call has none', async () => {
+    const { captured, mockClient } = setupCapture()
+    const provider = new AnthropicModel({ client: mockClient })
+
+    await collectIterator(provider.stream([userMessage('Hi')], serverOptions()))
+
+    expect(captured.request.system).toBe(
+      'Tools you can search for and load:\n- get_weather: Get the weather.\n- get_forecast: Get a forecast.'
+    )
+  })
+
+  it('caches on a copy of the API tool search, so a later request without caching sends it bare', async () => {
+    const { captured, mockClient } = setupCapture()
+    const provider = new AnthropicModel({ client: mockClient, cacheConfig: { toolsTTL: true } })
+
+    await collectIterator(provider.stream([userMessage('Hi')], serverOptions()))
+    expect(captured.request.tools.at(-1)).toEqual({ ...BM25, cache_control: { type: 'ephemeral' } })
+
+    provider.updateConfig({ cacheConfig: { toolsTTL: false } })
+    await collectIterator(provider.stream([userMessage('Hi')], serverOptions()))
+    expect(captured.request.tools.at(-1)).toEqual(BM25)
+  })
+
+  it('leaves the API tool search out of a forced turn without a warning', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const { captured, mockClient } = setupCapture()
+    const provider = new AnthropicModel({ client: mockClient })
+
+    await collectIterator(provider.stream([userMessage('Hi')], serverOptions({ toolChoice: { any: {} } })))
+
+    expect(captured.request.tools.map((tool: { name: string }) => tool.name)).toEqual(['get_weather', 'get_forecast'])
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('keeps a tool search the caller configured, and adds no other', async () => {
+    const regex = { type: 'tool_search_tool_regex_20251119' as const, name: 'tool_search_tool_regex' as const }
+    const { captured, mockClient } = setupCapture()
+    const provider = new AnthropicModel({
+      client: mockClient,
+      anthropicTools: [regex],
+      cacheConfig: { toolsTTL: false },
+    })
+
+    await collectIterator(provider.stream([userMessage('Hi')], serverOptions()))
+
+    expect(captured.request.tools.map((tool: { name: string }) => tool.name)).toEqual([
+      'get_weather',
+      'get_forecast',
+      'tool_search_tool_regex',
+    ])
+  })
+
+  it('lists the deferred tools in the search_tools description within 1% of the context window', async () => {
+    const { captured, mockClient } = setupCapture()
+    const provider = new AnthropicModel({ client: mockClient, modelInfo: { limits: { contextWindow: 1_000 } } })
+
+    await collectIterator(provider.stream([userMessage('Hi')], serverOptions({ serverToolSearch: false })))
+
+    expect(captured.request.tools[0].description).toBe('Load tools.\n\nTools you can load:\nget_weather, get_forecast')
+  })
+
+  it.each([
+    ['without serverToolSearch', { serverToolSearch: false }],
+    ['on a call that defers nothing', { deferredTools: new Set<string>() }],
+  ])('sends search_tools and no API tool search %s', async (_name, extra) => {
+    const { captured, mockClient } = setupCapture()
+    const provider = new AnthropicModel({ client: mockClient })
+
+    await collectIterator(provider.stream([userMessage('Hi')], serverOptions({ ...extra, systemPrompt: 'Be brief.' })))
+
+    expect(captured.request.tools.map((tool: { name: string }) => tool.name)).toEqual([
+      'search_tools',
+      'get_weather',
+      'get_forecast',
+    ])
+    expect(captured.request.system).toBe('Be brief.')
+  })
+
+  it('keeps each tool search block whole and names the tools its result loaded', async () => {
+    const result = {
+      type: 'tool_search_tool_result',
+      tool_use_id: 'srvtoolu_1',
+      content: {
+        type: 'tool_search_tool_search_result',
+        tool_references: [{ type: 'tool_reference', tool_name: 'get_weather' }],
+      },
+    }
+    const { mockClient } = setupCapture([
+      { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 10 } } },
+      {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'server_tool_use', id: 'srvtoolu_1', name: 'tool_search_tool_bm25', input: {} },
+      },
+      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"query":' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '"weather"}' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'content_block_start', index: 1, content_block: result },
+      { type: 'content_block_stop', index: 1 },
+      {
+        type: 'content_block_start',
+        index: 2,
+        content_block: { type: 'tool_use', id: 'toolu_1', name: 'get_weather', input: {} },
+      },
+      { type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{"city":"Paris"}' } },
+      { type: 'content_block_stop', index: 2 },
+      { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } },
+      { type: 'message_stop' },
+    ])
+    const provider = new AnthropicModel({ client: mockClient })
+
+    const { result: aggregated } = await collectGenerator(
+      provider.streamAggregated([userMessage('Hi')], serverOptions())
+    )
+
+    expect(aggregated.message.content).toEqual([
+      new ServerToolBlock({
+        provider: 'anthropic',
+        data: { type: 'server_tool_use', id: 'srvtoolu_1', name: 'tool_search_tool_bm25', input: { query: 'weather' } },
+      }),
+      new ServerToolBlock({ provider: 'anthropic', data: result, loadedTools: ['get_weather'] }),
+      new ToolUseBlock({ name: 'get_weather', toolUseId: 'toolu_1', input: { city: 'Paris' } }),
+    ])
+  })
+
+  it('names no loaded tools for a failed search', async () => {
+    const failed = {
+      type: 'tool_search_tool_result',
+      tool_use_id: 'srvtoolu_1',
+      content: { type: 'tool_search_tool_result_error', error_code: 'unavailable' },
+    }
+    const { mockClient } = setupCapture([
+      { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 10 } } },
+      { type: 'content_block_start', index: 0, content_block: failed },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } },
+      { type: 'message_stop' },
+    ])
+    const provider = new AnthropicModel({ client: mockClient })
+
+    const { result } = await collectGenerator(provider.streamAggregated([userMessage('Hi')], serverOptions()))
+
+    expect(result.message.content).toEqual([new ServerToolBlock({ provider: 'anthropic', data: failed })])
+  })
+
+  it("sends its own server tool blocks back as they came, leaves out another provider's, and drops a reference to a tool the request doesn't list", async () => {
+    const call = {
+      type: 'server_tool_use',
+      id: 'srvtoolu_1',
+      name: 'tool_search_tool_bm25',
+      input: { query: 'weather' },
+    }
+    const references = [
+      { type: 'tool_reference', tool_name: 'get_weather' },
+      { type: 'tool_reference', tool_name: 'removed_tool' },
+    ]
+    const result = {
+      type: 'tool_search_tool_result',
+      tool_use_id: 'srvtoolu_1',
+      content: { type: 'tool_search_tool_search_result', tool_references: references },
+    }
+    const assistant = new Message({
+      role: 'assistant',
+      content: [
+        new ServerToolBlock({ provider: 'anthropic', data: call }),
+        new ServerToolBlock({ provider: 'anthropic', data: result, loadedTools: ['get_weather', 'removed_tool'] }),
+        new ServerToolBlock({ provider: 'openai', data: { type: 'tool_search_call' } }),
+        new TextBlock('Done.'),
+      ],
+    })
+    const { captured, mockClient } = setupCapture()
+    const provider = new AnthropicModel({ client: mockClient })
+
+    await collectIterator(provider.stream([userMessage('Hi'), assistant, userMessage('Thanks')], serverOptions()))
+
+    expect(captured.request.messages[1].content).toEqual([
+      call,
+      { ...result, content: { ...result.content, tool_references: [references[0]] } },
+      { type: 'text', text: 'Done.' },
+    ])
   })
 })

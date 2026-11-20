@@ -9,13 +9,16 @@ import {
   TextBlock,
   ToolUseBlock,
   ToolResultBlock,
+  ToolReferenceBlock,
   OffloadedBlock,
+  ServerToolBlock,
   UnknownBlock,
 } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock } from '../../../types/media.js'
 import { CitationsBlock } from '../../../types/citations.js'
 import { StateStore } from '../../../state-store.js'
 import { logger } from '../../../logging/logger.js'
+import type { JSONValue } from '../../../types/json.js'
 
 /**
  * Build a mock OpenAI client whose `responses.create` returns the given async generator.
@@ -1257,5 +1260,319 @@ describe("OpenAIModel (api: 'responses')", () => {
         collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
       ).rejects.toThrow('some other failure')
     })
+  })
+})
+
+describe("OpenAIModel (api: 'responses') tool search", () => {
+  const OPENAI_API = 'https://api.openai.com/v1'
+  const params = { type: 'object' as const, properties: { city: { type: 'string' } } }
+  const searchTools = { name: 'search_tools', description: 'Load tools.', inputSchema: { type: 'object' as const } }
+  const weather = { name: 'get_weather', description: 'Get the weather.', inputSchema: params }
+  const forecast = { name: 'get_forecast', description: 'Get a forecast.', inputSchema: params }
+  const toolSpecs = [searchTools, weather, forecast]
+  const userMessage = (text: string): Message => new Message({ role: 'user', content: [new TextBlock(text)] })
+  const fn = (spec: typeof weather, deferred = false): { [key: string]: JSONValue } => ({
+    type: 'function',
+    name: spec.name,
+    description: spec.description,
+    parameters: spec.inputSchema as JSONValue,
+    strict: null,
+    ...(deferred && { defer_loading: true }),
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    if (isNode) vi.stubEnv('OPENAI_API_KEY', 'sk-test-env')
+  })
+
+  afterEach(() => {
+    if (isNode) vi.unstubAllEnvs()
+  })
+
+  /** The request a call with these options sends, and the model's aggregated result for these stream events. */
+  async function run(
+    options: Parameters<OpenAIModel['stream']>[1],
+    { modelId = 'gpt-5.4', messages = [userMessage('Hi')], events = [] as unknown[], params: extra = {} } = {}
+  ): Promise<{ request: any; content: unknown[] }> {
+    const capture: { request?: any } = {}
+    const client = createMockClient(async function* () {
+      yield { type: 'response.created', response: { id: 'resp_1' } }
+      yield* events
+      yield { type: 'response.completed', response: {} }
+    }, capture)
+    Object.assign(client, { baseURL: OPENAI_API })
+    const model = new OpenAIModel({ api: 'responses', client, modelId, params: extra })
+    const { result } = await collectGenerator(model.streamAggregated(messages, options))
+    return { request: capture.request, content: result.message.content }
+  }
+
+  const deferring = (serverToolSearch?: boolean): Parameters<OpenAIModel['stream']>[1] => ({
+    toolSpecs,
+    deferredTools: new Set(['get_weather', 'get_forecast']),
+    ...(serverToolSearch !== undefined && { serverToolSearch }),
+  })
+
+  it.each([
+    ['the Responses API on GPT-5.4', 'responses', 'gpt-5.4', OPENAI_API, 'native'],
+    ['the Responses API on GPT-5.4 nano, which rejects tool search', 'responses', 'gpt-5.4-nano', OPENAI_API, 'stubs'],
+    ['Chat Completions on GPT-5.4', 'chat', 'gpt-5.4', OPENAI_API, 'stubs'],
+    ['the Responses API on another host', 'responses', 'gpt-5.4', 'https://gateway.example.com/v1', 'stubs'],
+  ] as const)('defers tools natively only through %s', (_name, api, modelId, baseURL, expected) => {
+    const model = new OpenAIModel({ api, modelId, client: { baseURL } as OpenAI })
+
+    expect(model.modelInfo.capabilities?.deferredToolLoading).toBe(expected)
+  })
+
+  it('sends the API tool search in place of search_tools, each deferred function with defer_loading', async () => {
+    const { request } = await run(deferring(true))
+
+    expect(request.tools).toEqual([fn(weather, true), fn(forecast, true), { type: 'tool_search' }])
+  })
+
+  it('keeps a tool search the caller put in params, and adds no other', async () => {
+    const { request } = await run(deferring(true), { params: { tools: [{ type: 'tool_search' }] } })
+
+    expect(request.tools).toEqual([{ type: 'tool_search' }, fn(weather, true), fn(forecast, true)])
+  })
+
+  it('sends search_tools as a client tool search that lists the deferred tools, without serverToolSearch', async () => {
+    const { request } = await run(deferring())
+
+    expect(request.tools).toEqual([
+      {
+        type: 'tool_search',
+        execution: 'client',
+        description:
+          'Load tools.\n\nTools you can load:\n- get_weather: Get the weather.\n- get_forecast: Get a forecast.',
+        parameters: { type: 'object' },
+      },
+      fn(weather, true),
+      fn(forecast, true),
+    ])
+  })
+
+  it('sends load_tools as the client tool search when the model loads by name, and runs its call', async () => {
+    const loadTools = { name: 'load_tools', description: 'Load tools.', inputSchema: { type: 'object' as const } }
+    const searchCall = {
+      type: 'tool_search_call',
+      id: 'tsc_1',
+      call_id: 'call_9',
+      execution: 'client',
+      arguments: { names: ['get_weather'] },
+      status: 'completed',
+    }
+    const { request, content } = await run(
+      { toolSpecs: [loadTools, weather, forecast], deferredTools: new Set(['get_weather', 'get_forecast']) },
+      { events: [{ type: 'response.output_item.done', item: searchCall }] }
+    )
+
+    expect(request.tools[0]).toEqual({
+      type: 'tool_search',
+      execution: 'client',
+      description:
+        'Load tools.\n\nTools you can load:\n- get_weather: Get the weather.\n- get_forecast: Get a forecast.',
+      parameters: { type: 'object' },
+    })
+    expect(content).toEqual([
+      new ToolUseBlock({ name: 'load_tools', toolUseId: 'call_9', input: { names: ['get_weather'] } }),
+    ])
+  })
+
+  it('sends every function as it is on a model that does not defer tools natively', async () => {
+    const { request } = await run(deferring(true), { modelId: 'gpt-5.4-nano' })
+
+    expect(request.tools).toEqual([fn(searchTools as typeof weather), fn(weather), fn(forecast)])
+  })
+
+  it("keeps the API's tool search items where they came and the namespace of a call to a tool it loaded", async () => {
+    const searchCall = {
+      type: 'tool_search_call',
+      id: 'tsc_1',
+      call_id: null,
+      execution: 'server',
+      arguments: { paths: ['get_weather'] },
+      status: 'completed',
+    }
+    const searchOutput = {
+      type: 'tool_search_output',
+      id: 'tso_1',
+      call_id: null,
+      execution: 'server',
+      status: 'completed',
+      tools: [
+        { ...fn(weather, true) },
+        { type: 'namespace', name: 'crm', description: 'CRM tools.', tools: [{ ...fn(forecast, true) }] },
+      ],
+    }
+    const call = {
+      type: 'function_call',
+      id: 'fc_1',
+      call_id: 'call_1',
+      name: 'get_weather',
+      namespace: 'get_weather',
+      arguments: '',
+    }
+    const { content } = await run(deferring(true), {
+      events: [
+        { type: 'response.output_text.delta', delta: 'Looking.' },
+        { type: 'response.output_item.done', item: searchCall },
+        { type: 'response.output_item.done', item: searchOutput },
+        { type: 'response.output_item.added', item: call },
+        { type: 'response.function_call_arguments.done', item_id: 'fc_1', arguments: '{"city":"Paris"}' },
+      ],
+    })
+
+    expect(content).toEqual([
+      new TextBlock('Looking.'),
+      new ServerToolBlock({ provider: 'openai', data: searchCall }),
+      new ServerToolBlock({ provider: 'openai', data: searchOutput, loadedTools: ['get_weather', 'get_forecast'] }),
+      new ToolUseBlock({
+        name: 'get_weather',
+        toolUseId: 'call_1',
+        input: { city: 'Paris' },
+        namespace: 'get_weather',
+      }),
+    ])
+  })
+
+  it('turns a client tool search call into a search_tools call', async () => {
+    const searchCall = {
+      type: 'tool_search_call',
+      id: 'tsc_1',
+      call_id: 'call_9',
+      execution: 'client',
+      arguments: { query: 'weather' },
+      status: 'completed',
+    }
+    const { content } = await run(deferring(), { events: [{ type: 'response.output_item.done', item: searchCall }] })
+
+    expect(content).toEqual([
+      new ToolUseBlock({ name: 'search_tools', toolUseId: 'call_9', input: { query: 'weather' } }),
+    ])
+  })
+
+  it("sends its own server tool items back before the calls, leaves out another provider's, and keeps each call's namespace", async () => {
+    const searchCall = {
+      type: 'tool_search_call',
+      call_id: null,
+      execution: 'server',
+      arguments: { paths: ['get_weather'] },
+      status: 'completed',
+    }
+    const messages = [
+      userMessage('Hi'),
+      new Message({
+        role: 'assistant',
+        content: [
+          new ServerToolBlock({ provider: 'openai', data: searchCall }),
+          new ServerToolBlock({ provider: 'anthropic', data: { type: 'server_tool_use' } }),
+          new ToolUseBlock({
+            name: 'get_weather',
+            toolUseId: 'call_1',
+            input: { city: 'Paris' },
+            namespace: 'get_weather',
+          }),
+          new TextBlock('Checking.'),
+        ],
+      }),
+      new Message({
+        role: 'user',
+        content: [new ToolResultBlock({ toolUseId: 'call_1', status: 'success', content: [new TextBlock('Sunny.')] })],
+      }),
+    ]
+
+    const { request } = await run(deferring(true), { messages })
+
+    expect(request.input.slice(1)).toEqual([
+      { role: 'assistant', content: 'Checking.' },
+      searchCall,
+      {
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'get_weather',
+        arguments: '{"city":"Paris"}',
+        namespace: 'get_weather',
+      },
+      { type: 'function_call_output', call_id: 'call_1', output: 'Sunny.' },
+    ])
+  })
+
+  it('sends a search_tools call that loaded tools as a client tool search, its output loading the tools the request still has', async () => {
+    const messages = [
+      userMessage('Hi'),
+      new Message({
+        role: 'assistant',
+        content: [new ToolUseBlock({ name: 'search_tools', toolUseId: 'call_9', input: { query: 'weather' } })],
+      }),
+      new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'call_9',
+            status: 'success',
+            content: [
+              new ToolReferenceBlock({ name: 'get_weather' }),
+              new ToolReferenceBlock({ name: 'removed_tool' }),
+            ],
+          }),
+        ],
+      }),
+    ]
+
+    const { request } = await run(deferring(), { messages })
+
+    expect(request.input.slice(1)).toEqual([
+      {
+        type: 'tool_search_call',
+        call_id: 'call_9',
+        execution: 'client',
+        status: 'completed',
+        arguments: { query: 'weather' },
+      },
+      {
+        type: 'tool_search_output',
+        call_id: 'call_9',
+        execution: 'client',
+        status: 'completed',
+        tools: [fn(weather, true)],
+      },
+    ])
+  })
+
+  it('sends a search_tools call that loaded nothing, and a reference beside text, as text a function call output holds', async () => {
+    const messages = [
+      userMessage('Hi'),
+      new Message({
+        role: 'assistant',
+        content: [
+          new ToolUseBlock({ name: 'search_tools', toolUseId: 'call_9', input: { query: 'pizza' } }),
+          new ToolUseBlock({ name: 'get_weather', toolUseId: 'call_1', input: {} }),
+        ],
+      }),
+      new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({ toolUseId: 'call_9', status: 'error', content: [new TextBlock('Nothing loaded.')] }),
+          new ToolResultBlock({
+            toolUseId: 'call_1',
+            status: 'error',
+            content: [new TextBlock('Not run.'), new ToolReferenceBlock({ name: 'get_weather' })],
+          }),
+        ],
+      }),
+    ]
+
+    const { request } = await run(deferring(true), { messages })
+
+    expect(request.input.slice(1)).toEqual([
+      { type: 'function_call', call_id: 'call_9', name: 'search_tools', arguments: '{"query":"pizza"}' },
+      { type: 'function_call', call_id: 'call_1', name: 'get_weather', arguments: '{}' },
+      { type: 'function_call_output', call_id: 'call_9', output: '[ERROR] Nothing loaded.' },
+      {
+        type: 'function_call_output',
+        call_id: 'call_1',
+        output: `[ERROR] Not run.\nget_weather parameters: ${JSON.stringify(params)}`,
+      },
+    ])
   })
 })

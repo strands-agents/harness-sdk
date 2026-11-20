@@ -219,6 +219,7 @@ export type ContentBlockData =
   | { citations: CitationsBlockData }
   | { injected: InjectedBlockData }
   | { summary: SummaryBlockData }
+  | { serverTool: ServerToolBlockData }
 
 export type ContentBlock =
   | TextBlock
@@ -234,6 +235,7 @@ export type ContentBlock =
   | CitationsBlock
   | InjectedBlock
   | SummaryBlock
+  | ServerToolBlock
   | UnknownBlock
 
 /**
@@ -405,6 +407,12 @@ export interface ToolUseBlockData {
    * Must be preserved and sent back to the model for multi-turn tool use.
    */
   reasoningSignature?: string
+
+  /**
+   * Namespace the model called the tool in, which the OpenAI Responses API reports for a tool it loaded with tool
+   * search and needs back with the call.
+   */
+  namespace?: string
 }
 
 /**
@@ -438,12 +446,21 @@ export class ToolUseBlock implements ToolUseBlockData, JSONSerializable<{ toolUs
    */
   readonly reasoningSignature?: string
 
+  /**
+   * Namespace the model called the tool in, which the OpenAI Responses API reports for a tool it loaded with tool
+   * search and needs back with the call.
+   */
+  readonly namespace?: string
+
   constructor(data: ToolUseBlockData) {
     this.name = data.name
     this.toolUseId = data.toolUseId
     this.input = data.input
     if (data.reasoningSignature !== undefined) {
       this.reasoningSignature = data.reasoningSignature
+    }
+    if (data.namespace !== undefined) {
+      this.namespace = data.namespace
     }
   }
 
@@ -458,6 +475,7 @@ export class ToolUseBlock implements ToolUseBlockData, JSONSerializable<{ toolUs
         toolUseId: this.toolUseId,
         input: this.input,
         reasoningSignature: this.reasoningSignature,
+        namespace: this.namespace,
       }),
     }
   }
@@ -501,7 +519,7 @@ export interface ToolReferenceBlockData {
 }
 
 /**
- * A tool whose input schema a tool result loads. `load_tools` returns one for each tool it loads, and any
+ * A tool whose input schema a tool result loads. `search_tools` returns one for each tool it loads, and any
  * tool can return them too, such as a custom loader that searches the tool catalog.
  *
  * It reaches the model as a reference only when the model defers tools natively
@@ -937,6 +955,82 @@ export class SummaryBlock implements SummaryBlockData, JSONSerializable<{ summar
    */
   static fromJSON(data: { summary: SummaryBlockData }): SummaryBlock {
     return new SummaryBlock(data.summary)
+  }
+}
+
+/**
+ * Data for a server tool block.
+ */
+export interface ServerToolBlockData {
+  /**
+   * Name of the provider whose API ran the tool, for example `'anthropic'`.
+   */
+  provider: string
+
+  /**
+   * The provider's own content block or output item, sent back to that provider unchanged.
+   */
+  data: JSONValue
+
+  /**
+   * Names of the tools the block loaded into the model's context, as a tool search result does.
+   */
+  loadedTools?: string[]
+}
+
+/**
+ * A call to a tool the provider's API runs itself, or its result, such as the provider's own tool search. The agent
+ * never runs it. The provider that wrote it gets it back as it was, and every other provider leaves it out.
+ */
+export class ServerToolBlock implements ServerToolBlockData, JSONSerializable<{ serverTool: ServerToolBlockData }> {
+  /**
+   * Discriminator for server tool content.
+   */
+  readonly type = 'serverToolBlock' as const
+
+  /**
+   * Name of the provider whose API ran the tool, for example `'anthropic'`.
+   */
+  readonly provider: string
+
+  /**
+   * The provider's own content block or output item, sent back to that provider unchanged.
+   */
+  readonly data: JSONValue
+
+  /**
+   * Names of the tools the block loaded into the model's context, as a tool search result does.
+   */
+  readonly loadedTools?: string[]
+
+  constructor(data: ServerToolBlockData) {
+    this.provider = data.provider
+    this.data = data.data
+    if (data.loadedTools !== undefined) this.loadedTools = [...data.loadedTools]
+  }
+
+  /**
+   * Serializes the ServerToolBlock to a JSON-compatible ContentBlockData object.
+   * Called automatically by JSON.stringify().
+   */
+  toJSON(): { serverTool: ServerToolBlockData } {
+    return {
+      serverTool: {
+        provider: this.provider,
+        data: this.data,
+        ...(this.loadedTools !== undefined && { loadedTools: [...this.loadedTools] }),
+      },
+    }
+  }
+
+  /**
+   * Creates a ServerToolBlock instance from its wrapped data format.
+   *
+   * @param data - Wrapped ServerToolBlockData to deserialize
+   * @returns ServerToolBlock instance
+   */
+  static fromJSON(data: { serverTool: ServerToolBlockData }): ServerToolBlock {
+    return new ServerToolBlock(data.serverTool)
   }
 }
 
@@ -1473,6 +1567,8 @@ function parseContentBlock(data: ContentBlockData, onUnknown: OnUnknown): Conten
     return InjectedBlock.fromJSON(data)
   } else if ('summary' in data) {
     return SummaryBlock.fromJSON(data)
+  } else if ('serverTool' in data) {
+    return ServerToolBlock.fromJSON(data)
   }
   return onUnknown(data, 'ContentBlockData')
 }

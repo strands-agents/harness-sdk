@@ -7,6 +7,7 @@ import {
   Message,
   OffloadedBlock,
   ReasoningBlock,
+  ServerToolBlock,
   SummaryBlock,
   TextBlock,
   ToolResultBlock,
@@ -67,6 +68,8 @@ const BLOCK_SAMPLES: { [K in ContentBlock['type']]: (char: string) => Extract<Co
     }),
   injectedBlock: (char) => new InjectedBlock({ text: `i${char}`, source: 'memory' }),
   summaryBlock: (char) => new SummaryBlock({ text: `m${char}` }),
+  serverToolBlock: (char) =>
+    new ServerToolBlock({ provider: 'anthropic', data: { type: 'server_tool_use', input: `s${char}` } }),
   unknownBlock: (char) => new UnknownBlock({ futureBlock: { text: `u${char}` } }),
 }
 
