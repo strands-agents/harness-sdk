@@ -1,6 +1,9 @@
 import type { JSONSchema, JSONValue } from '@strands-agents/sdk'
+import { basename } from 'node:path'
 
+import { createDiffPreview } from '../../agent/file-changes.js'
 import type {
+  WizardDiffSpec,
   WizardFieldSpec,
   WizardOption,
   WizardOutcome,
@@ -180,6 +183,26 @@ const duplicateKey = (steps: readonly WizardStepSpec[]): string | undefined => {
   return undefined
 }
 
+/** A file change to show beside the question. It carries no answer, so the question holds the verdict. */
+const diffAt = (value: JSONValue | undefined): WizardDiffSpec | undefined => {
+  if (value === undefined || value === null) return undefined
+  if (!isObject(value)) throw new Error('diff must be an object with path, before, and after.')
+  const path = stringAt(value.path, 'diff.path')
+  const before = value.before
+  const after = value.after
+  if (typeof before !== 'string' || typeof after !== 'string')
+    throw new Error('diff.before and diff.after must both be text.')
+  if (before === after) throw new Error('diff.before and diff.after are the same, so there is nothing to show.')
+  return {
+    kind: 'diff',
+    key: 'diff',
+    label: optionalString(value.label, 'diff.label') ?? basename(path),
+    path,
+    proposed: after,
+    diff: createDiffPreview(path, before, after),
+  }
+}
+
 /** One component, one answer: the shape a skill uses to ask a single thing. */
 const oneQuestion = (input: Input): WizardRequestSpec => {
   const kind = stringAt(input.ask, 'ask')
@@ -208,10 +231,11 @@ const oneQuestion = (input: Input): WizardRequestSpec => {
   })()
   const status = optionalString(input.status, 'status')
   const footer = optionalString(input.footer, 'footer')
+  const change = diffAt(input.diff)
   return {
     name: optionalString(input.title, 'title') ?? 'setup',
     question,
-    steps: [{ key: 'question', title: 'Question', fields: [field] }],
+    steps: [{ key: 'question', title: 'Question', fields: change ? [field, change] : [field] }],
     finishLabel: optionalString(input.finishLabel, 'finishLabel') ?? '[ OK ]',
     ...(status === undefined ? {} : { status }),
     ...(footer === undefined ? {} : { footer }),
@@ -293,6 +317,7 @@ export const askTool = (broker: () => { ask: (spec: WizardRequestSpec) => Promis
     'at a time: ask, read the answer, then ask the next thing. Send ask with one of selectMany, selectOne, text, ' +
     'or confirm, and a question that says what you need. Keep each question about one decision, and skip the ones ' +
     'the developer already answered or that do not matter for this request. ' +
+    'Send diff as well to show a file change beside the question, so it is read before it is made. ' +
     'Use steps instead only for a form the developer walks with Next and Back, which is heavier and rarely what ' +
     'they want. Returns cancelled when they decline, and that is a no: do not ask again with the same question ' +
     'and do not act as if they agreed.',
@@ -338,6 +363,20 @@ export const askTool = (broker: () => { ask: (spec: WizardRequestSpec) => Promis
       listLabel: { type: 'string', description: 'With ask selectMany or selectOne: the heading above the rows.' },
       value: { type: 'string', description: 'With ask text: the starting text.' },
       placeholder: { type: 'string', description: 'With ask text: the grey hint while the field is empty.' },
+      diff: {
+        type: 'object',
+        description:
+          'With ask: a file change to show beside the question, as a diff. Use it to have a change read and ' +
+          'approved before you make it, and keep the question about whether to apply it.',
+        properties: {
+          path: { type: 'string', description: 'The file the change is for.' },
+          before: { type: 'string', description: 'The whole text of the file now.' },
+          after: { type: 'string', description: 'The whole text the change would leave.' },
+          label: { type: 'string', description: 'The short name for the change. Default: the file name.' },
+        },
+        required: ['path', 'before', 'after'],
+        additionalProperties: false,
+      },
       title: { type: 'string', description: 'The name on the top line, such as optimize. Default: setup.' },
       subtitle: {
         type: 'array',
