@@ -304,6 +304,16 @@ describe('reading and editing every createHarness option in TypeScript source', 
     })
   })
 
+  it('shouldWriteInstructionsTheAgentNeverSetWhenTheEditExpectsThemEmpty', async () => {
+    const workspace = await agent('typescript', KNOB_TYPESCRIPT)
+
+    expect(
+      await editAgentOptions(workspace, [{ option: 'instructions', value: 'Answer briefly.', expected: '' }])
+    ).toBe(true)
+
+    expect(await readFile(workspace.entrypoint, 'utf8')).toContain("instructions: 'Answer briefly.',")
+  })
+
   it('shouldSetScalarsRemoveItemsAndKeysAndInsertMissingOptionsWhenTheEditsApply', async () => {
     const workspace = await agent('typescript', KNOB_TYPESCRIPT)
 

@@ -467,6 +467,7 @@ const camelCase = (option: string): string => option.replace(/_([a-z])/gu, (_, l
 
 const UNSET_OPTIONS: Readonly<Record<string, unknown>> = {
   model: DEFAULT_HARNESS_AGENT_CONFIG.model,
+  instructions: DEFAULT_HARNESS_AGENT_CONFIG.instructions,
   effort: 'auto',
   caching: 'auto',
   contextManager: 'auto',
