@@ -28,7 +28,7 @@ From the command line, `ask --image FILE` (repeatable) loads the vision tower fo
 
 Limits, fixed per server:
 
--   Each image is scaled down so its longer side is at most 448 px, then fitted to the image processor’s grid: sides that are multiples of 32, and an area of at least 65,536 pixels, so a small image is scaled up (a 64 px square becomes 256 x 256). A 448 px square is 196 tokens (patch 16, merge 2). An image more than 200 times as long as it is wide is refused. At most 4 images per request.
+-   Each image is scaled down (never up) so its longer side is at most 448 px: 196 tokens for a square image (patch 16, merge 2). At most 4 images per request.
 -   An image over 4096 x 4096 pixels is refused from its header, before it is decoded. Other formats are refused before they are parsed. EXIF rotation is applied, and transparent areas are read as white.
 -   Images count against the same 4,096-token window as the state. An over-long prompt (state + images + question) is refused with HTTP 422.
 -   The vision tower adds about 331M parameters (0.66 GB in bf16).
@@ -103,4 +103,4 @@ The same accuracy as v21 within the intervals; POPE Brier is a little worse.
 
 With the image removed both fall to chance. v1 still answers: mean confidence 0.711 on NaturalBench and 0.834 on POPE (v21 0.722 and 0.792), ECE 0.211 and 0.334 (v21 0.222 and 0.292). On POPE it is more overconfident than v21 (ECE +0.042, 95% CI +0.039 to +0.044). Its confidence does not tell you that an image is missing: check that the image is there before you ask.
 
-The script is `evaluation/vision/run.py`; [evaluation/vision/README.md](https://github.com/strands-labs/strands-decider/blob/2230d342d16f65561e4d70ec2eb5c12541d96b44/evaluation/vision/README.md) has the exact command and a link to the recorded runs: per-item probabilities for v19 and the base, and Mapika’s summary.
+The script is `evaluation/vision/run.py`; [evaluation/vision/README.md](https://github.com/strands-labs/strands-decider/blob/d30112f8c216a42b842acddcb7ed3567ab50618e/evaluation/vision/README.md) has the exact command and a link to the recorded runs: per-item probabilities for v19 and the base, and Mapika’s summary.

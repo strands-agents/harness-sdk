@@ -1,10 +1,10 @@
 Policy decides MCP requests routed through a declared server. MCP means Model Context Protocol. Permit the server’s startup or network connection, then permit its MCP calls. Use a `forbid` rule to block a tool or a specific argument value.
 
-Audience: an operator who has declared a server in [the `[mcp.<name>]` table](../add-an-mcp-server/index.md) and writes its rules in `policy.dw`.
+Audience: an operator who has declared a server in [the `[mcp.<name>]` table](/docs/user-guide/box/guides/add-an-mcp-server/index.md) and writes its rules in `policy.dw`.
 
 ## Before you start
 
--   A box from [getting started](../../quickstart/index.md).
+-   A box from [getting started](/docs/user-guide/box/quickstart/index.md).
 -   An `[mcp.<name>]` table for the server in its `box.toml`.
 
 ### Scope of remote-server rules
@@ -19,7 +19,7 @@ To require the server’s tool restrictions on every permitted route to that app
 -   Restrict network and HTTP access to those destinations and the ports and paths the task needs. Check other permits too; adding a narrow permit does not remove access from a broader one.
 -   Check whether any other allowed destination can reach that application. Restrict that route if you cannot apply the required MCP rules to it.
 
-See [remote destination matching](../add-an-mcp-server/index.md#remote-destination-matching) for the matching rules.
+See [remote destination matching](/docs/user-guide/box/guides/add-an-mcp-server/index.md#remote-destination-matching) for the matching rules.
 
 ## Step 1. Allow the server
 
@@ -71,7 +71,7 @@ when { ["fetch", "github"].contains(context.input.server) };
 
 For modern stdio servers, an input answer inside a retried call is checked in the same way as a legacy reply. For example, a `forbid` on `context.input.method == "roots/list"` prevents either form of roots answer from reaching the server. The retried tool call also needs its own permit.
 
-For an enabled [wildcard command](../add-an-mcp-server/index.md#argument-wildcards), `command` instead holds the alias name and effective launch arguments, with received values in the `*` positions and fixed arguments expanded. `arg1`, `arg2`, and `arg_count` describe those same launch arguments. A permit that checks only `program`, as above, matches every value supplied in the `*` positions. To restrict those values, add conditions on the effective arguments.
+For an enabled [wildcard command](/docs/user-guide/box/guides/add-an-mcp-server/index.md#argument-wildcards), `command` instead holds the alias name and effective launch arguments, with received values in the `*` positions and fixed arguments expanded. `arg1`, `arg2`, and `arg_count` describe those same launch arguments. A permit that checks only `program`, as above, matches every value supplied in the `*` positions. To restrict those values, add conditions on the effective arguments.
 
 ## Step 2. Connect the harness
 
@@ -213,7 +213,7 @@ Restart the box. The decision log records each decision with the rule’s `@id`.
 | --- | --- |
 | `MCP server "<name>" may not start` | No `shell:spawn` permit for the program. |
 | The harness starts an ordinary program instead of its MCP server | Its command does not match a declared server. Set the executable’s filename and every declared argument, as in [step 2](#step-2-connect-the-harness). With `argument_wildcards = true`, supply a value for each `*` argument. |
-| `strands.box.mcp.unmatched` in the telemetry records | No declared MCP command matched. Compare the harness command with the declared command. The diagnostic carries the program and redacted arguments, with no policy verdict or execution outcome. See [an unmatched MCP route](../record-telemetry/index.md#an-unmatched-mcp-route). |
+| `strands.box.mcp.unmatched` in the telemetry records | No declared MCP command matched. Compare the harness command with the declared command. The diagnostic carries the program and redacted arguments, with no policy verdict or execution outcome. See [an unmatched MCP route](/docs/user-guide/box/guides/record-telemetry/index.md#an-unmatched-mcp-route). |
 | `no MCP server declares "<command>"` | The program is undeclared, or a command on that program cannot expand. Check that the harness uses a declared program, and correct any command expansion named in the error. |
 | Two MCP tables `declare overlapping wildcard commands` | The wildcard entries can match the same request, so Box refuses to start. Give them fixed arguments that distinguish them. An exact entry may overlap a wildcard entry; the exact entry takes priority. |
 | `MCP command matches multiple servers` | No exact entry matched, and more than one wildcard entry matched the received command. The launch is refused. |
@@ -279,6 +279,6 @@ Read the startup warning as the signal that a rule went inert, then check it aga
 
 ## See also
 
--   [The `[mcp.<name>]` table](../add-an-mcp-server/index.md): the keys for a `stdio` and an `http` server.
--   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/mcp.md): how the box starts a server and decides each call.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/policy.md): how the engine decides, and what refuses to load.
+-   [The `[mcp.<name>]` table](/docs/user-guide/box/guides/add-an-mcp-server/index.md): the keys for a `stdio` and an `http` server.
+-   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/mcp.md): how the box starts a server and decides each call.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/policy.md): how the engine decides, and what refuses to load.

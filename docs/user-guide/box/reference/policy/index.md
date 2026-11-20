@@ -1,8 +1,6 @@
 A policy is the `policy.dw` file of `permit` and `forbid` rules that decides each request the workload makes through the box’s trusted process (the part of Box that runs outside the box and answers its requests). `box.toml` sets what the workload’s own system calls can reach, and the operating system enforces that. Inside that reach, policy decides each request the workload sends through the box’s trusted process.
 
-Audience: an operator who wants to write or change a policy. [Write a policy and read what it decided](../../guides/write-a-policy/index.md) walks through a first one, and [the action vocabulary](../policy-actions/index.md) lists every field a rule can read.
-
-> **Status.** The action vocabulary and the context fields can change before 1.0.0. Pin the Box build you install (`./box-core/box --version`).
+Audience: an operator who wants to write or change a policy. [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md) walks through a first one, and [the action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md) lists every field a rule can read.
 
 ## When the box asks policy
 
@@ -10,7 +8,7 @@ Four parts of the box ask policy, each about its own boundary:
 
 -   **Strands Shell**, the box’s own shell, which the agent’s shell tool runs. It asks once per command line, as `shell:exec` or `shell:spawn`, and once per file operation a command makes, as `fs:*`.
 -   **Monty**, the Python interpreter the box runs for the agent’s scripts. It asks once per file operation, as `fs:*`.
--   **The egress gateway.** It asks once per connection, as `net:connect`, and once per HTTP request, as `http:request`. It asks `mcp:call` for MCP requests whose host matches a declared server, except the protocol methods listed in the [action reference](../policy-actions/index.md#mcp).
+-   **The egress gateway.** It asks once per connection, as `net:connect`, and once per HTTP request, as `http:request`. It asks `mcp:call` for MCP requests whose host matches a declared server, except the protocol methods listed in the [action reference](/docs/user-guide/box/reference/policy-actions/index.md#mcp).
 -   **The MCP broker.** It asks once per request to a local MCP server, as `mcp:call`. On a `tools/call` it asks a second time, as the tool’s own generated action. At startup it asks once for each declared server, as `shell:spawn`.
 
 Three facts decide every request:
@@ -19,7 +17,7 @@ Three facts decide every request:
 -   **A `forbid` beats a `permit`.** Write an exception to a broad permit as a `forbid`.
 -   **A `permit` only widens.** A restriction such as a budget is a `forbid`.
 
-The agent’s own system calls reach a path in `[agent.filesystem]` with no decision and no record. [Security](../../security/index.md) states where each tier governs.
+The agent’s own system calls reach a path in `[agent.filesystem]` with no decision and no record. [Security](/docs/user-guide/box/security/index.md) states where each tier governs.
 
 ## How a rule reads
 
@@ -58,7 +56,7 @@ The agent reads the same text, so write each `@description` for the agent. The t
 -   `[policy-pending]: The complete policy bundle is not installed.`: an MCP tool’s schema is still being discovered. The call can be retried.
 -   `because the request could not be evaluated.`: the engine hit an internal fault, and it denied the request.
 
-A denial of an experimental [tool grammar](../configuration/index.md#toolnamegrammar) action reads the same way, on the path of the program. The decision log names the grammar action.
+A denial of an experimental [tool grammar](/docs/user-guide/box/reference/configuration/index.md#toolnamegrammar) action reads the same way, on the path of the program. The decision log names the grammar action.
 
 Each caller shows the text in its own form:
 
@@ -69,22 +67,22 @@ Each caller shows the text in its own form:
 
 Three refusals look like a denial, and no `permit` lifts them:
 
--   **A path inside the box directory, or the `box.toml` or `policy.dw` this run loaded, is refused whatever the policy says.** The decision log records the cause as `enforcement`, and [step 4 of the tutorial](../../guides/write-a-policy/index.md#step-4-read-the-decision-log) shows how to read it. [What Box always enforces](../../security/index.md#what-box-always-enforces) states the rule.
--   **A program that a tool grammar binds, run by its bound name after its file was replaced or removed, or run by the agent under a name that only a stdio `[mcp.<name>]` declares, is refused whatever the policy says.** The tail is `[tool-grammar]`, then the reason, then `No policy can permit it.` [`shell:spawn`](../shell/index.md#shellspawn) states the cases.
+-   **A path inside the box directory, or the `box.toml` or `policy.dw` this run loaded, is refused whatever the policy says.** The decision log records the cause as `enforcement`, and [step 4 of the tutorial](/docs/user-guide/box/guides/write-a-policy/index.md#step-4-read-the-decision-log) shows how to read it. [What Box always enforces](/docs/user-guide/box/security/index.md#what-box-always-enforces) states the rule.
+-   **A program that a tool grammar binds, run by its bound name after its file was replaced or removed, or run by the agent under a name that only a stdio `[mcp.<name>]` declares, is refused whatever the policy says.** The tail is `[tool-grammar]`, then the reason, then `No policy can permit it.` [`shell:spawn`](/docs/user-guide/box/reference/shell/index.md#shellspawn) states the cases.
 -   **A file tool of the harness itself fails with “operation not permitted” on macOS, or “no such file or directory” on Linux, and the decision log holds no record.** The path is outside every `[agent.filesystem]` list. Add it to a list in `box.toml` if the agent is meant to reach it.
 
 ## The actions
 
-The box ships ten actions in four categories, and generates one more for each MCP tool it discovers. Each experimental [tool grammar](../configuration/index.md#toolnamegrammar) adds its own `Tool::<name>` actions. [The action vocabulary](../policy-actions/index.md) lists the fields of each one.
+The box ships ten actions in four categories, and generates one more for each MCP tool it discovers. Each experimental [tool grammar](/docs/user-guide/box/reference/configuration/index.md#toolnamegrammar) adds its own `Tool::<name>` actions. [The action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md) lists the fields of each one.
 
--   **[Filesystem](../policy-actions/index.md#filesystem)**: a file operation in Strands Shell or Monty. `fs:read`, `fs:write`, `fs:delete`, `fs:move`, and the reserved `fs:other`.
--   **[Network](../policy-actions/index.md#network)**: an outbound call through the egress gateway. Each call is two decisions: `net:connect` for the connection, before TLS, and `http:request` for each request inside it, after TLS on an HTTPS connection.
--   **[Shell](../policy-actions/index.md#shell)**: a command line in Strands Shell, judged once after the shell resolves its first word to a program. `shell:exec` for a program the shell implements, such as `cat` or `grep`, and `shell:spawn` for a program of the surrounding OS, such as `git`, and for the start of each stdio MCP server `box.toml` declares.
--   **[MCP](../policy-actions/index.md#mcp)**: a request through a declared MCP server, with [host-based matching](../../guides/add-an-mcp-server/index.md#remote-destination-matching) for remote servers. `mcp:call` decides each request except the protocol methods listed in the action reference. One generated `<server>::Action::"<tool>"` per discovered tool decides a `tools/call` after `mcp:call` permitted it.
+-   **[Filesystem](/docs/user-guide/box/reference/policy-actions/index.md#filesystem)**: a file operation in Strands Shell or Monty. `fs:read`, `fs:write`, `fs:delete`, `fs:move`, and the reserved `fs:other`.
+-   **[Network](/docs/user-guide/box/reference/policy-actions/index.md#network)**: an outbound call through the egress gateway. Each call is two decisions: `net:connect` for the connection, before TLS, and `http:request` for each request inside it, after TLS on an HTTPS connection.
+-   **[Shell](/docs/user-guide/box/reference/policy-actions/index.md#shell)**: a command line in Strands Shell, judged once after the shell resolves its first word to a program. `shell:exec` for a program the shell implements, such as `cat` or `grep`, and `shell:spawn` for a program of the surrounding OS, such as `git`, and for the start of each stdio MCP server `box.toml` declares.
+-   **[MCP](/docs/user-guide/box/reference/policy-actions/index.md#mcp)**: a request through a declared MCP server, with [host-based matching](/docs/user-guide/box/guides/add-an-mcp-server/index.md#remote-destination-matching) for remote servers. `mcp:call` decides each request except the protocol methods listed in the action reference. One generated `<server>::Action::"<tool>"` per discovered tool decides a `tools/call` after `mcp:call` permitted it.
 
 ## Common rules
 
-Seven rules an operator writes often. Each one is a working rule. Copy it beside the permits from [your first policy](../../guides/write-a-policy/index.md), replace `~/project` with your project directory, and run the box. Two of them say what else `box.toml` needs. The first six are `forbid` rules. The last is a pair of `permit` rules that replace two from the tutorial.
+Seven rules an operator writes often. Each one is a working rule. Copy it beside the permits from [your first policy](/docs/user-guide/box/guides/write-a-policy/index.md), replace `~/project` with your project directory, and run the box. Two of them say what else `box.toml` needs. The first six are `forbid` rules. The last is a pair of `permit` rules that replace two from the tutorial.
 
 ### A budget over time
 
@@ -126,7 +124,7 @@ Write a budget as a `forbid`. [A cap written as a permit](#a-cap-written-as-a-pe
 
 ### A rate limit on one host
 
-This rule refuses new requests to `api.github.com` when Box has recorded at least sixty response outcomes for that host in the last ten minutes. Pending exchanges do not count yet. Write it beside a `permit` for `api.github.com` on `http:request`, such as the `github_request` rule in [the `[egress.<name>]` table](../../guides/network-and-credentials/index.md#example).
+This rule refuses new requests to `api.github.com` when Box has recorded at least sixty response outcomes for that host in the last ten minutes. Pending exchanges do not count yet. Write it beside a `permit` for `api.github.com` on `http:request`, such as the `github_request` rule in [the `[egress.<name>]` table](/docs/user-guide/box/guides/network-and-credentials/index.md#example).
 
 ```text
 @id("github_rate_limit")
@@ -186,7 +184,7 @@ when { context.input.operation == Box::FsReadOperation::"enumerate" };
 strands-shell: ls: policy denied this operation on '~/project/src' [policy: no_listing]: Directory listings stay closed.
 ```
 
-Every filesystem request carries `operation`, the exact verb, so a rule can single out one verb of an action. [The action vocabulary](../policy-actions/index.md#filesystem) lists the verbs of each action.
+Every filesystem request carries `operation`, the exact verb, so a rule can single out one verb of an action. [The action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md#filesystem) lists the verbs of each action.
 
 ### Commit only after the tests passed
 
@@ -211,7 +209,7 @@ unless temporal {
 strands-shell: effect denied: policy denied this operation on '/usr/bin/git' [policy: test_before_commit]: Run the tests first.
 ```
 
--   The rule needs a `shell:spawn` permit for `git` and one for `cargo`, and a [`[tool.<name>]`](../shell/index.md#toolname) table in `box.toml` for each of the two programs. The policy in [your first policy](../../guides/write-a-policy/index.md) has no `shell:spawn` permit, so add these two:
+-   The rule needs a `shell:spawn` permit for `git` and one for `cargo`, and a [`[tool.<name>]`](/docs/user-guide/box/reference/shell/index.md#toolname) table in `box.toml` for each of the two programs. The policy in [your first policy](/docs/user-guide/box/guides/write-a-policy/index.md) has no `shell:spawn` permit, so add these two:
     
     ```text
     @id("spawn_git")
@@ -283,7 +281,7 @@ http:request gate: policy denied this operation on 'api.example.com:443/v1//admi
 
 A `POST` to the Bedrock host on port 443 goes out with the key the box holds. Every other method on that host, and every other host, is refused.
 
-The credential is bound in `box.toml`, and the policy permits the request. The two name the same host. Edit the `[egress.model]` table in `box.toml`; [the `[egress.<name>]` table](../../guides/network-and-credentials/index.md) lists its keys:
+The credential is bound in `box.toml`, and the policy permits the request. The two name the same host. Edit the `[egress.model]` table in `box.toml`; [the `[egress.<name>]` table](/docs/user-guide/box/guides/network-and-credentials/index.md) lists its keys:
 
 ```toml
 [egress.model]
@@ -291,7 +289,7 @@ destinations = ["bedrock-runtime.us-west-2.amazonaws.com"]
 secret.ref = "env://AWS_BEARER_TOKEN_BEDROCK"
 ```
 
-Replace the `model_connect` and `model_request` rules of [your first policy](../../guides/write-a-policy/index.md) with these two. Replace rather than add: a second rule with the same `@id` refuses to load, and a renamed copy leaves the broad `model_request` permit in force.
+Replace the `model_connect` and `model_request` rules of [your first policy](/docs/user-guide/box/guides/write-a-policy/index.md) with these two. Replace rather than add: a second rule with the same `@id` refuses to load, and a renamed copy leaves the broad `model_request` permit in force.
 
 ```text
 @id("model_connect")
@@ -401,7 +399,7 @@ permit (principal, action == Box::Action::"fs:raed", resource);
 policy references unknown action: for policy `policy_0`, unrecognized action `Box::Action::"fs:raed"` at line 1, column 30 (did you mean `Box::Action::"fs:read"`?); for policy `policy_0`, unable to find an applicable action given the policy scope constraints
 ```
 
-A field name is one the action carries, and [the action vocabulary](../policy-actions/index.md) lists them. This one misspells `path`:
+A field name is one the action carries, and [the action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md) lists them. This one misspells `path`:
 
 ```text
 permit (principal, action == Box::Action::"fs:read", resource)
@@ -425,7 +423,7 @@ policy fails schema validation: for policy `policy_0`: entity `Box::FsReadOperat
 
 ### An optional field read without a guard
 
-An optional field (marked `?` in [the action vocabulary](../policy-actions/index.md)) is read behind a guard, as `context.input has arg1 && context.input.arg1 == "-rf"`. This one reads `arg1` with no guard:
+An optional field (marked `?` in [the action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md)) is read behind a guard, as `context.input has arg1 && context.input.arg1 == "-rf"`. This one reads `arg1` with no guard:
 
 ```text
 forbid (principal, action == Box::Action::"shell:exec", resource)
@@ -727,7 +725,7 @@ strands-box: warning: rule @id("write_budget") (rule 2) carries a temporal claus
 
 **Loads**, with no warning, when the temporal `permit` is the only permit for its action, or when every other permit for the action is temporal too. Alone, it admits the action whenever its clause holds.
 
-The check reads only whether the other permit has a condition. Whether two conditions overlap is outside it, and [Policy limitations](../../security/index.md#policy-limitations) states what this means for a cap.
+The check reads only whether the other permit has a condition. Whether two conditions overlap is outside it, and [Policy limitations](/docs/user-guide/box/security/index.md#policy-limitations) states what this means for a cap.
 
 ### A rule that loads and never matches
 
@@ -744,7 +742,9 @@ A box keeps its decision history in `<box_dir>/private/dogwood.redb`. The box re
 strands-box: error: policy staging failed: the box record is committed, but the history /Users/dev/.box/<name>/private/dogwood.redb is absent. Wipe the box directory to start again.
 ```
 
-The text varies: the record `is committed` or `is not committed`, and the history `is absent`, `is empty`, or `holds <n> bytes`. The run also refuses when the engine cannot read the history file, with `policy staging failed:` and the engine’s own reason, and the file is left as found. Remove the box directory to start again, as [getting started](../../quickstart/index.md#clean-up) describes.
+A first run that stops after Box stores the record and before it opens the history leaves the box in this state too.
+
+The text varies: the record `is committed` or `is not committed`, and the history `is absent`, `is empty`, or `holds <n> bytes`. The run also refuses when the engine cannot read the history file, with `policy staging failed:` and the engine’s own reason, and the file is left as found. Remove the box directory to start again, as [getting started](/docs/user-guide/box/quickstart/index.md#clean-up) describes.
 
 The run also refuses history stamped more than five minutes ahead of the system clock. This happens when the clock moved back after the box last ran, or when someone edited the history file:
 
@@ -752,11 +752,11 @@ The run also refuses history stamped more than five minutes ahead of the system 
 strands-box: error: policy staging failed: policy staging history failure: durable timestamp <t> is <n> ns ahead of the current clock <now>, exceeding the maximum allowed future skew of 300000000000 ns; refusing the operation rather than issuing future-dated timestamps
 ```
 
-If the clock moves back more than five minutes during a run, the box denies each request and prints `policy: warn: durable timestamp ...; denying` on stderr. Requests are decided again once the clock is within five minutes of the newest history timestamp. If an action finished while the clock was that far back, the box keeps its record and prints `policy: warn: an earlier outcome is not recorded yet: ...; denying` for each request until the record is saved. Once the clock is within five minutes again, the box saves it at the next request, or when the run shuts down, and then requests are decided normally. If the run ends while the clock is still more than five minutes behind, or the process is killed, that action doesn’t count toward any limit after a restart. A time-zone change does not move this clock. Correct the system clock, or remove the box directory to start again, as [getting started](../../quickstart/index.md#clean-up) describes.
+If the clock moves back more than five minutes during a run, the box denies each request and prints `policy: warn: durable timestamp ...; denying` on stderr. Requests are decided again once the clock is within five minutes of the newest history timestamp. If an action finished while the clock was that far back, the box keeps its record and prints `policy: warn: an earlier outcome is not recorded yet: ...; denying` for each request until the record is saved. Once the clock is within five minutes again, the box saves it at the next request, or when the run shuts down, and then requests are decided normally. If the run ends while the clock is still more than five minutes behind, or the process is killed, that action doesn’t count toward any limit after a restart. A time-zone change does not move this clock. Correct the system clock, or remove the box directory to start again, as [getting started](/docs/user-guide/box/quickstart/index.md#clean-up) describes.
 
 ## See also
 
--   [Write a policy and read what it decided](../../guides/write-a-policy/index.md): a first policy, a denial, and the decision log.
--   [The action vocabulary](../policy-actions/index.md): every action, its fields, and which part of the box raises it.
--   [Security](../../security/index.md): what `box.toml` governs, what `policy.dw` governs, and what a policy cannot do today.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/policy.md): how one engine per box decides, and why.
+-   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): a first policy, a denial, and the decision log.
+-   [The action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md): every action, its fields, and which part of the box raises it.
+-   [Security](/docs/user-guide/box/security/index.md): what `box.toml` governs, what `policy.dw` governs, and what a policy cannot do today.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/policy.md): how one engine per box decides, and why.

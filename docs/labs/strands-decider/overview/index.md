@@ -37,14 +37,14 @@ strands-decider ask StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 \
   --choice "Which team should handle this?=billing,technical,sales"
 ```
 
-The result names the selected option, reports a probability for every option, and includes a confidence for the choice. See [Inference](../inference/index.md) for the complete installation, device, command-line, and HTTP server guide.
+The result names the selected option, reports a probability for every option, and includes a confidence for the choice. See [Inference](/docs/labs/strands-decider/inference/index.md) for the complete installation, device, command-line, and HTTP server guide.
 
 ## Explore Decider
 
--   [Inference](../inference/index.md): install Decider, ask questions, and serve the HTTP API.
--   [Images](../images/index.md): ask questions about image inputs with supported models.
--   [Architecture](../architecture/index.md): understand the pointer head, question types, calibration, and shared-prefix cache.
--   [Model names](../model-names/index.md): choose and interpret a published model identifier.
--   [Strands Agents example](https://github.com/strands-labs/strands-decider/blob/2230d342d16f65561e4d70ec2eb5c12541d96b44/examples/strands/README.md): gate a tool call with Decider inside a Strands agent.
+-   [Inference](/docs/labs/strands-decider/inference/index.md): install Decider, ask questions, and serve the HTTP API.
+-   [Images](/docs/labs/strands-decider/images/index.md): ask questions about image inputs with supported models.
+-   [Architecture](/docs/labs/strands-decider/architecture/index.md): understand the pointer head, question types, calibration, and shared-prefix cache.
+-   [Model names](/docs/labs/strands-decider/model-names/index.md): choose and interpret a published model identifier.
+-   [Strands Agents example](https://github.com/strands-labs/strands-decider/blob/d30112f8c216a42b842acddcb7ed3567ab50618e/examples/strands/README.md): gate a tool call with Decider inside a Strands agent.
 
-New to Decider? Continue with [Inference](../inference/index.md) to run the model locally.
+New to Decider? Continue with [Inference](/docs/labs/strands-decider/inference/index.md) to run the model locally.

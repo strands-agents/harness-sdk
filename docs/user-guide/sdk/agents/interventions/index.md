@@ -512,6 +512,7 @@ Interventions return typed actions that the framework interprets. This enables:
 ## Related topics
 
 -   [Cedar Authorization](/docs/user-guide/sdk/agents/interventions/cedar-authorization/index.md): declarative, identity-aware access control using Cedar policies
+-   [Dogwood Authorization](/docs/user-guide/sdk/agents/interventions/dogwood-authorization/index.md): Cedar-style access control plus temporal rules over the agent’s own history
 -   [Steering](/docs/user-guide/sdk/agents/interventions/steering/index.md): LLM-based contextual guidance using the steering handler
 -   [Human in the Loop](/docs/user-guide/sdk/agents/interventions/human-in-the-loop/index.md): ready-to-use intervention handler for tool approval workflows
 -   [Hooks](/docs/user-guide/sdk/agents/hooks/index.md): low-level event callbacks for observing and modifying agent behavior

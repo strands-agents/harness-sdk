@@ -5,6 +5,9 @@ To change what answers your questions, you change the decision model class. Ever
 | Decision model | Class | Answers with | Reports |
 | --- | --- | --- | --- |
 | [LLM decision model](/docs/user-guide/sdk/decision-models/models/llm/index.md) | `LLMDecisionModel` | Any model provider | Latency, token usage |
+| TypeSafe Jev | `TypeSafeDecisionModel` | TypeSafe’s hosted Jev model | Latency, token usage when the provider returns it |
+| Decisions API | `DecisionsAPIDecisionModel` | A decision model hosted on decisionapi.net | Latency, token usage when the provider returns it |
+| Amazon SageMaker AI | `SageMakerDecisionModel` | A decision model deployed to your SageMaker AI real-time endpoint | Latency, token usage when the endpoint returns it |
 
 ## Custom decision models
 
@@ -116,8 +119,14 @@ This example only handles yes/no questions. A decision model that also handles m
 
 - [harness-sdk/strands-py/src/strands/decisions/decision_model.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decision_model.py)
 - [harness-sdk/strands-py/src/strands/decisions/types.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/types.py)
+- [harness-sdk/strands-py/src/strands/decisions/typesafe_decision_model.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/typesafe_decision_model.py)
+- [harness-sdk/strands-py/src/strands/decisions/decisions_api_decision_model.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decisions_api_decision_model.py)
+- [harness-sdk/strands-py/src/strands/decisions/sagemaker_decision_model.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/sagemaker_decision_model.py)
 
 ### TypeScript
 
 - [harness-sdk/strands-ts/src/decisions/decision-model.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts)
 - [harness-sdk/strands-ts/src/decisions/types.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/types.ts)
+- [harness-sdk/strands-ts/src/decisions/typesafe-decision-model.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts)
+- [harness-sdk/strands-ts/src/decisions/decisions-api-decision-model.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decisions-api-decision-model.ts)
+- [harness-sdk/strands-ts/src/decisions/sagemaker.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/sagemaker.ts)

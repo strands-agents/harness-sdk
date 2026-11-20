@@ -1,12 +1,10 @@
-[pi](https://pi.dev) runs in a box like any other program. In this example the project stays out of pi’s own reach, so its `bash` tool is its only way to a project file, and that tool runs [Strands Shell](../../reference/shell/index.md#invocation), the box’s own shell, where the policy decides the command and every file it reads, writes, or deletes. By the end of this page you have pi working on the project from getting started, and you have watched the policy permit three tasks and refuse two, with the refusal text pi quoted back.
+[pi](https://pi.dev) runs in a box like any other program. In this example the project stays out of pi’s own reach, so its `bash` tool is its only way to a project file, and that tool runs [Strands Shell](/docs/user-guide/box/reference/shell/index.md#invocation), the box’s own shell, where the policy decides the command and every file it reads, writes, or deletes. By the end of this page you have pi working on the project from getting started, and you have watched the policy permit three tasks and refuse two, with the refusal text pi quoted back.
 
-Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac with Apple silicon. The files are in [`examples/pi`](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/examples/pi/) in the repository, and this page walks through them.
-
-> **Status.** The action vocabulary and the context fields can change before 1.0.0. Pin the Box build you install (`./box-core/box --version`), and read [troubleshooting load failures](../../reference/policy/index.md#troubleshooting-load-failures) after an upgrade.
+Audience: an operator who has run [getting started](/docs/user-guide/box/quickstart/index.md) and [write a policy](/docs/user-guide/box/guides/write-a-policy/index.md) on a Mac with Apple silicon. The files are in [`examples/pi`](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/examples/pi/) in the repository, and this page walks through them.
 
 ## Before you start
 
--   The box from [getting started](../../quickstart/index.md) under `~/box-tutorial`: Box in `box-core`, Node.js from Homebrew, the project in `my-project`, and your Bedrock key in `AWS_BEARER_TOKEN_BEDROCK`, made in `us-west-2`. Run every command on this page from `~/box-tutorial`.
+-   The box from [getting started](/docs/user-guide/box/quickstart/index.md) under `~/box-tutorial`: Box in `box-core`, Node.js from Homebrew, the project in `my-project`, and your Bedrock key in `AWS_BEARER_TOKEN_BEDROCK`, made in `us-west-2`. Run every command on this page from `~/box-tutorial`.
     
 -   pi, from its installer:
     
@@ -74,7 +72,7 @@ pi reads `settings.json` from its agent directory. This is the whole file, with 
 
 ## Step 3. Read the box
 
-The complete file is [`box.toml`](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/examples/pi/box.toml) in the example directory. Its `name`, `box_dir`, `policy`, and `[egress.model]` table follow the box from getting started. These are the three tables this page explains, with your home directory and pi version where `<HOME>` and `<VERSION>` stand after the `sed` in step 1:
+The complete file is [`box.toml`](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/examples/pi/box.toml) in the example directory. Its `name`, `box_dir`, `policy`, and `[egress.model]` table follow the box from getting started. These are the three tables this page explains, with your home directory and pi version where `<HOME>` and `<VERSION>` stand after the `sed` in step 1:
 
 ```toml
 [agent]
@@ -111,11 +109,11 @@ write = ["~/box-tutorial/pi/agent", "~/box-tutorial/pi/tmp"]
 list = ["~/box-tutorial/my-project"]
 ```
 
-`command` names Node and the pi release itself, because the box starts only the programs that `command` and `exec` name, and the `pi` in `~/.pi/agent/bin` is a shell script that starts the same release. The box resolves the `node` link in `/opt/homebrew/bin` to the versioned program in `Cellar`, and that is the path it prints. `[agent.filesystem]` is the operating system enforcement tier: pi’s own process reaches each path listed there with no policy decision ([the two tiers](../../security/index.md#the-two-tiers)). `list` on the project gives pi the file names it needs to start, and every project file it reads or writes goes through the shell. A `read` grant over the project would let pi’s own process open `.env` with no decision, so the project stays out of `read` and `write`.
+`command` names Node and the pi release itself, because the box starts only the programs that `command` and `exec` name, and the `pi` in `~/.pi/agent/bin` is a shell script that starts the same release. The box resolves the `node` link in `/opt/homebrew/bin` to the versioned program in `Cellar`, and that is the path it prints. `[agent.filesystem]` is the operating system enforcement tier: pi’s own process reaches each path listed there with no policy decision ([the two tiers](/docs/user-guide/box/security/index.md#the-two-tiers)). `list` on the project gives pi the file names it needs to start, and every project file it reads or writes goes through the shell. A `read` grant over the project would let pi’s own process open `.env` with no decision, so the project stays out of `read` and `write`.
 
 ## Step 4. Read the policy
 
-The complete file is [`policy.dw`](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/examples/pi/policy.dw) in the example directory. It keeps the rules from getting started, adds `project_write` for writes in the project, and adds four `forbid` rules. The tasks below exercise two of them, and each carries an `@id` and a `@description` that the denial text quotes:
+The complete file is [`policy.dw`](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/examples/pi/policy.dw) in the example directory. It keeps the rules from getting started, adds `project_write` for writes in the project, and adds four `forbid` rules. The tasks below exercise two of them, and each carries an `@id` and a `@description` that the denial text quotes:
 
 ```text
 // One file inside the project stays unread, whatever the permit above says. The agent can see that
@@ -136,7 +134,7 @@ forbid (principal, action == Box::Action::"fs:delete", resource);
 
 The other two `forbid` rules, `metadata_hosts` and `metadata_addresses`, refuse the cloud metadata services by name and by address.
 
-`no_env` refuses the content of `.env` and leaves its metadata readable. A listing shows the file, and the policy refuses a read of its content. [Strands Shell](../../reference/shell/index.md#fs) lists the operations an `fs:read` rule can name.
+`no_env` refuses the content of `.env` and leaves its metadata readable. A listing shows the file, and the policy refuses a read of its content. [Strands Shell](/docs/user-guide/box/reference/shell/index.md#fs) lists the operations an `fs:read` rule can name.
 
 ## Step 5. Run the tasks
 
@@ -325,7 +323,7 @@ The review is done.
 
 ## Step 6. Read the decision log
 
-The box writes its decisions to `pi/state/private/telemetry/records.jsonl`. This command prints the verdict, action, resource, and rule of each one, as in [write a policy](../write-a-policy/index.md#step-4-read-the-decision-log):
+The box writes its decisions to `pi/state/private/telemetry/records.jsonl`. This command prints the verdict, action, resource, and rule of each one, as in [write a policy](/docs/user-guide/box/guides/write-a-policy/index.md#step-4-read-the-decision-log):
 
 ```sh
 jq -r '
@@ -382,7 +380,7 @@ With the setting, pi’s `bash` tool starts the `bash` in the box’s `bin` dire
 
 **The process title, in `box-preload.mjs`.** pi sets its process title when it starts. In a box that call ends the Node process at once, so the box prints its startup lines and then stops, with nothing from pi and exit status `139`. The preload file makes the title setter do nothing, which is a workaround for a Box limitation.
 
-**File timestamps, in `box-preload.mjs`.** Without the [`file-attributes`](../../reference/configuration/index.md#file-attributes) switch, Box does not let the agent change file timestamps inside a write grant ([file timestamps may not be preserved](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/macos-enforcement.md#file-timestamps-may-not-be-preserved)). pi’s credential store probes the timestamp precision of its lock file through that call, and stops when the call fails:
+**File timestamps, in `box-preload.mjs`.** Without the [`file-attributes`](/docs/user-guide/box/reference/configuration/index.md#file-attributes) switch, Box does not let the agent change file timestamps inside a write grant ([file timestamps may not be preserved](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/macos-enforcement.md#file-timestamps-may-not-be-preserved)). pi’s credential store probes the timestamp precision of its lock file through that call, and stops when the call fails:
 
 ```text
 Credential store read failed for amazon-bedrock: EPERM: operation not permitted, utime '/Users/you/box-tutorial/pi/agent/auth.json.lock'
@@ -392,7 +390,7 @@ The preload file answers that probe with success and touches no file, which is a
 
 ## What you have
 
-pi working on a project it can only reach through the box’s shell, a `box.toml` that gives its process its own installation, its own agent directory, and the project’s file names, and a policy that permitted three tasks and refused two with text pi quoted back. To give pi more, add a rule to `policy.dw`: [common rules](../../reference/policy/index.md#common-rules) has six to start from, and [write policy for shell commands](../write-shell-policy/index.md) shows how to admit a program such as `git`.
+pi working on a project it can only reach through the box’s shell, a `box.toml` that gives its process its own installation, its own agent directory, and the project’s file names, and a policy that permitted three tasks and refused two with text pi quoted back. To give pi more, add a rule to `policy.dw`: [common rules](/docs/user-guide/box/reference/policy/index.md#common-rules) has six to start from, and [write policy for shell commands](/docs/user-guide/box/guides/write-shell-policy/index.md) shows how to admit a program such as `git`.
 
 ## If something goes wrong
 
@@ -404,11 +402,11 @@ pi working on a project it can only reach through the box’s shell, a `box.toml
 | `Credential store read failed for amazon-bedrock: EPERM ... utime ...auth.json.lock` | The preload file did not load, or pi changed how it probes its lock file. Check the `--import` path in `command`. When pi tolerates the refusal, the timestamp part of the preload can go. |
 | pi reports `spawn EPERM` for every command | pi’s `bash` tool started `/bin/bash`. Check that `pi/agent/settings.json` is there and sets `shellPath`. |
 | `credential setup failed: credential variable AWS_BEARER_TOKEN_BEDROCK is not set` | Export the key in the shell that runs the box. A key lasts up to 12 hours. |
-| `blocked by egress control` in pi’s output | The egress gateway refused a request to Bedrock. [Errors and exit codes](../network-and-credentials/index.md#errors-and-exit-codes) on the egress page lists the causes. |
+| `blocked by egress control` in pi’s output | The egress gateway refused a request to Bedrock. [Errors and exit codes](/docs/user-guide/box/guides/network-and-credentials/index.md#errors-and-exit-codes) on the egress page lists the causes. |
 
 ## See also
 
--   [Write a policy and read what it decided](../write-a-policy/index.md): each part of a rule, and the record of each decision.
--   [Strands Shell](../../reference/shell/index.md): what pi’s `bash` tool runs, where, and the fields a rule reads.
--   [Security](../../security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of pi’s `read` list.
--   [The example directory](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/examples/pi/): the files this page walks through.
+-   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): each part of a rule, and the record of each decision.
+-   [Strands Shell](/docs/user-guide/box/reference/shell/index.md): what pi’s `bash` tool runs, where, and the fields a rule reads.
+-   [Security](/docs/user-guide/box/security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of pi’s `read` list.
+-   [The example directory](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/examples/pi/): the files this page walks through.

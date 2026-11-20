@@ -1,6 +1,6 @@
-Defined in: [src/decisions/typesafe-decision-model.ts:37](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L37)
+Defined in: [src/decisions/typesafe-decision-model.ts:42](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L42)
 
-Decision model backed by TypeSafe’s hosted Jev API.
+Decision model backed by TypeSafe’s hosted Jev API. HTTP 413 and TypeSafe’s HTTP 400 `max_tokens_exceeded` responses raise [ContextWindowOverflowError](/docs/api/typescript/ContextWindowOverflowError/index.md), preserving the HTTP failure as the cause.
 
 ## Example
 
@@ -23,7 +23,7 @@ const result = await decisions.ask('A customer needs a refund today.', {
 new TypeSafeDecisionModel(options?): TypeSafeDecisionModel;
 ```
 
-Defined in: [src/decisions/typesafe-decision-model.ts:44](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L44)
+Defined in: [src/decisions/typesafe-decision-model.ts:49](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L49)
 
 #### Parameters
 
@@ -103,7 +103,7 @@ protected _ask<Q>(
 ): Promise<DecisionResult<Q>>;
 ```
 
-Defined in: [src/decisions/typesafe-decision-model.ts:56](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L56)
+Defined in: [src/decisions/typesafe-decision-model.ts:61](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L61)
 
 Implementation-specific decision logic. Must return a complete [DecisionResult](/docs/api/typescript/DecisionResult/index.md), including `metadata.latencyMs` sourced from the underlying model provider. Implementations should forward `options.cancelSignal` to any cancellable work they start. The request’s `invocationContext` is not passed: `ask` records the reported usage itself.
 

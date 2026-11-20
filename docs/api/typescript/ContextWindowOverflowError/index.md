@@ -13,10 +13,10 @@ This error indicates that the combined length of the input (prompt, messages, sy
 ### Constructor
 
 ```ts
-new ContextWindowOverflowError(message): ContextWindowOverflowError;
+new ContextWindowOverflowError(message, options?): ContextWindowOverflowError;
 ```
 
-Defined in: [src/errors.ts:45](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/errors.ts#L45)
+Defined in: [src/errors.ts:46](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/errors.ts#L46)
 
 Creates a new ContextWindowOverflowError.
 
@@ -25,6 +25,8 @@ Creates a new ContextWindowOverflowError.
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `message` | `string` | Error message describing the context overflow |
+| `options?` | { `cause?`: `unknown`; } | Optional error options including the cause |
+| `options.cause?` | `unknown` | \- |
 
 #### Returns
 

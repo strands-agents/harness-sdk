@@ -1,4 +1,4 @@
-Defined in: [src/errors.ts:263](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/errors.ts#L263)
+Defined in: [src/errors.ts:264](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/errors.ts#L264)
 
 Error thrown when a tool cannot be found by name.
 
@@ -16,7 +16,7 @@ Thrown by ToolRegistry.resolve when the requested tool name doesn’t match any 
 new ToolNotFoundError(toolName): ToolNotFoundError;
 ```
 
-Defined in: [src/errors.ts:272](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/errors.ts#L272)
+Defined in: [src/errors.ts:273](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/errors.ts#L273)
 
 Creates a new ToolNotFoundError.
 
@@ -42,6 +42,6 @@ Creates a new ToolNotFoundError.
 readonly toolName: string;
 ```
 
-Defined in: [src/errors.ts:265](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/errors.ts#L265)
+Defined in: [src/errors.ts:266](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/errors.ts#L266)
 
 The tool name that was requested but not found.

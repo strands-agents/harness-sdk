@@ -1,6 +1,6 @@
 Strands Shell is the shell that runs each command the agent sends to `zsh`, `bash`, or `sh` in a box. Policy decides each command, and each file operation the command makes. A program outside the Shell runs in its own sandbox, separate from the agent’s.
 
-Audience: an operator with a working box from [getting started](../../quickstart/index.md). For the steps, read [write policy for shell commands](../../guides/write-shell-policy/index.md).
+Audience: an operator with a working box from [getting started](/docs/user-guide/box/quickstart/index.md). For the steps, read [write policy for shell commands](/docs/user-guide/box/guides/write-shell-policy/index.md).
 
 ## Invocation
 
@@ -25,11 +25,11 @@ Only commands that the Shell runs itself, such as `cat`, `read`, or `jq`, receiv
 
 A Lua script that the Shell runs does not read the input piped into the alias: it reads it as empty and never waits for it. A pipe inside one command, such as `echo x | lua -e 'print(io.read())'`, still reaches the script.
 
-Each invocation is one command. A variable exported in one invocation is unset in the next. The Shell starts each command with `HOME` set to the agent’s `HOME`, in the directory the alias was run from. It also gets the placeholder of each [credential route](../../guides/network-and-credentials/index.md), in the same variable as the agent. So `curl -H "Authorization: Bearer $GITHUB_TOKEN" ...` sends the placeholder. On a request to the route’s destination that policy permits, the gateway puts the real token in its place.
+Each invocation is one command. A variable exported in one invocation is unset in the next. The Shell starts each command with `HOME` set to the agent’s `HOME`, in the directory the alias was run from. It also gets the placeholder of each [credential route](/docs/user-guide/box/guides/network-and-credentials/index.md), in the same variable as the agent. So `curl -H "Authorization: Bearer $GITHUB_TOKEN" ...` sends the placeholder. On a request to the route’s destination that policy permits, the gateway puts the real token in its place.
 
 The alias takes the directory it was run from from `PWD` when `PWD` names it, and otherwise asks the operating system. A directory other than the workspace takes the same `fs:read` decision, with operation `change_dir`, that `cd` takes. The command doesn’t run, and the alias exits `126`, if policy refuses that decision, if the directory isn’t a directory, or if it is outside the operator’s home, the agent’s home, and the workspace. The last case covers `/` and `/tmp`, which the Shell holds only in memory. If the alias can’t tell which directory it was run from, or the directory’s name isn’t valid UTF-8, it exits `125` and runs nothing.
 
-The `python3` and `python` aliases send their arguments to the Shell’s own `python3` and `python` commands, as [Python in a box](../python/index.md#running-a-script) describes. They forward no standard input: the command reads its input as empty.
+The `python3` and `python` aliases send their arguments to the Shell’s own `python3` and `python` commands, as [Python in a box](/docs/user-guide/box/reference/python/index.md#running-a-script) describes. They forward no standard input: the command reads its input as empty.
 
 ## What runs where
 
@@ -49,7 +49,7 @@ The Shell implements these, each in place of a program of the same name on the `
 -   Text: `cat`, `grep`, `sed`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `tee`.
 -   Files: `ls`, `cp`, `mv`, `rm`, `mkdir`, `rmdir`, `ln`, `chmod`, `touch`, `mktemp`, `readlink`.
 -   Data and network: `jq`, `curl`.
--   Interpreters: `sh` and `lash`, which run a script in the Shell; `lua`; and `python` and `python3`, which run in Monty, Box’s Python interpreter. With [`monty = false`](../configuration/index.md#monty), `python` and `python3` are external programs instead. Policy sees `sh` and `lash` as two programs. `sh FILE` and `/bin/sh FILE` are both decided as `program == "sh"`, and `lash FILE` and `/bin/lash FILE` as `program == "lash"`, so a rule meant for the Shell’s script interpreter must name both. `.` and `source` also run a file.
+-   Interpreters: `sh` and `lash`, which run a script in the Shell; `lua`; and `python` and `python3`, which run in Monty, Box’s Python interpreter. With [`monty = false`](/docs/user-guide/box/reference/configuration/index.md#monty), `python` and `python3` are external programs instead. Policy sees `sh` and `lash` as two programs. `sh FILE` and `/bin/sh FILE` are both decided as `program == "sh"`, and `lash FILE` and `/bin/lash FILE` as `program == "lash"`, so a rule meant for the Shell’s script interpreter must name both. `.` and `source` also run a file.
 
 Paths outside the operator’s home, the agent’s home, and the workspace, such as `/tmp`, exist only in the Shell’s memory, for one command. A file written to `/tmp` is gone when the command ends.
 
@@ -95,7 +95,7 @@ when { context.input.program_path like "~/src/project/target/debug/*" };
 
 A program’s filesystem lists bound its own file operations.
 
-When an experimental [tool grammar](../configuration/index.md#toolnamegrammar) binds the program, Box decides the spawn as the grammar’s action, such as `Tool::git::Action::"push"`, or as `unmodeled` when the grammar can’t read the command, and `shell:spawn` doesn’t decide it. A grammar binds the program file of its own `[tool]` under its `program`, the name the agent types, and the file of each other `[tool]` and each stdio `[mcp.<name>]` whose command ends in that name. A spawn of a bound file by any other name is a `shell:spawn`, except in the refused cases below. For example, macOS `/usr/bin/git` is one file with many names, so with a git grammar on it, `git` is decided by the grammar and `make` is decided by `shell:spawn`. The agent may be able to make a link to a bound file under a name that no grammar binds, and `shell:spawn` decides that spawn too. So pin each `shell:spawn` permit on both `context.input.program` and `context.input.program_path`, such as `program == "make"` with `program_path == "/usr/bin/make"`.
+When an experimental [tool grammar](/docs/user-guide/box/reference/configuration/index.md#toolnamegrammar) binds the program, Box decides the spawn as the grammar’s action, such as `Tool::git::Action::"push"`, or as `unmodeled` when the grammar can’t read the command, and `shell:spawn` doesn’t decide it. A grammar binds the program file of its own `[tool]` under its `program`, the name the agent types, and the file of each other `[tool]` and each stdio `[mcp.<name>]` whose command ends in that name. A spawn of a bound file by any other name is a `shell:spawn`, except in the refused cases below. For example, macOS `/usr/bin/git` is one file with many names, so with a git grammar on it, `git` is decided by the grammar and `make` is decided by `shell:spawn`. The agent may be able to make a link to a bound file under a name that no grammar binds, and `shell:spawn` decides that spawn too. So pin each `shell:spawn` permit on both `context.input.program` and `context.input.program_path`, such as `program == "make"` with `program_path == "/usr/bin/make"`.
 
 Box refuses a spawn of a bound file before any rule decides it, and no rule can permit it, in these cases:
 
@@ -116,7 +116,7 @@ Decided once for each file operation that one of the Shell’s commands makes, o
 | `fs:delete` | `Box::FsDeleteOperation::"remove_file"`, `"remove_dir"` |
 | `fs:move` | `Box::FsMoveOperation::"rename"` |
 
-`touch` changes a file’s times as a `write_content` write. It first reads the file’s metadata to see whether the file exists, so it also needs `fs:read` with `read_metadata`. Without that, a plain `touch` on an existing file in a host folder exits `0` and changes nothing. The macOS [`file-attributes`](../configuration/index.md#file-attributes) switch doesn’t apply to the Shell’s built-in `touch`, because the Shell runs outside the agent’s sandbox. A `touch` program that runs in a sandbox still needs it.
+`touch` changes a file’s times as a `write_content` write. It first reads the file’s metadata to see whether the file exists, so it also needs `fs:read` with `read_metadata`. Without that, a plain `touch` on an existing file in a host folder exits `0` and changes nothing. The macOS [`file-attributes`](/docs/user-guide/box/reference/configuration/index.md#file-attributes) switch doesn’t apply to the Shell’s built-in `touch`, because the Shell runs outside the agent’s sandbox. A `touch` program that runs in a sandbox still needs it.
 
 | Field | Type | Present | Value |
 | --- | --- | --- | --- |
@@ -146,11 +146,11 @@ Policy decides whether a program outside the Shell runs. These `box.toml` keys d
 2.  An [`[agent.filesystem] exec`](#agentfilesystem-exec) entry.
 3.  Neither: the program is refused with status `126`.
 
-`limits.shell.max_input` bounds submitted command text, and `limits.shell.max_output` bounds output buffers and script files loaded with `source`. Set either size to `0` to disable that Shell limit. The [limits reference](../configuration/index.md#limits) gives their defaults, byte units, and the separate limits on transport and positional script invocation.
+`limits.shell.max_input` bounds submitted command text, and `limits.shell.max_output` bounds output buffers, script files loaded with `source`, and each `curl` response body. Set either size to `0` to disable that Shell limit. The [limits reference](/docs/user-guide/box/reference/configuration/index.md#limits) gives their defaults, byte units, and the separate limits on transport and positional script invocation.
 
 ### `limits.shell.timeout`
 
-Each submitted Shell call has a 30-second timeout by default. Set `shell.timeout = 600` under `[limits]` to allow ten minutes, or `shell.timeout = false` to disable this limit. See [`[limits]`](../configuration/index.md#limits) for the accepted values.
+Each submitted Shell call has a 30-second timeout by default. Set `shell.timeout = 600` under `[limits]` to allow ten minutes, or `shell.timeout = false` to disable this limit. See [`[limits]`](/docs/user-guide/box/reference/configuration/index.md#limits) for the accepted values.
 
 The allowance covers the full text sent in one call, including multiple commands, pipelines, Python called inside the Shell, and programs the Shell starts. Each new call receives a fresh allowance. Output leaves its deadline unchanged. The Shell alias waits for the broker’s result.
 
@@ -167,11 +167,11 @@ Monty’s 120-second active execution limit and 180-second cumulative sleep limi
 | `env` | table | empty | Variables the program receives. |
 | `filesystem` | table | empty | `read`, `write`, `read_file`, `write_file`, `list`, and `deny`: the paths the program’s own system calls reach. |
 | `network.contain_egress` | bool | `true` | How the program reaches the network. See [`[tool.<name>.network]`](#toolnamenetwork). |
-| `grammar` | table | none | Experimental. The tool grammar for the program. See [`[tool.<name>.grammar]`](../configuration/index.md#toolnamegrammar). |
+| `grammar` | table | none | Experimental. The tool grammar for the program. See [`[tool.<name>.grammar]`](/docs/user-guide/box/reference/configuration/index.md#toolnamegrammar). |
 
 A table matches a `shell:spawn` when `program_path` names the command file that Box resolved at startup, and its fixed arguments match the leading arguments of the command. When several tables match, the one with the longest `command` is used. When a table names the file and none matches the arguments, the program is refused.
 
-Configured tool programs remain protected from writes and replacement for the run. Box checks direct writable grants before startup and refuses changes through the Shell after policy permits them. [Configured command integrity](../configuration/index.md#configured-command-integrity) lists the startup constraints and the procedure for operator updates.
+Configured tool programs and the programs of declared secret sources remain protected from writes and replacement for the run. Box checks direct writable grants before startup and refuses changes through the Shell after policy permits them. [Configured command integrity](/docs/user-guide/box/reference/configuration/index.md#configured-command-integrity) lists the startup constraints and the procedure for operator updates.
 
 ```toml
 [tool.git]
@@ -185,7 +185,7 @@ deny  = ["~/src/project/.env"]
 
 ### `[tool.<name>.network]`
 
-`[tool.<name>.network]` holds one key, `contain_egress`. It works the same as a stdio MCP server’s [`[mcp.<name>.network]`](../../guides/add-an-mcp-server/index.md#network), with one difference: with `false`, the decision log records one `egress:native` entry each time the program runs, not once at startup.
+`[tool.<name>.network]` holds one key, `contain_egress`. It works the same as a stdio MCP server’s [`[mcp.<name>.network]`](/docs/user-guide/box/guides/add-an-mcp-server/index.md#network), with one difference: with `false`, the decision log records one `egress:native` entry each time the program runs, not once at startup.
 
 `false` applies to a program whose client does not read `HTTPS_PROXY`, such as a client that signs in through single sign-on:
 
@@ -230,7 +230,9 @@ A name changes only which file runs. The spawn still needs a `shell:spawn` permi
 
 ## `curl`
 
-`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/egress.md)). A request the gateway refuses makes `curl` exit non-zero.
+`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/egress.md)). A request the gateway refuses makes `curl` exit non-zero.
+
+A response body is at most [`limits.shell.max_output`](/docs/user-guide/box/reference/configuration/index.md#limits) bytes, 1 MiB by default. Past it, `curl` exits with status `6`, writes none of the body, and prints `curl: (6) response body too large` unless `-s` hides errors. The request was already sent, so its effect at the server stays.
 
 ## Exit statuses
 
@@ -246,19 +248,20 @@ A name changes only which file runs. The spawn still needs a `shell:spawn` permi
 | `126` | Policy refused the directory the alias was run from, it isn’t a directory, or it is outside the operator’s home, the agent’s home, and the workspace. Nothing ran. | `strands-box: cannot start in <directory>: <error>` |
 | `126` | Policy refused the command. | `strands-shell: effect denied: policy denied this operation on '<program>'`, then `[policy: <id>]` or `[default-deny]`. A tool grammar action reads the same way. |
 | `126` | A tool grammar binds the program file, and Box refused the spawn before any rule decided it. | `strands-shell: effect denied: policy denied this operation on '<program>' [tool-grammar]: <reason>. No policy can permit it.` |
-| `126` | Policy permitted a program, and nothing in [Configuration](#configuration) covers it. | ``strands-shell: <program>: no tool runs <path>: no `[tool.<name>] command` matches this program and its leading arguments`` |
+| `126` | Policy permitted a program that a `[tool.<name>]` table names, and its arguments match no table’s fixed arguments. | ``strands-shell: <program>: no tool runs <path>: no `[tool.<name>] command` matches this program and its leading arguments`` |
+| `126` | Policy permitted a program that no `[tool.<name>]` table names, and no `exec` entry covers it, for example a program the agent installed during the run. | ``strands-shell: <program>: no tool runs <path>: no `[tool.<name>] command` matches this program and its leading arguments. The `[tool.<name>]` tables are fixed when the box starts, so a program created during the run runs only under an `[agent.filesystem] exec` entry`` |
 | `126` | The launch directory differs from the directory policy checked. Run the command again. | `strands-shell: <program>: the tool working directory does not match the policy-approved directory` |
-| `127` | The program is not in the Shell, and not on the `PATH`. | `strands-shell: <program>: command not found` |
+| `127` | The program is not in the Shell, and not on the `PATH`. A `PATH` set inside the box does not change where the box looks. | `strands-shell: <program>: command not found`. For a bare name, then ``strands-shell: <program>: no tool in this box has this name, and no file of this name is on the PATH that `box run` started with. A PATH set inside the box does not change where the box looks`` |
 | Any other | The command’s own status. A refused file operation fails the command that made it, for example `cat` with `1`. | `policy denied this operation on '<path>'`, then `[policy: <id>]` or `[default-deny]` |
 | Any other | The path changed between the check and the operation, for example a directory was swapped for a symlink. The Shell refuses rather than act on a file policy didn’t judge. Run the command again. | `strands-shell: <command>: filesystem identity changed during effect admission` |
 | Any other | The operation reaches a configured tool command or its ancestor. Select another path. | `<path>: is a configured tool command or its ancestor, which this run does not allow to change` |
 | Any other | The directory contains a hard-link alias for a configured command. Select a directory without the alias. | `<path>: contains a hard link to a configured tool command, so this mutation is not allowed` |
-| Any other | Box cannot complete its directory scan. [Check the reported cause and scan constraints](../configuration/index.md#configured-command-integrity). | `<path>: cannot finish checking for configured tool command hard links: <cause>` |
-| Any other | The operation would change an installed Box program or an enclosing path. [Update the installation between runs](../configuration/index.md#installation-integrity). | `<path>: cannot change a trusted Box executable or its path` |
+| Any other | Box cannot complete its directory scan. [Check the reported cause and scan constraints](/docs/user-guide/box/reference/configuration/index.md#configured-command-integrity). | `<path>: cannot finish checking for configured tool command hard links: <cause>` |
+| Any other | The operation would change an installed Box program or an enclosing path. [Update the installation between runs](/docs/user-guide/box/reference/configuration/index.md#installation-integrity). | `<path>: cannot change a trusted Box executable or its path` |
 
 ## See also
 
--   [Write policy for shell commands](../../guides/write-shell-policy/index.md): rules for commands, programs, and paths.
--   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
--   [A tool’s sandbox](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
--   [The `[egress.<name>]` table](../../guides/network-and-credentials/index.md): credentials for the requests `curl` sends.
+-   [Write policy for shell commands](/docs/user-guide/box/guides/write-shell-policy/index.md): rules for commands, programs, and paths.
+-   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
+-   [A tool’s sandbox](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
+-   [The `[egress.<name>]` table](/docs/user-guide/box/guides/network-and-credentials/index.md): credentials for the requests `curl` sends.

@@ -23,5 +23,7 @@
 
 - [GitHub repository](https://github.com/strands-agents/harness-sdk)
 - [Samples](https://github.com/strands-agents/samples)
+- [OpenAPI description](https://strandsagents.com/openapi.json)
+- [Integrations catalog](https://strandsagents.com/integrations.json)
 - [Documentation index for language models](https://strandsagents.com/llms.txt)
 - [Complete documentation corpus](https://strandsagents.com/llms-full.txt)

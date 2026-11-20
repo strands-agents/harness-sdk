@@ -17,7 +17,7 @@ AI-powered Lambda error diagnostics that transforms generic error messages into 
 
 ### Architecture
 
-![Lambda Error Analysis Architecture](https://raw.githubusercontent.com/strands-agents/samples/0c1a4c460c5e3aa589bef0d544728314d9d94891/python/04-industry-use-cases/software-engineering/lambda-error-analysis-agent/images/lambda-error-analysis-architecture.png)
+![Lambda Error Analysis Architecture](https://raw.githubusercontent.com/strands-agents/samples/6226307ed8f6de1face333d3daec638593aeedf3/python/04-industry-use-cases/software-engineering/lambda-error-analysis-agent/images/lambda-error-analysis-architecture.png)
 
 **Event-driven error analysis system** that automatically investigates Lambda failures using AI:
 
@@ -246,4 +246,4 @@ For production deployments, consider:
 
 ## Upstream source
 
-- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/0c1a4c460c5e3aa589bef0d544728314d9d94891/python/04-industry-use-cases/software-engineering/lambda-error-analysis-agent)
+- [View this sample at the imported commit](https://github.com/strands-agents/samples/tree/6226307ed8f6de1face333d3daec638593aeedf3/python/04-industry-use-cases/software-engineering/lambda-error-analysis-agent)

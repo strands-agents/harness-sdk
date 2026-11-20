@@ -1,4 +1,4 @@
-Defined in: [src/errors.ts:142](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/errors.ts#L142)
+Defined in: [src/errors.ts:143](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/errors.ts#L143)
 
 Error thrown when the network connection to the model provider fails, before or while the response is received.
 
@@ -16,7 +16,7 @@ Retrying the same request may succeed. The default model retry strategy retries 
 new ModelNetworkError(message, options?): ModelNetworkError;
 ```
 
-Defined in: [src/errors.ts:149](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/errors.ts#L149)
+Defined in: [src/errors.ts:150](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/errors.ts#L150)
 
 Creates a new ModelNetworkError.
 

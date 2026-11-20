@@ -2,13 +2,13 @@ A tool grammar describes one program, such as `git`, as a set of actions and eff
 
 Without a grammar, a rule about `git` reads the raw words of a `shell:spawn` request, such as `context.input.arg1 == "push"`. The same force push can be written as `git push -f`, `git push --force-with-lease`, or `git push origin +main`, and a rule over raw words must list each spelling. A grammar lists the spellings once, as data. Each of them becomes the action `push` with the effect `force_push`, and one rule refuses all of them.
 
-This page adds a grammar for `git`, writes rules against it, and then states what a grammar governs and what it doesn’t. For every key and every startup refusal, see [`[tool.<name>.grammar]`](../../reference/configuration/index.md#toolnamegrammar) in the configuration reference.
+This page adds a grammar for `git`, writes rules against it, and then states what a grammar governs and what it doesn’t. For every key and every startup refusal, see [`[tool.<name>.grammar]`](/docs/user-guide/box/reference/configuration/index.md#toolnamegrammar) in the configuration reference.
 
-> **Status.** Tool grammars are experimental. They load only when `box.toml` sets `[experimental-features] tool-grammars = true`, and the format can change before 1.0.0.
+Tool grammars are experimental. They load only when `box.toml` sets `[experimental-features] tool-grammars = true`.
 
 ## Before you start
 
--   A box with a working policy for Strands Shell commands, and a `[tool.git]` table that runs, as in [Write policy for shell commands](../write-shell-policy/index.md). This page adds rules to that policy.
+-   A box with a working policy for Strands Shell commands, and a `[tool.git]` table that runs, as in [Write policy for shell commands](/docs/user-guide/box/guides/write-shell-policy/index.md). This page adds rules to that policy.
 
 ## Step 1. Turn on tool grammars
 
@@ -105,7 +105,7 @@ strands-shell: effect denied: policy denied this operation on '/usr/bin/git' [po
 
 `git push --dry-run -f` doesn’t have the effect, because `--dry-run` removes it, so the forbid doesn’t refuse it.
 
-A rule reads the command through `context.input`: the effects, one field for each option and operand, such as `force`, and the fields that every grammar action has, such as `cwd`. [Tool grammar actions](../../reference/policy-actions/index.md#tool-grammar-actions) lists each field and its type.
+A rule reads the command through `context.input`: the effects, one field for each option and operand, such as `force`, and the fields that every grammar action has, such as `cwd`. [Tool grammar actions](/docs/user-guide/box/reference/policy-actions/index.md#tool-grammar-actions) lists each field and its type.
 
 ## Step 4. Start the box
 
@@ -254,13 +254,13 @@ The effects are what the command line states, not what the program does. Write r
 
 ## Startup refusals
 
-`run` refuses invalid grammar definitions and tool configuration before the workload starts. Each message says what is wrong. Most of these refusals come before it writes any box state. The check that `program` on `PATH` reaches the tool’s file comes after `run` opens each tool’s program file. [`[tool.<name>.grammar]`](../../reference/configuration/index.md#toolnamegrammar) lists each refusal with its message.
+`run` refuses invalid grammar definitions and tool configuration before the workload starts. Each message says what is wrong. Most of these refusals come before it writes any box state. The check that `program` on `PATH` reaches the tool’s file comes after `run` opens each tool’s program file. [`[tool.<name>.grammar]`](/docs/user-guide/box/reference/configuration/index.md#toolnamegrammar) lists each refusal with its message.
 
 An unavailable server program does not stop startup. A later server-start request can be refused when its required grammar binding is unavailable, as described in [which program files a grammar binds](#which-program-files-a-grammar-binds).
 
 ## See also
 
--   [`[tool.<name>.grammar]`](../../reference/configuration/index.md#toolnamegrammar): the configuration reference and every startup refusal.
--   [Tool grammar actions](../../reference/policy-actions/index.md#tool-grammar-actions): every field a rule can read.
--   [`shell:spawn`](../../reference/shell/index.md#shellspawn): how the Shell decides a program of the surrounding OS, and when a grammar decides it instead.
--   [What a temporal rule observes](../../reference/policy-actions/index.md#what-a-temporal-rule-observes): the events a grammar action records.
+-   [`[tool.<name>.grammar]`](/docs/user-guide/box/reference/configuration/index.md#toolnamegrammar): the configuration reference and every startup refusal.
+-   [Tool grammar actions](/docs/user-guide/box/reference/policy-actions/index.md#tool-grammar-actions): every field a rule can read.
+-   [`shell:spawn`](/docs/user-guide/box/reference/shell/index.md#shellspawn): how the Shell decides a program of the surrounding OS, and when a grammar decides it instead.
+-   [What a temporal rule observes](/docs/user-guide/box/reference/policy-actions/index.md#what-a-temporal-rule-observes): the events a grammar action records.

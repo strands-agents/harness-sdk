@@ -176,6 +176,7 @@ If the classifier’s model call fails, the handler asks a person to approve tha
 
 - [Human in the loop](/docs/user-guide/sdk/agents/interventions/human-in-the-loop/index.md) (2 shared tags)
 - [Cedar Authorization](/docs/user-guide/sdk/agents/interventions/cedar-authorization/index.md) (2 shared tags)
+- [Dogwood Authorization](/docs/user-guide/sdk/agents/interventions/dogwood-authorization/index.md) (2 shared tags)
 - [Interventions](/docs/user-guide/sdk/agents/interventions/index.md) (2 shared tags)
 - [Creating a Custom Model Provider](/docs/user-guide/sdk/model-providers/custom_model_provider/index.md) (1 shared tag)
 - [Tools](/docs/user-guide/sdk/bidi/tools/index.md) (1 shared tag)
@@ -183,7 +184,6 @@ If the classifier’s model call fails, the handler asks a person to approve tha
 - [Tool Executors](/docs/user-guide/sdk/tools/executors/index.md) (1 shared tag)
 - [Available Sandboxes](/docs/user-guide/sdk/sandbox/available-sandboxes/index.md) (1 shared tag)
 - [Building a Custom Sandbox](/docs/user-guide/sdk/sandbox/custom-sandbox/index.md) (1 shared tag)
-- [Sandbox](/docs/user-guide/sdk/sandbox/index.md) (1 shared tag)
 
 
 ## Implementation

@@ -194,6 +194,8 @@ Put rules like this in the schema, not in your prompt. The model sees the exact 
 
 Sometimes the model ends its turn with a text reply and never calls the structured output tool. Strands then retries once with the structured output tool required, so the model’s only option is to call it.
 
+With the Amazon Bedrock and Anthropic providers, Strands doesn’t force a model that rejects a forced tool call, such as Claude Opus 5.5 or Claude Sonnet 5.5, or a model that skips thinking when forced, such as Claude Haiku 5.5. The [shared model info](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json) lists the models Strands knows not to force. For any other model, Strands tries forcing first. If the provider rejects it, Strands stops forcing that model for the rest of the process. When Strands doesn’t force the model, the retry instead asks the provider to make the model’s reply match your schema (native structured output). If native structured output isn’t available or rejects your schema, the retry offers the structured output tool without requiring it, so the result is best effort. A schema that native structured output can’t represent, such as one with dictrecord, tuple, or untyped fields, goes straight to that best-effort retry, and Strands warns about it.
+
 (( tab "Python" ))
 Before the retry, Strands adds a user message to the conversation: `You must format the previous response as structured output.` To replace it, pass `structured_output_prompt` to the agent or to a single call. A value passed to a call takes precedence over the agent’s value.
 
@@ -223,7 +225,7 @@ name='Dana Ruiz' email='dana@example.com'
 (( /tab "Python" ))
 
 (( tab "TypeScript" ))
-Strands drops the text reply and retries with only the tool choice changed. No message is added, so there’s no prompt to configure.
+Strands drops the text reply and retries without adding a message, so there’s no prompt to configure.
 (( /tab "TypeScript" ))
 
 If the retry still doesn’t return valid structured output, the call raises `StructuredOutputException``StructuredOutputError`. Catch it where your application can fall back. [Return structured output](/docs/user-guide/sdk/agents/structured-output/index.md#request-structured-output) shows an example. To retry again instead of raising, set an attempt limit.
@@ -313,8 +315,10 @@ The limit covers the whole request, like the other [invocation limits](/docs/use
 
 - [harness-sdk/strands-py/src/strands/tools/structured_output/structured_output_tool.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/tools/structured_output/structured_output_tool.py)
 - [harness-sdk/strands-py/src/strands/event_loop/event_loop.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/event_loop/event_loop.py)
+- [harness-sdk/strands-py/src/strands/models/_native_output.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/_native_output.py)
 
 ### TypeScript
 
 - [harness-sdk/strands-ts/src/tools/structured-output-tool.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/structured-output-tool.ts)
 - [harness-sdk/strands-ts/src/agent/agent.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/agent/agent.ts)
+- [harness-sdk/strands-ts/src/models/native-output.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/native-output.ts)

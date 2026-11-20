@@ -2,15 +2,15 @@ Use these profiles to prepare Box for AgentCore Runtime managed code, customer c
 
 ## Install and configure Box
 
-The service profiles below describe ARM64 deployments. Select an ARM64 runtime, container, or MicroVM and check that `uname -m` reports `aarch64`. [Install Box](../../quickstart/index.md#step-1-download-box), keeping the main executable and both helpers from the same build together. Check the [Linux requirements](../linux-requirements/index.md) for required libraries, permissions to create the sandbox, and experimental x86-64 builds.
+The service profiles below describe ARM64 deployments. Select an ARM64 runtime, container, or MicroVM and check that `uname -m` reports `aarch64`. [Install Box](/docs/user-guide/box/quickstart/index.md#step-1-download-box), keeping the main executable and both helpers from the same build together. Check the [Linux requirements](/docs/user-guide/box/reference/linux-requirements/index.md) for required libraries, permissions to create the sandbox, and architecture selection.
 
-Use the [configuration reference](../configuration/index.md) to configure Box.
+Use the [configuration reference](/docs/user-guide/box/reference/configuration/index.md) to configure Box.
 
-[Native filesystem policy](../../security/native-filesystem-policy/index.md) is macOS-only. A Linux build refuses a `box.toml` that enables it.
+[Native filesystem policy](/docs/user-guide/box/security/native-filesystem-policy/index.md) is macOS-only. A Linux build refuses a `box.toml` that enables it.
 
 ## Shared requirements
 
-Use the shared [Linux requirements](../linux-requirements/index.md) for libraries, namespaces, mounts, workload restrictions, private storage, and application dependencies. Check them inside the deployed service using the Linux user account that starts Box. The service supplies the kernel and controls which system calls and namespace and mount operations Box can use. If you use a container, its image supplies the libraries. If setup fails, use the [permission troubleshooting table](../linux-requirements/index.md#operating-system-and-container-permissions).
+Use the shared [Linux requirements](/docs/user-guide/box/reference/linux-requirements/index.md) for libraries, namespaces, mounts, workload restrictions, private storage, and application dependencies. Check them inside the deployed service using the Linux user account that starts Box. The service supplies the kernel and controls which system calls and namespace and mount operations Box can use. If you use a container, its image supplies the libraries. If setup fails, use the [permission troubleshooting table](/docs/user-guide/box/reference/linux-requirements/index.md#operating-system-and-container-permissions).
 
 How Box uses Linux capabilities during startup
 

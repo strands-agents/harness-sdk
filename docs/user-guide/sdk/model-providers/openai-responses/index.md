@@ -406,6 +406,8 @@ const model = new OpenAIModel({
 ```
 (( /tab "TypeScript" ))
 
+GPT-6.2 models append the `instructions` field after the input, so OpenAI never caches it. On models whose model info says so (GPT-6.2 Astra and Sol, on the OpenAI API and Amazon Bedrock Mantle), the provider sends the system prompt as a leading `developer` message instead, with or without a cache configuration, so it is part of the cached prefix. A [stateful](#server-side-conversation-state) model still sends the system prompt as `instructions`, because a message sent again on every call would be stored again each time, so on these models a stateful system prompt is not cached.
+
 Cache points do not change what a [stateful](#server-side-conversation-state) model stores server-side: injected content is still kept in the stored conversation.
 
 ## Advanced Features

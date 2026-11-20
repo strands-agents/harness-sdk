@@ -33,27 +33,6 @@ await agent.invoke('Show me the contents of a single file in this directory')
 ```
 (( /tab "TypeScript" ))
 
-We can see which tools are loaded in our agent:
-
-(( tab "Python" ))
-Access `agent.tool_names` for a list of tool names, and `agent.tool_registry.get_all_tools_config()` for a JSON representation including descriptions and input parameters:
-
-```python
-print(agent.tool_names)
-
-print(agent.tool_registry.get_all_tools_config())
-```
-(( /tab "Python" ))
-
-(( tab "TypeScript" ))
-Access the tools array directly:
-
-```typescript
-// Access all tools
-console.log(agent.tools)
-```
-(( /tab "TypeScript" ))
-
 ## Loading Tools from Files
 
 (( tab "Python" ))
@@ -89,6 +68,33 @@ Automatic loading and reloading from a directory is available in the Python SDK.
 Tool Loading Implications
 
 When enabling automatic tool loading, any Python file placed in the `./tools/` directory will be executed by the agent. Under the shared responsibility model, it is your responsibility to ensure that only safe, trusted code is written to the tool loading directory, as the agent will automatically pick up and execute any tools found there.
+
+## Accessing Tools
+
+Inspect the tools registered with your agent:
+
+(( tab "Python" ))
+Access `agent.tool_names` for a list of tool names, and `agent.tool_registry.get_all_tools_config()` for a JSON representation including descriptions and input parameters:
+
+```python
+print(agent.tool_names)
+
+print(agent.tool_registry.get_all_tools_config())
+```
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+Access the tools array directly:
+
+```typescript
+// Access all tools
+console.log(agent.tools)
+```
+(( /tab "TypeScript" ))
+
+By default, agents send tool definitions to the model in registration order. To keep identical tool catalogs stable across requests, for example when MCP servers return the same tools in different orders, turn on sorting with `Agent(sort_tools=True)``new Agent({ sortTools: true })`. Tool definitions are then sorted by name on every request the agent makes, including context summaries. This helps avoid prompt-cache misses; it does not enable caching.
+
+Sorting happens before middleware runs, so middleware on the model-invocation stage receives the sorted list and can reorder it. The model receives whatever order the middleware passes on.
 
 ## Using Tools
 
@@ -210,5 +216,6 @@ When a model returns several tool requests at once, a [tool executor](/docs/user
 
 ### TypeScript
 
+- [harness-sdk/strands-ts/src/registry/tool-registry.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/registry/tool-registry.ts)
 - [harness-sdk/strands-ts/src/tools/tool.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/tool.ts)
 - [harness-sdk/strands-ts/src/tools/tool-factory.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/tool-factory.ts)

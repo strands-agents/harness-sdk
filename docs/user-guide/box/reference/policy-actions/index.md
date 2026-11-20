@@ -1,8 +1,8 @@
-A rule names one action. The action decides which `context.input` fields the rule can read. The box ships ten actions, and generates one more for each MCP tool it discovers. Each experimental [tool grammar](../configuration/index.md#toolnamegrammar) adds its own `Tool::<name>` actions.
+A rule names one action. The action decides which `context.input` fields the rule can read. The box ships ten actions, and generates one more for each MCP tool it discovers. Each experimental [tool grammar](/docs/user-guide/box/reference/configuration/index.md#toolnamegrammar) adds its own `Tool::<name>` actions.
 
-Audience: an operator writing a `policy.dw` who needs the exact action name, its `context.input` fields, and which part of the box raises it. [Policy](../policy/index.md) introduces the rules, and [common rules](../policy/index.md#common-rules) shows each field in use.
+Audience: an operator writing a `policy.dw` who needs the exact action name, its `context.input` fields, and which part of the box raises it. [Policy](/docs/user-guide/box/reference/policy/index.md) introduces the rules, and [common rules](/docs/user-guide/box/reference/policy/index.md#common-rules) shows each field in use.
 
-> **Status.** The vocabulary can change before 1.0.0. Pin the Box build you install. A rule that names an action the build does not have refuses to load.
+A rule that names an action the build does not have refuses to load.
 
 ## The fixed parts
 
@@ -98,9 +98,9 @@ Compare either as a String behind its own guard, as `context.input has ip4 && co
 | `body_bytes` | Long | The request body length. |
 | `intercepted` | Bool | `true` when the gateway decrypted a TLS exchange, `false` for plain HTTP. |
 
-A rule on `path` has caveats for repeated slashes and `%2F`. [Forbid one URL path on a host](../policy/index.md#forbid-one-url-path-on-a-host) lists them.
+A rule on `path` has caveats for repeated slashes and `%2F`. [Forbid one URL path on a host](/docs/user-guide/box/reference/policy/index.md#forbid-one-url-path-on-a-host) lists them.
 
-Cloud metadata and link-local protection is two `forbid` rules on `net:connect`; [what Box always enforces](../../security/index.md#what-box-always-enforces) lists them.
+Cloud metadata and link-local protection is two `forbid` rules on `net:connect`; [what Box always enforces](/docs/user-guide/box/security/index.md#what-box-always-enforces) lists them.
 
 ## Shell
 
@@ -130,13 +130,13 @@ The decision, request, and outcome use the same `cwd` spelling. The program star
 
 A program bound to a tool grammar raises its `Tool::<name>::Action`. For programs launched through Strands Shell, its `cwd` names the same selected launch directory and stays absolute in decisions and history, including paths below the operator home. Use that absolute path in directory predicates for those grammar actions.
 
-When a tool grammar binds the program, the grammar action decides the spawn, and the spawn enters history as that action and not as `shell:spawn`. A spawn that the grammar binding refuses before any rule decides it enters history as a `shell:spawn` request. [`shell:spawn`](../shell/index.md#shellspawn) states when Box refuses one.
+When a tool grammar binds the program, the grammar action decides the spawn, and the spawn enters history as that action and not as `shell:spawn`. A spawn that the grammar binding refuses before any rule decides it enters history as a `shell:spawn` request. [`shell:spawn`](/docs/user-guide/box/reference/shell/index.md#shellspawn) states when Box refuses one.
 
-A rule that covers both actions names both, as `action in [Box::Action::"shell:exec", Box::Action::"shell:spawn"]`. A `shell:exec` permit covers the shell’s own programs, and a `shell:spawn` permit covers a program of the surrounding OS. A permitted program of the surrounding OS runs in its own sandbox, separate from the agent’s sandbox and wider than it. Its own file operations raise no `fs:*` decision; [Security](../../security/index.md#the-two-tiers) states that boundary.
+A rule that covers both actions names both, as `action in [Box::Action::"shell:exec", Box::Action::"shell:spawn"]`. A `shell:exec` permit covers the shell’s own programs, and a `shell:spawn` permit covers a program of the surrounding OS. A permitted program of the surrounding OS runs in its own sandbox, separate from the agent’s sandbox and wider than it. Its own file operations raise no `fs:*` decision; [Security](/docs/user-guide/box/security/index.md#the-two-tiers) states that boundary.
 
 ## MCP
 
-**`mcp:call`**, once per request through a declared MCP server, except the protocol methods listed below. Remote MCP checks require a [matching configured host](../../guides/add-an-mcp-server/index.md#remote-destination-matching).
+**`mcp:call`**, once per request through a declared MCP server, except the protocol methods listed below. Remote MCP checks require a [matching configured host](/docs/user-guide/box/guides/add-an-mcp-server/index.md#remote-destination-matching).
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -146,7 +146,7 @@ A rule that covers both actions names both, as `action in [Box::Action::"shell:e
 | `prompt?` | String | The prompt, on `prompts/get`. |
 | `uri?` | String | The resource URI, on `resources/read`. |
 
-Each stdio server in `box.toml` starts through a `shell:spawn` decision on the program its `[mcp.<name>]` table names, or through the grammar action when a tool grammar binds that program. A policy with no matching permit refuses the server at startup. The `program` field is the executable’s filename, and `program_path` identifies its resolved file. The `command` field starts with that filename. For an enabled [MCP wildcard command](../../guides/add-an-mcp-server/index.md#argument-wildcards), `command` contains the alias name and effective launch arguments, joined by spaces. Its argument fields contain the same values, including the caller’s values in wildcard positions. A permit on `mcp:call` for a server covers every method and tool on it. Refuse one tool by name with a `tool` guard, or with the per-tool `forbid` that [MCP policy](../../guides/write-mcp-policy/index.md#step-4-narrow-the-server) shows:
+Each stdio server in `box.toml` starts through a `shell:spawn` decision on the program its `[mcp.<name>]` table names, or through the grammar action when a tool grammar binds that program. A policy with no matching permit refuses the server at startup. The `program` field is the executable’s filename, and `program_path` identifies its resolved file. The `command` field starts with that filename. For an enabled [MCP wildcard command](/docs/user-guide/box/guides/add-an-mcp-server/index.md#argument-wildcards), `command` contains the alias name and effective launch arguments, joined by spaces. Its argument fields contain the same values, including the caller’s values in wildcard positions. A permit on `mcp:call` for a server covers every method and tool on it. Refuse one tool by name with a `tool` guard, or with the per-tool `forbid` that [MCP policy](/docs/user-guide/box/guides/write-mcp-policy/index.md#step-4-narrow-the-server) shows:
 
 ```text
 forbid (principal, action == Box::Action::"mcp:call", resource)
@@ -176,7 +176,7 @@ Over HTTP, each frame is also decided as `http:request` first. Because `tools/li
 
 ## Tool grammar actions
 
-Each experimental [tool grammar](../../guides/tool-grammars/index.md) adds the actions `Tool::<name>::Action::"<action>"`, one for each `[shell.<action>]` table, and `Tool::<name>::Action::"unmodeled"`. Version 2 and later of a grammar use the namespace `Tool::<name>::v<version>`. `Tool::<name>::Action::"*"` is the group of every action except `unmodeled`.
+Each experimental [tool grammar](/docs/user-guide/box/guides/tool-grammars/index.md) adds the actions `Tool::<name>::Action::"<action>"`, one for each `[shell.<action>]` table, and `Tool::<name>::Action::"unmodeled"`. Version 2 and later of a grammar use the namespace `Tool::<name>::v<version>`. `Tool::<name>::Action::"*"` is the group of every action except `unmodeled`.
 
 Every action of a grammar carries these fields, and `unmodeled` carries only these:
 
@@ -237,6 +237,6 @@ Each temporal operator carries a window of at most `24h`. A temporal predicate n
 
 ## See also
 
--   [Policy](../policy/index.md): what a policy is, the common rules, and the refusal for a misspelled action, value, or field.
--   [Write a policy and read what it decided](../../guides/write-a-policy/index.md): the rule shape and the denial text.
--   [Security](../../security/index.md): what the operating system enforces with no policy decision.
+-   [Policy](/docs/user-guide/box/reference/policy/index.md): what a policy is, the common rules, and the refusal for a misspelled action, value, or field.
+-   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): the rule shape and the denial text.
+-   [Security](/docs/user-guide/box/security/index.md): what the operating system enforces with no policy decision.

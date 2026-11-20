@@ -1,6 +1,6 @@
 A box runs the agent’s Python scripts in [Monty](https://github.com/pydantic/monty), an interpreter for a subset of Python. Policy decides each file operation a script makes, and the egress gateway decides each request a script sends with `fetch()`.
 
-Audience: an operator with a working box from [getting started](../../quickstart/index.md) whose agent runs Python. For how Box runs a script and why a script cannot act on its own, read [how Box runs Python scripts](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/monty.md).
+Audience: an operator with a working box from [getting started](/docs/user-guide/box/quickstart/index.md) whose agent runs Python. For how Box runs a script and why a script cannot act on its own, read [how Box runs Python scripts](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/monty.md).
 
 ## Example
 
@@ -51,7 +51,7 @@ A name that Monty does not define, such as `input()`, `memoryview()`, or `__impo
 
 The `python3` and `python` aliases send their name and arguments, unchanged, to Strands Shell. So `python3 report.py` run by the harness and `zsh -c 'python3 report.py'` take one route:
 
--   **Forms:** `-c SOURCE`, one `SCRIPT` file, `--version` or `-V`, and `--help` or `-h`. The broker puts each argument in single quotes, and each `'` in it takes four bytes, so the whole command must fit the Shell’s [input limit](../shell/index.md#configuration), 256 KiB by default. A longer `-c SOURCE` exits `1` with `strands-shell: input too large`; put it in a script file.
+-   **Forms:** `-c SOURCE`, one `SCRIPT` file, `--version` or `-V`, and `--help` or `-h`. The broker puts each argument in single quotes, and each `'` in it takes four bytes, so the whole command must fit the Shell’s [input limit](/docs/user-guide/box/reference/shell/index.md#configuration), 256 KiB by default. A longer `-c SOURCE` exits `1` with `strands-shell: input too large`; put it in a script file.
 -   **Working directory:** the directory the alias was run from. A directory other than the workspace takes an `fs:read` decision with operation `change_dir`, as `cd` does.
 -   **Script file:** read by Strands Shell from that directory, under an `fs:read` decision. The agent’s own filesystem lists don’t decide it.
 -   **Policy decisions:** `shell:exec` for the command, `fs:read` for a script file, and the script’s file operations.
@@ -90,8 +90,8 @@ These raise an error whatever the policy says:
 | The box directory, or the `box.toml` and `policy.dw` this run loaded | `PermissionError: <path>: resolves into trusted Box state, which no policy may open`, or `resolves to an authority source that this run loaded` | A path outside the box directory |
 | A write, deletion, or rename that reaches a configured tool command or its ancestor | `PermissionError` containing `is a configured tool command or its ancestor, which this run does not allow to change` | A path outside the command and its enclosing directories |
 | A directory mutation that reaches a hard-link alias for a configured command | `PermissionError` containing `contains a hard link to a configured tool command, so this mutation is not allowed` | A directory without the command’s hard-link names |
-| A directory mutation whose hard-link scan cannot finish | `PermissionError` containing `cannot finish checking for configured tool command hard links`, followed by the scan failure | [Correct the reported cause or narrow the directory](../configuration/index.md#configured-command-integrity) |
-| A write, deletion, or rename that changes an installed Box program or an enclosing path | `PermissionError` containing `cannot change a trusted Box executable or its path` | [Update the installation between runs](../configuration/index.md#installation-integrity) |
+| A directory mutation whose hard-link scan cannot finish | `PermissionError` containing `cannot finish checking for configured tool command hard links`, followed by the scan failure | [Correct the reported cause or narrow the directory](/docs/user-guide/box/reference/configuration/index.md#configured-command-integrity) |
+| A write, deletion, or rename that changes an installed Box program or an enclosing path | `PermissionError` containing `cannot change a trusted Box executable or its path` | [Update the installation between runs](/docs/user-guide/box/reference/configuration/index.md#installation-integrity) |
 
 A rename can also fail if another operation creates its destination while Box checks policy. Box raises `PermissionError: <destination>: filesystem identity changed during effect admission` and leaves both files in place. Retry the rename to let policy check deletion of the existing destination.
 
@@ -167,7 +167,7 @@ Example output:
 | `0` | The script completed. |
 | `1` | The script raised an exception it did not catch, including a policy refusal and a limit. |
 | `2` | A form the command refuses. |
-| `125` | Box did not run the script to its end: Box failed, or the call ran longer than [`limits.shell.timeout`](../shell/index.md#limitsshelltimeout). Box checks that limit only when Monty hands control back, so a script that never pauses, such as `while True: pass`, runs until Monty’s own 120-second limit stops it, however short `limits.shell.timeout` is. |
+| `125` | Box did not run the script to its end: Box failed, or the call ran longer than [`limits.shell.timeout`](/docs/user-guide/box/reference/shell/index.md#limitsshelltimeout). Box checks that limit only when Monty hands control back, so a script that never pauses, such as `while True: pass`, runs until Monty’s own 120-second limit stops it, however short `limits.shell.timeout` is. |
 | `125` | The alias couldn’t tell which directory it was run from, or that directory’s name isn’t valid UTF-8. Nothing ran. |
 | `126` | Policy refused `shell:exec` for the command, or Box refused the directory the alias was run from. |
 
@@ -189,7 +189,7 @@ permit (principal, action == Box::Action::"shell:exec", resource)
 when { ["python", "python3"].contains(context.input.program) };
 ```
 
-The egress gateway decides each `fetch()` with `net:connect` and `http:request`, as for the agent’s own requests. To permit a host, write the rules in [the `[egress.<name>]` table](../../guides/network-and-credentials/index.md#example).
+The egress gateway decides each `fetch()` with `net:connect` and `http:request`, as for the agent’s own requests. To permit a host, write the rules in [the `[egress.<name>]` table](/docs/user-guide/box/guides/network-and-credentials/index.md#example).
 
 | Action | Field | Value |
 | --- | --- | --- |
@@ -209,11 +209,11 @@ The egress gateway decides each `fetch()` with `net:connect` and `http:request`,
 | `strands-shell: effect denied: policy denied this operation on 'python'`, exit status `126` | No `shell:exec` permit names the command. | Permit `shell:exec` for `python` and `python3`. |
 | `strands-box: cannot start in <directory>: ...`, exit status `126` | Policy refused `fs:read` with operation `change_dir` on the directory the alias was run from, or the directory is outside the operator’s home, the agent’s home, and the workspace, such as `/tmp`. | Permit `fs:read` on that directory, or run the script from the workspace. |
 | `strands-box-sock-alias: read the working directory: ...; set PWD to it`, exit status `125` | The alias could not read which directory it was run from. | Set `PWD` to that directory before running `python3`. |
-| `python3: -m is not supported by Monty, Box's built-in Python subset. ...`, or `ModuleNotFoundError` for a package | The script needs real Python, such as `-m pytest` or a package from a venv. | Have the operator set [`monty = false`](../configuration/index.md#monty), declare a `[tool]` whose command file is named `python3`, grant it `read` on the venv and Python’s install, and permit `shell:spawn` on its file. The `monty` section has a working setup. |
+| `python3: -m is not supported by Monty, Box's built-in Python subset. ...`, or `ModuleNotFoundError` for a package | The script needs real Python, such as `-m pytest` or a package from a venv. | Have the operator set [`monty = false`](/docs/user-guide/box/reference/configuration/index.md#monty), declare a `[tool]` whose command file is named `python3`, grant it `read` on the venv and Python’s install, and permit `shell:spawn` on its file. The `monty` section has a working setup. |
 
-The decision log records each decision with the rule’s `@id` ([getting started](../../quickstart/index.md#step-7-read-the-decision-log)).
+The decision log records each decision with the rule’s `@id` ([getting started](/docs/user-guide/box/quickstart/index.md#step-7-read-the-decision-log)).
 
 ## See also
 
--   [How Box runs Python scripts](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/monty.md): the routes, the steps for each file operation, and the residual risk.
--   [The `[egress.<name>]` table](../../guides/network-and-credentials/index.md): the rules for a host, and a credential that the gateway adds to a request.
+-   [How Box runs Python scripts](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/monty.md): the routes, the steps for each file operation, and the residual risk.
+-   [The `[egress.<name>]` table](/docs/user-guide/box/guides/network-and-credentials/index.md): the rules for a host, and a credential that the gateway adds to a request.

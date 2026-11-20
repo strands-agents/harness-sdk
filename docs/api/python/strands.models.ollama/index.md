@@ -111,7 +111,7 @@ def format_request(messages: Messages,
                    system_prompt: str | None = None) -> dict[str, Any]
 ```
 
-Defined in: [src/strands/models/ollama.py:205](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L205)
+Defined in: [src/strands/models/ollama.py:208](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L208)
 
 Format an Ollama chat streaming request.
 
@@ -135,7 +135,7 @@ An Ollama chat streaming request.
 def format_chunk(event: dict[str, Any]) -> StreamEvent
 ```
 
-Defined in: [src/strands/models/ollama.py:261](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L261)
+Defined in: [src/strands/models/ollama.py:264](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L264)
 
 Format the Ollama response events into standardized message chunks.
 
@@ -163,7 +163,7 @@ async def stream(messages: Messages,
                  **kwargs: Any) -> AsyncGenerator[StreamEvent, None]
 ```
 
-Defined in: [src/strands/models/ollama.py:325](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L325)
+Defined in: [src/strands/models/ollama.py:331](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L331)
 
 Stream conversation with the Ollama model.
 
@@ -194,7 +194,7 @@ async def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/ollama.py:395](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L395)
+Defined in: [src/strands/models/ollama.py:421](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/ollama.py#L421)
 
 Get structured output from the model.
 

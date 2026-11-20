@@ -152,6 +152,7 @@
     -   [Interrupt](/docs/api/python/strands.types.interrupt)
     -   [Json Dict](/docs/api/python/strands.types.json_dict)
     -   [Media](/docs/api/python/strands.types.media)
+    -   [Offload](/docs/api/python/strands.types.offload)
     -   [Session](/docs/api/python/strands.types.session)
     -   [Streaming](/docs/api/python/strands.types.streaming)
     -   [Tools](/docs/api/python/strands.types.tools)

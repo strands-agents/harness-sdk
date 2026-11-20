@@ -168,13 +168,13 @@ console.log(`Cache read tokens: ${cacheReadTokens}`)
 
 Messages caching allows you to reuse cached conversation context across multiple requests. By default, message caching is not enabled. To enable it, choose Option A for automatic cache management in agent workflows, or Option B for manual control over cache placement.
 
-The two compose. With automatic placement enabled, a cache point you place yourself in the last user message is kept where you put it, and automatic placement is suspended for that message. Cache points in earlier messages are removed, so they never accumulate one per turn.
+The two compose. With automatic placement enabled, a cache point you place yourself in the last user message is kept where you put it, and automatic placement is suspended for that message. Cache points you place in earlier messages are removed, so they never accumulate one per turn.
 
 Place your cache point *ahead* of content that changes on every call, such as retrieved context or a timestamp. A cache point after that content puts it inside the cached prefix, so every request writes a new entry and none ever reads one. Bedrock also needs something ahead of the point to cache: a point in the first block of a message is dropped.
 
-**Option A: Automatic Cache Strategy (Claude models only)**
+**Option A: Automatic Cache Strategy (Claude and Amazon Nova models)**
 
-Enable automatic cache point management for agent workflows with multi-turn conversations. The SDK automatically places a cache point at the end of the last user message to maximize cache hits without requiring manual management. The same `cache_config``cacheConfig` also caches the system prompt by default (see [System Prompt Caching](#system-prompt-caching)), so a multi-turn conversation reuses both the static system prefix and the accumulated conversation context.
+Enable automatic cache point management for agent workflows with multi-turn conversations. On Claude, the SDK automatically places a cache point at the end of the last user message to maximize cache hits without requiring manual management (Amazon Nova differs, see below). The same `cache_config``cacheConfig` also caches the system prompt by default (see [System Prompt Caching](#system-prompt-caching)), so a multi-turn conversation reuses both the static system prefix and the accumulated conversation context.
 
 (( tab "Python" ))
 ```python
@@ -248,6 +248,13 @@ console.log(`Cache read tokens: ${cacheReadTokens}`)
 `messages_ttl``messagesTTL` controls this cache point: set it to `False` (`false`) to turn it off, or to a TTL string such as `"5m"` to set its duration. Left unset, it takes the duration from `ttl`.
 
 > **Note**: Cache misses occur if you intentionally modify past conversation context (e.g., summarization or editing previous messages).
+
+**Amazon Nova**: Nova takes a cache point only directly after text, takes none on tool definitions, and takes no TTL, so `tools_ttl``toolsTTL` has no effect and a TTL duration is ignored. Setting `system_prompt_ttl``systemPromptTTL` or `messages_ttl``messagesTTL` to `False` (`false`) still turns that part off. It also reads a cache entry only at a position an earlier request marked too. The SDK therefore places Nova’s conversation cache points differently:
+
+-   A cache point goes after the last text block of each of the last three user messages that have text, so a new turn repeats the positions the previous turn wrote. During a tool loop the points stay where they are.
+-   A cache point you place in the last user message counts as one of the three. Nova takes it only directly after text, so it moves back to the nearest text block ahead of it, or is replaced by automatic placement when no text is ahead of it.
+-   Bedrock accepts four cache points per request and the system prompt’s count against them. With more than one cache point in the system prompt, the conversation gets fewer; with four, it gets none and a cache point you placed in the last user message is dropped.
+-   On a cross-region inference profile (for example `us.amazon.nova-pro-v1:0`), a request only reads entries written in the region that serves it, so some follow-up turns miss the cache. An in-region model ID reads on every turn.
 
 **Option B: Manual Cache Points**
 

@@ -34,9 +34,9 @@ Whether and how the model caches prompts.
 readonly forcedToolChoice?: boolean;
 ```
 
-Defined in: [src/models/model-info.ts:31](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts#L31)
+Defined in: [src/models/model-info.ts:35](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts#L35)
 
-Whether the model accepts a `toolChoice` that forces a tool call (`any` or a named tool).
+Whether the Bedrock and Anthropic providers force the structured output tool (`any` or a named tool) on the structured output retry. False when the model rejects forcing, or when a forced call degrades the response (for example, it skips thinking).
 
 ---
 
@@ -46,7 +46,7 @@ Whether the model accepts a `toolChoice` that forces a tool call (`any` or a nam
 readonly nativeStructuredOutput?: boolean;
 ```
 
-Defined in: [src/models/model-info.ts:33](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts#L33)
+Defined in: [src/models/model-info.ts:37](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts#L37)
 
 Whether the provider can make the model’s text output conform to a JSON schema.
 
@@ -58,7 +58,7 @@ Whether the provider can make the model’s text output conform to a JSON schema
 readonly serverSideSummary?: boolean;
 ```
 
-Defined in: [src/models/model-info.ts:38](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts#L38)
+Defined in: [src/models/model-info.ts:42](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts#L42)
 
 Whether the model summarizes history server-side through [Model.summarize](/docs/api/typescript/Model/index.md#summarize); set `false` in `modelInfo` to summarize client-side.
 
@@ -70,6 +70,6 @@ Whether the model summarizes history server-side through [Model.summarize](/docs
 readonly temporaryMessages?: boolean;
 ```
 
-Defined in: [src/models/model-info.ts:46](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts#L46)
+Defined in: [src/models/model-info.ts:50](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model-info.ts#L50)
 
 Whether the model and provider take temporary messages: injected text the model reads only until the next user message, such as Anthropic’s turn-scoped system messages. When `true`, the provider receives each `InjectedBlock` as stored and formats it; otherwise it receives only the latest user message’s injected text, as text. The shared data lists the models that take them, but `Model.modelInfo` reports `false` unless the provider can send them (`AnthropicModel`). A `modelInfo` override that turns it on for another provider drops the injected text.

@@ -58,6 +58,8 @@ const agent = new Agent({ tools: [httpRequest] })
 
 `web_search` lets the agent look things up while it answers. It isn’t a separate tool: it turns on the web search built into the model provider. OpenAI, Anthropic, Google, and the GPT-5, GPT-6, and Daybreak models on `bedrock-mantle` have one.
 
+Other Amazon Bedrock models have no search of their own, so the harness gives them a search tool backed by [Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html). It runs with your AWS credentials and is billed to your account, so your role needs the `bedrock-agentcore:InvokeWebSearch` permission.
+
 For models that don’t provide web search, the harness logs a message and builds the agent without it. If you asked for it explicitly in `builtin_tools`, you get an error instead, so the request doesn’t silently do nothing.
 
 To search with those models anyway, set `{"web_search": "exa"}` in `builtin_tools`. The harness then searches through [Exa](https://exa.ai) instead, on any model, including ones with their own search. No setup is needed to get started, and setting `EXA_API_KEY` lifts the free tier’s rate limit. Exa is a third party, so every search query is sent to Exa and handled under its terms; weigh that before using it for sensitive work. You can also connect the MCP server of your preferred search provider instead; see [connect MCP servers](/docs/user-guide/harness/configure/mcp-servers/index.md).

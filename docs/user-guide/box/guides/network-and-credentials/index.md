@@ -1,10 +1,10 @@
 An `[egress.<name>]` table in `box.toml` binds a credential to a set of destinations. The box’s egress gateway adds the credential to each request to those destinations. Policy decides whether each request goes out.
 
-Audience: an operator with a working box from [getting started](../../quickstart/index.md) who gives the agent a credential for a service. For how the gateway decides and forwards each request, read [how Box controls outbound traffic](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/egress.md).
+Audience: an operator with a working box from [getting started](/docs/user-guide/box/quickstart/index.md) who gives the agent a credential for a service. For how the gateway decides and forwards each request, read [how Box controls outbound traffic](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/egress.md).
 
-A tool or local MCP server with `network.contain_egress = false` can connect directly, outside gateway policy. On Linux, this includes IPv4 access to reachable private networks, loopback services, and instance metadata endpoints. See [server network settings](../add-an-mcp-server/index.md#network).
+A tool or local MCP server with `network.contain_egress = false` can connect directly, outside gateway policy. On Linux, this includes IPv4 access to reachable private networks, loopback services, and instance metadata endpoints. See [server network settings](/docs/user-guide/box/guides/add-an-mcp-server/index.md#network).
 
-Such a program connects as it would on the host. Box sets no proxy variable and no CA file for it, so it uses its own defaults and verifies the real server’s certificate. Its table’s `env` may set `HTTPS_PROXY`, `SSL_CERT_FILE`, `GIT_SSL_CAINFO` and the other proxy and CA names, for a company proxy or CA bundle; add a `read_file` entry for a file it names. On macOS, the program may ask the system’s certificate services (`trustd` and `SecurityServer`), and keychain files stay unreadable. On Linux, if the default bundle is a link outside `/etc/ssl`, such as into `/etc/pki`, add a `read` entry for it. The startup report shows a `native trust:` line for the program. See [a native-egress process keeps its own proxy and trust settings](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/decisions.md#a-native-egress-process-keeps-its-own-proxy-and-trust-settings).
+Such a program connects as it would on the host. Box sets no proxy variable and no CA file for it, so it uses its own defaults and verifies the real server’s certificate. Its table’s `env` may set `HTTPS_PROXY`, `SSL_CERT_FILE`, `GIT_SSL_CAINFO` and the other proxy and CA names, for a company proxy or CA bundle; add a `read_file` entry for a file it names. On macOS, the program may ask the system’s certificate services (`trustd` and `SecurityServer`), and keychain files stay unreadable. On Linux, if the default bundle is a link outside `/etc/ssl`, such as into `/etc/pki`, add a `read` entry for it. The startup report shows a `native trust:` line for the program. See [a native-egress process keeps its own proxy and trust settings](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/decisions.md#a-native-egress-process-keeps-its-own-proxy-and-trust-settings).
 
 ## Example
 
@@ -22,7 +22,7 @@ secret.ref   = "aws://my-profile"
 
 `box run` reads `GITHUB_TOKEN` from its own environment. The agent gets a placeholder in `GITHUB_TOKEN`, and sends it as it would send the token. The gateway replaces the placeholder with the real token on each request to `api.github.com`.
 
-> **Every process in the box can use every route.** The agent, each tool, each stdio MCP server, and the Shell that runs the agent’s commands get the same placeholders, and the gateway adds the real credential to a request from any of them. The gateway can’t tell which process sent a request, so no setting limits a route to one process. To keep a credential away from a tool or a server, run it in a separate box. [The box is the credential boundary](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/decisions.md#the-box-is-the-credential-boundary) explains why.
+> **Every process in the box can use every route.** The agent, each tool, each stdio MCP server, and the Shell that runs the agent’s commands get the same placeholders, and the gateway adds the real credential to a request from any of them. The gateway can’t tell which process sent a request, so no setting limits a route to one process. To keep a credential away from a tool or a server, run it in a separate box. [The box is the credential boundary](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/decisions.md#the-box-is-the-credential-boundary) explains why.
 
 To let the requests out, permit them in `policy.dw`:
 
@@ -41,14 +41,15 @@ when { context.input.host == "api.github.com" };
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `destinations` | string array | required | The destinations the credential goes to. See [Destinations](#destinations). |
-| `secret.ref` | string | required, unless the entry declares a backend | Where the credential comes from: `env://NAME`, `aws://PROFILE`, or a bare `aws://` for the default credential chain. See [Credential sources](#credential-sources). |
+| `secret.ref` | string | required, unless the entry declares a backend | Where the credential comes from: `env://NAME`, `aws://PROFILE`, a bare `aws://` for the default credential chain, or a reference in a declared scheme. See [Credential sources](#credential-sources). |
+| `secret.env` | string | `NAME` for `env://NAME` | Experimental: needs `secret-sources = true` in [`[experimental-features]`](/docs/user-guide/box/reference/configuration/index.md#experimental-features). The variable that holds the placeholder in the workload. Required for a reference in a declared scheme. For `env://NAME` it is optional and must equal `NAME`. Refused for `aws://`. |
 | `backends` | table array | none | A destination to re-route this entry’s requests to. At most one. See [Backends](#backends). |
-| `secret.placement` | string | `header` | For `env://`: where the credential goes. `header`, `basic_auth`, or `query_param`. |
-| `secret.header` | string | `Authorization` | For `env://` with `placement = "header"`: the header name. |
-| `secret.prefix` | string | `Bearer` on `Authorization`, empty on any other header | For `env://` with `placement = "header"`: the text before the credential. |
-| `secret.param` | string | none | For `env://` with `placement = "query_param"`: the query parameter name. Required for that placement. |
-| `secret.inject` | string | `phantom` | For `env://`: `phantom` adds the credential only to a request that carries the placeholder, and refuses any other request to the destinations. `always` adds it to every request to the destinations. Refused beside a backend, where the destination secret is phantom-only and the box injects nothing. |
-| `secret.phantom_prefix` | string | `strands_box_` | For `env://`: the start of the placeholder, such as `sk-ant-` for a client that checks the key’s format. 1 to 64 letters, digits, `-`, `_`, `.`, or `~`. |
+| `secret.placement` | string | `header` | For `env://` and a declared scheme: where the credential goes. `header`, `basic_auth`, or `query_param`. |
+| `secret.header` | string | `Authorization` | For `env://` and a declared scheme, with `placement = "header"`: the header name. |
+| `secret.prefix` | string | `Bearer` on `Authorization`, empty on any other header | For `env://` and a declared scheme, with `placement = "header"`: the text before the credential. |
+| `secret.param` | string | none | For `env://` and a declared scheme, with `placement = "query_param"`: the query parameter name. Required for that placement. |
+| `secret.inject` | string | `phantom` | For `env://` and a declared scheme: `phantom` adds the credential only to a request that carries the placeholder, and refuses any other request to the destinations. `always` adds it to every request to the destinations. Refused beside a backend, where the destination secret is phantom-only and the box injects nothing. |
+| `secret.phantom_prefix` | string | `strands_box_` | For `env://` and a declared scheme: the start of the placeholder, such as `sk-ant-` for a client that checks the key’s format. 1 to 64 letters, digits, `-`, `_`, `.`, or `~`. |
 
 ### Placement
 
@@ -72,7 +73,7 @@ Each entry in `destinations` is a host, with an optional port and path.
 
 A host is matched in lowercase. A path is matched case-sensitively, against the path in the gateway’s canonical form. Two routes, or two entries in one route, can’t match the same destination, and an http MCP server’s host can’t appear in a route.
 
-The canonical form keeps repeated slashes, and a path prefix matches by whole segment. So `api.example.com/v1` covers `/v1//chat`, and `api.example.com/v1/chat` doesn’t cover `/v1//chat`. [Forbid one URL path on a host](../../reference/policy/index.md#forbid-one-url-path-on-a-host) shows rules for these paths in policy.
+The canonical form keeps repeated slashes, and a path prefix matches by whole segment. So `api.example.com/v1` covers `/v1//chat`, and `api.example.com/v1/chat` doesn’t cover `/v1//chat`. [Forbid one URL path on a host](/docs/user-guide/box/reference/policy/index.md#forbid-one-url-path-on-a-host) shows rules for these paths in policy.
 
 ## Backends
 
@@ -90,12 +91,12 @@ auth.ref = "env://BOX_GW_TOKEN"
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `backends.url` | string | required | The backend to dial, as `scheme://host[:port][/prefix]`. `https` or `http`. An explicit port must be 1 to 65535. A path prefix is allowed; a query or fragment is not. A prefix adds a request-path restriction — see the note below. |
-| `backends.auth.ref` | string | none | The backend’s own credential: `env://NAME` for a static token (takes `backends.auth.header`, `backends.auth.placement`, `backends.auth.prefix`, `backends.auth.param`, but no `inject` or `phantom_prefix`), or `aws://PROFILE` to SigV4-sign the request over the backend host (requires `backends.auth.aws.service` and `backends.auth.aws.region`). |
+| `backends.auth.ref` | string | none | The backend’s own credential: `env://NAME` or a reference in a declared scheme for a static token (takes `backends.auth.header`, `backends.auth.placement`, `backends.auth.prefix`, `backends.auth.param`, but no `env`, `inject`, or `phantom_prefix`), or `aws://PROFILE` to SigV4-sign the request over the backend host (requires `backends.auth.aws.service` and `backends.auth.aws.region`). |
 | `backends.auth.aws.service` / `backends.auth.aws.region` | string | none | The SigV4 service (e.g. `bedrock-agentcore`) and region (e.g. `us-east-1`) to sign under. Each must be non-empty and only lowercase letters, digits, or `-`, because the signer uses the value verbatim. Required for an `aws://` auth, refused otherwise. |
 
 The box dials the backend’s host and port, presents the backend host for TLS and in the `Host` header, and validates the backend’s certificate against the backend host. If the `url` has a path prefix, the box puts it in front of the agent’s request path, so a request to `api.github.com/zen` with a backend `url` of `https://gateway-1.example.com/github` leaves as `gateway-1.example.com/github/zen`. The original destination and the agent’s own path stay in policy and in the audit record. The box checks the backend’s address against policy before it connects, so a `forbid` on a metadata or private address refuses a backend that resolves there.
 
-A `secret` on the entry may sit beside a backend, but only as `env://`, and it is phantom-only: the box provisions a placeholder in the named variable (so the agent’s credential-shaped code works) and strips it from the request, and never sends the real value — the backend handles the destination’s auth downstream. Because the box never reads the real value, the named variable may be unset, and `secret.inject` is refused (there is nothing to inject). A signed destination `secret` (`aws://` or `credsd://`) is refused beside a backend, because it mints no placeholder to strip.
+A `secret` on the entry may sit beside a backend, but only as `env://`, and it is phantom-only: the box provisions a placeholder in the named variable (so the agent’s credential-shaped code works) and strips it from the request, and never sends the real value — the backend handles the destination’s auth downstream. Because the box never reads the real value, the named variable may be unset, and `secret.inject` is refused (there is nothing to inject). A signed destination `secret` (`aws://` or `credsd://`) is refused beside a backend, because it mints no placeholder to strip. A destination `secret` in a declared scheme is refused too, because the box never reads that secret.
 
 When the backend `url` has a path prefix, the box refuses a request whose path contains an encoded slash (`%2F`) or backslash (`%5C`): joining a prefix in front of an escaped separator could change which path the backend sees, so the box fails the request rather than risk a traversal. This rejects some legitimate requests — for example a GitLab path such as `/api/v4/projects/1/repository/files/src%2FREADME.md`. If a destination needs encoded separators, give the backend a **dedicated host with no path prefix** (`url = "https://gw.example.com"`), which carries no join and so no restriction.
 
@@ -117,7 +118,7 @@ A host that re-routes to a backend may be named by no other entry, on any port. 
 
 This version re-routes to one backend. More than one backend and routing rules are not yet available.
 
-A remote MCP server re-routes the same way: attach `[[mcp.<name>.backends]]` to a `type = "http"` server. See [Backends in the MCP guide](../add-an-mcp-server/index.md#backends).
+A remote MCP server re-routes the same way: attach `[[mcp.<name>.backends]]` to a `type = "http"` server. See [Backends in the MCP guide](/docs/user-guide/box/guides/add-an-mcp-server/index.md#backends).
 
 ## Credential sources
 
@@ -126,6 +127,7 @@ A remote MCP server re-routes the same way: attach `[[mcp.<name>.backends]]` to 
 | `env://NAME` | The variable `NAME` in the environment of `box run` | Once, when the box starts. The agent, each tool, each stdio MCP server, and the Shell get a placeholder in `NAME`. Every destination that names `NAME`, in one route or in several, accepts the same placeholder. |
 | `aws://PROFILE` | The named profile `PROFILE`, resolved through the AWS SDK | On each request. The gateway signs the request with SigV4. |
 | `aws://` (no profile) | The AWS SDK default credential provider chain on the host | On each request. The gateway signs the request with SigV4, under the host’s ambient identity. |
+| `<scheme>://NAME[#FIELD]`, for a scheme that a [`[secret-source.<scheme>]`](/docs/user-guide/box/reference/configuration/index.md#secret-sourcescheme) table declares | The host program that the table names | Experimental, and macOS only. Once, when the box starts: Box runs the program and reads the secret from its stdout. The agent, each tool, each stdio MCP server, and the Shell get a placeholder in the variable that `secret.env` names. You don’t set that variable. See [how a run reads the secrets](/docs/user-guide/box/reference/configuration/index.md#how-a-run-reads-the-secrets). |
 
 An `aws://` route takes no placement, `header`, `prefix`, `param`, `inject`, or `phantom_prefix`. The gateway signs each request to the destinations. The service and region come from the host, which ends in `.amazonaws.com` or `.api.aws`.
 
@@ -177,11 +179,18 @@ The list applies to every process in the box. An entry is a host name alone: the
 | A `backends.url` has a query, fragment, no host, or a scheme other than `http`/`https` | Name the backend as `scheme://host[:port][/prefix]`. A path prefix is allowed; a query or fragment is not. |
 | An entry has a backend, and its destination is not one exact host | A re-route is matched per connection, on host and port, and the box presents the backend host on the wire. Give a backend entry exactly one destination with an exact host (no path, no wildcard). Write one entry per host. |
 | A host with a backend is also named by another entry (any port) | A re-route is matched by host alone, so a host that re-routes may name no other entry. Move the other destination to its own host, or drop it. |
-| An entry has a backend and a signed (`aws://`/`credsd://`) `secret` | A re-routed destination secret is phantom-only, so it must be `env://`. |
+| An entry has a backend and a signed (`aws://`/`credsd://`) `secret`, or one in a declared scheme | A re-routed destination secret is phantom-only, so it must be `env://`. |
 | An entry has a backend and sets `secret.inject` | A re-routed destination secret is phantom-only — provisioned to the workload and stripped, never injected — so `inject` has no effect. Remove `secret.inject`. |
 | A `backends.auth` uses `credsd://`, or sits on an `http` backend | Use an `env://` token or an `aws://` profile on an `https` backend. |
 | A `backends.auth` uses `aws://` without a valid `aws.service`/`aws.region` (or sets them on a non-`aws://` auth) | An `aws://` backend auth signs over the backend host, so state `backends.auth.aws.service` and `backends.auth.aws.region`, each non-empty and only lowercase letters, digits, or `-`. They are valid only on an `aws://` auth. |
-| `secret.ref` has a scheme other than `env` or `aws` | Use one of the two schemes. |
+| `secret.ref` has a scheme other than `env` or `aws`, and no `[secret-source.<scheme>]` table declares it | Use one of the two schemes, or declare the [secret source](/docs/user-guide/box/reference/configuration/index.md#secret-sourcescheme). |
+| A route in a declared scheme has no `secret.env` | Name the variable that holds the placeholder, such as `secret.env = "GH_TOKEN"`. |
+| `secret.env` on an `env://NAME` route is not `NAME`, or an `aws://` route sets `secret.env` | Remove `secret.env`. |
+| `secret.env` is set while `secret-sources` is off | Set `secret-sources = true` in `[experimental-features]`, or remove `secret.env` from an `env://` route, where it has no effect. |
+| Two entries hold a placeholder in one variable and name different secrets | Give one of them another variable. One placeholder variable holds one secret. |
+| An entry holds a placeholder in `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY` beside a signed (`aws://`/`credsd://`) route | Give the entry another variable. A signed route fills those two variables with its own placeholders. |
+| `env://NAME` names a variable that a `pass-secret-env` list of a `[secret-source.<scheme>]` table names | Use another variable. No `env://` reference can read the credential of a declared source’s vault. |
+| `` `[egress.<name>] secret.ref` names a secret that the secret source `<scheme>` (<program>) did not return ``, at startup | Read the line before it on stderr, which holds the reason and the program’s own words. Sign in to the vault or correct the reference, then start the box again. |
 | `env://NAME` names a variable that is unset, blank, or reserved by the box | Set `NAME` in the host OS’s shell that runs `box run`, or choose another name. |
 | A bare `aws://` route whose default credential chain resolves no credentials at startup (no env keys, no default profile, no IMDS), or whose `credential_process` does not finish within the resolve timeout | Configure the host’s AWS credentials, or name a profile with `aws://PROFILE`. The box validates a bare `aws://` chain once at startup, so a broken one stops `box run` rather than the first request. |
 | An `aws://` route sets a placement, `header`, `prefix`, `param`, `inject`, or `phantom_prefix` | Remove the key. A signed route takes none. |
@@ -190,7 +199,7 @@ The list applies to every process in the box. An entry is a host name alone: the
 | `header` is not a valid header name, or `prefix` holds a control character or a brace | Use a plain header name and prefix. |
 | `inject` is a value other than `phantom` or `always` | Use `phantom` or `always`. |
 | `phantom_prefix` is empty, longer than 64 characters, or holds another character | Use 1 to 64 letters, digits, `-`, `_`, `.`, or `~`. |
-| Two routes name one `env://NAME` with a different `phantom_prefix` | Set the same `phantom_prefix` on both. `NAME` holds one placeholder. |
+| Two routes hold a placeholder in one variable with a different `phantom_prefix` | Set the same `phantom_prefix` on both. One variable holds one placeholder. |
 | A `[gateway] upgrade_http` entry names a scheme, a port, a path, a `*` wildcard, or an IP address, or holds another character | Write the host name alone, such as `static.rust-lang.org`. |
 
 A request the gateway refuses while the box runs gets an HTTP 403 with the header `x-strands-box-egress: refused`. The body says why:
@@ -209,5 +218,5 @@ Responses arrive progressively, including on credentialed routes. Credential red
 
 ## See also
 
--   [How Box controls outbound traffic](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/egress.md): routing, the connect and request decisions, and how the gateway adds a credential.
--   [The `[mcp.<name>]` table](../add-an-mcp-server/index.md): a credential for an http MCP server.
+-   [How Box controls outbound traffic](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/egress.md): routing, the connect and request decisions, and how the gateway adds a credential.
+-   [The `[mcp.<name>]` table](/docs/user-guide/box/guides/add-an-mcp-server/index.md): a credential for an http MCP server.

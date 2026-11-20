@@ -1,6 +1,10 @@
-This experiment adds Dogwood checks to selected native file operations on macOS. It requires macOS 27 or later and a binary built with the macOS 27 SDK or later. The binary must carry Apple’s Endpoint Security entitlement and a valid signature. Endpoint Security is the macOS interface that lets a client decide selected operating system requests.
+This experimental feature adds Dogwood checks to selected native file operations on macOS and Linux ARM64.
 
-## Enable the experiment
+### macOS requirements
+
+It requires macOS 27 or later and a binary built with the macOS 27 SDK or later. The binary must carry Apple’s Endpoint Security entitlement and a valid signature. Endpoint Security is the macOS interface that lets a client decide selected operating system requests.
+
+## Enable native filesystem policy
 
 Signed macOS releases include the Cargo feature. The experiment still requires the compatible system described above and the runtime opt-in below. For a source build, build the product and its helpers:
 
@@ -8,14 +12,33 @@ Signed macOS releases include the Cargo feature. The experiment still requires t
 cargo build --release --locked -p strands-box -p strands-box-containment --features native-filesystem-policy
 ```
 
-Sign the product bundle with an identity and provisioning profile that permit `com.apple.developer.endpoint-security.client`. Add this table to `box.toml`:
+On macOS, sign the product bundle with an identity and provisioning profile that permit `com.apple.developer.endpoint-security.client`. Add this table to `box.toml`:
 
 ```toml
 [experimental-features]
 native-filesystem-policy = true
 ```
 
-Run the signed product with `run --config /absolute/path/box.toml`. An absent table or `false` leaves native interception disabled, including in an `--all-features` build. A selected but unavailable mechanism refuses startup. Box never silently disables the selected checks. Signed macOS release artifacts include the experiment’s code; unsigned build artifacts do not establish its signing requirements.
+Run the product with `run --config /absolute/path/box.toml`. Linux launches also need the capabilities described below. An absent table or `false` leaves native interception disabled, including in an `--all-features` build. A selected but unavailable mechanism refuses startup. Box never silently disables the selected checks. Signed macOS release artifacts include the experiment’s code; unsigned build artifacts do not establish its signing requirements.
+
+### Linux ARM64 requirements
+
+Linux x86-64 builds refuse this feature during configuration validation, before creating Box state or starting a workload.
+
+The host must support seccomp user notifications, descriptor injection, BPF Linux Security Module hooks, and BPF type information. BPF lets Box attach the checks that prevent delete and rename from affecting a replacement file. The checks use the kernel’s file identity while the filesystem operation holds its locks. Testing used Amazon Linux 2023 on ARM64 with kernel `6.12.111-136.204.amzn2023.aarch64`. Other kernels and distributions need qualification.
+
+Start the trusted Box process with `CAP_BPF` and `CAP_PERFMON` when any workload selects native checks. These are Linux capabilities for loading BPF programs and accessing the required tracing hooks. The Box process need not run as root. It loads its checks and drops these capabilities before creating runtime threads or launching workloads. It preserves other inherited capabilities, including the authority root needs to create its user namespace. Inherited `CAP_SYS_ADMIN` remains baseline host authority and can also authorize BPF operations. Use the restricted capability set below to avoid retaining `CAP_SYS_ADMIN` after native setup. Missing capabilities or kernel support stop launch. For a command-line run, Box does not load these checks if every workload opts out. A library caller can create its configuration in `RunOptions::on_ready`. For that callback path, Box prepares available checks before runtime startup and reads configuration after the callback. It discards unused checks when the resulting configuration opts out. An opted-out run does not require these capabilities. These requirements apply to native interception; they do not change the prerequisites for ordinary Linux containment.
+
+For a development run, an administrator can supply only these capabilities:
+
+```sh
+sudo setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups \
+  --bounding-set=-all,+bpf,+perfmon --inh-caps=-all,+bpf,+perfmon \
+  --ambient-caps=-all,+bpf,+perfmon --no-new-privs \
+  /absolute/path/strands-box run --config /absolute/path/box.toml
+```
+
+Keep `strands-box-contain-trampoline` and `strands-box-sock-alias` beside the Box binary. The example launches the workload as the caller’s user, with no supplementary groups. It does not install capabilities on any executable or configure the host’s BPF support.
 
 ## Select workloads
 
@@ -43,15 +66,29 @@ Disabled workloads retain their sandbox restrictions and shutdown tracking. Thei
 
 ## Coverage and limits
 
+### macOS
+
 The adapter checks open, create, unlink, rename, truncate, and permission-change requests from selected descendants of the box’s trusted process. It uses the box’s existing durable Dogwood history. Filesystem grants still restrict each process through Seatbelt, the macOS process sandbox. A policy permit cannot expand those grants.
 
 Permission-change events (`AUTH_SETMODE`) for regular files and directories require `fs:write` with the existing `set_permissions` operation. These events cover `chmod` and `fchmod`, including permission changes through an open file descriptor. Other target types are refused. The policy input identifies the path and operation, but does not include the requested permission bits.
 
 For mediated workloads, the adapter disables authorization caching and requests kernel denial for missed deadlines or dropped authorization messages. Accepted authorization replies produce `indeterminate` outcomes. These records confirm authorization, not successful filesystem effects.
 
-An existing open file descriptor can still carry later reads or writes without another open request. This experiment does not revoke existing descriptors or intercept every filesystem operation. Shutdown terminates tracked descendants, including detached children, before interception stops. It uses a five-second deadline for descendant cleanup and callback draining. Startup checks subscriptions and removes path mutes that would suppress required events. It refuses startup if required events remain muted or any process mute exists.
+An existing open file descriptor can still carry later reads or writes without another open request. This feature does not revoke existing descriptors or intercept every filesystem operation. Shutdown terminates tracked descendants, including detached children, before interception stops. It uses a five-second deadline for descendant cleanup and callback draining. Startup checks subscriptions and removes path mutes that would suppress required events. It refuses startup if required events remain muted or any process mute exists.
 
 The signed tests cover detached-child cleanup and durable history across mode changes. They do not establish enforcement after the trusted Box process crashes or validate every shutdown failure. Production use still requires further review and tests for those failures.
+
+### Linux ARM64
+
+The adapter checks file opens, creation, unlink, rename, directory creation and removal, symbolic-link creation, and path-based truncation. Tests cover allowed and denied operations through agents, declared tools, and local MCP servers. Mount restrictions still apply beneath Dogwood policy. The adapter uses durable Dogwood history; this feature does not enable history skipping or batching.
+
+For file opens, Box opens the approved file and transfers that descriptor into the workload. For delete and rename, kernel checks restrict the worker to the approved file identities. Tests replace files and directories after authorization and after final user-space verification. The replacement survives those tests.
+
+At startup, Box probes whether the running kernel can transfer `O_PATH` handles. These handles identify a file or directory without allowing content reads or writes. A successful probe enables path-only opens with a metadata policy check. An unsupported transfer disables only these opens and produces a startup disclosure. An unexpected probe error stops startup. Box never substitutes a readable descriptor.
+
+Ordinary symbolic links and parent components (`..`) resolve inside the captured workload filesystem view. Policy checks use the resolved object, and effects use its pinned descriptor or parent directory. `O_NOFOLLOW` preserves the final-link restriction. Kernel magic links remain restricted. Other unsupported open flags and file kinds receive a refusal.
+
+An existing descriptor can carry later reads, writes, or directory listings without another Dogwood check. Linux permission changes remain subject to filesystem grants, without a fresh Dogwood permission-change check. The Linux adapter does not mediate standalone metadata queries or link-target reads. Outcome records distinguish descriptor delivery from later file effects. A descriptor’s delivery does not prove that a subsequent write succeeded. Policy storage errors, worker failures, and expired processing deadlines stop Box. The kernel tests cover pending requests, process termination, detached descendants, and concurrent writes. Telemetry remains best effort: its bounded exporter queue can lose records under sustained load. Use the durable policy history and saved file effects when assessing enforcement.
 
 ## Filesystem operation meanings
 
@@ -61,9 +98,11 @@ A readable directory open uses `fs:read` with `context.input.operation == Box::F
 
 ## Stored configuration and rollback
 
-When `[limits]` has no explicit settings, `file-attributes` is `false`, MCP argument wildcards are disabled, MCP executable names are bare, the agent declares no `[[agent.ingress]]`, no egress destination has a backend, `[gateway] upgrade_http` is empty, the box ID is `box-` and 16 hexadecimal digits, every process leaves `file-watching` disabled, and each telemetry target uses only the settings an earlier build reads, configurations without process overrides retain version 21 when disabled and version 22 when enabled. An explicit process override requires record version 23. Two stdio MCP servers that share a program require record version 24. Setting [`file-attributes`](../../reference/configuration/index.md#file-attributes) to `true` requires record version 25. Enabling [MCP argument wildcards](../../guides/add-an-mcp-server/index.md#argument-wildcards) on any server requires version 26. An explicit `limits.shell.timeout` requires record version 27, including `30` and `false`. An [absolute MCP executable path](../../guides/add-an-mcp-server/index.md#select-an-executable-by-path) requires record version 28. A box whose agent declares `[[agent.ingress]]` requires record version 29. A box whose egress re-routes a destination to a [backend](../../guides/network-and-credentials/index.md) requires record version 30. An explicit `limits.shell.max_input` or `limits.shell.max_output` requires record version 31, including values equal to the defaults. A non-empty [`[gateway] upgrade_http`](../../reference/configuration/index.md#gateway) requires record version 32. A box ID that a library caller supplied, other than `box-` and 16 hexadecimal digits, requires record version 34. Enabling [`file-watching`](../../reference/configuration/index.md#file-watching) for any process requires record version 35. A [telemetry target](../../reference/configuration/index.md#telemetrylabel) that uses `accepts`, `headers`, `secret.prefix`, `secret.placement`, a vendor kind, or an `aws://` or `credsd://` secret requires record version 36. When a configuration selects more than one of these features, it uses the highest required version and retains every selection. Older binaries refuse unsupported versions.
+When `[limits]` has no explicit settings, `monty` is `true`, `file-attributes` is `false`, MCP argument wildcards are disabled, MCP executable names are bare, the agent declares no `[[agent.ingress]]`, no egress destination has a backend, `[gateway] upgrade_http` is empty, the box ID is `box-` and 16 hexadecimal digits, every process leaves `file-watching` disabled, and each telemetry target uses only the settings an earlier build reads, configurations without process overrides retain version 21 when disabled and version 22 when enabled. An explicit process override requires record version 23. Two stdio MCP servers that share a program require record version 24. Setting [`file-attributes`](/docs/user-guide/box/reference/configuration/index.md#file-attributes) to `true` requires record version 25. Enabling [MCP argument wildcards](/docs/user-guide/box/guides/add-an-mcp-server/index.md#argument-wildcards) on any server requires version 26. An explicit `limits.shell.timeout` requires record version 27, including `30` and `false`. An [absolute MCP executable path](/docs/user-guide/box/guides/add-an-mcp-server/index.md#select-an-executable-by-path) requires record version 28. A box whose agent declares `[[agent.ingress]]` requires record version 29. A box whose egress re-routes a destination to a [backend](/docs/user-guide/box/guides/network-and-credentials/index.md) requires record version 30. An explicit `limits.shell.max_input` or `limits.shell.max_output` requires record version 31, including values equal to the defaults. A non-empty [`[gateway] upgrade_http`](/docs/user-guide/box/reference/configuration/index.md#gateway) requires record version 32. A box ID that a library caller supplied, other than `box-` and 16 hexadecimal digits, requires record version 34. Enabling [`file-watching`](/docs/user-guide/box/reference/configuration/index.md#file-watching) for any process requires record version 35. A [telemetry target](/docs/user-guide/box/reference/configuration/index.md#telemetrylabel) that uses `accepts`, `headers`, `secret.prefix`, `secret.placement`, a vendor kind, or an `aws://` or `credsd://` secret requires record version 36. Setting [`monty`](/docs/user-guide/box/reference/configuration/index.md#monty) to `false` requires record version 37. A box whose agent, tool, or local MCP server declares a [`deny_write`](/docs/user-guide/box/reference/configuration/index.md#agentfilesystem-and-toolnamefilesystem) list requires record version 38. A [`[secret-source.<scheme>]`](/docs/user-guide/box/reference/configuration/index.md#secret-sourcescheme) table, or a `secret.env` key on a route or a remote MCP server, requires record version 39. When a configuration selects more than one of these features, it uses the highest required version and retains every selection. Older binaries refuse unsupported versions.
 
-To disable the experiment, change the global setting to `false`. Remove all process overrides and `[limits]` settings, give each stdio MCP server its own program, set `file-attributes` to `false`, remove `file-watching` from every process, remove `[gateway] upgrade_http`, and give each telemetry target only `env://` or `secret://` bearer settings before returning to a binary that supports only version 21. If MCP argument wildcards are enabled, replace the stars with concrete arguments and disable `argument_wildcards` on each server too. Replace each absolute MCP executable path with a bare program name that the server’s `PATH` resolves to the intended executable. Remove any egress backends before returning to a binary that supports only version 21. Run once with the current build before switching binaries. This writes a version 21 record while retaining durable policy history. Changing TOML alone does not rewrite an existing record.
+To disable the experiment, change the global setting to `false`. Set `monty` to `true` before returning to a binary that supports only version 21. Remove all process overrides and `[limits]` settings, give each stdio MCP server its own program, set `file-attributes` to `false`, remove `file-watching` from every process, remove `[gateway] upgrade_http`, and give each telemetry target only `env://` or `secret://` bearer settings before returning to a binary that supports only version 21. If MCP argument wildcards are enabled, replace the stars with concrete arguments and disable `argument_wildcards` on each server too. Replace each absolute MCP executable path with a bare program name that the server’s `PATH` resolves to the intended executable. Remove all `[[agent.ingress]]` entries and egress backends before returning to a binary that supports only version 21. Before switching binaries, check that the older build can read both the configuration record and policy history. If both builds support the same policy history format, run once with the current build. This writes a version 21 record while retaining that history. Changing TOML alone does not rewrite an existing record.
+
+The [Dogwood 1.1.2 upgrade](/docs/user-guide/box/reference/policy/index.md#start-with-fresh-history-after-a-dogwood-upgrade) requires a new box directory. To return to the earlier build, use its preserved configuration and box directory. Keep the old and new directories separate. Activity recorded in the new directory does not carry back; Box does not convert that history.
 
 ## FAQ
 
@@ -77,7 +116,7 @@ Containment restricts which paths a process can reach. Dogwood adds policy decis
 
 ### Can I enable this through TOML alone?
 
-Only if you already have the compatible, signed build described in [Enable the experiment](#enable-the-experiment). Signed macOS releases include the adapter, but leave it disabled until you select it. The Cargo feature includes the adapter in a build. The TOML setting activates it for a box.
+Only if you already have the compatible build and platform prerequisites described in [Enable native filesystem policy](#enable-native-filesystem-policy). Signed macOS releases include the adapter, but leave it disabled until you select it. The Cargo feature includes the adapter in a build. The TOML setting activates it for a box.
 
 ### What happens if I enable it on an unsupported system?
 
@@ -93,19 +132,31 @@ No. The adapter uses the box’s existing durable Dogwood history, which survive
 
 ### Why disable authorization caching?
 
-The adapter disables kernel authorization caching so intercepted requests receive fresh policy decisions. Reusing an earlier decision could miss changes in policy history. Repeated checks add processing and storage work. Access through an existing descriptor remains subject to the limitation above.
+The macOS adapter disables kernel authorization caching so intercepted requests receive fresh policy decisions. Reusing an earlier decision could miss changes in policy history. Repeated checks add processing and storage work. Access through an existing descriptor remains subject to the limitation above.
 
 ### Does an allow record prove that the operation succeeded?
 
-No. Accepted authorization replies produce `indeterminate` outcomes. These records confirm authorization, not successful filesystem effects. Do not interpret them as proof that a file operation completed.
+No. macOS authorization replies produce `indeterminate` outcomes. Linux records the operation performed by its worker; descriptor delivery still precedes later reads or writes through that descriptor. Read the recorded operation and outcome instead of treating every allow as a completed file change.
 
 ### Can detached children survive normal Box shutdown?
 
-The shutdown path terminates tracked descendants, including detached children, before interception stops. Descendant cleanup and callback draining share a five-second deadline. Tests cover normal detached-child cleanup, but not every shutdown failure or enforcement after the trusted process crashes.
+The shutdown path terminates tracked descendants, including detached children, before interception stops. On macOS, descendant cleanup and callback draining share a five-second deadline. Tests cover normal detached-child cleanup, but not every shutdown failure or enforcement after the trusted process crashes.
 
 ### Can I immediately return to an older binary?
 
-No, if the box has a record of version 22 or later that the older binary does not support. Follow [Stored configuration and rollback](#stored-configuration-and-rollback) before starting an older binary. Changing TOML alone does not rewrite the stored record.
+Only when both the stored configuration record and policy history are compatible with the older binary. Follow [Stored configuration and rollback](#stored-configuration-and-rollback) before starting an older binary. Changing TOML alone does not rewrite the stored record.
+
+## Validate the Linux build
+
+Run the kernel suite on a qualified ARM64 Linux host with passwordless `sudo`:
+
+```sh
+bash test-native-filesystem/run-linux.sh
+```
+
+The script builds the product and helpers before it launches tests. Only test processes receive `CAP_BPF` and `CAP_PERFMON`; compilers keep the caller’s privileges. It runs policy decisions, file effects, workload selection, capability removal, concurrency, shutdown, and file-replacement races. A second build enables deliberate storage, registration, deadline, and worker faults. The script stops on a failed build or test and prints the directory containing retained fixtures.
+
+Privileged tests require the private `box_native_kernel_tests` build setting. Deliberate faults additionally require `box_native_test_faults`. The script sets these values; ordinary `cargo test --all-features` runs the unprivileged unit tests without enabling them. Ordinary unit-test success does not replace this kernel suite. Neither setting is required to build or use the feature. Do not distribute a build with deliberate faults enabled.
 
 ## Validate a signed build
 

@@ -392,6 +392,27 @@
       "addedDate": "2026-02-06"
     },
     {
+      "id": "clickhouse-loom",
+      "name": "ClickHouse Loom",
+      "description": "Shared long-term memory for agents on a self-hosted Loom server; memories are stored in ClickHouse and found again by any agent on the namespace.",
+      "integrationType": "memory-store",
+      "sdk": "agents",
+      "maintainedBy": "partner",
+      "languages": {
+        "python": {
+          "package": "clickhouse-loom",
+          "registryUrl": "https://pypi.org/project/clickhouse-loom/"
+        },
+        "typescript": {
+          "package": "@clickhouse/loom",
+          "registryUrl": "https://www.npmjs.com/package/@clickhouse/loom"
+        }
+      },
+      "github": "https://github.com/ClickHouse/loom",
+      "docsUrl": "https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md#strands-agents",
+      "addedDate": "2026-11-13"
+    },
+    {
       "id": "clova-studio",
       "name": "clova-studio",
       "description": "Naver Cloud Platform's Korean-optimized LLM service, integrated with Strands Agents via the strands-clova community package supporting the HCX-005 model.",
@@ -517,6 +538,35 @@
       "github": "https://github.com/DataDog/dd-trace-py",
       "docsUrl": "https://strandsagents.com/docs/integrations/plugins/datadog-ai-guard/",
       "addedDate": "2026-03-11"
+    },
+    {
+      "id": "decisions-api",
+      "name": "Decisions API",
+      "description": "Answer closed questions for Strands agents with decision models hosted on decisionapi.net.",
+      "integrationType": "decision-model",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decisions_api_decision_model.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/decision-models/models/",
+      "addedDate": "2026-10-30"
+    },
+    {
+      "id": "dogwood-authorization",
+      "name": "Dogwood Authorization",
+      "description": "Gate tool calls with Dogwood policies: Cedar-style access control plus temporal rules that decide on what the agent already did.",
+      "integrationType": "intervention",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-ts/src/vended-interventions/dogwood",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/agents/interventions/dogwood-authorization/",
+      "addedDate": "2026-11-16"
     },
     {
       "id": "edit",
@@ -856,6 +906,21 @@
       "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/llamacpp.py",
       "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/model-providers/llamacpp/",
       "addedDate": "2025-09-10"
+    },
+    {
+      "id": "llm-decision-model",
+      "name": "LLM Decision Model",
+      "description": "Answer closed questions for Strands agents with any model provider, one structured output call per ask.",
+      "integrationType": "decision-model",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/llm_decision_model.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/decision-models/models/llm/",
+      "addedDate": "2026-10-14"
     },
     {
       "id": "llm-tracekit-strands",
@@ -1335,6 +1400,20 @@
       "addedDate": "2026-04-09"
     },
     {
+      "id": "sagemaker-decision-model",
+      "name": "SageMaker Decision Model",
+      "description": "Answer closed questions for Strands agents with a decision model deployed to an Amazon SageMaker AI real-time endpoint.",
+      "integrationType": "decision-model",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/sagemaker.ts",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/decision-models/models/",
+      "addedDate": "2026-11-12"
+    },
+    {
       "id": "serply-mcp",
       "name": "serply-mcp",
       "description": "Hosted MCP server giving Strands agents live Google Search, Scholar, News, Maps, Jobs, Bing, Amazon and Reddit search plus page scraping, with one API key header.",
@@ -1425,6 +1504,23 @@
       "github": "https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/stop",
       "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/stop/",
       "addedDate": "2026-07-24"
+    },
+    {
+      "id": "strands-acgs",
+      "name": "strands-acgs",
+      "description": "Checks each tool call against ACGS constitution rules before it runs: blocking rules return Deny, and rules that require human review return Confirm.",
+      "integrationType": "intervention",
+      "sdk": "agents",
+      "maintainedBy": "community",
+      "languages": {
+        "python": {
+          "package": "strands-acgs",
+          "registryUrl": "https://pypi.org/project/strands-acgs/"
+        }
+      },
+      "github": "https://github.com/acgs-ai/strands-acgs",
+      "docsUrl": "https://github.com/acgs-ai/strands-acgs#readme",
+      "addedDate": "2026-10-19"
     },
     {
       "id": "strands-acp",
@@ -2360,6 +2456,21 @@
       },
       "github": "https://github.com/future-agi/traceAI",
       "addedDate": "2026-03-10"
+    },
+    {
+      "id": "typesafe-jev",
+      "name": "TypeSafe Jev",
+      "description": "Answer closed questions for Strands agents with TypeSafe's hosted Jev decision model.",
+      "integrationType": "decision-model",
+      "sdk": "agents",
+      "maintainedBy": "strands",
+      "languages": {
+        "python": {},
+        "typescript": {}
+      },
+      "github": "https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/typesafe_decision_model.py",
+      "docsUrl": "https://strandsagents.com/docs/user-guide/sdk/decision-models/models/",
+      "addedDate": "2026-10-30"
     },
     {
       "id": "utcp",

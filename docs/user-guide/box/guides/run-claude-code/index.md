@@ -1,12 +1,10 @@
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) runs in a box like any other program. In this example its own file tools reach none of the project’s files, so every read, write, and delete goes through its Bash tool, where the box’s shell asks the policy about every command and every file. By the end of this page you have Claude Code working on the project from getting started, and you have watched the policy permit three tasks and refuse two, with the refusal text the agent read.
 
-Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac. The files are in [`examples/claude-code`](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/examples/claude-code/) in the repository, and this page walks through them.
-
-> **Status.** The action vocabulary and the context fields can change before 1.0.0. Pin the Box build you install (`./box-core/box --version`), and read [troubleshooting load failures](../../reference/policy/index.md#troubleshooting-load-failures) after an upgrade.
+Audience: an operator who has run [getting started](/docs/user-guide/box/quickstart/index.md) and [write a policy](/docs/user-guide/box/guides/write-a-policy/index.md) on a Mac. The files are in [`examples/claude-code`](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/examples/claude-code/) in the repository, and this page walks through them.
 
 ## Before you start
 
--   The box from [getting started](../../quickstart/index.md) under `~/box-tutorial`: Box in `box-core`, the project in `my-project`, and your Bedrock key in `AWS_BEARER_TOKEN_BEDROCK`, made in `us-west-2`. Run every command on this page from `~/box-tutorial`.
+-   The box from [getting started](/docs/user-guide/box/quickstart/index.md) under `~/box-tutorial`: Box in `box-core`, the project in `my-project`, and your Bedrock key in `AWS_BEARER_TOKEN_BEDROCK`, made in `us-west-2`. Run every command on this page from `~/box-tutorial`.
     
 -   Claude Code, from its native installer:
     
@@ -110,7 +108,7 @@ destinations = ["bedrock-runtime.us-west-2.amazonaws.com"]
 secret.ref = "env://AWS_BEARER_TOKEN_BEDROCK"
 ```
 
-`[agent.filesystem]` is the operating system enforcement tier: Claude Code’s own process reaches each path listed there with no policy decision ([the two tiers](../../security/index.md#the-two-tiers)). `list` on the project gives Claude Code the file names it needs to start, and every file it opens goes through the shell.
+`[agent.filesystem]` is the operating system enforcement tier: Claude Code’s own process reaches each path listed there with no policy decision ([the two tiers](/docs/user-guide/box/security/index.md#the-two-tiers)). `list` on the project gives Claude Code the file names it needs to start, and every file it opens goes through the shell.
 
 The `command` names the link in `~/.local/bin`, and the box resolves it to the versioned program and runs that. With `--dangerously-skip-permissions`, Claude Code runs each command its model writes without asking you first, and the policy decides each one in its place.
 
@@ -319,9 +317,9 @@ Claude Code tried its Write tool, and the operating system refused it. It then r
 
 ## Step 5. Read the decision log
 
-The box writes its decisions to `claude-code/state/private/telemetry/records.jsonl`. The same file holds Claude Code’s own spans, log records, and metrics, because `box.toml` switched its exporters on and the box relays what it exports. [Telemetry in the example](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/examples/claude-code/README.md#telemetry) names those switches, and [Telemetry](../record-telemetry/index.md) states what each record carries.
+The box writes its decisions to `claude-code/state/private/telemetry/records.jsonl`. The same file holds Claude Code’s own spans, log records, and metrics, because `box.toml` switched its exporters on and the box relays what it exports. [Telemetry in the example](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/examples/claude-code/README.md#telemetry) names those switches, and [Telemetry](/docs/user-guide/box/guides/record-telemetry/index.md) states what each record carries.
 
-This command prints the verdict, action, resource, and rule of each decision, as in [write a policy](../write-a-policy/index.md#step-4-read-the-decision-log):
+This command prints the verdict, action, resource, and rule of each decision, as in [write a policy](/docs/user-guide/box/guides/write-a-policy/index.md#step-4-read-the-decision-log):
 
 ```sh
 jq -r '
@@ -367,7 +365,7 @@ The log has no line for the files the Read, Write, and Edit tools tried to open:
 
 ## What you have
 
-Claude Code in a box that gives its process its own installation, its own two state directories, and the file names in the project. A policy decided every command it ran and every file those commands touched: three tasks permitted, two refused, with text the agent quoted back. To give the agent more, add a rule to `policy.dw`: [common rules](../../reference/policy/index.md#common-rules) has six to start from, and [write policy for shell commands](../write-shell-policy/index.md) shows how to admit a program such as `git`.
+Claude Code in a box that gives its process its own installation, its own two state directories, and the file names in the project. A policy decided every command it ran and every file those commands touched: three tasks permitted, two refused, with text the agent quoted back. To give the agent more, add a rule to `policy.dw`: [common rules](/docs/user-guide/box/reference/policy/index.md#common-rules) has six to start from, and [write policy for shell commands](/docs/user-guide/box/guides/write-shell-policy/index.md) shows how to admit a program such as `git`.
 
 ## If something goes wrong
 
@@ -382,8 +380,8 @@ Claude Code in a box that gives its process its own installation, its own two st
 
 ## See also
 
--   [Write a policy and read what it decided](../write-a-policy/index.md): each part of a rule, and the record of each decision.
--   [Strands Shell](../../reference/shell/index.md): what the Bash tool’s commands run, where, and the fields a rule reads.
--   [Security](../../security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of the agent’s `read` list.
--   [Run a Strands Agents SDK agent in a box](../run-strands-harness/index.md): the same project and the same rules, with an agent you write yourself.
--   [The example directory](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/examples/claude-code/): the files this page walks through.
+-   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): each part of a rule, and the record of each decision.
+-   [Strands Shell](/docs/user-guide/box/reference/shell/index.md): what the Bash tool’s commands run, where, and the fields a rule reads.
+-   [Security](/docs/user-guide/box/security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of the agent’s `read` list.
+-   [Run a Strands Agents SDK agent in a box](/docs/user-guide/box/guides/run-strands-harness/index.md): the same project and the same rules, with an agent you write yourself.
+-   [The example directory](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/examples/claude-code/): the files this page walks through.

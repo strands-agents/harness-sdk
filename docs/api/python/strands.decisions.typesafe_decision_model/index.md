@@ -6,11 +6,11 @@ Decision model backed by TypeSafe’s hosted Jev API.
 class TypeSafeDecisionModel(DecisionModel)
 ```
 
-Defined in: [src/strands/decisions/typesafe\_decision\_model.py:16](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/typesafe_decision_model.py#L16)
+Defined in: [src/strands/decisions/typesafe\_decision\_model.py:17](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/typesafe_decision_model.py#L17)
 
 Decision model backed by TypeSafe’s hosted Jev API.
 
-`ask` raises `ModelThrottledException` on provider throttling (HTTP 429/503/529, with the `httpx.HTTPStatusError` as `__cause__`), `ContextWindowOverflowException` when the request exceeds the provider’s size limit (HTTP 413), `ValueError` for request-level violations (too many choices, binary content, state that is not JSON-serializable or contains NaN/infinity), `httpx.HTTPStatusError` for any other non-2xx response, and `StructuredOutputException` for a malformed provider response. Transport errors from the HTTP client (e.g. `httpx.TimeoutException`, `httpx.ConnectError`) propagate unchanged.
+`ask` raises `ModelThrottledException` on provider throttling (HTTP 429/503/529, with the `httpx.HTTPStatusError` as `__cause__`), `ContextWindowOverflowException` when the request exceeds the provider’s size limit (HTTP 413) or context window (HTTP 400 with `max_tokens_exceeded`, with the `httpx.HTTPStatusError` as `__cause__`), `ValueError` for request-level violations (too many choices, binary content, state that is not JSON-serializable or contains NaN/infinity), `httpx.HTTPStatusError` for any other non-2xx response, and `StructuredOutputException` for a malformed provider response. Transport errors from the HTTP client (e.g. `httpx.TimeoutException`, `httpx.ConnectError`) propagate unchanged.
 
 **Example**:
 
@@ -32,7 +32,7 @@ def __init__(*,
              http_client: httpx.AsyncClient | None = None) -> None
 ```
 
-Defined in: [src/strands/decisions/typesafe\_decision\_model.py:37](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/typesafe_decision_model.py#L37)
+Defined in: [src/strands/decisions/typesafe\_decision\_model.py:39](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/typesafe_decision_model.py#L39)
 
 Create a TypeSafe-backed decision model.
 

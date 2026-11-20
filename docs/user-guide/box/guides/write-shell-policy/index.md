@@ -1,6 +1,6 @@
 Policy decides each command the agent runs in Strands Shell, and each file operation the command makes. This page builds a policy for an agent that works in `~/src/project`, runs `git` and the programs it builds, and stays out of the project’s `.env` file.
 
-Audience: an operator with a working box from [getting started](../../quickstart/index.md). For every field a rule can read, see the [Strands Shell reference](../../reference/shell/index.md).
+Audience: an operator with a working box from [getting started](/docs/user-guide/box/quickstart/index.md). For every field a rule can read, see the [Strands Shell reference](/docs/user-guide/box/reference/shell/index.md).
 
 ## Before you start
 
@@ -162,7 +162,7 @@ when temporal {
 
 ## Result
 
-Restart the box with the command from step 4. The decision log has one line for each command and each file operation; [read the decision log](../../quickstart/index.md#step-7-read-the-decision-log) prints it. For `grep -n TODO src/main.rs > todo.txt && git add todo.txt`:
+Restart the box with the command from step 4. The decision log has one line for each command and each file operation; [read the decision log](/docs/user-guide/box/quickstart/index.md#step-7-read-the-decision-log) prints it. For `grep -n TODO src/main.rs > todo.txt && git add todo.txt`:
 
 ```text
 permit  shell:exec   grep -n TODO src/main.rs
@@ -176,16 +176,17 @@ permit  shell:spawn  /Library/Developer/CommandLineTools/usr/bin/git add todo.tx
 | What the agent sees | Cause | Fix |
 | --- | --- | --- |
 | `strands-shell: effect denied: policy denied this operation on '<program>'`, then `[policy: <id>]` or `[default-deny]`, status `126` | No `shell:exec` or `shell:spawn` permit matches the command. | Add a permit, as in step 1, 4, or 5. |
-| ``strands-shell: <program>: no tool runs <path>: no `[tool.<name>] command` matches this program and its leading arguments``, status `126` | Policy permits the program, and no `[tool.<name>]` table or `exec` entry covers the file at `<path>`. | Add a `[tool.<name>]` table whose `command` resolves to `<path>`, or an `exec` entry that covers it. When a table names the program, make its fixed arguments match the command. |
-| `strands-shell: <program>: command not found`, status `127` | The program is not in the box’s shell, and not on the `PATH` of the host OS’s shell that runs `box run`. | Install it, or start `box run` with its directory on the `PATH`. |
+| ``strands-shell: <program>: no tool runs <path>: no `[tool.<name>] command` matches this program and its leading arguments``, status `126` | Policy permits the program, and a `[tool.<name>]` table names the file at `<path>`, but no table’s fixed arguments match the command. | Make the table’s fixed arguments match the command. |
+| ``strands-shell: <program>: no tool runs <path>: no `[tool.<name>] command` matches this program and its leading arguments. The `[tool.<name>]` tables are fixed when the box starts, so a program created during the run runs only under an `[agent.filesystem] exec` entry``, status `126` | Policy permits the program, and no `[tool.<name>]` table or `exec` entry covers the file at `<path>`. A program the agent installed during the run gets this refusal. | Add a `[tool.<name>]` table whose `command` resolves to `<path>` and start a new run, or an `exec` entry that covers it. |
+| `strands-shell: <program>: command not found`, for a bare name followed by ``strands-shell: <program>: no tool in this box has this name, and no file of this name is on the PATH that `box run` started with. A PATH set inside the box does not change where the box looks``, status `127` | The program is not in the box’s shell, and not on the `PATH` of the host OS’s shell that runs `box run`. | Install it, or start `box run` with its directory on the `PATH`. |
 | `policy denied this operation on '<path>'`, and the command exits `1` | No `fs:*` permit matches the path, or a `forbid` names it. | Read the `@id` in the message. Widen the permit, as in step 2, or narrow the `forbid`. |
 | `xcode-select: error: unable to read data link at '/var/db/xcode_select_link'` | `git` resolved to `/usr/bin/git` on macOS. | Start `box run` with `/Library/Developer/CommandLineTools/usr/bin` first on the `PATH`, as in step 4. |
 | A file written to `/tmp` is missing in the next command | The Shell’s `/tmp` lasts one command. | Write the file in the workspace. |
-| `curl` fails, and prints `http:request gate: policy denied this operation` | The gateway refused the request. | Permit `net:connect` and `http:request` for the host, as in [the `[egress.<name>]` table](../network-and-credentials/index.md#example). |
+| `curl` fails, and prints `http:request gate: policy denied this operation` | The gateway refused the request. | Permit `net:connect` and `http:request` for the host, as in [the `[egress.<name>]` table](/docs/user-guide/box/guides/network-and-credentials/index.md#example). |
 | A `shell:spawn` rule on `program_path` never matches | `program_path` is the file with every link resolved, under `~/` when it is in your home. | Read the path in the refusal, and write the rule on that spelling. |
 
 ## See also
 
--   [Strands Shell reference](../../reference/shell/index.md): every field, action, and exit status.
--   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/shell.md): the order of the checks.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/docs/design/policy.md): how the engine decides, and what refuses to load.
+-   [Strands Shell reference](/docs/user-guide/box/reference/shell/index.md): every field, action, and exit status.
+-   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/shell.md): the order of the checks.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/policy.md): how the engine decides, and what refuses to load.

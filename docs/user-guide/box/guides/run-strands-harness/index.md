@@ -1,12 +1,10 @@
 An agent you write with the [Strands Agents SDK](https://github.com/strands-agents/sdk-python) runs in a box like any other program. In this example each of its three tools runs a command through the box’s shell, so the policy decides every command and every file a command touches. By the end of this page you have the agent working on the project from getting started, and you have watched the policy permit two tasks and refuse two, with the refusal text the agent read.
 
-Audience: an operator who has run [getting started](../../quickstart/index.md) and [write a policy](../write-a-policy/index.md) on a Mac. The files are in [`examples/strands-box/strands-sdk-agent`](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/examples/strands-box/strands-sdk-agent/) in the repository, and this page walks through them.
-
-> **Status.** The action vocabulary and the context fields can change before 1.0.0. Pin the Box build you install (`./box-core/box --version`), and read [troubleshooting load failures](../../reference/policy/index.md#troubleshooting-load-failures) after an upgrade.
+Audience: an operator who has run [getting started](/docs/user-guide/box/quickstart/index.md) and [write a policy](/docs/user-guide/box/guides/write-a-policy/index.md) on a Mac. The files are in [`examples/strands-box/strands-sdk-agent`](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/examples/strands-box/strands-sdk-agent/) in the repository, and this page walks through them.
 
 ## Before you start
 
--   The box from [getting started](../../quickstart/index.md) under `~/box-tutorial`: Box in `box-core`, the project in `my-project`, and your Bedrock key in `AWS_BEARER_TOKEN_BEDROCK`, made in `us-west-2`. Run every command on this page from `~/box-tutorial`.
+-   The box from [getting started](/docs/user-guide/box/quickstart/index.md) under `~/box-tutorial`: Box in `box-core`, the project in `my-project`, and your Bedrock key in `AWS_BEARER_TOKEN_BEDROCK`, made in `us-west-2`. Run every command on this page from `~/box-tutorial`.
     
 -   Homebrew’s Python 3.14: `brew install python@3.14`.
     
@@ -54,7 +52,7 @@ The virtual environment sits beside the agent, outside the project, and the `rea
 
 ## Step 3. Read the agent
 
-`agent.py` builds one agent with a Bedrock model and three tools. Each tool builds a command and runs it with `zsh -c`. The `zsh` on the agent’s `PATH` is the alias the box places there, a client program that sends the command to [Strands Shell](../../reference/shell/index.md#invocation), the box’s own shell. The policy decides the command and each file it touches, and the tool returns the shell’s output, or its refusal, to the model:
+`agent.py` builds one agent with a Bedrock model and three tools. Each tool builds a command and runs it with `zsh -c`. The `zsh` on the agent’s `PATH` is the alias the box places there, a client program that sends the command to [Strands Shell](/docs/user-guide/box/reference/shell/index.md#invocation), the box’s own shell. The policy decides the command and each file it touches, and the tool returns the shell’s output, or its refusal, to the model:
 
 ```python
 def shell(command: str) -> str:
@@ -174,7 +172,7 @@ forbid (principal, action == Box::Action::"fs:delete", resource);
 
 The file ends with two more `forbid` rules, `metadata_hosts` and `metadata_addresses`, which refuse the cloud metadata services by name and by address.
 
-`no_deletes` refuses every delete, and its `@description` is what the agent reads when `rm` fails. [How a denial reads](../../reference/policy/index.md#how-a-denial-reads) lists the shapes.
+`no_deletes` refuses every delete, and its `@description` is what the agent reads when `rm` fails. [How a denial reads](/docs/user-guide/box/reference/policy/index.md#how-a-denial-reads) lists the shapes.
 
 ## Step 6. Run four tasks
 
@@ -296,7 +294,7 @@ util.py
 
 ## Step 7. Read the decision log
 
-The box writes its decisions to `strands-agent/state/private/telemetry/records.jsonl`. This command prints the verdict, action, resource, and rule of each one, as in [write a policy](../write-a-policy/index.md#step-4-read-the-decision-log):
+The box writes its decisions to `strands-agent/state/private/telemetry/records.jsonl`. This command prints the verdict, action, resource, and rule of each one, as in [write a policy](/docs/user-guide/box/guides/write-a-policy/index.md#step-4-read-the-decision-log):
 
 ```sh
 jq -r '
@@ -331,7 +329,7 @@ Each model call is an `http:request` under `model_request`, on a connection that
 
 ## What you have
 
-A Strands Agents SDK agent that sends every tool call through the box’s shell, a `box.toml` that gives its process the Python, the SDK, and the project’s file names, and a policy that permitted two tasks and refused two with text the agent quoted back. To give the agent more, add a tool to `agent.py` and a rule to `policy.dw`: [common rules](../../reference/policy/index.md#common-rules) has six to start from, and [write policy for shell commands](../write-shell-policy/index.md) shows how to admit a program such as `git`.
+A Strands Agents SDK agent that sends every tool call through the box’s shell, a `box.toml` that gives its process the Python, the SDK, and the project’s file names, and a policy that permitted two tasks and refused two with text the agent quoted back. To give the agent more, add a tool to `agent.py` and a rule to `policy.dw`: [common rules](/docs/user-guide/box/reference/policy/index.md#common-rules) has six to start from, and [write policy for shell commands](/docs/user-guide/box/guides/write-shell-policy/index.md) shows how to admit a program such as `git`.
 
 ## If something goes wrong
 
@@ -342,12 +340,12 @@ A Strands Agents SDK agent that sends every tool call through the box’s shell,
 | `filesystem entry "..." is refused: ... is a symbolic link` | Name the directory the link points at. For a Homebrew package, that is its directory under `/opt/homebrew/Cellar`. |
 | `Library not loaded: /opt/homebrew/opt/<package>/...` | Add `/opt/homebrew/Cellar/<package>` to `read` in `[agent.filesystem]`. |
 | `exec ".../runtime/.venv/bin/python3" failed: Operation not permitted` | Check that `metadata` in `[agent.filesystem]` names `/opt/homebrew/opt`, and `exec` names the Python directory under `/opt/homebrew/Cellar`. |
-| `blocked by egress control` in the agent’s output | The egress gateway refused a request to Bedrock. [Errors and exit codes](../network-and-credentials/index.md#errors-and-exit-codes) on the egress page lists the causes. |
+| `blocked by egress control` in the agent’s output | The egress gateway refused a request to Bedrock. [Errors and exit codes](/docs/user-guide/box/guides/network-and-credentials/index.md#errors-and-exit-codes) on the egress page lists the causes. |
 | A `403` from Bedrock | Bedrock refused the key. Check that it is in `AWS_BEARER_TOKEN_BEDROCK` and was made in `us-west-2`. |
 
 ## See also
 
--   [Write a policy and read what it decided](../write-a-policy/index.md): each part of a rule, and the record of each decision.
--   [Strands Shell](../../reference/shell/index.md): what the agent’s `zsh -c` runs, where, and the fields a rule reads.
--   [Security](../../security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of the agent’s `read` list.
--   [The example directory](https://github.com/strands-agents/box/blob/e1aadc294eee78ef51e404e00c0251c85108ed18/examples/strands-box/strands-sdk-agent/): the files this page walks through.
+-   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): each part of a rule, and the record of each decision.
+-   [Strands Shell](/docs/user-guide/box/reference/shell/index.md): what the agent’s `zsh -c` runs, where, and the fields a rule reads.
+-   [Security](/docs/user-guide/box/security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of the agent’s `read` list.
+-   [The example directory](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/examples/strands-box/strands-sdk-agent/): the files this page walks through.

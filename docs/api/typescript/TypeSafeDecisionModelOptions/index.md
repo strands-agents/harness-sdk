@@ -1,4 +1,4 @@
-Defined in: [src/decisions/typesafe-decision-model.ts:15](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L15)
+Defined in: [src/decisions/typesafe-decision-model.ts:18](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L18)
 
 Options for constructing a [TypeSafeDecisionModel](/docs/api/typescript/TypeSafeDecisionModel/index.md).
 
@@ -10,7 +10,7 @@ Options for constructing a [TypeSafeDecisionModel](/docs/api/typescript/TypeSafe
 readonly apiKey?: string;
 ```
 
-Defined in: [src/decisions/typesafe-decision-model.ts:17](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L17)
+Defined in: [src/decisions/typesafe-decision-model.ts:20](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L20)
 
 TypeSafe API key. Defaults to `TYPESAFE_API_KEY`.
 
@@ -22,7 +22,7 @@ TypeSafe API key. Defaults to `TYPESAFE_API_KEY`.
 readonly modelId?: string;
 ```
 
-Defined in: [src/decisions/typesafe-decision-model.ts:19](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L19)
+Defined in: [src/decisions/typesafe-decision-model.ts:22](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L22)
 
 Jev model identifier. Defaults to `jev-latest`.
 
@@ -34,7 +34,7 @@ Jev model identifier. Defaults to `jev-latest`.
 readonly defaultMinConfidence?: number;
 ```
 
-Defined in: [src/decisions/typesafe-decision-model.ts:21](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L21)
+Defined in: [src/decisions/typesafe-decision-model.ts:24](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L24)
 
 Default minimum confidence. Defaults to `0.5`.
 
@@ -49,7 +49,7 @@ readonly fetch?: {
 };
 ```
 
-Defined in: [src/decisions/typesafe-decision-model.ts:23](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L23)
+Defined in: [src/decisions/typesafe-decision-model.ts:26](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/typesafe-decision-model.ts#L26)
 
 Custom fetch implementation, primarily for transport configuration and tests.
 

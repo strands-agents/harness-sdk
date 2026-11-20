@@ -8,7 +8,7 @@ AWS Bedrock model provider.
 class BedrockModel(Model)
 ```
 
-Defined in: [src/strands/models/bedrock.py:286](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L286)
+Defined in: [src/strands/models/bedrock.py:295](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L295)
 
 AWS Bedrock model provider implementation.
 
@@ -26,7 +26,7 @@ The implementation handles Bedrock-specific features such as:
 class BedrockConfig(BaseModelConfig)
 ```
 
-Defined in: [src/strands/models/bedrock.py:300](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L300)
+Defined in: [src/strands/models/bedrock.py:309](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L309)
 
 Configuration options for Bedrock models.
 
@@ -38,9 +38,9 @@ Configuration options for Bedrock models.
 -   `cache_prompt` - Cache point type for the system prompt (deprecated, use cache\_config)
 -   `cache_config` - Configuration for prompt caching. Use CacheConfig(strategy=“auto”) for automatic caching.
 -   `cache_tools` - Cache point type for tools (deprecated, use CacheConfig(tools\_ttl=…)). Pass a string (e.g. “default”) to cache the tools with no explicit TTL, or a CacheToolsConfig instance to set both type and TTL (e.g. “1h”). Inherits cache\_config.ttl if specified, otherwise it takes the Bedrock default. Superseded by an explicitly set cache\_config.tools\_ttl.
--   `guardrail_id` - ID of the guardrail to apply
+-   `guardrail_id` - ID of the guardrail to apply. Must be set together with guardrail\_version.
 -   `guardrail_trace` - Guardrail trace mode. Defaults to enabled.
--   `guardrail_version` - Version of the guardrail to apply
+-   `guardrail_version` - Version of the guardrail to apply. Must be set together with guardrail\_id.
 -   `guardrail_stream_processing_mode` - The guardrail processing mode
 -   `guardrail_redact_input` - Flag to redact input if a guardrail is triggered. Defaults to True.
 -   `guardrail_redact_input_message` - If a Bedrock Input guardrail triggers, replace the input with this message.
@@ -71,7 +71,7 @@ def __init__(*,
              **model_config: Unpack[BedrockConfig])
 ```
 
-Defined in: [src/strands/models/bedrock.py:378](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L378)
+Defined in: [src/strands/models/bedrock.py:387](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L387)
 
 Initialize provider instance.
 
@@ -92,7 +92,7 @@ Initialize provider instance.
 def model_info() -> ModelInfo
 ```
 
-Defined in: [src/strands/models/bedrock.py:456](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L456)
+Defined in: [src/strands/models/bedrock.py:465](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L465)
 
 Reports server-side summary as off, and how Converse caches the model where the shared model info differs.
 
@@ -105,7 +105,7 @@ A `model_info` override still wins over both.
 def update_config(**model_config: Unpack[BedrockConfig]) -> None
 ```
 
-Defined in: [src/strands/models/bedrock.py:508](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L508)
+Defined in: [src/strands/models/bedrock.py:517](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L517)
 
 Update the Bedrock Model configuration with the provided arguments.
 
@@ -120,7 +120,7 @@ Update the Bedrock Model configuration with the provided arguments.
 def get_config() -> BedrockConfig
 ```
 
-Defined in: [src/strands/models/bedrock.py:520](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L520)
+Defined in: [src/strands/models/bedrock.py:535](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L535)
 
 Get the current Bedrock Model configuration.
 
@@ -140,7 +140,7 @@ def format_request(messages: Messages,
                    **kwargs: Any) -> dict[str, Any]
 ```
 
-Defined in: [src/strands/models/bedrock.py:533](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L533)
+Defined in: [src/strands/models/bedrock.py:548](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L548)
 
 Format a Bedrock converse stream request.
 
@@ -168,7 +168,7 @@ async def count_tokens(
         system_prompt_content: list[SystemContentBlock] | None = None) -> int
 ```
 
-Defined in: [src/strands/models/bedrock.py:1601](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1601)
+Defined in: [src/strands/models/bedrock.py:1642](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1642)
 
 Count tokens using Bedrock’s native CountTokens API.
 
@@ -200,7 +200,7 @@ async def stream(messages: Messages,
                  **kwargs: Any) -> AsyncGenerator[StreamEvent, None]
 ```
 
-Defined in: [src/strands/models/bedrock.py:1683](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1683)
+Defined in: [src/strands/models/bedrock.py:1724](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1724)
 
 Stream conversation with the Bedrock model.
 
@@ -233,7 +233,7 @@ def convert_non_streaming_to_streaming(response: dict[str, Any],
                                        **kwargs: Any) -> Iterable[StreamEvent]
 ```
 
-Defined in: [src/strands/models/bedrock.py:1935](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1935)
+Defined in: [src/strands/models/bedrock.py:1976](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L1976)
 
 Convert a non-streaming response to the streaming format.
 
@@ -257,7 +257,7 @@ async def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/bedrock.py:2061](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L2061)
+Defined in: [src/strands/models/bedrock.py:2102](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/bedrock.py#L2102)
 
 Get structured output from the model.
 
