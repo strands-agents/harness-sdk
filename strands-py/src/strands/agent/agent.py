@@ -117,7 +117,7 @@ from . import _continuation
 from ._agent_as_tool import _AgentAsTool
 from ._concurrency import _ConcurrencyController
 from .agent_metadata import AgentMetadata
-from .agent_result import AgentResult
+from .agent_result import AgentResult, StructuredOutputT
 from .base import AgentBase
 from .conversation_manager import (
     ConversationManager,
@@ -948,14 +948,14 @@ class Agent(AgentBase, LocalAgent):
         prompt: AgentInput = None,
         *,
         invocation_state: dict[str, Any] | None = None,
-        structured_output_model: type[BaseModel] | None = None,
+        structured_output_model: type[StructuredOutputT] | None = None,
         structured_output_prompt: str | None = None,
         idempotency_token: Any = None,
         limits: Limits | None = None,
         cancel_signal: threading.Event | None = None,
         invocation_context: InvocationContext | None = None,
         **kwargs: Any,
-    ) -> AgentResult:
+    ) -> AgentResult[StructuredOutputT]:
         """Process a natural language prompt through the agent's event loop.
 
         This method implements the conversational interface with multiple input patterns:
@@ -1017,7 +1017,7 @@ class Agent(AgentBase, LocalAgent):
                 or if ``invocation_context`` is not an ``InvocationContext``.
             Exception: Any exceptions from the agent invocation will be propagated to the caller.
         """
-        return run_async(
+        result = run_async(
             lambda: self._invoke_async_and_flush(
                 prompt,
                 invocation_state=invocation_state,
@@ -1030,6 +1030,7 @@ class Agent(AgentBase, LocalAgent):
                 **kwargs,
             )
         )
+        return cast(AgentResult[StructuredOutputT], result)
 
     async def _invoke_async_and_flush(self, prompt: AgentInput = None, **kwargs: Any) -> AgentResult:
         """Run ``invoke_async`` then flush the memory manager within this loop.
@@ -1049,14 +1050,14 @@ class Agent(AgentBase, LocalAgent):
         prompt: AgentInput = None,
         *,
         invocation_state: dict[str, Any] | None = None,
-        structured_output_model: type[BaseModel] | None = None,
+        structured_output_model: type[StructuredOutputT] | None = None,
         structured_output_prompt: str | None = None,
         idempotency_token: Any = None,
         limits: Limits | None = None,
         cancel_signal: threading.Event | None = None,
         invocation_context: InvocationContext | None = None,
         **kwargs: Any,
-    ) -> AgentResult:
+    ) -> AgentResult[StructuredOutputT]:
         """Process a natural language prompt through the agent's event loop.
 
         This method implements the conversational interface with multiple input patterns:
@@ -1131,7 +1132,7 @@ class Agent(AgentBase, LocalAgent):
         async for event in events:
             _ = event
 
-        return cast(AgentResult, event["result"])
+        return cast(AgentResult[StructuredOutputT], event["result"])
 
     def structured_output(self, output_model: type[T], prompt: AgentInput = None) -> T:
         """This method allows you to get structured output from the agent.
