@@ -26,7 +26,9 @@ from strands.bidi.models import BidiModel, ConnectionTimeoutError
 from strands.hooks.events import (
     AfterMultiAgentInvocationEvent,
     AfterNodeCallEvent,
+    BeforeModelCallEvent,
     BeforeMultiAgentInvocationEvent,
+    MessageAddedEvent,
     MultiAgentInitializedEvent,
 )
 from strands.hooks.registry import HookOrder
@@ -46,7 +48,7 @@ from strands.storage import LocalFileStorage
 from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types._snapshot import Snapshot
 from strands.types.content import ContentBlock
-from strands.types.exceptions import ContextWindowOverflowException, SnapshotException
+from strands.types.exceptions import ContextWindowOverflowException, SnapshotException, StorageError
 from strands.vended_plugins.context_injector import ContextInjector
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
@@ -1176,7 +1178,7 @@ def test_redaction_flushes_even_under_trigger_strategy(temp_dir):
     AfterModelCall hook that it does not register under ``saveLatestOn: 'trigger'``, so TS does not
     flush redactions under that strategy. Python has no redaction signal on AfterModelCallEvent;
     redaction arrives through the Agent's direct ``redact_latest_message`` call, which always
-    persists so pre-redaction content never sits at rest. We assert the safer always-flush here.
+    persists the redacted message. We assert the safer always-flush here.
     """
     storage = LocalFileStorage(temp_dir)
     manager = SnapshotSessionManager("s1", storage=storage, save_latest_on="trigger")
@@ -1192,6 +1194,457 @@ def test_redaction_flushes_even_under_trigger_strategy(temp_dir):
     tru_texts = [content["text"] for message in agent_2.messages for content in message["content"] if "text" in content]
     assert "sensitive prompt" not in tru_texts
     assert "REDACTED" in tru_texts
+
+
+def _immutable_snapshot_data(storage, snapshot_id: str) -> bytes:
+    """The raw stored bytes of an immutable snapshot."""
+    return asyncio.run(storage.read(f"session/{_snapshot_key('s1', 'a1', snapshot_id=snapshot_id)}"))
+
+
+def _redacted_snapshot(data: bytes, message_index: int) -> dict:
+    """The decoded snapshot expected once the text message at ``message_index`` is redacted and nothing else changes."""
+    snapshot = json.loads(data)
+    snapshot["data"]["messages"][message_index]["content"] = [{"text": "REDACTED"}]
+    return snapshot
+
+
+def test_redaction_rewrites_immutable_snapshots_holding_message(storage):
+    """A redaction replaces the message in every checkpoint that holds it and leaves the others alone (#6246)."""
+    manager = SnapshotSessionManager("s1", storage=storage, snapshot_trigger=lambda *, agent_data, **_: True)
+    model = MockedModelProvider(
+        [
+            {"role": "assistant", "content": [{"text": "hi"}]},
+            {"role": "assistant", "content": [{"text": "hi again"}]},
+            {"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."},
+        ]
+    )
+    agent = Agent(model=model, session_manager=manager, agent_id="a1")
+    agent("hello")
+    agent("again")
+    earlier_ids = asyncio.run(manager.list_snapshot_ids(agent))
+    exp_earlier_data = [_immutable_snapshot_data(storage, snapshot_id) for snapshot_id in earlier_ids]
+
+    async def checkpoint(event):
+        await manager.save_snapshot(event.agent, is_latest=False)
+
+    agent.add_hook(checkpoint, MessageAddedEvent)
+    agent.add_hook(checkpoint, BeforeModelCallEvent)
+    agent.state.set("step", "before model call")
+    storage.read = AsyncMock(wraps=storage.read)  # type: ignore[method-assign]
+    storage.write = AsyncMock(wraps=storage.write)  # type: ignore[method-assign]
+    agent("sensitive prompt")
+    agent.state.set("step", "after model call")
+
+    # The redaction reads each checkpoint that exists at that point once: two earlier, two holding the message.
+    tru_read_count = sum("immutable_history" in call.args[0] for call in storage.read.call_args_list)
+    exp_read_count = 4
+    assert tru_read_count == exp_read_count
+
+    holder_ids = asyncio.run(manager.list_snapshot_ids(agent))[len(earlier_ids) :]
+    assert len(holder_ids) == 4  # user message added, before model call, assistant message added, trigger
+    for snapshot_id in holder_ids:
+        first_write = next(call for call in storage.write.call_args_list if snapshot_id in call.args[0])
+        exp_snapshot = _redacted_snapshot(first_write.args[1], 4)
+        tru_snapshot = json.loads(_immutable_snapshot_data(storage, snapshot_id))
+        assert tru_snapshot == exp_snapshot
+    tru_earlier_data = [_immutable_snapshot_data(storage, snapshot_id) for snapshot_id in earlier_ids]
+    assert tru_earlier_data == exp_earlier_data
+
+    asyncio.run(manager.restore_snapshot(agent, snapshot_id=holder_ids[0]))
+    tru_texts = [message["content"][0]["text"] for message in agent.messages]
+    exp_texts = ["hello", "hi", "again", "hi again", "REDACTED"]
+    assert tru_texts == exp_texts
+    assert agent.state.get("step") == "before model call"
+
+
+def test_redaction_rewrites_immutable_snapshot_from_stopped_invocation(storage):
+    """A redaction reaches a checkpoint written by an earlier invocation through another manager (#6246).
+
+    The first invocation stops on a tool result no model call has seen, so its checkpoint holds the original.
+    """
+
+    @tool
+    def lookup() -> str:
+        """Return the record."""
+        return "sensitive record"
+
+    def session_agent():
+        manager = SnapshotSessionManager("s1", storage=storage, snapshot_trigger=lambda *, agent_data, **_: True)
+        return Agent(model=model, tools=[lookup], session_manager=manager, agent_id="a1"), manager
+
+    model = MockedModelProvider(
+        [
+            {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "lookup", "input": {}}}]},
+            {"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."},
+        ]
+    )
+    agent, manager = session_agent()
+    agent("look up my record", limits={"turns": 1})
+    [stopped_id] = asyncio.run(manager.list_snapshot_ids(agent))
+    exp_snapshot = json.loads(_immutable_snapshot_data(storage, stopped_id))
+    exp_result = exp_snapshot["data"]["messages"][2]["content"][0]["toolResult"]
+    assert exp_result["content"] == [{"text": "sensitive record"}]
+    exp_result["content"] = [{"text": "REDACTED"}]
+
+    agent, manager = session_agent()
+    agent()
+
+    tru_snapshot = json.loads(_immutable_snapshot_data(storage, stopped_id))
+    assert tru_snapshot == exp_snapshot
+    asyncio.run(manager.restore_snapshot(agent, snapshot_id=stopped_id))
+    assert len(agent.messages) == 3
+    tru_result_content = agent.messages[-1]["content"][0]["toolResult"]["content"]
+    exp_result_content = [{"text": "REDACTED"}]
+    assert tru_result_content == exp_result_content
+
+
+def test_redaction_rewrites_restored_older_immutable_snapshot(storage, caplog):
+    """A redaction reaches a checkpoint that was restored and continued from after newer ones were written (#6246)."""
+
+    @tool
+    def lookup() -> str:
+        """Return the record."""
+        return "sensitive record"
+
+    manager = SnapshotSessionManager("s1", storage=storage, snapshot_trigger=lambda *, agent_data, **_: True)
+    model = MockedModelProvider(
+        [
+            {"role": "assistant", "content": [{"text": "hi"}]},
+            {"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "lookup", "input": {}}}]},
+            {"role": "assistant", "content": [{"text": "something else"}]},
+            {"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."},
+        ]
+    )
+    agent = Agent(model=model, tools=[lookup], session_manager=manager, agent_id="a1")
+    agent("hello")
+    agent("look up my record", limits={"turns": 1})
+    first_id, stopped_id = asyncio.run(manager.list_snapshot_ids(agent))
+    asyncio.run(manager.restore_snapshot(agent, snapshot_id=first_id))
+    agent("another branch")
+    newer_id = asyncio.run(manager.list_snapshot_ids(agent))[-1]
+    exp_untouched_data = [_immutable_snapshot_data(storage, snapshot_id) for snapshot_id in (first_id, newer_id)]
+    exp_snapshot = json.loads(_immutable_snapshot_data(storage, stopped_id))
+    exp_result = exp_snapshot["data"]["messages"][-1]["content"][0]["toolResult"]
+    assert exp_result["content"] == [{"text": "sensitive record"}]
+    exp_result["content"] = [{"text": "REDACTED"}]
+
+    asyncio.run(manager.restore_snapshot(agent, snapshot_id=stopped_id))
+    with caplog.at_level(logging.INFO, logger="strands.session.snapshot_session_manager"):
+        agent()
+
+    tru_snapshot = json.loads(_immutable_snapshot_data(storage, stopped_id))
+    assert tru_snapshot == exp_snapshot
+    tru_untouched_data = [_immutable_snapshot_data(storage, snapshot_id) for snapshot_id in (first_id, newer_id)]
+    assert tru_untouched_data == exp_untouched_data
+    tru_rewrite_logs = [record.getMessage() for record in caplog.records if "rewrote redacted message" in record.msg]
+    exp_rewrite_logs = [
+        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{stopped_id}>, tracking_id=<{agent.messages[-2]['tracking_id']}>"
+        " | rewrote redacted message in immutable snapshot"
+    ]
+    assert tru_rewrite_logs == exp_rewrite_logs
+
+    asyncio.run(manager.restore_snapshot(agent, snapshot_id=stopped_id))
+    tru_result_content = agent.messages[-1]["content"][0]["toolResult"]["content"]
+    exp_result_content = [{"text": "REDACTED"}]
+    assert tru_result_content == exp_result_content
+
+
+def test_redaction_storage_error_fails_invocation_after_other_rewrites(storage, caplog):
+    """A storage error on one checkpoint fails the invocation only after the others are rewritten; a retry fixes it."""
+    manager = SnapshotSessionManager("s1", storage=storage)
+    redaction_model = MockedModelProvider(
+        [{"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."}]
+    )
+    agent = Agent(model=redaction_model, session_manager=manager, agent_id="a1")
+    snapshot_ids = []
+    write = storage.write
+
+    async def write_failing_on_first_checkpoint(key, data):
+        if snapshot_ids[0] in key:
+            raise OSError("disk full while writing: sensitive prompt")
+        await asyncio.sleep(0.01)  # as on remote storage, this write is still in flight when the other one fails
+        await write(key, data)
+
+    async def checkpoint(event):
+        snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
+        snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
+        storage.write = write_failing_on_first_checkpoint  # type: ignore[method-assign]
+
+    agent.add_hook(checkpoint, BeforeModelCallEvent)
+    manager_logger = "strands.session.snapshot_session_manager"
+    with caplog.at_level(logging.WARNING, logger=manager_logger):
+        with pytest.raises(OSError, match="disk full"):
+            agent("sensitive prompt")
+    storage.write = write  # type: ignore[method-assign]
+
+    tru_latest_data = asyncio.run(storage.read(_on_disk_key("s1", "a1")))
+    assert b"REDACTED" in tru_latest_data and b"sensitive prompt" not in tru_latest_data
+    failed_data, rewritten_data = (_immutable_snapshot_data(storage, snapshot_id) for snapshot_id in snapshot_ids)
+    assert b"sensitive prompt" in failed_data
+    # The two checkpoints were saved back to back, so they differ only in their timestamp.
+    exp_snapshot = _redacted_snapshot(failed_data, 0) | {"created_at": ANY}
+    assert json.loads(rewritten_data) == exp_snapshot
+    tru_warnings = [record.getMessage() for record in caplog.records if record.name == manager_logger]
+    exp_warnings = [
+        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{snapshot_ids[0]}>, error=<OSError>, cause=<None>"
+        " | failed to flush a redaction to immutable snapshot"
+    ]
+    assert tru_warnings == exp_warnings
+    # The error is not wrapped and its message quotes the prompt, so the log names its type only.
+    assert "sensitive prompt" not in caplog.text
+
+    manager.redact_latest_message(agent.messages[0], agent)
+
+    tru_snapshot = json.loads(_immutable_snapshot_data(storage, snapshot_ids[0]))
+    assert tru_snapshot == _redacted_snapshot(failed_data, 0)
+
+
+def test_redaction_latest_write_error_still_rewrites_immutable_snapshots(storage):
+    """A failed ``snapshot_latest`` write fails the invocation without leaving the checkpoints unredacted."""
+    manager = SnapshotSessionManager("s1", storage=storage, save_latest_on="trigger")
+    redaction_model = MockedModelProvider(
+        [{"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."}]
+    )
+    agent = Agent(model=redaction_model, session_manager=manager, agent_id="a1")
+    exp_snapshots = []
+    write = storage.write
+
+    async def write_failing_on_latest(key, data):
+        if key == _on_disk_key("s1", "a1"):
+            raise OSError("disk full")
+        await write(key, data)
+
+    async def checkpoint(event):
+        snapshot_id = await manager.save_snapshot(event.agent, is_latest=False)
+        data = await storage.read(f"session/{_snapshot_key('s1', 'a1', snapshot_id=snapshot_id)}")
+        exp_snapshots.append(_redacted_snapshot(data, 0))
+        storage.write = write_failing_on_latest  # type: ignore[method-assign]
+
+    agent.add_hook(checkpoint, BeforeModelCallEvent)
+    with pytest.raises(OSError, match="disk full"):
+        agent("sensitive prompt")
+
+    [snapshot_id] = asyncio.run(manager.list_snapshot_ids(agent))
+    tru_snapshots = [json.loads(_immutable_snapshot_data(storage, snapshot_id))]
+    assert tru_snapshots == exp_snapshots
+
+
+def test_redaction_latest_and_immutable_write_errors_raise_latest_error(storage, caplog):
+    """When the ``snapshot_latest`` write and a checkpoint rewrite both fail, the latest error is the one raised."""
+    manager = SnapshotSessionManager("s1", storage=storage, save_latest_on="trigger")
+    redaction_model = MockedModelProvider(
+        [{"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."}]
+    )
+    agent = Agent(model=redaction_model, session_manager=manager, agent_id="a1")
+    snapshot_ids = []
+
+    async def write_failing(key, data):
+        if key == _on_disk_key("s1", "a1"):
+            raise StorageError("latest write failed") from TimeoutError("timed out writing: sensitive prompt")
+        raise StorageError("checkpoint write failed") from PermissionError("cannot write: sensitive prompt")
+
+    async def checkpoint(event):
+        snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
+        storage.write = write_failing  # type: ignore[method-assign]
+
+    agent.add_hook(checkpoint, BeforeModelCallEvent)
+    manager_logger = "strands.session.snapshot_session_manager"
+    with caplog.at_level(logging.WARNING, logger=manager_logger):
+        with pytest.raises(StorageError, match="latest write failed"):
+            agent("sensitive prompt")
+
+    tru_warnings = [record.getMessage() for record in caplog.records if record.name == manager_logger]
+    exp_warnings = [
+        "agent_id=<a1>, session_id=<s1>, error=<StorageError>, cause=<TimeoutError>"
+        " | failed to flush a redaction to snapshot_latest",
+        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{snapshot_ids[0]}>, error=<StorageError>,"
+        " cause=<PermissionError> | failed to flush a redaction to immutable snapshot",
+    ]
+    assert tru_warnings == exp_warnings
+    # A wrapped cause can quote the stored document, so the logs name the error and cause types only.
+    assert "sensitive prompt" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("latest_write_fails", "exp_error", "exp_latest_warnings"),
+    [
+        (False, "listing failed", []),
+        (
+            True,
+            "latest write failed",
+            [
+                "agent_id=<a1>, session_id=<s1>, error=<OSError>, cause=<None>"
+                " | failed to flush a redaction to snapshot_latest"
+            ],
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    ("list_cause", "exp_cause"),
+    [(None, "None"), (PermissionError("cannot list: sensitive prompt"), "PermissionError")],
+)
+def test_redaction_listing_error_is_logged(
+    storage, caplog, latest_write_fails, exp_error, exp_latest_warnings, list_cause, exp_cause
+):
+    """A failed listing leaves the checkpoints as they were and is logged, also when the latest error is raised."""
+    manager = SnapshotSessionManager("s1", storage=storage, save_latest_on="trigger")
+    redaction_model = MockedModelProvider(
+        [{"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."}]
+    )
+    agent = Agent(model=redaction_model, session_manager=manager, agent_id="a1")
+    snapshot_ids = []
+    write, list_keys = storage.write, storage.list
+
+    async def write_failing_on_latest(key, data):
+        if key == _on_disk_key("s1", "a1"):
+            raise OSError("latest write failed: sensitive prompt")
+        await write(key, data)
+
+    async def list_failing(prefix):
+        raise OSError("listing failed: sensitive prompt") from list_cause
+
+    async def checkpoint(event):
+        snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
+        storage.list = list_failing  # type: ignore[method-assign]
+        if latest_write_fails:
+            storage.write = write_failing_on_latest  # type: ignore[method-assign]
+
+    agent.add_hook(checkpoint, BeforeModelCallEvent)
+    manager_logger = "strands.session.snapshot_session_manager"
+    with caplog.at_level(logging.WARNING, logger=manager_logger):
+        with pytest.raises(OSError, match=exp_error):
+            agent("sensitive prompt")
+    storage.list = list_keys  # type: ignore[method-assign]
+
+    tru_warnings = [record.getMessage() for record in caplog.records if record.name == manager_logger]
+    exp_warnings = [
+        *exp_latest_warnings,
+        f"agent_id=<a1>, session_id=<s1>, error=<OSError>, cause=<{exp_cause}>"
+        " | failed to list immutable snapshots while flushing a redaction | no immutable snapshot was rewritten",
+    ]
+    assert tru_warnings == exp_warnings
+    # The error messages quote the prompt, with and without a wrapped cause; the log names types only.
+    assert "sensitive prompt" not in caplog.text
+    assert b"sensitive prompt" in _immutable_snapshot_data(storage, snapshot_ids[0])
+
+
+def test_redaction_rewrites_every_copy_of_message(storage):
+    """A message sent twice shares one tracking id, and a checkpoint holding both copies has both rewritten."""
+    manager = SnapshotSessionManager("s1", storage=storage)
+    model = MockedModelProvider(
+        [
+            {"role": "assistant", "content": [{"text": "hi"}]},
+            {"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."},
+        ]
+    )
+    agent = Agent(model=model, session_manager=manager, agent_id="a1")
+    prompt = [{"role": "user", "content": [{"text": "sensitive prompt"}]}]
+    agent(prompt)
+    snapshot_ids = []
+
+    async def checkpoint(event):
+        snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
+
+    agent.add_hook(checkpoint, BeforeModelCallEvent)
+    agent(prompt)
+
+    [snapshot_id] = snapshot_ids
+    tru_messages = json.loads(_immutable_snapshot_data(storage, snapshot_id))["data"]["messages"]
+    exp_message = {"role": "user", "content": [{"text": "REDACTED"}], "tracking_id": prompt[0]["tracking_id"]}
+    exp_messages = [exp_message, ANY, exp_message]  # the assistant reply sits between the two copies
+    assert tru_messages == exp_messages
+
+
+def test_redaction_skips_unreadable_immutable_snapshot(storage, caplog):
+    """An unreadable checkpoint does not fail the redacted invocation or stop older ones being rewritten."""
+    manager = SnapshotSessionManager("s1", storage=storage)
+    redaction_model = MockedModelProvider(
+        [{"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."}]
+    )
+    agent = Agent(model=redaction_model, session_manager=manager, agent_id="a1")
+
+    exp_snapshots = []
+
+    async def checkpoint(event):
+        snapshot_id = await manager.save_snapshot(event.agent, is_latest=False)
+        data = await storage.read(f"session/{_snapshot_key('s1', 'a1', snapshot_id=snapshot_id)}")
+        exp_snapshots.append(_redacted_snapshot(data, 0))
+        unreadable_key = f"session/{_snapshot_key('s1', 'a1', snapshot_id=_new_snapshot_id())}"
+        await storage.write(unreadable_key, b"not json")
+
+    agent.add_hook(checkpoint, BeforeModelCallEvent)
+    manager_logger = "strands.session.snapshot_session_manager"
+    with caplog.at_level(logging.WARNING, logger=manager_logger):
+        result = agent("sensitive prompt")
+
+    assert result.stop_reason == "guardrail_intervened"
+    [holder_id, unreadable_id] = asyncio.run(manager.list_snapshot_ids(agent))
+    [tru_warning] = [record.getMessage() for record in caplog.records if record.name == manager_logger]
+    # The text between the two parts is the JSON decoder's message.
+    assert tru_warning.startswith(
+        f"agent_id=<a1>, session_id=<s1>, snapshot_id=<{unreadable_id}>, error=<Failed to deserialize snapshot: "
+    )
+    assert tru_warning.endswith("> | skipping unreadable immutable snapshot while flushing a redaction")
+    tru_snapshots = [json.loads(_immutable_snapshot_data(storage, holder_id))]
+    assert tru_snapshots == exp_snapshots
+    assert _immutable_snapshot_data(storage, unreadable_id) == b"not json"
+
+
+def test_redaction_skips_immutable_snapshot_deleted_during_walk(storage):
+    """A checkpoint that disappears after being listed is skipped and older ones are still rewritten."""
+    manager = SnapshotSessionManager("s1", storage=storage)
+    redaction_model = MockedModelProvider(
+        [{"redactedUserContent": "REDACTED", "redactedAssistantContent": "I can't help with that."}]
+    )
+    agent = Agent(model=redaction_model, session_manager=manager, agent_id="a1")
+    snapshot_ids = []
+
+    async def checkpoint(event):
+        snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
+        snapshot_ids.append(await manager.save_snapshot(event.agent, is_latest=False))
+
+    read = storage.read
+
+    async def read_without_newest(key):
+        return None if snapshot_ids[1] in key else await read(key)
+
+    agent.add_hook(checkpoint, BeforeModelCallEvent)
+    storage.read = read_without_newest  # type: ignore[method-assign]
+    result = agent("sensitive prompt")
+    storage.read = read  # type: ignore[method-assign]
+
+    assert result.stop_reason == "guardrail_intervened"
+    rewritten_data, skipped_data = (_immutable_snapshot_data(storage, snapshot_id) for snapshot_id in snapshot_ids)
+    assert b"sensitive prompt" in skipped_data
+    # The two checkpoints were saved back to back, so they differ only in their timestamp.
+    exp_snapshot = _redacted_snapshot(skipped_data, 0) | {"created_at": ANY}
+    assert json.loads(rewritten_data) == exp_snapshot
+
+
+@pytest.mark.parametrize("no_tracking_id", [{}, {"tracking_id": ""}])
+def test_redaction_without_tracking_id_rewrites_latest_only(storage, no_tracking_id):
+    """A redacted message with no usable tracking id cannot be matched, so immutable snapshots are left alone."""
+    manager = SnapshotSessionManager("s1", storage=storage)
+    agent = Agent(
+        model=_model("hi"),
+        session_manager=manager,
+        agent_id="a1",
+        messages=[
+            {"role": "user", "content": [{"text": "earlier prompt"}], **no_tracking_id},
+            {"role": "assistant", "content": [{"text": "hi"}], **no_tracking_id},
+            {"role": "user", "content": [{"text": "sensitive prompt"}], **no_tracking_id},
+        ],
+    )
+    snapshot_id = asyncio.run(manager.save_snapshot(agent, is_latest=False))
+    exp_data = _immutable_snapshot_data(storage, snapshot_id)
+
+    agent.messages[-1]["content"] = [{"text": "REDACTED"}]
+    manager.redact_latest_message(agent.messages[-1], agent)
+
+    tru_data = _immutable_snapshot_data(storage, snapshot_id)
+    assert tru_data == exp_data
+    tru_latest_data = asyncio.run(storage.read(_on_disk_key("s1", "a1")))
+    assert b"REDACTED" in tru_latest_data and b"sensitive prompt" not in tru_latest_data
 
 
 def test_snapshot_trigger_returning_false_appends_nothing(storage):
