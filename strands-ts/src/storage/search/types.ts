@@ -36,6 +36,16 @@ export interface SearchStrategy<S extends Storage = Storage, SearchQuery = strin
   index?: (storage: S, key: string, data: Uint8Array) => Promise<void>
 
   /**
+   * Removes a deleted entry from a separately maintained search index.
+   *
+   * Strategies that search stored content directly can omit this hook.
+   *
+   * @param storage - The storage backend the deleted entry belongs to
+   * @param key - The deleted storage key, relative to `storage`
+   */
+  remove?: (storage: S, key: string) => Promise<void>
+
+  /**
    * Searches content in `storage` matching `query`.
    *
    * @param storage - The storage to search over

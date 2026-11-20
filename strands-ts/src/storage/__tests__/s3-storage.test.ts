@@ -149,6 +149,35 @@ describe('S3Storage', () => {
       expect(mockStrategy.index).toHaveBeenCalledWith(storage, 'doc.md', data)
     })
 
+    it('calls the configured removal hook after deleting a namespaced object', async () => {
+      mockSend.mockResolvedValue({})
+      const strategy = {
+        search: vi.fn(),
+        remove: vi.fn().mockResolvedValue(undefined),
+      }
+      const storage = new S3Storage('my-bucket', { prefix: 'agents', searchStrategy: strategy }).namespace('memory')
+
+      await storage.delete('/doc.md')
+
+      expect(mockDeleteObjectCommand).toHaveBeenCalledWith({ Bucket: 'my-bucket', Key: 'agents/memory/doc.md' })
+      expect(strategy.remove).toHaveBeenCalledExactlyOnceWith(storage, 'doc.md')
+      expect(mockSend.mock.invocationCallOrder[0]).toBeLessThan(strategy.remove.mock.invocationCallOrder[0]!)
+    })
+
+    it('preserves the cause when a configured removal hook fails', async () => {
+      mockSend.mockResolvedValue({})
+      const cause = new Error('Index unavailable')
+      const strategy = { search: vi.fn(), remove: vi.fn().mockRejectedValue(cause) }
+      const storage = new S3Storage('my-bucket', { searchStrategy: strategy })
+
+      const error = await storage.delete('doc.md').catch((error: unknown) => error)
+
+      expect(error).toBeInstanceOf(StorageError)
+      expect((error as StorageError).cause).toBe(cause)
+      expect((error as StorageError).message).toContain('removing its search index entry failed')
+      expect(mockDeleteObjectCommand).toHaveBeenCalled()
+    })
+
     it('removes the vector on delete when using S3VectorSearchStrategy', async () => {
       mockSend.mockResolvedValue({})
       const strategy = new S3VectorSearchStrategy({

@@ -4,7 +4,6 @@ import type { Storage, StorageSearchResult } from './storage.js'
 import { StorageError } from '../errors.js'
 import { NAMESPACED, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
-import { S3VectorSearchStrategy } from './search/s3-vector.js'
 
 /** Configuration for {@link S3Storage}. */
 export interface S3StorageConfig {
@@ -16,7 +15,7 @@ export interface S3StorageConfig {
   s3Client?: import('@aws-sdk/client-s3').S3Client
   /**
    * Optional search strategy. When set, `write()` indexes entries and `search()` delegates
-   * to the strategy. Defaults to keyword search. Use {@link S3VectorSearchStrategy} for
+   * to the strategy. Defaults to keyword search. Use `S3VectorSearchStrategy` for
    * natural-language search via S3 Vectors; `delete()` then removes the matching vector.
    */
   searchStrategy?: SearchStrategy<S3Storage>
@@ -130,7 +129,7 @@ export class S3Storage implements Storage {
    * Deletes the value stored under `key`. A no-op if the key does not exist.
    *
    * @param key - The key to delete
-   * @throws {@link StorageError} if the key is invalid, the delete request fails, or removing the vector fails (the object is deleted in that case)
+   * @throws {@link StorageError} if the key is invalid, the delete request fails, or removing the search index entry fails (the object is deleted in that case)
    */
   async delete(key: string): Promise<void> {
     const normalized = normalizeKey(key)
@@ -141,7 +140,7 @@ export class S3Storage implements Storage {
     } catch (error: unknown) {
       throw new StorageError(`Failed to delete '${normalized}' from S3 bucket '${this._bucket}'`, { cause: error })
     }
-    if (this._searchStrategy instanceof S3VectorSearchStrategy) {
+    if (this._searchStrategy?.remove) {
       try {
         await this._searchStrategy.remove(this, normalized)
       } catch (error: unknown) {
