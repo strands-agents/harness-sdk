@@ -3,7 +3,7 @@
 //! region and model. Needs only the `openai` feature.
 //!
 //! ```text
-//! cargo run -p strands --no-default-features --features openai --example bedrock_mantle
+//! cargo run -p strands --no-default-features --features mantle --example bedrock_mantle
 //! ```
 
 #![allow(clippy::print_stdout, reason = "an example reports to the terminal")]
