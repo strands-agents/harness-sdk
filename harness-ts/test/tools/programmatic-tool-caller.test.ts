@@ -167,7 +167,8 @@ describe('programmatic_tool_caller', () => {
     ['import subprocess', 'ModuleNotFoundError'],
     ['import socket', 'ModuleNotFoundError'],
     ['print(().__class__.__bases__)', 'AttributeError'],
-    ["print(eval('1 + 1'))", 'NameError'],
+    ['print(eval("__import__(\'os\')"))', 'NameError'],
+    ['exec("import os\\nprint(os.listdir(\'/\'))")', 'PermissionError'],
     ['print(__builtins__)', 'NameError'],
   ])('keeps the host unreachable: %s', async (code, expected) => {
     const result = await run(agentWith(calculator), code)
@@ -176,8 +177,8 @@ describe('programmatic_tool_caller', () => {
   })
 
   it('bounds a synchronous busy loop via the VM duration limit', async () => {
-    const previous = LIMITS.maxDurationSecs
-    LIMITS.maxDurationSecs = 0.3
+    const previous = LIMITS.maxFeedDurationSecs
+    LIMITS.maxFeedDurationSecs = 0.3
     try {
       const start = Date.now()
       const result = await run(agentWith(calculator), 'while True:\n    pass')
@@ -185,7 +186,7 @@ describe('programmatic_tool_caller', () => {
       expect(text(result)).toContain('TimeoutError')
       expect(Date.now() - start).toBeLessThan(5000)
     } finally {
-      LIMITS.maxDurationSecs = previous
+      LIMITS.maxFeedDurationSecs = previous
     }
   })
 
@@ -314,6 +315,20 @@ describe('programmatic_tool_caller', () => {
     const result = await run(new Agent({ tools: [quick, slow] } as never), "print('start')\nawait slow()", 'quick')
     expect(result.status).toBe('error')
     expect(text(result)).toBe('Error: start\n\nExecution error: timed out after 0.3 seconds.')
+  })
+
+  it('returns at the timeout while the code is still computing', async () => {
+    const quick = makeProgrammaticToolCaller({ name: 'quick', timeoutMs: 300 })
+    const previous = LIMITS.maxFeedDurationSecs
+    LIMITS.maxFeedDurationSecs = 3
+    try {
+      const started = Date.now()
+      const result = await run(new Agent({ tools: [quick] } as never), "print('start')\nwhile True:\n    pass", 'quick')
+      expect(Date.now() - started).toBeLessThan(2000)
+      expect(text(result)).toBe('Error: start\n\nExecution error: timed out after 0.3 seconds.')
+    } finally {
+      LIMITS.maxFeedDurationSecs = previous
+    }
   })
 
   it('keeps inner calls from changing the parent state', async () => {
