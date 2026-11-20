@@ -1,0 +1,8 @@
+name: Xquik
+description: Connect Strands agents to the Xquik X Twitter data API over MCP to search posts, read profiles and monitor accounts.
+integrationType: integration
+languages:
+  python: {}
+github: https://github.com/Xquik-dev/xquik-mcp
+docsUrl: https://docs.xquik.com/guides/strands-agents
+addedDate: 2026-11-03
