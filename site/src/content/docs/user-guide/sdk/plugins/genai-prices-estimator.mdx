@@ -148,7 +148,9 @@ the whole request. The parent's events and `estimate()` still include it.
 The token counts behind the estimate are on the request itself, with or without the
 plugin. `result.invocation_context.usage_by_model` is a list of `ModelUsage` records, one
 per model, each with a `provider_name`, a `model_id`, and the model's summed `usage`. You
-can save the records and pass them to `estimate()` later.
+can save the records and pass them to `estimate()` later. `usage_by_model` and `ModelUsage`
+are experimental like the plugin, so they may change. Import `ModelUsage` from
+`strands.experimental.cost_estimator`.
 
 For the SDK's model classes, `provider_name` is one of `anthropic`, `bedrock`, `google`,
 `litellm`, `llamaapi`, `llamacpp`, `mistral`, `ollama`, `openai`, `sagemaker`, or `writer`.

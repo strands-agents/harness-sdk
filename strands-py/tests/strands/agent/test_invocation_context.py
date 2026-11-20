@@ -6,9 +6,10 @@ import time
 
 import pytest
 
-from strands import InvocationContext, ModelUsage
+from strands import InvocationContext
 from strands.agent import invocation_context as invocation_context_module
 from strands.agent.invocation_context import (
+    ModelUsage,
     _create_auxiliary_invocation_context,
     _create_invocation_context,
     _invocation_context_kwargs,

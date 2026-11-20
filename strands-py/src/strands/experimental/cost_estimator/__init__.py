@@ -22,6 +22,7 @@ Example Usage:
     ```
 """
 
+from ...agent.invocation_context import ModelUsage
 from .plugin import CostEstimate, CostEstimateEvent, GenAIPricesEstimator, ModelCostEstimate, ModelPrice
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "GenAIPricesEstimator",
     "ModelCostEstimate",
     "ModelPrice",
+    "ModelUsage",
 ]

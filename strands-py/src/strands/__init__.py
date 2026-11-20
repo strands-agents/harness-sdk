@@ -3,7 +3,7 @@
 from . import agent, decisions, models, storage, telemetry, types
 from .agent.agent import Agent
 from .agent.base import AgentBase
-from .agent.invocation_context import InvocationContext, InvocationContextUsage, ModelUsage
+from .agent.invocation_context import InvocationContext, InvocationContextUsage
 from .background_tasks import BackgroundTasksConfig
 from .decisions import DecisionModel, LLMDecisionModel, Uncertain
 from .event_loop._retry import ModelRetryStrategy
@@ -35,7 +35,6 @@ __all__ = [
     "decisions",
     "models",
     "ModelRetryStrategy",
-    "ModelUsage",
     "MultiAgentPlugin",
     "Plugin",
     "PosixShellSandbox",
