@@ -131,6 +131,28 @@ impl fmt::Debug for HumanInTheLoopConfig {
     }
 }
 
+/// What [`HumanInTheLoop::auto`] accepts (`HumanInTheLoopAutoConfig`): how the human is reached and
+/// the calls that skip the decision entirely. The approval strategy is the mode's to choose.
+#[derive(Clone, Debug, Default, bon::Builder)]
+pub struct HumanInTheLoopAutoConfig {
+    /// Tools that run without approval, as in [`HumanInTheLoopConfig::allowed_tools`].
+    #[builder(default)]
+    pub allowed_tools: Vec<String>,
+    /// Collects answers inline, as in [`HumanInTheLoopConfig::ask`].
+    pub ask: Option<HumanInTheLoopAsk>,
+}
+
+impl From<HumanInTheLoopAutoConfig> for HumanInTheLoopConfig {
+    fn from(config: HumanInTheLoopAutoConfig) -> Self {
+        Self {
+            allowed_tools: config.allowed_tools,
+            classifier: Some(ClassifierConfig::llm()),
+            ask: config.ask,
+            ..Self::default()
+        }
+    }
+}
+
 fn is_trust_response(response: &JsonValue) -> bool {
     match response {
         JsonValue::String(text) => matches!(text.to_lowercase().trim_matches(is_js_whitespace), "t" | "trust"),
@@ -234,6 +256,26 @@ impl fmt::Debug for HumanInTheLoop {
 pub const HUMAN_IN_THE_LOOP_NAME: &str = "strands:human-in-the-loop";
 
 impl HumanInTheLoop {
+    /// Auto mode (`'auto'`): the SDK's current best approval strategy decides which calls need a
+    /// human. Today that is the built-in LLM risk classifier, the same as
+    /// [`ClassifierConfig::llm`]: low-risk calls run on their own and risky ones are escalated.
+    /// What auto mode resolves to may change between releases; pass a full
+    /// [`HumanInTheLoopConfig`] to [`new`](Self::new) to pin the strategy.
+    ///
+    /// ```
+    /// use strands::vended_interventions::hitl::{HumanInTheLoop, HumanInTheLoopAsk, HumanInTheLoopAutoConfig};
+    ///
+    /// let hitl = HumanInTheLoop::auto(HumanInTheLoopAutoConfig {
+    ///     allowed_tools: vec!["read_file".into()],
+    ///     ask: Some(HumanInTheLoopAsk::Stdio),
+    /// });
+    /// # let _ = hitl;
+    /// ```
+    #[must_use]
+    pub fn auto(config: HumanInTheLoopAutoConfig) -> Self {
+        Self::new(config.into())
+    }
+
     /// A handler with these settings.
     #[must_use]
     pub fn new(config: HumanInTheLoopConfig) -> Self {

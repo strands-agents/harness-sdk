@@ -791,3 +791,57 @@ fn the_config_builder_takes_a_classifier_closure() {
         .build();
     assert!(matches!(config.classifier, Some(ClassifierConfig::Custom(_))));
 }
+
+async fn invoke_auto(handler: HumanInTheLoop, aux_model: &MockModel) -> (StopReason, usize) {
+    let runs = Counter::default();
+    let mut agent = Agent::builder()
+        .model(agent_model("readFile", json!({"path": "/tmp/x"})))
+        .aux_model(aux_model.clone())
+        .tools([tool("readFile", &runs)])
+        .interventions([handler])
+        .printer(false)
+        .build()
+        .unwrap();
+    let result = agent.invoke("Read the file").await.unwrap();
+    (result.stop_reason(), runs.get())
+}
+
+#[tokio::test]
+async fn auto_uses_the_built_in_llm_classifier_on_agent_aux_model() {
+    let aux = classifier_model(false, "read-only");
+
+    let outcome = invoke_auto(HumanInTheLoop::auto(HumanInTheLoopAutoConfig::default()), &aux).await;
+
+    assert_eq!(outcome, (StopReason::EndTurn, 1));
+    assert_eq!(aux.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn auto_lets_allowed_tools_skip_the_classifier() {
+    let handler = HumanInTheLoop::auto(HumanInTheLoopAutoConfig {
+        allowed_tools: allowed(&["readFile"]),
+        ..Default::default()
+    });
+
+    let aux = MockModel::new().with_turn("unused");
+
+    assert_eq!(invoke_auto(handler, &aux).await, (StopReason::EndTurn, 1));
+    assert!(aux.requests().is_empty());
+}
+
+#[tokio::test]
+async fn auto_escalates_through_ask() {
+    let aux = classifier_model(true, "risky");
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let handler = HumanInTheLoop::auto(HumanInTheLoopAutoConfig {
+        ask: Some(recording("n", &prompts)),
+        ..Default::default()
+    });
+
+    let outcome = invoke_auto(handler, &aux).await;
+
+    assert_eq!(outcome, (StopReason::EndTurn, 0));
+    let prompts = prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 1);
+    assert!(prompts[0].contains("readFile"));
+}
