@@ -671,8 +671,9 @@ export function ChatApp({
       // A pending question holds the turn open, so sending a message instead means dropping it.
       // Commands are not messages: /settings or /ask must leave the question waiting.
       const panel = controller.getSnapshot().panel
-      if (prompt.trim() && !/^[!/$]/.test(prompt.trimStart()) && panel?.kind === 'dev' && panel.dropPending)
-        panel.dropPending()
+      const droppedQuestion =
+        prompt.trim() !== '' && !/^[!/$]/.test(prompt.trimStart()) && panel?.kind === 'dev' && panel.dropPending
+      if (droppedQuestion) panel.dropPending?.()
       if (editingQueuedPromptId && controller.updateQueuedPrompt(editingQueuedPromptId, prompt)) {
         finishQueuedPromptEdit()
         return
@@ -703,6 +704,12 @@ export function ChatApp({
         clearAttachments()
         if (pendingAttachments.length > 0) {
           void controller.submit({ text: prompt, attachments: pendingAttachments })
+          return
+        }
+        // The dropped question's turn is still draining its cancelled result; steering joins that
+        // turn instead of queueing behind it, so the message is not shown as Queued.
+        if (droppedQuestion) {
+          void controller.steer(prompt)
           return
         }
       }

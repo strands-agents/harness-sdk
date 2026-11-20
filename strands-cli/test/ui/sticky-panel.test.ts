@@ -1,6 +1,6 @@
 import { createElement, useState, type ReactElement } from 'react'
 import { Text, useInput, type Instance } from 'ink'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   ChatController,
@@ -134,9 +134,10 @@ describe('a sticky question panel', () => {
     expect(screen()).toContain('question keys:[z]')
   })
 
-  it('shouldDropThePendingQuestionWhenTheDeveloperSubmitsAMessage', async () => {
+  it('shouldDropThePendingQuestionAndSteerTheMessageIntoTheTurn', async () => {
     const dropped: number[] = []
-    const { press } = await mount(askCommand(() => dropped.push(1)))
+    const { controller, press } = await mount(askCommand(() => dropped.push(1)))
+    const steer = vi.spyOn(controller, 'steer')
     await press('/ask')
     await press('\r')
     await press('\u001b[B')
@@ -146,6 +147,7 @@ describe('a sticky question panel', () => {
     await press('\r')
 
     expect(dropped).toEqual([1])
+    expect(steer).toHaveBeenCalledWith('hi')
   })
 
   it('shouldKeepThePendingQuestionWhenTheDeveloperRunsACommand', async () => {
