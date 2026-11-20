@@ -8,6 +8,12 @@ sourceLinks:
 addedDate: 2026-06-12
 ---
 
+:::caution[Experimental in Python]
+In Python, the `ContextManager` strategy API is still exported from
+`strands.experimental.context_manager` and may change in future versions. The
+TypeScript API is stable.
+:::
+
 As conversations grow, your agent's context window fills with messages, tool results, and system prompts. Without management, this leads to token limit errors, degraded performance, and loss of relevant information.
 
 The SDK ships context management that works out of the box. Pick a mode and the SDK wires up an ordered strategy pipeline with tuned defaults.

@@ -9,6 +9,12 @@ sourceLinks:
 addedDate: 2026-09-04
 ---
 
+:::caution[Experimental in Python]
+In Python, the `ContextManager` strategy API is still exported from
+`strands.experimental.context_manager` and may change in future versions. The
+TypeScript API is stable.
+:::
+
 The SDK ships two built-in context management modes that work out of the box. Both create a `ContextManager` with tuned `Offload` strategies internally, so you don't have to assemble strategies, thresholds, and storage by hand.
 
 For full control over the strategy pipeline, see [Custom Strategies](./custom-strategies). For named shorthand configurations, see [Strategy Presets](./presets).
@@ -48,7 +54,7 @@ On Claude models that preserve thinking, the truncation keeps thinking blocks va
 ## Agentic context management
 
 :::caution[Experimental]
-Agentic context management is experimental and may change in future versions.
+Agentic context management is experimental in both SDKs and may change in future versions.
 :::
 
 Auto mode compresses on a fixed threshold the SDK controls. Agentic mode hands that control to the model. Pass <Syntax py='context_manager="agentic"' ts='contextManager: "agentic"' /> and the model manages its own working memory: it sees how full the context window is and chooses when to compress, what to compress, and what to protect.
