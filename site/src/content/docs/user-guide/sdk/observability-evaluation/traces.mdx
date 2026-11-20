@@ -233,7 +233,7 @@ emits only the semantic-convention names.
 
 | Attribute | Description |
 |-----------|-------------|
-| `gen_ai.system` | The agent system identifier ("strands-agents") |
+| `gen_ai.system` | The model provider, for example `aws.bedrock` (`gen_ai.provider.name` with `gen_ai_latest_experimental`); omitted when unknown |
 | `gen_ai.agent.name` | Name of the agent |
 | `gen_ai.user.message` | The user's initial prompt |
 | `gen_ai.choice` | The agent's final response |
@@ -266,7 +266,7 @@ emits only the semantic-convention names.
 
 | Attribute | Description |
 |-----------|-------------|
-| `gen_ai.system` | The agent system identifier |
+| `gen_ai.system` | The model provider, for example `aws.bedrock` (`gen_ai.provider.name` with `gen_ai_latest_experimental`); omitted when unknown |
 | `gen_ai.operation.name` | Gen-AI operation name |
 | `gen_ai.agent.name` | Name of the agent |
 | `gen_ai.user.message` | Formatted prompt sent to the model |

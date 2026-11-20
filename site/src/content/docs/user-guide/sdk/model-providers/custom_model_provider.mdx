@@ -42,6 +42,8 @@ The base class also provides optional methods you can override:
 - `count_tokens()`: Estimate input token count (defaults to a character-based heuristic).
 - `estimate_utilization()`: Compute the ratio of input tokens to `context_window_limit` (defaults to 200,000 when not configured). See [Utilization Estimation](../agents/conversation-management/#utilization-estimation).
 - `model_info`: Report what your service supports, such as turning off server-side summary. See [Model info](#model-info).
+- `gen_ai_provider_name`: Report your provider's OpenTelemetry `gen_ai.provider.name` value
+  (for example `aws.bedrock`); spans omit the attribute when it is `None`.
 </Tab>
 <Tab label="TypeScript">
 

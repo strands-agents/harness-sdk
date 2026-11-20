@@ -102,8 +102,9 @@ than of the response that requested the tool.
 ## Captured attributes
 
 Every span carries `gen_ai.event.start_time`, `gen_ai.event.end_time`, and
-`gen_ai.system` set to `strands-agents`, matching the non-streaming agent. Under the
-latest semantic conventions, `gen_ai.provider.name` replaces `gen_ai.system`.
+`gen_ai.system` set to the model provider (for example `aws.bedrock`) when the model
+reports one, matching the non-streaming agent. Under the latest semantic conventions,
+`gen_ai.provider.name` replaces `gen_ai.system`.
 
 | Span | Attribute | Description |
 |------|-----------|-------------|
@@ -189,7 +190,7 @@ The console exporter is the fastest way to confirm spans are being produced. A s
     "attributes": {
         "gen_ai.event.start_time": "2026-08-10T13:27:25.500001+00:00",
         "gen_ai.operation.name": "bidi_session",
-        "gen_ai.system": "strands-agents",
+        "gen_ai.system": "aws.bedrock",
         "gen_ai.agent.name": "Voice Assistant",
         "gen_ai.request.model": "amazon.nova-2-5-sonic",
         "gen_ai.agent.tools": "[\"get_weather\", \"calculator\"]",
@@ -238,7 +239,7 @@ same session produces the following child response span:
     "attributes": {
         "gen_ai.event.start_time": "2026-08-10T13:27:26.709679+00:00",
         "gen_ai.operation.name": "bidi_response",
-        "gen_ai.system": "strands-agents",
+        "gen_ai.system": "aws.bedrock",
         "gen_ai.response.id": "resp_01",
         "gen_ai.event.end_time": "2026-08-10T13:27:26.830133+00:00",
         "gen_ai.server.time_to_first_audio": 120
