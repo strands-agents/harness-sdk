@@ -491,6 +491,17 @@ export const Wizard = ({
   )
   const rowOf = (key: string): number => rows.findIndex((row) => row.kind === 'field' && row.field.key === key)
   const toggleRows = toggles.map(({ key }) => rowOf(key))
+  const notice = step.body ? undefined : (step.notice ?? blocking)
+  // A single question is sized to its content, so the list chrome is counted, not approximated.
+  const listChrome = walked
+    ? LIST_CHROME_ROWS
+    : 2 +
+      (question === undefined ? 0 : 1) +
+      (compact ? 0 : 1) +
+      (compact || step.listLabel === undefined ? 0 : 1) +
+      (notice ? 1 : 0) +
+      (step.footnote !== undefined && !compact ? 1 : 0) +
+      (footer ? 1 : 0)
   // One scrolling list for every toggle of the step, placed where the first one was declared.
   const toggleList = (): ReactNode => (
     <>
@@ -498,10 +509,7 @@ export const Wizard = ({
       <ItemList
         items={toggles.map(toggleItem)}
         selected={active ? toggleRows.indexOf(cursor.index) : -1}
-        capacity={Math.max(
-          MIN_LIST_ROWS,
-          Math.min(toggles.length, height - LIST_CHROME_ROWS + (steps.length > 1 ? 0 : 1))
-        )}
+        capacity={Math.max(MIN_LIST_ROWS, Math.min(toggles.length, height - listChrome))}
         labelWidth={labelWidthFor(
           toggles.map(({ label }) => label),
           width
@@ -562,7 +570,6 @@ export const Wizard = ({
       </Box>
     )
   }
-  const notice = step.body ? undefined : (step.notice ?? blocking)
   return (
     <>
       <PanelTitle

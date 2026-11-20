@@ -43,6 +43,21 @@ const question: WizardRequestSpec = {
 const askingBackend = (broker: WizardBroker, answered: Promise<unknown>): ChatBackend =>
   idleBackend({
     async *stream() {
+      // Two finished calls first, so the pending ask lands inside a tool group, not alone.
+      yield { type: 'toolStart', toolUseId: 'use-a', name: 'strands_dev_status', input: {} } as never
+      yield {
+        type: 'toolResult',
+        toolUseId: 'use-a',
+        status: 'success',
+        content: [{ type: 'text', text: '{}' }],
+      } as never
+      yield { type: 'toolStart', toolUseId: 'use-b', name: 'strands_dev_status', input: {} } as never
+      yield {
+        type: 'toolResult',
+        toolUseId: 'use-b',
+        status: 'success',
+        content: [{ type: 'text', text: '{}' }],
+      } as never
       yield { type: 'toolStart', toolUseId: 'use-1', name: 'strands_dev_ask', input: { ask: 'text' } } as never
       void broker.ask(question)
       await answered
@@ -170,7 +185,8 @@ describe('a real ask call with its question on screen', () => {
     writeFileSync('/tmp/ask-integration.txt', shown)
 
     expect(shown).toContain('Describe the optimization you want')
-    expect(shown).not.toContain('Tool activity')
+    expect(shown).not.toContain('Ask ×')
+    expect(shown).not.toContain('3 tool calls')
     expect(shown).not.toContain('Waiting for your answer')
     expect(shown).not.toContain('Viewing /ask')
     expect(shown).toContain('Enter to send')

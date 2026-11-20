@@ -131,10 +131,9 @@ export function TurnView({
   const visibleEntries = silentOpening
     ? turn.entries.filter((entry) => entry.type === 'assistant' || entry.type === 'media')
     : turn.entries
-  const grouped = settings.toolOutput === 'hidden' ? visibleEntries : groupToolEntries(visibleEntries)
-  const groupedEntries = asking
-    ? grouped.filter((entry) => !(Array.isArray(entry) ? entry : [entry]).some((one) => isPendingQuestion(one)))
-    : grouped
+  // Filtered before grouping: a group object would hide the pending question from an array check.
+  const shownEntries = asking ? visibleEntries.filter((entry) => !isPendingQuestion(entry)) : visibleEntries
+  const groupedEntries = settings.toolOutput === 'hidden' ? shownEntries : groupToolEntries(shownEntries)
   const entries = settings.showReasoning ? groupedEntries : groupedEntries.filter((entry) => entry.type !== 'reasoning')
   const firstEntry = entries[0]
   const startsWithTool = firstEntry?.type === 'tool' || firstEntry?.type === 'toolGroup'
