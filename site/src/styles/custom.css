@@ -112,43 +112,42 @@ a[aria-current="page"]:hover {
 	--wide-block-max: 72rem;
 }
 
+/* Docs layout at 72rem and up, on pages with both sidebars. Starlight sizes the TOC column to
+   the TOC width plus half the spare width and pushes the text against it, so the text sits off
+   centre, next to the TOC. Instead, give the TOC a fixed column that matches the left sidebar
+   (--sl-sidebar-width), and centre the text in the space between the two. Below about 1480px
+   there is no spare width, so this matches Starlight's layout. */
+@media (min-width: 72rem) {
+	:root[data-has-sidebar][data-has-toc] .right-sidebar-container,
+	:root[data-has-sidebar][data-has-toc] .right-sidebar {
+		width: var(--sl-sidebar-width);
+	}
+	:root[data-has-sidebar][data-has-toc] .main-pane {
+		--sl-content-margin-inline: auto;
+		width: calc(100% - var(--sl-sidebar-width));
+	}
+}
+
 /* Wide blocks (`:::wide`, rendered by src/plugins/remark-wide-blocks.ts): one figure, table,
    or code block that stays centred on the text column and grows by the same amount on both
-   sides into spare room, up to --wide-block-max in total. Below 72rem there is no spare room, so
-   it stays column width. Terms follow Starlight's TwoColumnContent and ContentPanel:
-   R = 100vw - left sidebar, W the column, S the TOC (--sl-sidebar-width), P the panel padding.
-   100vw counts a classic scrollbar, which overstates the room by half its width; the P gutters
-   absorb that. Tables and code keep their own horizontal scroll inside the block.
+   sides into the spare room, up to --wide-block-max in total. Below 72rem there is no spare
+   room, so it stays column width. Terms: R = 100vw - left sidebar, S the TOC column, W the text
+   column, P the panel padding. 100vw counts a classic scrollbar, which overstates the room by
+   half its width; the P gutters absorb that. Tables and code keep their own horizontal scroll.
    Only top-level blocks widen: inside an aside or a <TabItem> the block would leave the aside's
    border or its tab bar behind, so a nested `:::wide` stays column width. */
 @media (min-width: 72rem) {
-	/* With a TOC, Starlight sizes the TOC container to S plus the spare width,
-	   (R - W - S) / 2, and draws the TOC at its left edge, next to the text, so the text has
-	   spare - 2P of room on its left and none on its right. On a page that has a wide block,
-	   the block grows by G = min(spare - 2P, (max - W) / 2) on each side, and the TOC moves right
-	   by G to make room. Pages without a wide block keep Starlight's layout. */
-	:root[data-has-sidebar][data-has-toc]:has(.sl-markdown-content > .wide-block) {
-		--toc-spare: max(
-			0px,
-			(100vw - var(--sl-content-inline-start, 0px) - var(--sl-content-width) - var(--sl-sidebar-width)) / 2
-		);
-		--wide-grow: max(
-			0px,
-			min(
-				var(--toc-spare) - 2 * var(--sl-content-pad-x),
-				(var(--wide-block-max) - var(--sl-content-width)) / 2
-			)
-		);
-	}
-	:root[data-has-sidebar][data-has-toc]:has(.sl-markdown-content > .wide-block) .right-sidebar {
-		inset-inline-start: auto;
-		inset-inline-end: calc(var(--toc-spare) - var(--wide-grow));
-		width: var(--sl-sidebar-width);
-	}
+	/* With a TOC the text is centred between the sidebar and the TOC, so each side has
+	   (R - S - W) / 2 - P of room. */
 	:root[data-has-sidebar][data-has-toc] .sl-markdown-content > .wide-block {
-		margin-inline: calc(-1 * var(--wide-grow));
+		--wide-room: max(
+			0px,
+			(100vw - var(--sl-content-inline-start, 0px) - var(--sl-sidebar-width) - var(--sl-content-width)) / 2 -
+				var(--sl-content-pad-x)
+		);
+		margin-inline: calc(-1 * min(var(--wide-room), (var(--wide-block-max) - var(--sl-content-width)) / 2));
 	}
-	/* Without a TOC the column is centred, so the block grows equally on both sides. */
+	/* Without a TOC the column is centred in the full width, so each side has (R - W) / 2 - P. */
 	:root[data-has-sidebar]:not([data-has-toc]) .sl-markdown-content > .wide-block {
 		--wide-room: max(
 			0px,
