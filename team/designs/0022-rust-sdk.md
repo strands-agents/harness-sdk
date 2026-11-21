@@ -390,8 +390,8 @@ The crates use edition 2024 with MSRV 1.96 ([decision](#decision-msrv)). CI runs
 
 The implementation of this design is in the same PR, with its commits grouped by area. At the TypeScript baseline:
 
-- 5,203 tests pass with all features, doctests included.
-- Of the 5,032 test cases in the in-scope strands-ts spec files, 4,326 are ported. Each remaining case has a recorded reason: a compile-time guarantee, a JS-only mechanism, a deprecated API, or a feature outside v0.1.0. For harness-ts, 430 of 502 cases are ported.
+- 5,569 tests pass with all features, doctests included.
+- Of the 5,035 test cases in the in-scope strands-ts spec files, 4,400 are ported. Each remaining case has a recorded reason: a compile-time guarantee, a JS-only mechanism, a deprecated API, or a feature outside v0.1.0. For harness-ts, 447 of 502 cases are ported.
 - TS-generated fixtures round-trip byte for byte. They cover messages, model and agent stream events, hook events, snapshots, session files, interrupt state, the archive, metrics, the vended and harness tool specs, and the harness system prompt.
 - A TS-written session is restored by Rust and a Rust-written one by TS, for both the SDK and the harness.
 - Live tests pass against Bedrock, Bedrock Mantle, Anthropic and OpenAI, including the harness on each provider.
