@@ -173,7 +173,7 @@ mod web_search_mode {
         let error = web_search_mode(true.into(), true, None).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "Model bedrock/global.anthropic.claude-opus-5 has no built-in web search. Pass builtinTools: { web_search: 'exa' } to search through Exa (a third party), or remove 'web_search' from builtinTools. See https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search"
+            "Model bedrock/global.anthropic.claude-opus-5-5 has no built-in web search. Pass builtinTools: { web_search: 'exa' } to search through Exa (a third party), or remove 'web_search' from builtinTools. See https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search"
         );
     }
 

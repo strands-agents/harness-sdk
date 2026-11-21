@@ -69,7 +69,7 @@ these are the defaults, with the options that have no default value commented ou
 use strands_harness::{BuiltinPluginName, ContextManagerOption, Effort, HarnessAgentOptions};
 
 let options = HarnessAgentOptions::builder()
-    .model("bedrock/global.anthropic.claude-opus-5") // "provider/name", a bare Bedrock id, a model or a router
+    .model("bedrock/global.anthropic.claude-opus-5-5") // "provider/name", a bare Bedrock id, a model or a router
     .effort(Effort::Auto) // Auto | Off | Minimal | Low | Medium | High | Xhigh | Max
     // .instructions("...")        domain text appended to the system prompt
     // .tools([..])                your tools, added alongside the built-ins
@@ -114,7 +114,7 @@ Cargo features select the providers and integrations. Everything except `otel` i
 
 | Feature | Adds |
 |---|---|
-| `bedrock` | `bedrock/` model strings and the default model |
+| `bedrock` | `bedrock/` model strings and the default model (Claude on Bedrock also turns on `strands/anthropic`) |
 | `anthropic` | `anthropic/` model strings |
 | `openai` | `openai/` model strings |
 | `mantle` | `bedrock-mantle/` model strings; turns on `openai` |
@@ -132,7 +132,9 @@ strands = { version = "0.1", default-features = false }
 ```
 
 The default agent runs on Amazon Bedrock, with credentials from the AWS default chain and the region from
-`AWS_REGION` (or `AWS_DEFAULT_REGION`). The other providers read `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`.
+`AWS_REGION` (or `AWS_DEFAULT_REGION`, else the AWS config's region). Claude on Bedrock runs on the Anthropic Messages
+API through Bedrock's InvokeModel API; other Bedrock models use Converse. The other providers read
+`ANTHROPIC_API_KEY` and `OPENAI_API_KEY`.
 
 `programmatic_tool_caller` runs the model's code in a `monty` worker process when it finds one, so a crash or runaway
 allocation ends only the worker. Install the worker with:
@@ -150,7 +152,7 @@ crash isolation and no cap on its total memory.
 Out of the box, `create_harness` gives you an agent that:
 
 - **Runs on frontier models with reasoning on**, across Amazon Bedrock, Bedrock Mantle, Anthropic, and OpenAI. The
-  default is Claude Opus 5 on Amazon Bedrock, behind a tuned system prompt: explore before changing things, confirm
+  default is Claude Opus 5.5 on Amazon Bedrock, behind a tuned system prompt: explore before changing things, confirm
   before anything irreversible, verify before calling a task done.
 - **Comes with working tools**: a shell, file tools (`read`, `write`, `edit`), web access, `subagent` for delegation,
   and `programmatic_tool_caller`, a sandboxed Python interpreter where it writes code that chains, loops over, and
@@ -174,7 +176,7 @@ use strands_harness::HarnessAgentOptions;
 
 HarnessAgentOptions::builder().model("anthropic/claude-opus-5").build(); // Anthropic's API directly
 HarnessAgentOptions::builder().model("openai/gpt-5.6-sol").build(); // OpenAI
-HarnessAgentOptions::builder().model("bedrock/global.anthropic.claude-opus-5").build(); // the default, spelled out
+HarnessAgentOptions::builder().model("bedrock/global.anthropic.claude-opus-5-5").build(); // the default, spelled out
 HarnessAgentOptions::builder().model("bedrock-mantle/openai.gpt-5.6-sol").build(); // Bedrock's OpenAI-compatible API
 
 # #[cfg(feature = "openai")]
@@ -194,7 +196,7 @@ you set it once for every provider:
 use strands_harness::{Effort, HarnessAgentOptions};
 
 HarnessAgentOptions::builder().effort(Effort::High).build(); // Minimal | Low | Medium | High | Xhigh | Max, as offered
-HarnessAgentOptions::builder().effort(Effort::Auto).build(); // the provider's recommended level (High), the default
+HarnessAgentOptions::builder().effort(Effort::Auto).build(); // the model vendor's default level (else High), the default
 HarnessAgentOptions::builder().effort(Effort::Off).build(); // reasoning off (the provider's `none` level if it has one)
 ```
 

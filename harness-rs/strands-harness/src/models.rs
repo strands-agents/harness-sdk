@@ -9,6 +9,10 @@
 //! points on models that take them). A pre-built instance cannot be configured, so effort and
 //! caching are only warned about there.
 //!
+//! Claude on Bedrock runs through the Anthropic Messages API (an `AnthropicModel` on Bedrock's
+//! InvokeModel API) so it gets the Anthropic-API features Converse does not expose; other Bedrock
+//! families use Converse (`BedrockModel`).
+//!
 //! Resolution first computes a [`ModelPlan`], the provider and the exact config fields, then
 //! builds the provider from it; a provider whose cargo feature is disabled fails at that step.
 
@@ -22,25 +26,10 @@ use strands::models::routing::CandidateModel;
 use crate::defaults::DEFAULT_MODEL;
 use crate::env::Env;
 use crate::logging::warn_once;
+use crate::model_info::lookup_model;
 use crate::types::{Effort, json_string};
 
 const ANTHROPIC_MAX_TOKENS: u64 = 32_000;
-
-const CLAUDE_MAX_TOKENS: [(&str, u64); 4] = [
-    ("claude-opus-", 128_000),
-    ("claude-sonnet-", 128_000),
-    ("claude-haiku-", 128_000),
-    ("claude-fable-", 128_000),
-];
-
-const CLAUDE_MAX_TOKENS_BY_VERSION: [(&str, u64); 6] = [
-    ("claude-opus-4-5", 64_000),
-    ("claude-opus-4.5", 64_000),
-    ("claude-sonnet-4-5", 64_000),
-    ("claude-sonnet-4.5", 64_000),
-    ("claude-haiku-4-5", 64_000),
-    ("claude-haiku-4.5", 64_000),
-];
 
 /// Small fast model per provider for the `web_fetch` summarizer (and memory extraction), keyed by
 /// the main agent's provider so it shares its credentials.
@@ -179,6 +168,9 @@ pub(crate) struct ModelPlan {
     pub(crate) anthropic_tools: Option<Vec<Value>>,
     /// Bedrock and Mantle region, from `AWS_REGION` or else `AWS_DEFAULT_REGION`.
     pub(crate) region: Option<String>,
+    /// Claude on Bedrock: an `AnthropicModel` on Bedrock's InvokeModel API rather than a
+    /// Converse `BedrockModel`.
+    pub(crate) anthropic_messages: bool,
 }
 
 /// A parsed Claude model id (`CLAUDE_ID`): the optional leading version, the family and the
@@ -295,12 +287,22 @@ fn claude_thinking_mode(model_id: &str) -> Option<ThinkingMode> {
     at_least(version, extended_thinking_since(family)).then_some(ThinkingMode::Extended)
 }
 
-fn claude_max_tokens(model_id: &str) -> Option<u64> {
-    CLAUDE_MAX_TOKENS_BY_VERSION
-        .iter()
-        .chain(CLAUDE_MAX_TOKENS.iter())
-        .find(|(needle, _)| model_id.contains(needle))
-        .map(|(_, max_tokens)| *max_tokens)
+fn claude_output_tokens(model_id: &str) -> u64 {
+    lookup_model(model_id)
+        .limits
+        .max_output_tokens
+        .unwrap_or(ANTHROPIC_MAX_TOKENS)
+}
+
+/// The level `Auto` resolves to: the vendor's default for the model from the shared model info
+/// (what Claude Code, Codex, or Gemini CLI run it at), else the provider's `recommended` level.
+fn default_effort(model_id: &str, levels: &[&'static str], recommended: Option<&'static str>) -> Option<&'static str> {
+    lookup_model(model_id)
+        .capabilities
+        .default_effort
+        .as_deref()
+        .and_then(|vendor| levels.iter().copied().find(|level| *level == vendor))
+        .or(recommended)
 }
 
 fn claude_thinking_block(model_id: &str, effort: &str, max_tokens: u64) -> Value {
@@ -319,6 +321,12 @@ fn bedrock_family(model_id: &str) -> &str {
         .iter()
         .find_map(|prefix| model_id.strip_prefix(prefix))
         .unwrap_or(model_id)
+}
+
+/// Whether a Bedrock model is Claude, which runs on the Anthropic Messages API (`AnthropicModel`
+/// on Bedrock's InvokeModel API) for the Anthropic-API features Converse does not expose.
+fn is_bedrock_claude(model_id: &str) -> bool {
+    bedrock_family(model_id).starts_with("anthropic.claude-")
 }
 
 fn is_bedrock_gpt(family: &str) -> bool {
@@ -359,8 +367,7 @@ fn bedrock_thinking(model_id: &str, effort: Option<&str>) -> Option<Value> {
     let effort = effort?;
     let family = bedrock_family(model_id);
     if family.starts_with("anthropic.") {
-        let max_tokens = claude_max_tokens(model_id).unwrap_or(ANTHROPIC_MAX_TOKENS);
-        return Some(claude_thinking_block(family, effort, max_tokens));
+        return Some(claude_thinking_block(family, effort, claude_output_tokens(model_id)));
     }
     if is_bedrock_gpt(family) {
         return Some(json!({ "reasoning": { "effort": effort } }));
@@ -372,8 +379,8 @@ fn bedrock_thinking(model_id: &str, effort: Option<&str>) -> Option<Value> {
 }
 
 /// Maps an effort to the level sent to a provider: the provider's `none` (or
-/// `None`, omitting the reasoning field) for `Off`, the recommended level for `Auto`, the level
-/// itself when supported; anything else fails.
+/// `None`, omitting the reasoning field) for `Off`, the model's default level for `Auto`, the
+/// level itself when supported; anything else fails.
 fn resolve_effort(
     effort: Effort,
     recommended: Option<&'static str>,
@@ -475,10 +482,16 @@ pub(crate) fn plan_model(spec: &str, request: ModelRequest, env: &Env) -> strand
     };
     let effort = if provider == Provider::Bedrock {
         let levels = bedrock_levels(name);
-        let recommended = (!levels.is_empty()).then_some("high");
-        resolve_effort(request.effort, recommended, levels, &format!("Bedrock model {name}"))?
+        // Families that take no level get none by default; an explicit level is rejected below.
+        let fallback = if levels.is_empty() {
+            None
+        } else {
+            default_effort(name, levels, provider.recommended())
+        };
+        resolve_effort(request.effort, fallback, levels, &format!("Bedrock model {name}"))?
     } else {
-        resolve_effort(request.effort, recommended, levels, &format!("model {name}"))?
+        let fallback = default_effort(name, levels, recommended);
+        resolve_effort(request.effort, fallback, levels, &format!("model {name}"))?
     };
     let caching = request.caching && !unsupported_caching;
     let region = env.get("AWS_REGION").or_else(|| env.get("AWS_DEFAULT_REGION"));
@@ -492,16 +505,23 @@ pub(crate) fn plan_model(spec: &str, request: ModelRequest, env: &Env) -> strand
         params: None,
         anthropic_tools: None,
         region: None,
+        anthropic_messages: false,
     };
     Ok(match provider {
+        Provider::Bedrock if is_bedrock_claude(name) => ModelPlan {
+            max_tokens: Some(claude_output_tokens(name)),
+            params: bedrock_thinking(name, effort),
+            region,
+            anthropic_messages: true,
+            ..base
+        },
         Provider::Bedrock => ModelPlan {
-            max_tokens: claude_max_tokens(name),
             additional_request_fields: bedrock_thinking(name, effort),
             region,
             ..base
         },
         Provider::Anthropic => {
-            let max_tokens = claude_max_tokens(name).unwrap_or(ANTHROPIC_MAX_TOKENS);
+            let max_tokens = claude_output_tokens(name);
             ModelPlan {
                 max_tokens: Some(max_tokens),
                 params: effort.map(|effort| claude_thinking_block(name, effort, max_tokens)),
@@ -550,9 +570,33 @@ fn auto_cache(enabled: bool) -> Option<strands::models::CacheConfig> {
 }
 
 #[cfg(feature = "bedrock")]
+fn build_bedrock_claude(plan: &ModelPlan) -> strands::Result<Arc<dyn Model>> {
+    use strands::models::anthropic::AnthropicBedrockConfig;
+    use strands::models::{AnthropicModel, AnthropicModelOptions};
+
+    // The AWS SDK resolves the region fallback (shared config, else us-west-2), the endpoint
+    // overrides and AWS_BEARER_TOKEN_BEDROCK itself.
+    let bedrock_config = AnthropicBedrockConfig {
+        region: plan.region.clone(),
+        ..Default::default()
+    };
+    let options = AnthropicModelOptions {
+        model_id: Some(plan.model_id.clone()),
+        max_tokens: plan.max_tokens,
+        cache_config: auto_cache(plan.caching),
+        params: plan.params.clone(),
+        ..Default::default()
+    };
+    Ok(Arc::new(AnthropicModel::bedrock(options, bedrock_config)?))
+}
+
+#[cfg(feature = "bedrock")]
 fn build_bedrock(plan: &ModelPlan) -> strands::Result<Arc<dyn Model>> {
     use strands::models::{BedrockModel, BedrockModelOptions};
 
+    if plan.anthropic_messages {
+        return build_bedrock_claude(plan);
+    }
     Ok(Arc::new(BedrockModel::new(BedrockModelOptions {
         model_id: Some(plan.model_id.clone()),
         region: plan.region.clone(),

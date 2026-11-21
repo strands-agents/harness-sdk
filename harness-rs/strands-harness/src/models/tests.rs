@@ -85,21 +85,58 @@ mod resolve_model {
     }
 
     #[test]
+    fn runs_claude_on_bedrock_on_the_anthropic_messages_api() {
+        for (spec, model_id) in [
+            (
+                "bedrock/global.anthropic.claude-opus-5-5",
+                "global.anthropic.claude-opus-5-5",
+            ),
+            (
+                "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+                "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+            ),
+            (
+                "bedrock/us.anthropic.claude-3-haiku-20240307-v1:0",
+                "us.anthropic.claude-3-haiku-20240307-v1:0",
+            ),
+        ] {
+            let resolved = plan(spec, Effort::Auto);
+            assert_eq!(resolved.provider, Provider::Bedrock, "{spec}");
+            assert!(resolved.anthropic_messages, "{spec}");
+            assert_eq!(resolved.model_id, model_id);
+        }
+    }
+
+    #[test]
+    fn keeps_other_bedrock_families_on_converse() {
+        for spec in [
+            "bedrock/amazon.nova-pro-v1:0",
+            "bedrock/us.openai.gpt-5.6-luna",
+            "bedrock/anthropic.other-model",
+        ] {
+            assert!(!plan(spec, Effort::Auto).anthropic_messages, "{spec}");
+        }
+    }
+
+    #[test]
     fn uses_aws_default_region_when_aws_region_is_absent_and_gives_aws_region_precedence() {
-        let fallback = plan_model(
-            DEFAULT,
-            ModelRequest::default(),
-            &env(&[("AWS_DEFAULT_REGION", "us-east-2")]),
-        );
-        assert_eq!(fallback.unwrap().region.as_deref(), Some("us-east-2"));
-        let both = env(&[("AWS_DEFAULT_REGION", "us-east-2"), ("AWS_REGION", "us-west-2")]);
-        assert_eq!(
-            plan_model(DEFAULT, ModelRequest::default(), &both)
-                .unwrap()
-                .region
-                .as_deref(),
-            Some("us-west-2")
-        );
+        for spec in [DEFAULT, "bedrock/amazon.nova-pro-v1:0"] {
+            let fallback = plan_model(
+                spec,
+                ModelRequest::default(),
+                &env(&[("AWS_DEFAULT_REGION", "us-east-2")]),
+            );
+            assert_eq!(fallback.unwrap().region.as_deref(), Some("us-east-2"), "{spec}");
+            let both = env(&[("AWS_DEFAULT_REGION", "us-east-2"), ("AWS_REGION", "us-west-2")]);
+            assert_eq!(
+                plan_model(spec, ModelRequest::default(), &both)
+                    .unwrap()
+                    .region
+                    .as_deref(),
+                Some("us-west-2"),
+                "{spec}"
+            );
+        }
     }
 
     #[test]
@@ -107,7 +144,7 @@ mod resolve_model {
         let resolved = plan(DEFAULT, Effort::Auto);
         assert_eq!(resolved.provider, Provider::Bedrock);
         assert_eq!(resolved.model_id, "global.anthropic.claude-opus-4-8");
-        assert_eq!(resolved.additional_request_fields, Some(adaptive("high")));
+        assert_eq!(resolved.params, Some(adaptive("high")));
     }
 
     #[test]
@@ -174,23 +211,17 @@ mod resolve_model {
 
     #[test]
     fn leaves_provider_defaults_when_effort_is_off() {
-        assert_eq!(plan(DEFAULT, Effort::Off).additional_request_fields, None);
+        assert_eq!(plan(DEFAULT, Effort::Off).params, None);
     }
 
     #[test]
     fn applies_an_explicit_thinking_level() {
-        assert_eq!(
-            plan(DEFAULT, Effort::Low).additional_request_fields,
-            Some(adaptive("low"))
-        );
+        assert_eq!(plan(DEFAULT, Effort::Low).params, Some(adaptive("low")));
     }
 
     #[test]
     fn accepts_a_provider_specific_level() {
-        assert_eq!(
-            plan(DEFAULT, Effort::Max).additional_request_fields,
-            Some(adaptive("max"))
-        );
+        assert_eq!(plan(DEFAULT, Effort::Max).params, Some(adaptive("max")));
     }
 
     #[test]
@@ -224,7 +255,7 @@ mod resolve_model {
             "us.openai.gpt-6.1-sol",
         ] {
             let spec = format!("bedrock/{model_id}");
-            for (effort, level) in [(Effort::Auto, "high"), (Effort::Low, "low"), (Effort::Max, "max")] {
+            for (effort, level) in [(Effort::Auto, "low"), (Effort::Low, "low"), (Effort::Max, "max")] {
                 assert_eq!(
                     plan(&spec, effort).additional_request_fields,
                     Some(json!({ "reasoning": { "effort": level } }))
@@ -249,7 +280,7 @@ mod resolve_model {
         ] {
             let spec = format!("bedrock/{model_id}");
             for (effort, level) in [
-                (Effort::Auto, "high"),
+                (Effort::Auto, "medium"),
                 (Effort::Low, "low"),
                 (Effort::Xhigh, "xhigh"),
                 (Effort::Off, "none"),
@@ -277,12 +308,7 @@ mod resolve_model {
             "us.openai.gpt-daybreak-blue-5.6-sol",
         ] {
             let spec = format!("bedrock/{model_id}");
-            for (effort, level) in [
-                (Effort::Auto, "high"),
-                (Effort::Low, "low"),
-                (Effort::Max, "max"),
-                (Effort::Off, "none"),
-            ] {
+            for (effort, level) in [(Effort::Low, "low"), (Effort::Max, "max"), (Effort::Off, "none")] {
                 assert_eq!(
                     plan(&spec, effort).additional_request_fields,
                     Some(json!({ "reasoning": { "effort": level } }))
@@ -390,7 +416,7 @@ mod resolve_model {
 
     #[test]
     fn maps_openai_to_reasoning_effort() {
-        let resolved = plan("openai/gpt-5.6-sol", Effort::Auto);
+        let resolved = plan("openai/gpt-5.6-sol", Effort::High);
         assert_eq!(resolved.provider, Provider::OpenAI);
         assert_eq!(resolved.params, Some(json!({ "reasoning": { "effort": "high" } })));
     }
@@ -472,7 +498,7 @@ mod resolve_model {
     fn sends_no_thinking_block_to_claude_below_the_floor() {
         for model_id in NO_THINKING_CLAUDE {
             assert_eq!(
-                plan(&format!("bedrock/{model_id}"), Effort::Auto).additional_request_fields,
+                plan(&format!("bedrock/{model_id}"), Effort::Auto).params,
                 None,
                 "{model_id}"
             );
@@ -483,7 +509,7 @@ mod resolve_model {
     fn sends_the_extended_block_to_extended_thinking_claude() {
         for model_id in EXTENDED_CLAUDE {
             assert_eq!(
-                plan(&format!("bedrock/{model_id}"), Effort::Auto).additional_request_fields,
+                plan(&format!("bedrock/{model_id}"), Effort::Auto).params,
                 Some(extended(16_384)),
                 "{model_id}"
             );
@@ -500,7 +526,7 @@ mod resolve_model {
             (Effort::Max, 49_152),
         ] {
             let resolved = plan("bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0", effort);
-            assert_eq!(resolved.additional_request_fields, Some(extended(budget)));
+            assert_eq!(resolved.params, Some(extended(budget)));
             assert!(budget < resolved.max_tokens.unwrap());
         }
     }
@@ -509,16 +535,13 @@ mod resolve_model {
     fn gives_each_claude_its_max_tokens_ceiling() {
         for (model_id, max_tokens) in [
             ("claude-sonnet-4-5-20250929-v1:0", 64_000),
-            ("claude-sonnet-4.5", 64_000),
             ("claude-sonnet-4-6", 128_000),
-            ("claude-sonnet-4.6", 128_000),
             ("claude-sonnet-5", 128_000),
             ("claude-opus-4-5-20251101-v1:0", 64_000),
-            ("claude-opus-4.5", 64_000),
             ("claude-opus-4-8", 128_000),
             ("claude-opus-5", 128_000),
+            ("claude-opus-5-5", 128_000),
             ("claude-haiku-4-5-20251001-v1:0", 64_000),
-            ("claude-haiku-4.5", 64_000),
             ("claude-haiku-5-5", 128_000),
         ] {
             assert_eq!(
@@ -540,7 +563,7 @@ mod resolve_model {
     fn sends_the_adaptive_block_to_adaptive_claude() {
         for model_id in ADAPTIVE_CLAUDE {
             assert_eq!(
-                plan(&format!("bedrock/{model_id}"), Effort::Auto).additional_request_fields,
+                plan(&format!("bedrock/{model_id}"), Effort::High).params,
                 Some(adaptive("high")),
                 "{model_id}"
             );
@@ -586,11 +609,15 @@ mod resolve_model {
     }
 
     #[test]
-    fn does_not_force_max_tokens_on_a_legacy_claude_3_bedrock_id() {
-        assert_eq!(
-            plan("bedrock/anthropic.claude-3-haiku-20240307-v1:0", Effort::Auto).max_tokens,
-            None
-        );
+    fn caps_a_claude_without_a_tier_ceiling_at_the_model_info_output_limit() {
+        for (spec, max_tokens) in [
+            ("bedrock/anthropic.claude-3-haiku-20240307-v1:0", 4_096),
+            ("anthropic/claude-3-5-haiku-20241022", 8_192),
+            ("anthropic/claude-unknown-1", 32_000),
+            ("bedrock/anthropic.claude-unknown-1", 32_000),
+        ] {
+            assert_eq!(plan(spec, Effort::Auto).max_tokens, Some(max_tokens), "{spec}");
+        }
     }
 
     #[test]
@@ -598,7 +625,7 @@ mod resolve_model {
         let resolved = plan("bedrock-mantle/openai.gpt-oss-120b", Effort::Auto);
         assert_eq!(resolved.provider, Provider::BedrockMantle);
         assert_eq!(resolved.model_id, "openai.gpt-oss-120b");
-        assert_eq!(resolved.params, Some(json!({ "reasoning": { "effort": "high" } })));
+        assert_eq!(resolved.params, Some(json!({ "reasoning": { "effort": "medium" } })));
     }
 
     #[test]
@@ -615,7 +642,7 @@ mod resolve_model {
         assert_eq!(
             resolved.params,
             Some(
-                json!({ "reasoning": { "effort": "high" }, "tools": [{ "type": "web_search", "external_web_access": true }] })
+                json!({ "reasoning": { "effort": "medium" }, "tools": [{ "type": "web_search", "external_web_access": true }] })
             )
         );
     }
@@ -833,6 +860,7 @@ mod resolve_model {
     fn builds_each_provider_from_its_plan() {
         for (spec, model_id) in [
             (DEFAULT, "global.anthropic.claude-opus-4-8"),
+            ("bedrock/amazon.nova-pro-v1:0", "amazon.nova-pro-v1:0"),
             ("anthropic/claude-opus-4-8", "claude-opus-4-8"),
             ("openai/gpt-5.6-sol", "gpt-5.6-sol"),
             ("bedrock-mantle/openai.gpt-6-luna", "openai.gpt-6-luna"),
@@ -850,20 +878,71 @@ mod default_effort {
     use super::*;
 
     #[test]
-    fn is_high_on_every_reasoning_provider() {
-        for (spec, field) in [
-            ("bedrock/global.anthropic.claude-opus-5", "/output_config/effort"),
-            ("bedrock/global.anthropic.claude-sonnet-5", "/output_config/effort"),
-            ("bedrock/us.anthropic.claude-sonnet-4-6", "/output_config/effort"),
-            ("bedrock/global.anthropic.claude-fable-5-1", "/output_config/effort"),
-            ("bedrock/openai.gpt-5.6-sol", "/reasoning/effort"),
-            ("bedrock/global.openai.gpt-6-astra", "/reasoning/effort"),
-            ("bedrock/openai.gpt-oss-120b-1:0", "/reasoning_effort"),
-            ("bedrock/qwen.qwen3-32b-v1:0", "/reasoning_effort"),
-            ("bedrock/us.xai.grok-4", "/reasoning_effort"),
-            ("anthropic/claude-opus-5", "/output_config/effort"),
-            ("openai/gpt-5.6-sol", "/reasoning/effort"),
-            ("bedrock-mantle/openai.gpt-5.6-sol", "/reasoning/effort"),
+    fn is_the_vendor_default_from_the_model_info_else_high() {
+        for (spec, field, level) in [
+            (
+                "bedrock/global.anthropic.claude-opus-5",
+                "/output_config/effort",
+                "high",
+            ),
+            (
+                "bedrock/global.anthropic.claude-sonnet-5",
+                "/output_config/effort",
+                "high",
+            ),
+            (
+                "bedrock/us.anthropic.claude-sonnet-4-6",
+                "/output_config/effort",
+                "high",
+            ),
+            (
+                "bedrock/global.anthropic.claude-fable-5-1",
+                "/output_config/effort",
+                "high",
+            ),
+            (
+                "bedrock/global.anthropic.claude-opus-5-5",
+                "/output_config/effort",
+                "medium",
+            ),
+            (
+                "bedrock/us.anthropic.claude-opus-5-5-20260401-v1:0",
+                "/output_config/effort",
+                "medium",
+            ),
+            (
+                "bedrock/global.anthropic.claude-sonnet-5-5",
+                "/output_config/effort",
+                "medium",
+            ),
+            (
+                "bedrock/global.anthropic.claude-opus-4-7",
+                "/output_config/effort",
+                "xhigh",
+            ),
+            (
+                "bedrock/global.anthropic.claude-opus-9",
+                "/output_config/effort",
+                "high",
+            ),
+            ("bedrock/openai.gpt-5.6-sol", "/reasoning/effort", "low"),
+            ("bedrock/us.openai.gpt-5.5", "/reasoning/effort", "medium"),
+            ("bedrock/global.openai.gpt-6-astra", "/reasoning/effort", "low"),
+            ("bedrock/us.openai.gpt-6.1-terra", "/reasoning/effort", "low"),
+            ("bedrock/us.openai.gpt-6.2-astra", "/reasoning/effort", "low"),
+            ("bedrock/global.openai.gpt-6.2-sol", "/reasoning/effort", "low"),
+            ("bedrock/us.openai.gpt-6-sol", "/reasoning/effort", "medium"),
+            ("bedrock/openai.gpt-5.6-cyber", "/reasoning/effort", "high"),
+            ("bedrock/openai.gpt-oss-120b-1:0", "/reasoning_effort", "medium"),
+            ("bedrock/qwen.qwen3-32b-v1:0", "/reasoning_effort", "high"),
+            ("bedrock/us.xai.grok-4", "/reasoning_effort", "high"),
+            ("anthropic/claude-opus-5", "/output_config/effort", "high"),
+            ("anthropic/claude-opus-5-5", "/output_config/effort", "medium"),
+            ("anthropic/claude-haiku-5-5-20260601", "/output_config/effort", "medium"),
+            ("openai/gpt-5.6-sol", "/reasoning/effort", "low"),
+            ("openai/gpt-5.5", "/reasoning/effort", "medium"),
+            ("openai/o3", "/reasoning/effort", "high"),
+            ("bedrock-mantle/openai.gpt-5.6-sol", "/reasoning/effort", "low"),
         ] {
             let resolved = plan(spec, Effort::Auto);
             let fields = resolved
@@ -871,9 +950,22 @@ mod default_effort {
                 .clone()
                 .or_else(|| resolved.params.clone())
                 .unwrap();
-            assert_eq!(fields.pointer(field), Some(&json!("high")), "{spec}");
-            assert_eq!(resolved, plan(spec, Effort::High), "{spec}");
+            assert_eq!(fields.pointer(field), Some(&json!(level)), "{spec}");
+            assert_eq!(resolved, plan(spec, level.parse().unwrap()), "{spec}");
         }
+    }
+
+    #[test]
+    fn falls_back_to_the_provider_level_when_the_vendor_default_is_not_one_the_provider_takes() {
+        // claude-opus-5-5's vendor default is medium, which these levels do not offer.
+        assert_eq!(
+            default_effort("claude-opus-5-5", &["low", "high"], Some("high")),
+            Some("high")
+        );
+        assert_eq!(
+            default_effort("claude-opus-5-5", &["medium", "high"], Some("high")),
+            Some("medium")
+        );
     }
 
     #[test]
@@ -963,10 +1055,7 @@ mod supports_thinking {
         for prefix in ["", "global.", "apac.", "us.", "eu.", "au.", "jp."] {
             let spec = format!("bedrock/{prefix}anthropic.claude-opus-4-8");
             assert!(thinks(&spec));
-            assert_eq!(
-                plan(&spec, Effort::Max).additional_request_fields,
-                Some(adaptive("max"))
-            );
+            assert_eq!(plan(&spec, Effort::Max).params, Some(adaptive("max")));
         }
     }
 
@@ -998,11 +1087,7 @@ mod supports_thinking {
         ] {
             let spec = format!("bedrock/global.anthropic.{model_id}");
             assert!(thinks(&spec), "{model_id}");
-            assert_eq!(
-                plan(&spec, Effort::Auto).additional_request_fields,
-                Some(adaptive("high")),
-                "{model_id}"
-            );
+            assert_eq!(plan(&spec, Effort::Auto).params, Some(adaptive("high")), "{model_id}");
         }
     }
 

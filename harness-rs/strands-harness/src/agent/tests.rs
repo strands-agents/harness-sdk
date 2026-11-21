@@ -173,7 +173,10 @@ async fn builds_an_agent_with_the_default_configuration() {
         assembly.config.context_manager,
         Some(ContextManagerStrategy::Auto)
     ));
-    assert_eq!(assembly.model_plan.unwrap().model_id, "global.anthropic.claude-opus-5");
+    assert_eq!(
+        assembly.model_plan.unwrap().model_id,
+        "global.anthropic.claude-opus-5-5"
+    );
     assert_eq!(plugin_names(&assembly.config), ["strands:environment"]);
     Agent::new(assembly.config).unwrap();
 }
@@ -668,7 +671,7 @@ async fn lets_an_explicit_context_manager_win() {
 }
 
 #[tokio::test]
-async fn uses_the_recommended_level_when_effort_is_auto_and_sends_none_when_off() {
+async fn uses_the_default_level_when_effort_is_auto_and_sends_none_when_off() {
     let auto = HarnessAgentOptions {
         model: Some("bedrock/global.anthropic.claude-opus-5".into()),
         ..quiet()
@@ -676,14 +679,14 @@ async fn uses_the_recommended_level_when_effort_is_auto_and_sends_none_when_off(
     let Ok(assembly) = assemble(auto, &offline_env()).await else {
         return;
     };
-    let fields = assembly.model_plan.unwrap().additional_request_fields.unwrap();
+    let fields = assembly.model_plan.unwrap().params.unwrap();
     assert_eq!(fields["output_config"]["effort"], json!("high"));
     let off = HarnessAgentOptions {
         model: Some("bedrock/global.anthropic.claude-opus-5".into()),
         effort: Effort::Off,
         ..quiet()
     };
-    assert_eq!(assembled(off).await.model_plan.unwrap().additional_request_fields, None);
+    assert_eq!(assembled(off).await.model_plan.unwrap().params, None);
 }
 
 fn session_id(config: &AgentConfig) -> String {

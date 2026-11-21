@@ -23,7 +23,7 @@ pub(crate) use crate::tools::web_search::WebSearchSetting;
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum Effort {
-    /// The provider's recommended level (`'auto'`, the default).
+    /// The model vendor's default level, else the provider's recommended one (`'auto'`, the default).
     #[default]
     Auto,
     /// Reasoning off: the provider's `none` level where it has one, otherwise no reasoning field.

@@ -558,7 +558,7 @@ pub struct HarnessDependencies {
 ///     "builtinTools": ["read", "shell"],
 /// }))?;
 /// assert_eq!(config.effort, Effort::High);
-/// assert_eq!(config.model, "bedrock/global.anthropic.claude-opus-5");
+/// assert_eq!(config.model, "bedrock/global.anthropic.claude-opus-5-5");
 /// # Ok::<(), serde_json::Error>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bon::Builder)]
