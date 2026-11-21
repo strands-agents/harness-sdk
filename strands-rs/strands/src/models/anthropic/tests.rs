@@ -405,6 +405,8 @@ mod info {
         for (model_id, expected) in [
             ("claude-opus-5-5", true),
             ("claude-opus-5-5-20260401", true),
+            // The API takes them, the model rarely uses their text (#6227).
+            ("claude-haiku-5-5", false),
             ("claude-sonnet-5", false),
             ("claude-sonnet-4-6", false),
         ] {
