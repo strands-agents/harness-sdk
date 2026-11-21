@@ -147,7 +147,9 @@ In `.mdx`, `:::wide` can also wrap a component such as `<FoundationComparison />
 
 Use it sparingly, for a block that clearly benefits:
 
-- a table with 5+ columns, or one that scrolls sideways at column width;
+- a table with 5+ columns, or one whose description cells wrap to several lines at column
+  width (Starlight wraps cells rather than scrolling, so the gain is a shorter table; skip
+  tables that are already short);
 - a screenshot much wider than the column (over about 1100px);
 - a code block where many lines run past about 100 characters.
 

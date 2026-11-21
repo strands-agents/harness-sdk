@@ -32,13 +32,11 @@ Executes operations inside a Docker container on the host via `docker exec`. The
 
 ### Options
 
-:::wide
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | <Syntax py="container" ts="container" /> | <Syntax py="str" ts="string" /> | (required) | ID or name of a running container |
 | <Syntax py="working_dir" ts="workingDir" /> | <Syntax py="str \| None" ts="string" /> | <Syntax py="None" ts="container default" /> | Working directory for executed commands. If omitted, runs in the container's configured working directory. |
 | <Syntax py="user" ts="user" /> | <Syntax py="str \| None" ts="string" /> | <Syntax py="None" ts="container default" /> | User to run commands as (`"uid"`, `"uid:gid"`, or name). If omitted, runs as the container's configured user. |
-:::
 
 ## SshSandbox
 
