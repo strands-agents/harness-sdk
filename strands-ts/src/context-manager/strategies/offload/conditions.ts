@@ -35,8 +35,6 @@ export type Percent = `${number}%`
  *
  * Strategies run as an ordered pipeline, so once an earlier strategy shrinks a block, it falls below the next
  * strategy's threshold and gets skipped.
- *
- * @experimental
  */
 export interface OffloadConditions {
   /**
@@ -129,13 +127,14 @@ const CONDITION_NAMES = new Intl.ListFormat('en', { type: 'disjunction' }).forma
 /**
  * Parses one offload condition value: a `'N%'` string is a share, and a whole number is a count.
  *
- * @param name - The condition name
+ * @param name - The condition name, whose rule the value must follow
  * @param raw - The value as supplied, or undefined when unset
+ * @param label - The name to report in an error, for a condition that takes the same values under another name
  * @returns The parsed condition, or undefined when unset
  * @throws Error when the value is not accepted for the condition
  * @internal
  */
-export function parseCondition(name: ConditionName, raw: unknown): ParsedCondition | undefined {
+export function parseCondition(name: ConditionName, raw: unknown, label: string = name): ParsedCondition | undefined {
   if (raw === undefined) return undefined
   const rule = CONDITION_RULES[name]
   if (typeof raw === 'string' && PERCENT_PATTERN.test(raw)) {
@@ -144,7 +143,7 @@ export function parseCondition(name: ConditionName, raw: unknown): ParsedConditi
     if (rule.percentInRange(percent)) return new ParsedCondition(percent, percentText)
   }
   if (typeof raw === 'number' && Number.isInteger(raw) && raw >= rule.minCount) return new ParsedCondition(raw)
-  throw new Error(`${name}=${formatConditionValue(raw)} is invalid: expected ${rule.expected}${percentHint(raw)}`)
+  throw new Error(`${label}=${formatConditionValue(raw)} is invalid: expected ${rule.expected}${percentHint(raw)}`)
 }
 
 /** Suggests the `'N%'` spelling for a rejected number that reads as a share or a percent. */

@@ -13,6 +13,7 @@ import {
   Message,
   SummaryBlock,
   TextBlock,
+  ToolReferenceBlock,
   ToolResultBlock,
   ToolUseBlock,
 } from '../../../types/messages.js'
@@ -234,6 +235,81 @@ describe('Offload builder', () => {
     expect(result).toBe(true)
     const block = messages[0]!.content[0] as ToolResultBlock
     expect((block.content[0] as TextBlock).text).toBe('[Dropped: ~25 tokens]')
+  })
+
+  it('Offload.drop() keeps tool results made of tool references, which hold the loaded schemas', async () => {
+    const reference = new ToolReferenceBlock({ name: 'bash' })
+    const messages = [
+      new Message({
+        role: 'assistant',
+        content: [
+          new ToolUseBlock({ name: 'load_tools', toolUseId: 'load-1', input: { names: ['bash'] } }),
+          new ToolUseBlock({ name: 'bash', toolUseId: 'bash-1', input: {} }),
+        ],
+      }),
+      new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({ toolUseId: 'load-1', status: 'success', content: [reference] }),
+          new ToolResultBlock({ toolUseId: 'bash-1', status: 'success', content: [new TextBlock('x'.repeat(100))] }),
+        ],
+      }),
+    ]
+
+    const result = await Offload.drop('toolResults').when({}).apply(makeContext(messages))
+
+    expect(result).toBe(true)
+    const [loadResult, bashResult] = messages[1]!.content as ToolResultBlock[]
+    expect(loadResult!.content).toEqual([reference])
+    expect(bashResult!.content).toEqual([offloadPlaceholder('drop', '[Dropped: ~25 tokens]', undefined, 25)])
+  })
+
+  it("Offload.drop('toolResultErrors') keeps the answer to an early call of a deferred tool, which holds its reference", async () => {
+    const answer = [
+      new TextBlock('Not run: bash was called before its parameters were loaded. They are loaded now; call it again.'),
+      new ToolReferenceBlock({ name: 'bash' }),
+    ]
+    const messages = [
+      new Message({
+        role: 'assistant',
+        content: [
+          new ToolUseBlock({ name: 'bash', toolUseId: 'bash-1', input: {} }),
+          new ToolUseBlock({ name: 'read', toolUseId: 'read-1', input: {} }),
+        ],
+      }),
+      new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({ toolUseId: 'bash-1', status: 'error', content: answer }),
+          new ToolResultBlock({ toolUseId: 'read-1', status: 'error', content: [new TextBlock('x'.repeat(100))] }),
+        ],
+      }),
+    ]
+    const result = await Offload.drop('toolResultErrors').when({}).apply(makeContext(messages))
+    expect(result).toBe(true)
+    const [bashResult, readResult] = messages[1]!.content as ToolResultBlock[]
+    expect(bashResult!.content).toEqual(answer)
+    expect(readResult!.content).toEqual([offloadPlaceholder('drop', '[Dropped: ~25 tokens]', undefined, 25)])
+  })
+
+  it('Offload.drop() drops a load_tools result that holds text, like any other tool result', async () => {
+    const messages = [
+      new Message({
+        role: 'assistant',
+        content: [new ToolUseBlock({ name: 'load_tools', toolUseId: 'load-1', input: {} })],
+      }),
+      new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({ toolUseId: 'load-1', status: 'success', content: [new TextBlock('x'.repeat(100))] }),
+        ],
+      }),
+    ]
+    const result = await Offload.drop('toolResults').when({}).apply(makeContext(messages))
+
+    expect(result).toBe(true)
+    const [loadResult] = messages[1]!.content as ToolResultBlock[]
+    expect(loadResult!.content).toEqual([offloadPlaceholder('drop', '[Dropped: ~25 tokens]', undefined, 25)])
   })
 
   it('Offload.truncate with string[] target matches tool by name from assistant message', async () => {

@@ -16,7 +16,7 @@ import json
 import math
 from typing import TYPE_CHECKING
 
-from ...sandbox.errors import SandboxTimeoutError
+from ...sandbox.errors import SandboxAbortError, SandboxTimeoutError
 from ...tools.decorator import tool
 from ...types.tools import ToolContext
 from .types import SANDBOX_SHELL_DESCRIPTION, ShellExecutionError, ShellOutput
@@ -70,10 +70,12 @@ def make_shell(
         """
         active = sandbox if sandbox is not None else tool_context.agent.sandbox
         try:
-            result = await active.execute(command, timeout=timeout)
-        except SandboxTimeoutError as e:
+            result = await active.execute(command, timeout=timeout, cancel_signal=tool_context.cancel_signal)
+        except (SandboxTimeoutError, SandboxAbortError) as e:
             # The model only sees str(e), so the partial output rides in the message with the success field names.
-            partial: ShellOutput = {"output": e.stdout, "error": e.stderr, "exit_code": 124}
+            # 124 and 130 are the shell conventions for a command killed by its time limit and by an interrupt.
+            exit_code = 124 if isinstance(e, SandboxTimeoutError) else 130
+            partial: ShellOutput = {"output": e.stdout, "error": e.stderr, "exit_code": exit_code}
             e.args = (f"{e}\n{json.dumps(partial)}",)
             raise
         except Exception as e:

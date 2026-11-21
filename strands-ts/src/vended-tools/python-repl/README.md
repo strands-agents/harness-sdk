@@ -60,5 +60,5 @@ interface PythonReplOutput {
 
 - Errors in the Python code itself are reported through `error` and a non-zero `exit_code`, not thrown.
 - `SandboxTimeoutError`: execution exceeded `timeout`. The message carries the partial output as JSON with the success field names and `exit_code: 124`.
-- `SandboxAbortError`: the agent cancelled the call (`context.cancelSignal`); the sandbox is told to stop the interpreter and the error propagates unwrapped.
+- `SandboxAbortError`: the agent cancelled the call (`context.cancelSignal`); the sandbox is told to stop the interpreter and the error propagates unwrapped. The message carries the partial output the same way, with `exit_code: 130`.
 - `PythonReplError`: the sandbox failed to run the code (for example, an unreachable container). The original error is available as `cause`.

@@ -63,6 +63,7 @@ export async function summarizeWithStream(
   const streamOptions: StreamOptions = {
     ...(options?.systemPrompt !== undefined && { systemPrompt: options.systemPrompt }),
     ...(options?.toolSpecs?.length ? { toolSpecs: options.toolSpecs } : {}),
+    ...(options?.deferredTools?.size ? { deferredTools: options.deferredTools } : {}),
     ...(cancelSignal && { cancelSignal }),
     ...(options?.agentMetadata && { agentMetadata: options.agentMetadata }),
   }
