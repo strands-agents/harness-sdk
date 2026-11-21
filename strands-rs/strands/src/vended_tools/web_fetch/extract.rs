@@ -2,7 +2,8 @@
 //! rules: ATX headings, fenced code, `-` bullets, inline links; non-content elements dropped; the
 //! `<title>` as a top-level heading; `data:` images reduced to their alt text; images with a
 //! `javascript:` or `vbscript:` source dropped, and links with a `javascript:`, `vbscript:` or
-//! `data:` href reduced to their text.
+//! `data:` href reduced to their text. Image alt text and sources are escaped so they cannot
+//! change the structure of the output.
 
 use std::sync::LazyLock;
 
@@ -38,6 +39,68 @@ static INVISIBLE_PREFIX: LazyLock<Option<Regex>> =
     LazyLock::new(|| Regex::new(r"^[\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}]+").ok());
 
 static SCHEME: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"^([a-zA-Z][a-zA-Z0-9+.-]*):").ok());
+
+/// JavaScript's `\s` (which, unlike the `regex` crate's, includes U+FEFF) and `\p{Cc}`.
+const JS_SPACE_OR_CONTROL: &str =
+    r"[\t\n\x0B\x0C\r \x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}\p{Cc}]";
+
+static SPACE_RUN: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(&format!("{JS_SPACE_OR_CONTROL}+")).ok());
+static SPACE_OR_SYNTAX: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(&format!(r#"{JS_SPACE_OR_CONTROL}|[<>\\"`]"#)).ok());
+static IMAGE_SPECIALS: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"[\\\[\]`~]|^\^").ok());
+static OPENING_PAREN: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"(^ ?|\\\] ?)\(").ok());
+
+fn replace_all(pattern: &LazyLock<Option<Regex>>, text: &str, replacement: &str) -> String {
+    match pattern.as_ref() {
+        Some(pattern) => pattern.replace_all(text, replacement).into_owned(),
+        None => text.to_owned(),
+    }
+}
+
+/// `value` without what URL parsers strip from both ends of a URL: C0 controls and space.
+fn trim_c0_control_or_space(value: &str) -> &str {
+    value.trim_matches(|c: char| c <= ' ')
+}
+
+/// Image text as plain text: whitespace and control characters collapsed, markdown and HTML
+/// syntax escaped. A `(` can only open a link destination at the start of the text or after a
+/// `]`, so it is escaped only there.
+fn escape_image_text(text: &str) -> String {
+    let text = replace_all(&SPACE_RUN, text, " ");
+    let text = replace_all(&IMAGE_SPECIALS, &text, r"\$0");
+    let text = replace_all(&OPENING_PAREN, &text, r"${1}\(");
+    text.replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// An image source without tabs and newlines, as URL parsers drop them, and with what a markdown
+/// parser could read as syntax percent-encoded.
+fn escape_image_src(src: &str) -> String {
+    let src: String = src.chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
+    let mut escaped = String::with_capacity(src.len());
+    for c in src.chars() {
+        let syntax = SPACE_OR_SYNTAX
+            .as_ref()
+            .is_some_and(|pattern| pattern.is_match(c.encode_utf8(&mut [0; 4])));
+        if syntax || matches!(c, '(' | ')' | '\'') {
+            for byte in c.encode_utf8(&mut [0; 4]).bytes() {
+                escaped.push_str(&format!("%{byte:02X}"));
+            }
+        } else {
+            escaped.push(c);
+        }
+    }
+    escaped
+}
+
+/// Alt text written without its image: a trailing `!` would turn a link that follows into an
+/// image, so it is escaped.
+fn bare_alt(alt: &str) -> String {
+    let body = alt.strip_suffix(' ').unwrap_or(alt);
+    match body.strip_suffix('!') {
+        Some(head) => format!("{head}\\{}", &alt[head.len()..]),
+        None => alt.to_owned(),
+    }
+}
 
 /// The lowercased scheme of `url`, or empty: read after the invisible characters before it, with
 /// tab, CR and LF removed anywhere as browsers do. The rest of the URL is not parsed, so a
@@ -82,15 +145,15 @@ fn title(handlers: &dyn Handlers, element: Element<'_>) -> Option<HandlerResult>
 #[allow(clippy::needless_pass_by_value, reason = "the htmd handler signature")]
 fn safe_image(_handlers: &dyn Handlers, element: Element<'_>) -> Option<HandlerResult> {
     let src = attribute(&element, "src").unwrap_or_default();
-    let src = src.trim();
-    let alt = attribute(&element, "alt").unwrap_or_default();
+    let src = trim_c0_control_or_space(&src);
+    let alt = escape_image_text(&attribute(&element, "alt").unwrap_or_default());
     if src.is_empty() {
-        return Some(alt.into());
+        return Some(bare_alt(&alt).into());
     }
     match url_scheme(src).as_str() {
         "javascript" | "vbscript" => Some("".into()),
-        "data" => Some(alt.into()),
-        _ => Some(format!("![{alt}]({src})").into()),
+        "data" => Some(bare_alt(&alt).into()),
+        _ => Some(format!("![{alt}]({})", escape_image_src(src)).into()),
     }
 }
 
@@ -326,5 +389,91 @@ mod tests {
     #[test]
     fn produces_no_heading_when_there_is_no_title() {
         assert!(!html_to_markdown("<p>no title here</p>").starts_with('#'));
+    }
+
+    #[test]
+    fn escapes_image_alt_text_and_src() {
+        let cases = [
+            (
+                "<img alt=\"a](https://example.com/x) [b\" src=\"pic.png\">",
+                "![a\\]\\(https://example.com/x) \\[b](pic.png)",
+            ),
+            (
+                "<img alt=\"[click](https://example.com/y)\" src=\"data:image/png;base64,AAAA\">",
+                "\\[click\\]\\(https://example.com/y)",
+            ),
+            (
+                "<img alt=\"[click](https://example.com/y)\" src=\"\">",
+                "\\[click\\]\\(https://example.com/y)",
+            ),
+            (
+                "<img alt=\"&lt;https://example.com/a&gt;\" src=\"data:image/png;base64,AAAA\">",
+                "&lt;https://example.com/a&gt;",
+            ),
+            (
+                "<img alt=\"^back\\slash\n\n`tick` ~~~\" src=\"pic.png\">",
+                "![\\^back\\\\slash \\`tick\\` \\~\\~\\~](pic.png)",
+            ),
+            (
+                "<p>Rated<img alt=\" 4 stars \" src=\"data:image/png;base64,AAAA\">by users</p>",
+                "Rated 4 stars by users",
+            ),
+            ("<img alt=\"Logo (dark)\" src=\"pic.png\">", "![Logo (dark)](pic.png)"),
+            ("<img alt=\"(dark) Logo\" src=\"pic.png\">", "![\\(dark) Logo](pic.png)"),
+            (
+                "<img alt=\"a] (https://example.com/x)\" src=\"pic.png\">",
+                "![a\\] \\(https://example.com/x)](pic.png)",
+            ),
+            (
+                "<p>see<img alt=\" (https://example.com/y)\" src=\"data:image/png;base64,AAAA\"></p>",
+                "see \\(https://example.com/y)",
+            ),
+            (
+                "<a href=\"https://example.com/\"><img alt=\"a] b\" src=\"pic.png\"></a>",
+                "[![a\\] b](pic.png)](https://example.com/)",
+            ),
+            (
+                "<img alt=\"x\" src=\"pic.png) [click](https://example.com/z\">",
+                "![x](pic.png%29%20[click]%28https://example.com/z)",
+            ),
+            (
+                "<img alt=\"x\" src=\" a\tb<c>d\\e\x01\x7f\u{85}.png\n\">",
+                "![x](ab%3Cc%3Ed%5Ce%01%7F%C2%85.png)",
+            ),
+            (
+                "<img alt=\"x\" src=\"p.png&quot;t&quot;&#39;u&#39;`v\">",
+                "![x](p.png%22t%22%27u%27%60v)",
+            ),
+            (
+                "<p><img alt=\"Wow!\" src=\"data:image/png;base64,AAAA\"><a href=\"https://example.com/\">link</a></p>",
+                "Wow\\![link](https://example.com/)",
+            ),
+            (
+                "<p><img alt=\"Wow!\" src=\"\"><a href=\"https://example.com/\">link</a></p>",
+                "Wow\\![link](https://example.com/)",
+            ),
+            (
+                // htmd keeps the space before the link that turndown collapses.
+                "<p><span><img alt=\"Wow! \" src=\"data:image/png;base64,AAAA\"> </span><a href=\"https://example.com/\">l</a></p>",
+                "Wow\\! [l](https://example.com/)",
+            ),
+            (
+                "<p><img alt=\"Wow!\" src=\"pic.png\"><a href=\"https://example.com/\">link</a></p>",
+                "![Wow!](pic.png)[link](https://example.com/)",
+            ),
+            (
+                "<img alt=\"a\x1cb\u{85}c\u{feff}d\u{a0}e\" src=\"\x1c\u{85}p\u{2028}q.png\u{feff}\x1c\">",
+                "![a b c d e](%C2%85p%E2%80%A8q.png%EF%BB%BF)",
+            ),
+        ];
+        let mut failures = Vec::new();
+        for (html, expected) in cases {
+            let markdown = html_to_markdown(html);
+            let actual = markdown.trim_matches(crate::models::is_js_whitespace);
+            if actual != expected {
+                failures.push(format!("{html}\n  expected {expected:?}\n  got      {actual:?}"));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 }
