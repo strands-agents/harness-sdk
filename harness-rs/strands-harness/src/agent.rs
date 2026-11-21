@@ -296,9 +296,9 @@ pub struct HarnessAgentOptions {
     /// Extraction runs in the background, so call [`Agent::shutdown`] to persist what is pending.
     #[builder(into)]
     pub memory: Option<MemoryOption>,
-    /// The built-in feature plugins to enable; both by default. `todos` adds a `todo_write` tool
-    /// and re-surfaces the list before each step; `environment` injects the platform, date,
-    /// working directory and the project's `AGENTS.md` before each user turn.
+    /// The built-in feature plugins to enable; `environment` by default, which injects the
+    /// platform, date, working directory and the project's `AGENTS.md` before each user turn.
+    /// `todos` is opt-in: it adds a `todo_write` tool and re-surfaces the list before each step.
     #[builder(with = |names: impl IntoIterator<Item = BuiltinPluginName>| names.into_iter().collect())]
     pub builtin_plugins: Option<Vec<BuiltinPluginName>>,
     /// Gates tool calls behind approval or a policy; off by default. A preset (`"ask"`,

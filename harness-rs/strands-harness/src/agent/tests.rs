@@ -165,7 +165,6 @@ async fn builds_an_agent_with_the_default_configuration() {
         "web_fetch",
         "subagent",
         "programmatic_tool_caller",
-        "todo_write",
     ] {
         assert!(names.contains(&name.to_owned()), "{name}");
     }
@@ -175,7 +174,7 @@ async fn builds_an_agent_with_the_default_configuration() {
         Some(ContextManagerStrategy::Auto)
     ));
     assert_eq!(assembly.model_plan.unwrap().model_id, "global.anthropic.claude-opus-5");
-    assert_eq!(plugin_names(&assembly.config), ["strands:todos", "strands:environment"]);
+    assert_eq!(plugin_names(&assembly.config), ["strands:environment"]);
     Agent::new(assembly.config).unwrap();
 }
 
@@ -322,7 +321,6 @@ async fn starts_from_nothing_when_the_builtin_tools_mapping_sets_star_to_false()
         ..quiet_with_mock()
     };
     let mut names = tool_names(&assembled(options).await.config);
-    names.retain(|name| name != "todo_write");
     names.sort();
     assert_eq!(names, ["read", "web_fetch"]);
 }
@@ -1061,6 +1059,12 @@ async fn rejects_a_built_in_plugin_tool_colliding_with_a_consumer_tool() {
             .await
             .contains("Tool name \"todo_write\" is registered more than once (from tools and a built-in plugin)")
     );
+}
+
+#[tokio::test]
+async fn leaves_the_plugin_tool_name_free_when_the_defaults_are_used() {
+    let options = with_tools(vec![tool("todo_write", "Collides with the todos plugin.")]);
+    assert!(tool_names(&assembled(options).await.config).contains(&"todo_write".to_owned()));
 }
 
 #[tokio::test]
@@ -1806,8 +1810,12 @@ mod builtin_plugins {
     }
 
     #[tokio::test]
-    async fn todos_is_enabled_by_default_and_contributes_the_todo_write_tool() {
-        let config = assembled(quiet_with_mock()).await.config;
+    async fn todos_contributes_the_todo_write_tool_when_selected() {
+        let options = HarnessAgentOptions {
+            builtin_plugins: Some(vec![BuiltinPluginName::Todos]),
+            ..quiet_with_mock()
+        };
+        let config = assembled(options).await.config;
         assert_eq!(
             config
                 .plugins
@@ -1826,6 +1834,12 @@ mod builtin_plugins {
             ..quiet_with_mock()
         };
         let config = assembled(options).await.config;
+        assert!(!config.plugins.iter().any(|plugin| plugin.name() == "strands:todos"));
+    }
+
+    #[tokio::test]
+    async fn todos_is_not_in_the_defaults() {
+        let config = assembled(quiet_with_mock()).await.config;
         assert!(!config.plugins.iter().any(|plugin| plugin.name() == "strands:todos"));
     }
 
