@@ -588,15 +588,24 @@ mod stream_event_handling {
     }
 
     #[tokio::test]
-    async fn maps_anthropic_stop_reason_refusal_to_refusal() {
-        let [delta, stop] = message_end("refusal", 1);
-        let client = MockClient::replying(vec![message_start(1), delta, stop]);
+    async fn maps_anthropic_stop_reason_to_stop_reason() {
+        for (anthropic_reason, expected) in [
+            ("refusal", "refusal"),
+            ("max_tokens", "maxTokens"),
+            ("stop_sequence", "stopSequence"),
+        ] {
+            let [delta, stop] = message_end(anthropic_reason, 1);
+            let client = MockClient::replying(vec![message_start(1), delta, stop]);
 
-        let events = collect(&model(&client, AnthropicModelConfig::default()), hi())
-            .await
-            .unwrap();
+            let events = collect(&model(&client, AnthropicModelConfig::default()), hi())
+                .await
+                .unwrap();
 
-        assert!(events.contains(&json!({"type": "modelMessageStopEvent", "stopReason": "refusal"})));
+            assert!(
+                events.contains(&json!({"type": "modelMessageStopEvent", "stopReason": expected})),
+                "{anthropic_reason}"
+            );
+        }
     }
 
     #[tokio::test]
