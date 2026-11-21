@@ -1,7 +1,8 @@
 //! HTML to markdown for the web fetch tool, on `htmd` (a turndown port) with these options and
 //! rules: ATX headings, fenced code, `-` bullets, inline links; non-content elements dropped; the
-//! `<title>` as a top-level heading; `data:` images reduced to their alt text; `javascript:` and
-//! `vbscript:` links and images stripped.
+//! `<title>` as a top-level heading; `data:` images reduced to their alt text; images with a
+//! `javascript:` or `vbscript:` source dropped, and links with a `javascript:`, `vbscript:` or
+//! `data:` href reduced to their text.
 
 use std::sync::LazyLock;
 
@@ -31,23 +32,33 @@ static CONVERTER: LazyLock<HtmlToMarkdown> = LazyLock::new(|| {
         .build()
 });
 
-/// The control, format and space-separator characters (`\p{Cc}\p{Cf}\p{Zs}`) before a URL, from
-/// the Unicode tables of the `regex` crate.
-static INVISIBLE_PREFIX: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"^[\p{Cc}\p{Cf}\p{Zs}]+").ok());
+/// The whitespace, control, format and separator characters (`\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}`)
+/// before a URL, from the Unicode tables of the `regex` crate.
+static INVISIBLE_PREFIX: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r"^[\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}]+").ok());
 
-/// `value` without the invisible characters before it.
-fn strip_invisible(value: &str) -> &str {
+static SCHEME: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"^([a-zA-Z][a-zA-Z0-9+.-]*):").ok());
+
+/// The lowercased scheme of `url`, or empty: read after the invisible characters before it, with
+/// tab, CR and LF removed anywhere as browsers do. The rest of the URL is not parsed, so a
+/// malformed host does not hide the scheme.
+fn url_scheme(url: &str) -> String {
     let start = INVISIBLE_PREFIX
         .as_ref()
-        .and_then(|pattern| pattern.find(value))
+        .and_then(|pattern| pattern.find(url))
         .map_or(0, |prefix| prefix.end());
-    value.get(start..).unwrap_or(value)
-}
-
-/// The scheme of an absolute URL, after the invisible characters before it.
-fn scheme(value: &str) -> Option<String> {
-    let url = reqwest::Url::parse(strip_invisible(value)).ok()?;
-    Some(url.scheme().to_owned())
+    let stripped: String = url
+        .get(start..)
+        .unwrap_or(url)
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
+        .collect();
+    SCHEME
+        .as_ref()
+        .and_then(|pattern| pattern.captures(&stripped))
+        .and_then(|captures| captures.get(1))
+        .map(|scheme| scheme.as_str().to_ascii_lowercase())
+        .unwrap_or_default()
 }
 
 fn attribute(element: &Element<'_>, name: &str) -> Option<String> {
@@ -76,16 +87,16 @@ fn safe_image(_handlers: &dyn Handlers, element: Element<'_>) -> Option<HandlerR
     if src.is_empty() {
         return Some(alt.into());
     }
-    match scheme(src).as_deref() {
-        Some("javascript" | "vbscript") => Some("".into()),
-        Some("data") => Some(alt.into()),
+    match url_scheme(src).as_str() {
+        "javascript" | "vbscript" => Some("".into()),
+        "data" => Some(alt.into()),
         _ => Some(format!("![{alt}]({src})").into()),
     }
 }
 
 fn safe_link(handlers: &dyn Handlers, element: Element<'_>) -> Option<HandlerResult> {
     let href = attribute(&element, "href").unwrap_or_default();
-    if matches!(scheme(href.trim()).as_deref(), Some("javascript" | "vbscript" | "data")) {
+    if matches!(url_scheme(&href).as_str(), "javascript" | "vbscript" | "data") {
         return Some(handlers.walk_children(element.node));
     }
     handlers.fallback(element)
@@ -185,15 +196,95 @@ mod tests {
     }
 
     #[test]
-    fn strips_only_control_format_and_space_separator_characters() {
-        assert_eq!(strip_invisible("\u{e0020}\u{200b}\u{3000}\u{7}x"), "x");
-        assert_eq!(strip_invisible("\u{2028}x"), "\u{2028}x");
-        assert_eq!(strip_invisible("x\u{200b}"), "x\u{200b}");
+    fn reads_the_scheme_after_invisible_characters_without_parsing_the_url() {
+        assert_eq!(
+            url_scheme("\u{e0020}\u{200b}\u{3000}\u{7}\u{2028}JavaScript:x"),
+            "javascript"
+        );
+        assert_eq!(url_scheme("ja\nva\tscr\ript:x"), "javascript");
+        assert_eq!(url_scheme("x\u{200b}:y"), "");
+        assert_eq!(url_scheme("/relative:path"), "");
+        assert_eq!(url_scheme("http://[bad"), "http");
+    }
+
+    #[test]
+    fn drops_hrefs_and_img_srcs_with_a_line_separator_prefix() {
+        for prefix in ["\u{2028}", "\u{2029}", "\u{200b}\u{2028} "] {
+            for url in ["javascript:alert(1)", "vbscript:msgbox(1)", "data:text/html,x"] {
+                assert_eq!(
+                    html_to_markdown(&format!("<a href=\"{prefix}{url}\">click</a>")),
+                    "click\n",
+                    "{prefix:?} {url}"
+                );
+            }
+            for (src, expected) in [
+                ("javascript:alert(1)", ""),
+                ("vbscript:msgbox(1)", ""),
+                ("data:image/png;base64,AAAA", "x\n"),
+            ] {
+                assert_eq!(
+                    html_to_markdown(&format!("<img src=\"{prefix}{src}\" alt=\"x\">")),
+                    expected,
+                    "{prefix:?} {src}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn drops_javascript_href_with_a_format_character_prefix() {
+        for code_point in [
+            0x0890, 0x0891, 0x13439, 0x1343A, 0x1343B, 0x1343C, 0x1343D, 0x1343E, 0x1343F,
+        ] {
+            let prefix = char::from_u32(code_point).unwrap();
+            assert_eq!(
+                html_to_markdown(&format!("<a href=\"{prefix}javascript:alert(1)\">click</a>")),
+                "click\n",
+                "U+{code_point:04X}"
+            );
+        }
+    }
+
+    #[test]
+    fn drops_javascript_hrefs_with_a_tab_inside_the_scheme() {
+        assert_eq!(
+            html_to_markdown("<a href=\"java\tscript:alert(1)\">click</a>"),
+            "click\n"
+        );
+    }
+
+    #[test]
+    fn drops_hrefs_with_an_unparseable_host() {
+        for url in [
+            "javascript://\u{2100}%0aalert(1)",
+            "vbscript://[x",
+            "data://[x/text/html,x",
+        ] {
+            assert_eq!(
+                html_to_markdown(&format!("<a href=\"{url}\">click</a>")),
+                "click\n",
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_an_unparseable_href_and_converts_the_rest_of_the_page() {
+        let html = "<h1>Hi</h1><a href=\"javascript:alert(1)\">js</a> <a href=\"http://[bad\">bad</a>";
+        assert_eq!(html_to_markdown(html), "# Hi\n\njs [bad](http://[bad)\n");
+    }
+
+    #[test]
+    fn keeps_an_unparseable_img_src() {
+        assert_eq!(
+            html_to_markdown("<img src=\"http://[bad\" alt=\"pic\">"),
+            "![pic](http://[bad)\n"
+        );
     }
 
     #[test]
     fn drops_vbscript_and_data_hrefs_but_keeps_link_text() {
-        for href in ["vbscript:msgbox(1)", "data:text/html,<script>alert(1)</script>"] {
+        for href in ["VBScript:msgbox(1)", "data:text/html,<script>alert(1)</script>"] {
             assert_eq!(
                 html_to_markdown(&format!("<a href=\"{href}\">click</a>")).trim(),
                 "click"
@@ -204,7 +295,7 @@ mod tests {
     #[test]
     fn drops_javascript_and_vbscript_img_srcs() {
         assert!(!html_to_markdown("<img src=\"javascript:alert(1)\" alt=\"x\">").contains("javascript:"));
-        assert_eq!(html_to_markdown("<img src=\"vbscript:msgbox(1)\" alt=\"x\">"), "");
+        assert_eq!(html_to_markdown("<img src=\"VBScript:msgbox(1)\" alt=\"x\">"), "");
         for prefix in ["\u{200b}", "\u{00ad}", "\u{feff}"] {
             let result = html_to_markdown(&format!("<img src=\"{prefix}javascript:alert(1)\" alt=\"x\">"));
             assert!(!result.contains("javascript:"), "{prefix:?}: {result}");
