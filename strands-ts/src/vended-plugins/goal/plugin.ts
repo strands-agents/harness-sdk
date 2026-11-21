@@ -3,7 +3,8 @@
  * Validates the agent's response after each invocation; if it doesn't
  * satisfy the goal, feeds validator feedback back as a user message and re-enters the
  * agent loop via `AfterInvocationEvent.resume`. Loops until validation passes,
- * `maxAttempts` is reached, `timeout` elapses, or one of the request's `limits` is reached.
+ * `maxAttempts` is reached, `timeout` elapses, one of the request's `limits` is reached,
+ * or the invocation is cancelled.
  *
  * @example
  * ```ts
@@ -391,7 +392,7 @@ export class GoalLoop implements Plugin {
         finishRun(run, 'limit')
         return
       }
-      // Cancelled or model-threw before emitting an assistant message.
+      // The model threw before emitting an assistant message.
       if (!response) return
 
       const attemptNumber = run.attempts.length + 1

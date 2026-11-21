@@ -1001,15 +1001,21 @@ export class Agent implements LocalAgent, InvokableAgent {
 
   /**
    * Whether a hook's `resume` starts another pass. Never once one of the
-   * request's limits is reached: it stays reached for the rest of the request,
-   * so that pass would stop at once.
+   * request's limits is reached or the caller's `cancelSignal` has aborted:
+   * either stays that way for the rest of the request, so that pass would stop at once.
    *
    * @param event - The event whose callbacks may have set `resume`
    * @param invocationContext - The state of the request the pass ran in
+   * @param callerCancelSignal - The `cancelSignal` the caller passed to `invoke` / `stream`
    * @returns `true` to run another pass with `event.resume` as input
    */
-  private _shouldResume(event: AfterInvocationEvent, invocationContext: InvocationContextImpl): boolean {
+  private _shouldResume(
+    event: AfterInvocationEvent,
+    invocationContext: InvocationContextImpl,
+    callerCancelSignal: AbortSignal | undefined
+  ): boolean {
     if (event.resume === undefined) return false
+    if (callerCancelSignal?.aborted) return false
     const limitStopReason = reachedLimit(invocationContext)
     if (limitStopReason === undefined) return true
     logger.debug(`limit=<${limitStopReason}> | ignoring resume because the request reached its limit`)
@@ -1426,14 +1432,15 @@ export class Agent implements LocalAgent, InvokableAgent {
 
         // A requested cancel drops the continuation (it re-delivers in a later invocation). A hook's
         // `resume` survives an immediate cancel (BackgroundTasks surfaces interrupts that way), not a deferred one.
-        const cancelRequested = this._deferredCancel || this._abortSignal.aborted
+        const cancelRequested = this._cancelRequested
         if (cancelRequested && hasContinuation) {
           await continuations.abandon(afterInvocationEvent, new Error('Continuation abandoned after cancel'))
           continuationEvent = undefined
         }
         if (
           (hasContinuation && !cancelRequested) ||
-          (!this._deferredCancel && this._shouldResume(afterInvocationEvent, invocationContext))
+          (!this._deferredCancel &&
+            this._shouldResume(afterInvocationEvent, invocationContext, resolvedOptions.cancelSignal))
         ) {
           currentArgs = afterInvocationEvent.resume ?? []
           continue

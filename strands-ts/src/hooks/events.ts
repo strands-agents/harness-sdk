@@ -213,8 +213,9 @@ export class AfterInvocationEvent extends HookableEvent {
    * {@link BeforeInvocationEvent}/{@link AfterInvocationEvent} pair fires for the
    * resumed run. Ignored if the invocation ended with an error, one of the
    * request's limits is reached (a resumed run would stop again at once),
-   * or `agent.cancel({ afterCurrentTools: true })` was requested. It is honoured
-   * after an immediate `agent.cancel()`, so check `result.stopReason` first.
+   * the caller's `cancelSignal` has aborted, or `agent.cancel({ afterCurrentTools: true })`
+   * was requested. It is honoured after an immediate `agent.cancel()`, so check
+   * `result.stopReason` and `agent.cancelSignal.aborted` first.
    *
    * If multiple callbacks set `resume`, the last callback to run wins.
    */
