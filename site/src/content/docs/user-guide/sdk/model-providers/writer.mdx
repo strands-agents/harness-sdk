@@ -66,6 +66,7 @@ model = WriterModel(
 
 The `WriterModel` accepts configuration parameters as keyword arguments to the model constructor:
 
+:::wide
 | Parameter | Type | Description | Default | Options |
 |-----------|------|-------------|---------|---------|
 | `model_id` | `str` | Model name to use (e.g. `palmyra-x5`, `palmyra-x4`, etc.) | Required | [reference](https://dev.writer.com/home/models) |
@@ -74,6 +75,7 @@ The `WriterModel` accepts configuration parameters as keyword arguments to the m
 | `stream_options` | `Dict[str, Any]` | Additional options for streaming. Specify `include_usage` to include usage information in the response, in the `accumulated_usage` field. If you do not specify this, `accumulated_usage` will show `0` for each value. | `None` | [reference](https://dev.writer.com/api-reference/completion-api/chat-completion#body-stream) |
 | `temperature` | `Optional[float]` | What sampling temperature to use (0.0 to 2.0). A higher temperature will produce more random output. | `1` | [reference](https://dev.writer.com/api-reference/completion-api/chat-completion#body-temperature) |
 | `top_p` | `Optional[float]` | Threshold for "nucleus sampling" | `None` | [reference](https://dev.writer.com/api-reference/completion-api/chat-completion#body-top_p) |
+:::
 
 ### Available Models
 

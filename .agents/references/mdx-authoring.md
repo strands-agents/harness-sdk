@@ -127,6 +127,42 @@ This will break existing code.
 :::
 ```
 
+## Wide Blocks
+
+Wrap one table, screenshot, or code block in `:::wide` when it doesn't fit the text
+column. On large screens it stays centred on the text and grows equally on both sides, up to
+72rem; on
+laptops and phones it stays column width. It works in `.md` and `.mdx`, including imported
+Box docs.
+
+````markdown
+:::wide
+| Option | Type | Default | Purpose |
+|---|---|---|---|
+| `model` | `str` | `bedrock/…` | Which model to call |
+:::
+````
+
+In `.mdx`, `:::wide` can also wrap a component such as `<FoundationComparison />`.
+
+Use it sparingly, for a block that clearly benefits:
+
+- a table with 5+ columns, or one whose description cells wrap to several lines at column
+  width (Starlight wraps cells rather than scrolling, so the gain is a shorter table; skip
+  tables that are already short);
+- a screenshot much wider than the column (over about 1100px);
+- a code block where many lines run past about 100 characters.
+
+Don't wrap prose, callouts, or a `<Diagram>`: diagrams are drawn 720px wide for the
+column, so a wider box only scales them up. Wrap a single block; everything inside the
+wrapper widens. Readers can already click any image to zoom it to full size, so a wide
+screenshot is for one readers need to read in place.
+
+Put `:::wide` at the top level of the page. Inside an aside or a `<TabItem>` it stays
+column width; to widen tabbed code, wrap the whole `<Tabs>` instead. `:::wide{#id}` sets an
+anchor for deep links. `:::wide` takes no label: `:::wide[Caption]` drops the caption and
+logs a build warning.
+
 ## Frontmatter Schema
 
 Required fields:

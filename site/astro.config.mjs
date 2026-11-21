@@ -3,9 +3,11 @@ import { defineConfig } from 'astro/config'
 import { unified } from '@astrojs/markdown-remark'
 import starlight from '@astrojs/starlight'
 import path from 'node:path'
+import starlightImageZoom from 'starlight-image-zoom'
 import remarkMkdocsSnippets from './src/plugins/remark-mkdocs-snippets.ts'
 import sdkSetupPlugin from './src/plugins/vite-plugin-sdk-setup.ts'
 import remarkReadingTime from './src/plugins/remark-reading-time.ts'
+import remarkWideBlocks from './src/plugins/remark-wide-blocks.ts'
 import watchNavigationPlugin from './src/plugins/vite-plugin-watch-navigation.ts'
 import legacyRedirectPages from './src/plugins/legacy-redirect-pages.ts'
 import legacyRoutes from './src/config/legacy-routes.json'
@@ -48,7 +50,7 @@ export default defineConfig({
 	},
   markdown: {
     processor: unified(),
-    remarkPlugins: [remarkMkdocsSnippets, remarkReadingTime],
+    remarkPlugins: [remarkMkdocsSnippets, remarkReadingTime, remarkWideBlocks],
   },
   integrations: [
     // Sitemap with git-based <lastmod> dates — must be before Starlight
@@ -67,6 +69,9 @@ export default defineConfig({
     }),
     mdx(),
     starlight({
+      // Click-to-zoom for Markdown images. The site overrides MarkdownContent, so
+      // overrides/MarkdownContent.astro renders the plugin's <ImageZoom /> itself.
+      plugins: [starlightImageZoom()],
       social: [],
       head: [
         { tag: 'meta', attrs: { property: 'og:image', content: `${site}/og-image.png` } },
