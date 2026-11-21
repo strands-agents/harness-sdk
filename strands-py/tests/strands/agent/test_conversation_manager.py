@@ -1104,6 +1104,28 @@ def test_pin_first_only_applies_once():
     assert "first" in [m["content"][0]["text"] for m in agent.messages]
 
 
+def test_pin_first_keeps_pinning_until_the_history_holds_that_many_messages():
+    """A reduction on a history shorter than ``pin_first`` pins what exists and the rest once they arrive."""
+    manager = SlidingWindowConversationManager(window_size=2, should_truncate_results=False, pin_first=2)
+    agent = _make_mock_agent(messages=[{"role": "user", "content": [{"text": "first"}]}])
+
+    # Proactive compression can reduce before the history holds pin_first messages.
+    manager.reduce_context(agent)
+
+    agent.messages.extend(
+        [
+            {"role": "assistant", "content": [{"text": "second"}]},
+            {"role": "user", "content": [{"text": "third"}]},
+            {"role": "assistant", "content": [{"text": "fourth"}]},
+            {"role": "user", "content": [{"text": "fifth"}]},
+            {"role": "assistant", "content": [{"text": "sixth"}]},
+        ]
+    )
+    manager.apply_management(agent)
+
+    assert [m["content"][0]["text"] for m in agent.messages] == ["first", "second", "fifth", "sixth"]
+
+
 def test_pinned_message_in_middle_survives_trimming():
     from strands.agent.conversation_manager.compression.pin_message import pin_message
 
