@@ -93,7 +93,7 @@ fn run(
             tokio::select! {
                 () = &mut cancelled => {
                     group.kill(&mut child);
-                    yield Err(SandboxAbortError::new().into());
+                    yield Err(SandboxAbortError::new().with_output(stdout.text.clone(), stderr.text.clone()).into());
                     return;
                 }
                 () = &mut deadline => {

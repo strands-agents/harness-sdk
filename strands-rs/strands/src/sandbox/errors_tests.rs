@@ -86,3 +86,11 @@ fn carries_the_path_in_its_message_and_a_node_fs_style_code() {
         assert_eq!(code, expected_code);
     }
 }
+
+#[test]
+fn carries_the_output_captured_before_the_abort_empty_by_default() {
+    let empty = SandboxAbortError::new();
+    assert_eq!((empty.stdout.as_str(), empty.stderr.as_str()), ("", ""));
+    let captured = SandboxAbortError::new().with_output("out", "err");
+    assert_eq!((captured.stdout.as_str(), captured.stderr.as_str()), ("out", "err"));
+}

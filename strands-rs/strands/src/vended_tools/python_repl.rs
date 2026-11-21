@@ -152,8 +152,8 @@ pub fn python_repl() -> FunctionTool {
 /// [`execute_code`](Sandbox::execute_code) and returns a [`PythonReplOutput`] as JSON.
 ///
 /// A timeout fails with a [`PythonReplTimeoutError`], cancellation with the sandbox's
-/// [`SandboxAbortError`](crate::SandboxAbortError) unchanged, and any other sandbox failure with
-/// a [`PythonReplError`].
+/// [`SandboxAbortError`](crate::SandboxAbortError) with the partial output appended to its
+/// message as JSON with exit code 130, and any other sandbox failure with a [`PythonReplError`].
 ///
 /// ```
 /// use strands::vended_tools::python_repl::{MakePythonReplOptions, make_python_repl};
@@ -222,7 +222,11 @@ async fn run(
             result.stderr,
             result.exit_code,
         ))?),
-        Err(error @ Error::SandboxAbort(_)) => Err(error.into()),
+        Err(Error::SandboxAbort(abort)) => {
+            let partial = PythonReplOutput::new(abort.stdout.clone(), abort.stderr.clone(), 130);
+            let detail = serde_json::to_string(&partial)?;
+            Err(Error::from(abort.with_detail(&detail)).into())
+        }
         Err(Error::SandboxTimeout(timeout)) => Err(PythonReplTimeoutError::new(timeout)?.into()),
         Err(error) => Err(ToolError::new(PythonReplError::new(error.to_string()))),
     }

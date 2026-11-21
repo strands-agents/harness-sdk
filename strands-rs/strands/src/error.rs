@@ -353,18 +353,51 @@ impl SandboxTimeoutError {
 }
 
 /// Sandbox execution was aborted through its cancel signal (`SandboxAbortError`).
-#[derive(Debug, Clone, Default, PartialEq, Eq, thiserror::Error)]
-#[error("Execution aborted")]
+///
+/// `stdout` and `stderr` hold what the process wrote before it was killed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{message}")]
 #[non_exhaustive]
-pub struct SandboxAbortError {}
+pub struct SandboxAbortError {
+    /// Output written before the abort.
+    pub stdout: String,
+    /// Error output written before the abort.
+    pub stderr: String,
+    message: String,
+}
 
 impl SandboxAbortError {
     /// The type name [`Error::name`] reports.
     pub const NAME: &'static str = "SandboxAbortError";
 
-    /// Creates the error.
+    /// Creates the error, with empty output.
     pub fn new() -> Self {
-        Self {}
+        Self {
+            stdout: String::new(),
+            stderr: String::new(),
+            message: "Execution aborted".to_owned(),
+        }
+    }
+
+    /// Sets the output captured before the abort.
+    #[must_use]
+    pub fn with_output(mut self, stdout: impl Into<String>, stderr: impl Into<String>) -> Self {
+        self.stdout = stdout.into();
+        self.stderr = stderr.into();
+        self
+    }
+
+    /// Appends `detail` to the message on its own line; a tool's caller sees only the message.
+    #[must_use]
+    pub(crate) fn with_detail(mut self, detail: &str) -> Self {
+        self.message = format!("{}\n{detail}", self.message);
+        self
+    }
+}
+
+impl Default for SandboxAbortError {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

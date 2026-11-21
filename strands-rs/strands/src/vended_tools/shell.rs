@@ -11,6 +11,7 @@ use serde_json::json;
 
 use super::input::InputReader;
 use super::{js_number, resolve_sandbox, seconds, tool_error};
+use crate::cancel::CancelSignal;
 use crate::error::{Error, Result};
 use crate::sandbox::{ExecuteOptions, Sandbox};
 use crate::tools::{FunctionTool, ToolError};
@@ -134,7 +135,10 @@ fn input_schema(default_timeout: f64) -> JsonSchema {
 /// [`execute`](Sandbox::execute) and returns a [`ShellOutput`] as JSON.
 ///
 /// A non-zero exit code is a result; a timeout fails with a [`ShellTimeoutError`] that carries
-/// the partial output, and any other sandbox failure with a [`ShellExecutionError`].
+/// the partial output, cancellation of the call stops the command and fails with the sandbox's
+/// [`SandboxAbortError`](crate::SandboxAbortError) with the partial output appended to its
+/// message as JSON with exit code 130, and any other sandbox failure with a
+/// [`ShellExecutionError`].
 ///
 /// ```
 /// use strands::vended_tools::shell::{MakeShellOptions, make_shell};
@@ -166,7 +170,8 @@ pub fn make_shell(options: MakeShellOptions) -> Result<FunctionTool> {
         .input_schema(schema)
         .callback(move |input, context| {
             let sandbox = resolve_sandbox(bound.as_ref(), &context);
-            async move { run(sandbox.as_ref(), &input, default_timeout).await }
+            let signal = context.cancel_signal().clone();
+            async move { run(sandbox.as_ref(), &input, default_timeout, signal).await }
         }))
 }
 
@@ -174,6 +179,7 @@ async fn run(
     sandbox: &dyn Sandbox,
     input: &JsonValue,
     default_timeout: f64,
+    signal: CancelSignal,
 ) -> std::result::Result<JsonValue, ToolError> {
     let mut reader = InputReader::new(input);
     let command = reader.string("command");
@@ -182,6 +188,7 @@ async fn run(
     let command = command.unwrap_or_default();
     let options = ExecuteOptions {
         timeout: seconds(timeout.unwrap_or(default_timeout)),
+        signal: Some(signal),
         ..ExecuteOptions::default()
     };
     match sandbox.execute(command, options).await {
@@ -194,6 +201,13 @@ async fn run(
             let partial = ShellOutput::new(timeout.stdout.clone(), timeout.stderr.clone(), 124);
             let message = format!("{timeout}\n{}", serde_json::to_string(&partial)?);
             Err(ToolError::new(ShellTimeoutError::new(message, Some(partial))))
+        }
+        // Not a shell failure: the abort itself, with the partial output and the interrupt
+        // convention's exit code 130 appended.
+        Err(Error::SandboxAbort(abort)) => {
+            let partial = ShellOutput::new(abort.stdout.clone(), abort.stderr.clone(), 130);
+            let detail = serde_json::to_string(&partial)?;
+            Err(Error::from(abort.with_detail(&detail)).into())
         }
         Err(error) => Err(ToolError::new(ShellExecutionError::new(error.to_string()))),
     }
