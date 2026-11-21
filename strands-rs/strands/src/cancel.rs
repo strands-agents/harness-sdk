@@ -21,7 +21,19 @@ pub struct CancelOptions {
     /// other observer.
     #[builder(default)]
     pub after_current_tools: bool,
+    /// Also cancel every queued, working or input-required background task of the agent
+    /// immediately, even with `after_current_tools` and whether or not an invocation is running
+    /// (`cancelBackgroundTasks`). Background tasks keep running by default, and a
+    /// `cancel_signal` passed into an invocation never cancels them. Their cancelled results are
+    /// delivered like a cancel the model requested. If the invocation was only waiting for its
+    /// background tasks, it ends with its natural stop reason and the results are delivered on the
+    /// next invocation. Only an agent's own handle acts on it.
+    #[builder(default)]
+    pub cancel_background_tasks: bool,
 }
+
+/// Cancels an agent's background tasks; installed on the agent's own handle.
+pub(crate) type BackgroundCancelFn = Arc<dyn Fn() + Send + Sync>;
 
 struct Shared {
     token: Mutex<CancellationToken>,
@@ -29,6 +41,7 @@ struct Shared {
     message: Mutex<Option<String>>,
     /// Set for an agent's own handle: a cancel only counts while an invocation runs.
     active: Option<AtomicBool>,
+    background_cancel: Mutex<Option<BackgroundCancelFn>>,
 }
 
 impl Shared {
@@ -78,6 +91,7 @@ impl CancelHandle {
                 deferred: AtomicBool::new(false),
                 message: Mutex::new(None),
                 active,
+                background_cancel: Mutex::new(None),
             }),
         }
     }
@@ -98,8 +112,19 @@ impl CancelHandle {
     /// With `after_current_tools` the request is recorded but the signal does not fire; the agent
     /// stops once the running tool batch finishes. Otherwise the signal fires now. On an agent's
     /// handle ([`Agent::cancel_handle`](crate::Agent::cancel_handle)) a cancel while the agent is
-    /// idle does nothing.
+    /// idle does nothing, except that `cancel_background_tasks` still applies.
     pub fn cancel(&self, options: CancelOptions) {
+        if options.cancel_background_tasks {
+            let background_cancel = self
+                .shared
+                .background_cancel
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone();
+            if let Some(background_cancel) = background_cancel {
+                background_cancel();
+            }
+        }
         if let Some(active) = &self.shared.active
             && !active.load(Ordering::SeqCst)
         {
@@ -121,6 +146,16 @@ impl CancelHandle {
         *self.shared.token.lock().unwrap_or_else(PoisonError::into_inner) = CancellationToken::new();
         self.shared.deferred.store(false, Ordering::SeqCst);
         *self.shared.message.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
+    /// Installs what `cancel_background_tasks` runs: the agent's background tasks, once they are
+    /// attached.
+    pub(crate) fn set_background_cancel(&self, background_cancel: BackgroundCancelFn) {
+        *self
+            .shared
+            .background_cancel
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(background_cancel);
     }
 
     /// Marks whether an invocation runs, for an agent's own handle.

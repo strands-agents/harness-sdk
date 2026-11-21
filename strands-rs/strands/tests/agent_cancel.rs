@@ -51,6 +51,7 @@ fn deferred(message: Option<&str>) -> CancelOptions {
     CancelOptions {
         message: message.map(str::to_owned),
         after_current_tools: true,
+        ..CancelOptions::default()
     }
 }
 

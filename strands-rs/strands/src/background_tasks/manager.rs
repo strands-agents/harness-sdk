@@ -177,6 +177,18 @@ impl Manager {
             .map(|record| to_background_task(&record))
     }
 
+    /// Cancels every task that is not terminal, including ones submitted but not yet running
+    /// (`cancelAll`), and returns the tasks it cancelled.
+    pub(crate) fn cancel_all(&self) -> Vec<BackgroundTask> {
+        self.engine
+            .list()
+            .iter()
+            .filter(|record| !record.status.is_terminal())
+            .filter_map(|record| self.engine.cancel(&record.task_id, "Cancellation requested").ok())
+            .map(|record| to_background_task(&record))
+            .collect()
+    }
+
     /// Cancels every unfinished task and aborts the running executions.
     pub(crate) fn shutdown(&self) {
         self.engine.shutdown("Agent shut down");
@@ -212,7 +224,8 @@ impl Manager {
             .map_err(|_| Error::other(BackgroundTaskTimeoutError(timeout.as_millis())))
     }
 
-    /// Applies interrupt responses to a task that requires input (`resume`).
+    /// Applies interrupt responses to a task that requires input (`resume`). A task that was
+    /// cancelled or otherwise finished in the meantime is returned unchanged.
     pub(crate) fn resume(&self, task_id: &str, responses: &[InterruptResponse]) -> Result<BackgroundTask> {
         let contents: Vec<InterruptResponseContent> =
             responses.iter().cloned().map(InterruptResponseContent::new).collect();
