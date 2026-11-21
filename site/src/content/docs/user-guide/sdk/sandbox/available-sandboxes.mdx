@@ -32,11 +32,13 @@ Executes operations inside a Docker container on the host via `docker exec`. The
 
 ### Options
 
+:::wide
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | <Syntax py="container" ts="container" /> | <Syntax py="str" ts="string" /> | (required) | ID or name of a running container |
 | <Syntax py="working_dir" ts="workingDir" /> | <Syntax py="str \| None" ts="string" /> | <Syntax py="None" ts="container default" /> | Working directory for executed commands. If omitted, runs in the container's configured working directory. |
 | <Syntax py="user" ts="user" /> | <Syntax py="str \| None" ts="string" /> | <Syntax py="None" ts="container default" /> | User to run commands as (`"uid"`, `"uid:gid"`, or name). If omitted, runs as the container's configured user. |
+:::
 
 ## SshSandbox
 
@@ -63,6 +65,7 @@ Executes operations on a remote host via SSH. Each command spawns a fresh `ssh` 
 
 ### Options
 
+:::wide
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | <Syntax py="host" ts="host" /> | <Syntax py="str" ts="string" /> | (required) | SSH destination (e.g., `"user@host"`, `"192.168.1.10"`) |
@@ -72,6 +75,7 @@ Executes operations on a remote host via SSH. Each command spawns a fresh `ssh` 
 | <Syntax py="allow_unknown_hosts" ts="allowUnknownHosts" /> | <Syntax py="bool" ts="boolean" /> | <Syntax py="False" ts="false" /> | When false, uses `StrictHostKeyChecking=accept-new`. When true, disables host key verification. |
 | <Syntax py="ssh_options" ts="sshOptions" /> | <Syntax py="list[str] \| None" ts="string[]" /> | <Syntax py="None" ts="[]" /> | Additional SSH options passed as `-o` flags |
 | <Syntax py="allow_unsafe_ssh_options" ts="allowUnsafeSshOptions" /> | <Syntax py="bool" ts="boolean" /> | <Syntax py="False" ts="false" /> | Bypass the SSH option allowlist. When false, unknown options throw at construction time. |
+:::
 
 ### SSH Option Allowlist
 

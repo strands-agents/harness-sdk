@@ -653,12 +653,14 @@ def invoke_agent(agent_id, payload, session_id=None):
 
 Common Tracing Headers Examples:
 
+:::wide
 | Header | Description | Sample Value |
 |--------|-------------|-------------|
 | `X-Amzn-Trace-Id` | X-Ray format trace ID | `Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1` |
 | `traceparent` | W3C standard tracing header | `00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01` |
 | `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` | Session identifier | `aea8996f-dcf5-4227-b5ea-f9e9c1843729` |
 | `baggage` | User-defined properties | `userId=alice,serverRegion=us-east-1` |
+:::
 
 For more supported headers details, please check [Bedrock AgentCore Runtime Observability Configuration](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-configure.html)
 
