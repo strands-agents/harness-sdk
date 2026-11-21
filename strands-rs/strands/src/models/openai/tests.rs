@@ -770,7 +770,7 @@ mod managed_params_warning {
 
     #[test]
     fn warns_on_update_config_when_params_contains_provider_managed_keys() {
-        for (api, key) in [(OpenAIApi::Chat, "stream_options"), (OpenAIApi::Responses, "stream")] {
+        for (api, key) in [(OpenAIApi::Chat, "stream"), (OpenAIApi::Responses, "stream")] {
             let model = model_with(
                 &idle(),
                 OpenAIModelOptions {

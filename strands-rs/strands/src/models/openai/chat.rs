@@ -23,7 +23,7 @@ use crate::types::{
 };
 
 /// Request fields the provider sets itself; `params` cannot override them.
-const MANAGED_PARAMS: [&str; 4] = ["model", "messages", "stream", "stream_options"];
+const MANAGED_PARAMS: [&str; 3] = ["model", "messages", "stream"];
 
 /// The tool message text for a tool result that holds only images.
 const IMAGE_ONLY_TOOL_RESULT: &str =
@@ -46,7 +46,10 @@ pub(super) fn format_chat_request(config: &OpenAIModelConfig, request: &ModelReq
     body.insert("model".to_owned(), model_id.into());
     body.insert("messages".to_owned(), JsonValue::Array(Vec::new()));
     body.insert("stream".to_owned(), true.into());
-    body.insert("stream_options".to_owned(), json!({"include_usage": true}));
+    // `params` may override the `stream_options` default or omit it with `null`.
+    if !body.contains_key("stream_options") {
+        body.insert("stream_options".to_owned(), json!({"include_usage": true}));
+    }
 
     let mut messages = Vec::new();
     if let Some(system) = format_system_prompt(request.system_prompt.as_ref()) {
@@ -100,6 +103,9 @@ pub(super) fn format_chat_request(config: &OpenAIModelConfig, request: &ModelReq
         request.agent_metadata.as_ref(),
         false,
     );
+    // Only `params` can leave a field `null`, so `null` there omits the field for endpoints that
+    // reject it.
+    body.retain(|_, value| !value.is_null());
 
     if body.get("n").and_then(JsonValue::as_f64).is_some_and(|n| n > 1.0) {
         return Err(Error::other("Streaming with n > 1 is not supported"));
