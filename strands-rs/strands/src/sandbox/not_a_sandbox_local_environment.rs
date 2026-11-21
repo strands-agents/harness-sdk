@@ -133,7 +133,7 @@ impl Sandbox for NotASandboxLocalEnvironment {
         let full_path = resolve_path(path)?;
         match tokio::fs::read(&full_path).await {
             Ok(content) => Ok(content),
-            Err(error) if cfg!(windows) && is_directory(&full_path, &error).await => {
+            Err(error) if cfg!(windows) && is_directory(&full_path).await => {
                 Err(SandboxIsADirectoryError::new(path).with_source(error).into())
             }
             Err(error) => Err(read_error(path, error)),
@@ -181,10 +181,10 @@ async fn file_info(directory: &Path, name: String) -> FileInfo {
     }
 }
 
-/// Whether a failed read hit a directory; Windows reports that as access denied.
-async fn is_directory(path: &Path, error: &std::io::Error) -> bool {
-    error.kind() == ErrorKind::PermissionDenied
-        && tokio::fs::metadata(path).await.is_ok_and(|metadata| metadata.is_dir())
+/// Whether a failed read hit a directory. Windows reports that as access denied, or as not found
+/// when the path ends in a separator.
+async fn is_directory(path: &Path) -> bool {
+    tokio::fs::metadata(path).await.is_ok_and(|metadata| metadata.is_dir())
 }
 
 fn resolve_path(path: &str) -> Result<PathBuf> {
