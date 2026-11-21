@@ -709,8 +709,8 @@ pub(crate) enum SummarizerPlan {
 ///
 /// An explicit `web_fetch_model` wins. Otherwise the small fast model of the main agent's
 /// provider is used so it shares its credentials; a main model instance (provider unknown) is
-/// reused. On Bedrock the summarizer follows the main model's family, and an unidentifiable
-/// family reuses the main model with a warning. Reasoning is never applied, and caching is not
+/// reused. On Bedrock the summarizer follows the main model's family, and a family with no
+/// mapped small model reuses the main model with a warning. Reasoning is never applied, and caching is not
 /// forwarded: each fetch would write a cache entry no later call can read.
 pub(crate) fn plan_web_fetch_model(
     main_model: Option<&ModelSource>,
@@ -732,7 +732,7 @@ pub(crate) fn plan_web_fetch_model(
     if provider == Provider::Bedrock {
         let Some(small) = bedrock_web_fetch_model(name) else {
             warn_once(&format!(
-                "model=<{main}> | could not identify the Bedrock model family for the web_fetch summarizer; reusing the main model. Pass builtinTools.web_fetch.model to choose a smaller one."
+                "model=<{main}> | no small web_fetch summarizer is mapped for this Bedrock model family; reusing the main model. Pass builtinTools.web_fetch.model to choose a smaller one."
             ));
             return plan_summarizer(main, env).map(SummarizerPlan::Plan);
         };
@@ -770,8 +770,8 @@ fn web_fetch_small_model(provider: Provider) -> &'static str {
         .map_or("", |(_, model)| *model)
 }
 
-/// The small Bedrock summarizer for a Bedrock main model `name`, or `None` for a family that
-/// cannot be identified.
+/// The small Bedrock summarizer for a Bedrock main model `name`, or `None` for a family with no
+/// mapped small model.
 fn bedrock_web_fetch_model(name: &str) -> Option<String> {
     let family = bedrock_family(name);
     if family.starts_with("anthropic.") {
