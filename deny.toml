@@ -9,6 +9,8 @@ ignore = [
   { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill reaches strands-harness only through monty's postcard; no maintained postcard 1.x drops it" },
   # Unmaintained, not vulnerable: chrono reaches strands only through cedar-policy, rmcp (oauth2), opentelemetry-stdout and monty.
   { id = "RUSTSEC-2026-0543", reason = "chrono comes only from third-party dependencies (cedar-policy, rmcp's oauth2, opentelemetry-stdout, monty); strands uses jiff" },
+  # Unmaintained, not vulnerable: `dogwood-ops` -> `dogwood-language` -> `rhai` (feature `dogwood`).
+  { id = "RUSTSEC-2026-0249", reason = "smartstring reaches strands only through dogwood-language's rhai; no rhai release drops it" },
 ]
 
 [licenses]
@@ -40,6 +42,12 @@ allow = ["BlueOak-1.0.0"]
 [[licenses.exceptions]]
 crate = "minicbor-serde"
 allow = ["BlueOak-1.0.0"]
+
+# A build-time dependency of `const-random`, which `rhai` (through `dogwood-language`) enables in
+# `ahash`; CC0-1.0 is a public-domain dedication.
+[[licenses.exceptions]]
+crate = "tiny-keccak"
+allow = ["CC0-1.0"]
 
 [bans]
 multiple-versions = "warn"

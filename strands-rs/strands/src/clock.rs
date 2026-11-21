@@ -32,6 +32,11 @@ impl Clock {
         Self(Arc::new(move || timestamp))
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_fn(now: impl Fn() -> Timestamp + Send + Sync + 'static) -> Self {
+        Self(Arc::new(now))
+    }
+
     pub(crate) fn now(&self) -> Timestamp {
         (self.0)()
     }

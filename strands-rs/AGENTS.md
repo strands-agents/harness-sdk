@@ -33,6 +33,7 @@ Features of `strands`:
 | `mcp` | `McpClient` and the `mcp_router` tool |
 | `otel` | OpenTelemetry export (`telemetry::setup_tracer`, `setup_meter`); its OpenTelemetry crate versions are public API |
 | `cedar` | `CedarAuthorization` |
+| `dogwood` | `DogwoodAuthorization`; shares `cedar-policy` 4.14.0 with `cedar` |
 
 Code behind a feature carries `#[cfg(feature = "...")]` and, for public items, shows on docs.rs through `doc_cfg`. Every combination the gates run (all features, no default features) must build and pass.
 

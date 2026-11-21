@@ -101,6 +101,7 @@ the model, and a region (`AWS_REGION`, `us-west-2` when unset).
 | `mcp` | | `McpClient` over stdio, streamable HTTP and SSE, and the `mcp_router` tool |
 | `otel` | | OpenTelemetry export of spans and metrics (OTLP and console) |
 | `cedar` | | `CedarAuthorization`, Cedar policy authorization of tool calls |
+| `dogwood` | | `DogwoodAuthorization`, Dogwood policy authorization of tool calls, with temporal rules over earlier calls |
 
 To leave out the AWS SDK, turn off the default features and pick a provider:
 
@@ -544,8 +545,9 @@ let mut agent = Agent::builder().intervention(NoShell).build()?;
 ```
 
 `strands::vended_interventions` has ready-made handlers: `HumanInTheLoop` asks for approval before tools that are
-not on its allow list, on the terminal or through your own callback, and `CedarAuthorization` (feature `cedar`)
-authorizes tool calls with Cedar policies. A `Plugin` extends an agent with hooks, tools and setup in one value, and
+not on its allow list, on the terminal or through your own callback, `CedarAuthorization` (feature `cedar`)
+authorizes tool calls with Cedar policies, and `DogwoodAuthorization` (feature `dogwood`) with Dogwood policies, whose
+temporal rules can depend on earlier calls ("delete only after a search"). A `Plugin` extends an agent with hooks, tools and setup in one value, and
 `strands::middleware` wraps the model call and each tool execution.
 
 ### Sessions

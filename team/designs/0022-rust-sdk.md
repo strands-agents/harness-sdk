@@ -58,7 +58,7 @@ harness-rs/                  # harness, mirrors harness-ts/
 Cargo.toml                   # root virtual workspace, one Cargo.lock
 ```
 
-Providers, MCP, OpenTelemetry and Cedar are cargo features of `strands` rather than separate crates: `bedrock` (the default), `anthropic`, `openai`, `mantle`, `mcp`, `otel` and `cedar`. A disabled feature skips its dependencies entirely, so an Anthropic-only build compiles no AWS crates. `mantle` enables `openai` plus the small AWS signing and credential crates, and Mantle is built with `OpenAIModel::bedrock_mantle(options, BedrockMantleConfig)`. That differs from TS, which puts `bedrockMantleConfig` in the OpenAI options: cargo features must be additive, and a feature-gated field on an exhaustive options struct breaks that ([decision](#decision-mantle-feature)). `strands-harness` turns on every provider, `mantle`, `mcp` and `cedar` by default. The crate names `strands`, `strands-macros` and `strands-harness` are reserved on crates.io. There is no Rust CLI; `strands-cli` stays TypeScript.
+Providers, MCP, OpenTelemetry and Cedar are cargo features of `strands` rather than separate crates: `bedrock` (the default), `anthropic`, `openai`, `mantle`, `mcp`, `otel`, `cedar` and `dogwood`. A disabled feature skips its dependencies entirely, so an Anthropic-only build compiles no AWS crates. `mantle` enables `openai` plus the small AWS signing and credential crates, and Mantle is built with `OpenAIModel::bedrock_mantle(options, BedrockMantleConfig)`. That differs from TS, which puts `bedrockMantleConfig` in the OpenAI options: cargo features must be additive, and a feature-gated field on an exhaustive options struct breaks that ([decision](#decision-mantle-feature)). `strands-harness` turns on every provider, `mantle`, `mcp` and `cedar` by default. The crate names `strands`, `strands-macros` and `strands-harness` are reserved on crates.io. There is no Rust CLI; `strands-cli` stays TypeScript.
 
 **Scope**
 
@@ -376,7 +376,7 @@ The normative spec is strands-ts and harness-ts at `7296caba7`, plus their tests
 | HTTP providers and tools | `reqwest`, `eventsource-stream`, `htmd` |
 | MCP | `rmcp` |
 | Telemetry | `tracing`, `opentelemetry`, `opentelemetry_sdk`, `tracing-opentelemetry`, `opentelemetry-otlp` |
-| Policy and scripting | `cedar-policy`, `monty` |
+| Policy and scripting | `cedar-policy`, `dogwood-ops`, `monty` |
 | Macros | `syn`, `quote`, `darling` |
 
 Anthropic and OpenAI publish no official Rust SDKs, so their providers are thin clients on `reqwest` and `eventsource-stream`, with the transport behaviour of the official TS SDKs that strands-ts uses ([decision](#decision-own-http-providers)). The MCP legacy SSE transport is a small custom transport on `rmcp`'s `Transport` trait, because `rmcp` ships no legacy SSE client. The Mantle bearer token is a SigV4-presigned `CallWithBearerToken` URL, minted the same way as AWS's TS token generator. `cargo-deny` allows the BlueOak-1.0.0 licence for `minicbor` and `minicbor-serde` and ignores the unmaintained-crate advisory RUSTSEC-2023-0089 (`atomic-polyfill`); both reach `strands-harness` only through Monty.
