@@ -24,7 +24,7 @@ use serde_json::json;
 use std::sync::Arc;
 
 use strands::conversation_manager::{SlidingWindowConversationManager, SlidingWindowConversationManagerConfig};
-use strands::models::bedrock::{BedrockModel, BedrockModelConfig};
+use strands::models::bedrock::{BedrockModel, BedrockModelConfig, BedrockModelOptions};
 use strands::models::{CacheConfig, CacheStrategy, CountTokensOptions, Model, ModelRequest, StreamAggregatedResult};
 use strands::tools::FunctionTool;
 use strands::{
@@ -570,4 +570,46 @@ async fn live_agent_thinking_with_tool_use() {
     assert!(has_block(&agent, |block| matches!(block, ContentBlock::ToolUse(_))));
     assert!(has_block(&agent, |block| matches!(block, ContentBlock::ToolResult(_))));
     assert!(has_block(&agent, |block| matches!(block, ContentBlock::Reasoning(_))));
+}
+
+/// An in-region model id keeps this deterministic: a cross-region profile only finds an entry in
+/// the region that wrote it. Not streamed, because Nova's stream now and then reports no usage.
+#[tokio::test]
+#[ignore = "calls Amazon Bedrock"]
+async fn live_reads_the_cache_on_each_later_user_turn_with_nova() {
+    require_credentials!();
+    let model = BedrockModel::new(BedrockModelOptions {
+        model_id: Some("amazon.nova-pro-v1:0".to_owned()),
+        region: Some("us-east-1".to_owned()),
+        stream: Some(false),
+        max_tokens: Some(100),
+        cache_config: Some(CacheConfig {
+            strategy: Some(CacheStrategy::Auto),
+            ..CacheConfig::default()
+        }),
+        ..BedrockModelOptions::default()
+    });
+    let mut agent = Agent::builder().model(model).printer(false).build().unwrap();
+    let prefix = format!(
+        "Dossier {}. {}",
+        nonce(),
+        "The subject prefers concise answers. ".repeat(600)
+    );
+
+    let first = agent.invoke(format!("{prefix} Reply ALPHA.")).await.unwrap();
+    let usage = |result: &strands::AgentResult| result.metrics().unwrap().latest_agent_invocation().unwrap().usage;
+    assert!(
+        usage(&first).cache_write_input_tokens.unwrap_or(0) > 0,
+        "{:?}",
+        usage(&first)
+    );
+
+    for prompt in ["Reply BETA.", "Reply GAMMA."] {
+        let result = agent.invoke(prompt).await.unwrap();
+        assert!(
+            usage(&result).cache_read_input_tokens.unwrap_or(0) > 0,
+            "{prompt}: {:?}",
+            usage(&result)
+        );
+    }
 }

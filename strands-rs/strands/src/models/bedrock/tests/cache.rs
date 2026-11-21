@@ -1495,10 +1495,10 @@ mod nova_cache_points {
 
     /// Serializes the tests that emit or expect the one-time Nova warnings, since a warning emitted
     /// by one test is not emitted again in another.
-    static WARNINGS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static WARNINGS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-    fn serial() -> std::sync::MutexGuard<'static, ()> {
-        WARNINGS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    async fn serial() -> tokio::sync::MutexGuard<'static, ()> {
+        WARNINGS.lock().await
     }
 
     fn ttl_warning() -> String {
@@ -1531,7 +1531,7 @@ mod nova_cache_points {
 
     #[tokio::test]
     async fn drops_a_configured_ttl_from_every_cache_point_and_warns() {
-        let _serial = serial();
+        let _serial = serial().await;
         crate::logging::forget_warning(&ttl_warning());
         let (logs, guard) = crate::test_support::record_logs();
         let request = sent(
@@ -1550,7 +1550,7 @@ mod nova_cache_points {
 
     #[tokio::test]
     async fn drops_a_system_prompt_ttl_and_warns() {
-        let _serial = serial();
+        let _serial = serial().await;
         crate::logging::forget_warning(&ttl_warning());
         let (logs, guard) = crate::test_support::record_logs();
         let request = sent(
@@ -1572,7 +1572,7 @@ mod nova_cache_points {
 
     #[tokio::test]
     async fn drops_the_ttl_of_a_caller_placed_system_cache_point_and_warns() {
-        let _serial = serial();
+        let _serial = serial().await;
         crate::logging::forget_warning(&ttl_warning());
         let (logs, guard) = crate::test_support::record_logs();
         let blocks = vec![
@@ -1611,7 +1611,7 @@ mod nova_cache_points {
 
     #[tokio::test]
     async fn applies_the_nova_rules_under_the_anthropic_strategy() {
-        let _serial = serial();
+        let _serial = serial().await;
         crate::logging::forget_warning(&ttl_warning());
         let (logs, guard) = crate::test_support::record_logs();
         let mut messages = tool_turn();
@@ -1684,7 +1684,7 @@ mod nova_cache_points {
 
     #[tokio::test]
     async fn moves_a_caller_placed_cache_point_with_no_text_ahead_of_it_to_the_prompt_and_warns() {
-        let _serial = serial();
+        let _serial = serial().await;
         let warning = format!(
             "model_id=<{NOVA}> | dropped a caller-placed cache point with no text ahead of it, this model takes one only directly after text, placing it automatically instead"
         );
@@ -1788,7 +1788,7 @@ mod nova_cache_points {
 
     #[tokio::test]
     async fn moves_a_caller_placed_cache_point_off_a_tool_result_back_to_the_prompt_never_past_the_boundary() {
-        let _serial = serial();
+        let _serial = serial().await;
         let mut messages = tool_turn();
         messages.push(user(vec![tool_result("id-1", "42"), point(), text("next")]));
         let request = sent(nova(auto()), messages, tools_only()).await;
@@ -1802,8 +1802,50 @@ mod nova_cache_points {
         assert_eq!(all_cache_points(&request), [default_point()]);
     }
 
+    /// User prompts, each after an assistant `Ok`.
+    fn chat(prompts: &[&str]) -> Vec<Message> {
+        let mut messages: Vec<Message> = prompts
+            .iter()
+            .flat_map(|prompt| [assistant(vec![text("Ok")]), Message::user(*prompt)])
+            .collect();
+        messages.remove(0);
+        messages
+    }
+
+    fn user_content(request: &Value) -> Vec<Value> {
+        request["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == json!("user"))
+            .map(|message| message["content"].clone())
+            .collect()
+    }
+
+    fn marked(prompts: &[&str], marked: &[&str]) -> Vec<Value> {
+        prompts
+            .iter()
+            .map(|prompt| match marked.contains(prompt) {
+                true => json!([{"text": prompt}, {"cachePoint": {"type": "default"}}]),
+                false => json!([{"text": prompt}]),
+            })
+            .collect()
+    }
+
+    fn system_points(count: usize) -> Options {
+        let blocks = (0..count)
+            .flat_map(|_| {
+                [
+                    SystemContentBlock::text("Be helpful"),
+                    SystemContentBlock::CachePoint(CachePointBlock::new()),
+                ]
+            })
+            .collect();
+        system_blocks(blocks)
+    }
+
     #[tokio::test]
-    async fn caches_a_plain_text_user_message_that_follows_earlier_tool_calls() {
+    async fn keeps_the_earlier_prompts_cache_point_when_a_plain_text_user_message_follows_tool_calls() {
         let mut messages = tool_turn();
         messages.extend([
             user(vec![tool_result("id-1", "42")]),
@@ -1812,10 +1854,81 @@ mod nova_cache_points {
         ]);
         let request = sent(nova(auto()), messages, tools_only()).await;
         assert_eq!(
+            request["messages"][0]["content"],
+            json!([{"text": "What is 6 x 7?"}, {"cachePoint": {"type": "default"}}])
+        );
+        assert_eq!(
             last_content(&request),
             json!([{"text": "Thanks"}, {"cachePoint": {"type": "default"}}])
         );
-        assert_eq!(all_cache_points(&request), [default_point()]);
+        assert_eq!(all_cache_points(&request), [default_point(), default_point()]);
+    }
+
+    #[tokio::test]
+    async fn keeps_cache_points_on_the_last_three_user_messages_with_text() {
+        let prompts = ["One", "Two", "Three", "Four"];
+        let request = sent(nova(auto()), chat(&prompts), Options::default()).await;
+        assert_eq!(user_content(&request), marked(&prompts, &["Two", "Three", "Four"]));
+    }
+
+    #[tokio::test]
+    async fn keeps_its_cache_points_in_place_through_a_tool_loop() {
+        let mut messages = chat(&["One", "Two"]);
+        messages.push(assistant(vec![text("Ok")]));
+        messages.extend(tool_turn());
+        messages.push(user(vec![tool_result("id-1", "42")]));
+        let request = sent(nova(auto()), messages, tools_only()).await;
+        let content = user_content(&request);
+        assert_eq!(
+            content[..3],
+            marked(&["One", "Two", "What is 6 x 7?"], &["One", "Two", "What is 6 x 7?"])[..]
+        );
+        assert!(
+            content[3].as_array().unwrap().len() == 1 && is_tool_result(&content[3][0]),
+            "{}",
+            content[3]
+        );
+    }
+
+    #[tokio::test]
+    async fn fits_its_conversation_cache_points_in_the_four_converse_accepts() {
+        let prompts = ["One", "Two", "Three"];
+        let cases: [(usize, &[&str]); 4] = [
+            (1, &["One", "Two", "Three"]),
+            (2, &["Two", "Three"]),
+            (3, &["Three"]),
+            (4, &[]),
+        ];
+        for (system_count, expected) in cases {
+            let request = sent(nova(auto()), chat(&prompts), system_points(system_count)).await;
+            assert_eq!(user_content(&request), marked(&prompts, expected), "{system_count}");
+            assert!(all_cache_points(&request).len() <= 4, "{system_count}");
+        }
+    }
+
+    #[tokio::test]
+    async fn keeps_cache_points_on_earlier_user_messages_behind_a_caller_placed_one() {
+        let prompts = ["One", "Two", "Three"];
+        let cases: [(usize, &[&str], bool); 5] = [
+            (0, &["Two", "Three"], true),
+            (1, &["Two", "Three"], true),
+            (2, &["Three"], true),
+            (3, &[], true),
+            (4, &[], false),
+        ];
+        for (system_count, expected, caller_point) in cases {
+            let mut messages = chat(&prompts);
+            messages.push(assistant(vec![text("Ok")]));
+            messages.push(user(vec![text("Four"), point(), text("per-call")]));
+            let request = sent(nova(auto()), messages, system_points(system_count)).await;
+            let mut want = marked(&prompts, expected);
+            want.push(match caller_point {
+                true => json!([{"text": "Four"}, {"cachePoint": {"type": "default"}}, {"text": "per-call"}]),
+                false => json!([{"text": "Four"}, {"text": "per-call"}]),
+            });
+            assert_eq!(user_content(&request), want, "{system_count}");
+            assert!(all_cache_points(&request).len() <= 4, "{system_count}");
+        }
     }
 
     #[tokio::test]

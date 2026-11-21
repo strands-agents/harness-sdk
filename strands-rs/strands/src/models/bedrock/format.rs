@@ -100,8 +100,6 @@ impl<'a> Formatter<'a> {
     pub(super) fn format_request(&self, messages: &[Message], options: &FormatOptions<'_>) -> Result<JsonObject> {
         let mut request = JsonObject::new();
         request.insert("modelId".to_owned(), json!(self.model_id()));
-        let formatted = self.format_messages(messages, options.dynamic_trailing_blocks)?;
-        request.insert("messages".to_owned(), JsonValue::Array(formatted));
 
         let mut system = self.format_system(options.system_prompt)?;
         if let Some(system) = system.as_mut().filter(|system| self.should_cache_system(system)) {
@@ -111,9 +109,12 @@ impl<'a> Formatter<'a> {
         if let Some(system) = system.as_mut() {
             self.apply_system_cache_ttl(system, tool_config.as_ref());
         }
+        let system_cache_points = system.iter().flatten().filter(|block| is_cache_point(block)).count();
         if let Some(system) = system {
             request.insert("system".to_owned(), JsonValue::Array(system));
         }
+        let formatted = self.format_messages(messages, options.dynamic_trailing_blocks, system_cache_points)?;
+        request.insert("messages".to_owned(), JsonValue::Array(formatted));
         if let Some(tool_config) = tool_config {
             request.insert("toolConfig".to_owned(), JsonValue::Object(tool_config));
         }
@@ -234,10 +235,12 @@ impl<'a> Formatter<'a> {
         bedrock_limits_cache_points(self.model_id())
     }
 
-    fn cache_point_rules(&self) -> CachePointRules<'_> {
+    fn cache_point_rules(&self, system_cache_points: usize) -> CachePointRules<'_> {
         CachePointRules {
             after_text_only: self.limits_cache_points(),
             model_id: self.model_id(),
+            conversation_points: NOVA_CONVERSATION_CACHE_POINTS
+                .min(MAX_CACHE_POINTS.saturating_sub(system_cache_points)),
         }
     }
 
@@ -391,7 +394,14 @@ impl<'a> Formatter<'a> {
 
     /// Formats the messages, dropping reasoning the model rejects, wrapping the latest user input
     /// in guard content when configured, and placing the messages cache point.
-    fn format_messages(&self, messages: &[Message], dynamic_trailing_blocks: usize) -> Result<Vec<JsonValue>> {
+    /// Formats the messages; `system_cache_points` is how many cache points the system prompt
+    /// carries, which Nova's conversation points must fit beside.
+    fn format_messages(
+        &self,
+        messages: &[Message],
+        dynamic_trailing_blocks: usize,
+        system_cache_points: usize,
+    ) -> Result<Vec<JsonValue>> {
         let guard_latest = self
             .config
             .guardrail_config
@@ -443,7 +453,7 @@ impl<'a> Formatter<'a> {
                     &mut formatted,
                     section.ttl.as_deref(),
                     dynamic_trailing_blocks,
-                    self.cache_point_rules(),
+                    self.cache_point_rules(system_cache_points),
                 );
             }
         }
@@ -835,12 +845,21 @@ fn content_mut(message: &mut JsonValue) -> Option<&mut Vec<JsonValue>> {
     message.get_mut("content").and_then(JsonValue::as_array_mut)
 }
 
+/// Converse rejects a request with more cache points than this.
+const MAX_CACHE_POINTS: usize = 4;
+
+/// With one point on the system prompt, that is the four Converse accepts.
+const NOVA_CONVERSATION_CACHE_POINTS: usize = 3;
+
 /// Where the model takes cache points.
 #[derive(Clone, Copy)]
 struct CachePointRules<'a> {
     /// The model takes a cache point only directly after text (Nova).
     after_text_only: bool,
     model_id: &'a str,
+    /// The most conversation points a model that takes them only after text gets, so the request
+    /// stays within [`MAX_CACHE_POINTS`] beside the system prompt's.
+    conversation_points: usize,
 }
 
 /// Steps a cache point index back over the adjacent run of non-PDF documents directly ahead of
@@ -920,9 +939,9 @@ fn honor_placed_cache_point(
 }
 
 /// Leaves exactly one cache point in the last user message, honoring one the caller placed
-/// there, and strips cache points from every other message. On a model that takes cache points
-/// only after text the point may land on an earlier user message (see
-/// [`nova_cache_point_position`]).
+/// there, and strips cache points from every other message. A model that takes cache points only
+/// after text instead gets one on each of its last few user messages with text (see
+/// [`nova_cache_point_positions`]).
 fn inject_cache_point(
     messages: &mut [JsonValue],
     ttl: Option<&str>,
@@ -978,7 +997,18 @@ fn place_last_user_cache_point(
                 "msg_idx=<{message_index}>, block_idx=<{extra}> | stripped existing cache point (auto mode manages cache points)"
             );
         }
+        if rules.after_text_only && rules.conversation_points == 0 {
+            content.remove(first);
+            tracing::warn!(
+                "msg_idx=<{message_index}>, block_idx=<{first}> | no cache point left after the system prompt | dropped caller-placed cache point"
+            );
+            return;
+        }
         if honor_placed_cache_point(content, first, message_index, ttl, rules) {
+            if rules.after_text_only && message_index > 0 {
+                // The caller's point is the newest one, so the rest go on the user messages before it.
+                inject_nova_cache_points(messages, message_index - 1, 0, rules.conversation_points - 1);
+            }
             return;
         }
         trailing_blocks = trailing_blocks.max(content.len().saturating_sub(first));
@@ -988,7 +1018,7 @@ fn place_last_user_cache_point(
         }
     }
     if rules.after_text_only {
-        inject_nova_cache_point(messages, message_index, trailing_blocks);
+        inject_nova_cache_points(messages, message_index, trailing_blocks, rules.conversation_points);
         return;
     }
     let Some(content) = content_mut(&mut messages[message_index]) else {
@@ -1019,47 +1049,60 @@ fn place_last_user_cache_point(
     tracing::debug!("msg_idx=<{message_index}> | added cache point to last user message");
 }
 
-/// Where a Nova conversation cache point goes: directly after the last text block of the last
-/// user message that has one, ahead of the final message's per-call blocks. Nova takes a cache
-/// point only directly after text and reads an entry only when a point repeats the previous
-/// call's position, so in a tool loop, whose user messages hold tool results, the point stays on
-/// the prompt that started the loop.
-fn nova_cache_point_position(
+/// Where the Nova conversation cache points go, newest first: directly after the last text block
+/// of each of the last `count` user messages that have one, ahead of the final message's per-call
+/// blocks. Nova takes a cache point only directly after text and reads an entry only at a position
+/// an earlier call marked too, so the points on earlier turns are what let a new turn read. More
+/// than one of them helps on a cross-region inference profile, where a call only finds entries
+/// written in the region that serves it. In a tool loop, whose user messages hold tool results, the
+/// points stay where they are.
+fn nova_cache_point_positions(
     messages: &[JsonValue],
     last_user: usize,
     dynamic_trailing_blocks: usize,
-) -> Option<(usize, usize)> {
-    (0..=last_user).rev().find_map(|message_index| {
-        let message = &messages[message_index];
-        if message.get("role").and_then(JsonValue::as_str) != Some("user") {
-            return None;
-        }
-        let content = message
-            .get("content")
-            .and_then(JsonValue::as_array)
-            .map_or(&[][..], Vec::as_slice);
-        let end = if message_index == last_user {
-            content.len().saturating_sub(dynamic_trailing_blocks)
-        } else {
-            content.len()
-        };
-        let block_index = step_back_to_text(content, end);
-        (block_index > 0).then_some((message_index, block_index))
-    })
+    count: usize,
+) -> Vec<(usize, usize)> {
+    (0..=last_user)
+        .rev()
+        .filter_map(|message_index| {
+            let message = &messages[message_index];
+            if message.get("role").and_then(JsonValue::as_str) != Some("user") {
+                return None;
+            }
+            let content = message
+                .get("content")
+                .and_then(JsonValue::as_array)
+                .map_or(&[][..], Vec::as_slice);
+            let end = if message_index == last_user {
+                content.len().saturating_sub(dynamic_trailing_blocks)
+            } else {
+                content.len()
+            };
+            let block_index = step_back_to_text(content, end);
+            (block_index > 0).then_some((message_index, block_index))
+        })
+        .take(count)
+        .collect()
 }
 
-/// Places the Nova conversation cache point, which takes no TTL, at
-/// [`nova_cache_point_position`].
-fn inject_nova_cache_point(messages: &mut [JsonValue], last_user: usize, dynamic_trailing_blocks: usize) {
-    let Some((message_index, block_index)) = nova_cache_point_position(messages, last_user, dynamic_trailing_blocks)
-    else {
-        tracing::debug!("no user message has text to follow, skipped conversation cache point");
-        return;
-    };
-    if let Some(content) = content_mut(&mut messages[message_index]) {
-        content.insert(block_index, json!({"cachePoint": {"type": "default"}}));
+/// Places the Nova conversation cache points, which take no TTL, at
+/// [`nova_cache_point_positions`].
+fn inject_nova_cache_points(
+    messages: &mut [JsonValue],
+    last_user: usize,
+    dynamic_trailing_blocks: usize,
+    count: usize,
+) {
+    let positions = nova_cache_point_positions(messages, last_user, dynamic_trailing_blocks, count);
+    if positions.is_empty() {
+        tracing::debug!("no user text to follow or no cache point left, skipped conversation cache point");
     }
-    tracing::debug!("msg_idx=<{message_index}>, block_idx=<{block_index}> | added cache point after text");
+    for (message_index, block_index) in positions {
+        if let Some(content) = content_mut(&mut messages[message_index]) {
+            content.insert(block_index, json!({"cachePoint": {"type": "default"}}));
+        }
+        tracing::debug!("msg_idx=<{message_index}>, block_idx=<{block_index}> | added cache point after text");
+    }
 }
 
 /// The Converse `outputConfig` constraining the response to the schema, merged into the request's
