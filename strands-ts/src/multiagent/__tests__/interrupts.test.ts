@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Agent } from '../../agent/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { MockSnapshotStorage } from '../../__fixtures__/mock-storage-provider.js'
@@ -9,8 +9,11 @@ import { Graph } from '../graph.js'
 import { Swarm } from '../swarm.js'
 import { Status } from '../state.js'
 import { SessionManager } from '../../session/session-manager.js'
-import { BeforeNodeCallEvent } from '../events.js'
+import { BeforeMultiAgentInvocationEvent, BeforeNodeCallEvent } from '../events.js'
 import { TextBlock } from '../../types/messages.js'
+import { BeforeInvocationEvent, BeforeModelCallEvent } from '../../hooks/events.js'
+import type { MultiAgentInput } from '../multiagent.js'
+import type { MultiAgentResult } from '../state.js'
 
 /**
  * Interrupt round-trip tests. Verifies that an orchestrator can hit an interrupt,
@@ -523,3 +526,156 @@ describe('Multi-agent interrupts: round-trip', () => {
     await expect(graph2.invoke([response])).rejects.toThrow(/topology changed between save and resume/)
   })
 })
+
+// Rejected resume input preserves the paused run: https://github.com/strands-agents/harness-sdk/issues/5459
+describe('Multi-agent interrupts: same-instance resume', () => {
+  describe.each(['Graph', 'Swarm'] as const)('%s', (kind) => {
+    it.each(['valid then unknown ID', 'mixed content'] as const)(
+      'preserves the paused run after rejecting %s',
+      async (invalid) => {
+        const fixture = createInterruptFixture(kind)
+        const response = await pauseInterruptedRun(fixture.orchestrator)
+        const unknown = new InterruptResponseContent({ interruptId: 'unknown-id', response: 'approved' })
+        // JavaScript callers can supply mixed arrays even though the TypeScript union excludes them.
+        const mixed = [response, new TextBlock('stray content')] as unknown as MultiAgentInput
+        const input = invalid === 'valid then unknown ID' ? [response, unknown] : mixed
+        const error =
+          invalid === 'mixed content'
+            ? 'Must resume from interrupt with a list of interruptResponse content blocks only'
+            : 'interrupt_id=<unknown-id> | no node found with matching interrupt'
+
+        await expect(fixture.orchestrator.invoke(input)).rejects.toThrow(error)
+        expect({
+          agentInvocations: fixture.observations.agentInvocations,
+          modelCalls: fixture.model.callCount,
+        }).toEqual({
+          agentInvocations: 0,
+          modelCalls: 0,
+        })
+        expectCompletedInterrupt(fixture, await fixture.orchestrator.invoke([response]))
+      }
+    )
+
+    it('keeps the pause when the routed target is missing', async () => {
+      const fixture = createInterruptFixture(kind)
+      const response = await pauseInterruptedRun(fixture.orchestrator)
+      const lookup = vi.spyOn(fixture.orchestrator.nodes, 'get').mockReturnValueOnce(undefined)
+
+      try {
+        await expect(fixture.orchestrator.invoke([response])).rejects.toThrow(/resume response targets a node missing/)
+      } finally {
+        lookup.mockRestore()
+      }
+
+      expectCompletedInterrupt(fixture, await fixture.orchestrator.invoke([response]))
+    })
+
+    it('consumes an accepted resume before a later node hook throws', async () => {
+      const fixture = createInterruptFixture(kind)
+      const response = await pauseInterruptedRun(fixture.orchestrator)
+      const removeHook = fixture.orchestrator.addHook(BeforeNodeCallEvent, () => {
+        throw new Error('later hook failure')
+      })
+
+      await expect(fixture.orchestrator.invoke([response])).rejects.toThrow('later hook failure')
+      removeHook()
+      await expectClearedInterrupt(fixture, response)
+    })
+
+    it('a concurrent second resume cannot consume the same pause', async () => {
+      const fixture = createInterruptFixture(kind)
+      const response = await pauseInterruptedRun(fixture.orchestrator)
+      let nested: Promise<MultiAgentResult> | undefined
+      const removeHook = fixture.orchestrator.addHook(BeforeMultiAgentInvocationEvent, () => {
+        // Fires while the first resume holds the pause but has not started; it must see no pause left.
+        if (!nested) nested = fixture.orchestrator.invoke([response])
+      })
+
+      try {
+        expectCompletedInterrupt(fixture, await fixture.orchestrator.invoke([response]))
+        await expect(nested).rejects.toThrow(/no node found with matching interrupt/)
+      } finally {
+        removeHook()
+      }
+    })
+  })
+})
+
+interface InterruptFixture {
+  orchestrator: Graph | Swarm
+  model: MockMessageModel
+  observations: { agentInvocations: number; modelInputs: string[][] }
+}
+
+function createInterruptFixture(kind: 'Graph' | 'Swarm'): InterruptFixture {
+  const model = new MockMessageModel()
+  if (kind === 'Graph') {
+    model.addTurn({ type: 'textBlock', text: 'completed' })
+  } else {
+    model.addTurn({
+      type: 'toolUseBlock',
+      name: 'strands_structured_output',
+      toolUseId: 'final-result',
+      input: { message: 'completed' },
+    })
+  }
+  // Multiple turns make the existing mock count calls instead of repeating its only turn.
+  model.addTurn(new Error('unexpected second model call'))
+  const agent = new Agent({ id: 'worker', model, printer: false })
+  const observations: InterruptFixture['observations'] = { agentInvocations: 0, modelInputs: [] }
+  agent.addHook(BeforeInvocationEvent, () => {
+    observations.agentInvocations++
+  })
+  agent.addHook(BeforeModelCallEvent, (event) => {
+    observations.modelInputs.push(
+      (event.agent.messages.find((message) => message.role === 'user')?.content ?? [])
+        .filter((block): block is TextBlock => block instanceof TextBlock)
+        .map((block) => block.text)
+    )
+  })
+  const orchestrator =
+    kind === 'Graph' ? new Graph({ nodes: [agent], edges: [] }) : new Swarm({ nodes: [agent], start: 'worker' })
+  orchestrator.addHook(BeforeNodeCallEvent, (event) => {
+    event.interrupt({ name: 'approval' })
+  })
+  return { orchestrator, model, observations }
+}
+
+async function pauseInterruptedRun(orchestrator: Graph | Swarm): Promise<InterruptResponseContent> {
+  const result = await orchestrator.invoke('original task')
+  expect(result).toEqual(
+    expect.objectContaining({
+      status: Status.INTERRUPTED,
+      results: [expect.objectContaining({ nodeId: 'worker', status: Status.INTERRUPTED })],
+      interrupts: [expect.objectContaining({ id: expect.any(String), source: 'multiagent-hook' })],
+    })
+  )
+  return new InterruptResponseContent({ interruptId: result.interrupts![0]!.id, response: 'approved' })
+}
+
+function expectCompletedInterrupt(fixture: InterruptFixture, result: MultiAgentResult): void {
+  expect({
+    status: result.status,
+    nodes: result.results.map(({ nodeId, status }) => ({ nodeId, status })),
+    interrupts: result.interrupts,
+    modelCalls: fixture.model.callCount,
+    ...fixture.observations,
+  }).toEqual({
+    status: Status.COMPLETED,
+    nodes: [{ nodeId: 'worker', status: Status.COMPLETED }],
+    interrupts: undefined,
+    modelCalls: 1,
+    agentInvocations: 1,
+    modelInputs: [['original task']],
+  })
+}
+
+async function expectClearedInterrupt(fixture: InterruptFixture, response: InterruptResponseContent): Promise<void> {
+  const priorCalls = fixture.model.callCount
+  await expect(fixture.orchestrator.invoke([response])).rejects.toThrow(/no node found with matching interrupt/)
+  const freshResult = await fixture.orchestrator.invoke('new task')
+  expect({ status: freshResult.status, modelCalls: fixture.model.callCount }).toEqual({
+    status: Status.INTERRUPTED,
+    modelCalls: priorCalls,
+  })
+}
