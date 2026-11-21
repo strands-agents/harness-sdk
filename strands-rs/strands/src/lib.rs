@@ -290,8 +290,8 @@ pub use types::{
     DocumentPageLocation, DocumentSource, GuardContentBlock, GuardContentImage, GuardContentText, GuardImageFormat,
     GuardImageSource, GuardQualifier, ImageBlock, ImageFormat, ImageSource, InjectedBlock, InterruptParams,
     InterruptResponse, InterruptResponseContent, JsonBlock, JsonObject, JsonValue, Message, MessageMetadata,
-    ReasoningBlock, Role, S3Location, SNAPSHOT_SCHEMA_VERSION, Scope, SearchResultLocation, Snapshot, StopReason,
-    SummaryBlock, SystemContentBlock, SystemPrompt, TextBlock, Toggle, ToolChoice, ToolResultBlock, ToolResultContent,
-    ToolResultError, ToolResultStatus, ToolSpec, ToolUse, ToolUseBlock, UnknownBlock, UnknownStopReason, VideoBlock,
-    VideoFormat, VideoSource, WebLocation,
+    OffloadMethod, Offloaded, ReasoningBlock, Role, S3Location, SNAPSHOT_SCHEMA_VERSION, Scope, SearchResultLocation,
+    Snapshot, StopReason, SummaryBlock, SystemContentBlock, SystemPrompt, TextBlock, Toggle, ToolChoice,
+    ToolResultBlock, ToolResultContent, ToolResultError, ToolResultStatus, ToolSpec, ToolUse, ToolUseBlock,
+    UnknownBlock, UnknownStopReason, VideoBlock, VideoFormat, VideoSource, WebLocation,
 };

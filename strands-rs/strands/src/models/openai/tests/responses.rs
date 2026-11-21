@@ -428,6 +428,33 @@ mod request_formatting {
     }
 
     #[tokio::test]
+    async fn sends_an_offloaded_block_as_the_text_the_model_receives_in_user_assistant_and_tool_result_content() {
+        let placeholder = crate::types::TextBlock::offloaded(
+            "[Dropped] [ref: tu-1]",
+            crate::types::Offloaded::new(crate::types::OffloadMethod::Drop).with_reference("tu-1"),
+        );
+        let body = run_messages(vec![
+            user(vec![ContentBlock::Text(placeholder.clone())]),
+            assistant(vec![ContentBlock::Text(placeholder.clone())]),
+            user(vec![
+                ToolResultBlock::success("tu-1", vec![crate::types::ToolResultContent::Text(placeholder)]).into(),
+            ]),
+        ])
+        .await;
+        assert_eq!(
+            body["input"][0],
+            json!({"role": "user", "content": [{"type": "input_text", "text": "[Dropped] [ref: tu-1]"}]})
+        );
+        assert_eq!(
+            body["input"][1],
+            json!({"role": "assistant", "content": "[Dropped] [ref: tu-1]"})
+        );
+        let output = find(&body, "function_call_output");
+        assert_eq!(output["call_id"], "tu-1");
+        assert_eq!(output["output"], "[Dropped] [ref: tu-1]");
+    }
+
+    #[tokio::test]
     async fn prefixes_errored_tool_results_with_error() {
         let body = run_messages(vec![
             Message::user("x"),

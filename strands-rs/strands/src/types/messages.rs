@@ -4,6 +4,7 @@
 //! except text, which is a bare `{"text": "..."}`, and [`UnknownBlock`], which keeps the raw data.
 
 use std::error::Error as StdError;
+use std::fmt;
 use std::sync::Arc;
 
 use serde::de::Error as _;
@@ -172,6 +173,13 @@ impl Message {
     #[must_use]
     pub fn with_metadata(mut self, metadata: MessageMetadata) -> Self {
         self.metadata = Some(metadata);
+        self
+    }
+
+    /// Replaces the content, keeping the role, tracking id and metadata (`with({ content })`).
+    #[must_use]
+    pub fn with_content(mut self, content: Vec<ContentBlock>) -> Self {
+        self.content = content;
         self
     }
 
@@ -413,8 +421,7 @@ fn keep_unknown(data: JsonObject) -> UnknownBlock {
 
 type BlockParser = fn(&JsonValue, OnUnknown) -> Result<ContentBlock, serde_json::Error>;
 
-const CONTENT_BLOCK_PARSERS: [(&str, BlockParser); 13] = [
-    ("text", |value, _| String::deserialize(value).map(ContentBlock::text)),
+const CONTENT_BLOCK_PARSERS: [(&str, BlockParser); 12] = [
     ("toolUse", |value, _| {
         ToolUseBlock::deserialize(value).map(ContentBlock::ToolUse)
     }),
@@ -453,13 +460,28 @@ const CONTENT_BLOCK_PARSERS: [(&str, BlockParser); 13] = [
     }),
 ];
 
+/// A text block from its data, with the placeholder provenance under `offloaded` when stored data
+/// records one (`OffloadedBlock.fromJSON`).
+fn parse_text_block(map: &JsonObject) -> Option<Result<TextBlock, serde_json::Error>> {
+    let text = map.get("text")?;
+    Some((|| {
+        let mut block = TextBlock::new(String::deserialize(text)?);
+        block.offloaded = map.get("offloaded").map(Offloaded::deserialize).transpose()?;
+        Ok(block)
+    })())
+}
+
 fn parse_content_block(data: JsonValue, on_unknown: OnUnknown) -> Result<ContentBlock, serde_json::Error> {
     let JsonValue::Object(map) = data else {
         return Err(serde_json::Error::custom("content block must be a JSON object"));
     };
-    let parsed = CONTENT_BLOCK_PARSERS
-        .iter()
-        .find_map(|(key, parse)| map.get(*key).map(|value| parse(value, on_unknown)));
+    let parsed = parse_text_block(&map)
+        .map(|parsed| parsed.map(ContentBlock::Text))
+        .or_else(|| {
+            CONTENT_BLOCK_PARSERS
+                .iter()
+                .find_map(|(key, parse)| map.get(*key).map(|value| parse(value, on_unknown)))
+        });
     let Some(parsed) = parsed else {
         return on_unknown
             .unrecognized(map, "ContentBlockData")
@@ -469,17 +491,116 @@ fn parse_content_block(data: JsonValue, on_unknown: OnUnknown) -> Result<Content
 }
 
 /// Plain text content (`TextBlock`).
+///
+/// A block whose [`offloaded`](Self::offloaded) is set is the placeholder a context-manager
+/// strategy left where it offloaded content (`OffloadedBlock`). It is text to every reader and
+/// every model provider; only code that cares about the provenance reads `offloaded`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct TextBlock {
     /// The text.
     pub text: String,
+    /// What the placeholder stands for, when this block replaced offloaded content. Serialized
+    /// under one `offloaded` key, whose presence alone marks stored data as a placeholder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offloaded: Option<Offloaded>,
 }
 
 impl TextBlock {
     /// Creates a text block.
     pub fn new(text: impl Into<String>) -> Self {
-        Self { text: text.into() }
+        Self {
+            text: text.into(),
+            offloaded: None,
+        }
+    }
+
+    /// Creates the placeholder an offload strategy leaves where it replaced content
+    /// (`new OffloadedBlock`).
+    pub fn offloaded(text: impl Into<String>, offloaded: Offloaded) -> Self {
+        Self {
+            text: text.into(),
+            offloaded: Some(offloaded),
+        }
+    }
+
+    /// Whether this block is an offload placeholder.
+    #[must_use]
+    pub fn is_offloaded(&self) -> bool {
+        self.offloaded.is_some()
+    }
+}
+
+/// The offload method that replaced content with a placeholder (`OffloadMethod`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+pub enum OffloadMethod {
+    /// Removed (`'drop'`).
+    Drop,
+    /// Shortened to a preview (`'truncate'`).
+    Truncate,
+    /// Replaced with a summary (`'summarize'`).
+    Summarize,
+}
+
+impl OffloadMethod {
+    /// The method's name, such as `drop`.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Drop => "drop",
+            Self::Truncate => "truncate",
+            Self::Summarize => "summarize",
+        }
+    }
+}
+
+impl fmt::Display for OffloadMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// What an offload placeholder stands for (the provenance of an `OffloadedBlock`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct Offloaded {
+    /// The offload method that left the placeholder.
+    pub method: OffloadMethod,
+    /// The stash reference the original is retrievable under; `None` when it was not stashed
+    /// (`ref`).
+    #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    /// The size of the content the placeholder stands for, in tokens, including any placeholder it
+    /// replaced; `None` when the token count could not measure it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<u64>,
+}
+
+impl Offloaded {
+    /// The provenance of a placeholder left by `method`, with no reference or size.
+    #[must_use]
+    pub fn new(method: OffloadMethod) -> Self {
+        Self {
+            method,
+            reference: None,
+            tokens: None,
+        }
+    }
+
+    /// Sets the stash reference.
+    #[must_use]
+    pub fn with_reference(mut self, reference: impl Into<String>) -> Self {
+        self.reference = Some(reference.into());
+        self
+    }
+
+    /// Sets the size in tokens.
+    #[must_use]
+    pub fn with_tokens(mut self, tokens: u64) -> Self {
+        self.tokens = Some(tokens);
+        self
     }
 }
 
@@ -647,8 +768,7 @@ impl<'de> Deserialize<'de> for ToolResultContent {
 
 type ContentParser = fn(&JsonValue) -> Result<ToolResultContent, serde_json::Error>;
 
-const TOOL_RESULT_CONTENT_PARSERS: [(&str, ContentParser); 5] = [
-    ("text", |value| String::deserialize(value).map(ToolResultContent::text)),
+const TOOL_RESULT_CONTENT_PARSERS: [(&str, ContentParser); 4] = [
     ("json", |value| Ok(ToolResultContent::json(value.clone()))),
     ("image", |value| {
         ImageBlock::deserialize(value).map(ToolResultContent::Image)
@@ -665,9 +785,13 @@ fn parse_tool_result_content(data: JsonValue, on_unknown: OnUnknown) -> Result<T
     let JsonValue::Object(map) = data else {
         return Err(serde_json::Error::custom("tool result content must be a JSON object"));
     };
-    let parsed = TOOL_RESULT_CONTENT_PARSERS
-        .iter()
-        .find_map(|(key, parse)| map.get(*key).map(parse));
+    let parsed = parse_text_block(&map)
+        .map(|parsed| parsed.map(ToolResultContent::Text))
+        .or_else(|| {
+            TOOL_RESULT_CONTENT_PARSERS
+                .iter()
+                .find_map(|(key, parse)| map.get(*key).map(parse))
+        });
     let Some(parsed) = parsed else {
         return on_unknown
             .unrecognized(map, "ToolResultContentData")
@@ -724,6 +848,13 @@ impl ToolResultBlock {
     #[must_use]
     pub fn with_error(mut self, error: impl Into<Box<dyn StdError + Send + Sync + 'static>>) -> Self {
         self.error = Some(Arc::from(error.into()));
+        self
+    }
+
+    /// Replaces the content, keeping the tool use id, status and error (`with({ content })`).
+    #[must_use]
+    pub fn with_content(mut self, content: Vec<ToolResultContent>) -> Self {
+        self.content = content;
         self
     }
 }
@@ -2084,5 +2215,98 @@ mod tests {
             vec!["a".into(), ToolUseBlock::new("t", "1", json!({})).into(), "b".into()],
         );
         assert_eq!(message.text(), "ab");
+    }
+
+    fn dropped(reference: Option<&str>, tokens: Option<u64>) -> TextBlock {
+        let mut offloaded = Offloaded::new(OffloadMethod::Drop);
+        offloaded.reference = reference.map(str::to_owned);
+        offloaded.tokens = tokens;
+        TextBlock::offloaded("[Dropped] [ref: tu-1]", offloaded)
+    }
+
+    #[test]
+    fn an_offloaded_block_is_a_text_block_that_serializes_what_it_stands_in_for_beside_the_text() {
+        let block = ContentBlock::Text(dropped(Some("tu-1"), None));
+        assert_eq!(block.as_text(), Some("[Dropped] [ref: tu-1]"));
+        let data = serde_json::to_value(&block).unwrap();
+        assert_eq!(
+            data,
+            json!({"text": "[Dropped] [ref: tu-1]", "offloaded": {"method": "drop", "ref": "tu-1"}})
+        );
+        assert_eq!(ContentBlock::from_data(data).unwrap(), block);
+    }
+
+    #[test]
+    fn an_offloaded_block_omits_a_ref_and_token_count_it_was_not_given() {
+        let block = TextBlock::offloaded("[Dropped]", Offloaded::new(OffloadMethod::Drop));
+        assert_eq!(
+            serde_json::to_value(&block).unwrap(),
+            json!({"text": "[Dropped]", "offloaded": {"method": "drop"}})
+        );
+    }
+
+    #[test]
+    fn a_plain_text_block_carries_and_serializes_no_offloaded_field() {
+        let block = TextBlock::new("hello");
+        assert_eq!(serde_json::to_value(&block).unwrap(), json!({"text": "hello"}));
+        assert!(!block.is_offloaded());
+        let parsed = ContentBlock::from_data(json!({"text": "hello"})).unwrap();
+        assert_eq!(parsed, ContentBlock::Text(block));
+    }
+
+    #[test]
+    fn an_offloaded_block_round_trips_through_message_data_at_top_level_and_inside_a_tool_result() {
+        let truncated = TextBlock::offloaded(
+            "row-1 [ref: tu-1]",
+            Offloaded::new(OffloadMethod::Truncate).with_reference("tu-1"),
+        );
+        let message = Message::new(
+            Role::User,
+            vec![
+                ContentBlock::Text(TextBlock::offloaded(
+                    "[Dropped] [ref: msg-1_0]",
+                    Offloaded::new(OffloadMethod::Drop).with_reference("msg-1_0"),
+                )),
+                ContentBlock::ToolResult(ToolResultBlock::success(
+                    "tu-1",
+                    vec![ToolResultContent::Text(truncated)],
+                )),
+            ],
+        )
+        .with_tracking_id("msg-1");
+        let data = serde_json::to_value(&message).unwrap();
+        assert_eq!(
+            data["content"],
+            json!([
+                {"text": "[Dropped] [ref: msg-1_0]", "offloaded": {"method": "drop", "ref": "msg-1_0"}},
+                {"toolResult": {"toolUseId": "tu-1", "status": "success", "content": [
+                    {"text": "row-1 [ref: tu-1]", "offloaded": {"method": "truncate", "ref": "tu-1"}}
+                ]}}
+            ])
+        );
+        assert_eq!(Message::from_message_data(data.clone()).unwrap(), message);
+        assert_eq!(serde_json::from_value::<Message>(data).unwrap(), message);
+    }
+
+    #[test]
+    fn with_content_replaces_content_keeping_role_tracking_id_and_metadata() {
+        let mut custom = JsonObject::new();
+        custom.insert("pinned".to_owned(), JsonValue::Bool(true));
+        let metadata = MessageMetadata::new().with_custom(custom);
+        let message = Message::user("a")
+            .with_tracking_id("m1")
+            .with_metadata(metadata.clone());
+        let copy = message.clone().with_content(vec![ContentBlock::text("b")]);
+        assert_eq!(copy, Message::user("b").with_tracking_id("m1").with_metadata(metadata));
+        assert_eq!(message.content, [ContentBlock::text("a")]);
+    }
+
+    #[test]
+    fn tool_result_with_content_replaces_content_keeping_tool_use_id_status_and_error() {
+        let block =
+            ToolResultBlock::error("t", vec![ToolResultContent::text("a")]).with_error(std::io::Error::other("boom"));
+        let copy = block.with_content(vec![ToolResultContent::text("b")]);
+        assert_eq!(copy, ToolResultBlock::error("t", vec![ToolResultContent::text("b")]));
+        assert!(copy.error.is_some());
     }
 }

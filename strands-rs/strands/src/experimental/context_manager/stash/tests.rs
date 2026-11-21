@@ -1,10 +1,13 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde_json::json;
 
 use super::*;
 use crate::storage::InMemoryStorage;
-use crate::types::{ImageBlock, ImageFormat, ImageSource, Role, ToolResultContent};
+use crate::types::{
+    ImageBlock, ImageFormat, ImageSource, OffloadMethod, Offloaded, Role, TextBlock, ToolResultContent,
+};
 
 fn stash() -> Stash {
     Stash::new(Arc::new(InMemoryStorage::new()), "test-session", "test-agent").unwrap()
@@ -37,32 +40,12 @@ async fn returns_null_for_unknown_references() {
 }
 
 #[tokio::test]
-async fn produces_deterministic_keys_from_the_same_id_and_block_index() {
-    let stash = stash();
-    let content = bytes(&json!("data"));
-    let first = stash.store("tool-1", 0, &content).await.unwrap();
-    let second = stash.store("tool-1", 0, &content).await.unwrap();
-    assert_eq!(first, second);
-}
-
-#[tokio::test]
-async fn produces_different_keys_for_different_id_or_block_index() {
-    let stash = stash();
-    let content = bytes(&json!("data"));
-    let first = stash.store("tool-1", 0, &content).await.unwrap();
-    let second = stash.store("tool-1", 1, &content).await.unwrap();
-    let third = stash.store("tool-2", 0, &content).await.unwrap();
-    assert_ne!(first, second);
-    assert_ne!(first, third);
-}
-
-#[tokio::test]
 async fn lists_all_stored_references() {
     let stash = stash();
     let content = bytes(&json!("data"));
     let first = stash.store("tool-a", 0, &content).await.unwrap();
     let second = stash.store("tool-b", 0, &content).await.unwrap();
-    let keys = stash.list().await.unwrap();
+    let keys = stash.list("").await.unwrap();
     assert!(keys.contains(&first));
     assert!(keys.contains(&second));
 }
@@ -157,63 +140,138 @@ async fn clears_the_session_for_every_agent() {
 }
 
 #[test]
-fn detects_formatted_refs() {
-    for refs in [
-        vec!["tu-1_0".to_owned()],
-        vec!["tu-1_0".to_owned(), "tu-1_1".to_owned()],
-    ] {
-        let text = format!("[Dropped]{}", format_stash_refs(&refs));
-        assert!(is_offload_placeholder_data(&json!({ "text": text })));
-        assert!(is_offload_placeholder(&ContentBlock::text(text)));
+fn round_trips_stash_keys() {
+    for (id, index) in [("tu-1", 0), ("call_12", 3), ("removed-0199-abc", 0)] {
+        let key = format_stash_key(id, index);
+        assert_eq!(
+            parse_stash_key(&key),
+            Some(StashKey {
+                id: id.to_owned(),
+                index
+            })
+        );
     }
 }
 
 #[test]
-fn ignores_non_placeholder() {
-    for data in [
-        json!({"text": "plain text"}),
-        json!({"text": "see [ref: x] for details"}),
-        json!({"json": {"text": "[Dropped] [ref: tu-1_0]"}}),
-        json!("[Dropped] [ref: tu-1_0]"),
-        JsonValue::Null,
-    ] {
-        assert!(!is_offload_placeholder_data(&data), "{data}");
+fn rejects_text_that_is_not_a_stash_key() {
+    for key in ["tu-1", "tu-1_", "_0", "tu-1_x", "tu-1_1a"] {
+        assert_eq!(parse_stash_key(key), None, "{key}");
     }
 }
 
 #[tokio::test]
-async fn skips_a_tool_result_carrying_stash_refs_including_its_other_items() {
+async fn ensure_stashed_references_a_tool_result_by_its_tool_use_id_and_any_other_block_by_its_position() {
     let stash = stash();
-    let message = Message::new(
-        Role::User,
-        vec![ContentBlock::ToolResult(ToolResultBlock::success(
-            "tu-1",
-            vec![
-                ToolResultContent::text("[Truncated: 1 block, ~10,973 tokens]\n\nrow-1\n\n[Stashed] [ref: tu-1_0]"),
-                ToolResultContent::Image(ImageBlock::new(ImageFormat::Png, ImageSource::Bytes(vec![1, 2, 3]))),
-            ],
-        ))],
+    let tool_result = ContentBlock::ToolResult(ToolResultBlock::success("tu-1", vec![ToolResultContent::text("a")]));
+    let message =
+        Message::new(Role::User, vec![ContentBlock::text("t"), tool_result.clone()]).with_tracking_id("track-1");
+    assert_eq!(stash.ensure_stashed(&tool_result, &message, 1).await.unwrap(), "tu-1");
+    assert_eq!(
+        stash.ensure_stashed(&message.content[0], &message, 0).await.unwrap(),
+        "track-1_0"
     );
-    stash.store_message(&message, None).await;
-    assert!(stash.take_snapshot().await.unwrap().is_empty());
+    assert_eq!(
+        JsonValue::Object(stash.take_snapshot().await.unwrap()),
+        json!({"track-1_0": {"text": "t"}, "tu-1_0": {"text": "a"}})
+    );
 }
 
 #[tokio::test]
-async fn skips_a_text_placeholder_and_keeps_other_blocks() {
+async fn ensure_stashed_leaves_an_entry_already_stored_under_the_reference_untouched() {
     let stash = stash();
+    stash
+        .store("track-1", 0, &bytes(&json!({"text": "original"})))
+        .await
+        .unwrap();
+    let message = Message::new(Role::User, vec![ContentBlock::text("edited")]).with_tracking_id("track-1");
+    assert_eq!(
+        stash.ensure_stashed(&message.content[0], &message, 0).await.unwrap(),
+        "track-1_0"
+    );
+    assert_eq!(
+        stash.retrieve("track-1_0").await.unwrap(),
+        Some(json!({"text": "original"}))
+    );
+}
+
+#[tokio::test]
+async fn stashes_text_that_only_looks_like_a_placeholder() {
+    let stash = stash();
+    let message =
+        Message::new(Role::User, vec![ContentBlock::text("[Dropped] [ref: tu-1]")]).with_tracking_id("track-1");
+    stash.store_message(&message, None, None).await;
+    assert_eq!(
+        JsonValue::Object(stash.take_snapshot().await.unwrap()),
+        json!({"track-1_0": {"text": "[Dropped] [ref: tu-1]"}})
+    );
+}
+
+#[tokio::test]
+async fn skips_a_placeholder_and_a_tool_result_that_holds_one_keeping_other_blocks() {
+    let stash = stash();
+    let dropped = TextBlock::offloaded(
+        "[Dropped] [ref: track-0_0]",
+        Offloaded::new(OffloadMethod::Drop).with_reference("track-0_0"),
+    );
+    let truncated = TextBlock::offloaded(
+        "[Truncated: 1 block, ~10,973 tokens]\n\nrow-1 [ref: tu-1]",
+        Offloaded::new(OffloadMethod::Truncate).with_reference("tu-1"),
+    );
     let message = Message::new(
         Role::User,
         vec![
-            ContentBlock::text("[Dropped] [refs: track-1_0, track-1_1]"),
-            ContentBlock::text("see [ref: x] for details"),
+            ContentBlock::Text(dropped),
+            ContentBlock::ToolResult(ToolResultBlock::success(
+                "tu-1",
+                vec![
+                    ToolResultContent::Text(truncated),
+                    ToolResultContent::Image(ImageBlock::new(ImageFormat::Png, ImageSource::Bytes(vec![1, 2, 3]))),
+                ],
+            )),
+            ContentBlock::text("kept"),
         ],
     )
     .with_tracking_id("track-1");
-    stash.store_message(&message, None).await;
+    stash.store_message(&message, None, None).await;
     assert_eq!(
         JsonValue::Object(stash.take_snapshot().await.unwrap()),
-        json!({"track-1_1": {"text": "see [ref: x] for details"}})
+        json!({"track-1_2": {"text": "kept"}})
     );
+}
+
+#[tokio::test]
+async fn keeps_an_entry_already_stored_when_a_restored_history_holds_a_placeholder() {
+    let stash = stash();
+    stash
+        .store("track-1", 0, &bytes(&json!({"text": "original"})))
+        .await
+        .unwrap();
+    let message = Message::new(Role::User, vec![ContentBlock::text("edited")]).with_tracking_id("track-1");
+    let stored: HashSet<String> = stash.list("").await.unwrap().into_iter().collect();
+    stash.store_message(&message, None, Some(&stored)).await;
+    assert_eq!(
+        stash.retrieve("track-1_0").await.unwrap(),
+        Some(json!({"text": "original"}))
+    );
+}
+
+#[tokio::test]
+async fn stores_removed_messages_under_one_reference() {
+    let stash = stash();
+    let removed = [Message::user("q1").with_tracking_id("m1"), Message::assistant("a1")];
+    let reference = stash.store_removed(&removed).await.unwrap();
+    assert_eq!(reference, "removed-m1");
+    assert_eq!(stash.keys_of(&reference).await.unwrap(), ["removed-m1_0"]);
+}
+
+#[tokio::test]
+async fn keys_of_leaves_out_ids_that_extend_the_id() {
+    let stash = stash();
+    for (id, index) in [("tu-1", 1), ("tu-1", 0), ("tu-10", 0), ("tu-1_x", 0)] {
+        stash.store(id, index, &bytes(&json!("data"))).await.unwrap();
+    }
+    assert_eq!(stash.keys_of("tu-1").await.unwrap(), ["tu-1_0", "tu-1_1"]);
 }
 
 #[tokio::test]

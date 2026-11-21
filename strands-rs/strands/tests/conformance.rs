@@ -309,8 +309,8 @@ async fn stash_cases_match_a_rust_stash() {
         ))],
     )
     .with_tracking_id("message-2");
-    stash.store_message(&first, None).await;
-    stash.store_message(&second, None).await;
+    stash.store_message(&first, None, None).await;
+    stash.store_message(&second, None, None).await;
 
     let keys = storage.list("").await.unwrap();
     assert_eq!(serde_json::to_string(&keys).unwrap(), case("storage_keys"));

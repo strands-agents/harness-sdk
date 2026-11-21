@@ -468,12 +468,13 @@ async fn leaves_the_conversation_unchanged_when_render_content_throws() {
 async fn keeps_injected_blocks_out_of_context_offloading() {
     let text = format!("<agents_md>{}</agents_md>", "Keep functions small. ".repeat(40));
     let model = MockModel::new().with_turn("one").with_turn("two").with_turn("three");
-    let summarize = Offload::summarize(OffloadTarget::All, SummarizeConfig::default())
+    let summarize = Offload::summarize(OffloadTarget::UserText, SummarizeConfig::default())
         .unwrap()
         .when(OffloadConditions {
-            threshold: Some(20.0),
+            block_threshold: Some(20.into()),
             ..OffloadConditions::default()
-        });
+        })
+        .unwrap();
     let rendered = text.clone();
     let config = ContextInjectorConfig::new(move |_| {
         let rendered = rendered.clone();

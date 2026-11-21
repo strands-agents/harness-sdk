@@ -39,8 +39,9 @@ impl ContextStrategy for Scripted {
         "test"
     }
 
-    fn init(&self, _agent: &mut LocalAgent, _stash: Option<&Stash>) {
+    fn init(&self, _agent: &mut LocalAgent, _stash: Option<&Stash>) -> Result<()> {
         self.init_called.store(true, Ordering::Relaxed);
+        Ok(())
     }
 
     async fn apply(&self, context: &mut ContextState<'_>) -> Result<bool> {
@@ -190,9 +191,10 @@ async fn does_not_overwrite_a_stashed_original_with_a_seeded_preview() {
         Role::User,
         vec![ContentBlock::ToolResult(ToolResultBlock::success(
             "tu-1",
-            vec![ToolResultContent::text(
-                "[Truncated: 1 block, ~7,500 tokens] preview\n\n[Stashed] [ref: tu-1_0]",
-            )],
+            vec![ToolResultContent::Text(crate::types::TextBlock::offloaded(
+                "[Truncated: 1 block, ~7,500 tokens] preview [ref: tu-1]",
+                crate::types::Offloaded::new(crate::types::OffloadMethod::Truncate).with_reference("tu-1"),
+            ))],
         ))],
     );
     let manager = Arc::new(
@@ -212,6 +214,54 @@ async fn does_not_overwrite_a_stashed_original_with_a_seeded_preview() {
     assert_eq!(
         manager.stash().unwrap().retrieve("tu-1_0").await.unwrap(),
         Some(serde_json::json!({"text": "original full result"}))
+    );
+}
+
+#[tokio::test]
+async fn does_not_overwrite_a_stashed_original_with_a_text_only_preview_from_a_session_without_placeholder_metadata() {
+    let storage = InMemoryStorage::new();
+    let view = Arc::new(storage.namespace("team").unwrap());
+    view.write("tu-1_0", br#"{"text":"original full result"}"#)
+        .await
+        .unwrap();
+    view.write("msg-1_0", br#"{"text":"original user text"}"#)
+        .await
+        .unwrap();
+    let restored = Message::new(
+        Role::User,
+        vec![
+            ContentBlock::text("[Truncated: ~2,000 tokens] original [ref: msg-1_0]"),
+            ContentBlock::ToolResult(ToolResultBlock::success(
+                "tu-1",
+                vec![ToolResultContent::text(
+                    "[Truncated: 1 block, ~7,500 tokens] preview [ref: tu-1_0]",
+                )],
+            )),
+        ],
+    )
+    .with_tracking_id("msg-1");
+    let manager = Arc::new(
+        ContextManager::new(ContextManagerConfig {
+            stash: Some(
+                crate::experimental::context_manager::StashConfig {
+                    storage: Some(view),
+                    ..Default::default()
+                }
+                .into(),
+            ),
+            ..ContextManagerConfig::default()
+        })
+        .unwrap(),
+    );
+    installed(&manager, Arc::new(TestModel::new()), vec![restored]).await;
+    let stash = manager.stash().unwrap();
+    assert_eq!(
+        stash.retrieve("tu-1_0").await.unwrap(),
+        Some(serde_json::json!({"text": "original full result"}))
+    );
+    assert_eq!(
+        stash.retrieve("msg-1_0").await.unwrap(),
+        Some(serde_json::json!({"text": "original user text"}))
     );
 }
 
@@ -468,7 +518,7 @@ async fn backfills_stash_from_pre_existing_messages_at_init() {
     )
     .await;
     let stash = manager.stash().unwrap();
-    let keys = stash.list().await.unwrap();
+    let keys = stash.list("").await.unwrap();
     assert_eq!(keys.len(), 1);
     assert_eq!(
         stash.retrieve(&keys[0]).await.unwrap().unwrap()["text"],
@@ -490,7 +540,7 @@ async fn stashes_messages_as_they_arrive_and_skips_retrieval_results() {
         let mut event = MessageAddedEvent::new(&mut agent, InvocationState::new(), message);
         hooks.invoke(&mut event).await.unwrap();
     }
-    assert_eq!(manager.stash().unwrap().list().await.unwrap(), ["call-2_0"]);
+    assert_eq!(manager.stash().unwrap().list("").await.unwrap(), ["call-2_0"]);
 }
 
 #[tokio::test]
@@ -530,17 +580,17 @@ async fn gives_each_agent_of_a_shared_manager_its_own_stash() {
 
     let first_stash = first.context_stash().unwrap().stash.clone();
     let second_stash = second.context_stash().unwrap().stash.clone();
-    assert_eq!(first_stash.list().await.unwrap(), ["call-first_0"]);
-    assert_eq!(second_stash.list().await.unwrap(), ["call-second_0"]);
-    assert_eq!(manager.stash().unwrap().list().await.unwrap(), ["call-second_0"]);
+    assert_eq!(first_stash.list("").await.unwrap(), ["call-first_0"]);
+    assert_eq!(second_stash.list("").await.unwrap(), ["call-second_0"]);
+    assert_eq!(manager.stash().unwrap().list("").await.unwrap(), ["call-second_0"]);
 
     let message = tool_result_message("later", "call-later");
     first.messages_mut().push(message.clone());
     let hooks = first.hooks().clone();
     let mut event = MessageAddedEvent::new(&mut first, InvocationState::new(), message);
     hooks.invoke(&mut event).await.unwrap();
-    assert_eq!(first_stash.list().await.unwrap(), ["call-first_0", "call-later_0"]);
-    assert_eq!(second_stash.list().await.unwrap(), ["call-second_0"]);
+    assert_eq!(first_stash.list("").await.unwrap(), ["call-first_0", "call-later_0"]);
+    assert_eq!(second_stash.list("").await.unwrap(), ["call-second_0"]);
 
     let retrieve = first.tool_registry().get(RETRIEVAL_TOOL_NAME).unwrap();
     let second_retrieve = second.tool_registry().get(RETRIEVAL_TOOL_NAME).unwrap();

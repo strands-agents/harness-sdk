@@ -234,7 +234,7 @@ async fn skips_stash_restore_when_location_is_external() {
     let stash = stash_on(Arc::new(InMemoryStorage::new()), "agent");
     let mut target = agent_with_stash(&stash, false);
     assert!(snapshots.manager().restore_snapshot(&mut target, None).await.unwrap());
-    assert!(stash.list().await.unwrap().is_empty());
+    assert!(stash.list("").await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -279,9 +279,9 @@ async fn deletes_stash_data_via_stash_reference() {
     attached(&manager, root, &stash).await;
     stash.store("tool-1", 0, &bytes(&json!("data1"))).await.unwrap();
     stash.store("tool-2", 0, &bytes(&json!("data2"))).await.unwrap();
-    assert_eq!(stash.list().await.unwrap().len(), 2);
+    assert_eq!(stash.list("").await.unwrap().len(), 2);
     manager.delete_session().await.unwrap();
-    assert!(stash.list().await.unwrap().is_empty());
+    assert!(stash.list("").await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -291,9 +291,9 @@ async fn deletes_stash_data_from_custom_stash_storage() {
     let stash = stash_on(Arc::new(InMemoryStorage::new()), "agent");
     attached(&manager, root, &stash).await;
     stash.store("tool-1", 0, &bytes(&json!("data1"))).await.unwrap();
-    assert_eq!(stash.list().await.unwrap().len(), 1);
+    assert_eq!(stash.list("").await.unwrap().len(), 1);
     manager.delete_session().await.unwrap();
-    assert!(stash.list().await.unwrap().is_empty());
+    assert!(stash.list("").await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -304,9 +304,9 @@ async fn deletes_stash_data_when_storage_is_pre_namespaced() {
     let stash = stash_on(Arc::new(shared.namespace("my-prefix").unwrap()), "agent");
     attached(&manager, root, &stash).await;
     stash.store("tool-1", 0, &bytes(&json!("data1"))).await.unwrap();
-    assert_eq!(stash.list().await.unwrap().len(), 1);
+    assert_eq!(stash.list("").await.unwrap().len(), 1);
     manager.delete_session().await.unwrap();
-    assert!(stash.list().await.unwrap().is_empty());
+    assert!(stash.list("").await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -319,7 +319,7 @@ async fn does_not_over_delete_when_root_storage_is_pre_namespaced() {
     stash.store("tool-1", 0, &bytes(&json!("data1"))).await.unwrap();
     namespaced.write("other-data/important", b"keep-me").await.unwrap();
     manager.delete_session().await.unwrap();
-    assert!(stash.list().await.unwrap().is_empty());
+    assert!(stash.list("").await.unwrap().is_empty());
     assert!(namespaced.read("other-data/important").await.unwrap().is_some());
 }
 
@@ -333,8 +333,8 @@ async fn clear_session_cleans_up_stash_data_from_other_agents_in_the_session() {
     first.store("tool-1", 0, &bytes(&json!("from-a"))).await.unwrap();
     second.store("tool-2", 0, &bytes(&json!("from-b"))).await.unwrap();
     manager.delete_session().await.unwrap();
-    assert!(first.list().await.unwrap().is_empty());
-    assert!(second.list().await.unwrap().is_empty());
+    assert!(first.list("").await.unwrap().is_empty());
+    assert!(second.list("").await.unwrap().is_empty());
 }
 
 #[tokio::test]

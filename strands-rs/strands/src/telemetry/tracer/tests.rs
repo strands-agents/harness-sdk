@@ -986,6 +986,24 @@ mod otel {
     }
 
     #[test]
+    fn records_an_offloaded_block_as_the_text_the_model_receives() {
+        let capture = capture_spans();
+        let messages = vec![Message::new(
+            Role::User,
+            vec![ContentBlock::Text(crate::types::TextBlock::offloaded(
+                "[Dropped] [ref: tu-1]",
+                crate::types::Offloaded::new(crate::types::OffloadMethod::Drop).with_reference("tu-1"),
+            ))],
+        )];
+        drop(latest().start_agent_span(agent_options(&messages, "test-agent")));
+        let details = events(&capture.span("invoke_agent test-agent"), OPERATION_DETAILS);
+        assert_eq!(
+            event_json(&details[0], "gen_ai.input.messages"),
+            json!([{"role": "user", "parts": [{"type": "text", "content": "[Dropped] [ref: tu-1]"}]}])
+        );
+    }
+
+    #[test]
     fn maps_tool_result_blocks_to_tool_call_response_parts_in_latest_conventions() {
         let capture = capture_spans();
         let messages = vec![Message::new(

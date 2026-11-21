@@ -2,39 +2,54 @@
 //! preview or summarizing it.
 
 mod base;
+mod conditions;
 mod drop;
 mod summarize;
+pub(crate) mod target;
 mod truncate;
 
-pub use base::{EmergencyTruncateStrategy, OffloadConditions, OffloadConditionsBuilder, OffloadTarget};
+pub use base::EmergencyTruncateStrategy;
+pub use conditions::{ConditionValue, OffloadConditions, OffloadConditionsBuilder};
 pub use drop::DropStrategy;
 pub use summarize::{SummarizeConfig, SummarizeConfigBuilder, SummarizeStrategy};
+pub use target::OffloadTarget;
 pub use truncate::TruncateStrategy;
 
 use crate::error::Result;
 use crate::experimental::context_manager::methods::truncate::TruncateConfig;
 
-/// Builds the offload strategies (`Offload`). Chain [`when`](DropStrategy::when) to set the
-/// conditions they fire under.
+/// Builds the offload strategies (`Offload`). Each returns a strategy; chain `when` to set when and
+/// on what it acts.
+///
+/// Target [`OffloadTarget::All`] acts on whole messages; any other target acts on each block.
+/// `block_threshold` measures whichever the target acts on, and `context_utilization` only gates
+/// when the strategy fires. Targets `All` and `Media` need conditions from `when`; any other target
+/// without them acts on each matching block as it arrives, before the model reads it.
 ///
 /// ```
 /// use strands::experimental::context_manager::{
 ///     Offload, OffloadConditions, OffloadTarget, SummarizeConfig, TruncateConfig,
 /// };
 ///
-/// // Truncate each tool result over 1,500 tokens to a 750-token preview, eagerly.
+/// // Per block, eagerly: truncate each tool result over 1,500 tokens to a 750-token preview.
 /// let truncate = Offload::truncate(
 ///     OffloadTarget::ToolResults,
 ///     TruncateConfig { preview_tokens: Some(750.0), ..Default::default() },
 /// )?
-/// .when(OffloadConditions { threshold: Some(1500.0), ..Default::default() })?;
-/// // Summarize the oldest messages at 85% utilization, keeping the last four.
+/// .when(OffloadConditions { block_threshold: Some(1500.into()), ..Default::default() })?;
+/// // Whole messages: summarize the oldest at 70% context utilization, keeping the newest four.
 /// let summarize = Offload::summarize(OffloadTarget::All, SummarizeConfig::default())?.when(OffloadConditions {
-///     utilization: Some(0.85),
-///     preserve_recent: Some(4.0),
+///     context_utilization: Some("70%".into()),
+///     preserve_recent: Some(4.into()),
 ///     ..Default::default()
-/// });
-/// # let _ = (truncate, summarize);
+/// })?;
+/// // Whole messages: once the window is full, drop the oldest, keeping the newest 70%.
+/// let drop = Offload::drop(OffloadTarget::All)?.when(OffloadConditions {
+///     context_utilization: Some("100%".into()),
+///     preserve_recent: Some("70%".into()),
+///     ..Default::default()
+/// })?;
+/// # let _ = (truncate, summarize, drop);
 /// # Ok::<(), strands::Error>(())
 /// ```
 #[derive(Debug, Clone, Copy)]
@@ -42,30 +57,33 @@ use crate::experimental::context_manager::methods::truncate::TruncateConfig;
 pub struct Offload;
 
 impl Offload {
-    /// Drops matching content from the context window entirely (`Offload.drop`).
+    /// Drops matching content from the context window entirely (`Offload.drop`). Without `when`
+    /// conditions, drops each block on arrival.
     ///
     /// # Errors
     ///
-    /// An empty [`OffloadTarget::Tools`] list.
+    /// A tool list target that is empty or excludes every tool it includes.
     pub fn drop(target: OffloadTarget) -> Result<DropStrategy> {
-        DropStrategy::new(target, OffloadConditions::default())
+        DropStrategy::new(target, None)
     }
 
-    /// Replaces oversized content with a preview (`Offload.truncate`).
+    /// Replaces oversized content with a preview (`Offload.truncate`). Without `when` conditions,
+    /// truncates each block on arrival.
     ///
     /// # Errors
     ///
-    /// An empty [`OffloadTarget::Tools`] list.
+    /// A tool list target that is empty or excludes every tool it includes.
     pub fn truncate(target: OffloadTarget, config: TruncateConfig) -> Result<TruncateStrategy> {
-        TruncateStrategy::new(target, config, OffloadConditions::default())
+        TruncateStrategy::new(target, config, None)
     }
 
-    /// Replaces oversized content with a model-written summary (`Offload.summarize`).
+    /// Replaces content with a model-written summary (`Offload.summarize`). Without `when`
+    /// conditions, summarizes each block on arrival.
     ///
     /// # Errors
     ///
-    /// An empty [`OffloadTarget::Tools`] list.
+    /// A tool list target that is empty or excludes every tool it includes.
     pub fn summarize(target: OffloadTarget, config: SummarizeConfig) -> Result<SummarizeStrategy> {
-        SummarizeStrategy::new(target, config, OffloadConditions::default())
+        SummarizeStrategy::new(target, config, None)
     }
 }
