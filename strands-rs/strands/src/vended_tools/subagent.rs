@@ -17,9 +17,9 @@ use crate::agent::ModelSource;
 use crate::agent::{
     Agent, AgentResult, AgentToolStreamer, InvokeArgs, InvokeOptions, Resume, ToolAgent, merge_events_first,
 };
+use crate::context_manager::ContextManagerStrategy;
 use crate::conversation_manager::compression::context_compression::find_valid_trim_point;
 use crate::error::{Error, Result};
-use crate::experimental::context_manager::ContextManagerStrategy;
 use crate::multiagent::spec::{SpecAxes, SpecError, resolve_spec, schema_properties};
 use crate::multiagent::{AgentSpec, Axis, ChildAgentBuilder, Fixed, Inherit, Open, Preset, SpecValue};
 use crate::plugins::Plugin;

@@ -40,7 +40,7 @@ Python and TypeScript are kept in parity by convention, porting and review. That
    | Functions, fields, parameters | `camelCase` | `snake_case` |
    | Enum-like literals | `'endTurn'` | `StopReason::EndTurn` |
    | Modules | `kebab-case` | `snake_case`, same stem |
-   | Experimental entry point | `@strands-agents/sdk/experimental` | `strands::experimental` |
+   | Context manager entry point | `@strands-agents/sdk/context-manager` | `strands::context_manager` |
 
 2. **Idiomatic where Rust differs.** Builders instead of optional-field object literals, `Result` instead of exceptions, `#[tool]` instead of `tool({...})`, cargo features instead of optional peer dependencies, `Stream` instead of async generators, and an explicit `shutdown().await` instead of `await using`.
 3. **TS behaviour, byte-identical only where it is observable across SDKs.** Wire formats, persisted data, prompts and the error text that cross-SDK tests check match TS exactly. Everything else is Rust-native, for example slicing strings by `char` rather than by UTF-16 code unit ([decision](#decision-observable-parity)).
@@ -62,7 +62,7 @@ Providers, MCP, OpenTelemetry and Cedar are cargo features of `strands` rather t
 
 **Scope**
 
-v0.1.0 ports the single-agent SDK and the harness: types and wire formats, the `Model` trait and four providers, tools and the `#[tool]` macros, the agent loop, hooks, plugins, middleware and interrupts, interventions (`HumanInTheLoop`, `CedarAuthorization`), conversation managers and the experimental `ContextManager`, storage, sessions and memory, the `Sandbox` trait with a local sandbox and the vended tools, MCP, telemetry, and `create_harness` with every harness-ts option and built-in tool. Graph, Swarm, A2A, steering, checkpointing, more sandboxes, more stores and more providers follow in later v0.x releases. The full list is in Additional Details.
+v0.1.0 ports the single-agent SDK and the harness: types and wire formats, the `Model` trait and four providers, tools and the `#[tool]` macros, the agent loop, hooks, plugins, middleware and interrupts, interventions (`HumanInTheLoop`, `CedarAuthorization`), conversation managers and the `ContextManager`, storage, sessions and memory, the `Sandbox` trait with a local sandbox and the vended tools, MCP, telemetry, and `create_harness` with every harness-ts option and built-in tool. Graph, Swarm, A2A, steering, checkpointing, more sandboxes, more stores and more providers follow in later v0.x releases. The full list is in Additional Details.
 
 **Core API**
 
@@ -93,7 +93,7 @@ v0.1.0 ports the single-agent SDK and the harness: types and wire formats, the `
 12. **`#[tool]`.** On a function, the macro keeps the function and generates a unit struct (`get_weather` becomes `GetWeather`). `#[tools]` on an `impl` block turns its `#[tool]` methods into tools that share `Arc<Self>`. Doc comments describe parameters and input is validated against the schemars schema ([decision](#decision-tool-macro)).
 13. **Defaults and lifecycle match TS.** Bedrock is the default model, resolved lazily so `build()` stays synchronous. Concurrent tools, a 40-message sliding window, the default retry strategy and the stdout printer are on by default. `Agent::shutdown().await` flushes memory and deferred cleanup ([decision](#decision-defaults-match-ts), [decision](#decision-explicit-shutdown)).
 
-**Wire compatibility.** Messages and content blocks use the Bedrock Converse JSON shape, as both SDKs do today. Strands-owned persisted data uses TS's keys, values and storage layout: snapshots, sessions, the context stash, interrupt state, and metric and attribute names. TS and Rust agents can therefore share sessions and dashboards. TS-produced fixtures are round-tripped in Rust CI ([decision](#decision-wire-compatibility)). Event JSON uses TS's keys as well, so the same fixtures can check it, but it is not a format shared across SDKs; where Rust differs there, as with redacted reasoning bytes, it still reads what TS writes ([decision](#decision-redacted-bytes-base64)).
+**Wire compatibility.** Messages and content blocks use the Bedrock Converse JSON shape, as both SDKs do today. Strands-owned persisted data uses TS's keys, values and storage layout: snapshots, sessions, the context archive, interrupt state, and metric and attribute names. TS and Rust agents can therefore share sessions and dashboards. TS-produced fixtures are round-tripped in Rust CI ([decision](#decision-wire-compatibility)). Event JSON uses TS's keys as well, so the same fixtures can check it, but it is not a format shared across SDKs; where Rust differs there, as with redacted reasoning bytes, it still reads what TS writes ([decision](#decision-redacted-bytes-base64)).
 
 **Pros:**
 
@@ -319,7 +319,7 @@ agent.shutdown().await?;
 | `Record<string, unknown>` invocation state | `InvocationState`, a typed extensions map |
 | `new OpenAIModel({ bedrockMantleConfig })` | `OpenAIModel::bedrock_mantle(options, mantle_config)` (feature `mantle`) |
 | Optional peer dependencies | cargo features |
-| `@strands-agents/sdk/experimental` | `strands::experimental` |
+| `@strands-agents/sdk/context-manager` | `strands::context_manager` |
 | `index.ts` barrel, `@internal` | crate root exports, `pub(crate)` / `#[doc(hidden)]` |
 | `await using` / `Symbol.asyncDispose` | `shutdown().await` |
 
@@ -335,7 +335,7 @@ agent.shutdown().await?;
 | Tools | `Tool` trait, `ToolContext`, `#[tool]` on functions and `#[tools]` on impl blocks, `FunctionTool`, `ToolRegistry`, `ConcurrentToolExecutor` (default) and `SequentialToolExecutor`, structured output, direct tool calls, `as_tool` |
 | Agent | `Agent`, builder and `AgentConfig` (every TS key except experimental `checkpointing`), `invoke`/`stream`, `InvokeOptions`, `InvokeLimits`, `InvocationContext`, cancellation, `app_state`, `model_state`, `aux_model`, snapshots, background tasks, `AgentResult` with `AgentMetrics` and `AgentTrace` |
 | Extension | `add_hook` with the 17 TS hook events, ordering via `HookOrder` and removal, `Plugin`, middleware (`InvokeModelStage`, `ExecuteToolStage`), interrupts, `InterventionHandler`, `HumanInTheLoop` (boolean, LLM and function classifiers), `CedarAuthorization` (feature `cedar`) |
-| Context | `ConversationManager` (with proactive compression), `NullConversationManager`, `SlidingWindowConversationManager`, `SummarizingConversationManager`. In `strands::experimental`: `ContextManager` with the `auto` and `agentic` presets, the `Offload` strategies and presets, the stash, `retrieve_context` and message pinning. Also `ContextInjector`, `AgentSkills` and `Skill` |
+| Context | `ConversationManager` (with proactive compression), `NullConversationManager`, `SlidingWindowConversationManager`, `SummarizingConversationManager`. In `strands::context_manager`: `ContextManager` with the `auto` and `agentic` presets, the `Offload` strategies and presets, the archive, `retrieve_context` and message pinning. Also `ContextInjector`, `AgentSkills` and `Skill` |
 | Persistence and memory | Unified `Storage` (`InMemoryStorage`, `LocalFileStorage`, namespaces, `KeywordSearchStrategy`), the snapshot-based `SessionManager`, `MemoryManager` (search, add, injection, extraction triggers, `ModelExtractor`), `MemoryStore`, `FileMemoryStore` |
 | Environment | `Sandbox` trait with a default local sandbox. Vended tools, all routed through the sandbox: `shell`, `read`, `write`, `edit`, `bash`, `python_repl`, `notebook`, `http_request`, `sleep`, `stop`, `handoff_to_user`, `web_fetch`, `subagent`, `mcp_router` |
 | MCP | `McpClient` over stdio, streamable HTTP and SSE. Tool filters and prefixes, auth, elicitation, `load_servers`, prompts and resources, list-changed notifications, progress, logging, trace-context propagation |
@@ -358,7 +358,7 @@ The normative spec is strands-ts and harness-ts at `d6c5fae7c`, plus their tests
 - **Stateful models.** These force `NullConversationManager`, discard restored messages, and reject explicit conversation or context managers.
 - **Tool schemas.** schemars output is normalized: subschemas are inlined unless the type is recursive; `$schema` and `title` are dropped; non-JSON-Schema formats such as `uint32` and `double` are dropped; property order is kept; names must match `^[a-zA-Z0-9_-]{1,64}$`.
 - **Interrupt IDs** follow TS (`tool:<toolUseId>:<name>`, `hook:beforeToolCall:<toolUseId>:<name>`, and so on). On resume, completed sibling results come from `pendingToolExecution`.
-- **Persisted layout.** Snapshot keys are `<sessionId>/scopes/<scope>/<scopeId>/snapshots/{snapshot_latest.json,manifest.json,immutable_history/snapshot_<uuidv7>.json}`. IDs match `^[a-z0-9_-]+$`. The stash's `storageType` uses the TS class names (`LocalFileStorage`, `InMemoryStorage`).
+- **Persisted layout.** Snapshot keys are `<sessionId>/scopes/<scope>/<scopeId>/snapshots/{snapshot_latest.json,manifest.json,immutable_history/snapshot_<uuidv7>.json}`. IDs match `^[a-z0-9_-]+$`. The archive's `storageType` uses the TS class names (`LocalFileStorage`, `InMemoryStorage`).
 - **Telemetry.** Span names are `invoke_agent <name>`, `execute_agent_loop_cycle`, `chat` and `execute_tool <tool>`. Metric names are `gen_ai.agent.*`, `gen_ai.server.time_to_first_token`, and so on. The `OTEL_SEMCONV_STABILITY_OPT_IN` modes apply, and the legacy usage keys are duplicated.
 - **Harness.** The byte-observable parts follow harness-ts: system prompt assembly; tool-name collision rules, where `-` and `_` count as equal; `read`, `edit` and `todos` text; `EnvironmentContext` discovery limits; programmatic tool caller limits; `web_fetch` caps and its URL cache; and session id sanitization.
 
@@ -392,7 +392,7 @@ The implementation of this design is in the same PR, with its commits grouped by
 
 - 5,203 tests pass with all features, doctests included.
 - Of the 5,032 test cases in the in-scope strands-ts spec files, 4,326 are ported. Each remaining case has a recorded reason: a compile-time guarantee, a JS-only mechanism, a deprecated API, or a feature outside v0.1.0. For harness-ts, 430 of 502 cases are ported.
-- TS-generated fixtures round-trip byte for byte. They cover messages, model and agent stream events, hook events, snapshots, session files, interrupt state, the stash, metrics, the vended and harness tool specs, and the harness system prompt.
+- TS-generated fixtures round-trip byte for byte. They cover messages, model and agent stream events, hook events, snapshots, session files, interrupt state, the archive, metrics, the vended and harness tool specs, and the harness system prompt.
 - A TS-written session is restored by Rust and a Rust-written one by TS, for both the SDK and the harness.
 - Live tests pass against Bedrock, Bedrock Mantle, Anthropic and OpenAI, including the harness on each provider.
 - The implementation keeps a divergences list for the places where Rust intentionally differs from TS, and the TS bugs it found will be reported as separate issues.
@@ -471,11 +471,11 @@ The decisions that shape the public API, each with its reason and the main alter
 
 **Alternative considered.** Holding the first release until multi-agent is ported.
 
-#### Decision: experimental context manager
+#### Decision: context manager
 
-**Decision.** `ContextManager` with the `auto` and `agentic` presets, the `Offload` strategies, the stash and `retrieve_context` ship in v0.1.0 under `strands::experimental`, as TS exports them from its experimental entry point. The harness defaults to `auto`. The `ContextOffloader` plugin comes later.
+**Decision.** `ContextManager` with the `auto` and `agentic` presets, the `Offload` strategies, the archive and `retrieve_context` ship in v0.1.0 in `strands::context_manager`, as TS exports them from its `context-manager` entry point. The `agentic` mode and deferred tool loading are marked experimental in their docs, as in TS. The harness defaults to `auto`. The `ContextOffloader` plugin comes later.
 
-**Reason.** The harness-ts default depends on it, and the experimental module carries the same stability signal as in TS.
+**Reason.** The harness-ts default depends on it.
 
 **Alternative considered.** Deferring context management, which would make the Rust harness defaults differ from harness-ts.
 
@@ -761,7 +761,7 @@ The decisions that shape the public API, each with its reason and the main alter
 
 #### Decision: wire compatibility
 
-**Decision.** Strands-owned persisted data uses TS's keys, values and storage layout: snapshots, sessions, the context stash, interrupt state, and metric and attribute names. Event JSON uses TS's keys too, so TS-produced fixtures can check it. Messages and content blocks use the Bedrock Converse JSON shape. Key order is part of the format, so `serde_json` and `schemars` use `preserve_order`. JavaScript moves integer-like keys to the front of an object, so a freshly built object with such keys can order them differently in Rust; stored data round-trips unchanged. Shared TS-produced fixtures round-trip in Rust CI.
+**Decision.** Strands-owned persisted data uses TS's keys, values and storage layout: snapshots, sessions, the context archive, interrupt state, and metric and attribute names. Event JSON uses TS's keys too, so TS-produced fixtures can check it. Messages and content blocks use the Bedrock Converse JSON shape. Key order is part of the format, so `serde_json` and `schemars` use `preserve_order`. JavaScript moves integer-like keys to the front of an object, so a freshly built object with such keys can order them differently in Rust; stored data round-trips unchanged. Shared TS-produced fixtures round-trip in Rust CI.
 
 **Reason.** TS and Rust agents can share sessions and dashboards.
 

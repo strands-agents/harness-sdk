@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use strands::experimental::context_manager::{ContextManager, ContextManagerConfig, ContextManagerConfigBuilder};
+use strands::context_manager::{ContextManager, ContextManagerConfig, ContextManagerConfigBuilder};
 use strands::memory::{MemoryManagerConfigBuilder, SearchOptions};
 use strands::storage::{InMemoryStorage, LocalFileStorageConfigBuilder, Storage};
 use strands::testing::MockModel;

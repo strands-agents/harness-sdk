@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{Value, json};
-use strands::experimental::context_manager::ContextManagerStrategy;
+use strands::context_manager::ContextManagerStrategy;
 use strands::testing::{MockModel, MockTurn};
 use strands::types::Role;
 use strands_harness::{

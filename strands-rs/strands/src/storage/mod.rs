@@ -128,11 +128,11 @@ pub trait Storage: Send + Sync + 'static {
         None
     }
 
-    /// The backend's type name, recorded as the stash `storageType`.
+    /// The backend's type name, recorded as the archive `storageType`.
     ///
     /// Defaults to the implementing type's name without its module path or generics. That name
     /// comes from [`std::any::type_name`], whose output Rust does not guarantee across compiler
-    /// versions, so a custom backend whose stash may be restored by another build or SDK should
+    /// versions, so a custom backend whose archive may be restored by another build or SDK should
     /// override it with a fixed name.
     fn storage_type(&self) -> &str {
         short_type_name(type_name::<Self>())

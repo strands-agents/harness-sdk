@@ -568,7 +568,7 @@ impl fmt::Display for OffloadMethod {
 pub struct Offloaded {
     /// The offload method that left the placeholder.
     pub method: OffloadMethod,
-    /// The stash reference the original is retrievable under; `None` when it was not stashed
+    /// The archive reference the original is retrievable under; `None` when it was not archived
     /// (`ref`).
     #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
@@ -589,7 +589,7 @@ impl Offloaded {
         }
     }
 
-    /// Sets the stash reference.
+    /// Sets the archive reference.
     #[must_use]
     pub fn with_reference(mut self, reference: impl Into<String>) -> Self {
         self.reference = Some(reference.into());

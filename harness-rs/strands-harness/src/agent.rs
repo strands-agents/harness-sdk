@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use futures::future::BoxFuture;
 use strands::background_tasks::BackgroundTasksConfig;
+use strands::context_manager::ContextManagerStrategy;
 use strands::conversation_manager::ConversationManager;
-use strands::experimental::context_manager::ContextManagerStrategy;
 use strands::hooks::InitializedEvent;
 use strands::interventions::InterventionHandler;
 use strands::memory::{MemoryManager, MemoryManagerSource};
@@ -349,7 +349,7 @@ pub struct HarnessAgentOptions {
     /// See [`AgentConfig::sandbox`]. The harness's built-ins route through it, so the tools the
     /// sandbox vends are dropped once the agent initializes.
     pub sandbox: Option<Arc<dyn Sandbox>>,
-    /// See [`AgentConfig::storage`]. Backs the context manager's stash; defaults to the
+    /// See [`AgentConfig::storage`]. Backs the context manager's archive; defaults to the
     /// session's own folder when the harness builds the session.
     pub storage: Option<Arc<dyn Storage>>,
     /// See [`AgentConfig::session_manager`]. Wins over `session`.
@@ -703,7 +703,7 @@ async fn load_mcp_servers(servers: Option<strands::mcp::McpServersSource>) -> st
     Ok(clients.into_iter().map(ToolSource::McpClient).collect())
 }
 
-/// A harness-built session manager and the stash storage in its folder.
+/// A harness-built session manager and the archive storage in its folder.
 type SessionParts = (SessionManager, Option<Arc<dyn Storage>>);
 
 fn session_parts(session: Option<SessionOption>) -> strands::Result<Option<SessionParts>> {
@@ -723,10 +723,10 @@ fn session_parts(session: Option<SessionOption>) -> strands::Result<Option<Sessi
         save_latest_on: Some(SaveLatestStrategy::Message),
         ..Default::default()
     })?;
-    // The stash goes to files, not into the snapshot rewritten on every message. It lives in the
+    // The archive goes to files, not into the snapshot rewritten on every message. It lives in the
     // session's own folder because each folder under the session dir is read as a session.
-    let stash: Arc<dyn Storage> = Arc::new(LocalFileStorage::new(dir.join(&session_id)));
-    Ok(Some((manager, Some(stash))))
+    let archive: Arc<dyn Storage> = Arc::new(LocalFileStorage::new(dir.join(&session_id)));
+    Ok(Some((manager, Some(archive))))
 }
 
 /// Resolves every harness option into the SDK agent configuration.
@@ -846,7 +846,7 @@ pub(crate) async fn assemble_with(
     let (session_manager, storage) = match session_manager {
         Some(manager) => (Some(manager), storage),
         None => match session_parts(session)? {
-            Some((manager, stash)) => (Some(manager), storage.or(stash)),
+            Some((manager, archive)) => (Some(manager), storage.or(archive)),
             None => (None, storage),
         },
     };

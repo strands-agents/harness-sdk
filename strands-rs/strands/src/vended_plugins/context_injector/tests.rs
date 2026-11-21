@@ -5,10 +5,10 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::agent::continuation::ContinuationInput;
-use crate::error::Error;
-use crate::experimental::context_manager::{
+use crate::context_manager::{
     ContextManagerConfig, ContextManagerStrategy, Offload, OffloadConditions, OffloadTarget, SummarizeConfig,
 };
+use crate::error::Error;
 use crate::hooks::MessageAddedEvent;
 use crate::models::{BaseModelConfig, Model, ModelCapabilities, ModelInfo};
 use crate::test_support::{MockTool, record_logs};

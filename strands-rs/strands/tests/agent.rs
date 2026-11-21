@@ -15,7 +15,7 @@ use std::time::Duration;
 use common::{MockTool, collect, text_model, tool_use_turn, types};
 use futures::StreamExt;
 use serde_json::json;
-use strands::experimental::context_manager::ContextManagerStrategy;
+use strands::context_manager::ContextManagerStrategy;
 use strands::hooks::{AfterInvocationEvent, AfterToolsEvent, BeforeModelCallEvent, BeforeToolsEvent, InterruptEvent};
 use strands::models::{BaseModelConfig, BoxStream, CountTokensOptions, ModelRequest};
 use strands::storage::{InMemoryStorage, Storage};

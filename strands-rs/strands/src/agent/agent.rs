@@ -23,12 +23,12 @@ use super::snapshot::TakeSnapshotOptions;
 use super::stream::{AgentStream, Emitter};
 use crate::background_tasks::{BackgroundTasks, BackgroundTasksPlugin};
 use crate::cancel::{CancelHandle, CancelSignal};
+use crate::context_manager::modes::agentic::AgenticContext;
+use crate::context_manager::{ContextManager, ContextManagerStrategy};
 use crate::conversation_manager::{
     ConversationManager, ConversationManagerPlugin, NullConversationManager, SlidingWindowConversationManager,
 };
 use crate::error::{Error, Result};
-use crate::experimental::context_manager::modes::agentic::AgenticContext;
-use crate::experimental::context_manager::{ContextManager, ContextManagerStrategy};
 use crate::hooks::{HookCallbackOptions, HookCleanup, HookEvent, IntoAsyncHook, IntoHookImpl, IntoSyncHook};
 use crate::interventions::InterventionRegistry;
 use crate::memory::{MemoryManager, MemoryManagerSource};

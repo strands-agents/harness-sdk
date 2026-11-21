@@ -88,7 +88,7 @@
 //! | [`interventions`] | [`InterventionHandler`]s that gate the agent's lifecycle |
 //! | [`vended_interventions`] | Human-in-the-loop approval, Cedar policy authorization (feature `cedar`) and Dogwood policy authorization (feature `dogwood`) |
 //! | [`conversation_manager`] | Keeping history within the context window |
-//! | [`experimental`] | APIs that may change in a minor release: the strategy-driven `ContextManager`, its presets, the stash and message pinning |
+//! | [`context_manager`] | The strategy-driven `ContextManager`, its presets, the archive and message pinning |
 //! | [`injection`] | Folding just-in-time text into the latest user message |
 //! | [`storage`] | The [`Storage`] trait, `InMemoryStorage`, `LocalFileStorage`, namespaces and keyword search |
 //! | [`session`] | [`SessionManager`], saving and restoring agent snapshots in the layout shared with the other Strands SDKs |
@@ -163,9 +163,9 @@ pub mod background_tasks;
 mod callback;
 pub mod cancel;
 mod clock;
+pub mod context_manager;
 pub mod conversation_manager;
 pub mod error;
-pub mod experimental;
 pub mod hooks;
 pub mod injection;
 pub mod interrupt;

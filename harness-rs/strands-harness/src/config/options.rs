@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 use strands::ModelSource;
-use strands::experimental::context_manager::ContextManagerStrategy;
+use strands::context_manager::ContextManagerStrategy;
 use strands::types::JsonObject;
 use strands::vended_plugins::skills::SkillSource;
 

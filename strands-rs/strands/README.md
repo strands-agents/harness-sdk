@@ -602,14 +602,14 @@ let agent = Agent::builder().conversation_manager(summarizing).build()?;
 # }
 ```
 
-The experimental context manager in `strands::experimental` replaces the conversation manager when set.
+The context manager in `strands::context_manager` replaces the conversation manager when set.
 `ContextManagerStrategy::Auto` truncates tool results and summarizes at 85% utilization, `Agentic` lets the model
 manage its context through the `summarize_context`, `truncate_context` and `pin_context` tools, and a
-`ContextManagerConfig` sets a custom pipeline and stash.
+`ContextManagerConfig` sets a custom pipeline and archive.
 
 ```rust,no_run
 use strands::Agent;
-use strands::experimental::ContextManagerStrategy;
+use strands::context_manager::ContextManagerStrategy;
 
 # async fn example() -> strands::Result<()> {
 let agent = Agent::builder().context_manager(ContextManagerStrategy::Auto).build()?;

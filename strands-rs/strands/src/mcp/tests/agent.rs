@@ -58,7 +58,7 @@ async fn refresh_setup() -> (Agent, TestServer, McpClient) {
             client.clone(),
             crate::test_support::MockTool::new("shell")
         ])
-        .context_manager(crate::experimental::context_manager::ContextManagerStrategy::Auto)
+        .context_manager(crate::context_manager::ContextManagerStrategy::Auto)
         .printer(false)
         .build()
         .unwrap();
