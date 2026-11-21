@@ -248,6 +248,16 @@
   role: "Principal Developer Advocate, AWS"
   bio: Morgan Willis is a Principal Developer Advocate at AWS working on agents.
 
+- id: mackenzie-zastrow
+  name: Mackenzie Zastrow
+  role: "Senior Software Engineer, AWS"
+  bio: Mackenzie Zastrow is a Senior Software Engineer at AWS working on Strands Box.
+
+- id: abhishek-padmavathi
+  name: Abhishek Srinivasa Raju Padmavathi
+  role: "Senior Software Development Engineer, AWS"
+  bio: Abhishek Srinivasa Raju Padmavathi is a Senior Software Development Engineer at AWS working on Strands Box.
+
 - id: chris-smith
   name: Chris Smith
   role: "Senior Solutions Architect, AWS"
