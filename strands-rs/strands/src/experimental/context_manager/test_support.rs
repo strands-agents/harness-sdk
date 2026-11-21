@@ -37,6 +37,7 @@ struct State {
     always: Option<Reply>,
     summarize_calls: Vec<(Vec<Message>, SummarizeOptions)>,
     count_calls: Vec<Vec<Message>>,
+    count_options: Vec<CountTokensOptions>,
 }
 
 /// A test model: token counts and utilization are closures, `summarize` replies come from a
@@ -157,6 +158,11 @@ impl TestModel {
         self.lock().count_calls.clone()
     }
 
+    /// The options of every token count, in order.
+    pub(crate) fn count_options(&self) -> Vec<CountTokensOptions> {
+        self.lock().count_options.clone()
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -189,8 +195,12 @@ impl Model for TestModel {
         self.inner.update_config(config)
     }
 
-    async fn count_tokens(&self, messages: &[Message], _options: CountTokensOptions) -> Result<u64> {
-        self.lock().count_calls.push(messages.to_vec());
+    async fn count_tokens(&self, messages: &[Message], options: CountTokensOptions) -> Result<u64> {
+        {
+            let mut state = self.lock();
+            state.count_calls.push(messages.to_vec());
+            state.count_options.push(options);
+        }
         if self.count_fails {
             return Err(crate::Error::other("count failed"));
         }

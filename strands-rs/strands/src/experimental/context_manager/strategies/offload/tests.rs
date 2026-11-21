@@ -1757,3 +1757,42 @@ async fn offloads_eagerly_as_messages_arrive() {
         Some(OffloadMethod::Truncate)
     );
 }
+
+/// An agent whose model counts every message list as `tokens` and reads utilization against a
+/// 100,000-token window.
+fn proactive_agent(messages: Vec<Message>, tokens: u64) -> LocalAgent {
+    let model = TestModel::new()
+        .with_count(move |_| tokens)
+        .with_utilization(|tokens| tokens as f64 / 100_000.0);
+    agent_with(Arc::new(model), messages)
+}
+
+fn five_messages() -> Vec<Message> {
+    vec![user("pin"), assistant("a1"), user("u2"), assistant("a2"), user("u3")]
+}
+
+#[tokio::test]
+async fn emergency_truncate_truncates_when_the_messages_alone_fill_the_window() {
+    // The messages are what this strategy removes, so they are what it measures.
+    let mut agent = proactive_agent(five_messages(), 110_000);
+    assert!(apply(&EmergencyTruncateStrategy::new(), &mut agent, 0.2).await);
+    assert!(agent.messages().len() < 5);
+}
+
+#[tokio::test]
+async fn emergency_truncate_skips_when_the_messages_fit_and_the_request_does_not() {
+    // The pipeline's utilization carries the system prompt and tool specs, which dropping messages
+    // cannot shrink.
+    let mut agent = proactive_agent(five_messages(), 1_000);
+    assert!(!apply(&EmergencyTruncateStrategy::new(), &mut agent, 1.1).await);
+    assert_eq!(agent.messages().len(), 5);
+}
+
+#[tokio::test]
+async fn emergency_truncate_truncates_on_overflow_even_when_the_messages_fit() {
+    // An overflow signal is the provider's verdict on a request it refused, so it outranks the
+    // estimate.
+    let mut agent = proactive_agent(five_messages(), 1_000);
+    assert!(apply_with(&EmergencyTruncateStrategy::new(), &mut agent, 0.2, true).await);
+    assert!(agent.messages().len() < 5);
+}

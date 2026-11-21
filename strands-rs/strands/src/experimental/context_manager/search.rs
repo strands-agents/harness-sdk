@@ -7,6 +7,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use super::js_text::{Utf16Text, js_len, js_prefix};
+use crate::error::{Error, Result};
 
 const MAX_PATTERN_LENGTH: usize = 200;
 
@@ -130,32 +131,38 @@ fn search_by_line_range(lines: &[&str], start: usize, end: usize, max_chars: usi
 }
 
 /// Searches text by pattern or line range, capped at `max_chars`.
-pub(crate) fn search_content(text: &str, input: &SearchInput, max_chars: usize) -> String {
+///
+/// # Errors
+///
+/// A `line_range` that is inverted or starts past the end of the content. Callers are tools, which
+/// turn the error into an error result; returning the message would report the failure as a
+/// success.
+pub(crate) fn search_content(text: &str, input: &SearchInput, max_chars: usize) -> Result<String> {
     let lines: Vec<&str> = text.split('\n').collect();
     let total_lines = lines.len();
     if total_lines == 1 && lines[0].is_empty() {
-        return "Content is empty (0 lines).".to_owned();
+        return Ok("Content is empty (0 lines).".to_owned());
     }
     let mut scope_start = 0;
     let mut scope_end = total_lines - 1;
     if let Some(range) = input.line_range {
         if range.start > range.end {
-            return format!(
-                "Error: line_range.start ({}) must be <= line_range.end ({}).",
+            return Err(Error::other(format!(
+                "line_range.start ({}) must be <= line_range.end ({}).",
                 range.start, range.end
-            );
+            )));
         }
         if range.start > total_lines {
-            return format!(
-                "Error: line_range.start ({}) is beyond content length ({total_lines} lines).",
+            return Err(Error::other(format!(
+                "line_range.start ({}) is beyond content length ({total_lines} lines).",
                 range.start
-            );
+            )));
         }
         scope_start = range.start.saturating_sub(1);
         scope_end = range.end.saturating_sub(1).min(total_lines - 1);
     }
     let Some(pattern) = input.pattern.as_deref().filter(|pattern| !pattern.is_empty()) else {
-        return search_by_line_range(&lines, scope_start, scope_end, max_chars);
+        return Ok(search_by_line_range(&lines, scope_start, scope_end, max_chars));
     };
     let label = input
         .line_range
@@ -167,7 +174,7 @@ pub(crate) fn search_content(text: &str, input: &SearchInput, max_chars: usize) 
         end: scope_end,
         label,
     };
-    search_by_pattern(&scope, pattern, input.context_lines, max_chars)
+    Ok(search_by_pattern(&scope, pattern, input.context_lines, max_chars))
 }
 
 #[cfg(test)]
@@ -186,7 +193,7 @@ mod tests {
     fn marks_matches_and_separates_gaps() {
         let text = "a\nERROR one\nb\nc\nd\nERROR two\ne";
         assert_eq!(
-            search_content(text, &input(Some("ERROR"), None), 10_000),
+            search_content(text, &input(Some("ERROR"), None), 10_000).unwrap(),
             "[2 matches for /ERROR/]\n\n  1| a\n> 2| ERROR one\n  3| b\n---\n  5| d\n> 6| ERROR two\n  7| e"
         );
     }
@@ -194,29 +201,41 @@ mod tests {
     #[test]
     fn reports_no_matches_with_the_scope() {
         assert_eq!(
-            search_content("a\nb\nc", &input(Some("zzz"), Some((2, 3))), 10_000),
+            search_content("a\nb\nc", &input(Some("zzz"), Some((2, 3))), 10_000).unwrap(),
             "No matches found for pattern 'zzz' in lines 2-3 (searched 2 lines)."
         );
     }
 
     #[test]
     fn falls_back_to_a_literal_for_an_invalid_or_nested_pattern() {
-        assert!(search_content("a(b\nc", &input(Some("a(b"), None), 10_000).starts_with("[1 match for /a(b/]"));
-        assert!(search_content("(a+)+", &input(Some("(a+)+"), None), 10_000).starts_with("[1 match"));
+        assert!(
+            search_content("a(b\nc", &input(Some("a(b"), None), 10_000)
+                .unwrap()
+                .starts_with("[1 match for /a(b/]")
+        );
+        assert!(
+            search_content("(a+)+", &input(Some("(a+)+"), None), 10_000)
+                .unwrap()
+                .starts_with("[1 match")
+        );
     }
 
     #[test]
     fn validates_line_ranges() {
         assert_eq!(
-            search_content("a\nb", &input(None, Some((3, 2))), 100),
-            "Error: line_range.start (3) must be <= line_range.end (2)."
+            search_content("a\nb", &input(None, Some((3, 2))), 100)
+                .unwrap_err()
+                .to_string(),
+            "line_range.start (3) must be <= line_range.end (2)."
         );
         assert_eq!(
-            search_content("a\nb", &input(None, Some((5, 9))), 100),
-            "Error: line_range.start (5) is beyond content length (2 lines)."
+            search_content("a\nb", &input(None, Some((5, 9))), 100)
+                .unwrap_err()
+                .to_string(),
+            "line_range.start (5) is beyond content length (2 lines)."
         );
         assert_eq!(
-            search_content("", &input(None, None), 100),
+            search_content("", &input(None, None), 100).unwrap(),
             "Content is empty (0 lines)."
         );
     }
@@ -227,7 +246,7 @@ mod tests {
             .map(|index| format!("line {index}"))
             .collect::<Vec<_>>()
             .join("\n");
-        let output = search_content(&text, &input(None, Some((1, 20))), 30);
+        let output = search_content(&text, &input(None, Some((1, 20))), 30).unwrap();
         assert!(output.ends_with("\n\n[output truncated, narrow your range]"));
         assert!(output.starts_with("[Lines 1-20 of 20]\n\n   1| line 1\n   2| line 2"));
     }

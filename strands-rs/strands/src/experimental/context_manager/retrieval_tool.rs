@@ -9,7 +9,7 @@ use super::content_rendering::flatten_messages_to_content;
 use super::placeholder::{is_offloaded, is_offloaded_content};
 use super::search::{LineRange, SearchInput, search_content};
 use super::stash::Stash;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::experimental::context_manager::js_text::{js_len, js_prefix};
 use crate::tools::{SchemaValidator, Tool, ToolContext, ToolError, ToolOutcome, ToolStream, wrap_in_tool_result};
 use crate::types::{ContentBlock, JsonValue, Message, TextBlock, ToolResultContent, ToolSpec};
@@ -99,18 +99,22 @@ enum StashEntry {
 ///
 /// # Errors
 ///
-/// The stash's read error.
+/// The stash's read error, or a reference the tool cannot serve. Failures are errors rather than
+/// returned text: a returned string reaches the model as a success, and a model that reads "Error"
+/// under success retries and then invents the content.
 pub(crate) async fn retrieve_context(stash: &Stash, input: RetrievalInput, max_chars: usize) -> Result<JsonValue> {
     let reference = input.reference.trim();
     let entries = resolve_reference(stash, reference).await?;
+    // A missing reference is terminal only once the id was passed as the placeholder lists it;
+    // content offloaded again never comes back.
     if entries.is_empty() {
-        return Ok(JsonValue::String(format!(
-            "Error: reference not found: {reference}. Pass only the <id> from the placeholder's \"[ref: <id>]\"."
+        return Err(Error::other(format!(
+            "reference not found: {reference}. Pass only the <id> from the placeholder's \"[ref: <id>]\". If that is what you passed, the content is unavailable — do not retry."
         )));
     }
     if entries.iter().any(entry_is_offloaded) {
-        return Ok(JsonValue::String(format!(
-            "Error: original content for reference {reference} is no longer available"
+        return Err(Error::other(format!(
+            "original content for reference {reference} is no longer available — do not retry."
         )));
     }
     let pattern = input.pattern.filter(|pattern| !pattern.is_empty());
@@ -125,7 +129,7 @@ pub(crate) async fn retrieve_context(stash: &Stash, input: RetrievalInput, max_c
         }),
         context_lines: input.context_lines.unwrap_or(5),
     };
-    Ok(JsonValue::String(search_entries(&entries, &search, max_chars)))
+    search_entries(&entries, &search, max_chars).map(JsonValue::String)
 }
 
 fn entry_is_offloaded(entry: &StashEntry) -> bool {
@@ -210,9 +214,13 @@ fn clip_text(blocks: Vec<ToolResultContent>, max_chars: usize) -> Vec<ToolResult
 }
 
 /// The lines of the entries' text that match the pattern or fall in the line range.
-fn search_entries(entries: &[StashEntry], search: &SearchInput, max_chars: usize) -> String {
+fn search_entries(entries: &[StashEntry], search: &SearchInput, max_chars: usize) -> Result<String> {
+    // Actionable rather than terminal: the content is there, the search arguments are what cannot
+    // apply.
     let Some(text) = join_text(entries.iter().map(entry_text)) else {
-        return "Error: cannot search non-text content. Omit pattern/line_range to retrieve full content.".to_owned();
+        return Err(Error::other(
+            "cannot search non-text content. Omit pattern/line_range to retrieve full content.",
+        ));
     };
     search_content(&text, search, max_chars)
 }

@@ -20,8 +20,8 @@ use super::types::{ContextManagerConfig, ContextState, ContextStrategy, StashCon
 use crate::agent::{InvocationContext, LocalAgent};
 use crate::error::{Error, Result};
 use crate::hooks::{AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent};
-use crate::models::model_proxy::ModelProxy;
-use crate::models::{CountTokensOptions, Model};
+use crate::models::Model;
+use crate::models::model_proxy::count_request_tokens;
 use crate::plugins::Plugin;
 use crate::storage::{InMemoryStorage, Storage};
 use crate::tools::ToolSource;
@@ -95,8 +95,9 @@ enum StashStorage {
 ///
 /// Before each model call it runs its strategy pipeline; on a context window overflow it runs
 /// the pipeline in recovery mode and retries the call, up to three times. An emergency truncation
-/// always runs last and fires only when the window still overflows. Offloaded content is stashed,
-/// and the `retrieve_context` tool lets the model read it back.
+/// always runs last and fires only when the window still overflows after the configured strategies
+/// have run. Offloaded content is stashed, and the `retrieve_context` tool lets the model read it
+/// back.
 ///
 /// Configure it through `AgentConfig::context_manager`; with one present no separate
 /// conversation manager is needed. Cheap to clone: clones are handles to the same manager and
@@ -208,14 +209,9 @@ async fn run_strategies(
     invocation_context: Option<&InvocationContext>,
 ) -> Result<bool> {
     let model = agent.model().clone();
-    let proxy = ModelProxy::new(model.clone());
     let input_tokens = match precomputed_input_tokens {
         Some(tokens) => tokens,
-        None => {
-            proxy
-                .count_tokens(agent.messages(), CountTokensOptions::default())
-                .await?
-        }
+        None => count_request_tokens(agent, agent.messages()).await?,
     };
     let agent_id = agent.id().to_owned();
     let mut state = ContextState::new(agent, model.estimate_utilization(input_tokens))
@@ -227,7 +223,7 @@ async fn run_strategies(
         if any_acted && strategy.name() == "offload:emergency-truncate" {
             state.overflow = false;
         }
-        let applied = apply_strategy(strategy.as_ref(), &mut state, &proxy, &model, &mut any_acted).await;
+        let applied = apply_strategy(strategy.as_ref(), &mut state, &model, &mut any_acted).await;
         if let Err(error) = applied {
             tracing::warn!(
                 "strategy=<{}>, agent_id=<{agent_id}>, error=<{error}> | strategy failed, continuing",
@@ -243,7 +239,6 @@ async fn run_strategies(
 async fn apply_strategy(
     strategy: &dyn ContextStrategy,
     state: &mut ContextState<'_>,
-    proxy: &ModelProxy,
     model: &Arc<dyn Model>,
     any_acted: &mut bool,
 ) -> Result<()> {
@@ -251,9 +246,7 @@ async fn apply_strategy(
         return Ok(());
     }
     *any_acted = true;
-    let tokens = proxy
-        .count_tokens(state.agent.messages(), CountTokensOptions::default())
-        .await?;
+    let tokens = count_request_tokens(state.agent, state.agent.messages()).await?;
     state.utilization = model.estimate_utilization(tokens);
     tracing::debug!(
         "strategy=<{}>, agent_id=<{}> | strategy applied",

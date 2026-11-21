@@ -227,10 +227,9 @@ async fn never_stores_a_seeded_placeholder_under_the_original_key_when_a_strateg
         ))]
     );
     assert!(stash.list("").await.unwrap().is_empty());
-    assert_eq!(
-        retrieve(&stash, json!({"reference": "tool-123"}), 10_000).await,
-        json!("Error: reference not found: tool-123. Pass only the <id> from the placeholder's \"[ref: <id>]\".")
-    );
+    let input = serde_json::from_value(json!({"reference": "tool-123"})).unwrap();
+    let error = retrieve_context(&stash, input, 40_000).await.unwrap_err();
+    assert!(error.to_string().contains("reference not found: tool-123"));
 }
 
 #[tokio::test]
