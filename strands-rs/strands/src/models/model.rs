@@ -1,5 +1,6 @@
 //! The [`Model`] trait, its request and result types, and stream aggregation.
 
+use std::collections::HashSet;
 use std::pin::Pin;
 
 use async_trait::async_trait;
@@ -7,7 +8,7 @@ use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 
 use super::model_info::lookup_model_info;
-use super::model_info::{ModelCapabilities, ModelInfo, ModelLimits, default_context_window_limit};
+use super::model_info::{DeferredToolLoading, ModelCapabilities, ModelInfo, ModelLimits, default_context_window_limit};
 use super::streaming::{
     ContentBlockDelta, ContentBlockStart, ModelContentBlockStartEvent, ModelMetadataEvent, ModelRedactionEvent,
     ModelStreamEvent, ReasoningContentDelta,
@@ -102,6 +103,13 @@ pub struct ModelRequest {
     pub structured_output_schema: Option<JsonValue>,
     /// Signal a provider can forward to abort the in-flight request. Support is provider-dependent.
     pub cancel_signal: Option<CancelSignal>,
+    /// Names of the tools in `tool_specs` this call defers; empty when it defers none. A provider
+    /// whose model defers tools natively (`ModelCapabilities::deferred_tool_loading` is
+    /// [`DeferredToolLoading::Native`](super::DeferredToolLoading::Native)) keeps their input
+    /// schemas out of the model's context until the model loads them; every other provider
+    /// ignores it.
+    #[builder(default)]
+    pub deferred_tools: HashSet<String>,
 }
 
 /// Options for [`Model::count_tokens`] (`CountTokensOptions`).
@@ -133,6 +141,10 @@ pub struct SummarizeOptions {
     /// Metadata of the invoking agent, as passed to [`Model::stream`]. A provider may derive a
     /// prompt-cache routing key from it, so a replay can share the agent's cache.
     pub agent_metadata: Option<AgentMetadata>,
+    /// Names of the tools in `tool_specs` the request defers, as in
+    /// [`ModelRequest::deferred_tools`].
+    #[builder(default)]
+    pub deferred_tools: HashSet<String>,
 }
 
 /// Redaction of the user's input when a guardrail blocked it (`Redaction`).
@@ -317,8 +329,10 @@ pub trait Model: Send + Sync + 'static {
     /// Everything the SDK knows about the configured model, resolved on each call.
     ///
     /// Layers, later ones winning: the shared model info for the model id, `temporary_messages`
-    /// off (a provider that supports them turns them back on), the `context_window_limit` config
-    /// value, and the `model_info` config override ([`base_model_info`]). A provider that knows
+    /// off (a provider that supports them turns them back on), `deferred_tool_loading` as `Stubs`
+    /// unless the shared info says `Unsupported` (a provider that defers natively says `Native`),
+    /// the `context_window_limit` config value, and the `model_info` config override
+    /// ([`base_model_info`]). A provider that knows
     /// better overrides this method, layering its facts over [`base_model_info`] and the user's
     /// override on top with [`ModelInfo::merge`](crate::models::ModelInfo::merge); it must not call
     /// [`stateful`](Model::stateful), which reads this method.
@@ -386,15 +400,20 @@ fn default_context_window_warning(default: u64) -> String {
 }
 
 /// The default [`Model::model_info`] for a configuration, before any provider facts: the shared model
-/// info for the model id, `temporary_messages` off, the `context_window_limit` and the `model_info`
-/// override. A provider that overrides [`Model::model_info`] starts from it (see
+/// info for the model id, `temporary_messages` off, `deferred_tool_loading` as `Stubs` unless the
+/// shared info says `Unsupported`, the `context_window_limit` and the `model_info` override. A provider that overrides [`Model::model_info`] starts from it (see
 /// [`ModelInfo::merge`](crate::models::ModelInfo::merge)).
 #[must_use]
 pub fn base_model_info(config: &BaseModelConfig) -> ModelInfo {
     let shared = lookup_model_info(config.model_id.as_deref().unwrap_or_default());
+    let deferred_tool_loading = match shared.capabilities.deferred_tool_loading {
+        Some(DeferredToolLoading::Unsupported) => DeferredToolLoading::Unsupported,
+        _ => DeferredToolLoading::Stubs,
+    };
     let defaults = ModelInfo {
         capabilities: ModelCapabilities {
             temporary_messages: Some(false),
+            deferred_tool_loading: Some(deferred_tool_loading),
             ..ModelCapabilities::default()
         },
         limits: ModelLimits {
@@ -809,7 +828,7 @@ fn normalize_js_numbers(value: &mut JsonValue) {
 /// 2^53 - 1, the largest integer below which a 64-bit float holds every integer exactly.
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
-fn heuristic_json(value: &impl Serialize) -> u64 {
+pub(crate) fn heuristic_json(value: &impl Serialize) -> u64 {
     let Ok(mut json) = serde_json::to_value(value) else {
         tracing::debug!("unable to serialize object for token estimation, skipping");
         return 0;

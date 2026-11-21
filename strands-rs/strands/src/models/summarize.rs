@@ -103,6 +103,7 @@ pub async fn summarize_client_side<M: Model + ?Sized>(
         tool_specs: options.tool_specs,
         agent_metadata: options.agent_metadata,
         cancel_signal: options.cancel_signal,
+        deferred_tools: options.deferred_tools,
         ..ModelRequest::default()
     };
     let is_cancelled = || cancel_signal.as_ref().is_some_and(|signal| signal.is_cancelled());

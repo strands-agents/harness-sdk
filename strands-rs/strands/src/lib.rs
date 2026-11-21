@@ -259,8 +259,8 @@ pub use models::streaming::{
 };
 pub use models::{
     AggregatedEvent, BaseModelConfig, BoxStream, CacheConfig, CacheKey, CacheSectionSetting, CacheStrategy, CacheTtl,
-    CountTokensOptions, Model, ModelCapabilities, ModelInfo, ModelLimits, ModelRequest, PromptCaching, Redaction,
-    StreamAggregatedResult, SummarizeOptions, SummarizeResult,
+    CountTokensOptions, DeferredToolLoading, Model, ModelCapabilities, ModelInfo, ModelLimits, ModelRequest,
+    PromptCaching, Redaction, StreamAggregatedResult, SummarizeOptions, SummarizeResult,
 };
 pub use plugins::Plugin;
 pub use retry::{
@@ -293,6 +293,6 @@ pub use types::{
     InterruptResponse, InterruptResponseContent, JsonBlock, JsonObject, JsonValue, Message, MessageMetadata,
     OffloadMethod, Offloaded, ReasoningBlock, Role, S3Location, SNAPSHOT_SCHEMA_VERSION, Scope, SearchResultLocation,
     Snapshot, StopReason, SummaryBlock, SystemContentBlock, SystemPrompt, TextBlock, Toggle, ToolChoice,
-    ToolResultBlock, ToolResultContent, ToolResultError, ToolResultStatus, ToolSpec, ToolUse, ToolUseBlock,
-    UnknownBlock, UnknownStopReason, VideoBlock, VideoFormat, VideoSource, WebLocation,
+    ToolReferenceBlock, ToolResultBlock, ToolResultContent, ToolResultError, ToolResultStatus, ToolSpec, ToolUse,
+    ToolUseBlock, UnknownBlock, UnknownStopReason, VideoBlock, VideoFormat, VideoSource, WebLocation,
 };

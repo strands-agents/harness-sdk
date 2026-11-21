@@ -204,10 +204,18 @@ impl OffloadTargetMatcher {
         let Some(name) = tool_names.get(&block.tool_use_id).filter(|name| !name.is_empty()) else {
             return false;
         };
+        self.matches_tool(name)
+    }
+
+    /// Whether a tool list target covers the tool with this name; any other target covers none
+    /// (`matchesTool`).
+    pub(crate) fn matches_tool(&self, tool_name: &str) -> bool {
         if let Some(include) = &self.include {
-            return include.contains(name);
+            return include.contains(tool_name);
         }
-        self.exclude.as_ref().is_some_and(|exclude| !exclude.contains(name))
+        self.exclude
+            .as_ref()
+            .is_some_and(|exclude| !exclude.contains(tool_name))
     }
 }
 

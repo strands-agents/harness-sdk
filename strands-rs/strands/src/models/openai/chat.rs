@@ -310,10 +310,10 @@ fn format_tool_result(result: &ToolResultBlock) -> Result<(JsonValue, Vec<JsonVa
             ToolResultContent::Video(_) => {
                 tracing::warn!("block_type=<videoBlock> | videos not supported in openai tool results, skipping");
             }
-            ToolResultContent::Unknown(_) => {}
+            ToolResultContent::ToolReference(_) | ToolResultContent::Unknown(_) => {}
         }
     }
-    let text = texts.concat();
+    let text = texts.join("\n");
     let tool_use_id = &result.tool_use_id;
     if !images.is_empty() {
         tracing::warn!(

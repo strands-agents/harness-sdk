@@ -27,6 +27,20 @@ pub enum PromptCaching {
     CachePoints,
 }
 
+/// How a model keeps deferred tool schemas out of its context until it loads them
+/// (`DeferredToolLoading`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub enum DeferredToolLoading {
+    /// Every tool goes with its full input schema.
+    Unsupported,
+    /// Deferred tools go with the API's own deferral flag.
+    Native,
+    /// Each deferred tool goes as its name and description with an open schema.
+    Stubs,
+}
+
 /// What the model can do (`ModelCapabilities`). `None` is unknown.
 ///
 /// Fields are added as the SDK learns to read more facts, so build values with the builder or
@@ -65,6 +79,20 @@ pub struct ModelCapabilities {
     /// [`Model::model_info`]: crate::models::Model::model_info
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temporary_messages: Option<bool>,
+    /// How the model and provider defer tool schemas. In the shared data, `Native` is the path on
+    /// the model vendor's own API and `Unsupported` marks a model that cannot fill in a stub's
+    /// parameters, such as one that constrains its tool calls to the stub's open schema. The
+    /// default [`Model::model_info`] reports `Stubs` for every other model; `Native` comes only
+    /// from a provider that sends the deferral flag (`AnthropicModel`), and `Unsupported` from one
+    /// that needs each tool's full input schema (`BedrockModel` with `strict_tools`). A
+    /// `model_info` override that sets `Unsupported` sends every full spec to a model that handles
+    /// stubs badly. On a provider without the flag, an override that sets `Native` sends every full
+    /// spec and only changes the `load_tools` result: `BedrockModel` names each loaded tool and
+    /// other providers leave it out.
+    ///
+    /// [`Model::model_info`]: crate::models::Model::model_info
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferred_tool_loading: Option<DeferredToolLoading>,
 }
 
 impl ModelCapabilities {
@@ -81,6 +109,7 @@ impl ModelCapabilities {
         self.native_structured_output = other.native_structured_output.or(self.native_structured_output);
         self.server_side_summary = other.server_side_summary.or(self.server_side_summary);
         self.temporary_messages = other.temporary_messages.or(self.temporary_messages);
+        self.deferred_tool_loading = other.deferred_tool_loading.or(self.deferred_tool_loading);
     }
 }
 
@@ -519,6 +548,7 @@ mod tests {
                     "nativeStructuredOutput": true,
                     "serverSideSummary": true,
                     "temporaryMessages": true,
+                    "deferredToolLoading": "native",
                 },
                 "limits": {"contextWindow": 1_000_000, "maxOutputTokens": 128_000},
             })
@@ -530,7 +560,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(lookup_model_info("eu.anthropic.claude-sonnet-4-6")).unwrap(),
             json!({
-                "capabilities": {"promptCaching": "cachePoints"},
+                "capabilities": {"promptCaching": "cachePoints", "deferredToolLoading": "native"},
                 "limits": {"contextWindow": 1_000_000, "maxOutputTokens": 128_000},
             })
         );
@@ -548,6 +578,7 @@ mod tests {
                         "nativeStructuredOutput": true,
                         "serverSideSummary": true,
                         "temporaryMessages": true,
+                        "deferredToolLoading": "native",
                     },
                     "limits": {"contextWindow": 1_000_000, "maxOutputTokens": 128_000},
                 }),
@@ -557,7 +588,11 @@ mod tests {
         assert_eq!(
             serde_json::to_value(lookup_model_info("amazon.nova-pro-v1:0")).unwrap(),
             json!({
-                "capabilities": {"forcedToolChoice": true, "nativeStructuredOutput": false},
+                "capabilities": {
+                    "forcedToolChoice": true,
+                    "nativeStructuredOutput": false,
+                    "deferredToolLoading": "unsupported",
+                },
                 "limits": {"contextWindow": 300_000},
             })
         );
@@ -617,6 +652,10 @@ mod tests {
                     "forcedToolChoice" | "nativeStructuredOutput" | "serverSideSummary" | "temporaryMessages" => {
                         assert!(value.is_boolean(), "{id}.{key}");
                     }
+                    "deferredToolLoading" => assert!(
+                        ["unsupported", "native"].contains(&value.as_str().unwrap()),
+                        "{id}.{key}"
+                    ),
                     // Fields the shared file carries for other readers, which `ModelInfo` skips.
                     "defaultEffort" => assert!(
                         ["minimal", "low", "medium", "high", "xhigh", "max"].contains(&value.as_str().unwrap()),

@@ -540,14 +540,15 @@ fn resolve(config: &AnthropicModelConfig) -> AnthropicModelConfig {
     }
 }
 
-/// The model info: the shared data and the base layers, temporary messages back on for the models
-/// the shared data lists, and the user's override on top.
+/// The model info: the shared data and the base layers, temporary messages and native deferred
+/// tools back on for the models the shared data lists, and the user's override on top.
 fn model_info_of(config: &AnthropicModelConfig) -> ModelInfo {
     let resolved = resolve(config).to_base();
-    let temporary_messages = lookup_model_info(model_id_of(config)).capabilities.temporary_messages;
+    let shared = lookup_model_info(model_id_of(config)).capabilities;
     let provider = ModelInfo {
         capabilities: ModelCapabilities {
-            temporary_messages,
+            temporary_messages: shared.temporary_messages,
+            deferred_tool_loading: shared.deferred_tool_loading,
             ..ModelCapabilities::default()
         },
         ..ModelInfo::default()
@@ -741,6 +742,7 @@ impl Inner {
                 request.tool_choice.as_ref()
             },
             dynamic_trailing_blocks: request.dynamic_trailing_blocks.unwrap_or_default(),
+            deferred_tools: Some(&request.deferred_tools),
         };
         let mut body = formatter.format_request(&request.messages, &options)?;
         if let (Some(StructuredOutputMechanism::Native), Some(schema)) =
@@ -954,6 +956,7 @@ impl Inner {
         let format_options = FormatOptions {
             system_prompt: options.system_prompt.as_ref(),
             tool_specs: &options.tool_specs,
+            deferred_tools: Some(&options.deferred_tools),
             ..FormatOptions::default()
         };
         let mut params = formatter.format_request(messages, &format_options)?;

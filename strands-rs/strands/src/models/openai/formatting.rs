@@ -72,6 +72,7 @@ pub(super) fn tool_result_content_type(content: &ToolResultContent) -> &'static 
         ToolResultContent::Image(_) => "imageBlock",
         ToolResultContent::Video(_) => "videoBlock",
         ToolResultContent::Document(_) => "documentBlock",
+        ToolResultContent::ToolReference(_) => "toolReferenceBlock",
         ToolResultContent::Unknown(_) => "unknownBlock",
     }
 }

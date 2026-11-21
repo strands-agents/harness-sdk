@@ -23,7 +23,8 @@ use crate::middleware::InvokeModelStage;
 use crate::plugins::Plugin;
 use crate::state_store::StateStore;
 use crate::tools::{
-    DelegationToken, STRUCTURED_OUTPUT_TOOL_NAME, Tool, ToolContext, ToolOutcome, ToolRegistry, ToolSource, ToolStream,
+    DelegationToken, STRUCTURED_OUTPUT_TOOL_NAME, SdkToolRole, Tool, ToolContext, ToolOutcome, ToolRegistry,
+    ToolSource, ToolStream,
 };
 use crate::types::{
     ContentBlock, JsonValue, Message, Role, ToolResultBlock, ToolResultContent, ToolSpec, ToolUse, ToolUseBlock,
@@ -167,6 +168,7 @@ fn can_execute_in_background(tool: Option<&Arc<dyn Tool>>, manage_tool_name: &st
     tool.is_some_and(|tool| {
         tool.name() != manage_tool_name
             && !FOREGROUND_TOOL_NAMES.contains(&tool.name())
+            && tool.sdk_tool_role(DelegationToken(())) != Some(SdkToolRole::LoadTools)
             && !tool.is_delegation_tool(DelegationToken(()))
     })
 }
@@ -827,5 +829,9 @@ impl Tool for ManageTool {
             Err(error) => crate::tools::create_error_result(error, tool_use_id),
         };
         ToolStream::ready(ToolOutcome::Result(outcome))
+    }
+
+    fn sdk_tool_role(&self, _: DelegationToken) -> Option<SdkToolRole> {
+        Some(SdkToolRole::ManageBackgroundTasks)
     }
 }

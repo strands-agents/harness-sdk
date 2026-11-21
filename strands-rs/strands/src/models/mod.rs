@@ -21,6 +21,7 @@ pub mod streaming;
 pub(crate) mod strict_schema;
 mod summarize;
 pub(crate) mod thinking_binding;
+pub(crate) mod tool_references;
 
 #[cfg(all(feature = "anthropic", feature = "bedrock"))]
 pub use anthropic::AnthropicBedrockConfig;
@@ -35,10 +36,10 @@ pub use model::{
 };
 #[allow(unused_imports, reason = "providers use these crate-internal helpers")]
 pub(crate) use model::{
-    ResolvedCacheSection, is_js_whitespace, latest_user_index, resolve_cache_section, resolve_config_metadata,
-    resolve_max_tokens,
+    ResolvedCacheSection, heuristic_json, is_js_whitespace, latest_user_index, resolve_cache_section,
+    resolve_config_metadata, resolve_max_tokens,
 };
-pub use model_info::{ModelCapabilities, ModelInfo, ModelLimits, PromptCaching};
+pub use model_info::{DeferredToolLoading, ModelCapabilities, ModelInfo, ModelLimits, PromptCaching};
 #[cfg(feature = "mantle")]
 pub use openai::BedrockMantleConfig;
 #[cfg(feature = "openai")]

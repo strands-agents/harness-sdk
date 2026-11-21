@@ -44,7 +44,7 @@ use super::bedrock_cache::bedrock_cache_model_info;
 use super::defaults::{MODEL_DEFAULTS, default_max_tokens_warning_message, default_model_warning_message};
 use super::model::{BaseModelConfig, BoxStream, CacheConfig, CacheTtl, CountTokensOptions, Model, ModelRequest};
 use super::model::{base_model_info, estimate_tokens, resolve_config_metadata, resolve_max_tokens};
-use super::model_info::{ModelInfo, server_side_summary_off};
+use super::model_info::{DeferredToolLoading, ModelCapabilities, ModelInfo, server_side_summary_off};
 use super::native_output::{StructuredOutputMechanism, handle_rejected_mechanism, structured_output_mechanisms};
 use super::streaming::ModelStreamEvent;
 use crate::error::{ContextWindowOverflowError, Error, ModelError, Result};
@@ -231,7 +231,9 @@ pub struct BedrockModelConfig {
     /// `false`.
     pub use_native_token_count: Option<bool>,
     /// Send every tool with `strict: true` and a closed copy of its input schema, constraining the
-    /// model to schema-valid tool calls. Bedrock rejects schemas outside its strict subset. Default
+    /// model to schema-valid tool calls. Bedrock rejects schemas outside its strict subset. Turns
+    /// deferred tool loading off, so `Offload::defer` and the `deferredToolLoading` preset send
+    /// every full spec; a `model_info` override of `deferred_tool_loading` still wins. Default
     /// `false`.
     pub strict_tools: Option<bool>,
 }
@@ -702,10 +704,19 @@ fn bedrock_model_info(config: &BedrockModelConfig) -> ModelInfo {
     base.model_id
         .get_or_insert_with(|| MODEL_DEFAULTS.bedrock.model_id.to_owned());
     let caching = bedrock_cache_model_info(config.model_id_or_default());
+    // Strict mode needs each tool's full input schema, so it can't take a deferred tool as a stub.
+    let strict = (config.strict_tools == Some(true)).then(|| ModelInfo {
+        capabilities: ModelCapabilities {
+            deferred_tool_loading: Some(DeferredToolLoading::Unsupported),
+            ..ModelCapabilities::default()
+        },
+        ..ModelInfo::default()
+    });
     ModelInfo::merge([
         Some(&base_model_info(&base)),
         Some(&server_side_summary_off()),
         caching.as_ref(),
+        strict.as_ref(),
         config.model_info.as_ref(),
     ])
 }

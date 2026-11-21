@@ -60,6 +60,14 @@ fn stale_tool_cleanup_resolves_to_a_drop_strategy() {
 }
 
 #[test]
+fn deferred_tool_loading_resolves_to_a_deferred_tool_loading_strategy() {
+    assert_eq!(
+        names(&resolve_preset(StrategyPresetName::DeferredToolLoading).unwrap()),
+        ["offload:defer"]
+    );
+}
+
+#[test]
 fn passes_raw_strategies_through_unchanged() {
     let raw: Arc<dyn ContextStrategy> = Arc::new(Custom);
     let result = resolve_strategies(&[StrategyEntry::from(raw.clone())]).unwrap();
@@ -99,7 +107,7 @@ fn throws_for_unknown_preset_string() {
     let error = "proactiveSummarisation".parse::<StrategyPresetName>().unwrap_err();
     assert_eq!(
         error.to_string(),
-        "Unknown strategy preset: \"proactiveSummarisation\". Valid presets: proactiveSummarization, largeToolOffloading, overflowProtection, staleToolCleanup"
+        "Unknown strategy preset: \"proactiveSummarisation\". Valid presets: proactiveSummarization, largeToolOffloading, overflowProtection, staleToolCleanup, deferredToolLoading"
     );
     assert_eq!(
         "staleToolCleanup".parse::<StrategyPresetName>().unwrap(),

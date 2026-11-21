@@ -1610,6 +1610,24 @@ async fn a_deferred_after_invocation_does_not_wait_for_background_tasks() {
     assert_eq!(persisted(&agent).unwrap()[0].status, BackgroundTaskStatus::Cancelled);
 }
 
+#[tokio::test]
+async fn lets_a_user_tool_named_load_tools_run_in_the_background() {
+    let load_tools = crate::tools::FunctionTool::builder("load_tools", "Load data.")
+        .input_schema(serde_json::json!({"type": "object", "properties": {}}))
+        .callback(|_, _| async { Ok(serde_json::json!("done")) });
+    let mut agent = Agent::builder()
+        .model(MockModel::new())
+        .tools([load_tools])
+        .background_tasks(BackgroundTasksConfig {
+            always: Some(vec!["load_tools".into()]),
+            ..BackgroundTasksConfig::default()
+        })
+        .printer(false)
+        .build()
+        .unwrap();
+    agent.initialize().await.unwrap();
+}
+
 /// `backgroundTasks: true | false | config` takes the same forms as the other toggles.
 #[tokio::test]
 async fn background_tasks_take_true_false_or_a_config() {

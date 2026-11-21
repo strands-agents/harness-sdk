@@ -73,6 +73,30 @@ pub trait Tool: Send + Sync + 'static {
     fn is_delegation_tool(&self, _: DelegationToken) -> bool {
         false
     }
+
+    /// Whether this is the SDK's `load_tools` or the background-tasks manage tool, rather than a
+    /// user's tool of the same name; deferred tool loading and background tasks read it. Only the
+    /// SDK can name the token, so only its tools answer.
+    #[doc(hidden)]
+    fn sdk_tool_role(&self, _: DelegationToken) -> Option<SdkToolRole> {
+        None
+    }
+}
+
+/// Which SDK tool a [`Tool::sdk_tool_role`] names.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SdkToolRole {
+    /// The `load_tools` tool of deferred tool loading.
+    LoadTools,
+    /// The background-tasks manage tool, under any `manage_tool_name`.
+    ManageBackgroundTasks,
+}
+
+/// Whether `tool` is the SDK tool with this role.
+pub(crate) fn has_sdk_tool_role(tool: Option<&Arc<dyn Tool>>, role: SdkToolRole) -> bool {
+    tool.is_some_and(|tool| tool.sdk_tool_role(DelegationToken(())) == Some(role))
 }
 
 mod sealed {

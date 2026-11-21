@@ -666,6 +666,29 @@ impl JsonBlock {
     }
 }
 
+/// A tool whose input schema a tool result loads (`ToolReferenceBlock`), `{"toolReference": {"name": ...}}`.
+///
+/// `load_tools` returns one for each tool it loads, and any tool can return them too, such as a
+/// custom loader that searches a tool catalog. It reaches the model as a reference only when the
+/// model defers tools natively (`ModelCapabilities::deferred_tool_loading` is
+/// [`DeferredToolLoading::Native`](crate::models::DeferredToolLoading::Native)), the request
+/// defers this tool, and the tool result holds only such references; the provider then sends a
+/// reference its API expands into the tool's definition. Otherwise the model gets the parameters
+/// of the request's tool with this name as text, so a tool that changed is shown as it is now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ToolReferenceBlock {
+    /// Name of the tool the result loads.
+    pub name: String,
+}
+
+impl ToolReferenceBlock {
+    /// Creates a reference to the tool named `name`.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into() }
+    }
+}
+
 /// Content within a tool result (`ToolResultContent`).
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -680,6 +703,8 @@ pub enum ToolResultContent {
     Video(VideoBlock),
     /// A document, `{"document": {...}}`.
     Document(DocumentBlock),
+    /// A tool whose input schema the result loads, `{"toolReference": {"name": ...}}`.
+    ToolReference(ToolReferenceBlock),
     /// Content of a type this version does not recognize, kept unchanged.
     Unknown(UnknownBlock),
 }
@@ -741,6 +766,12 @@ impl From<VideoBlock> for ToolResultContent {
     }
 }
 
+impl From<ToolReferenceBlock> for ToolResultContent {
+    fn from(block: ToolReferenceBlock) -> Self {
+        Self::ToolReference(block)
+    }
+}
+
 impl From<DocumentBlock> for ToolResultContent {
     fn from(block: DocumentBlock) -> Self {
         Self::Document(block)
@@ -755,6 +786,7 @@ impl Serialize for ToolResultContent {
             Self::Image(block) => serialize_wrapped(serializer, "image", block),
             Self::Video(block) => serialize_wrapped(serializer, "video", block),
             Self::Document(block) => serialize_wrapped(serializer, "document", block),
+            Self::ToolReference(block) => serialize_wrapped(serializer, "toolReference", block),
             Self::Unknown(block) => block.data.serialize(serializer),
         }
     }
@@ -768,7 +800,7 @@ impl<'de> Deserialize<'de> for ToolResultContent {
 
 type ContentParser = fn(&JsonValue) -> Result<ToolResultContent, serde_json::Error>;
 
-const TOOL_RESULT_CONTENT_PARSERS: [(&str, ContentParser); 4] = [
+const TOOL_RESULT_CONTENT_PARSERS: [(&str, ContentParser); 5] = [
     ("json", |value| Ok(ToolResultContent::json(value.clone()))),
     ("image", |value| {
         ImageBlock::deserialize(value).map(ToolResultContent::Image)
@@ -778,6 +810,9 @@ const TOOL_RESULT_CONTENT_PARSERS: [(&str, ContentParser); 4] = [
     }),
     ("document", |value| {
         DocumentBlock::deserialize(value).map(ToolResultContent::Document)
+    }),
+    ("toolReference", |value| {
+        ToolReferenceBlock::deserialize(value).map(ToolResultContent::ToolReference)
     }),
 ];
 
@@ -1871,10 +1906,10 @@ mod tests {
         let saved = json!({"toolResult": {
             "toolUseId": "tool-1",
             "status": "success",
-            "content": [{"text": "loaded"}, {"toolReference": {"name": "shell"}}]
+            "content": [{"text": "loaded"}, {"futureBlock": {"name": "shell"}}]
         }});
         let block: ContentBlock = serde_json::from_value(saved.clone()).unwrap();
-        let unknown = UnknownBlock::new(json!({"toolReference": {"name": "shell"}}).as_object().unwrap().clone());
+        let unknown = UnknownBlock::new(json!({"futureBlock": {"name": "shell"}}).as_object().unwrap().clone());
         assert_eq!(
             block,
             ToolResultBlock::success(
@@ -1887,9 +1922,32 @@ mod tests {
     }
 
     #[test]
+    fn tool_reference_block_roundtrips_inside_a_tool_result_through_to_json_and_message_from_json() {
+        let message = Message::new(
+            Role::User,
+            vec![ToolResultBlock::success("tool-1", vec![ToolReferenceBlock::new("shell").into()]).into()],
+        );
+        let data = serde_json::to_value(&message).unwrap();
+        assert_eq!(
+            data["content"][0],
+            json!({"toolResult": {"toolUseId": "tool-1", "status": "success", "content": [{"toolReference": {"name": "shell"}}]}})
+        );
+        let restored: Message = serde_json::from_value(data).unwrap();
+        assert_eq!(restored, message);
+    }
+
+    #[test]
+    fn tool_reference_block_is_converted_by_tool_result_content_from_data() {
+        assert_eq!(
+            ToolResultContent::from_data(json!({"toolReference": {"name": "shell"}})).unwrap(),
+            ToolResultContent::ToolReference(ToolReferenceBlock::new("shell"))
+        );
+    }
+
+    #[test]
     fn content_block_from_data_still_throws_on_unknown_content_inside_a_tool_result() {
         let data =
-            json!({"toolResult": {"toolUseId": "tool-1", "status": "success", "content": [{"toolReference": {}}]}});
+            json!({"toolResult": {"toolUseId": "tool-1", "status": "success", "content": [{"futureBlock": {}}]}});
         assert_eq!(
             ContentBlock::from_data(data).unwrap_err().to_string(),
             "Unknown ToolResultContentData type"
@@ -1899,13 +1957,13 @@ mod tests {
     #[test]
     fn tool_result_block_from_json_keeps_unknown_content() {
         let block: ToolResultBlock = serde_json::from_value(
-            json!({"toolUseId": "tool-1", "status": "success", "content": [{"toolReference": {}}]}),
+            json!({"toolUseId": "tool-1", "status": "success", "content": [{"futureBlock": {}}]}),
         )
         .unwrap();
         assert_eq!(
             block.content,
             vec![ToolResultContent::Unknown(UnknownBlock::new(
-                json!({"toolReference": {}}).as_object().unwrap().clone()
+                json!({"futureBlock": {}}).as_object().unwrap().clone()
             ))]
         );
     }

@@ -96,6 +96,14 @@ async fn handles_string_return_values() {
 }
 
 #[tokio::test]
+async fn keeps_returned_tool_references_as_tool_reference_content() {
+    assert_eq!(
+        content_of(json!([{"toolReference": {"name": "shell"}}])).await,
+        json!([{"toolReference": {"name": "shell"}}])
+    );
+}
+
+#[tokio::test]
 async fn handles_object_return_values() {
     assert_eq!(
         content_of(json!({"key": "value", "count": 42})).await,

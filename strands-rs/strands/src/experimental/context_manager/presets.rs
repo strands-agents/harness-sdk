@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use super::methods::truncate::TruncateConfig;
+use super::strategies::deferred_tool_loading::{DeferConditions, DeferTarget};
 use super::strategies::offload::{ConditionValue, Offload, OffloadConditions, OffloadTarget, SummarizeConfig};
 use super::types::ContextStrategy;
 use crate::error::{Error, Result};
@@ -25,14 +26,23 @@ pub enum StrategyPresetName {
     OverflowProtection,
     /// Drops tool results outside the newest five tool-result messages (`staleToolCleanup`).
     StaleToolCleanup,
+    /// Experimental: from 20 tools, the SDK's own included, defers tools' input schemas until the
+    /// model loads them (`deferredToolLoading`). Claude 4.5 and later defer natively through
+    /// `AnthropicModel`, most other models get each deferred tool as a stub (name and
+    /// description), and models that can't use stubs (`DeferredToolLoading::Unsupported`) get
+    /// every spec. The SDK's own tools and tools without parameters are always sent in full and
+    /// every other tool is deferred, so the model loads even its most used tools first;
+    /// [`Offload::defer`] keeps the ones you name.
+    DeferredToolLoading,
 }
 
 /// Every preset, in their canonical order.
-pub(crate) const STRATEGY_PRESET_NAMES: [StrategyPresetName; 4] = [
+pub(crate) const STRATEGY_PRESET_NAMES: [StrategyPresetName; 5] = [
     StrategyPresetName::ProactiveSummarization,
     StrategyPresetName::LargeToolOffloading,
     StrategyPresetName::OverflowProtection,
     StrategyPresetName::StaleToolCleanup,
+    StrategyPresetName::DeferredToolLoading,
 ];
 
 impl StrategyPresetName {
@@ -44,6 +54,7 @@ impl StrategyPresetName {
             Self::LargeToolOffloading => "largeToolOffloading",
             Self::OverflowProtection => "overflowProtection",
             Self::StaleToolCleanup => "staleToolCleanup",
+            Self::DeferredToolLoading => "deferredToolLoading",
         }
     }
 }
@@ -145,6 +156,12 @@ pub(crate) fn resolve_preset(name: StrategyPresetName) -> Result<Vec<Arc<dyn Con
         }
         StrategyPresetName::StaleToolCleanup => {
             Arc::new(Offload::drop(OffloadTarget::ToolResults)?.when(conditions(None, None, Some(5.into())))?)
+        }
+        StrategyPresetName::DeferredToolLoading => {
+            Arc::new(Offload::defer(DeferTarget::ToolSpecs)?.when(DeferConditions {
+                tool_count: Some(20.into()),
+                ..DeferConditions::default()
+            })?)
         }
     };
     Ok(vec![strategy])

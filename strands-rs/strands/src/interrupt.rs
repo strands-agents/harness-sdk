@@ -723,7 +723,7 @@ mod tests {
                 "t-0": {"toolResult": {
                     "toolUseId": "t-0",
                     "status": "success",
-                    "content": [{"text": "loaded"}, {"toolReference": {"name": "shell"}}]
+                    "content": [{"text": "loaded"}, {"futureBlock": {"name": "shell"}}]
                 }}
             }
         });
@@ -741,7 +741,7 @@ mod tests {
         assert_eq!(
             pending.completed_tool_results["t-0"].content[1],
             ToolResultContent::Unknown(UnknownBlock::new(
-                json!({"toolReference": {"name": "shell"}}).as_object().unwrap().clone()
+                json!({"futureBlock": {"name": "shell"}}).as_object().unwrap().clone()
             ))
         );
         assert_eq!(serde_json::to_value(&state).unwrap(), data);

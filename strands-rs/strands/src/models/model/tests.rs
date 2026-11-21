@@ -1331,11 +1331,12 @@ fn info_override(info: ModelInfo) -> BaseModelConfig {
 }
 
 #[test]
-fn knows_only_that_temporary_messages_are_off_for_a_provider_with_no_model_id_and_unknown_stateful_reads_as_false() {
+fn knows_only_that_temporary_messages_are_off_and_deferred_tools_go_as_stubs_for_a_provider_with_no_model_id_and_unknown_stateful_reads_as_false()
+ {
     let model = MockModel::new();
     assert_eq!(
         serde_json::to_value(model.model_info()).unwrap(),
-        json!({"capabilities": {"temporaryMessages": false}})
+        json!({"capabilities": {"temporaryMessages": false, "deferredToolLoading": "stubs"}})
     );
     assert!(!model.stateful());
 }
@@ -1663,4 +1664,24 @@ fn resolve_cache_section_tries_fallbacks_in_order() {
             ttl: Some("5m".to_owned())
         }
     );
+}
+
+#[test]
+fn reports_deferred_tool_loading_for_a_model_whose_own_api_defers_natively_one_the_shared_data_does_not_list_and_one_it_says_can_not_take_stubs()
+ {
+    for (model_id, expected) in [
+        ("us.anthropic.claude-sonnet-4-6", DeferredToolLoading::Stubs),
+        ("some-gateway-model", DeferredToolLoading::Stubs),
+        ("us.amazon.nova-pro-v1:0", DeferredToolLoading::Unsupported),
+    ] {
+        let config = BaseModelConfig {
+            model_id: Some(model_id.to_owned()),
+            ..BaseModelConfig::default()
+        };
+        assert_eq!(
+            base_model_info(&config).capabilities.deferred_tool_loading,
+            Some(expected),
+            "{model_id}"
+        );
+    }
 }

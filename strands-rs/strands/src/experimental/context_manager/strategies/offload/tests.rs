@@ -20,8 +20,8 @@ use crate::models::streaming::Usage;
 use crate::test_support::record_logs;
 use crate::testing::MockModel;
 use crate::types::{
-    ImageBlock, ImageFormat, ImageSource, InjectedBlock, JsonObject, JsonValue, MessageMetadata, ToolResultContent,
-    ToolResultStatus,
+    ImageBlock, ImageFormat, ImageSource, InjectedBlock, JsonObject, JsonValue, MessageMetadata, ToolReferenceBlock,
+    ToolResultContent, ToolResultStatus, ToolUseBlock,
 };
 
 const LARGE_LEN: usize = 2500 * 4 + 100;
@@ -373,6 +373,92 @@ async fn offload_drop_drops_tool_result_content_from_context_window_entirely() {
     let strategy = drop_strategy(OffloadTarget::ToolResults).when(none()).unwrap();
     assert!(apply(&strategy, &mut agent, 0.5).await);
     assert_eq!(first_result_text(&agent.messages()[0]), "[Dropped: ~25 tokens]");
+}
+
+fn dropped_text(message: &Message, index: usize) -> String {
+    let ToolResultContent::Text(text) = &tool_result(message, index).content[0] else {
+        panic!("not text");
+    };
+    text.text.clone()
+}
+
+fn load_and_call(load: ToolResultBlock, other: ToolResultBlock, other_name: &str) -> Vec<Message> {
+    vec![
+        Message::new(
+            Role::Assistant,
+            vec![
+                ToolUseBlock::new("load_tools", load.tool_use_id.clone(), serde_json::json!({})).into(),
+                ToolUseBlock::new(other_name, other.tool_use_id.clone(), serde_json::json!({})).into(),
+            ],
+        ),
+        Message::new(Role::User, vec![load.into(), other.into()]),
+    ]
+}
+
+#[tokio::test]
+async fn offload_drop_keeps_tool_results_made_of_tool_references_which_hold_the_loaded_schemas() {
+    let reference = ToolResultContent::from(ToolReferenceBlock::new("bash"));
+    let mut agent = agent(load_and_call(
+        ToolResultBlock::success("load-1", vec![reference.clone()]),
+        ToolResultBlock::success("bash-1", vec![ToolResultContent::text("x".repeat(100))]),
+        "bash",
+    ));
+    assert!(
+        apply(
+            &drop_strategy(OffloadTarget::ToolResults).when(none()).unwrap(),
+            &mut agent,
+            0.5
+        )
+        .await
+    );
+    assert_eq!(tool_result(&agent.messages()[1], 0).content, vec![reference]);
+    assert_eq!(dropped_text(&agent.messages()[1], 1), "[Dropped: ~25 tokens]");
+}
+
+#[tokio::test]
+async fn offload_drop_tool_result_errors_keeps_the_answer_to_an_early_call_of_a_deferred_tool_which_holds_its_reference()
+ {
+    let answer = vec![
+        ToolResultContent::text(
+            "Not run: bash was called before its parameters were loaded. They are loaded now; call it again.",
+        ),
+        ToolReferenceBlock::new("bash").into(),
+    ];
+    let mut agent = agent(load_and_call(
+        ToolResultBlock::error("bash-1", answer.clone()),
+        ToolResultBlock::error("read-1", vec![ToolResultContent::text("x".repeat(100))]),
+        "read",
+    ));
+    assert!(
+        apply(
+            &drop_strategy(OffloadTarget::ToolResultErrors).when(none()).unwrap(),
+            &mut agent,
+            0.5
+        )
+        .await
+    );
+    assert_eq!(tool_result(&agent.messages()[1], 0).content, answer);
+    assert_eq!(dropped_text(&agent.messages()[1], 1), "[Dropped: ~25 tokens]");
+}
+
+#[tokio::test]
+async fn offload_drop_drops_a_load_tools_result_that_holds_text_like_any_other_tool_result() {
+    let mut agent = agent(vec![
+        Message::new(
+            Role::Assistant,
+            vec![ToolUseBlock::new("load_tools", "load-1", serde_json::json!({})).into()],
+        ),
+        tool_result_message(&"x".repeat(100), "load-1"),
+    ]);
+    assert!(
+        apply(
+            &drop_strategy(OffloadTarget::ToolResults).when(none()).unwrap(),
+            &mut agent,
+            0.5
+        )
+        .await
+    );
+    assert_eq!(first_result_text(&agent.messages()[1]), "[Dropped: ~25 tokens]");
 }
 
 #[tokio::test]
@@ -1132,7 +1218,7 @@ fn inits_with_a_window_and_utilization() {
     for (window, value) in cases {
         let strategy = drop_strategy(OffloadTarget::All)
             .when(OffloadConditions {
-                context_utilization: Some(value.clone()),
+                context_utilization: Some(value),
                 ..OffloadConditions::default()
             })
             .unwrap();

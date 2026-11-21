@@ -669,3 +669,85 @@ async fn leaves_messages_that_fit_the_window_in_the_emergency_truncate_gate() {
     assert_eq!(agent.messages().len(), 4);
     assert_eq!(model.count_calls().len(), 1);
 }
+
+mod deferred_tool_loading {
+    use super::*;
+    use crate::Agent;
+    use crate::experimental::context_manager::{DeferTarget, StrategyEntry, StrategyPresetName};
+    use crate::testing::MockModel;
+    use crate::tools::{LOAD_TOOLS_TOOL_NAME, ToolSource};
+
+    fn defer(target: DeferTarget) -> StrategyEntry {
+        Offload::defer(target).unwrap().into()
+    }
+
+    fn config(strategies: Vec<StrategyEntry>) -> ContextManagerConfig {
+        ContextManagerConfig {
+            strategies: Some(strategies),
+            ..ContextManagerConfig::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn registers_the_loader_of_an_offload_defer_strategy_as_a_context_manager_tool() {
+        let mut agent = Agent::builder()
+            .model(MockModel::new())
+            .context_manager(ContextManagerStrategy::Config(config(vec![defer(
+                DeferTarget::ToolSpecs,
+            )])))
+            .printer(false)
+            .build()
+            .unwrap();
+
+        agent.initialize().await.unwrap();
+
+        assert!(agent.tool_registry().get(RETRIEVAL_TOOL_NAME).is_some());
+        assert!(agent.tool_registry().get(LOAD_TOOLS_TOOL_NAME).is_some());
+        let tools: Vec<String> = agent
+            .context_manager()
+            .unwrap()
+            .get_tools()
+            .into_iter()
+            .flat_map(ToolSource::into_tools)
+            .map(|tool| tool.name().to_owned())
+            .collect();
+        assert_eq!(tools, [RETRIEVAL_TOOL_NAME, LOAD_TOOLS_TOOL_NAME]);
+    }
+
+    #[tokio::test]
+    async fn rejects_an_agent_tool_named_load_tools_when_it_defers_tools() {
+        let load_tools = crate::tools::FunctionTool::builder("load_tools", "Load data.")
+            .input_schema(serde_json::json!({"type": "object", "properties": {}}))
+            .callback(|_, _| async { Ok(serde_json::json!("done")) });
+        let mut agent = Agent::builder()
+            .model(MockModel::new())
+            .tools([load_tools])
+            .context_manager(ContextManagerStrategy::Config(config(vec![
+                StrategyPresetName::DeferredToolLoading.into(),
+            ])))
+            .printer(false)
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            agent.initialize().await.unwrap_err().to_string(),
+            "contextManager adds a tool named 'load_tools' for Offload.defer and the 'deferredToolLoading' preset, and the agent already has one; rename the agent's tool"
+        );
+    }
+
+    #[test]
+    fn rejects_the_preset_and_offload_defer_or_two_offload_defer_strategies_which_would_share_one_tools_list() {
+        for strategies in [
+            vec![
+                StrategyPresetName::DeferredToolLoading.into(),
+                defer(DeferTarget::tools(["!shell"])),
+            ],
+            vec![defer(DeferTarget::ToolSpecs), defer(DeferTarget::tools(["shell"]))],
+        ] {
+            assert_eq!(
+                ContextManager::new(config(strategies)).unwrap_err().to_string(),
+                "contextManager takes one Offload.defer strategy, and the 'deferredToolLoading' preset is one; to change what the preset defers or when, use Offload.defer(target).when(conditions) in its place"
+            );
+        }
+    }
+}

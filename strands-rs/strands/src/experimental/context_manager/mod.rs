@@ -34,6 +34,7 @@ pub use context_manager::{ContextManager, ContextManagerStrategy};
 pub use methods::truncate::{PreviewMode, TruncateConfig, TruncateConfigBuilder};
 pub use presets::{StrategyEntry, StrategyPresetName};
 pub use stash::Stash;
+pub use strategies::deferred_tool_loading::{DeferConditions, DeferConditionsBuilder, DeferStrategy, DeferTarget};
 pub use strategies::offload::{
     ConditionValue, DropStrategy, EmergencyTruncateStrategy, Offload, OffloadConditions, OffloadConditionsBuilder,
     OffloadTarget, SummarizeConfig, SummarizeConfigBuilder, SummarizeStrategy, TruncateStrategy,

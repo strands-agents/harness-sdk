@@ -88,6 +88,7 @@ fn context(agent: &LocalAgent, state: &InvocationState) -> InvokeModelContext {
         projected_input_tokens: None,
         dynamic_trailing_blocks: None,
         structured_output_schema: None,
+        deferred_tools: std::collections::HashSet::new(),
         invocation_context: None,
     }
 }

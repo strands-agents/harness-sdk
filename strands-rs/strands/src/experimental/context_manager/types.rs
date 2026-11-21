@@ -7,6 +7,7 @@ use async_trait::async_trait;
 
 use super::presets::StrategyEntry;
 use super::stash::Stash;
+use super::strategies::deferred_tool_loading::DeferStrategy;
 use crate::agent::{InvocationContext, LocalAgent};
 use crate::error::Result;
 use crate::storage::Storage;
@@ -60,6 +61,13 @@ pub trait ContextStrategy: Send + Sync + 'static {
     ///
     /// A failed reduction; the context manager logs it and continues with the next strategy.
     async fn apply(&self, context: &mut ContextState<'_>) -> Result<bool>;
+
+    /// The strategy as deferred tool loading, which the context manager gives its `load_tools`
+    /// tool; only [`DeferStrategy`] answers.
+    #[doc(hidden)]
+    fn as_defer_strategy(&self) -> Option<&DeferStrategy> {
+        None
+    }
 }
 
 /// What a strategy sees when it runs (`ContextState`).

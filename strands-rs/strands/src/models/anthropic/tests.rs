@@ -4,6 +4,7 @@
 //! Anthropic client; `http` exercises the real client against a local server.
 
 mod caching;
+mod deferred_tools;
 mod formatting;
 mod http;
 mod server_tools;

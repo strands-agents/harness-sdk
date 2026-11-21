@@ -13,6 +13,7 @@ use super::methods::truncate::TruncateConfig;
 use super::presets::resolve_strategies;
 use super::retrieval_tool::{RETRIEVAL_TOOL_NAME, create_retrieval_tool};
 use super::stash::Stash;
+use super::strategies::deferred_tool_loading::DeferStrategy;
 use super::strategies::offload::{
     EmergencyTruncateStrategy, Offload, OffloadConditions, OffloadTarget, SummarizeConfig,
 };
@@ -21,11 +22,11 @@ use crate::agent::{InvocationContext, LocalAgent};
 use crate::error::{Error, Result};
 use crate::hooks::{AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent};
 use crate::models::Model;
-use crate::models::model_proxy::count_request_tokens;
+use crate::models::model_proxy::{CallTools, count_request_tokens};
 use crate::plugins::Plugin;
 use crate::storage::{InMemoryStorage, Storage};
-use crate::tools::ToolSource;
-use crate::types::{ContentBlock, Message, Toggle};
+use crate::tools::{LOAD_TOOLS_TOOL_NAME, ToolRegistry, ToolSource};
+use crate::types::{ContentBlock, Message, Toggle, ToolSpec};
 
 const TRUNCATE_PREVIEW_TOKENS: f64 = 750.0;
 const MAX_OVERFLOW_RETRIES: u32 = 3;
@@ -267,6 +268,7 @@ impl ContextManager {
             Some(entries) => resolve_strategies(entries)?,
             None => auto_strategies()?,
         };
+        check_one_tool_loading_strategy(&strategies)?;
         strategies.push(Arc::new(EmergencyTruncateStrategy::new()));
         let stash = config.stash.unwrap_or_else(|| Toggle::On(StashConfig::default()));
         let (stash_storage, enable_retrieval_tool) = match stash.into_option() {
@@ -308,6 +310,30 @@ impl ContextManager {
             Some(ContextManagerStrategy::Agentic) => Some(Self::agentic()?),
             Some(ContextManagerStrategy::Config(config)) => Some(Self::new(config)?),
         })
+    }
+
+    /// The tools an agent's model call with these tool specs on this model sends, so a count or a
+    /// summary replay of the request carries the same tools (`callTools`): the specs and the names
+    /// of the ones it defers, or every spec without an `Offload.defer` strategy.
+    pub(crate) fn call_tools(
+        &self,
+        _agent_id: &str,
+        registry: &ToolRegistry,
+        tool_specs: &[ToolSpec],
+        model: &Arc<dyn Model>,
+    ) -> CallTools {
+        match self.tool_loading_strategy() {
+            Some(strategy) => strategy.call_tools(registry, tool_specs, model),
+            None => CallTools {
+                tool_specs: tool_specs.to_vec(),
+                ..CallTools::default()
+            },
+        }
+    }
+
+    /// The `Offload.defer` strategy among the strategies, if there is one.
+    fn tool_loading_strategy(&self) -> Option<&DeferStrategy> {
+        self.strategies.iter().find_map(|strategy| strategy.as_defer_strategy())
     }
 
     /// A manager whose stash is `stash`, for session tests that stand in for an attached one.
@@ -403,16 +429,22 @@ impl Plugin for ContextManager {
     }
 
     fn get_tools(&self) -> Vec<ToolSource> {
-        if !self.enable_retrieval_tool {
-            return Vec::new();
-        }
-        let Some(stash) = self.stash() else {
-            return Vec::new();
-        };
-        vec![ToolSource::from(create_retrieval_tool(stash))]
+        let retrieval = self
+            .stash()
+            .filter(|_| self.enable_retrieval_tool)
+            .map(|stash| ToolSource::from(create_retrieval_tool(stash)));
+        let loader = self
+            .tool_loading_strategy()
+            .map(|strategy| ToolSource::from(strategy.load_tools()));
+        retrieval.into_iter().chain(loader).collect()
     }
 
     async fn init_agent(&self, agent: &mut LocalAgent) -> Result<()> {
+        if self.tool_loading_strategy().is_some() && agent.tool_registry().get(LOAD_TOOLS_TOOL_NAME).is_some() {
+            return Err(Error::other(format!(
+                "contextManager adds a tool named '{LOAD_TOOLS_TOOL_NAME}' for Offload.defer and the 'deferredToolLoading' preset, and the agent already has one; rename the agent's tool"
+            )));
+        }
         let agent_stash = self.resolve_stash(agent)?;
         agent.set_context_stash(agent_stash.clone());
         *self.lock_last_stash() = agent_stash.clone();
@@ -471,6 +503,20 @@ impl Plugin for ContextManager {
         });
         Ok(())
     }
+}
+
+/// Two `Offload.defer` strategies can't share an agent's tools list, which holds one `load_tools`.
+fn check_one_tool_loading_strategy(strategies: &[Arc<dyn ContextStrategy>]) -> Result<()> {
+    let count = strategies
+        .iter()
+        .filter(|strategy| strategy.as_defer_strategy().is_some())
+        .count();
+    if count < 2 {
+        return Ok(());
+    }
+    Err(Error::other(
+        "contextManager takes one Offload.defer strategy, and the 'deferredToolLoading' preset is one; to change what the preset defers or when, use Offload.defer(target).when(conditions) in its place",
+    ))
 }
 
 impl crate::Agent {

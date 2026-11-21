@@ -2,7 +2,7 @@
 //! preview or summarizing it.
 
 mod base;
-mod conditions;
+pub(crate) mod conditions;
 mod drop;
 mod summarize;
 pub(crate) mod target;
@@ -15,6 +15,7 @@ pub use summarize::{SummarizeConfig, SummarizeConfigBuilder, SummarizeStrategy};
 pub use target::OffloadTarget;
 pub use truncate::TruncateStrategy;
 
+use super::deferred_tool_loading::{DeferConditions, DeferStrategy, DeferTarget};
 use crate::error::Result;
 use crate::experimental::context_manager::methods::truncate::TruncateConfig;
 
@@ -85,5 +86,19 @@ impl Offload {
     /// A tool list target that is empty or excludes every tool it includes.
     pub fn summarize(target: OffloadTarget, config: SummarizeConfig) -> Result<SummarizeStrategy> {
         SummarizeStrategy::new(target, config, None)
+    }
+
+    /// Keeps tools' input schemas out of the context until the model loads them with
+    /// `load_tools` (`Offload.defer`). The model still sees each deferred tool's name and
+    /// description. Without [`when`](DeferStrategy::when) conditions, defers at any tool count;
+    /// either of its conditions is enough. One per context manager, the `deferredToolLoading`
+    /// preset included.
+    ///
+    /// # Errors
+    ///
+    /// A [`DeferTarget::Tools`] list that is empty, lists `toolSpecs`, or excludes every tool it
+    /// includes.
+    pub fn defer(target: DeferTarget) -> Result<DeferStrategy> {
+        DeferStrategy::new(target, DeferConditions::default())
     }
 }

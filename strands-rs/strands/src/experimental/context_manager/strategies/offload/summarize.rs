@@ -25,6 +25,7 @@ use crate::experimental::context_manager::message_trimming::{
 use crate::experimental::context_manager::placeholder::{REMOVED_MESSAGES, format_offloaded, format_summarized};
 use crate::experimental::context_manager::stash::Stash;
 use crate::experimental::context_manager::types::{ContextState, ContextStrategy};
+use crate::models::model_proxy::CallTools;
 use crate::models::{Model, SummarizeOptions, SummarizeResult, is_js_whitespace};
 use crate::types::{ContentBlock, Message, OffloadMethod, Role, SummaryBlock, TextBlock, ToolResultContent};
 
@@ -266,7 +267,9 @@ impl SummarizeBehavior {
             ..SummarizeOptions::default()
         };
         if replay {
-            options.tool_specs = agent.tool_registry().tool_specs();
+            let tools = replayed_tools(agent);
+            options.tool_specs = tools.tool_specs;
+            options.deferred_tools = tools.deferred_tools;
             options.system_prompt = agent.system_prompt().cloned();
         }
         options
@@ -604,6 +607,22 @@ impl ContextStrategy for SummarizeStrategy {
     }
 }
 
+/// The tools a replay sends: those of the agent's latest model call, since the replay shares that
+/// call's prompt cache only with the same tools. Before the first call, the ones it would send with
+/// the registry's tools.
+fn replayed_tools(agent: &LocalAgent) -> CallTools {
+    if let Some(recorded) = agent.latest_call_tools() {
+        return recorded;
+    }
+    let tool_specs = agent.tool_registry().tool_specs();
+    match agent.context_manager() {
+        Some(manager) => manager.call_tools(agent.id(), agent.tool_registry(), &tool_specs, agent.model()),
+        None => CallTools {
+            tool_specs,
+            ..CallTools::default()
+        },
+    }
+}
 #[cfg(test)]
 #[path = "summarize_tests.rs"]
 mod tests;
