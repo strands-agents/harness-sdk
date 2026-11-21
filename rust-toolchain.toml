@@ -1,0 +1,8 @@
+# The one toolchain CI and local checks build, test, lint and document with (the MSRV check overrides it with
+# `cargo +1.96.0`). Pinned so a new stable release (new lints, formatting rules, or compiler messages in the
+# `#[tool]` compile-fail snapshots) doesn't fail unrelated PRs. Bump deliberately and re-record the snapshots with
+# `TRYBUILD=overwrite cargo test -p strands --all-features --test tool_macro_ui`.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

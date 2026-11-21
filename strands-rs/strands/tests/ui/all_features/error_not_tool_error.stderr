@@ -12,5 +12,7 @@ error[E0277]: `#[tool]` cannot turn `u32` into a tool error
 note: required by a bound in `strands::__private::BoxErrorKind::into_tool_error`
  --> src/__private.rs
   |
+  | impl BoxErrorKind {
+  |     /// The error, boxed and wrapped.
   |     pub fn into_tool_error<E: IntoBoxError>(self, error: E) -> ToolError {
   |                               ^^^^^^^^^^^^ required by this bound in `BoxErrorKind::into_tool_error`

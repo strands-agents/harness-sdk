@@ -42,8 +42,8 @@ Code behind a feature carries `#[cfg(feature = "...")]` and, for public items, s
 Run from the repo root before every commit:
 
 ```bash
-cargo +1.100.0 fmt --check                      # lint toolchain, pinned in CI
-cargo +1.100.0 clippy --workspace --all-targets --all-features -- -D warnings
+cargo fmt --check                              # the toolchain in rust-toolchain.toml
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo build --workspace --examples --all-features
 cargo test --workspace --all-features          # includes the doctests and the README's code blocks
 cargo test --workspace --no-default-features
