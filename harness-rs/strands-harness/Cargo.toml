@@ -14,7 +14,7 @@ authors.workspace = true
 
 [features]
 default = ["bedrock", "anthropic", "openai", "mantle", "mcp", "cedar", "monty-pool"]
-bedrock = ["strands/bedrock"]
+bedrock = ["strands/bedrock", "strands/anthropic"]
 anthropic = ["strands/anthropic"]
 openai = ["strands/openai"]
 mantle = ["openai", "strands/mantle"]

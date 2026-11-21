@@ -241,11 +241,12 @@ pub struct HarnessAgentOptions {
     #[builder(field)]
     pub plugins: Vec<Arc<dyn Plugin>>,
     /// A model or router, a `"provider/name"` string (such as `"anthropic/claude-fable-5"`), a
-    /// bare Bedrock model id, or `None` for the harness default (Bedrock Opus 5).
+    /// bare Bedrock model id, or `None` for the harness default (Bedrock Opus 5.5).
     #[builder(into)]
     pub model: Option<ModelSource>,
     /// Reasoning effort applied to the resolved model, mapped to each provider's request fields:
-    /// [`Effort::Auto`] (the default) uses the provider's recommended level, [`Effort::Off`]
+    /// [`Effort::Auto`] (the default) uses the model vendor's default level (what Claude Code,
+    /// Codex or Gemini CLI run it at; the provider's `high` otherwise), [`Effort::Off`]
     /// turns reasoning off, and a named level sets it; a level the provider does not support
     /// fails. Ignored for a model instance or router.
     #[builder(default)]

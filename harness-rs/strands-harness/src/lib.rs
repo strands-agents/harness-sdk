@@ -66,6 +66,7 @@ mod factory;
 mod interventions;
 mod logging;
 mod memory;
+mod model_info;
 mod models;
 pub mod plugins;
 mod prompt;

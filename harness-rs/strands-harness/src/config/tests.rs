@@ -76,7 +76,7 @@ fn serializes_the_defaults_with_the_ts_keys_in_order() {
             "name": "Strands harness",
             "description": "",
             "instructions": "",
-            "model": "bedrock/global.anthropic.claude-opus-5",
+            "model": "bedrock/global.anthropic.claude-opus-5-5",
             "modelModule": null,
             "effort": "auto",
             "tools": [],
@@ -109,7 +109,7 @@ fn maps_defaults_through_the_same_contract_create_harness_consumes() {
     let options = harness_agent_options_from_config(&DEFAULT_HARNESS_AGENT_CONFIG, None).unwrap();
     assert_eq!(options.name.as_deref(), Some("Strands harness"));
     assert!(
-        matches!(&options.model, Some(strands::ModelSource::Id(model)) if model == "bedrock/global.anthropic.claude-opus-5")
+        matches!(&options.model, Some(strands::ModelSource::Id(model)) if model == "bedrock/global.anthropic.claude-opus-5-5")
     );
     assert_eq!(options.effort, Effort::Auto);
     assert!(matches!(

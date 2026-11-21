@@ -250,7 +250,7 @@ macro_rules! live_provider {
     };
 }
 
-live_provider!(bedrock, "bedrock", "bedrock/global.anthropic.claude-opus-5");
+live_provider!(bedrock, "bedrock", "bedrock/global.anthropic.claude-opus-5-5");
 live_provider!(anthropic, "anthropic", "anthropic/claude-opus-4-8");
 live_provider!(openai, "openai", "openai/gpt-5.6-sol");
 live_provider!(bedrock_mantle, "mantle", "bedrock-mantle/openai.gpt-5.6-luna");
