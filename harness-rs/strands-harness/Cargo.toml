@@ -14,10 +14,10 @@ authors.workspace = true
 
 [features]
 default = ["bedrock", "anthropic", "openai", "mantle", "mcp", "cedar", "monty-pool"]
-bedrock = ["strands/bedrock", "strands/anthropic"]
+bedrock = ["strands/bedrock", "strands/anthropic", "dep:aws-config", "dep:aws-credential-types", "dep:aws-sdk-bedrockagentcore"]
 anthropic = ["strands/anthropic"]
 openai = ["strands/openai"]
-mantle = ["openai", "strands/mantle"]
+mantle = ["openai", "strands/mantle", "dep:aws-config", "dep:aws-credential-types", "dep:aws-sdk-bedrockagentcore"]
 mcp = ["strands/mcp"]
 otel = ["strands/otel"]
 cedar = ["strands/cedar"]
@@ -27,6 +27,9 @@ monty-pool = ["dep:monty-pool"]
 [dependencies]
 strands.workspace = true
 
+aws-config = { workspace = true, optional = true }
+aws-credential-types = { workspace = true, optional = true }
+aws-sdk-bedrockagentcore = { workspace = true, optional = true }
 async-stream.workspace = true
 async-trait.workspace = true
 base64.workspace = true
@@ -57,6 +60,7 @@ hyper = { workspace = true, features = ["server", "http1"] }
 hyper-util = { workspace = true, features = ["tokio", "service", "server"] }
 http-body-util.workspace = true
 bytes.workspace = true
+aws-smithy-runtime-api.workspace = true
 
 [lints]
 workspace = true

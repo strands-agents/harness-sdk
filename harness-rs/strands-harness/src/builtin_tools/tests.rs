@@ -1,6 +1,8 @@
 //! The typed options make untyped input (a non-boolean `*`, a config object on `write`, unknown
 //! names in a mapping) a compile error; its JSON form is checked by the portable config tests.
 
+use strands::models::routing::{ModelRouter, ModelRouterOptions, RoutingCandidate};
+
 use super::*;
 use crate::test_support::record_logs;
 
@@ -157,9 +159,23 @@ mod web_search_mode {
     use super::*;
 
     #[test]
-    fn logs_info_not_a_warning_when_default_web_search_hits_the_default_bedrock_model() {
+    fn serves_web_search_on_bedrock_from_the_agentcore_tool() {
+        assert_eq!(
+            web_search_mode(true.into(), false, None).unwrap(),
+            Some(WebSearchMode::AgentCore)
+        );
+        let nova: ModelSource = "bedrock/us.amazon.nova-2-lite-v1:0".into();
+        assert_eq!(
+            web_search_mode(true.into(), true, Some(&nova)).unwrap(),
+            Some(WebSearchMode::AgentCore)
+        );
+    }
+
+    #[test]
+    fn logs_info_not_a_warning_when_default_web_search_hits_a_model_without_search() {
         let (logs, _guard) = record_logs();
-        assert_eq!(web_search_mode(true.into(), false, None).unwrap(), None);
+        let model: ModelSource = "ollama/llama3".into();
+        assert_eq!(web_search_mode(true.into(), false, Some(&model)).unwrap(), None);
         let info = logs.lines("INFO");
         assert!(
             info.iter()
@@ -170,10 +186,11 @@ mod web_search_mode {
 
     #[test]
     fn throws_when_web_search_is_explicitly_selected_on_an_unsupported_provider() {
-        let error = web_search_mode(true.into(), true, None).unwrap_err();
+        let model: ModelSource = "ollama/llama3".into();
+        let error = web_search_mode(true.into(), true, Some(&model)).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "Model bedrock/global.anthropic.claude-opus-5-5 has no built-in web search. Pass builtinTools: { web_search: 'exa' } to search through Exa (a third party), or remove 'web_search' from builtinTools. See https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search"
+            "Model ollama/llama3 has no built-in web search. Pass builtinTools: { web_search: 'exa' } to search through Exa (a third party), or remove 'web_search' from builtinTools. See https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search"
         );
     }
 
@@ -213,6 +230,18 @@ mod web_search_mode {
             error
                 .to_string()
                 .starts_with("A pre-built Model instance has no built-in web search.")
+        );
+    }
+
+    #[test]
+    fn names_a_pre_built_model_router() {
+        let model: Arc<dyn strands::models::Model> = Arc::new(strands::testing::MockModel::new());
+        let router = ModelRouter::new([RoutingCandidate::from(model)], ModelRouterOptions::default()).unwrap();
+        let error = web_search_mode(true.into(), true, Some(&ModelSource::Router(router))).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with("A pre-built ModelRouter has no built-in web search.")
         );
     }
 }

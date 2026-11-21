@@ -254,3 +254,66 @@ live_provider!(bedrock, "bedrock", "bedrock/global.anthropic.claude-opus-5-5");
 live_provider!(anthropic, "anthropic", "anthropic/claude-opus-4-8");
 live_provider!(openai, "openai", "openai/gpt-5.6-sol");
 live_provider!(bedrock_mantle, "mantle", "bedrock-mantle/openai.gpt-5.6-luna");
+
+/// The text of every tool result in `agent`'s history.
+fn tool_result_texts(agent: &strands::Agent) -> Vec<String> {
+    agent
+        .messages()
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .filter_map(|block| match block {
+            strands::types::ContentBlock::ToolResult(result) => Some(result),
+            _ => None,
+        })
+        .flat_map(|result| result.content.iter())
+        .filter_map(|content| match content {
+            strands::types::ToolResultContent::Text(text) => Some(text.text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[cfg(feature = "bedrock")]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs AWS credentials with bedrock-agentcore:InvokeWebSearch"]
+async fn live_agentcore_backend_returns_parsed_results() {
+    use strands_harness::tools::web_search::{AgentCoreBackend, SearchBackend};
+
+    if !has_aws() {
+        eprintln!("skipping: no AWS credentials");
+        return;
+    }
+    let results = AgentCoreBackend::default()
+        .search("Strands Agents SDK", 3)
+        .await
+        .unwrap();
+    assert!(!results.is_empty());
+    assert!(results.len() <= 3);
+    assert!(
+        results.iter().all(|result| result.url.starts_with("http")),
+        "{results:?}"
+    );
+}
+
+#[cfg(feature = "bedrock")]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live: needs AWS credentials with bedrock-agentcore:InvokeWebSearch"]
+async fn live_serves_web_search_on_bedrock_from_agentcore() {
+    let model = "bedrock/global.anthropic.claude-opus-5-5";
+    if !credentials(model) {
+        return;
+    }
+    let options = HarnessAgentOptions {
+        builtin_tools: Some([BuiltinToolName::WebSearch].into()),
+        ..options(model)
+    };
+    let mut agent = create_harness(options).await.unwrap();
+    agent
+        .invoke("Use the web_search tool to find the Strands Agents SDK documentation site.")
+        .await
+        .unwrap();
+    // "Sources:" only comes from real InvokeWebSearch results; a failure returns "web_search failed: ...".
+    let texts = tool_result_texts(&agent);
+    assert!(texts.iter().any(|text| text.starts_with("Sources:")), "{texts:?}");
+    agent.shutdown().await.unwrap();
+}

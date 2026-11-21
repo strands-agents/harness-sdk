@@ -15,7 +15,7 @@ use crate::factory::{
     BuiltinToolFactory, ChildBuilder, ChildSpec, ReadToolOptions, SubagentToolOptions, WebFetchToolOptions,
 };
 use crate::memory::{ResolveMemoryOptions, resolve_memory};
-use crate::models::{resolve_web_fetch_model, supports_media, supports_web_search};
+use crate::models::{WebSearchKind, resolve_web_fetch_model, supports_media, web_search_kind};
 use crate::types::{
     BuiltinToolsConfig, BuiltinToolsOption, MemoryConfig, ProgrammaticToolCallerConfig, ReadConfig, Setting,
     ShellConfig, SubagentConfig, WebFetchConfig, WebSearchSetting,
@@ -217,12 +217,15 @@ pub(crate) fn web_search_explicit(value: Option<&BuiltinToolsOption>) -> bool {
 pub(crate) enum WebSearchMode {
     /// A model flag on a provider with native search.
     Native,
+    /// The AgentCore tool, on Bedrock.
+    AgentCore,
     /// The third-party Exa tool.
     Exa,
 }
 
-/// How `web_search` is served for `model`: Exa whenever opted into, native
-/// where the model has it, otherwise off (an error when it was requested explicitly).
+/// How `web_search` is served for `model`: Exa whenever opted into, native where the model has
+/// it, AgentCore on other Bedrock models, otherwise off (an error when it was requested
+/// explicitly).
 pub(crate) fn web_search_mode(
     setting: WebSearchSetting,
     explicit: bool,
@@ -238,12 +241,15 @@ pub(crate) fn web_search_mode(
         }
         _ => {}
     }
-    if supports_web_search(model) {
-        return Ok(Some(WebSearchMode::Native));
+    match web_search_kind(model) {
+        Some(WebSearchKind::Native) => return Ok(Some(WebSearchMode::Native)),
+        Some(WebSearchKind::AgentCore) => return Ok(Some(WebSearchMode::AgentCore)),
+        None => {}
     }
     let target = match model {
         None => format!("Model {DEFAULT_MODEL}"),
         Some(ModelSource::Id(spec)) => format!("Model {spec}"),
+        Some(ModelSource::Router(_)) => "A pre-built ModelRouter".to_owned(),
         Some(_) => "A pre-built Model instance".to_owned(),
     };
     if explicit {
@@ -257,11 +263,11 @@ pub(crate) fn web_search_mode(
     Ok(None)
 }
 
-/// The tools of the enabled built-ins, in canonical order. `web_search` is built only for Exa;
-/// native search is a model flag.
+/// The tools of the enabled built-ins, in canonical order. `web_search` is built for the Exa and
+/// AgentCore modes; native search is a model flag.
 pub(crate) fn build_builtin_tools(
     resolved: &ResolvedBuiltinTools,
-    exa: bool,
+    web_search: Option<WebSearchMode>,
     parent: &Arc<ParentConfig>,
     env: &Env,
     factory: &BuiltinToolFactory,
@@ -287,8 +293,10 @@ pub(crate) fn build_builtin_tools(
                     transport: config.transport,
                 })?
             }
-            BuiltinToolName::WebSearch if exa => (factory.web_search)()?,
-            BuiltinToolName::WebSearch => continue,
+            BuiltinToolName::WebSearch => match web_search {
+                Some(mode @ (WebSearchMode::Exa | WebSearchMode::AgentCore)) => (factory.web_search)(mode, env)?,
+                _ => continue,
+            },
             BuiltinToolName::ProgrammaticToolCaller => {
                 (factory.programmatic_tool_caller)(&resolved.programmatic_tool_caller_config().unwrap_or_default())?
             }

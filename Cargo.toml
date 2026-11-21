@@ -41,6 +41,7 @@ thiserror = "2"
 
 aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio", "credentials-process", "sso"] }
 aws-credential-types = "1"
+aws-sdk-bedrockagentcore = { version = "1", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
 aws-sdk-bedrockruntime = { version = "1", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
 aws-sigv4 = "1"
 aws-smithy-runtime-api = "1"

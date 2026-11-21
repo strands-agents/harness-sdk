@@ -434,9 +434,62 @@ async fn does_not_register_web_search_as_a_tool() {
 
 #[cfg(feature = "bedrock")]
 #[tokio::test]
-async fn logs_info_not_a_warning_and_builds_when_default_web_search_hits_the_default_bedrock_model() {
-    let (logs, _guard) = record_logs();
+async fn serves_web_search_on_bedrock_from_the_agentcore_tool_by_default_and_when_named() {
     let assembly = assembled(quiet()).await;
+    assert!(tool_names(&assembly.config).contains(&"web_search".to_owned()));
+    let named = HarnessAgentOptions {
+        model: Some("bedrock/us.amazon.nova-2-lite-v1:0".into()),
+        builtin_tools: Some([BuiltinToolName::Read, BuiltinToolName::WebSearch].into()),
+        ..quiet()
+    };
+    assert!(tool_names(&assembled(named).await.config).contains(&"web_search".to_owned()));
+}
+
+#[tokio::test]
+async fn names_a_model_router_when_it_cannot_serve_web_search() {
+    let (logs, _guard) = record_logs();
+    let model: Arc<dyn Model> = Arc::new(MockModel::new());
+    let router = ModelRouter::new([RoutingCandidate::from(model)], ModelRouterOptions::default()).unwrap();
+    let options = HarnessAgentOptions {
+        model: Some(ModelSource::Router(router)),
+        ..quiet()
+    };
+    assert!(!tool_names(&assembled(options).await.config).contains(&"web_search".to_owned()));
+    assert!(
+        logs.lines("INFO")
+            .iter()
+            .any(|line| line.contains("A pre-built ModelRouter has no built-in web search"))
+    );
+}
+
+#[cfg(feature = "bedrock")]
+#[tokio::test]
+async fn collides_with_a_passed_web_search_tool_on_bedrock_like_any_built_in() {
+    let mine = tool("web_search", "Search.");
+    let options = HarnessAgentOptions {
+        tools: vec![Arc::clone(&mine).into()],
+        ..quiet()
+    };
+    assert!(rejection(options).await.contains("registered more than once"));
+    let off = HarnessAgentOptions {
+        tools: vec![Arc::clone(&mine).into()],
+        builtin_tools: Some(BuiltinToolsConfig::builder().web_search(false).build().into()),
+        ..quiet()
+    };
+    let assembly = assembled(off).await;
+    assert_eq!(
+        tool_names(&assembly.config)
+            .iter()
+            .filter(|name| *name == "web_search")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn logs_info_not_a_warning_and_builds_when_default_web_search_hits_a_model_without_search() {
+    let (logs, _guard) = record_logs();
+    let assembly = assembled(quiet_with_mock()).await;
     assert!(!tool_names(&assembly.config).contains(&"web_search".to_owned()));
     assert!(
         logs.lines("INFO")
@@ -454,13 +507,14 @@ async fn logs_info_not_a_warning_and_builds_when_default_web_search_hits_the_def
 #[tokio::test]
 async fn throws_when_web_search_is_explicitly_selected_on_an_unsupported_provider() {
     let list = HarnessAgentOptions {
+        model: Some("ollama/llama3".into()),
         builtin_tools: Some([BuiltinToolName::Read, BuiltinToolName::WebSearch].into()),
         ..quiet()
     };
     assert!(rejection(list).await.contains("has no built-in web search"));
     let mapping = HarnessAgentOptions {
         builtin_tools: Some(BuiltinToolsConfig::builder().web_search(true).build().into()),
-        ..quiet()
+        ..quiet_with_mock()
     };
     assert!(rejection(mapping).await.contains("has no built-in web search"));
 }
@@ -539,15 +593,15 @@ async fn enables_anthropic_native_web_search_from_the_default_set() {
 
 #[cfg(feature = "mantle")]
 #[tokio::test]
-async fn only_offers_bedrock_web_search_on_gpt_5_and_gpt_6_mantle_models() {
-    let (logs, _guard) = record_logs();
+async fn uses_bedrock_web_search_on_gpt_5_gpt_6_mantle_models_and_agentcore_on_other_mantle_models() {
     let luna = HarnessAgentOptions {
         model: Some("bedrock-mantle/openai.gpt-5.6-luna".into()),
         ..quiet()
     };
-    let plan = assembled(luna).await.model_plan.unwrap();
+    let assembly = assembled(luna).await;
+    assert!(!tool_names(&assembly.config).contains(&"web_search".to_owned()));
     assert_eq!(
-        plan.params.unwrap()["tools"],
+        assembly.model_plan.unwrap().params.unwrap()["tools"],
         json!([{ "type": "web_search", "external_web_access": true }])
     );
     let oss = HarnessAgentOptions {
@@ -555,13 +609,8 @@ async fn only_offers_bedrock_web_search_on_gpt_5_and_gpt_6_mantle_models() {
         ..quiet()
     };
     let assembly = assembled(oss).await;
-    assert!(!tool_names(&assembly.config).contains(&"web_search".to_owned()));
+    assert!(tool_names(&assembly.config).contains(&"web_search".to_owned()));
     assert!(assembly.model_plan.unwrap().params.unwrap().get("tools").is_none());
-    assert!(
-        logs.lines("INFO")
-            .iter()
-            .any(|line| line.contains("has no built-in web search"))
-    );
 }
 
 #[tokio::test]
@@ -1395,6 +1444,38 @@ mod subagent_delegate_built_child {
         assert!(tool_names(&build_child(options, spec).await.config).contains(&"web_search".to_owned()));
     }
 
+    #[cfg(feature = "bedrock")]
+    #[tokio::test]
+    async fn gives_delegates_of_a_default_bedrock_parent_agentcore_web_search() {
+        let narrowed = ChildSpec {
+            tools: strings(&["read"]),
+            ..Default::default()
+        };
+        for spec in [narrowed, ChildSpec::default()] {
+            assert!(tool_names(&build_child(quiet(), spec).await.config).contains(&"web_search".to_owned()));
+        }
+    }
+
+    #[tokio::test]
+    async fn hands_delegates_the_callers_web_search_when_the_built_in_is_off() {
+        let options = || HarnessAgentOptions {
+            tools: vec![tool("web_search", "Search.").into()],
+            builtin_tools: Some(BuiltinToolsConfig::builder().web_search(false).build().into()),
+            ..quiet_with_mock()
+        };
+        let inherit_all = build_child(options(), ChildSpec::default()).await;
+        let description = inherit_all.config.tools.iter().find_map(|source| match source {
+            ToolSource::Tool(tool) if tool.name() == "web_search" => Some(tool.description().to_owned()),
+            _ => None,
+        });
+        assert_eq!(description.as_deref(), Some("Search."));
+        let narrowed = ChildSpec {
+            tools: strings(&["read"]),
+            ..Default::default()
+        };
+        assert!(!tool_names(&build_child(options(), narrowed).await.config).contains(&"web_search".to_owned()));
+    }
+
     #[cfg(feature = "mcp")]
     fn client_names(tools: &[ToolSource]) -> Vec<String> {
         tools
@@ -1685,8 +1766,45 @@ mod builtin_tool_factories {
             record(format!("subagent {:?}", options.max_depth));
             (BUILTIN_TOOL_FACTORY.subagent)(options)
         },
+        web_search: |mode, env| {
+            record(format!("web_search {mode:?} {:?}", env.get("AWS_REGION")));
+            (BUILTIN_TOOL_FACTORY.web_search)(mode, env)
+        },
         ..BUILTIN_TOOL_FACTORY
     };
+
+    #[cfg(feature = "bedrock")]
+    async fn web_search_calls(builtin_tools: Option<BuiltinToolsConfig>) -> Vec<String> {
+        CALLS.with(|calls| calls.borrow_mut().clear());
+        let options = HarnessAgentOptions {
+            builtin_tools: builtin_tools.map(Into::into),
+            ..quiet()
+        };
+        let env = crate::test_support::env(&[("AWS_REGION", "eu-west-1")]);
+        assemble_with(options, &env, &RECORDING).await.unwrap();
+        only(&CALLS.with(|calls| calls.borrow().clone()), "web_search")
+    }
+
+    #[cfg(feature = "bedrock")]
+    #[tokio::test]
+    async fn builds_the_agentcore_web_search_tool_on_bedrock_from_the_harness_environment() {
+        assert_eq!(
+            web_search_calls(None).await,
+            ["web_search AgentCore Some(\"eu-west-1\")"]
+        );
+    }
+
+    #[cfg(all(feature = "bedrock", feature = "mcp"))]
+    #[tokio::test]
+    async fn serves_an_explicit_exa_selection_on_bedrock_instead_of_agentcore() {
+        let exa = BuiltinToolsConfig::builder()
+            .web_search(crate::WebSearchSetting::Exa)
+            .build();
+        assert_eq!(
+            web_search_calls(Some(exa)).await,
+            ["web_search Exa Some(\"eu-west-1\")"]
+        );
+    }
 
     async fn calls_for(builtin_tools: BuiltinToolsConfig) -> (Vec<String>, Vec<String>) {
         CALLS.with(|calls| calls.borrow_mut().clear());

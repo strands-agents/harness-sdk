@@ -264,7 +264,8 @@ pub struct HarnessAgentOptions {
     /// Which built-in tools to enable: a list pins exactly those (an empty list disables them
     /// all), a [`BuiltinToolsConfig`] edits the defaults. `web_search` turns on the provider's
     /// native search (OpenAI, Anthropic, and the GPT-5, GPT-6 and Daybreak models on Bedrock
-    /// Mantle); elsewhere it is off, and naming it there fails.
+    /// Mantle), or a tool backed by Amazon Bedrock AgentCore web search on other Bedrock models;
+    /// elsewhere it is off, and naming it there fails.
     /// [`WebSearchSetting::Exa`](crate::WebSearchSetting::Exa) (`"exa"` in a config) uses Exa's
     /// hosted search on any model instead (needs the `mcp` feature). A `subagent` child inherits
     /// this.
@@ -830,7 +831,7 @@ pub(crate) async fn assemble_with(
         background_tasks: background_tasks.clone(),
         sandbox: sandbox.clone(),
     });
-    let builtin = build_builtin_tools(&resolved, web_search == Some(WebSearchMode::Exa), &parent, env, factory)?;
+    let builtin = build_builtin_tools(&resolved, web_search, &parent, env, factory)?;
 
     // Consumer plugins stay first so the tail is the harness's own.
     let mut plugins = consumer_plugins.clone();

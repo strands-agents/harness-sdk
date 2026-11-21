@@ -12,7 +12,9 @@ use strands::tools::Tool;
 use strands::vended_tools::subagent::{MakeSubagentOptions, generalist, make_subagent};
 use strands::{Agent, ModelSource};
 
+use crate::builtin_tools::WebSearchMode;
 use crate::defaults::DEFAULT_SUBAGENT_MAX_DEPTH;
+use crate::env::Env;
 use crate::plugins::EnvironmentContext;
 use crate::tools::file_tools;
 use crate::tools::programmatic_tool_caller::{ProgrammaticToolCallerConfig, programmatic_tool_caller};
@@ -65,8 +67,8 @@ pub(crate) struct BuiltinToolFactory {
     pub(crate) write: fn() -> strands::Result<Arc<dyn Tool>>,
     pub(crate) edit: fn() -> strands::Result<Arc<dyn Tool>>,
     pub(crate) web_fetch: fn(WebFetchToolOptions) -> strands::Result<Arc<dyn Tool>>,
-    /// The Exa-backed `web_search` tool; native search is a model flag.
-    pub(crate) web_search: fn() -> strands::Result<Arc<dyn Tool>>,
+    /// The `web_search` tool for the Exa or AgentCore mode; native search is a model flag.
+    pub(crate) web_search: fn(WebSearchMode, &Env) -> strands::Result<Arc<dyn Tool>>,
     /// Takes the portable config: `timeout` is in seconds, `Some(None)` unbounded.
     pub(crate) programmatic_tool_caller: fn(&ProgrammaticToolCallerConfig) -> strands::Result<Arc<dyn Tool>>,
     pub(crate) subagent: fn(SubagentToolOptions) -> strands::Result<Arc<dyn Tool>>,
@@ -87,11 +89,30 @@ pub(crate) const BUILTIN_TOOL_FACTORY: BuiltinToolFactory = BuiltinToolFactory {
         };
         Ok(Arc::new(web_fetch_tool(config, Some(options.model))?))
     },
-    web_search: exa_web_search,
+    web_search,
     programmatic_tool_caller: |config| Ok(Arc::new(programmatic_tool_caller(config.clone()))),
     subagent,
     environment: || Arc::new(EnvironmentContext::default()),
 };
+
+fn web_search(mode: WebSearchMode, env: &Env) -> strands::Result<Arc<dyn Tool>> {
+    match mode {
+        WebSearchMode::AgentCore => agent_core_web_search(env),
+        _ => exa_web_search(),
+    }
+}
+
+#[cfg(any(feature = "bedrock", feature = "mantle"))]
+fn agent_core_web_search(env: &Env) -> strands::Result<Arc<dyn Tool>> {
+    Ok(Arc::new(crate::tools::web_search::agent_core_web_search(env)))
+}
+
+#[cfg(not(any(feature = "bedrock", feature = "mantle")))]
+fn agent_core_web_search(_env: &Env) -> strands::Result<Arc<dyn Tool>> {
+    Err(strands::Error::other(
+        "web_search through AgentCore needs the strands-harness feature \"bedrock\" or \"mantle\"; enable one, or drop web_search from builtinTools.",
+    ))
+}
 
 #[cfg(feature = "mcp")]
 fn exa_web_search() -> strands::Result<Arc<dyn Tool>> {

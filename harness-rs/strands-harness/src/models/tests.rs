@@ -1111,19 +1111,38 @@ mod supports_web_search {
         assert!(searches("bedrock-mantle/openai.gpt-6-astra"));
         assert!(searches("bedrock-mantle/openai.gpt-6.1-sol"));
         assert!(searches("bedrock-mantle/openai.gpt-daybreak-blue-5.6-sol"));
-        assert!(!searches("bedrock-mantle/openai.gpt-oss-120b"));
-        assert!(!searches("bedrock-mantle/qwen.qwen3-32b-v1:0"));
+        // Mantle models without Bedrock Web Search get AgentCore web search instead.
+        assert!(searches("bedrock-mantle/openai.gpt-oss-120b"));
+        assert!(searches("bedrock-mantle/qwen.qwen3-32b-v1:0"));
     }
 
     #[test]
-    fn is_false_for_bedrock_but_true_for_anthropic_direct() {
-        assert!(!searches("bedrock/global.anthropic.claude-opus-4-8"));
+    fn is_true_for_bedrock_agentcore_web_search_and_anthropic_direct_false_for_ollama() {
+        assert!(searches("bedrock/global.anthropic.claude-opus-4-8"));
+        assert!(searches("global.anthropic.claude-opus-4-8"));
         assert!(searches("anthropic/claude-opus-4-8"));
+        assert!(!searches("ollama/llama3"));
     }
 
     #[test]
     fn uses_the_default_model_provider_for_undefined() {
-        assert!(!supports_web_search(None));
+        assert_eq!(supports_web_search(None), searches(DEFAULT_MODEL));
+    }
+
+    #[test]
+    fn web_search_kind_names_the_backend() {
+        let kind = |spec: &str| web_search_kind(Some(&spec.into()));
+        assert_eq!(kind("openai/gpt-5.6-sol"), Some(WebSearchKind::Native));
+        assert_eq!(
+            kind("bedrock/global.anthropic.claude-opus-4-8"),
+            Some(WebSearchKind::AgentCore)
+        );
+        assert_eq!(kind("ollama/llama3"), None);
+        assert_eq!(
+            kind("bedrock-mantle/qwen.qwen3-32b-v1:0"),
+            Some(WebSearchKind::AgentCore)
+        );
+        assert_eq!(kind("bedrock-mantle/openai.gpt-6-astra"), Some(WebSearchKind::Native));
     }
 
     #[test]
