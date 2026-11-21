@@ -365,6 +365,55 @@ describe('createHarness', () => {
     expect(names).not.toContain('sandbox_file_editor')
   })
 
+  it('keeps harness built-in and consumer tools when sandbox vends colliding names', async () => {
+    const lookup = tool({
+      name: 'lookup',
+      description: 'Consumer lookup.',
+      inputSchema: z.object({}),
+      callback: () => 'ok',
+    })
+    const sandboxLookup = tool({
+      name: 'lookup',
+      description: 'Sandbox lookup.',
+      inputSchema: z.object({}),
+      callback: () => 'sandbox',
+    })
+
+    class CollidingSandbox extends DockerSandbox {
+      override getTools(): Tool[] {
+        return [makeShell(this, { name: 'shell' }), sandboxLookup, makeShell(this, { name: 'sandbox_shell' })]
+      }
+    }
+
+    const agent = await createHarness({ sandbox: new CollidingSandbox({ container: 'c1' }), tools: [lookup] })
+    const builtinShell = agent.toolRegistry.get('shell')
+    await agent.initialize()
+
+    const names = toolNames(agent)
+    expect(names).toContain('shell')
+    expect(names).toContain('lookup')
+    expect(names).not.toContain('sandbox_shell')
+    expect(agent.toolRegistry.get('shell')).toBe(builtinShell)
+    expect(agent.toolRegistry.get('lookup')).toBe(lookup)
+
+    const registeredLookup = agent.toolRegistry.get('lookup')!
+    const result = await registeredLookup.invoke({}, { agent, toolUse: { name: 'lookup', toolUseId: 't1', input: {} } })
+    expect(result).toBe('ok')
+
+    // Nested consumer tool lists are preserved too; disabled built-ins stay absent even if the sandbox vends them.
+    const nested = await createHarness({
+      sandbox: new CollidingSandbox({ container: 'c1' }),
+      builtinTools: [],
+      tools: [[lookup]],
+    })
+    await nested.initialize()
+    const nestedNames = toolNames(nested)
+    expect(nestedNames).toContain('lookup')
+    expect(nestedNames).not.toContain('shell')
+    expect(nestedNames).not.toContain('sandbox_shell')
+    expect(nested.toolRegistry.get('lookup')).toBe(lookup)
+  })
+
   it('disables built-in tools with an empty list', async () => {
     const agent = await createHarness({ builtinTools: [], tools: [sampleTool] })
     const names = toolNames(agent)
