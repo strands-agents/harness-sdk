@@ -40,10 +40,11 @@ use futures::StreamExt;
 use self::format::{FormatOptions, Formatter};
 use self::parse::{StreamState, map_converse_output};
 use self::transport::{BedrockError, BedrockTransport, ChunkStream, SdkTransport};
+use super::bedrock_cache::bedrock_cache_model_info;
 use super::defaults::{MODEL_DEFAULTS, default_max_tokens_warning_message, default_model_warning_message};
 use super::model::{BaseModelConfig, BoxStream, CacheConfig, CacheTtl, CountTokensOptions, Model, ModelRequest};
 use super::model::{base_model_info, estimate_tokens, resolve_config_metadata, resolve_max_tokens};
-use super::model_info::{ModelCapabilities, ModelInfo, PromptCaching, merge_model_info, server_side_summary_off};
+use super::model_info::{ModelInfo, merge_model_info, server_side_summary_off};
 use super::native_output::{StructuredOutputMechanism, handle_rejected_mechanism, structured_output_mechanisms};
 use super::streaming::ModelStreamEvent;
 use crate::error::{ContextWindowOverflowError, Error, ModelError, Result};
@@ -694,24 +695,17 @@ fn resolve_config(raw: &BedrockModelConfig) -> BedrockModelConfig {
     config
 }
 
-/// Bedrock's model info: the shared info, server-side summary off, OpenAI models cached
-/// implicitly (Converse rejects their cache points), and the user's override on top.
+/// Bedrock's model info: the shared info, server-side summary off, how Converse caches the model
+/// where that differs from the shared info, and the user's override on top.
 fn bedrock_model_info(config: &BedrockModelConfig) -> ModelInfo {
     let mut base = config.to_base();
     base.model_id
         .get_or_insert_with(|| MODEL_DEFAULTS.bedrock.model_id.to_owned());
-    let openai = config.model_id_or_default().to_lowercase().contains("openai.");
-    let implicit_caching = openai.then(|| ModelInfo {
-        capabilities: ModelCapabilities {
-            prompt_caching: Some(PromptCaching::Auto),
-            ..ModelCapabilities::default()
-        },
-        ..ModelInfo::default()
-    });
+    let caching = bedrock_cache_model_info(config.model_id_or_default());
     merge_model_info([
         Some(&base_model_info(&base)),
         Some(&server_side_summary_off()),
-        implicit_caching.as_ref(),
+        caching.as_ref(),
         config.model_info.as_ref(),
     ])
 }

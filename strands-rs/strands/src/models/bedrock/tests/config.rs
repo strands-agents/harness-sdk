@@ -175,7 +175,7 @@ fn reads_cache_points_for_claude_model_ids_from_the_shared_model_info() {
 
 #[test]
 fn leaves_caching_unknown_for_other_model_ids() {
-    let (model, _) = provider(with_model_id("amazon.nova-pro-v1:0"));
+    let (model, _) = provider(with_model_id("meta.llama4-maverick-17b-instruct-v1:0"));
     assert_eq!(model.model_info().capabilities.prompt_caching, None);
 }
 
@@ -237,14 +237,26 @@ async fn skips_an_injected_block_it_receives_with_a_warning() {
     assert!(logs.text().contains(warning), "{}", logs.text());
 }
 
+fn auto_caching_warning(model_id: &str) -> String {
+    format!("model_id=<{model_id}> | cache_config is enabled but this model does not support automatic caching")
+}
+
 #[tokio::test]
-async fn reports_an_openai_model_as_implicitly_cached_and_sends_no_cache_point() {
-    for model_id in ["us.openai.gpt-6-luna", "openai.gpt-6.1-sol", "openai.gpt-5.6-sol"] {
+async fn reports_an_openai_gpt_or_xai_model_as_implicitly_cached_and_sends_no_cache_point() {
+    for model_id in [
+        "us.openai.gpt-6-luna",
+        "openai.gpt-6.1-sol",
+        "openai.gpt-5.6-sol",
+        "us.xai.grok-4.7",
+    ] {
         let (model, transport) = provider(BedrockModelConfig {
             cache_config: auto_cache(),
             ..with_model_id(model_id)
         });
+        crate::logging::forget_warning(&auto_caching_warning(model_id));
+        let (logs, guard) = crate::test_support::record_logs();
         run(&model, request(hello(), helpful())).await;
+        drop(guard);
         assert_eq!(
             model.model_info().capabilities.prompt_caching,
             Some(PromptCaching::Auto),
@@ -255,7 +267,60 @@ async fn reports_an_openai_model_as_implicitly_cached_and_sends_no_cache_point()
             json!([{"text": "Be helpful"}]),
             "{model_id}"
         );
+        assert_eq!(
+            transport.last()["messages"][0]["content"],
+            json!([{"text": "Hello"}]),
+            "{model_id}"
+        );
+        assert!(
+            !logs.text().contains("does not support automatic caching"),
+            "{}",
+            logs.text()
+        );
     }
+}
+
+#[tokio::test]
+async fn warns_that_gpt_oss_has_no_automatic_caching_and_sends_no_cache_point() {
+    for model_id in ["openai.gpt-oss-120b-1:0", "us.openai.gpt-oss-20b-1:0"] {
+        let (model, transport) = provider(BedrockModelConfig {
+            cache_config: auto_cache(),
+            ..with_model_id(model_id)
+        });
+        let warning = auto_caching_warning(model_id);
+        crate::logging::forget_warning(&warning);
+        let (logs, guard) = crate::test_support::record_logs();
+        run(&model, request(hello(), helpful())).await;
+        drop(guard);
+        assert_eq!(model.model_info().capabilities.prompt_caching, None, "{model_id}");
+        assert_eq!(
+            transport.last()["system"],
+            json!([{"text": "Be helpful"}]),
+            "{model_id}"
+        );
+        assert_eq!(
+            transport.last()["messages"][0]["content"],
+            json!([{"text": "Hello"}]),
+            "{model_id}"
+        );
+        assert!(logs.text().contains(&warning), "{}", logs.text());
+    }
+}
+
+#[tokio::test]
+async fn places_cache_points_on_an_implicitly_cached_openai_model_when_the_strategy_is_anthropic() {
+    let (model, transport) = provider(BedrockModelConfig {
+        cache_config: Some(CacheConfig {
+            strategy: Some(CacheStrategy::Anthropic),
+            ..CacheConfig::default()
+        }),
+        ..with_model_id("us.openai.gpt-6-luna")
+    });
+    run(&model, request(hello(), helpful())).await;
+    assert_eq!(
+        transport.last()["system"],
+        json!([{"text": "Be helpful"}, {"cachePoint": {"type": "default"}}])
+    );
 }
 
 #[test]
