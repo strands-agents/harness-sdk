@@ -6,11 +6,11 @@
 
 **Scope**: Rust (new `strands-rs` SDK and `harness-rs` harness). No changes to Python or TypeScript.
 
-**TypeScript baseline**: strands-ts and harness-ts at commit `7296caba7`
+**TypeScript baseline**: strands-ts and harness-ts at commit `d6c5fae7c`
 
 ## Overview
 
-We propose an official Rust SDK (`strands`) and harness (`strands-harness`) in this monorepo, next to the Python and TypeScript packages. They use the same concepts, abstractions and names as the other SDKs, re-cased to Rust idiom (`systemPrompt` becomes `system_prompt`, `BeforeToolCallEvent` stays `BeforeToolCallEvent`). Where Rust has a better-fitting idiom we use it, the way Python has `@tool` and TypeScript does not. TypeScript is the reference for behaviour, and parity is measured against commit `7296caba7`.
+We propose an official Rust SDK (`strands`) and harness (`strands-harness`) in this monorepo, next to the Python and TypeScript packages. They use the same concepts, abstractions and names as the other SDKs, re-cased to Rust idiom (`systemPrompt` becomes `system_prompt`, `BeforeToolCallEvent` stays `BeforeToolCallEvent`). Where Rust has a better-fitting idiom we use it, the way Python has `@tool` and TypeScript does not. TypeScript is the reference for behaviour, and parity is measured against commit `d6c5fae7c`.
 
 The first release, v0.1.0, is a developer preview. It covers the agent loop; Bedrock, Bedrock Mantle, Anthropic and OpenAI models; tools, hooks, plugins, middleware and interrupts; MCP, sessions, memory, context management and the sandbox seam; and a harness with the same defaults as harness-ts. Multi-agent orchestration, A2A and bidirectional streaming come in later releases.
 
@@ -351,7 +351,7 @@ Not ported: bidirectional streaming, until TS has it; TS APIs marked `@deprecate
 <details>
 <summary>Behaviour contracts an implementation must preserve</summary>
 
-The normative spec is strands-ts and harness-ts at `7296caba7`, plus their tests. These are the items that are easiest to miss.
+The normative spec is strands-ts and harness-ts at `d6c5fae7c`, plus their tests. These are the items that are easiest to miss.
 
 - **Loop.** The assistant tool-use message is appended only after its tools finish, so history is always re-invokable. The retry strategy sleeps inside an `AfterModelCallEvent` hook, and `attempt_count` resets when the router switches models. Limits are checked in the order turns, total tokens, output tokens, structured-output attempts. `AfterInvocationEvent.resume` re-enters the loop and is ignored on error or when a limit is hit.
 - **Plugins.** Registration order is fixed: router, conversation manager, retry strategies, user plugins, background tasks, delegation, memory, context manager, session manager, then the model plugin.
@@ -391,7 +391,7 @@ The crates use edition 2024 with MSRV 1.96 ([decision](#decision-msrv)). CI runs
 The implementation of this design is in the same PR, with its commits grouped by area. At the TypeScript baseline:
 
 - 5,203 tests pass with all features, doctests included.
-- Of the 4,626 test cases in the in-scope strands-ts spec files, 4,049 are ported. Each remaining case has a recorded reason: a compile-time guarantee, a JS-only mechanism, a deprecated API, or a feature outside v0.1.0. For harness-ts, 484 of 521 cases are ported.
+- Of the 5,032 test cases in the in-scope strands-ts spec files, 4,326 are ported. Each remaining case has a recorded reason: a compile-time guarantee, a JS-only mechanism, a deprecated API, or a feature outside v0.1.0. For harness-ts, 430 of 502 cases are ported.
 - TS-generated fixtures round-trip byte for byte. They cover messages, model and agent stream events, hook events, snapshots, session files, interrupt state, the stash, metrics, the vended and harness tool specs, and the harness system prompt.
 - A TS-written session is restored by Rust and a Rust-written one by TS, for both the SDK and the harness.
 - Live tests pass against Bedrock, Bedrock Mantle, Anthropic and OpenAI, including the harness on each provider.
@@ -449,7 +449,7 @@ The decisions that shape the public API, each with its reason and the main alter
 
 #### Decision: TS baseline
 
-**Decision.** The spec is strands-ts and harness-ts at commit `7296caba7`, plus their tests. Parity is measured against that commit, and later TS changes are follow-up work. Nothing lands in TS only to make the Rust port easier.
+**Decision.** The spec is strands-ts and harness-ts at commit `d6c5fae7c`, plus their tests. Parity is measured against that commit, and later TS changes are follow-up work. Nothing lands in TS only to make the Rust port easier.
 
 **Reason.** A fixed baseline makes parity checkable, and this proposal leaves Python and TypeScript unchanged.
 

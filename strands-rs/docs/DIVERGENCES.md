@@ -1,6 +1,6 @@
 # Divergences from strands-ts
 
-User-visible differences between the Rust SDK and strands-ts at `7296caba7`. Each entry says what differs, why, and confirms that no cross-SDK wire or persisted format changes.
+User-visible differences between the Rust SDK and strands-ts at `d6c5fae7c`. Each entry says what differs, why, and confirms that no cross-SDK wire or persisted format changes.
 
 Rust-native differences that the design calls for (string slicing by `char`, `Result` instead of exceptions, compile-time rejection of concurrent invocation) are not listed.
 
