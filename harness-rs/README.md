@@ -591,20 +591,26 @@ unset (or `none`), the harness touches telemetry not at all: no exporter, no cos
 selector logs a warning and tracing stays off. Setup runs once per process, and a tracer provider the program already
 registered through `strands::telemetry::setup_tracer` is reused.
 
-The spans reach the exporter only through a `tracing` subscriber that carries the SDK's OpenTelemetry layer, and the
-harness doesn't install a subscriber. A program with no subscriber of its own can register the provider and that
-subscriber before building agents (one that has its own adds `TracerGuard::layer` to it instead):
+The spans reach the exporter through a `tracing` subscriber that carries the SDK's OpenTelemetry layer. When the
+program has no global subscriber, the harness installs one with only that layer. A program that installs its own
+subscriber owns tracing: the harness leaves it alone and logs a warning, and the program adds the layer itself,
+before building agents:
 
 ```rust,no_run
 # #[cfg(feature = "otel")]
 fn init_tracing() -> strands::Result<strands::telemetry::TracerGuard> {
+    use strands::telemetry::tracing_subscriber::layer::SubscriberExt;
+    use strands::telemetry::tracing_subscriber::util::SubscriberInitExt;
     use strands::telemetry::{TelemetryExporters, TracerConfig, setup_tracer};
 
     let telemetry = setup_tracer(TracerConfig {
         exporters: TelemetryExporters { otlp: true, console: false },
         ..Default::default()
     })?;
-    telemetry.try_init_subscriber()?;
+    strands::telemetry::tracing_subscriber::registry()
+        .with(telemetry.layer())
+        .with(strands::telemetry::tracing_subscriber::fmt::layer())
+        .init();
     Ok(telemetry) // keep the guard for the life of the program; dropping it flushes the spans
 }
 ```

@@ -6,6 +6,11 @@
 //! spec default of `otlp`, so it never silently stands up an exporter. Endpoint, headers and
 //! protocol come from the usual `OTEL_EXPORTER_OTLP_*` variables. Tracing is process-global, so
 //! setup runs at most once per process. Exporting needs the `otel` feature.
+//!
+//! The SDK's spans are `tracing` spans, so they reach the exporter only through a global
+//! subscriber that carries the SDK's OpenTelemetry layer. The harness installs that subscriber
+//! when the program has none; a program that installed its own owns tracing, and the harness
+//! leaves it alone.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -83,6 +88,29 @@ pub(crate) fn setup_telemetry(env: &Env) -> strands::Result<()> {
 
 #[cfg(feature = "otel")]
 fn install(exporters: Exporters) -> strands::Result<()> {
+    install_unless_subscribed(exporters, tracing::dispatcher::has_been_set(), install_tracer)
+}
+
+/// Leaves tracing to a global subscriber the program installed, with a warning; otherwise
+/// `install` wires the exporters.
+#[cfg(any(feature = "otel", test))]
+pub(crate) fn install_unless_subscribed(
+    exporters: Exporters,
+    subscribed: bool,
+    install: impl FnOnce(Exporters) -> strands::Result<()>,
+) -> strands::Result<()> {
+    if subscribed {
+        warn_once(&format!(
+            "{TRACES_EXPORTER_ENV_VAR} is set, but the program already installed a global tracing subscriber, so the harness leaves tracing to it. Add the layer from strands::telemetry::setup_tracer (TracerGuard::layer) to that subscriber to export the agent's spans."
+        ));
+        return Ok(());
+    }
+    install(exporters)
+}
+
+/// Registers the provider and a global subscriber that exports the SDK's spans through it.
+#[cfg(feature = "otel")]
+fn install_tracer(exporters: Exporters) -> strands::Result<()> {
     use std::sync::OnceLock;
 
     use strands::telemetry::{TelemetryExporters, TracerConfig, TracerGuard, setup_tracer};
@@ -97,6 +125,10 @@ fn install(exporters: Exporters) -> strands::Result<()> {
         ..Default::default()
     };
     let guard = setup_tracer(config)?;
+    // Another thread can install a global subscriber between the check and this call.
+    if let Err(error) = guard.try_init_subscriber() {
+        tracing::warn!("error=<{error}> | could not install the tracing subscriber, spans are not exported");
+    }
     let _ = GUARD.set(guard);
     Ok(())
 }
@@ -193,6 +225,49 @@ mod tests {
                 otlp: true,
                 console: false
             }]
+        );
+    }
+
+    #[test]
+    fn installs_the_exporters_when_the_program_has_no_subscriber() {
+        let mut installed = Vec::new();
+        install_unless_subscribed(
+            Exporters {
+                otlp: true,
+                console: false,
+            },
+            false,
+            |exporters| {
+                installed.push(exporters);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            installed,
+            [Exporters {
+                otlp: true,
+                console: false
+            }]
+        );
+    }
+
+    #[test]
+    fn leaves_tracing_to_a_subscriber_the_program_installed() {
+        let (logs, _guard) = record_logs();
+        install_unless_subscribed(
+            Exporters {
+                otlp: true,
+                console: false,
+            },
+            true,
+            |_| panic!("the program's subscriber owns tracing"),
+        )
+        .unwrap();
+        assert!(
+            logs.lines("WARN")
+                .iter()
+                .any(|line| line.contains("already installed a global tracing subscriber"))
         );
     }
 
