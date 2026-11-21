@@ -20,8 +20,30 @@ fn rejection(value: Value) -> String {
     normalize(value).unwrap_err().to_string()
 }
 
+/// A Unix-style absolute path in the platform's absolute form: on Windows it gains a drive.
+fn on_platform(path: &str) -> String {
+    if cfg!(windows) {
+        format!("C:{path}")
+    } else {
+        path.to_owned()
+    }
+}
+
+/// `path` as the resolver returns it: absolute on this platform, with the platform's separators.
+fn abs(path: &str) -> String {
+    Path::new(&on_platform(path))
+        .components()
+        .collect::<PathBuf>()
+        .to_string_lossy()
+        .into_owned()
+}
+
 fn options_at(config: &HarnessAgentConfig, base_dir: &str) -> strands::Result<crate::HarnessAgentOptions> {
-    harness_agent_options_from_config_with_env(config, Some(Path::new(base_dir)), &env(&[("HOME", "/home/me")]))
+    harness_agent_options_from_config_with_env(
+        config,
+        Some(Path::new(&on_platform(base_dir))),
+        &env(&[("HOME", &on_platform("/home/me"))]),
+    )
 }
 
 fn config(value: Value) -> HarnessAgentConfig {
@@ -197,14 +219,17 @@ fn rejects_executable_values_declared_through_module_references() {
 #[test]
 fn resolves_the_intervention_against_the_project_root_when_it_is_a_cedar_file() {
     for (value, expected) in [
-        ("./policy.cedar", "/project/policy.cedar"),
-        ("policies/policy.cedar", "/project/policies/policy.cedar"),
-        ("  ./policy.cedar  ", "/project/policy.cedar"),
-        ("/policies/policy.cedar", "/policies/policy.cedar"),
-        ("~/policy.cedar", "/home/me/policy.cedar"),
-        ("ask", "ask"),
-        ("  Require approval for writes.  ", "  Require approval for writes.  "),
-        ("./policy.cedar.bak", "./policy.cedar.bak"),
+        ("./policy.cedar", abs("/project/policy.cedar")),
+        ("policies/policy.cedar", abs("/project/policies/policy.cedar")),
+        ("  ./policy.cedar  ", abs("/project/policy.cedar")),
+        ("/policies/policy.cedar", abs("/policies/policy.cedar")),
+        ("~/policy.cedar", abs("/home/me/policy.cedar")),
+        ("ask", "ask".to_owned()),
+        (
+            "  Require approval for writes.  ",
+            "  Require approval for writes.  ".to_owned(),
+        ),
+        ("./policy.cedar.bak", "./policy.cedar.bak".to_owned()),
     ] {
         let config = config(json!({ "interventions": value }));
         let options = options_at(&config, "/project").unwrap();
@@ -233,7 +258,7 @@ fn keeps_a_list_of_interventions_in_order() {
             InterventionValue::Handler(_) => panic!("text"),
         })
         .collect();
-    assert_eq!(texts, ["ask", "/project/policy.cedar"]);
+    assert_eq!(texts, ["ask".to_owned(), abs("/project/policy.cedar")]);
 }
 
 #[cfg(feature = "mcp")]
@@ -312,8 +337,8 @@ fn resolves_a_stdio_server_cwd_against_the_project_root() {
     }));
     let options = options_at(&config, "/project").unwrap();
     let servers = mcp_json(&options);
-    assert_eq!(servers["local"]["cwd"], json!("/project"));
-    assert_eq!(servers["nested"]["cwd"], json!("/project/tools"));
+    assert_eq!(servers["local"]["cwd"], json!(abs("/project")));
+    assert_eq!(servers["nested"]["cwd"], json!(abs("/project/tools")));
 }
 
 #[test]
@@ -338,18 +363,21 @@ fn resolves_state_directories_against_the_project_root_matching_python() {
         panic!("session on")
     };
     assert_eq!(session.id.as_deref(), Some("proj"));
-    assert_eq!(session.dir.as_deref(), Some(Path::new("/project/.agent/sessions")));
+    assert_eq!(
+        session.dir.as_deref(),
+        Some(Path::new(&abs("/project/.agent/sessions")))
+    );
     let Some(MemoryOption::On(memory)) = &options.memory else {
         panic!("memory on")
     };
-    assert_eq!(memory.dir.as_deref(), Some(Path::new("/project/.agent/memory")));
+    assert_eq!(memory.dir.as_deref(), Some(Path::new(&abs("/project/.agent/memory"))));
     let Some(SkillsOption::Sources(sources)) = &options.skills else {
         panic!("skill sources")
     };
     assert_eq!(
         sources,
         &[
-            strands::vended_plugins::skills::SkillSource::Path("/project/.agent/skills".to_owned()),
+            strands::vended_plugins::skills::SkillSource::Path(abs("/project/.agent/skills")),
             strands::vended_plugins::skills::SkillSource::Url("https://example.com/SKILL.md".to_owned()),
         ]
     );
