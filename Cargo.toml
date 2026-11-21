@@ -72,6 +72,8 @@ tracing-subscriber = "0.3"
 cedar-policy = "=4.14.0"
 cedar-policy-mcp-schema-generator = "0.7"
 mcp-tools-sdk = "0.5"
+# Shares Cedar's `cedar-policy` 4.14.0 (and its schema generator) with the `cedar` feature.
+dogwood-ops = { version = "1.2", features = ["mcp-schema"] }
 # Pinned exactly: the `monty` worker binary (`monty-runtime`) the programmatic tool caller spawns
 # must speak the same protocol version as `monty-pool`.
 monty = "=1.5.0"

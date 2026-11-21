@@ -23,6 +23,7 @@ mantle = ["openai", "dep:aws-config", "dep:aws-credential-types", "dep:aws-sigv4
 mcp = ["dep:rmcp", "rmcp/client", "rmcp/transport-child-process", "rmcp/transport-streamable-http-client-reqwest", "rmcp/reqwest", "rmcp/auth", "dep:eventsource-stream", "dep:sse-stream"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-stdout", "dep:tracing-opentelemetry", "dep:tracing-subscriber"]
 cedar = ["dep:cedar-policy", "dep:cedar-policy-mcp-schema-generator", "dep:mcp-tools-sdk"]
+dogwood = ["dep:dogwood-ops"]
 
 [dependencies]
 strands-macros.workspace = true
@@ -52,6 +53,7 @@ tracing.workspace = true
 
 cedar-policy = { workspace = true, optional = true }
 cedar-policy-mcp-schema-generator = { workspace = true, optional = true }
+dogwood-ops = { workspace = true, optional = true }
 mcp-tools-sdk = { workspace = true, optional = true }
 
 aws-config = { workspace = true, optional = true }

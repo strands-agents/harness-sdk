@@ -66,6 +66,7 @@
 //! | `mcp` | | `mcp::McpClient`, Model Context Protocol clients over stdio, streamable HTTP and SSE, and the `mcp_router` tool |
 //! | `otel` | | OpenTelemetry export of the agent's spans and metrics (`telemetry::setup_tracer`, `telemetry::setup_meter`) |
 //! | `cedar` | | `CedarAuthorization`, Cedar policy authorization of tool calls |
+//! | `dogwood` | | `DogwoodAuthorization`, Dogwood policy authorization of tool calls, with temporal rules over earlier calls |
 //!
 //! Without `bedrock` an agent needs an explicit model; a Bedrock model id then fails with
 //! [`DefaultNotConfiguredError`]. The `otel` feature's `opentelemetry`, `opentelemetry_sdk`,
@@ -85,7 +86,7 @@
 //! | [`middleware`] | Handlers around the model call and each tool execution |
 //! | [`interrupt`] | Human-in-the-loop [`Interrupt`]s |
 //! | [`interventions`] | [`InterventionHandler`]s that gate the agent's lifecycle |
-//! | [`vended_interventions`] | Human-in-the-loop approval and Cedar policy authorization (feature `cedar`) |
+//! | [`vended_interventions`] | Human-in-the-loop approval, Cedar policy authorization (feature `cedar`) and Dogwood policy authorization (feature `dogwood`) |
 //! | [`conversation_manager`] | Keeping history within the context window |
 //! | [`experimental`] | APIs that may change in a minor release: the strategy-driven `ContextManager`, its presets, the stash and message pinning |
 //! | [`injection`] | Folding just-in-time text into the latest user message |
