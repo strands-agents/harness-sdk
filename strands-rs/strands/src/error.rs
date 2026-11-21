@@ -4,6 +4,7 @@
 //! callers can branch with `match` and still reach the type's fields.
 
 use std::error::Error as StdError;
+use std::sync::Arc;
 
 use crate::interrupt::InterruptError;
 use crate::types::Message;
@@ -221,10 +222,40 @@ source_error!(
     ModelError
 );
 
-message_error!(
-    /// The combined input exceeded the model's context window (`ContextWindowOverflowError`).
-    ContextWindowOverflowError
-);
+/// The combined input exceeded the model's context window (`ContextWindowOverflowError`).
+///
+/// The cause is shared rather than owned so the error stays `Clone`: conversation managers
+/// receive a copy of the error that triggered the reduction.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{message}")]
+#[non_exhaustive]
+pub struct ContextWindowOverflowError {
+    /// The error message.
+    pub message: String,
+    /// The underlying cause.
+    #[source]
+    pub source: Option<Arc<dyn StdError + Send + Sync + 'static>>,
+}
+
+impl ContextWindowOverflowError {
+    /// The type name [`Error::name`] reports.
+    pub const NAME: &'static str = "ContextWindowOverflowError";
+
+    /// Creates the error with a message and no cause.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// Sets the underlying cause.
+    #[must_use]
+    pub fn with_source(mut self, source: impl Into<BoxError>) -> Self {
+        self.source = Some(Arc::from(source.into()));
+        self
+    }
+}
 
 /// The model stopped because it reached its output token limit (`MaxTokensError`).
 ///
@@ -498,6 +529,15 @@ mod tests {
             error.source().map(ToString::to_string).as_deref(),
             Some("original error")
         );
+    }
+
+    #[test]
+    fn context_window_overflow_error_preserves_the_original_failure() {
+        let error = ContextWindowOverflowError::new("context overflow")
+            .with_source(std::io::Error::other("provider context limit"));
+        let source = StdError::source(&error).expect("a cause");
+        assert_eq!(source.to_string(), "provider context limit");
+        assert!(Error::from(error).is_model_error());
     }
 
     #[test]
