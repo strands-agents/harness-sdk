@@ -383,6 +383,16 @@ async fn defaults_max_tokens_to_the_model_info_output_ceiling_for() {
             with_model_id("us.anthropic.claude-sonnet-4-6"),
             128_000,
         ),
+        (
+            "GPT-6.2 Astra on Bedrock",
+            with_model_id("us.openai.gpt-6.2-astra"),
+            128_000,
+        ),
+        (
+            "GPT-6.2 Sol on Bedrock",
+            with_model_id("global.openai.gpt-6.2-sol"),
+            128_000,
+        ),
         ("the SDK default model", BedrockModelConfig::default(), 128_000),
         (
             "an older Claude model",

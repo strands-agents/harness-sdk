@@ -567,9 +567,8 @@ mod tests {
 
     #[test]
     fn keeps_get_context_window_limit_working_for_ids_the_python_table_already_knew() {
-        for id in ["mistral-large-latest", "o3"] {
-            assert!(window(id).is_some_and(|limit| limit > 0), "{id}");
-        }
+        assert_eq!(window("mistral-large-latest"), Some(1_048_576));
+        assert_eq!(window("o3"), Some(200_000));
     }
 
     #[test]
@@ -672,6 +671,8 @@ mod tests {
             ("us.xai.grok-4.7", 524_288),
             ("global.xai.grok-4.7", 524_288),
             ("chat-latest", 272_000),
+            ("gpt-6.2-astra", 1_050_000),
+            ("gpt-6.2-sol", 1_050_000),
             ("gpt-6-astra", 1_050_000),
             ("gpt-6.1-sol", 1_050_000),
             ("gpt-6.1-terra", 1_050_000),
@@ -685,6 +686,8 @@ mod tests {
             ("gpt-oss-120b", 131_072),
             ("gpt-oss-20b", 131_072),
             ("gemini-4-argon", 1_048_576),
+            ("gemini-4-neon", 1_048_576),
+            ("gemini-4-hydrogen", 1_048_576),
             ("gemini-3.8-flash", 1_048_576),
             ("gemini-3.7-flash", 1_048_576),
             ("gemini-2.5-flash", 1_048_576),
@@ -753,6 +756,8 @@ mod tests {
             ("us.openai.gpt-5.5", 1_050_000),
             ("global.openai.gpt-6.1-sol", 1_000_000),
             ("us.openai.gpt-6.1-terra", 1_050_000),
+            ("us.openai.gpt-6.2-astra", 1_050_000),
+            ("global.openai.gpt-6.2-sol", 1_050_000),
             ("in.openai.gpt-5.6-luna", 1_050_000),
         ];
         for (model_id, expected) in cases {
