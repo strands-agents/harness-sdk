@@ -46,10 +46,10 @@ jobs:
         run: cargo build --workspace --examples --all-features
 
       - name: Test (all features)
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --no-fail-fast
 
       - name: Test (no default features)
-        run: cargo test --workspace --no-default-features
+        run: cargo test --workspace --no-default-features --no-fail-fast
 
       - name: Docs
         shell: bash

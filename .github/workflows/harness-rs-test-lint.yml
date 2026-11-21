@@ -40,7 +40,7 @@ jobs:
         run: cargo clippy -p strands-harness --all-targets --all-features -- -D warnings
 
       - name: Test
-        run: cargo test -p strands-harness --all-features
+        run: cargo test -p strands-harness --all-features --no-fail-fast
 
       - name: Docs
         shell: bash
