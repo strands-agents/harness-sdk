@@ -24,7 +24,7 @@ harness-rs/
 │   │   ├── telemetry.rs        # OTEL_TRACES_EXPORTER -> strands::telemetry::setup_tracer
 │   │   ├── factory.rs          # constructor table for the built-in tools and plugins
 │   │   ├── tools/              # file_tools, web_fetch, web_search, programmatic_tool_caller, subagent
-│   │   └── plugins/            # todos, environment
+│   │   └── plugins/            # environment
 │   └── tests/
 └── docs/DIVERGENCES.md
 ```

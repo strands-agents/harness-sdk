@@ -77,7 +77,7 @@ let options = HarnessAgentOptions::builder()
     // .mcp_servers(".mcp.json")   MCP servers: a mcpServers JSON path or the map itself
     // .builtin_tools(..)          a list pins the set; a BuiltinToolsConfig edits the defaults (see below)
     // .background_tasks(false)    SDK Background Tasks policy; false to disable
-    .builtin_plugins([BuiltinPluginName::Environment]) // the default; add Todos to opt in, [] for none
+    .builtin_plugins([BuiltinPluginName::Environment]) // the default; [] for none
     // .caching(false)             cache system prompt, tools and history where supported; false turns it off
     .context_manager(ContextManagerOption::Auto) // Auto | Agentic | a config or instance | Disabled
     .session(true) // true | a SessionConfig | a SessionManager | false
@@ -554,23 +554,22 @@ HarnessAgentOptions::builder().skills(false).build(); // no skills
 
 ## Built-in plugins
 
-The harness ships two built-in feature plugins. `environment` is on by default; `todos` is opt-in:
+The harness ships one built-in feature plugin, on by default:
 
-- **`todos`** lets the agent keep a structured task list through a `todo_write` tool and re-surfaces it before each
-  model call so it stays on plan through longer tasks. The list lives in agent state, never in durable history.
 - **`environment`** injects a short context block before each user turn: the platform, current date, working
   directory, the project's `AGENTS.md` contents, and links to other `AGENTS.md`/`README.md` files a couple of levels
   down (links, not contents, so the block stays small). Everything is read through the agent's sandbox, so it works
   whether the agent runs locally, in Docker, or over SSH.
 
-`builtin_plugins` selects these by name, the same way `builtin_tools` does: pass a subset, or an empty list to turn
-them off. Both are public (`Todos` and `EnvironmentContext`, each with a config), and a plugin you pass in `plugins`
-under the same name replaces the built-in:
+`builtin_plugins` selects built-in plugins by name, the same way `builtin_tools` does; an empty list turns them off.
+`EnvironmentContext` is public with a config, and a plugin you pass in `plugins` under the same name replaces the
+built-in. For a task list the agent keeps through a `todo_write` tool, pass the SDK's `Todos` plugin:
 
 ```rust
+use strands::vended_plugins::todos::Todos;
 use strands_harness::{BuiltinPluginName, HarnessAgentOptions};
 
-HarnessAgentOptions::builder().builtin_plugins([BuiltinPluginName::Todos, BuiltinPluginName::Environment]).build(); // both
+HarnessAgentOptions::builder().plugins([Todos::default()]).build(); // a todo list
 HarnessAgentOptions::builder().builtin_plugins(Vec::<BuiltinPluginName>::new()).build(); // no built-in plugins
 ```
 

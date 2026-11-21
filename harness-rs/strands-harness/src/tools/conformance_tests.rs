@@ -17,7 +17,6 @@ use super::subagent::{
 };
 use super::web_fetch::{WebFetchConfig, web_fetch_tool};
 use super::web_search::{SearchBackend, SearchResult, WebSearchError, search_tool};
-use crate::plugins::Todos;
 
 fn fixtures() -> Vec<(String, String)> {
     let path = concat!(
@@ -65,7 +64,6 @@ fn tool(name: &str) -> Box<dyn Tool> {
                 .name("run_code".to_owned())
                 .build(),
         )),
-        "todo_write" => Box::new(Todos::default().todo_write_tool()),
         "subagent_default_harness" => Box::new(
             subagent_tool(
                 SubagentConfig::default(),

@@ -1171,7 +1171,6 @@ function vendedToolCases(): Case[] {
 const harnessTools = await import('../../harness-ts/src/tools/index.js')
 const harnessBuiltinTools = await import('../../harness-ts/src/builtin-tools.js')
 const harnessWebSearch = await import('../../harness-ts/src/tools/web-search.js')
-const harnessTodos = await import('../../harness-ts/src/plugins/todos.js')
 const harnessPrompt = await import('../../harness-ts/src/prompt.js')
 
 function harnessToolCases(): Case[] {
@@ -1184,7 +1183,6 @@ function harnessToolCases(): Case[] {
     ['web_search', harnessWebSearch.exaWebSearch],
     ['programmatic_tool_caller', harnessTools.programmaticToolCaller],
     ['programmatic_tool_caller_named', harnessTools.makeProgrammaticToolCaller({ name: 'run_code' })],
-    ['todo_write', new harnessTodos.Todos().getTools()[0]!],
     [
       'subagent_default_harness',
       harnessBuiltinTools.buildDefaultSubagent((() => undefined) as never, {

@@ -693,13 +693,13 @@ fn parses_a_config_through_serde() {
 fn define_harness_agent_config_validates_a_config_built_in_code() {
     let config = define_harness_agent_config(HarnessAgentConfig {
         name: "Reviewer".to_owned(),
-        builtin_plugins: vec![BuiltinPluginName::Todos],
+        builtin_plugins: vec![BuiltinPluginName::Environment],
         ..Default::default()
     })
     .unwrap();
-    assert_eq!(config.builtin_plugins, [BuiltinPluginName::Todos]);
+    assert_eq!(config.builtin_plugins, [BuiltinPluginName::Environment]);
     let error = define_harness_agent_config(HarnessAgentConfig {
-        builtin_plugins: vec![BuiltinPluginName::Todos, BuiltinPluginName::Todos],
+        builtin_plugins: vec![BuiltinPluginName::Environment, BuiltinPluginName::Environment],
         ..Default::default()
     })
     .unwrap_err();
@@ -791,7 +791,11 @@ mod builtin_tool_config_keys {
     fn rejects_an_unknown_built_in_plugin() {
         assert_eq!(
             "memories".parse::<BuiltinPluginName>().unwrap_err().to_string(),
-            "Unknown built-in plugin \"memories\". Available: environment, todos."
+            "Unknown built-in plugin \"memories\". Available: environment."
+        );
+        assert_eq!(
+            "todos".parse::<BuiltinPluginName>().unwrap_err().to_string(),
+            "Unknown built-in plugin \"todos\". Available: environment."
         );
     }
 }
