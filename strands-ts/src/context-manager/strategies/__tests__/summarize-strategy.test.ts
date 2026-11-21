@@ -16,7 +16,7 @@ import { ImageBlock, VideoBlock } from '../../../types/media.js'
 import { logger } from '../../../logging/logger.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
-import { TestModelProvider } from '../../../__fixtures__/model-test-helpers.js'
+import { collectGenerator, TestModelProvider } from '../../../__fixtures__/model-test-helpers.js'
 import {
   heuristicCountTokens,
   makeContext as makeBaseContext,
@@ -28,8 +28,10 @@ import type { ModelStreamEvent, Usage } from '../../../models/streaming.js'
 import type { Agent } from '../../../agent/agent.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
-import type { ToolRegistry } from '../../../registry/tool-registry.js'
+import { ToolRegistry } from '../../../registry/tool-registry.js'
+import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
 import type { Model } from '../../../models/model.js'
+import { ModelProxy } from '../../../models/model-proxy.js'
 
 const summaryResult = (text: string, provider?: string): SummarizeResult => ({
   content: [new SummaryBlock({ text, ...(provider && { provider }) })],
@@ -96,7 +98,7 @@ describe('Offload.summarize', () => {
       expect((block.content[0] as TextBlock).text).toContain('[Summarized:')
     })
 
-    it('summarizes with agent.auxModel when the strategy has no model', async () => {
+    it('summarizes with agent.model rather than agent.auxModel when the strategy has no model', async () => {
       const largeText = 'x'.repeat(2500 * 4 + 100)
       const messages = [makeToolResultMessage(largeText)]
       const mainModel = {
@@ -113,8 +115,8 @@ describe('Offload.summarize', () => {
       const result = await strategy.apply({ messages, agent, utilization: 0.9 })
 
       expect(result).toBe(true)
-      expect(auxModel.summarize).toHaveBeenCalledTimes(1)
-      expect(mainModel.summarize).not.toHaveBeenCalled()
+      expect(mainModel.summarize).toHaveBeenCalledTimes(1)
+      expect(auxModel.summarize).not.toHaveBeenCalled()
     })
 
     it('summarizes assistant text blocks', async () => {
@@ -343,22 +345,18 @@ function baseModel(serverSideSummary = false) {
 }
 
 /** An agent on a {@link baseModel}, with a system prompt, a tool, a cancel signal and agent metadata. */
-function mockAgent(
-  messages: Message[],
-  options: { serverSideSummary?: boolean; systemPrompt?: string | null; auxModel?: unknown } = {}
-) {
+function mockAgent(messages: Message[], options: { serverSideSummary?: boolean; systemPrompt?: string | null } = {}) {
   const spies = baseModel(options.serverSideSummary)
   const controller = new AbortController()
   const systemPrompt = options.systemPrompt === undefined ? AGENT_PROMPT : options.systemPrompt
   const agent = createMockAgent({
     messages,
-    toolRegistry: { list: () => [{ toolSpec: AGENT_TOOL }] } as unknown as ToolRegistry,
+    toolRegistry: { list: () => [{ toolSpec: AGENT_TOOL }], toolSpecs: () => [AGENT_TOOL] } as unknown as ToolRegistry,
     extra: {
       model: spies.model,
       cancelSignal: controller.signal,
       agentMetadata: { sessionId: 'session' },
       ...(systemPrompt !== null && { systemPrompt }),
-      ...(options.auxModel !== undefined && { auxModel: options.auxModel }),
     } as unknown as Partial<Agent>,
   })
   return { agent, controller, ...spies }
@@ -416,7 +414,11 @@ const summarizedToolResult = (summary: string): { role: string; content: unknown
 const pinned = (text: string): Message =>
   new Message({ role: 'user', content: [new TextBlock(text)], metadata: { custom: { pinned: true } } })
 
-const perMessage = () => Offload.summarize('*').when({ contextUtilization: '80%', preserveRecent: 1 })
+const perMessage = (model?: unknown) =>
+  Offload.summarize('*', model ? { model: model as Model } : undefined).when({
+    contextUtilization: '80%',
+    preserveRecent: 1,
+  })
 const perBlock = (config?: { systemPrompt: string }) =>
   Offload.summarize('toolResults', config).when({ blockThreshold: 100 })
 
@@ -583,6 +585,19 @@ describe('a summarized run replays the agent request', () => {
     expect(options).toEqual(replayOptions(agent))
   })
 
+  it("sends the tools of the agent's latest model call, so the summary shares its prompt cache", async () => {
+    const messages = replayMessages()
+    const { agent, summarize } = mockAgent(messages)
+    const loader = { name: 'load_tools', description: 'Load tools.', inputSchema: { type: 'object' as const } }
+    const callTools = { toolSpecs: [AGENT_TOOL, loader], deferredTools: new Set(['shell']) }
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+    await collectGenerator(new ModelProxy(model, agent).streamAggregated(messages, callTools))
+
+    expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
+
+    expect(summarize.mock.calls[0]![1]).toEqual({ ...replayOptions(agent), ...callTools })
+  })
+
   it('summarizes each side of a kept pin on its own', async () => {
     const messages = [
       new Message({ role: 'user', content: [new TextBlock('task')] }),
@@ -728,9 +743,9 @@ describe('a summarized run replays the agent request', () => {
       modelInfo: {},
       summarize: vi.fn(async (_messages: Message[]) => summaryResult('aux summary')),
     }
-    const { agent } = mockAgent(messages, { auxModel })
+    const { agent } = mockAgent(messages)
 
-    expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
+    expect(await perMessage(auxModel).apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
     const expected = replayMessages().slice(0, 4)
     expected[1] = new Message({ role: 'assistant', content: [new TextBlock('old1')] })
@@ -859,6 +874,29 @@ describe('server-side summary', () => {
     ])
   })
 
+  it('leaves the summary unplaced when the messages it covers leave the history', async () => {
+    const messages = serverSideMessages()
+    const { agent, summarize } = mockAgent(messages, { serverSideSummary: true })
+    summarize.mockImplementation(async () => {
+      // The messages the summary covers leave the history while the provider is writing it.
+      messages.splice(1, 2)
+      return { content: [new SummaryBlock({ provider: 'anthropic', text: 'compacted' })] }
+    })
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(false)
+
+    // A summary stands in for the conversation's exact start, so placing it over a shortened history would take the
+    // message the next model call responds to.
+    expect(turns(messages)).toEqual([
+      { role: 'user', content: [new TextBlock('task')] },
+      { role: 'assistant', content: [new TextBlock('old3')] },
+      { role: 'user', content: [new TextBlock('recent')] },
+    ])
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('leaving the summary unplaced'))
+    warnSpy.mockRestore()
+  })
+
   it('places a summary without a provider as a client-side marker', async () => {
     const messages = serverSideMessages()
     const { agent, summarize, countTokens } = mockAgent(messages, { serverSideSummary: true })
@@ -891,7 +929,7 @@ describe('server-side summary', () => {
     const messages = serverSideMessages()
     const agent = createMockAgent({
       messages,
-      toolRegistry: { list: () => [{ toolSpec }] } as unknown as ToolRegistry,
+      toolRegistry: { list: () => [{ toolSpec }], toolSpecs: () => [toolSpec] } as unknown as ToolRegistry,
       extra: { model, systemPrompt: 'be terse' } as unknown as Partial<Agent>,
     })
     const strategy = Offload.summarize('*', config).when({ contextUtilization: '80%', preserveRecent: 1 })
@@ -904,6 +942,24 @@ describe('server-side summary', () => {
       cancelSignal: agent.cancelSignal,
       ...instructions,
     })
+  })
+
+  it('sends the server-side summary the same sorted tools as the model call (#5700)', async () => {
+    const { model } = baseModel(true)
+    const summarize = vi.spyOn(model, 'summarize').mockResolvedValue(summaryResult('compacted', 'anthropic'))
+    const messages = serverSideMessages()
+    const toolRegistry = new ToolRegistry(undefined, { sortToolSpecs: true })
+    toolRegistry.add(['zeta', 'alpha', 'mike'].map((name) => createMockTool(name, () => 'OK')))
+    const agent = createMockAgent({
+      messages,
+      toolRegistry,
+      extra: { model, systemPrompt: 'be terse' } as unknown as Partial<Agent>,
+    })
+    const strategy = Offload.summarize('*').when({ contextUtilization: '80%', preserveRecent: 1 })
+
+    expect(await strategy.apply({ messages, agent, utilization: 0.9 })).toBe(true)
+
+    expect(summarize.mock.calls[0]![1]!.toolSpecs!.map((spec) => spec.name)).toEqual(['alpha', 'mike', 'zeta'])
   })
 
   it.each<{ name: string; other: Record<string, unknown> }>([
@@ -924,10 +980,10 @@ describe('server-side summary', () => {
     const messages = serverSideMessages()
     const agent = createMockAgent({
       messages,
-      extra: { model: agentModel, auxModel } as unknown as Partial<Agent>,
+      extra: { model: agentModel } as unknown as Partial<Agent>,
     })
 
-    expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
+    expect(await perMessage(auxModel).apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
     expect(turns(messages)).toEqual([
       { role: 'user', content: [new TextBlock('task')] },
@@ -1046,9 +1102,9 @@ describe('server-side summary', () => {
   ])('requires both models to support server-side summary: $name', async ({ agentSupports, auxSupports }) => {
     const messages = serverSideMessages()
     const aux = baseModel(auxSupports)
-    const { agent } = mockAgent(messages, { serverSideSummary: agentSupports, auxModel: aux.model })
+    const { agent } = mockAgent(messages, { serverSideSummary: agentSupports })
 
-    expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
+    expect(await perMessage(aux.model).apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
     expect(turns(messages)).toEqual([
       { role: 'user', content: [new TextBlock('task')] },

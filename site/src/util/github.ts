@@ -3,9 +3,8 @@ const FALLBACK = '6,100+'
 const TIMEOUT_MS = 5000
 const MAX_PAGES = 5
 
-// Fetched once per build and shared across every page render, so the header
-// shows the same count everywhere and a large build doesn't exhaust GitHub's
-// unauthenticated rate limit by issuing one request per page.
+// Fetched once per build so the homepage CTA shows one stable count without
+// issuing repeated unauthenticated GitHub requests during the build.
 let cached: Promise<string> | undefined
 
 export function getStarCount(): Promise<string> {

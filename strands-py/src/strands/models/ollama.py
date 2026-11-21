@@ -193,6 +193,9 @@ class OllamaModel(Model):
         skipped: Counter[str] = Counter()
         for message in messages:
             for content in message["content"]:
+                if "reasoningContent" in content:
+                    skipped["reasoningContent is not supported by Ollama | skipping content block"] += 1
+                    continue
                 # Check for location sources and skip with warning
                 if _has_location_source(content):
                     skipped["Location sources are not supported by Ollama | skipping content block"] += 1
@@ -276,7 +279,7 @@ class OllamaModel(Model):
                 return {"messageStart": {"role": "assistant"}}
 
             case "content_start":
-                if event["data_type"] == "text":
+                if event["data_type"] == "text" or event["data_type"] == "reasoning_content":
                     return {"contentBlockStart": {"start": {}}}
 
                 tool_name = event["data"].function.name
@@ -284,6 +287,9 @@ class OllamaModel(Model):
                 return {"contentBlockStart": {"start": {"toolUse": {"name": tool_name, "toolUseId": tool_use_id}}}}
 
             case "content_delta":
+                if event["data_type"] == "reasoning_content":
+                    return {"contentBlockDelta": {"delta": {"reasoningContent": {"text": event["data"]}}}}
+
                 if event["data_type"] == "text":
                     return {"contentBlockDelta": {"delta": {"text": event["data"]}}}
 
@@ -367,16 +373,36 @@ class OllamaModel(Model):
             yield self.format_chunk({"chunk_type": "message_start"})
             yield self.format_chunk({"chunk_type": "content_start", "data_type": "text"})
 
+            is_thinking = False
             async for event in response:
+                if event.message.thinking:
+                    if not is_thinking:
+                        is_thinking = True
+                        yield self.format_chunk({"chunk_type": "content_start", "data_type": "reasoning_content"})
+                    yield self.format_chunk(
+                        {
+                            "chunk_type": "content_delta",
+                            "data_type": "reasoning_content",
+                            "data": event.message.thinking,
+                        }
+                    )
+                if is_thinking and (not event.message.thinking or event.message.content or event.message.tool_calls):
+                    is_thinking = False
+                    yield self.format_chunk({"chunk_type": "content_stop", "data_type": "reasoning_content"})
+
                 for tool_call in event.message.tool_calls or []:
                     yield self.format_chunk({"chunk_type": "content_start", "data_type": "tool", "data": tool_call})
                     yield self.format_chunk({"chunk_type": "content_delta", "data_type": "tool", "data": tool_call})
                     yield self.format_chunk({"chunk_type": "content_stop", "data_type": "tool", "data": tool_call})
                     tool_requested = True
 
-                yield self.format_chunk(
-                    {"chunk_type": "content_delta", "data_type": "text", "data": event.message.content}
-                )
+                if event.message.content:
+                    yield self.format_chunk(
+                        {"chunk_type": "content_delta", "data_type": "text", "data": event.message.content}
+                    )
+
+            if is_thinking:
+                yield self.format_chunk({"chunk_type": "content_stop", "data_type": "reasoning_content"})
         except ollama.ResponseError as error:
             if any(message in str(error).lower() for message in self.OVERFLOW_MESSAGES):
                 raise ContextWindowOverflowException(str(error)) from error

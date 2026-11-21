@@ -166,12 +166,12 @@ export interface ProgrammaticToolCallerConfig {
   timeout?: number | null
 }
 export interface SubagentConfig {
-  /** How many levels of delegation a child may itself open. Defaults to 2. */
+  /** How many levels of delegation a child may itself open; `0` removes the tool. Defaults to 2. */
   maxDepth?: number
 }
 /**
  * `web_search` setting: a boolean, or `'exa'` to serve `web_search` from Exa's hosted search on any
- * model, replacing the provider's native search where it has one (a third party that sees the
+ * model, replacing native or AgentCore search where the model has one (a third party that sees the
  * queries; keyless, `EXA_API_KEY` lifts its rate limit).
  */
 export type WebSearchSetting = boolean | 'exa'

@@ -250,10 +250,9 @@ def _raise_http_error(provider_name: str, response: httpx.Response, body: Any) -
     status = response.status_code
     detail = _error_detail(body)
     message = f"{provider_name} decision request failed with HTTP {status}" + (f": {detail}" if detail else "")
-    if status == 413:
-        raise ContextWindowOverflowException(message)
-
     error = httpx.HTTPStatusError(message, request=response.request, response=response)
+    if status == 413:
+        raise ContextWindowOverflowException(message) from error
     if status in (429, 503, 529):
         raise ModelThrottledException(message) from error
     raise error
@@ -269,7 +268,7 @@ def _error_detail(body: Any) -> str | None:
         if isinstance(value, str):
             return value
         if isinstance(value, dict):
-            nested = value.get("message")
+            nested = value.get("message") or value.get("error_type")
             if isinstance(nested, str):
                 return nested
     return None

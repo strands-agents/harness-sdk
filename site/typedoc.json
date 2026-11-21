@@ -1,6 +1,6 @@
 {
   "$schema": "https://typedoc.org/schema.json",
-  "entryPoints": ["../strands-ts/src/index.ts"],
+  "entryPoints": ["../strands-ts/src/index.ts", "../strands-ts/src/context-manager/index.ts"],
   "out": ".build/api-docs/typescript",
   "tsconfig": "typedoc-tsconfig.json",
   "plugin": ["typedoc-plugin-markdown"],

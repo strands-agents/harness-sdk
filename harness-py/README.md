@@ -58,7 +58,7 @@ agent("Find the slowest test in this repo and explain why it's slow")
 
 ```python
 create_harness(
-    model="bedrock/global.anthropic.claude-opus-5",  # "provider/name", a bare Bedrock id, or a Model instance
+    model="bedrock/global.anthropic.claude-opus-5-5",  # "provider/name", a bare Bedrock id, or a Model instance
     effort="auto",                          # "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
     instructions=None,                      # domain text appended to the system prompt
     tools=None,                             # your tools, added alongside the built-ins
@@ -93,7 +93,8 @@ or wrong-language references fail instead of being ignored.
 pip install strands-harness
 ```
 
-The default agent runs on Amazon Bedrock. To use another provider, grab the matching extra:
+The default agent runs on Amazon Bedrock (Claude through Anthropic's Bedrock client, which the harness
+installs). To use another provider, grab the matching extra:
 
 ```bash
 pip install "strands-harness[openai]"      # or [anthropic], [gemini] (the `google` provider), [ollama], [litellm]
@@ -104,7 +105,7 @@ pip install "strands-harness[openai]"      # or [anthropic], [gemini] (the `goog
 Out of the box, `create_harness()` gives you an agent that:
 
 - **Runs on frontier models with reasoning on**, across Amazon Bedrock, Anthropic, OpenAI, and
-  Google. The default is Claude Opus 5 on Amazon Bedrock, behind a tuned system prompt: explore
+  Google. The default is Claude Opus 5.5 on Amazon Bedrock, behind a tuned system prompt: explore
   before changing things, confirm before anything irreversible, verify before calling a task done.
 - **Comes with working tools**: a shell, file tools (`read`, `write`, `edit`), web access, and
   `programmatic_tool_caller`, a sandbox where it writes code that chains, loops over, and
@@ -125,10 +126,10 @@ Everything above is a default, not a constraint. Here's how to adjust each piece
 Pass a `provider/model` string, a bare model id, or a ready-made `Model` instance:
 
 ```python
-create_harness(model="anthropic/claude-opus-5")  # Anthropic's API directly
+create_harness(model="anthropic/claude-opus-5-5")  # Anthropic's API directly
 create_harness(model="openai/gpt-5.6-sol")         # OpenAI
 create_harness(model="google/gemini-3.5-flash")    # Google
-create_harness(model="bedrock/global.anthropic.claude-opus-5")  # the default, spelled out
+create_harness(model="bedrock/global.anthropic.claude-opus-5-5")  # the default, spelled out
 create_harness(model="bedrock-mantle/openai.gpt-5.6-sol")  # Bedrock's OpenAI-compatible endpoint
 
 from strands.models.openai import OpenAIModel
@@ -142,7 +143,7 @@ for every provider:
 
 ```python
 create_harness(effort="high")     # minimal | low | medium | high | xhigh | max, as the provider offers them
-create_harness(effort="auto")     # the provider's recommended level (high where supported), the default
+create_harness(effort="auto")     # the model vendor's default level (e.g. medium on Opus 5.5, else high), the default
 create_harness(effort="off")      # no reasoning
 ```
 
@@ -189,7 +190,7 @@ create_harness(builtin_tools={"*": False, "read": True, "web_fetch": {}})   # pi
 
 `BUILTIN_TOOL_NAMES` (exported from the package root) is the full list. Prefer the mapping form
 for "the defaults minus X" (`{"subagent": False}`); a list pins every name it contains, so listing
-`web_search` on a model without native search raises instead of quietly staying off (opt into the
+`web_search` on a model without search raises instead of quietly staying off (opt into the
 Exa fallback with `{"web_search": "exa"}`).
 
 `subagent` always runs in the background. By default, the model may also select background
@@ -224,10 +225,12 @@ create_harness(builtin_tools=["shell", "read", "write", "edit"])   # no subagent
 The tool's model-facing parameters are derived from configuration. For a fully configured tool
 (custom roles, model tiers, fixed prompts), build one with `make_subagent` and pass it via `tools`
 with `subagent` dropped from `builtin_tools`. You supply the `builder`, a function that turns a
-resolved `AgentSpec` into the child agent (typically calling `create_harness`); this is the seam
-that makes the child a harness member. Delegation depth is bounded at two levels by default; pass
-`max_depth` to change it. Each axis (`instructions`, `tools`, `mcp_servers`, `model`, `context`)
-becomes a parameter, or not, depending on whether it is `Fixed`, `Inherit`, `Open`, or `Choice`:
+resolved `AgentSpec` into the child agent (typically calling `create_harness`, sync or async); this
+is the seam that makes the child a harness member. `make_subagent` is the SDK's vended subagent tool,
+re-exported here. Delegation depth is bounded at two levels by default; pass `max_depth` to change it.
+Each axis (`instructions`, `tools`, `model`, `context`) becomes a parameter, or not, depending on
+whether it is `Fixed`, `Inherit`, `Open`, or `Choice`. See [docs/subagent.md](docs/subagent.md) for
+what the default wiring adds and what changed when the harness moved to the SDK tool:
 
 ```python
 from strands_harness import create_harness
@@ -306,14 +309,17 @@ create_harness(builtin_tools={"web_fetch": {"model": "anthropic/claude-haiku-4-5
 
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the
 model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, and Daybreak models on
-`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. In case of no
-native search (Amazon Bedrock Converse, other Mantle models, a `Model` instance) `web_search` is
+`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. Other
+Amazon Bedrock models get a `web_search` tool backed by
+[Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html)
+instead. In case of no native search (a `Model` instance from another provider) `web_search` is
 off by default. To enable web search for these providers, you can opt into Exa with
 `{"web_search": "exa"}`. The model then gets a `web_search` tool backed by Exa's hosted search. It
 works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can
 override a provider's native web search by adding `"exa"` explicitly to any model. If you are
 using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in
-`AmazonBedrockFullAccess`) to avoid failing search.
+`AmazonBedrockFullAccess`) to avoid failing search; AgentCore web search needs
+`bedrock-agentcore:InvokeWebSearch`.
 
 > [!WARNING]
 > Web search through Exa sends every search query the model writes to Exa (exa.ai), a third-party
@@ -322,7 +328,8 @@ using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in
 
 ```python
 create_harness(model="openai/gpt-5.6-sol")                 # native search on, it's in the defaults
-create_harness(builtin_tools={"web_search": "exa"})  # Bedrock: search through Exa (third party)
+create_harness()                                           # Bedrock: AgentCore web search, also a default
+create_harness(builtin_tools={"web_search": "exa"})        # any model: search through Exa (third party)
 ```
 
 ## Caching reused context

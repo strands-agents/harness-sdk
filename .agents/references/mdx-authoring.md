@@ -146,7 +146,7 @@ Optional fields (validated by Zod in `site/src/content.config.ts`):
 | `community` | `boolean` | Marks page as community-contributed |
 | `experimental` | `boolean` | Marks feature as experimental |
 | `externalDocs` | object | Generated provenance and publication status for imported docs; authors must not set it |
-| `integrationType` | enum | `model-provider`, `tool`, `session-manager`, `memory-store`, `storage`, `integration`, `plugin`, `observability`, `agent-extension`, `intervention` |
+| `integrationType` | enum | `model-provider`, `decision-model`, `tool`, `session-manager`, `memory-store`, `storage`, `integration`, `plugin`, `observability`, `agent-extension`, `intervention` |
 | `category` | `string` | For TypeScript API doc grouping |
 | `redirectFrom` | `string[]` | Old slugs that should redirect here |
 | `tags` | `Tag[]` | From `site/src/config/tags.yml`; drives the build-time "Related pages" block |
