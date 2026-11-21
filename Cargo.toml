@@ -48,6 +48,8 @@ aws-smithy-types = "1"
 
 eventsource-stream = "0.2"
 htmd = "0.5"
+# The DOM types htmd hands element handlers, at the version htmd uses.
+markup5ever_rcdom = "0.38"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream", "gzip", "brotli", "deflate"] }
 
 rmcp = { version = "3.9", default-features = false }
