@@ -54,7 +54,8 @@ pub(crate) async fn shell_of(sandbox: &Arc<dyn Sandbox>) -> strands::Result<Sand
         return Ok(shell);
     }
     let options = ExecuteOptions {
-        timeout: Some(Duration::from_secs(10)),
+        // A cold powershell.exe start on a loaded Windows host can take longer than 10 s.
+        timeout: Some(Duration::from_secs(30)),
         ..ExecuteOptions::default()
     };
     let result = sandbox.execute(SHELL_PROBE, options).await?;
