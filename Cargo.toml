@@ -116,3 +116,8 @@ match_same_arms = "warn"
 uninlined_format_args = "warn"
 cognitive_complexity = "warn"
 large_futures = "warn"
+
+# Line tables keep backtraces readable while keeping test binaries under the MSVC linker's
+# program-database limit; the same setting on every OS keeps builds comparable.
+[profile.dev]
+debug = "line-tables-only"
