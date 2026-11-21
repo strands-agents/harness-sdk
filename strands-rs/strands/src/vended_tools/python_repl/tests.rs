@@ -204,7 +204,11 @@ async fn cancellation_stops_the_call_and_propagates_unwrapped() {
         panic!("{error}");
     };
     let payload: JsonValue = serde_json::from_str(abort.to_string().split('\n').nth(1).unwrap()).unwrap();
-    assert_eq!(payload, json!({"output": "partial\n", "error": "", "exit_code": 130}));
+    let newline = if cfg!(windows) { "\r\n" } else { "\n" };
+    assert_eq!(
+        payload,
+        json!({"output": format!("partial{newline}"), "error": "", "exit_code": 130})
+    );
 }
 
 #[test]

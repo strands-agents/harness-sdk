@@ -683,7 +683,7 @@ mod tests {
     fn base_dir_collapses_separators_and_defaults_to_dot_strands() {
         assert_eq!(LocalFileStorage::new("/tmp//a/").base_dir(), Path::new("/tmp/a"));
         assert_eq!(LocalFileStorage::new("/").base_dir(), Path::new("/"));
-        assert_eq!(LocalFileStorage::default().base_dir().to_str(), Some("./.strands"));
+        assert_eq!(LocalFileStorage::default().base_dir(), Path::new("./.strands"));
         assert!(!Storage::is_ephemeral(&LocalFileStorage::default()));
     }
 
@@ -977,7 +977,8 @@ mod tests {
             "C:x",
         ] {
             let written = storage.write(key, b"v").await;
-            if cfg!(windows) && key.starts_with("C:") {
+            // Windows rejects a drive prefix and strips the trailing dots that make `...` a name.
+            if cfg!(windows) && (key.starts_with("C:") || key.contains("/.../")) {
                 assert!(written.is_err(), "{key}");
             } else {
                 written.unwrap();

@@ -392,7 +392,12 @@ fn finds_lowercase_skill_md_as_fallback() {
 #[test]
 fn throws_for_non_existent_path() {
     let error = Skill::from_file("/does/not/exist", lenient()).unwrap_err().to_string();
-    assert!(error.ends_with("does/not/exist> | skill path does not exist or is not a valid skill directory"));
+    let path: PathBuf = Path::new("does/not/exist").components().collect();
+    let suffix = format!(
+        "{}> | skill path does not exist or is not a valid skill directory",
+        path.display()
+    );
+    assert!(error.ends_with(&suffix), "{error}");
 }
 
 #[test]

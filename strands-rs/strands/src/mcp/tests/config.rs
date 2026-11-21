@@ -645,7 +645,8 @@ async fn throws_when_sse_transport_specified_without_url() {
 #[tokio::test]
 async fn throws_on_invalid_file_path() {
     let error = error_text(resolve("/nonexistent/path.json").await);
-    assert!(error.contains("No such file or directory"), "{error}");
+    let not_found = std::fs::read("/nonexistent/path.json").unwrap_err().to_string();
+    assert!(error.contains(&not_found), "{error}");
 }
 
 #[tokio::test]
