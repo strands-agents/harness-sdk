@@ -1430,3 +1430,417 @@ async fn agrees_on_cache_config_across_providers() {
         );
     }
 }
+
+mod nova_cache_points {
+    use super::*;
+    use crate::models::bedrock::BedrockGuardrailConfig;
+    use crate::types::{
+        ImageBlock, ImageFormat, ImageSource, ToolResultBlock, ToolResultContent, ToolUseBlock, VideoBlock,
+        VideoFormat, VideoSource,
+    };
+
+    const NOVA: &str = "us.amazon.nova-pro-v1:0";
+
+    fn nova(cache_config: CacheConfig) -> BedrockModelConfig {
+        BedrockModelConfig {
+            cache_config: Some(cache_config),
+            ..with_model_id(NOVA)
+        }
+    }
+
+    fn tool_turn() -> Vec<Message> {
+        vec![
+            Message::user("What is 6 x 7?"),
+            assistant(vec![ContentBlock::ToolUse(ToolUseBlock::new(
+                "calculator",
+                "id-1",
+                json!({}),
+            ))]),
+        ]
+    }
+
+    fn tool_result(id: &str, output: &str) -> ContentBlock {
+        ToolResultBlock::success(id, vec![ToolResultContent::text(output)]).into()
+    }
+
+    fn image() -> ContentBlock {
+        ContentBlock::Image(ImageBlock::new(ImageFormat::Png, ImageSource::Bytes(vec![1])))
+    }
+
+    fn last_content(request: &Value) -> Value {
+        request["messages"].as_array().unwrap().last().unwrap()["content"].clone()
+    }
+
+    /// Every cache point in the request: tools, system, then messages.
+    fn all_cache_points(request: &Value) -> Vec<Value> {
+        let blocks = |value: &Value| value.as_array().cloned().unwrap_or_default();
+        let mut all = blocks(&request["toolConfig"]["tools"]);
+        all.extend(blocks(&request["system"]));
+        for message in blocks(&request["messages"]) {
+            all.extend(blocks(&message["content"]));
+        }
+        all.into_iter()
+            .filter_map(|block| block.get("cachePoint").cloned())
+            .collect()
+    }
+
+    fn is_tool_result(block: &Value) -> bool {
+        block["toolResult"]["toolUseId"] == json!("id-1")
+    }
+
+    fn tools_without_point(request: &Value) -> bool {
+        let tools = request["toolConfig"]["tools"].as_array().unwrap();
+        tools.len() == 1 && tools[0]["toolSpec"]["name"] == json!("calculator")
+    }
+
+    /// Serializes the tests that emit or expect the one-time Nova warnings, since a warning emitted
+    /// by one test is not emitted again in another.
+    static WARNINGS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        WARNINGS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn ttl_warning() -> String {
+        format!("model_id=<{NOVA}> | ttl is not supported by this model, using the default cache duration")
+    }
+
+    fn default_point() -> Value {
+        json!({"type": "default"})
+    }
+
+    #[tokio::test]
+    async fn caches_the_system_prompt_and_conversation_but_not_the_tool_definitions_without_a_warning() {
+        let warning =
+            format!("model_id=<{NOVA}> | cache_config is enabled but this model does not support automatic caching");
+        crate::logging::forget_warning(&warning);
+        let (logs, guard) = crate::test_support::record_logs();
+        let request = sent(nova(auto()), hello(), with_tools(system("Be helpful"))).await;
+        drop(guard);
+        assert_eq!(
+            request["system"],
+            json!([{"text": "Be helpful"}, {"cachePoint": {"type": "default"}}])
+        );
+        assert!(tools_without_point(&request), "{request}");
+        assert_eq!(
+            last_content(&request),
+            json!([{"text": "Hello"}, {"cachePoint": {"type": "default"}}])
+        );
+        assert!(!logs.text().contains(&warning), "{}", logs.text());
+    }
+
+    #[tokio::test]
+    async fn drops_a_configured_ttl_from_every_cache_point_and_warns() {
+        let _serial = serial();
+        crate::logging::forget_warning(&ttl_warning());
+        let (logs, guard) = crate::test_support::record_logs();
+        let request = sent(
+            nova(CacheConfig {
+                ttl: Some("1h".to_owned()),
+                ..auto()
+            }),
+            hello(),
+            with_tools(system("Be helpful")),
+        )
+        .await;
+        drop(guard);
+        assert_eq!(all_cache_points(&request), [default_point(), default_point()]);
+        assert!(logs.text().contains(&ttl_warning()), "{}", logs.text());
+    }
+
+    #[tokio::test]
+    async fn drops_a_system_prompt_ttl_and_warns() {
+        let _serial = serial();
+        crate::logging::forget_warning(&ttl_warning());
+        let (logs, guard) = crate::test_support::record_logs();
+        let request = sent(
+            nova(CacheConfig {
+                system_prompt_ttl: ttl("1h"),
+                ..CacheConfig::default()
+            }),
+            hello(),
+            system("Be helpful"),
+        )
+        .await;
+        drop(guard);
+        assert_eq!(
+            request["system"],
+            json!([{"text": "Be helpful"}, {"cachePoint": {"type": "default"}}])
+        );
+        assert!(logs.text().contains(&ttl_warning()), "{}", logs.text());
+    }
+
+    #[tokio::test]
+    async fn drops_the_ttl_of_a_caller_placed_system_cache_point_and_warns() {
+        let _serial = serial();
+        crate::logging::forget_warning(&ttl_warning());
+        let (logs, guard) = crate::test_support::record_logs();
+        let blocks = vec![
+            SystemContentBlock::text("Be helpful"),
+            SystemContentBlock::CachePoint(CachePointBlock::new().with_ttl("5m")),
+        ];
+        let request = sent(nova(CacheConfig::default()), hello(), system_blocks(blocks)).await;
+        drop(guard);
+        assert_eq!(
+            request["system"],
+            json!([{"text": "Be helpful"}, {"cachePoint": {"type": "default"}}])
+        );
+        assert!(logs.text().contains(&ttl_warning()), "{}", logs.text());
+    }
+
+    #[tokio::test]
+    async fn warns_that_an_explicit_tools_ttl_has_no_effect() {
+        let warning = format!(
+            "model_id=<{NOVA}>, tools_ttl=<1h> | this model accepts no tool-level cache point, tool definitions are cached only as part of the system prompt prefix"
+        );
+        crate::logging::forget_warning(&warning);
+        let (logs, guard) = crate::test_support::record_logs();
+        let request = sent(
+            nova(CacheConfig {
+                tools_ttl: ttl("1h"),
+                ..CacheConfig::default()
+            }),
+            hello(),
+            tools_only(),
+        )
+        .await;
+        drop(guard);
+        assert!(tools_without_point(&request), "{request}");
+        assert!(logs.text().contains(&warning), "{}", logs.text());
+    }
+
+    #[tokio::test]
+    async fn applies_the_nova_rules_under_the_anthropic_strategy() {
+        let _serial = serial();
+        crate::logging::forget_warning(&ttl_warning());
+        let (logs, guard) = crate::test_support::record_logs();
+        let mut messages = tool_turn();
+        messages.push(user(vec![tool_result("id-1", "42")]));
+        let config = nova(CacheConfig {
+            strategy: Some(CacheStrategy::Anthropic),
+            ttl: Some("1h".to_owned()),
+            ..CacheConfig::default()
+        });
+        let request = sent(config, messages, with_tools(system("Be helpful"))).await;
+        drop(guard);
+        assert!(tools_without_point(&request), "{request}");
+        assert_eq!(
+            request["system"],
+            json!([{"text": "Be helpful"}, {"cachePoint": {"type": "default"}}])
+        );
+        assert_eq!(
+            request["messages"][0]["content"],
+            json!([{"text": "What is 6 x 7?"}, {"cachePoint": {"type": "default"}}])
+        );
+        let last = last_content(&request);
+        assert!(
+            last.as_array().unwrap().len() == 1 && is_tool_result(&last[0]),
+            "{last}"
+        );
+        assert_eq!(all_cache_points(&request), [default_point(), default_point()]);
+        assert!(logs.text().contains(&ttl_warning()), "{}", logs.text());
+    }
+
+    #[tokio::test]
+    async fn keeps_the_conversation_cache_point_on_the_prompt_that_started_a_tool_loop() {
+        let mut messages = tool_turn();
+        messages.extend([
+            user(vec![tool_result("id-1", "42")]),
+            assistant(vec![ContentBlock::ToolUse(ToolUseBlock::new(
+                "calculator",
+                "id-2",
+                json!({}),
+            ))]),
+            user(vec![tool_result("id-2", "84")]),
+        ]);
+        let request = sent(nova(auto()), messages, tools_only()).await;
+        assert_eq!(
+            request["messages"][0]["content"],
+            json!([{"text": "What is 6 x 7?"}, {"cachePoint": {"type": "default"}}])
+        );
+        assert_eq!(all_cache_points(&request), [default_point()]);
+    }
+
+    #[tokio::test]
+    async fn keeps_the_conversation_cache_point_on_the_prompt_when_a_per_call_tail_follows_a_tool_result() {
+        let mut messages = tool_turn();
+        messages.push(user(vec![tool_result("id-1", "42"), text("per-call")]));
+        let options = Options {
+            dynamic_trailing_blocks: Some(1),
+            ..tools_only()
+        };
+        let request = sent(nova(auto()), messages, options).await;
+        assert_eq!(
+            request["messages"][0]["content"],
+            json!([{"text": "What is 6 x 7?"}, {"cachePoint": {"type": "default"}}])
+        );
+        let last = last_content(&request);
+        assert!(
+            is_tool_result(&last[0]) && last[1] == json!({"text": "per-call"}),
+            "{last}"
+        );
+        assert_eq!(all_cache_points(&request), [default_point()]);
+    }
+
+    #[tokio::test]
+    async fn moves_a_caller_placed_cache_point_with_no_text_ahead_of_it_to_the_prompt_and_warns() {
+        let _serial = serial();
+        let warning = format!(
+            "model_id=<{NOVA}> | dropped a caller-placed cache point with no text ahead of it, this model takes one only directly after text, placing it automatically instead"
+        );
+        crate::logging::forget_warning(&warning);
+        let (logs, guard) = crate::test_support::record_logs();
+        let mut messages = tool_turn();
+        messages.push(user(vec![tool_result("id-1", "42"), image(), point()]));
+        let request = sent(nova(CacheConfig::default()), messages, tools_only()).await;
+        drop(guard);
+        let last = last_content(&request);
+        assert!(
+            last.as_array().unwrap().len() == 2 && is_tool_result(&last[0]) && last[1].get("image").is_some(),
+            "{last}"
+        );
+        assert_eq!(
+            request["messages"][0]["content"],
+            json!([{"text": "What is 6 x 7?"}, {"cachePoint": {"type": "default"}}])
+        );
+        assert_eq!(all_cache_points(&request), [default_point()]);
+        assert!(logs.text().contains(&warning), "{}", logs.text());
+    }
+
+    #[tokio::test]
+    async fn places_the_cache_point_directly_after_the_text_ahead_of_name() {
+        let video = ContentBlock::Video(VideoBlock::new(VideoFormat::Mp4, VideoSource::Bytes(vec![1])));
+        let cases = [
+            ("an image", vec![image()]),
+            ("a PDF", vec![document("order", DocumentFormat::Pdf, 1)]),
+            (
+                "an image then a txt document",
+                vec![image(), document("notes", DocumentFormat::Txt, 1)],
+            ),
+            ("a video", vec![video]),
+        ];
+        for (name, media) in cases {
+            let count = media.len();
+            let mut content = vec![text("Describe")];
+            content.extend(media);
+            let request = sent(nova(auto()), vec![user(content)], Options::default()).await;
+            let last = last_content(&request);
+            let last = last.as_array().unwrap();
+            assert_eq!(last.len(), count + 2, "{name}");
+            assert_eq!(
+                last[..2],
+                [json!({"text": "Describe"}), json!({"cachePoint": {"type": "default"}})],
+                "{name}"
+            );
+            assert_eq!(all_cache_points(&request), [default_point()], "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn moves_a_caller_placed_cache_point_after_an_image_back_to_the_text() {
+        let request = sent(
+            nova(auto()),
+            vec![user(vec![text("Describe"), image(), point()])],
+            Options::default(),
+        )
+        .await;
+        let last = last_content(&request);
+        assert_eq!(last[0], json!({"text": "Describe"}));
+        assert_eq!(last[1], json!({"cachePoint": {"type": "default"}}));
+        assert!(
+            last[2].get("image").is_some() && last.as_array().unwrap().len() == 3,
+            "{last}"
+        );
+    }
+
+    #[tokio::test]
+    async fn keeps_the_cache_point_after_an_image_on_claude() {
+        let config = BedrockModelConfig {
+            cache_config: Some(auto()),
+            ..with_model_id("global.anthropic.claude-sonnet-4-6")
+        };
+        let request = sent(config, vec![user(vec![text("Describe"), image()])], Options::default()).await;
+        let last = last_content(&request);
+        assert_eq!(
+            last.as_array().unwrap().last().unwrap(),
+            &json!({"cachePoint": {"type": "default"}})
+        );
+    }
+
+    #[tokio::test]
+    async fn places_no_conversation_cache_point_when_the_only_user_text_is_wrapped_in_guard_content() {
+        let config = BedrockModelConfig {
+            guardrail_config: Some(BedrockGuardrailConfig {
+                guardrail_identifier: "g".into(),
+                guardrail_version: "1".into(),
+                guard_latest_user_message: Some(true),
+                ..BedrockGuardrailConfig::default()
+            }),
+            ..nova(auto())
+        };
+        let request = sent(config, hello(), system("Be helpful")).await;
+        assert_eq!(
+            last_content(&request),
+            json!([{"guardContent": {"text": {"text": "Hello"}}}])
+        );
+        assert_eq!(all_cache_points(&request), [default_point()]);
+    }
+
+    #[tokio::test]
+    async fn moves_a_caller_placed_cache_point_off_a_tool_result_back_to_the_prompt_never_past_the_boundary() {
+        let _serial = serial();
+        let mut messages = tool_turn();
+        messages.push(user(vec![tool_result("id-1", "42"), point(), text("next")]));
+        let request = sent(nova(auto()), messages, tools_only()).await;
+        let last = last_content(&request);
+        assert!(is_tool_result(&last[0]) && last[1] == json!({"text": "next"}), "{last}");
+        assert_eq!(last.as_array().unwrap().len(), 2);
+        assert_eq!(
+            request["messages"][0]["content"],
+            json!([{"text": "What is 6 x 7?"}, {"cachePoint": {"type": "default"}}])
+        );
+        assert_eq!(all_cache_points(&request), [default_point()]);
+    }
+
+    #[tokio::test]
+    async fn caches_a_plain_text_user_message_that_follows_earlier_tool_calls() {
+        let mut messages = tool_turn();
+        messages.extend([
+            user(vec![tool_result("id-1", "42")]),
+            assistant(vec![text("42")]),
+            Message::user("Thanks"),
+        ]);
+        let request = sent(nova(auto()), messages, tools_only()).await;
+        assert_eq!(
+            last_content(&request),
+            json!([{"text": "Thanks"}, {"cachePoint": {"type": "default"}}])
+        );
+        assert_eq!(all_cache_points(&request), [default_point()]);
+    }
+
+    #[tokio::test]
+    async fn keeps_the_tools_cache_point_and_ttl_on_claude() {
+        let (logs, guard) = crate::test_support::record_logs();
+        let mut messages = tool_turn();
+        messages.push(user(vec![tool_result("id-1", "42")]));
+        let config = BedrockModelConfig {
+            cache_config: Some(CacheConfig {
+                ttl: Some("1h".to_owned()),
+                ..auto()
+            }),
+            ..with_model_id("global.anthropic.claude-sonnet-4-6")
+        };
+        let request = sent(config, messages, with_tools(system("Be helpful"))).await;
+        drop(guard);
+        let tools = request["toolConfig"]["tools"].as_array().unwrap();
+        assert_eq!(tools[1], json!({"cachePoint": {"type": "default", "ttl": "1h"}}));
+        assert_eq!(
+            request["system"],
+            json!([{"text": "Be helpful"}, {"cachePoint": {"type": "default", "ttl": "1h"}}])
+        );
+        let last = last_content(&request);
+        assert!(is_tool_result(&last[0]), "{last}");
+        assert_eq!(last[1], json!({"cachePoint": {"type": "default", "ttl": "1h"}}));
+        assert!(!logs.text().contains("ttl is not supported"), "{}", logs.text());
+    }
+}

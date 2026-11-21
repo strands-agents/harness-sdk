@@ -9,7 +9,10 @@ use serde_json::json;
 use super::{BedrockModelConfig, IncludeToolResultStatus};
 use crate::error::{Error, Result};
 use crate::logging::warn_once;
-use crate::models::model::{ModelRequest, resolve_cache_section, resolve_max_tokens};
+use crate::models::bedrock_cache::bedrock_limits_cache_points;
+use crate::models::model::{
+    CacheSectionSetting, ModelRequest, ResolvedCacheSection, resolve_cache_section, resolve_max_tokens,
+};
 use crate::models::model_info::{ModelInfo, PromptCaching};
 use crate::models::native_output::to_native_output_schema;
 use crate::models::strict_schema::{ensure_strict_json_schema, find_unsupported_strict_keywords};
@@ -167,15 +170,9 @@ impl<'a> Formatter<'a> {
             .iter()
             .map(|spec| format_tool_spec(spec, strict_tools))
             .collect();
-        if self.should_enable_caching() {
-            let cache_config = self.config.cache_config.as_ref();
-            let section = resolve_cache_section(
-                cache_config.and_then(|cache| cache.tools_ttl.as_ref()),
-                &[cache_config.and_then(|cache| cache.ttl.as_deref())],
-            );
-            if section.enabled {
-                tools.push(json!({"cachePoint": cache_point(section.ttl.as_deref())}));
-            }
+        let section = self.tools_cache_section();
+        if section.enabled {
+            tools.push(json!({"cachePoint": cache_point(section.ttl.as_deref())}));
         }
         let mut tool_config = JsonObject::new();
         tool_config.insert("tools".to_owned(), JsonValue::Array(tools));
@@ -231,6 +228,93 @@ impl<'a> Formatter<'a> {
         }
     }
 
+    /// Whether Converse limits where this model takes cache points (no tools cache point, no TTL,
+    /// only directly after text).
+    fn limits_cache_points(&self) -> bool {
+        bedrock_limits_cache_points(self.model_id())
+    }
+
+    fn cache_point_rules(&self) -> CachePointRules<'_> {
+        CachePointRules {
+            after_text_only: self.limits_cache_points(),
+            model_id: self.model_id(),
+        }
+    }
+
+    fn warn_ttl_unsupported(&self) {
+        warn_once(&format!(
+            "model_id=<{}> | ttl is not supported by this model, using the default cache duration",
+            self.model_id()
+        ));
+    }
+
+    /// Resolves a cache section against `cache_config.ttl`, dropping the TTL with a one-time
+    /// warning when the model rejects one.
+    fn cache_section(&self, section: Option<&CacheSectionSetting>) -> ResolvedCacheSection {
+        let shared_ttl = self.config.cache_config.as_ref().and_then(|cache| cache.ttl.as_deref());
+        let resolved = resolve_cache_section(section, &[shared_ttl]);
+        if resolved.ttl.is_none() || !self.limits_cache_points() {
+            return resolved;
+        }
+        self.warn_ttl_unsupported();
+        ResolvedCacheSection {
+            enabled: resolved.enabled,
+            ttl: None,
+        }
+    }
+
+    /// The tools cache section, disabled when caching is off or the model rejects a tools cache
+    /// point.
+    fn tools_cache_section(&self) -> ResolvedCacheSection {
+        let disabled = ResolvedCacheSection {
+            enabled: false,
+            ttl: None,
+        };
+        if !self.should_enable_caching() {
+            return disabled;
+        }
+        let tools_ttl = self
+            .config
+            .cache_config
+            .as_ref()
+            .and_then(|cache| cache.tools_ttl.as_ref());
+        if !self.limits_cache_points() {
+            return self.cache_section(tools_ttl);
+        }
+        let value = match tools_ttl {
+            None | Some(CacheSectionSetting::Enabled(false)) => return disabled,
+            Some(CacheSectionSetting::Enabled(true)) => "true",
+            Some(CacheSectionSetting::Ttl(ttl)) => ttl.as_str(),
+        };
+        warn_once(&format!(
+            "model_id=<{}>, tools_ttl=<{value}> | this model accepts no tool-level cache point, tool definitions are cached only as part of the system prompt prefix",
+            self.model_id()
+        ));
+        disabled
+    }
+
+    /// Removes caller-placed TTLs from system cache points when the model rejects any TTL,
+    /// warning once.
+    fn drop_unsupported_system_ttls(&self, system: &mut [JsonValue]) {
+        if !self.limits_cache_points() {
+            return;
+        }
+        for point in system
+            .iter_mut()
+            .filter_map(|block| block.get_mut("cachePoint"))
+            .filter_map(JsonValue::as_object_mut)
+        {
+            if point
+                .get("ttl")
+                .and_then(JsonValue::as_str)
+                .is_some_and(|ttl| !ttl.is_empty())
+            {
+                point.shift_remove("ttl");
+                self.warn_ttl_unsupported();
+            }
+        }
+    }
+
     /// Whether cache points are added.
     fn should_enable_caching(&self) -> bool {
         let Some(cache_config) = &self.config.cache_config else {
@@ -241,6 +325,10 @@ impl<'a> Formatter<'a> {
         }
         if self.model_takes_cache_points() {
             return true;
+        }
+        // A model the provider caches implicitly needs no cache points, so it gets no warning.
+        if self.model_info.capabilities.prompt_caching == Some(PromptCaching::Auto) {
+            return false;
         }
         warn_once(&format!(
             "model_id=<{}> | cache_config is enabled but this model does not support automatic caching",
@@ -268,9 +356,10 @@ impl<'a> Formatter<'a> {
         if !self.should_enable_caching() {
             return;
         }
+        self.drop_unsupported_system_ttls(system);
         let cache_config = self.config.cache_config.as_ref();
         let system_setting = cache_config.and_then(|cache| cache.system_prompt_ttl.as_ref());
-        let section = resolve_cache_section(system_setting, &[cache_config.and_then(|cache| cache.ttl.as_deref())]);
+        let section = self.cache_section(system_setting);
         let mut ttl = section.ttl;
         let explicit_system_ttl = matches!(system_setting, Some(crate::models::CacheSectionSetting::Ttl(_)));
         if ttl.is_some() && !explicit_system_ttl {
@@ -343,13 +432,19 @@ impl<'a> Formatter<'a> {
             );
         }
         if self.should_enable_caching() {
-            let cache_config = self.config.cache_config.as_ref();
-            let section = resolve_cache_section(
-                cache_config.and_then(|cache| cache.messages_ttl.as_ref()),
-                &[cache_config.and_then(|cache| cache.ttl.as_deref())],
-            );
+            let messages_ttl = self
+                .config
+                .cache_config
+                .as_ref()
+                .and_then(|cache| cache.messages_ttl.as_ref());
+            let section = self.cache_section(messages_ttl);
             if section.enabled {
-                inject_cache_point(&mut formatted, section.ttl.as_deref(), dynamic_trailing_blocks);
+                inject_cache_point(
+                    &mut formatted,
+                    section.ttl.as_deref(),
+                    dynamic_trailing_blocks,
+                    self.cache_point_rules(),
+                );
             }
         }
         Ok(formatted)
@@ -740,14 +835,44 @@ fn content_mut(message: &mut JsonValue) -> Option<&mut Vec<JsonValue>> {
     message.get_mut("content").and_then(JsonValue::as_array_mut)
 }
 
-/// Keeps a caller-placed cache point with the configured TTL and the document rule. Returns `false`
-/// when nothing cacheable precedes it, so it was removed: Bedrock rejects a cache point with no
-/// content ahead of it.
+/// Where the model takes cache points.
+#[derive(Clone, Copy)]
+struct CachePointRules<'a> {
+    /// The model takes a cache point only directly after text (Nova).
+    after_text_only: bool,
+    model_id: &'a str,
+}
+
+/// Steps a cache point index back over the adjacent run of non-PDF documents directly ahead of
+/// it. Bedrock rejects a cache point directly after one; moving further would evict durable
+/// content, usually the document itself, from the cached prefix.
+fn step_back_over_documents(content: &[JsonValue], index: usize) -> usize {
+    let mut target = index;
+    while target > 0 && is_non_pdf_document(&content[target - 1]) {
+        target -= 1;
+    }
+    target
+}
+
+/// Steps a cache point index back to directly after the nearest text block ahead of it, or 0
+/// when no text block precedes it.
+fn step_back_to_text(content: &[JsonValue], index: usize) -> usize {
+    (1..=index)
+        .rev()
+        .find(|target| content[target - 1].get("text").is_some())
+        .unwrap_or(0)
+}
+
+/// Keeps a caller-placed cache point with the configured TTL and the placement rules. Returns
+/// `false` when nothing cacheable precedes it (or, on a model that takes a cache point only after
+/// text, no text does), so it was removed: Bedrock rejects a cache point with no content ahead of
+/// it.
 fn honor_placed_cache_point(
     content: &mut Vec<JsonValue>,
     placed_index: usize,
     message_index: usize,
     ttl: Option<&str>,
+    rules: CachePointRules<'_>,
 ) -> bool {
     if content.get(placed_index).is_none_or(|block| !is_cache_point(block)) {
         return false;
@@ -768,16 +893,22 @@ fn honor_placed_cache_point(
             point.insert("ttl".to_owned(), json!(ttl));
         }
     }
-    // Bedrock rejects a cache point directly after a non-PDF document, so step back over the
-    // adjacent run of them, and no further.
-    let mut target = placed_index;
-    while target > 0 && is_non_pdf_document(&content[target - 1]) {
-        target -= 1;
-    }
+    let target = if rules.after_text_only {
+        step_back_to_text(content, placed_index)
+    } else {
+        step_back_over_documents(content, placed_index)
+    };
     if target == placed_index {
         content.insert(placed_index, placed);
         tracing::debug!("msg_idx=<{message_index}>, block_idx=<{placed_index}> | honored caller-placed cache point");
         return true;
+    }
+    if target == 0 && rules.after_text_only {
+        warn_once(&format!(
+            "model_id=<{}> | dropped a caller-placed cache point with no text ahead of it, this model takes one only directly after text, placing it automatically instead",
+            rules.model_id
+        ));
+        return false;
     }
     if target == 0 {
         tracing::warn!("msg_idx=<{message_index}> | dropped cache point ahead of a leading document");
@@ -789,8 +920,15 @@ fn honor_placed_cache_point(
 }
 
 /// Leaves exactly one cache point in the last user message, honoring one the caller placed
-/// there, and strips cache points from every other message.
-fn inject_cache_point(messages: &mut [JsonValue], ttl: Option<&str>, dynamic_trailing_blocks: usize) {
+/// there, and strips cache points from every other message. On a model that takes cache points
+/// only after text the point may land on an earlier user message (see
+/// [`nova_cache_point_position`]).
+fn inject_cache_point(
+    messages: &mut [JsonValue],
+    ttl: Option<&str>,
+    dynamic_trailing_blocks: usize,
+    rules: CachePointRules<'_>,
+) {
     let last_user = messages
         .iter()
         .rposition(|message| message.get("role").and_then(JsonValue::as_str) == Some("user"));
@@ -810,21 +948,24 @@ fn inject_cache_point(messages: &mut [JsonValue], ttl: Option<&str>, dynamic_tra
             }
         }
     }
-    let Some(last_user) = last_user else {
-        return;
-    };
-    let Some(content) = content_mut(&mut messages[last_user]) else {
-        return;
-    };
-    place_last_user_cache_point(content, last_user, ttl, dynamic_trailing_blocks);
+    if let Some(last_user) = last_user {
+        place_last_user_cache_point(messages, last_user, ttl, dynamic_trailing_blocks, rules);
+    }
 }
 
 fn place_last_user_cache_point(
-    content: &mut Vec<JsonValue>,
+    messages: &mut [JsonValue],
     message_index: usize,
     ttl: Option<&str>,
     dynamic_trailing_blocks: usize,
+    rules: CachePointRules<'_>,
 ) {
+    let Some(content) = content_mut(&mut messages[message_index]) else {
+        return;
+    };
+    // Blocks after the caller's boundary are per-call content, so a fallback point never lands
+    // among them.
+    let mut trailing_blocks = dynamic_trailing_blocks;
     let placed: Vec<usize> = (0..content.len())
         .filter(|index| is_cache_point(&content[*index]))
         .collect();
@@ -837,14 +978,22 @@ fn place_last_user_cache_point(
                 "msg_idx=<{message_index}>, block_idx=<{extra}> | stripped existing cache point (auto mode manages cache points)"
             );
         }
-        if honor_placed_cache_point(content, first, message_index, ttl) {
+        if honor_placed_cache_point(content, first, message_index, ttl, rules) {
             return;
         }
+        trailing_blocks = trailing_blocks.max(content.len().saturating_sub(first));
         if content.is_empty() {
             tracing::debug!("msg_idx=<{message_index}> | no content left to cache");
             return;
         }
     }
+    if rules.after_text_only {
+        inject_nova_cache_point(messages, message_index, trailing_blocks);
+        return;
+    }
+    let Some(content) = content_mut(&mut messages[message_index]) else {
+        return;
+    };
     let point = json!({"cachePoint": cache_point(ttl)});
     if dynamic_trailing_blocks > 0 {
         // Per-call content sits at the end, so the reusable prefix ends where it begins; the honor
@@ -855,7 +1004,7 @@ fn place_last_user_cache_point(
             return;
         }
         content.insert(boundary, point);
-        honor_placed_cache_point(content, boundary, message_index, ttl);
+        honor_placed_cache_point(content, boundary, message_index, ttl, rules);
         return;
     }
     match content.iter().position(is_non_pdf_document) {
@@ -868,6 +1017,49 @@ fn place_last_user_cache_point(
         Some(index) => content.insert(index, point),
     }
     tracing::debug!("msg_idx=<{message_index}> | added cache point to last user message");
+}
+
+/// Where a Nova conversation cache point goes: directly after the last text block of the last
+/// user message that has one, ahead of the final message's per-call blocks. Nova takes a cache
+/// point only directly after text and reads an entry only when a point repeats the previous
+/// call's position, so in a tool loop, whose user messages hold tool results, the point stays on
+/// the prompt that started the loop.
+fn nova_cache_point_position(
+    messages: &[JsonValue],
+    last_user: usize,
+    dynamic_trailing_blocks: usize,
+) -> Option<(usize, usize)> {
+    (0..=last_user).rev().find_map(|message_index| {
+        let message = &messages[message_index];
+        if message.get("role").and_then(JsonValue::as_str) != Some("user") {
+            return None;
+        }
+        let content = message
+            .get("content")
+            .and_then(JsonValue::as_array)
+            .map_or(&[][..], Vec::as_slice);
+        let end = if message_index == last_user {
+            content.len().saturating_sub(dynamic_trailing_blocks)
+        } else {
+            content.len()
+        };
+        let block_index = step_back_to_text(content, end);
+        (block_index > 0).then_some((message_index, block_index))
+    })
+}
+
+/// Places the Nova conversation cache point, which takes no TTL, at
+/// [`nova_cache_point_position`].
+fn inject_nova_cache_point(messages: &mut [JsonValue], last_user: usize, dynamic_trailing_blocks: usize) {
+    let Some((message_index, block_index)) = nova_cache_point_position(messages, last_user, dynamic_trailing_blocks)
+    else {
+        tracing::debug!("no user message has text to follow, skipped conversation cache point");
+        return;
+    };
+    if let Some(content) = content_mut(&mut messages[message_index]) {
+        content.insert(block_index, json!({"cachePoint": {"type": "default"}}));
+    }
+    tracing::debug!("msg_idx=<{message_index}>, block_idx=<{block_index}> | added cache point after text");
 }
 
 /// The Converse `outputConfig` constraining the response to the schema, merged into the request's

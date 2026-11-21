@@ -5,6 +5,8 @@
 pub mod anthropic;
 #[cfg(feature = "bedrock")]
 pub mod bedrock;
+#[cfg(feature = "bedrock")]
+mod bedrock_cache;
 pub(crate) mod defaults;
 #[cfg(any(feature = "anthropic", feature = "openai"))]
 pub(crate) mod http;
