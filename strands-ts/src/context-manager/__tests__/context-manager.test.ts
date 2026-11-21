@@ -1,11 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { ContextManager } from '../context-manager.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
-import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
+import { AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent } from '../../hooks/events.js'
 import { ContextWindowOverflowError } from '../../errors.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock, OffloadedBlock } from '../../types/messages.js'
 import type { Agent } from '../../agent/agent.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
+import type { Storage } from '../../storage/storage.js'
+import { PluginRegistry } from '../../plugins/registry.js'
+import { RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
 import { Offload } from '../strategies/offload/index.js'
 import { ToolRegistry } from '../../registry/tool-registry.js'
 import { ToolStreamEvent } from '../../tools/tool.js'
@@ -706,6 +709,203 @@ describe('ContextManager', () => {
 
       expect(agent.messages).toHaveLength(4)
       expect(counts).toBe(1)
+    })
+  })
+
+  describe('shared across multiple agents', () => {
+    function invokeRetrieval(tool: Tool, reference: string): Promise<unknown> {
+      return (tool as unknown as { invoke(input: unknown): Promise<unknown> }).invoke({ reference })
+    }
+
+    function makeSessionAgent(params: {
+      id: string
+      sessionId: string
+      storage: Storage
+      messages?: Message[]
+      estimateUtilization?: (tokens: number) => number
+    }) {
+      return createMockAgent({
+        messages: params.messages ?? [],
+        extra: {
+          id: params.id,
+          sessionId: params.sessionId,
+          storage: params.storage,
+          model: {
+            getConfig: () => ({}),
+            modelInfo: { limits: { contextWindow: 10_000 } },
+            countTokens: async (msgs: Message[]) =>
+              msgs.reduce(
+                (sum, m) =>
+                  sum +
+                  m.content.reduce((s, b) => {
+                    if (b instanceof TextBlock) return s + Math.ceil(b.text.length / 4)
+                    if (b instanceof ToolResultBlock) {
+                      return (
+                        s +
+                        b.content.reduce((cs, c) => cs + (c instanceof TextBlock ? Math.ceil(c.text.length / 4) : 0), 0)
+                      )
+                    }
+                    return s
+                  }, 0),
+                0
+              ),
+            estimateUtilization: params.estimateUtilization ?? ((tokens: number) => tokens / 10_000),
+          },
+        } as Partial<Agent>,
+      })
+    }
+
+    it('isolates archives, retrieval tools, and backfill across agents sharing one ContextManager', async () => {
+      const storage = new InMemoryStorage()
+      const cm = new ContextManager({ strategies: [] })
+
+      const msgA = new Message({ role: 'user', content: [new TextBlock('secret from session A')], trackingId: 'msg-a' })
+      const msgB = new Message({ role: 'user', content: [new TextBlock('secret from session B')], trackingId: 'msg-b' })
+      const agentA = makeSessionAgent({ id: 'agent-a', sessionId: 's1', storage, messages: [msgA] })
+      const agentB = makeSessionAgent({ id: 'agent-b', sessionId: 's2', storage, messages: [msgB] })
+
+      await new PluginRegistry([cm]).initialize(agentA)
+      await new PluginRegistry([cm]).initialize(agentB)
+
+      const toolA = agentA.toolRegistry.get(RETRIEVAL_TOOL_NAME)!
+      const toolB = agentB.toolRegistry.get(RETRIEVAL_TOOL_NAME)!
+      expect(toolA).toBeDefined()
+      expect(toolB).toBeDefined()
+      expect(toolA).not.toBe(toolB)
+      expect(cm.getTools(agentA)).toStrictEqual([toolA])
+      expect(cm.getTools(agentB)).toStrictEqual([toolB])
+      expect(cm.archiveFor(agentA)).not.toBe(cm.archiveFor(agentB))
+
+      expect(await invokeRetrieval(toolA, 'msg-a_0')).toEqual(new TextBlock('secret from session A'))
+      expect(await invokeRetrieval(toolB, 'msg-b_0')).toEqual(new TextBlock('secret from session B'))
+      await expect(invokeRetrieval(toolB, 'msg-a_0')).rejects.toThrow('reference not found: msg-a_0')
+      await expect(invokeRetrieval(toolA, 'msg-b_0')).rejects.toThrow('reference not found: msg-b_0')
+
+      expect(await storage.list('context/s1/')).toStrictEqual(['context/s1/scopes/agent/agent-a/msg-a_0'])
+      expect(await storage.list('context/s2/')).toStrictEqual(['context/s2/scopes/agent/agent-b/msg-b_0'])
+    })
+
+    it('isolates archives and retrieval tools when shared ContextManager initializes agents concurrently', async () => {
+      const storage = new InMemoryStorage()
+      const cm = new ContextManager({ strategies: [] })
+
+      const agentA = makeSessionAgent({
+        id: 'agent-a',
+        sessionId: 's1',
+        storage,
+        messages: [new Message({ role: 'user', content: [new TextBlock('concurrent A')], trackingId: 'conc-a' })],
+      })
+      const agentB = makeSessionAgent({
+        id: 'agent-b',
+        sessionId: 's2',
+        storage,
+        messages: [new Message({ role: 'user', content: [new TextBlock('concurrent B')], trackingId: 'conc-b' })],
+      })
+
+      await Promise.all([new PluginRegistry([cm]).initialize(agentA), new PluginRegistry([cm]).initialize(agentB)])
+
+      const toolA = agentA.toolRegistry.get(RETRIEVAL_TOOL_NAME)!
+      const toolB = agentB.toolRegistry.get(RETRIEVAL_TOOL_NAME)!
+      expect(toolA).not.toBe(toolB)
+      expect(await invokeRetrieval(toolA, 'conc-a_0')).toEqual(new TextBlock('concurrent A'))
+      expect(await invokeRetrieval(toolB, 'conc-b_0')).toEqual(new TextBlock('concurrent B'))
+      await expect(invokeRetrieval(toolB, 'conc-a_0')).rejects.toThrow('reference not found: conc-a_0')
+      await expect(invokeRetrieval(toolA, 'conc-b_0')).rejects.toThrow('reference not found: conc-b_0')
+    })
+
+    it('keeps offload strategy writes on agent A isolated after agent B is initialized', async () => {
+      const storage = new InMemoryStorage()
+      const cm = new ContextManager({
+        strategies: [
+          Offload.truncate('toolResults', { previewTokens: 10 }).when({ blockThreshold: 50 }),
+          Offload.drop('*').when({ contextUtilization: '50%', preserveRecent: 1 }),
+        ],
+      })
+
+      const agentA = makeSessionAgent({
+        id: 'agent-a',
+        sessionId: 's1',
+        storage,
+        messages: [
+          new Message({ role: 'user', content: [new TextBlock('task A')], trackingId: 'a-0' }),
+          new Message({ role: 'assistant', content: [new TextBlock('old reply A')], trackingId: 'a-1' }),
+          new Message({ role: 'user', content: [new TextBlock('follow-up A')], trackingId: 'a-2' }),
+        ],
+        estimateUtilization: () => 0.8,
+      })
+      const agentB = makeSessionAgent({
+        id: 'agent-b',
+        sessionId: 's2',
+        storage,
+        messages: [new Message({ role: 'user', content: [new TextBlock('task B')], trackingId: 'b-0' })],
+      })
+
+      await new PluginRegistry([cm]).initialize(agentA)
+      await new PluginRegistry([cm]).initialize(agentB)
+
+      // Trigger eager offload on agent A after agent B was initialized.
+      const largeOutput = 'A_SECRET_PAYLOAD '.repeat(200)
+      const toolResultMsg = new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'tu-a-big',
+            status: 'success',
+            content: [new TextBlock(largeOutput)],
+          }),
+        ],
+        trackingId: 'a-3',
+      })
+      agentA.messages.push(toolResultMsg)
+      await invokeTrackedHook(
+        agentA,
+        new MessageAddedEvent({ agent: agentA, message: toolResultMsg, invocationState: {} })
+      )
+
+      // Trigger pipeline offload (Offload.drop('*')) on agent A after agent B was initialized.
+      await invokeTrackedHook(agentA, makeBeforeEvent(agentA, 8_000))
+
+      const toolA = agentA.toolRegistry.get(RETRIEVAL_TOOL_NAME)!
+      const toolB = agentB.toolRegistry.get(RETRIEVAL_TOOL_NAME)!
+
+      // Eagerly offloaded tool result belongs strictly to agent A's archive.
+      expect(await invokeRetrieval(toolA, 'tu-a-big')).toEqual(new TextBlock(largeOutput))
+      await expect(invokeRetrieval(toolB, 'tu-a-big')).rejects.toThrow('reference not found: tu-a-big')
+
+      // Dropped message placeholder belongs strictly to agent A's archive.
+      const droppedBlock = agentA.messages
+        .flatMap((m) => m.content)
+        .find((b): b is OffloadedBlock => b instanceof OffloadedBlock && b.method === 'drop')
+      expect(droppedBlock?.ref).toBeDefined()
+      expect(await invokeRetrieval(toolA, droppedBlock!.ref!)).toBeDefined()
+      await expect(invokeRetrieval(toolB, droppedBlock!.ref!)).rejects.toThrow(
+        `reference not found: ${droppedBlock!.ref}`
+      )
+
+      // Nothing from agent A leaked into session B's storage prefix.
+      expect(await storage.list('context/s2/')).toStrictEqual(['context/s2/scopes/agent/agent-b/b-0_0'])
+      const keysA = await storage.list('context/s1/')
+      expect(keysA.some((k) => k.endsWith('/tu-a-big_0'))).toBe(true)
+      expect(keysA.some((k) => k.includes('/removed-'))).toBe(true)
+    })
+
+    it('tracks archive durability per agent', async () => {
+      const ephemeralStorage = new InMemoryStorage()
+      const durableStorage: Storage = {
+        read: async () => null,
+        write: async () => {},
+        delete: async () => {},
+        list: async () => [],
+      }
+      const cm = new ContextManager({ strategies: [] })
+      const agentA = makeSessionAgent({ id: 'agent-a', sessionId: 's1', storage: ephemeralStorage })
+      const agentB = makeSessionAgent({ id: 'agent-b', sessionId: 's2', storage: durableStorage })
+
+      await cm.initAgent(agentA)
+      await cm.initAgent(agentB)
+
+      expect(cm.archiveIsDurableFor(agentA)).toBe(false)
+      expect(cm.archiveIsDurableFor(agentB)).toBe(true)
     })
   })
 })

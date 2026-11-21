@@ -83,15 +83,20 @@ export type ContextManagerStrategy = ContextManagerPreset | ContextManagerConfig
  * `ContextManager` instance; the Agent registers the manager. When present, it owns overflow
  * recovery and proactive compression — no separate ConversationManager is needed.
  */
+interface AgentContextState {
+  archive: Archive | undefined
+  archiveIsDurable: boolean
+  tools: Tool[]
+}
+
 export class ContextManager implements Plugin {
   readonly name = 'strands:context-manager'
 
   private readonly _strategies: ContextStrategy[]
   private readonly _archiveStorage: Storage | false | undefined
   private readonly _enableRetrievalTool: boolean
-  private _tools: Tool[] = []
-  private _archive: Archive | undefined
-  private _archiveIsDurable = false
+  private readonly _agentState = new WeakMap<LocalAgent, AgentContextState>()
+  private _lastState: AgentContextState | undefined
 
   /**
    * @param config - The strategies and archive to use; the default pipeline when omitted
@@ -131,8 +136,9 @@ export class ContextManager implements Plugin {
     return new ContextManager(strategy)
   }
 
-  getTools(): Tool[] {
-    return [...this._tools]
+  getTools(agent?: LocalAgent): Tool[] {
+    const state = agent ? this._agentState.get(agent) : this._lastState
+    return [...(state?.tools ?? [])]
   }
 
   /**
@@ -154,26 +160,28 @@ export class ContextManager implements Plugin {
   }
 
   async initAgent(agent: LocalAgent): Promise<void> {
+    let archive: Archive | undefined
+    let archiveIsDurable = false
     if (this._archiveStorage !== false) {
       const storage = this._archiveStorage ?? agent.storage ?? new InMemoryStorage()
-      this._archiveIsDurable = !(EPHEMERAL in storage)
+      archiveIsDurable = !(EPHEMERAL in storage)
       // Only explicit archive storage may be a shared root; agent.storage is shared with other subsystems.
       // Plain (non-namespaced) explicit storage still gets the per-agent prefix. Mirrors strands-py.
-      this._archive = new Archive(storage, agent.sessionId, agent.id, {
+      archive = new Archive(storage, agent.sessionId, agent.id, {
         customArchiveNamespace: this._archiveStorage !== undefined,
       })
     }
 
-    if (this._archive) {
-      const archive = this._archive
-      const storedKeys = new Set(await archive.list())
+    if (archive) {
+      const agentArchive = archive
+      const storedKeys = new Set(await agentArchive.list())
       for (const [index, message] of agent.messages.entries()) {
-        await archive.storeMessage(message, retrievalCallsBefore(agent.messages, index), storedKeys)
+        await agentArchive.storeMessage(message, retrievalCallsBefore(agent.messages, index), storedKeys)
       }
       agent.addHook(MessageAddedEvent, async (event) => {
         const messages = event.agent.messages
         const index = messages.indexOf(event.message)
-        await archive.storeMessage(
+        await agentArchive.storeMessage(
           event.message,
           retrievalCallsBefore(messages, index === -1 ? messages.length : index)
         )
@@ -181,11 +189,14 @@ export class ContextManager implements Plugin {
     }
 
     for (const strategy of this._strategies) {
-      strategy.init?.(agent, this._archive)
+      strategy.init?.(agent, archive)
     }
 
-    const retrievalTools = this._enableRetrievalTool && this._archive ? [createRetrievalTool(this._archive)] : []
-    this._tools = [...retrievalTools, ...loadToolsFor(toolLoadingStrategy(this._strategies), agent)]
+    const retrievalTools = this._enableRetrievalTool && archive ? [createRetrievalTool(archive)] : []
+    const tools = [...retrievalTools, ...loadToolsFor(toolLoadingStrategy(this._strategies), agent)]
+    const state: AgentContextState = { archive, archiveIsDurable, tools }
+    this._agentState.set(agent, state)
+    this._lastState = state
 
     agent.addHook(BeforeModelCallEvent, async (event) => {
       await this._runStrategies(event.agent, event.projectedInputTokens, undefined, event.invocationContext)
@@ -217,12 +228,34 @@ export class ContextManager implements Plugin {
   }
 
   /**
+   * The L1 archive bound to `agent`, if archive is enabled and `agent` has been initialized.
+   *
+   * @param agent - The agent whose archive to look up
+   * @returns The agent's archive, or undefined if archive is disabled or `agent` has not been initialized
+   * @internal
+   */
+  archiveFor(agent: LocalAgent): Archive | undefined {
+    return this._agentState.get(agent)?.archive
+  }
+
+  /**
+   * Whether `agent`'s archive is backed by durable storage that survives process restarts.
+   *
+   * @param agent - The agent whose archive durability to check
+   * @returns true if the agent's archive storage is not ephemeral
+   * @internal
+   */
+  archiveIsDurableFor(agent: LocalAgent): boolean {
+    return this._agentState.get(agent)?.archiveIsDurable ?? false
+  }
+
+  /**
    * The L1 archive instance, if archive is enabled and the agent has been initialized.
    *
    * @returns The archive, or undefined if archive is disabled or initAgent has not run
    */
   get archive(): Archive | undefined {
-    return this._archive
+    return this._lastState?.archive
   }
 
   /**
@@ -232,7 +265,7 @@ export class ContextManager implements Plugin {
    * @returns true if the archive storage is not ephemeral
    */
   get archiveIsDurable(): boolean {
-    return this._archiveIsDurable
+    return this._lastState?.archiveIsDurable ?? false
   }
 
   /**
@@ -240,7 +273,7 @@ export class ContextManager implements Plugin {
    * @returns The archive, or undefined if archive is disabled or initAgent has not run
    */
   get stash(): Archive | undefined {
-    return this._archive
+    return this.archive
   }
 
   /**
@@ -248,7 +281,7 @@ export class ContextManager implements Plugin {
    * @returns true if the archive storage is not ephemeral
    */
   get stashIsDurable(): boolean {
-    return this._archiveIsDurable
+    return this.archiveIsDurable
   }
 
   private async _runStrategies(
@@ -260,13 +293,14 @@ export class ContextManager implements Plugin {
     const messages = agent.messages
     const inputTokens = precomputedInputTokens ?? (await countRequestTokens(agent, messages))
     const auxiliaryInvocationContext = createAuxiliaryInvocationContext(invocationContext)
+    const archive = this._agentState.get(agent)?.archive
 
     const strategyContext: ContextState = {
       messages,
       agent,
       utilization: agent.model.estimateUtilization(inputTokens),
       ...(overflow ? { overflow: true } : {}),
-      ...(this._archive ? { archive: this._archive, stash: this._archive } : {}),
+      ...(archive ? { archive, stash: archive } : {}),
       ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
     }
 
