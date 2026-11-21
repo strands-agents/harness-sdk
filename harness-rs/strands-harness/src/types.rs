@@ -9,7 +9,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize, Serializer};
-use strands::experimental::context_manager::ContextManagerStrategy;
+use strands::context_manager::ContextManagerStrategy;
 use strands::memory::MemoryStore;
 
 use crate::config::BuiltinToolName;

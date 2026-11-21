@@ -10,8 +10,8 @@ use super::invocation_context::{InvocationContext, InvokeLimits};
 use super::invocation_state::InvocationState;
 use crate::background_tasks::BackgroundTasksConfig;
 use crate::cancel::CancelSignal;
+use crate::context_manager::ContextManagerStrategy;
 use crate::conversation_manager::ConversationManager;
-use crate::experimental::context_manager::ContextManagerStrategy;
 use crate::interventions::InterventionHandler;
 use crate::memory::MemoryManagerSource;
 use crate::models::Model;
@@ -183,7 +183,7 @@ pub struct AgentConfig {
     /// `Arc`.
     #[builder(with = |manager: impl ConversationManager| Arc::new(manager) as Arc<dyn ConversationManager>)]
     pub conversation_manager: Option<Arc<dyn ConversationManager>>,
-    /// Strategy-driven context management (experimental): a preset, a
+    /// Strategy-driven context management: a preset, a
     /// configuration, an instance, or `Disabled`. When set (except `Disabled`) it owns overflow
     /// recovery and compression, and a co-provided `conversation_manager` is ignored.
     #[builder(into)]
@@ -215,7 +215,7 @@ pub struct AgentConfig {
     #[builder(with = |sandbox: impl crate::sandbox::IntoSandbox| sandbox.into_sandbox())]
     pub sandbox: Option<Arc<dyn Sandbox>>,
     /// Default storage backend for agent subsystems (`storage`). Subsystems without their own
-    /// storage (the session manager, the context manager's stash) resolve from it, each under
+    /// storage (the session manager, the context manager's archive) resolve from it, each under
     /// its own namespace; a subsystem's own storage always wins. The builder's `storage(..)`
     /// takes a storage by value or as an `Arc`.
     #[builder(with = |storage: impl crate::storage::IntoStorage| storage.into_storage())]

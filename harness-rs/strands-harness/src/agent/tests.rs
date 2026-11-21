@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use serde_json::json;
-use strands::experimental::context_manager::ContextManagerStrategy;
+use strands::context_manager::ContextManagerStrategy;
 use strands::memory::{MemoryEntry, MemoryManagerConfig, SearchOptions};
 use strands::models::routing::{ModelRouter, ModelRouterOptions, RoutingCandidate};
 use strands::models::{BaseModelConfig, Model};
@@ -906,7 +906,7 @@ async fn returns_an_offloaded_tool_result_to_the_model_in_full_on_retrieval() {
     .unwrap();
     let snapshot: serde_json::Value = serde_json::from_str(&snapshot).unwrap();
     assert_eq!(
-        snapshot["data"]["stash"],
+        snapshot["data"]["archive"],
         json!({ "location": "external", "storageType": "LocalFileStorage" })
     );
     assert!(
@@ -924,7 +924,7 @@ async fn returns_an_offloaded_tool_result_to_the_model_in_full_on_retrieval() {
 }
 
 #[tokio::test]
-async fn keeps_the_stash_in_memory_without_a_harness_built_session() {
+async fn keeps_the_archive_in_memory_without_a_harness_built_session() {
     let in_memory = || -> Arc<dyn Storage> { Arc::new(InMemoryStorage::new()) };
     let manager = || {
         SessionManager::new(SessionManagerConfig {
@@ -947,7 +947,7 @@ async fn keeps_the_stash_in_memory_without_a_harness_built_session() {
 }
 
 #[tokio::test]
-async fn backs_the_stash_with_an_explicit_storage() {
+async fn backs_the_archive_with_an_explicit_storage() {
     let dir = tempfile::tempdir().unwrap();
     let storage: Arc<dyn Storage> = Arc::new(InMemoryStorage::new());
     let options = HarnessAgentOptions {

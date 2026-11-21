@@ -11,8 +11,8 @@ use super::snapshot_storage_adapter::{SnapshotLocation, SnapshotStorageAdapter};
 use super::types::{SnapshotTriggerCallback, SnapshotTriggerParams};
 use super::validation::validate_identifier;
 use crate::agent::{LocalAgent, TakeSnapshotOptions};
+use crate::context_manager::{AgentArchive, Archive};
 use crate::error::{Error, Result};
-use crate::experimental::context_manager::{AgentStash, Stash};
 use crate::hooks::{AfterInvocationEvent, AfterModelCallEvent, InitializedEvent, MessageAddedEvent};
 use crate::plugins::Plugin;
 use crate::storage::{NamespacedStorage, Storage};
@@ -151,7 +151,7 @@ struct Inner {
     save_latest_on: SaveLatestStrategy,
     snapshot_trigger: Option<SnapshotTriggerCallback>,
     ids: UuidV7Source,
-    agent_stash: RwLock<Option<Stash>>,
+    agent_archive: RwLock<Option<Archive>>,
 }
 
 impl SessionManager {
@@ -183,7 +183,7 @@ impl SessionManager {
                 save_latest_on: config.save_latest_on.unwrap_or_default(),
                 snapshot_trigger: config.snapshot_trigger,
                 ids,
-                agent_stash: RwLock::new(None),
+                agent_archive: RwLock::new(None),
             }),
         })
     }
@@ -233,7 +233,7 @@ impl SessionManager {
             .await
     }
 
-    /// Deletes every snapshot, manifest and stash entry of the session. A stash
+    /// Deletes every snapshot, manifest and archive entry of the session. An archive
     /// rooted at a caller-scoped view is shared beyond the session and is kept.
     ///
     /// # Errors
@@ -241,14 +241,14 @@ impl SessionManager {
     /// No storage or a failed delete.
     pub async fn delete_session(&self) -> Result<()> {
         self.inner.adapter()?.delete_session(&self.inner.session_id).await?;
-        let stash = self
+        let archive = self
             .inner
-            .agent_stash
+            .agent_archive
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
-        if let Some(stash) = stash {
-            stash.clear_session().await?;
+        if let Some(archive) = archive {
+            archive.clear_session().await?;
         }
         Ok(())
     }
@@ -269,7 +269,7 @@ impl Inner {
 
     async fn save_snapshot(&self, agent: &LocalAgent, is_latest: bool) -> Result<()> {
         let mut snapshot = agent.take_snapshot(TakeSnapshotOptions::session())?;
-        include_stash_data(agent, &mut snapshot).await?;
+        include_archive_data(agent, &mut snapshot).await?;
         let snapshot_id = if is_latest {
             LATEST_SNAPSHOT_ID.to_owned()
         } else {
@@ -286,7 +286,7 @@ impl Inner {
             return Ok(false);
         };
         agent.load_snapshot(&snapshot)?;
-        self.restore_stash_data(agent, &snapshot).await?;
+        self.restore_archive_data(agent, &snapshot).await?;
         Ok(true)
     }
 
@@ -328,7 +328,7 @@ impl Inner {
     /// Captures one snapshot and writes it as immutable history and as `snapshot_latest`.
     async fn save_immutable_and_latest(&self, agent: &LocalAgent) -> Result<()> {
         let mut snapshot: Snapshot = agent.take_snapshot(TakeSnapshotOptions::session())?;
-        include_stash_data(agent, &mut snapshot).await?;
+        include_archive_data(agent, &mut snapshot).await?;
         let adapter = self.adapter()?;
         let location = self.location(agent);
         let snapshot_id = self.ids.next_id();
@@ -341,22 +341,22 @@ impl Inner {
 }
 
 impl Inner {
-    /// Loads inline stash entries into the agent's stash; an external stash is left where it is,
+    /// Loads inline archive entries into the agent's archive; an external archive is left where it is,
     /// with a warning when its storage type changed.
-    async fn restore_stash_data(&self, agent: &LocalAgent, snapshot: &Snapshot) -> Result<()> {
-        let Some(data) = snapshot.data.get(STASH_KEY).filter(|data| is_truthy(data)) else {
+    async fn restore_archive_data(&self, agent: &LocalAgent, snapshot: &Snapshot) -> Result<()> {
+        let Some(data) = snapshot.data.get(ARCHIVE_KEY).filter(|data| is_truthy(data)) else {
             return Ok(());
         };
-        let Some(stash) = agent.context_stash().map(|agent_stash| &agent_stash.stash) else {
+        let Some(archive) = agent.context_archive().map(|agent_archive| &agent_archive.archive) else {
             return Ok(());
         };
         match data.get("location").and_then(JsonValue::as_str) {
             Some("external") => {
                 let snapshot_type = data.get("storageType").and_then(JsonValue::as_str).unwrap_or_default();
-                let current_type = stash.storage_type_name();
+                let current_type = archive.storage_type_name();
                 if !snapshot_type.is_empty() && !current_type.is_empty() && snapshot_type != current_type {
                     tracing::warn!(
-                        "session_id=<{}>, snapshot_storage=<{snapshot_type}>, current_storage=<{current_type}> | stash storage type changed since snapshot was created, stash data may be inaccessible",
+                        "session_id=<{}>, snapshot_storage=<{snapshot_type}>, current_storage=<{current_type}> | archive storage type changed since snapshot was created, archive data may be inaccessible",
                         self.session_id
                     );
                 }
@@ -368,16 +368,16 @@ impl Inner {
                     .and_then(JsonValue::as_object)
                     .cloned()
                     .unwrap_or_default();
-                stash.load_snapshot(&entries).await
+                archive.load_snapshot(&entries).await
             }
             _ => Ok(()),
         }
     }
 }
 
-const STASH_KEY: &str = "stash";
+const ARCHIVE_KEY: &str = "archive";
 
-/// Whether a JSON value counts as stash data: `null`, `false`, `0` and `""` do not.
+/// Whether a JSON value counts as archive data: `null`, `false`, `0` and `""` do not.
 fn is_truthy(value: &JsonValue) -> bool {
     match value {
         JsonValue::Null => false,
@@ -388,26 +388,30 @@ fn is_truthy(value: &JsonValue) -> bool {
     }
 }
 
-/// Adds the agent's stash to a snapshot: a reference to durable storage
+/// Adds the agent's archive to a snapshot: a reference to durable storage
 /// (`{"location":"external","storageType":..}`), or the entries inline when there are any.
-async fn include_stash_data(agent: &LocalAgent, snapshot: &mut Snapshot) -> Result<()> {
-    let Some(AgentStash { stash, durable }) = agent.context_stash() else {
+async fn include_archive_data(agent: &LocalAgent, snapshot: &mut Snapshot) -> Result<()> {
+    let Some(AgentArchive { archive, durable }) = agent.context_archive() else {
         return Ok(());
     };
     let mut envelope = JsonObject::new();
     if *durable {
         envelope.insert("location".to_owned(), JsonValue::from("external"));
-        envelope.insert("storageType".to_owned(), JsonValue::from(stash.storage_type_name()));
-        snapshot.data.insert(STASH_KEY.to_owned(), JsonValue::Object(envelope));
+        envelope.insert("storageType".to_owned(), JsonValue::from(archive.storage_type_name()));
+        snapshot
+            .data
+            .insert(ARCHIVE_KEY.to_owned(), JsonValue::Object(envelope));
         return Ok(());
     }
-    let entries = stash.take_snapshot().await?;
+    let entries = archive.take_snapshot().await?;
     if entries.is_empty() {
         return Ok(());
     }
     envelope.insert("location".to_owned(), JsonValue::from("inline"));
     envelope.insert("entries".to_owned(), JsonValue::Object(entries));
-    snapshot.data.insert(STASH_KEY.to_owned(), JsonValue::Object(envelope));
+    snapshot
+        .data
+        .insert(ARCHIVE_KEY.to_owned(), JsonValue::Object(envelope));
     Ok(())
 }
 
@@ -435,8 +439,9 @@ impl Plugin for SessionManager {
             let adapter = resolve_snapshot_storage(storage)?;
             *self.inner.storage.write().unwrap_or_else(PoisonError::into_inner) = Some(adapter);
         }
-        *self.inner.agent_stash.write().unwrap_or_else(PoisonError::into_inner) =
-            agent.context_stash().map(|agent_stash| agent_stash.stash.clone());
+        *self.inner.agent_archive.write().unwrap_or_else(PoisonError::into_inner) = agent
+            .context_archive()
+            .map(|agent_archive| agent_archive.archive.clone());
         let inner = self.inner.clone();
         agent.add_async_hook::<InitializedEvent<'_>>(move |event| {
             let inner = inner.clone();
@@ -484,5 +489,5 @@ impl fmt::Debug for SessionManager {
 mod tests;
 
 #[cfg(test)]
-#[path = "session_manager/stash_tests.rs"]
-mod stash_tests;
+#[path = "session_manager/archive_tests.rs"]
+mod archive_tests;

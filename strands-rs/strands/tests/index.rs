@@ -109,12 +109,12 @@ fn can_instantiate_exported_streaming_event_classes() {
     );
 }
 
-/// The context manager items are reachable from `strands::experimental` itself.
+/// The context manager items are reachable from `strands::context_manager`.
 #[test]
-fn exports_the_experimental_context_manager_barrel() {
-    use strands::experimental::{
-        ContextManager, ContextManagerConfig, ContextManagerStrategy, ContextState, ContextStrategy, Offload,
-        OffloadConditions, OffloadTarget, StashConfig, SummarizeConfig, TruncateConfig,
+fn exports_the_context_manager_barrel() {
+    use strands::context_manager::{
+        ArchiveConfig, ContextManager, ContextManagerConfig, ContextManagerStrategy, ContextState, ContextStrategy,
+        Offload, OffloadConditions, OffloadTarget, SummarizeConfig, TruncateConfig,
     };
     assert!(named::<ContextManager>().ends_with("ContextManager"));
     assert!(named::<ContextManagerConfig>().ends_with("ContextManagerConfig"));
@@ -124,7 +124,7 @@ fn exports_the_experimental_context_manager_barrel() {
     assert!(named::<Offload>().ends_with("Offload"));
     assert!(named::<OffloadConditions>().ends_with("OffloadConditions"));
     assert!(named::<OffloadTarget>().ends_with("OffloadTarget"));
-    assert!(named::<StashConfig>().ends_with("StashConfig"));
+    assert!(named::<ArchiveConfig>().ends_with("ArchiveConfig"));
     assert!(named::<SummarizeConfig>().ends_with("SummarizeConfig"));
     assert!(named::<TruncateConfig>().ends_with("TruncateConfig"));
 }

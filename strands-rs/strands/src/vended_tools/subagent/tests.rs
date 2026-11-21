@@ -6,7 +6,7 @@ use super::*;
 use crate::agent::LocalAgent;
 use crate::agent::{InvocationContext, InvocationState, InvokeLimits};
 use crate::cancel::{CancelHandle, CancelOptions};
-use crate::experimental::context_manager::ContextManagerStrategy;
+use crate::context_manager::ContextManagerStrategy;
 use crate::hooks::{BeforeInvocationEvent, BeforeToolCallEvent};
 use crate::interrupt::{Interrupt, InterruptState};
 use crate::models::streaming::Usage;

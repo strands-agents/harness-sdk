@@ -1,5 +1,5 @@
 //! Agent-level storage flowing to the session manager, and the `storage` property. The context
-//! manager stash cases are tested with the context manager.
+//! manager archive cases are tested with the context manager.
 
 #![allow(
     clippy::unwrap_used,

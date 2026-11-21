@@ -9,7 +9,7 @@ use futures::future::BoxFuture;
 use super::invocation_context::InvocationContext;
 use super::invocation_state::InvocationState;
 use crate::cancel::{CancelHandle, CancelOptions, CancelSignal};
-use crate::experimental::context_manager::ContextManager;
+use crate::context_manager::ContextManager;
 use crate::interrupt::{Interrupt, InterruptError, InterruptSource, InterruptState};
 use crate::interventions::InterventionHandler;
 use crate::models::Model;

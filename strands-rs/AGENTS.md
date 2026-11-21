@@ -83,7 +83,7 @@ cargo package -p strands-macros -p strands
 ## Wire compatibility
 
 - Messages and content blocks use the Bedrock Converse JSON shape, as in TS.
-- Strands-owned persisted data (snapshots, sessions, stash, interrupt state, event JSON, metric and span names) uses the TS keys, values and layout byte for byte.
+- Strands-owned persisted data (snapshots, sessions, archive, interrupt state, event JSON, metric and span names) uses the TS keys, values and layout byte for byte.
 - `serde_json` and `schemars` use `preserve_order`: key order is part of the wire format.
 - Fixtures in `conformance/fixtures/` are produced by TS (`conformance/generate.ts`) and must round-trip byte-identically. Regenerate with `npx tsx strands-rs/conformance/generate.ts` from the repo root.
 - Sessions interoperate both ways: `conformance/fixtures/session-tree/` is a `LocalFileStorage` tree a TS `SessionManager` wrote (also from `generate.ts`), which `tests/session_interop.rs` restores; with `STRANDS_CONFORMANCE_TS=1` the same test writes a tree from Rust and restores it in TS through `npx tsx strands-rs/conformance/check-session-tree.ts` (needs the repo's `node_modules`).

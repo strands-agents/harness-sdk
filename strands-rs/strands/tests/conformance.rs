@@ -265,18 +265,18 @@ fn hook_event_records_round_trip() {
     }
 }
 
-/// The stash cases of `generate.ts` (`stashCases`), rebuilt with the Rust stash and compared
+/// The archive cases of `generate.ts` (`archiveCases`), rebuilt with the Rust archive and compared
 /// byte for byte: storage keys, every stored entry, `take_snapshot` and the storage type names.
 /// The two session snapshot envelopes need the session manager and round-trip as JSON.
 #[tokio::test]
-async fn stash_cases_match_a_rust_stash() {
-    use strands::experimental::context_manager::Stash;
+async fn archive_cases_match_a_rust_archive() {
+    use strands::context_manager::Archive;
     use strands::storage::{InMemoryStorage, LocalFileStorage, Storage};
     use strands::types::{
         CachePointBlock, ImageBlock, ImageFormat, ImageSource, JsonBlock, Role, ToolResultBlock, ToolResultContent,
     };
 
-    let fixture = fixture("stash");
+    let fixture = fixture("archive");
     let case = |name: &str| {
         fixture
             .cases
@@ -287,7 +287,7 @@ async fn stash_cases_match_a_rust_stash() {
             .clone()
     };
     let storage = Arc::new(InMemoryStorage::new());
-    let stash = Stash::new(storage.clone(), "conformance-session", "conformance-agent").unwrap();
+    let archive = Archive::new(storage.clone(), "conformance-session", "conformance-agent").unwrap();
     let bytes = vec![0, 1, 2, 3, 250, 251, 252, 253, 254, 255];
     let first = Message::new(
         Role::User,
@@ -301,7 +301,7 @@ async fn stash_cases_match_a_rust_stash() {
     let second = Message::new(
         Role::User,
         vec![ContentBlock::ToolResult(ToolResultBlock::success(
-            "tooluse-stash-1",
+            "tooluse-archive-1",
             vec![
                 ToolResultContent::text("long tool output"),
                 ToolResultContent::Json(JsonBlock::new(json!({"rows": [1, 2, 3]}))),
@@ -309,8 +309,8 @@ async fn stash_cases_match_a_rust_stash() {
         ))],
     )
     .with_tracking_id("message-2");
-    stash.store_message(&first, None, None).await;
-    stash.store_message(&second, None, None).await;
+    archive.store_message(&first, None, None).await;
+    archive.store_message(&second, None, None).await;
 
     let keys = storage.list("").await.unwrap();
     assert_eq!(serde_json::to_string(&keys).unwrap(), case("storage_keys"));
@@ -320,26 +320,30 @@ async fn stash_cases_match_a_rust_stash() {
         assert_eq!(String::from_utf8(stored).unwrap(), case(&name), "{name}");
     }
     assert_eq!(
-        serde_json::to_string(&stash.take_snapshot().await.unwrap()).unwrap(),
+        serde_json::to_string(&archive.take_snapshot().await.unwrap()).unwrap(),
         case("take_snapshot")
     );
     assert_eq!(
-        json!(stash.storage_type_name()).to_string(),
+        json!(archive.storage_type_name()).to_string(),
         case("storage_type_name_in_memory")
     );
     let dir = tempfile::tempdir().unwrap();
-    let file_stash = Stash::new(Arc::new(LocalFileStorage::new(dir.path())), "s", "a").unwrap();
+    let file_archive = Archive::new(Arc::new(LocalFileStorage::new(dir.path())), "s", "a").unwrap();
     assert_eq!(
-        json!(file_stash.storage_type_name()).to_string(),
+        json!(file_archive.storage_type_name()).to_string(),
         case("storage_type_name_local_file")
     );
-    assert_eq!(snapshot_stash_inline().await, case("snapshot_stash_inline"));
-    assert_eq!(snapshot_stash_external().await, case("snapshot_stash_external"));
+    let (inline, inline_keys) = snapshot_archive_inline().await;
+    assert_eq!(inline, case("snapshot_archive_inline"));
+    assert_eq!(inline_keys, case("snapshot_data_keys_inline"));
+    let (external, external_keys) = snapshot_archive_external().await;
+    assert_eq!(external, case("snapshot_archive_external"));
+    assert_eq!(external_keys, case("snapshot_data_keys_external"));
 }
 
 /// `conformanceAgent` with a context manager and an optional session manager.
 fn conformance_agent_with(
-    context_manager: strands::experimental::context_manager::ContextManagerConfig,
+    context_manager: strands::context_manager::ContextManagerConfig,
     session_manager: Option<strands::session::SessionManager>,
 ) -> Agent {
     let model = MockModel::new()
@@ -368,11 +372,11 @@ fn conformance_agent_with(
 
 fn no_retrieval_tool(
     storage: Option<Arc<dyn strands::storage::Storage>>,
-) -> strands::experimental::context_manager::ContextManagerConfig {
-    use strands::experimental::context_manager::{ContextManagerConfig, StashConfig};
+) -> strands::context_manager::ContextManagerConfig {
+    use strands::context_manager::{ArchiveConfig, ContextManagerConfig};
     ContextManagerConfig {
-        stash: Some(
-            StashConfig {
+        archive: Some(
+            ArchiveConfig {
                 storage,
                 retrieval_tool: Some(false),
             }
@@ -382,17 +386,17 @@ fn no_retrieval_tool(
     }
 }
 
-/// The `snapshot_stash_inline` case: the stash envelope of the session snapshot after one run,
+/// The `snapshot_archive_inline` case: the archive envelope of the session snapshot after one run,
 /// with the run's message tracking ids replaced by the ones the TS generator fixes and the entries
-/// re-sorted as storage lists them.
-async fn snapshot_stash_inline() -> String {
+/// re-sorted as storage lists them, plus the snapshot's data keys.
+async fn snapshot_archive_inline() -> (String, String) {
     use strands::session::SessionManager;
     use strands::storage::{InMemoryStorage, Storage};
 
     let storage = Arc::new(InMemoryStorage::new());
     let session = SessionManager::builder()
         .storage(storage.clone())
-        .session_id("stash-inline-session")
+        .session_id("archive-inline-session")
         .build()
         .unwrap();
     let mut agent = conformance_agent_with(no_retrieval_tool(None), Some(session));
@@ -407,13 +411,13 @@ async fn snapshot_stash_inline() -> String {
         .map(|&(index, id)| (agent.messages()[index].tracking_id().to_owned(), id))
         .collect();
     let bytes = storage
-        .read("session/stash-inline-session/scopes/agent/conformance-agent/snapshots/snapshot_latest.json")
+        .read("session/archive-inline-session/scopes/agent/conformance-agent/snapshots/snapshot_latest.json")
         .await
         .unwrap()
         .unwrap();
     let snapshot: JsonValue = serde_json::from_slice(&bytes).unwrap();
-    let stash = snapshot["data"]["stash"].as_object().unwrap().clone();
-    let mut entries: Vec<(String, JsonValue)> = stash["entries"]
+    let archive = snapshot["data"]["archive"].as_object().unwrap().clone();
+    let mut entries: Vec<(String, JsonValue)> = archive["entries"]
         .as_object()
         .unwrap()
         .iter()
@@ -426,14 +430,19 @@ async fn snapshot_stash_inline() -> String {
         .collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
     let mut envelope = serde_json::Map::new();
-    envelope.insert("location".to_owned(), stash["location"].clone());
+    envelope.insert("location".to_owned(), archive["location"].clone());
     envelope.insert("entries".to_owned(), JsonValue::Object(entries.into_iter().collect()));
-    serde_json::to_string(&envelope).unwrap()
+    (serde_json::to_string(&envelope).unwrap(), data_keys(&snapshot))
 }
 
-/// The `snapshot_stash_external` case: the envelope a session snapshot records for a stash on
-/// local files.
-async fn snapshot_stash_external() -> String {
+/// The keys of a snapshot's `data`, in order, as JSON.
+fn data_keys(snapshot: &JsonValue) -> String {
+    serde_json::to_string(&snapshot["data"].as_object().unwrap().keys().collect::<Vec<_>>()).unwrap()
+}
+
+/// The `snapshot_archive_external` case: the envelope a session snapshot records for an archive on
+/// local files, plus the snapshot's data keys.
+async fn snapshot_archive_external() -> (String, String) {
     use strands::session::SessionManager;
     use strands::storage::{InMemoryStorage, LocalFileStorage, Storage};
 
@@ -446,17 +455,20 @@ async fn snapshot_stash_external() -> String {
     let storage = Arc::new(InMemoryStorage::new());
     let session = SessionManager::builder()
         .storage(storage.clone())
-        .session_id("stash-external-session")
+        .session_id("archive-external-session")
         .build()
         .unwrap();
     session.save_snapshot(agent.local(), true).await.unwrap();
     let bytes = storage
-        .read("session/stash-external-session/scopes/agent/conformance-agent/snapshots/snapshot_latest.json")
+        .read("session/archive-external-session/scopes/agent/conformance-agent/snapshots/snapshot_latest.json")
         .await
         .unwrap()
         .unwrap();
     let snapshot: JsonValue = serde_json::from_slice(&bytes).unwrap();
-    serde_json::to_string(&snapshot["data"]["stash"]).unwrap()
+    (
+        serde_json::to_string(&snapshot["data"]["archive"]).unwrap(),
+        data_keys(&snapshot),
+    )
 }
 
 #[test]

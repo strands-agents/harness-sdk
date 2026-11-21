@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use super::tool_agent::{ChildInheritance, ToolAgent};
 use crate::background_tasks::BackgroundTasks;
 use crate::cancel::{CancelHandle, CancelOptions, CancelSignal};
-use crate::experimental::context_manager::{AgentStash, ContextManager};
+use crate::context_manager::{AgentArchive, ContextManager};
 use crate::hooks::{
     HookCallbackOptions, HookCleanup, HookEvent, HookRegistry, IntoAsyncHook, IntoHookImpl, IntoSyncHook,
 };
@@ -53,7 +53,7 @@ pub struct LocalAgent {
     printer: bool,
     storage: Option<Arc<dyn Storage>>,
     context_manager: Option<ContextManager>,
-    context_stash: Option<AgentStash>,
+    context_archive: Option<AgentArchive>,
     latest_call_tools: CallToolsRecord,
     interventions: Arc<[Arc<dyn InterventionHandler>]>,
 }
@@ -87,7 +87,7 @@ impl LocalAgent {
             printer: false,
             storage: None,
             context_manager: None,
-            context_stash: None,
+            context_archive: None,
             latest_call_tools: CallToolsRecord::default(),
             interventions: Arc::from(Vec::new()),
         }
@@ -139,13 +139,13 @@ impl LocalAgent {
         self.context_manager.as_ref()
     }
 
-    pub(crate) fn set_context_stash(&mut self, context_stash: Option<AgentStash>) {
-        self.context_stash = context_stash;
+    pub(crate) fn set_context_archive(&mut self, context_archive: Option<AgentArchive>) {
+        self.context_archive = context_archive;
     }
 
-    /// The stash the context manager made for this agent, once it is attached.
-    pub(crate) fn context_stash(&self) -> Option<&AgentStash> {
-        self.context_stash.as_ref()
+    /// The archive the context manager made for this agent, once it is attached.
+    pub(crate) fn context_archive(&self) -> Option<&AgentArchive> {
+        self.context_archive.as_ref()
     }
 
     /// Where the agent's model calls record the tools they send.

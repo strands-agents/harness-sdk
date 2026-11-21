@@ -977,12 +977,12 @@ function resumedInterruptState(): unknown {
   return state.toJSON()
 }
 
-// --- Area 8: stash ------------------------------------------------------------------------------
+// --- Area 8: archive ----------------------------------------------------------------------------
 
-async function stashCases(): Promise<Case[]> {
+async function archiveCases(): Promise<Case[]> {
   const storage = new InMemoryStorage()
-  const stash = new Archive(storage, 'conformance-session', 'conformance-agent')
-  await stash.storeMessage(
+  const archive = new Archive(storage, 'conformance-session', 'conformance-agent')
+  await archive.storeMessage(
     new Message({
       role: 'user',
       content: [
@@ -993,12 +993,12 @@ async function stashCases(): Promise<Case[]> {
       trackingId: 'message-1',
     })
   )
-  await stash.storeMessage(
+  await archive.storeMessage(
     new Message({
       role: 'user',
       content: [
         new ToolResultBlock({
-          toolUseId: 'tooluse-stash-1',
+          toolUseId: 'tooluse-archive-1',
           status: 'success',
           content: [new TextBlock('long tool output'), new JsonBlock({ json: { rows: [1, 2, 3] } })],
         }),
@@ -1015,15 +1015,15 @@ async function stashCases(): Promise<Case[]> {
   const inlineStorage = new InMemoryStorage()
   const inlineAgent = conformanceAgent({
     contextManager: new ContextManager({ archive: { retrievalTool: false } }),
-    sessionManager: new SessionManager({ storage: inlineStorage, sessionId: 'stash-inline-session' }),
+    sessionManager: new SessionManager({ storage: inlineStorage, sessionId: 'archive-inline-session' }),
   })
   await inlineAgent.invoke('What is the weather in Seattle?')
   const inlineLatest = JSON.parse(
     await storedText(
       inlineStorage,
-      'session/stash-inline-session/scopes/agent/conformance-agent/snapshots/snapshot_latest.json'
+      'session/archive-inline-session/scopes/agent/conformance-agent/snapshots/snapshot_latest.json'
     )
-  ) as { data: { archive: unknown } }
+  ) as { data: Record<string, unknown> }
 
   const dir = mkdtempSync(join(tmpdir(), 'strands-conformance-'))
   try {
@@ -1032,28 +1032,30 @@ async function stashCases(): Promise<Case[]> {
       contextManager: new ContextManager({ archive: { storage: fileStorage, retrievalTool: false } }),
     })
     await externalAgent.invoke('What is the weather in Seattle?')
-    const externalData = await externalStashData(externalAgent)
+    const externalData = await externalArchiveData(externalAgent)
     return [
       jsonCase('storage_keys', keys),
       ...entries,
-      jsonCase('take_snapshot', await stash.takeSnapshot()),
-      jsonCase('storage_type_name_in_memory', stash.storageTypeName),
+      jsonCase('take_snapshot', await archive.takeSnapshot()),
+      jsonCase('storage_type_name_in_memory', archive.storageTypeName),
       jsonCase('storage_type_name_local_file', externalAgent.contextManager!.archive!.storageTypeName),
-      jsonCase('snapshot_stash_inline', inlineLatest.data.archive),
-      jsonCase('snapshot_stash_external', externalData.archive),
+      jsonCase('snapshot_archive_inline', inlineLatest.data.archive),
+      jsonCase('snapshot_archive_external', externalData.archive),
+      jsonCase('snapshot_data_keys_inline', Object.keys(inlineLatest.data)),
+      jsonCase('snapshot_data_keys_external', Object.keys(externalData)),
     ]
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 }
 
-async function externalStashData(agent: AgentInstance): Promise<Record<string, unknown>> {
+async function externalArchiveData(agent: AgentInstance): Promise<Record<string, unknown>> {
   const storage = new InMemoryStorage()
-  const manager = new SessionManager({ storage, sessionId: 'stash-external-session' })
+  const manager = new SessionManager({ storage, sessionId: 'archive-external-session' })
   await manager.saveSnapshot({ target: agent, isLatest: true })
   const text = await storedText(
     storage,
-    'session/stash-external-session/scopes/agent/conformance-agent/snapshots/snapshot_latest.json'
+    'session/archive-external-session/scopes/agent/conformance-agent/snapshots/snapshot_latest.json'
   )
   return (JSON.parse(text) as { data: Record<string, unknown> }).data
 }
@@ -1202,7 +1204,7 @@ writeArea('hook_events', 'strands-ts/src/hooks/events.ts', await hookEventCases(
 writeArea('snapshots', 'strands-ts/src/agent/snapshot.ts', await snapshotCases())
 writeArea('sessions', 'strands-ts/src/session/session-manager.ts', await sessionCases())
 writeArea('interrupts', 'strands-ts/src/interrupt.ts', await interruptCases())
-writeArea('stash', 'strands-ts/src/context-manager/archive.ts', await stashCases())
+writeArea('archive', 'strands-ts/src/context-manager/archive.ts', await archiveCases())
 writeArea('metrics', 'strands-ts/src/telemetry/meter.ts', await metricsCases())
 writeArea('vended_tools', 'strands-ts/src/vended-tools/index.ts', vendedToolCases())
 writeArea('harness_tools', 'harness-ts/src/tools/index.ts', harnessToolCases())

@@ -114,7 +114,7 @@ fn maps_defaults_through_the_same_contract_create_harness_consumes() {
     assert_eq!(options.effort, Effort::Auto);
     assert!(matches!(
         options.context_manager,
-        Some(strands::experimental::context_manager::ContextManagerStrategy::Auto)
+        Some(strands::context_manager::ContextManagerStrategy::Auto)
     ));
     let Some(MemoryOption::On(memory)) = &options.memory else {
         panic!("memory on")
