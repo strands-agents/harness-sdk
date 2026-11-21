@@ -289,11 +289,11 @@ There are two kinds of delegation, and they coexist. The built-in **`subagent`**
 just a name in `builtin_tools`, like `shell` or `read`). The parent model calls it with a self-contained `task`; the
 harness builds a fresh child through `create_harness` that inherits this agent's configuration (its model, effort,
 built-in tools and plugins, skills, interventions, sandbox, and the `plugins` you passed, so your approval gate
-reaches the delegate too) and returns a single final report. Your consumer `tools` and MCP servers are forwarded so
-the delegate can be granted them. The model picks the `generalist` role, may write an ad-hoc role prompt, may narrow
-the tool set (never widen it), and chooses how much of the conversation the child sees. Delegation depth is bounded
-(two levels by default, `SubagentConfig::max_depth` to change it), so a delegate can't recurse without limit. Drop it
-from `builtin_tools` to turn it off:
+reaches the delegate too) and returns a single final report. Your named consumer `tools` are forwarded so the
+delegate can be granted them, and every MCP server stays with each delegate. The model picks the `generalist` role, may
+write an ad-hoc role prompt, may narrow the tool set (never widen it), and chooses how much of the conversation the
+child sees. Delegation depth is bounded (two levels by default, `SubagentConfig::max_depth` to change it, `0` to
+remove the tool), so a delegate can't recurse without limit. Drop it from `builtin_tools` to turn it off:
 
 ```rust
 use strands_harness::{BuiltinToolName, HarnessAgentOptions};
@@ -303,16 +303,16 @@ HarnessAgentOptions::builder()
     .build(); // no subagent
 ```
 
-The tool's model-facing parameters are derived from configuration. For a fully configured tool (custom roles, model
-tiers, fixed prompts), build one with `make_subagent` and pass it in `tools` with `subagent` dropped from
-`builtin_tools`. You supply an `AgentBuilder`, an async function that turns a resolved `AgentSpec` into the child agent
-(typically by calling `create_harness`); this is the seam that makes the child a harness member. Each axis
-(`instructions`, `tools`, `mcp_servers`, `model`, `context`) becomes a parameter, or not, depending on whether it is
-`Fixed`, `Inherit`, `Open`, or `Choice`:
+The built-in tool is the SDK's `subagent` tool with the harness's description, presets and choices. For a fully
+configured tool (custom roles, model tiers, fixed prompts), build one with `make_subagent` (re-exported from
+`strands::vended_tools::subagent`) and pass it in `tools` with `subagent` dropped from `builtin_tools`. You supply a
+`ChildAgentBuilder`, an async function that turns a resolved `AgentSpec` into the child agent (typically by calling
+`create_harness`); this is the seam that makes the child a harness member. Each axis (`instructions`, `tools`,
+`model`, `context`) becomes a parameter, or not, depending on whether it is `Fixed`, `Inherit`, `Open`, or `Choice`:
 
 ```rust,no_run
 use strands_harness::{
-    AgentBuilder, AgentSpec, BuiltinToolsConfig, Fixed, HarnessAgentOptions, Inherit, MakeSubagentOptions, Preset,
+    AgentSpec, BuiltinToolsConfig, ChildAgentBuilder, Fixed, HarnessAgentOptions, Inherit, MakeSubagentOptions, Preset,
     create_harness, make_subagent,
 };
 
@@ -333,10 +333,10 @@ async fn agent_with_reviewer() -> strands::Result<strands::Agent> {
     let preset = Preset::builder().instructions("You review diffs.").description("reviews diffs").build();
     let reviewer = make_subagent(
         MakeSubagentOptions::builder()
-            .builder(AgentBuilder::new(build_reviewer))
+            .builder(ChildAgentBuilder::new(build_reviewer))
             .presets([("reviewer", preset)])
-            .instructions(Fixed::none()) // the role owns the prompt; parameter removed
-            .model(Inherit::new())
+            .instructions(Fixed::none().into()) // the role owns the prompt; parameter removed
+            .model(Inherit::new().into())
             .build(),
     )?;
     create_harness(HarnessAgentOptions::builder().tools([reviewer]).builtin_tools(no_subagent()).build()).await

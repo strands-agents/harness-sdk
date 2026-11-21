@@ -85,9 +85,10 @@ async fn build(options: HarnessAgentOptions) -> (Agent, Arc<ParentConfig>) {
     (agent, parent)
 }
 
-async fn child_of(parent: &ParentConfig, mcp_servers: Option<&[&str]>) -> (Agent, Arc<ParentConfig>) {
+/// A delegate of `parent`, narrowed to `tools` when given.
+async fn child_of(parent: &ParentConfig, tools: Option<&[&str]>) -> (Agent, Arc<ParentConfig>) {
     let spec = ChildSpec {
-        mcp_servers: mcp_servers.map(|names| names.iter().map(|name| (*name).to_owned()).collect()),
+        tools: tools.map(|names| names.iter().map(|name| (*name).to_owned()).collect()),
         ..Default::default()
     };
     let options = child_options(parent, &delegable(&parent.tools), spec, &offline_env()).unwrap();
@@ -106,20 +107,19 @@ fn parent_options() -> HarnessAgentOptions {
 }
 
 #[tokio::test]
-async fn inherits_the_parent_mcp_tools_via_the_shared_clients_narrowable_per_server() {
+async fn inherits_every_parent_mcp_server_also_on_a_narrowed_delegate() {
     let (parent_agent, parent) = build(parent_options()).await;
     assert!(names(&parent_agent).contains(&"srv_echo".to_owned()));
+    let subagent = parent_agent.tool_registry().get("subagent").unwrap();
+    let schema = serde_json::to_value(subagent.tool_spec().input_schema.unwrap()).unwrap();
+    assert!(schema["properties"].get("mcp_servers").is_none());
 
     let (inherit_all, _) = child_of(&parent, None).await;
     assert!(names(&inherit_all).contains(&"srv_echo".to_owned()));
-    let (narrowed, _) = child_of(&parent, Some(&[])).await;
-    assert!(!names(&narrowed).contains(&"srv_echo".to_owned()));
-    let (selected, _) = child_of(&parent, Some(&["srv", "srv"])).await;
-    assert!(names(&selected).contains(&"srv_echo".to_owned()));
-
-    let subagent = parent_agent.tool_registry().get("subagent").unwrap();
-    let schema = subagent.tool_spec().input_schema.unwrap();
-    assert_eq!(schema["properties"]["mcp_servers"]["items"]["enum"], json!(["srv"]));
+    let (narrowed, _) = child_of(&parent, Some(&["read"])).await;
+    let narrowed = names(&narrowed);
+    assert!(narrowed.contains(&"read".to_owned()));
+    assert!(narrowed.contains(&"srv_echo".to_owned()));
 }
 
 #[tokio::test]
@@ -129,17 +129,4 @@ async fn forwards_inherited_mcp_servers_to_a_grandchild() {
     assert!(names(&child).contains(&"srv_echo".to_owned()));
     let (grandchild, _) = child_of(&child_parent, None).await;
     assert!(names(&grandchild).contains(&"srv_echo".to_owned()));
-}
-
-#[tokio::test]
-async fn propagates_mcp_narrowing_through_a_grandchild() {
-    let (_, parent) = build(parent_options()).await;
-    let (starved, starved_parent) = child_of(&parent, Some(&[])).await;
-    assert!(!names(&starved).contains(&"srv_echo".to_owned()));
-    let (starved_grandchild, _) = child_of(&starved_parent, None).await;
-    assert!(!names(&starved_grandchild).contains(&"srv_echo".to_owned()));
-
-    let (_, granted_parent) = child_of(&parent, Some(&["srv"])).await;
-    let (granted_grandchild, _) = child_of(&granted_parent, None).await;
-    assert!(names(&granted_grandchild).contains(&"srv_echo".to_owned()));
 }

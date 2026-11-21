@@ -6,15 +6,16 @@ use std::sync::Arc;
 
 use futures::future::BoxFuture;
 use strands::models::Model;
-use strands::multiagent::SpecValue;
+use strands::multiagent::{AgentSpec, Axis, ChildAgentBuilder, Choice, Fixed, SpecValue};
 use strands::plugins::Plugin;
 use strands::tools::Tool;
+use strands::vended_tools::subagent::{MakeSubagentOptions, generalist, make_subagent};
 use strands::{Agent, ModelSource};
 
+use crate::defaults::DEFAULT_SUBAGENT_MAX_DEPTH;
 use crate::plugins::EnvironmentContext;
 use crate::tools::file_tools;
 use crate::tools::programmatic_tool_caller::{ProgrammaticToolCallerConfig, programmatic_tool_caller};
-use crate::tools::subagent::{AgentBuilder, AgentSpec, SubagentConfig, SubagentContext, subagent_tool};
 use crate::tools::web_fetch::{WebFetchConfig, WebFetchTransport, web_fetch_tool};
 use crate::types::ShellConfig;
 
@@ -25,7 +26,6 @@ pub(crate) struct ChildSpec {
     pub(crate) instructions: Option<String>,
     pub(crate) tools: Option<Vec<String>>,
     pub(crate) model: Option<ModelSource>,
-    pub(crate) mcp_servers: Option<Vec<String>>,
 }
 
 /// Builds a `subagent` child the way the parent was built.
@@ -52,12 +52,9 @@ pub(crate) struct WebFetchToolOptions {
 pub(crate) struct SubagentToolOptions {
     /// Rebuilds a child through `create_harness` with the resolved spec applied.
     pub(crate) builder: ChildBuilder,
-    /// The parent's built-in (minus `web_search`) and consumer tool names, the default `tools`
-    /// choice.
+    /// The parent's built-in (minus `web_search`) and consumer tool names, the `tools` choice.
     pub(crate) inherited_tools: Vec<String>,
-    /// The parent's offerable MCP server names, the default `mcp_servers` choice.
-    pub(crate) inherited_mcp_servers: Vec<String>,
-    /// The delegation-depth bound; the tool's default (2) when `None`.
+    /// The delegation-depth bound; [`DEFAULT_SUBAGENT_MAX_DEPTH`] when `None`.
     pub(crate) max_depth: Option<usize>,
 }
 
@@ -108,6 +105,15 @@ fn exa_web_search() -> strands::Result<Arc<dyn Tool>> {
     ))
 }
 
+/// The description of the harness's `subagent` tool.
+pub(crate) const SUBAGENT_DESCRIPTION: &str = concat!(
+    "Delegate a self-contained task to a subagent that runs in its own context and returns a final ",
+    "report. Reach for this when a subtask would otherwise flood your context with intermediate ",
+    "work and you only need its conclusion. Do not poll for progress or redo its work."
+);
+
+const CONTEXT_MODES: [&str; 3] = ["none", "all", "no_tools"];
+
 fn child_spec(spec: AgentSpec) -> ChildSpec {
     ChildSpec {
         instructions: spec.instructions,
@@ -117,23 +123,34 @@ fn child_spec(spec: AgentSpec) -> ChildSpec {
             SpecValue::Text(model) => Some(ModelSource::Id(model)),
             _ => None,
         }),
-        mcp_servers: spec.mcp_servers,
     }
 }
 
-/// The default `subagent` tool, building each child through the harness builder.
+/// The default `subagent` tool: the SDK's tool with the generalist preset, a choice over the
+/// inherited tools, a context choice and the harness description, building each child through
+/// the harness builder.
 fn subagent(options: SubagentToolOptions) -> strands::Result<Arc<dyn Tool>> {
     let SubagentToolOptions {
         builder,
         inherited_tools,
-        inherited_mcp_servers,
         max_depth,
     } = options;
-    let builder = AgentBuilder::new(move |spec| builder(child_spec(spec)));
-    let context = SubagentContext::new(builder)
-        .with_inherited_tools(inherited_tools)
-        .with_inherited_mcp_servers(inherited_mcp_servers);
-    Ok(Arc::new(subagent_tool(SubagentConfig { max_depth }, context)?))
+    // The tool is built even when `subagent` is off, so the selectable set can be empty.
+    let tools: Axis = if inherited_tools.is_empty() {
+        Fixed::new(SpecValue::List(Vec::new())).into()
+    } else {
+        Choice::new(inherited_tools).multiple(true).into()
+    };
+    let tool = make_subagent(MakeSubagentOptions {
+        builder: Some(ChildAgentBuilder::new(move |spec| builder(child_spec(spec)))),
+        presets: Some(vec![("generalist".to_owned(), generalist())]),
+        tools: Some(tools),
+        context: Some(Choice::new(CONTEXT_MODES).into()),
+        max_depth: Some(max_depth.unwrap_or(DEFAULT_SUBAGENT_MAX_DEPTH)),
+        description: Some(SUBAGENT_DESCRIPTION.to_owned()),
+        ..MakeSubagentOptions::default()
+    })?;
+    Ok(Arc::new(tool))
 }
 
 /// The default name of the `environment` plugin (`strands:environment`).

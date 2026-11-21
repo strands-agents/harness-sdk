@@ -90,14 +90,12 @@ pub use interventions::{InterventionValue, InterventionsOption};
 pub use models::{supports_thinking, supports_web_search};
 pub use plugins::{EnvironmentContext, EnvironmentContextConfig};
 pub use prompt::{HARNESS_CONTRACT, build_system_prompt};
+pub use strands::multiagent::{AgentSpec, ChildAgentBuilder, Choice, ChoiceOption, Fixed, Inherit, Open, Preset};
+pub use strands::vended_tools::subagent::{MakeSubagentOptions, SubagentTool, make_subagent};
 pub use tools::file_tools::{edit_tool, read_tool, write_tool};
 pub use tools::programmatic_tool_caller::{
     DEFAULT_PROGRAMMATIC_TOOL_CALLER_DESCRIPTION, Isolation, MakeProgrammaticToolCallerOptions, ProgrammaticToolCaller,
     ProgrammaticToolCallerConfig, make_programmatic_tool_caller, programmatic_tool_caller,
-};
-pub use tools::subagent::{
-    AgentBuilder, AgentSpec, Choice, ChoiceOption, ContextMode, Fixed, Inherit, MakeSubagentOptions, Open, Preset,
-    SubagentConfig, SubagentContext, SubagentTool, make_subagent, subagent_tool,
 };
 pub use tools::web_fetch::{WebFetchConfig, WebFetchTransport, web_fetch_tool};
 pub use tools::web_search::WebSearchSetting;
@@ -105,5 +103,5 @@ pub use tools::web_search::WebSearchSetting;
 pub use tools::web_search::web_search_tool;
 pub use types::{
     BuiltinToolsConfig, BuiltinToolsOption, ContextManagerOption, Effort, McpServersOption, MemoryConfig, ReadConfig,
-    SessionConfig, Setting, ShellConfig,
+    SessionConfig, Setting, ShellConfig, SubagentConfig,
 };

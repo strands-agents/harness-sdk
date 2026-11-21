@@ -1404,94 +1404,84 @@ mod subagent_delegate_built_child {
     }
 
     #[cfg(feature = "mcp")]
+    fn subagent_schema(config: &AgentConfig) -> serde_json::Value {
+        let tool = config
+            .tools
+            .iter()
+            .find_map(|source| match source {
+                ToolSource::Tool(tool) if tool.name() == "subagent" => Some(tool),
+                _ => None,
+            })
+            .unwrap();
+        tool.tool_spec().input_schema.unwrap()
+    }
+
+    #[cfg(feature = "mcp")]
     #[tokio::test]
-    async fn shares_the_parent_mcp_clients_narrowable_per_server() {
+    async fn inherits_every_parent_mcp_server_also_on_a_narrowed_delegate() {
         let servers = json!({ "alpha": { "command": "node" }, "beta": { "command": "node" } });
         let options = HarnessAgentOptions {
             mcp_servers: Some(crate::McpServersOption::Json(servers.as_object().unwrap().clone())),
             ..quiet_with_mock()
         };
-        let parent = parent_of(&assembled(options).await);
+        let assembly = assembled(options).await;
+        assert!(
+            subagent_schema(&assembly.config)["properties"]
+                .get("mcp_servers")
+                .is_none()
+        );
+        let parent = parent_of(&assembly);
         let delegable = delegable(&parent.tools);
-        let options = subagent_tool_options(&parent, crate::SubagentConfig::default(), &offline_env());
-        assert_eq!(options.inherited_mcp_servers, ["alpha", "beta"]);
-        assert!(!options.inherited_tools.contains(&"alpha".to_owned()));
-        let child = |mcp_servers: Option<Vec<String>>, tools: Option<Vec<String>>| {
+        let child = |tools: Option<Vec<String>>| {
             let spec = ChildSpec {
-                mcp_servers,
                 tools,
                 ..Default::default()
             };
             client_names(&child_options(&parent, &delegable, spec, &offline_env()).unwrap().tools)
         };
-        assert_eq!(child(None, None), ["alpha", "beta"]);
-        assert!(child(Some(Vec::new()), None).is_empty());
-        assert_eq!(child(strings(&["beta", "beta"]), None), ["beta"]);
-        assert_eq!(child(strings(&["beta"]), strings(&["read"])), ["beta"]);
+        assert_eq!(child(None), ["alpha", "beta"]);
+        assert_eq!(child(strings(&["read"])), ["alpha", "beta"]);
     }
 
     #[cfg(feature = "mcp")]
     #[tokio::test]
-    async fn warns_when_two_mcp_clients_share_a_client_name_and_offers_only_the_first() {
-        use strands::mcp::{McpClient, McpClientOptions, McpLoadServersOptions, McpServersSource};
+    async fn hands_mcp_clients_passed_in_tools_to_a_narrowed_delegate_without_offering_them_as_tools() {
+        use strands::mcp::{McpClient, McpClientConfig, McpClientOptions, McpLoadServersOptions, McpServersSource};
 
-        let (logs, _guard) = record_logs();
-        let servers = json!({ "alpha": { "command": "node" }, "beta": { "command": "node" } });
-        let clients = McpClient::load_servers(
+        let servers = json!({ "alpha": { "command": "node" } });
+        let mut clients = McpClient::load_servers(
             McpServersSource::Json(servers.as_object().unwrap().clone()),
-            McpClientOptions {
-                application_name: Some("shared".to_owned()),
-                ..Default::default()
-            },
+            McpClientOptions::default(),
             McpLoadServersOptions {
                 prefix_with_server_name: true,
             },
         )
         .await
         .unwrap();
+        clients.push(
+            McpClient::new(McpClientConfig {
+                url: Some("http://127.0.0.1:9/mcp".to_owned()),
+                options: McpClientOptions {
+                    prefix: Some("bare".to_owned()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .unwrap(),
+        );
         let options = HarnessAgentOptions {
             tools: clients.into_iter().map(ToolSource::McpClient).collect(),
             ..quiet_with_mock()
         };
         let parent = parent_of(&assembled(options).await);
-        assert!(
-            logs.lines("WARN")
-                .iter()
-                .any(|line| line.contains("share the name \"shared\""))
-        );
         let options = subagent_tool_options(&parent, crate::SubagentConfig::default(), &offline_env());
-        assert_eq!(options.inherited_mcp_servers, ["shared"]);
-    }
-
-    #[cfg(feature = "mcp")]
-    #[tokio::test]
-    async fn warns_about_an_mcp_client_without_application_name_and_leaves_it_off_the_mcp_servers_axis() {
-        use strands::mcp::{McpClient, McpClientConfig, McpClientOptions};
-
-        let (logs, _guard) = record_logs();
-        let bare = McpClient::new(McpClientConfig {
-            url: Some("http://127.0.0.1:9/mcp".to_owned()),
-            options: McpClientOptions {
-                prefix: Some("bare".to_owned()),
-                ..Default::default()
-            },
+        assert!(!options.inherited_tools.contains(&"alpha".to_owned()));
+        let spec = ChildSpec {
+            tools: strings(&["read"]),
             ..Default::default()
-        })
-        .unwrap();
-        let options = HarnessAgentOptions {
-            tools: vec![ToolSource::McpClient(bare)],
-            ..quiet_with_mock()
         };
-        let parent = parent_of(&assembled(options).await);
-        assert!(
-            logs.lines("WARN")
-                .iter()
-                .any(|line| line.contains("has no applicationName"))
-        );
-        let options = subagent_tool_options(&parent, crate::SubagentConfig::default(), &offline_env());
-        assert!(options.inherited_mcp_servers.is_empty());
-        let child = child_options(&parent, &delegable(&parent.tools), ChildSpec::default(), &offline_env()).unwrap();
-        assert!(client_names(&child.tools).is_empty());
+        let child = child_options(&parent, &delegable(&parent.tools), spec, &offline_env()).unwrap();
+        assert_eq!(client_names(&child.tools).len(), 2);
     }
 }
 
@@ -1820,3 +1810,4 @@ mod builtin_plugins {
 mod connected_mcp_delegates;
 #[cfg(feature = "openai")]
 mod openai_cache;
+mod subagent_tool;
