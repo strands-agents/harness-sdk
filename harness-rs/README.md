@@ -114,10 +114,10 @@ Cargo features select the providers and integrations. Everything except `otel` i
 
 | Feature | Adds |
 |---|---|
-| `bedrock` | `bedrock/` model strings and the default model (Claude on Bedrock also turns on `strands/anthropic`) |
+| `bedrock` | `bedrock/` model strings, the default model (Claude on Bedrock also turns on `strands/anthropic`) and the AgentCore-backed `web_search` |
 | `anthropic` | `anthropic/` model strings |
 | `openai` | `openai/` model strings |
-| `mantle` | `bedrock-mantle/` model strings; turns on `openai` |
+| `mantle` | `bedrock-mantle/` model strings and the AgentCore-backed `web_search`; turns on `openai` |
 | `mcp` | `mcp_servers` and the Exa-backed `web_search` |
 | `cedar` | `.cedar` interventions |
 | `monty-pool` | runs `programmatic_tool_caller` code in a `monty` worker subprocess |
@@ -271,7 +271,7 @@ HarnessAgentOptions::builder()
 
 `BUILTIN_TOOL_NAMES` is the full list, and `BuiltinToolName` parses from a tool name (`"web_fetch".parse()`). Prefer
 the config form for "the defaults minus X"; a list pins every name it contains, so listing `web_search` on a model
-without native search fails instead of quietly staying off (opt into the Exa fallback with
+without built-in search fails instead of quietly staying off (opt into the Exa fallback with
 `.web_search(WebSearchSetting::Exa)`). A tool in `tools` whose name collides with an enabled built-in (or a plugin's
 tool) fails `create_harness` too, so nothing is silently shadowed; drop the built-in first to replace it.
 
@@ -421,12 +421,16 @@ HarnessAgentOptions::builder().builtin_tools(BuiltinToolsConfig::builder().web_f
 
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the model provider has
 its own search (OpenAI, Anthropic, and GPT-5, GPT-6, and Daybreak models on `bedrock-mantle` via Bedrock Web Search)
-the harness turns that on by default. With no native search (Amazon Bedrock Converse, other Mantle models, a model
-instance) `web_search` is off by default. To enable web search for these providers, you can opt into Exa with
-`WebSearchSetting::Exa`. The model then gets a `web_search` tool backed by Exa's hosted search (this needs the `mcp`
-feature). It works keyless, but setting `EXA_API_KEY` in the environment lifts the rate limit. You can override a
-provider's native web search by choosing Exa explicitly on any model. If you are using Bedrock Web Search, you'll need
-the `bedrock-websearch` IAM action (in `AmazonBedrockFullAccess`) to avoid failing search.
+the harness turns that on by default. Other Amazon Bedrock models (`bedrock/` and `bedrock-mantle/` model strings) get
+a `web_search` tool backed by
+[Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html)
+instead, signed with the same AWS credentials and region resolution as the Bedrock model. With no native search (a
+model instance or router, whose provider the harness can't see) `web_search` is off by default. To enable web search
+there, you can opt into Exa with `WebSearchSetting::Exa`. The model then gets a `web_search` tool backed by Exa's
+hosted search (this needs the `mcp` feature). It works keyless, but setting `EXA_API_KEY` in the environment lifts
+the rate limit. You can override a provider's native web search by choosing Exa explicitly on any model. If you are
+using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in `AmazonBedrockFullAccess`) to avoid
+failing search; AgentCore web search needs `bedrock-agentcore:InvokeWebSearch`.
 
 > [!WARNING]
 > Web search through Exa sends every search query the model writes to Exa (exa.ai), a third-party service. Queries
@@ -436,9 +440,10 @@ the `bedrock-websearch` IAM action (in `AmazonBedrockFullAccess`) to avoid faili
 use strands_harness::{BuiltinToolsConfig, HarnessAgentOptions, WebSearchSetting};
 
 HarnessAgentOptions::builder().model("openai/gpt-5.6-sol").build(); // native search on, it's in the defaults
+HarnessAgentOptions::builder().build(); // Bedrock: AgentCore web search, also a default
 HarnessAgentOptions::builder()
     .builtin_tools(BuiltinToolsConfig::builder().web_search(WebSearchSetting::Exa).build())
-    .build(); // Bedrock: search through Exa (third party)
+    .build(); // any model: search through Exa (third party)
 ```
 
 ## Caching reused context

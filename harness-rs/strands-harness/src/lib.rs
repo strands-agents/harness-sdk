@@ -102,6 +102,8 @@ pub use tools::web_fetch::{WebFetchConfig, WebFetchTransport, web_fetch_tool};
 pub use tools::web_search::WebSearchSetting;
 #[cfg(feature = "mcp")]
 pub use tools::web_search::web_search_tool;
+#[cfg(any(feature = "bedrock", feature = "mantle"))]
+pub use tools::web_search::{MakeAgentCoreWebSearchOptions, make_agent_core_web_search};
 pub use types::{
     BuiltinToolsConfig, BuiltinToolsOption, ContextManagerOption, Effort, McpServersOption, MemoryConfig, ReadConfig,
     SessionConfig, Setting, ShellConfig, SubagentConfig,

@@ -1,11 +1,14 @@
 //! `web_search`: search the web and return the top results as numbered sources.
 //!
-//! Two modes serve the `web_search` built-in ([`WebSearchSetting`]):
+//! Three modes serve the `web_search` built-in ([`WebSearchSetting`]):
 //!
 //! - native: a provider server tool on the model itself (Anthropic `web_search`, the OpenAI
 //!   Responses `web_search` tool, Bedrock Mantle's GPT models), with no harness tool. The tool
 //!   records for those are [`anthropic_web_search_tool`], [`openai_web_search_tool`] and
-//!   [`bedrock_mantle_web_search_tool`]; Bedrock has none, so search stays off there;
+//!   [`bedrock_mantle_web_search_tool`];
+//! - AgentCore (features `bedrock` or `mantle`): on Bedrock models without native search, the
+//!   `make_agent_core_web_search` tool built here, backed by Amazon Bedrock AgentCore's
+//!   `InvokeWebSearch` API and authorized by IAM;
 //! - Exa (opt-in, feature `mcp`): the `web_search_tool` built here, backed by Exa's hosted MCP
 //!   server, a third party that receives the queries. The keyless tier works out of the box and
 //!   `EXA_API_KEY` lifts its rate limit.
@@ -31,7 +34,10 @@ pub(crate) const EXA_MCP_URL: &str = "https://mcp.exa.ai/mcp";
 pub(crate) const EXA_TOOL: &str = "web_search_exa";
 const MAX_RESULTS: i64 = 10;
 const DEFAULT_RESULTS: i64 = 5;
-#[cfg_attr(not(feature = "mcp"), allow(dead_code, reason = "used by the Exa backend"))]
+#[cfg_attr(
+    not(any(feature = "mcp", feature = "bedrock", feature = "mantle")),
+    allow(dead_code, reason = "used by the Exa and AgentCore backends")
+)]
 const SNIPPET_CHARS: usize = 500;
 
 /// The `web_search` tool description.
@@ -294,8 +300,15 @@ fn parse_block(block: &str) -> Option<SearchResult> {
     Some(SearchResult::new(title.trim(), url, snippet))
 }
 
+#[cfg(any(feature = "bedrock", feature = "mantle"))]
+pub(crate) use agentcore::agent_core_web_search;
+#[cfg(any(feature = "bedrock", feature = "mantle"))]
+pub use agentcore::{AgentCoreBackend, MakeAgentCoreWebSearchOptions, make_agent_core_web_search};
 #[cfg(feature = "mcp")]
 pub use exa::{ExaBackend, web_search_tool};
+
+#[cfg(any(feature = "bedrock", feature = "mantle"))]
+mod agentcore;
 
 #[cfg(feature = "mcp")]
 mod exa {

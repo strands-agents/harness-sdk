@@ -129,7 +129,8 @@ impl Provider {
     }
 
     /// Whether native web search is enabled through model config: OpenAI Responses tools for
-    /// OpenAI and Mantle, Anthropic server tools; Bedrock Converse has no mechanism.
+    /// OpenAI and Mantle, Anthropic server tools. Bedrock has no native search, so every other
+    /// Bedrock API gets AgentCore web search as a harness tool instead (`web_search_kind`).
     fn web_search(self) -> bool {
         self != Self::Bedrock
     }
@@ -888,25 +889,47 @@ pub fn supports_thinking(model: Option<&ModelSource>) -> bool {
     }
 }
 
-/// Whether native web search can be enabled for `model`: `false` for a
-/// model instance or router, whose provider is unknown; `None` is the harness default model.
+/// How `web_search` is served for a model without the Exa opt-in (`webSearchKind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WebSearchKind {
+    /// The provider's native search, a model flag.
+    Native,
+    /// AgentCore web search, a harness tool, on Bedrock APIs without native search.
+    AgentCore,
+}
+
+/// How `web_search` is served for `model`: the provider's native search, else AgentCore web
+/// search on `bedrock/...` and `bedrock-mantle/...` strings (and bare Bedrock ids), else none. A
+/// model instance or router has an unknown provider, so it gets none. `None` is the harness
+/// default model.
+pub(crate) fn web_search_kind(model: Option<&ModelSource>) -> Option<WebSearchKind> {
+    let spec = match model {
+        None => DEFAULT_MODEL,
+        Some(ModelSource::Id(spec)) => spec.as_str(),
+        Some(_) => return None,
+    };
+    let (provider_name, name) = split_provider(spec);
+    let provider = Provider::parse(provider_name)?;
+    if has_web_search(provider, name) {
+        return Some(WebSearchKind::Native);
+    }
+    matches!(provider, Provider::Bedrock | Provider::BedrockMantle).then_some(WebSearchKind::AgentCore)
+}
+
+/// Whether `web_search` works for `model` without the Exa opt-in: where the provider has native
+/// search, and on every Bedrock API, where AgentCore web search serves it. `false` for a model
+/// instance or router, whose provider is unknown; `None` is the harness default model.
 ///
 /// ```
 /// use strands_harness::supports_web_search;
 ///
 /// assert!(supports_web_search(Some(&"openai/gpt-5.6-sol".into())));
-/// assert!(!supports_web_search(Some(&"bedrock/global.anthropic.claude-opus-4-8".into())));
-/// assert!(!supports_web_search(None));
+/// assert!(supports_web_search(Some(&"bedrock/global.anthropic.claude-opus-4-8".into())));
+/// assert!(!supports_web_search(Some(&"ollama/llama3".into())));
 /// ```
 #[must_use]
 pub fn supports_web_search(model: Option<&ModelSource>) -> bool {
-    let spec = match model {
-        None => DEFAULT_MODEL,
-        Some(ModelSource::Id(spec)) => spec.as_str(),
-        Some(_) => return false,
-    };
-    let (provider_name, name) = split_provider(spec);
-    Provider::parse(provider_name).is_some_and(|provider| has_web_search(provider, name))
+    web_search_kind(model).is_some()
 }
 
 #[cfg(test)]
