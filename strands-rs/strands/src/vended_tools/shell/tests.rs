@@ -247,3 +247,55 @@ async fn kills_the_commands_of_a_timed_out_command() {
     cleanup(&pid);
     assert!(ended, "process {pid} survived");
 }
+
+#[tokio::test]
+async fn stops_the_command_when_the_tool_call_is_cancelled() {
+    let (shell, _dir) = sandbox_shell();
+    let handle = crate::cancel::CancelHandle::new();
+    let canceller = handle.clone();
+    let cancel = async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        canceller.cancel(crate::cancel::CancelOptions::default());
+    };
+    let input = json!({"command": "echo partial; echo warn >&2; sleep 60"});
+    let caller = agent();
+    let (result, ()) = tokio::join!(
+        crate::vended_tools::test_support::run_with_signal(&shell, input, &caller, handle.signal()),
+        cancel
+    );
+
+    let error = result.error.as_ref().unwrap();
+    let Some(Error::SandboxAbort(abort)) = error.downcast_ref::<Error>() else {
+        panic!("expected an abort, not a shell failure: {error}");
+    };
+    let partial = json!({"output": "partial\n", "error": "warn\n", "exit_code": 130});
+    assert_eq!(abort.to_string(), format!("Execution aborted\n{partial}"));
+}
+
+#[tokio::test]
+async fn agent_cancel_stops_a_running_command() {
+    let (shell, _dir) = sandbox_shell();
+    let tool_use = crate::types::ToolUseBlock::new("shell", "t1", json!({"command": "sleep 60"}));
+    let model = crate::testing::MockModel::new().with_turn(crate::testing::MockTurn::content([tool_use]));
+    let mut agent = crate::Agent::builder()
+        .model(model)
+        .tools([shell])
+        .printer(false)
+        .build()
+        .unwrap();
+    let handle = agent.cancel_handle();
+    let cancel = async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        handle.cancel(crate::cancel::CancelOptions::default());
+    };
+
+    let (result, ()) = tokio::join!(agent.invoke("go"), cancel);
+
+    assert_eq!(result.unwrap().stop_reason(), crate::types::StopReason::Cancelled);
+    let partial = json!({"output": "", "error": "", "exit_code": 130});
+    let crate::types::ContentBlock::ToolResult(tool_result) = &agent.messages()[2].content[0] else {
+        panic!("expected a tool result: {:?}", agent.messages()[2]);
+    };
+    assert_eq!(tool_result.status, ToolResultStatus::Error);
+    assert_eq!(text(tool_result), format!("Error: Execution aborted\n{partial}"));
+}

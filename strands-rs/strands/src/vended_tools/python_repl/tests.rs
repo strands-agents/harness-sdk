@@ -1,4 +1,5 @@
 use std::sync::Mutex;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::stream;
@@ -186,15 +187,24 @@ async fn timeout_carries_partial_output_with_the_success_field_names() {
 
 #[tokio::test]
 async fn cancellation_stops_the_call_and_propagates_unwrapped() {
+    if !has_python() {
+        return;
+    }
     let handle = CancelHandle::new();
-    handle.cancel(CancelOptions::default());
-    let input = json!({"code": "import time; time.sleep(10)"});
-    let result = run_with_signal(&python_repl(), input, &agent(), handle.signal()).await;
+    let canceller = handle.clone();
+    let input = json!({"code": "print('partial', flush=True)\nimport time; time.sleep(10)"});
+    let cancel = async move {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        canceller.cancel(CancelOptions::default());
+    };
+    let (tool, agent) = (python_repl(), agent());
+    let (result, ()) = tokio::join!(run_with_signal(&tool, input, &agent, handle.signal()), cancel);
     let error = result.error.as_ref().unwrap();
-    assert!(
-        matches!(error.downcast_ref::<Error>(), Some(Error::SandboxAbort(_))),
-        "{error}"
-    );
+    let Some(Error::SandboxAbort(abort)) = error.downcast_ref::<Error>() else {
+        panic!("{error}");
+    };
+    let payload: JsonValue = serde_json::from_str(abort.to_string().split('\n').nth(1).unwrap()).unwrap();
+    assert_eq!(payload, json!({"output": "partial\n", "error": "", "exit_code": 130}));
 }
 
 #[test]

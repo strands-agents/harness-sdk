@@ -139,3 +139,133 @@ async fn kills_the_process_when_the_stream_is_dropped() {
     assert_eq!(result.exit_code, 0);
     assert!(!marker.exists());
 }
+
+/// A command whose backgrounded child creates `marker` after 0.5 s, unless the child is killed
+/// first.
+fn backgrounded_child(marker: &std::path::Path) -> String {
+    format!("(sleep 0.5; touch '{}') & echo started; wait", marker.display())
+}
+
+/// A command that ignores SIGTERM and creates `marker` after 1.5 s unless it is killed.
+fn ignoring_sigterm(marker: &std::path::Path) -> String {
+    format!("trap '' TERM; echo started; sleep 1.5; touch '{}'", marker.display())
+}
+
+async fn was_killed(marker: &std::path::Path, wait: std::time::Duration) -> bool {
+    tokio::time::sleep(wait).await;
+    !marker.exists()
+}
+
+#[tokio::test]
+async fn kills_the_whole_process_tree_on_abort() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("ran");
+    let handle = crate::cancel::CancelHandle::new();
+    let options = StreamProcessOptions {
+        signal: Some(handle.signal()),
+        ..StreamProcessOptions::default()
+    };
+    let mut stream = stream_process("sh", vec!["-c".into(), backgrounded_child(&marker)], options);
+    let mut error = None;
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(_) => handle.cancel(crate::cancel::CancelOptions::default()),
+            Err(failure) => error = Some(failure),
+        }
+    }
+    let Some(Error::SandboxAbort(abort)) = error else {
+        panic!("expected an abort, got {error:?}");
+    };
+    assert_eq!((abort.stdout.as_str(), abort.stderr.as_str()), ("started\n", ""));
+    assert!(was_killed(&marker, std::time::Duration::from_millis(800)).await);
+}
+
+#[tokio::test]
+async fn kills_the_whole_process_tree_on_timeout() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("ran");
+    let options = StreamProcessOptions {
+        timeout: Some(std::time::Duration::from_millis(100)),
+        ..StreamProcessOptions::default()
+    };
+    let error = run_to_result("sh", &["-c", &backgrounded_child(&marker)], options)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::SandboxTimeout(_)), "{error:?}");
+    assert!(was_killed(&marker, std::time::Duration::from_millis(800)).await);
+}
+
+#[tokio::test]
+async fn kills_the_whole_process_tree_when_the_consumer_stops_early() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("ran");
+    let mut stream = stream_process(
+        "sh",
+        vec!["-c".into(), backgrounded_child(&marker)],
+        StreamProcessOptions::default(),
+    );
+    stream.next().await.unwrap().unwrap();
+    drop(stream);
+    assert!(was_killed(&marker, std::time::Duration::from_millis(800)).await);
+}
+
+#[tokio::test]
+async fn a_command_that_ignores_sigterm_is_killed_after_a_timeout() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("ran");
+    let options = StreamProcessOptions {
+        timeout: Some(std::time::Duration::from_millis(100)),
+        ..StreamProcessOptions::default()
+    };
+    let error = run_to_result("sh", &["-c", &ignoring_sigterm(&marker)], options)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::SandboxTimeout(_)), "{error:?}");
+    assert!(was_killed(&marker, std::time::Duration::from_secs(2)).await);
+}
+
+#[tokio::test]
+async fn a_command_that_ignores_sigterm_is_killed_when_the_consumer_stops_early() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("ran");
+    let mut stream = stream_process(
+        "sh",
+        vec!["-c".into(), ignoring_sigterm(&marker)],
+        StreamProcessOptions::default(),
+    );
+    stream.next().await.unwrap().unwrap();
+    drop(stream);
+    assert!(was_killed(&marker, std::time::Duration::from_secs(2)).await);
+}
+
+#[tokio::test]
+async fn does_not_spawn_when_the_signal_is_already_aborted() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("ran");
+    let handle = crate::cancel::CancelHandle::new();
+    handle.cancel(crate::cancel::CancelOptions::default());
+    let options = StreamProcessOptions {
+        signal: Some(handle.signal()),
+        ..StreamProcessOptions::default()
+    };
+    let script = format!("touch '{}'", marker.display());
+    let error = run_to_result("sh", &["-c", &script], options).await.unwrap_err();
+    let Error::SandboxAbort(abort) = error else {
+        panic!("expected an abort, got {error:?}");
+    };
+    assert_eq!((abort.stdout.as_str(), abort.stderr.as_str()), ("", ""));
+    assert!(was_killed(&marker, std::time::Duration::from_millis(200)).await);
+}
+
+#[tokio::test]
+async fn fails_without_signalling_when_the_binary_is_missing_and_the_call_is_aborted() {
+    let handle = crate::cancel::CancelHandle::new();
+    let options = StreamProcessOptions {
+        signal: Some(handle.signal()),
+        ..StreamProcessOptions::default()
+    };
+    let mut stream = stream_process("strands-definitely-not-a-binary", Vec::new(), options);
+    let next = stream.next();
+    handle.cancel(crate::cancel::CancelOptions::default());
+    assert!(next.await.unwrap().is_err());
+}
