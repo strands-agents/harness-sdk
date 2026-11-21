@@ -267,8 +267,12 @@ export class Swarm implements MultiAgent {
   ): AsyncGenerator<MultiAgentStreamEvent, MultiAgentResult, undefined> {
     // Reuse state from a prior INTERRUPTED run so `swarm.invoke(responses)` can
     // resume on the same instance without a SessionManager.
+    const pending = this._pendingInterruptState
+    // Consume the pause synchronously so a concurrent resume cannot also read it; the
+    // finally below restores it when this run never starts.
+    delete this._pendingInterruptState
     const state =
-      this._pendingInterruptState ??
+      pending ??
       new MultiAgentState({
         nodeIds: [...this.nodes.keys()],
       })
@@ -281,59 +285,64 @@ export class Swarm implements MultiAgent {
       input,
     })
 
-    // SessionManager (or plugins) may restore state.results here via the hook
-    yield* this._emit(new BeforeMultiAgentInvocationEvent({ orchestrator: this, state, invocationState }))
-
-    // Resume input bypasses handoff-derived resume (goes straight to the interrupted
-    // node). On fresh runs, stash the input for replay if a hook-gate pauses before
-    // the node runs.
-    const resumeResponses = extractResumeResponses(input)
-    const interruptResponsesByNode = resumeResponses ? groupInterruptResponsesByNode(resumeResponses, state) : undefined
-    if (!resumeResponses) {
-      state._pendingInput = input
-    }
-
     let node: AgentNode
     let handoff: HandoffResult | undefined
     let nextInput: MultiAgentInput = input
-    if (interruptResponsesByNode) {
-      // Swarm runs sequentially, so at most one node can be INTERRUPTED per run.
-      // Assert the invariant so a future change that accidentally produces multiple
-      // interrupted nodes surfaces loudly rather than silently taking the first.
-      if (interruptResponsesByNode.size > 1) {
-        throw new Error(
-          `swarm_id=<${this.id}>, interrupted_nodes=<${[...interruptResponsesByNode.keys()].join(',')}> | swarm cannot have multiple interrupted nodes simultaneously`
-        )
-      }
-      const entry = interruptResponsesByNode.entries().next().value
-      if (!entry) throw new Error(`swarm_id=<${this.id}> | no interrupt responses to route`)
-      const [nodeId, responses] = entry
-      const resolvedNode = this.nodes.get(nodeId)
-      if (!resolvedNode) {
-        throw new Error(
-          `node_id=<${nodeId}>, swarm_id=<${this.id}> | resume response targets a node missing from the swarm; topology changed between save and resume?`
-        )
-      }
-      node = resolvedNode
-      const resolvedNodeState = state.node(nodeId)
-      if (!resolvedNodeState) {
-        throw new Error(
-          `node_id=<${nodeId}>, swarm_id=<${this.id}> | routed interrupt response targets a node missing from state; topology changed between save and resume?`
-        )
+    let started = false
+    try {
+      // SessionManager (or plugins) may restore state.results here via the hook
+      yield* this._emit(new BeforeMultiAgentInvocationEvent({ orchestrator: this, state, invocationState }))
+
+      // Resume input bypasses handoff-derived resume (goes straight to the interrupted
+      // node). On fresh runs, stash the input for replay if a hook-gate pauses before
+      // the node runs.
+      const resumeResponses = extractResumeResponses(input)
+      const interruptResponsesByNode = resumeResponses
+        ? groupInterruptResponsesByNode(resumeResponses, state)
+        : undefined
+      if (!resumeResponses) {
+        state._pendingInput = input
       }
 
-      // Orchestrator hooks consume matching responses; leftovers go to the child
-      // agent. If the hook consumed everything, replay the original invocation input.
-      const forwarded = applyOrchestratorHookResponses(resolvedNodeState, responses)
-      nextInput = forwarded.length > 0 ? forwarded : (state._pendingInput ?? '')
-    } else {
-      const resumeNode = this._findResumeNode(state)
-      node = resumeNode?.node ?? this.start
-      handoff = resumeNode?.lastHandoff
+      if (interruptResponsesByNode) {
+        // Swarm runs sequentially, so at most one node can be INTERRUPTED per run.
+        // Assert the invariant so a future change that accidentally produces multiple
+        // interrupted nodes surfaces loudly rather than silently taking the first.
+        if (interruptResponsesByNode.size > 1) {
+          throw new Error(
+            `swarm_id=<${this.id}>, interrupted_nodes=<${[...interruptResponsesByNode.keys()].join(',')}> | swarm cannot have multiple interrupted nodes simultaneously`
+          )
+        }
+        const entry = interruptResponsesByNode.entries().next().value
+        if (!entry) throw new Error(`swarm_id=<${this.id}> | no interrupt responses to route`)
+        const [nodeId, responses] = entry
+        const resolvedNode = this.nodes.get(nodeId)
+        if (!resolvedNode) {
+          throw new Error(
+            `node_id=<${nodeId}>, swarm_id=<${this.id}> | resume response targets a node missing from the swarm; topology changed between save and resume?`
+          )
+        }
+        node = resolvedNode
+        const resolvedNodeState = state.node(nodeId)
+        if (!resolvedNodeState) {
+          throw new Error(
+            `node_id=<${nodeId}>, swarm_id=<${this.id}> | routed interrupt response targets a node missing from state; topology changed between save and resume?`
+          )
+        }
+
+        // Orchestrator hooks consume matching responses; leftovers go to the child
+        // agent. If the hook consumed everything, replay the original invocation input.
+        const forwarded = applyOrchestratorHookResponses(resolvedNodeState, responses)
+        nextInput = forwarded.length > 0 ? forwarded : (state._pendingInput ?? '')
+      } else {
+        const resumeNode = this._findResumeNode(state)
+        node = resumeNode?.node ?? this.start
+        handoff = resumeNode?.lastHandoff
+      }
+      started = true
+    } finally {
+      if (!started && pending && !this._pendingInterruptState) this._pendingInterruptState = pending
     }
-
-    // Consume the paused run only after resume input and targets validate.
-    delete this._pendingInterruptState
 
     let caughtError: Error | undefined
     let result: MultiAgentResult | undefined
