@@ -134,11 +134,22 @@ mod otel {
         );
     }
 
+    fn input_schema() -> JsonValue {
+        json!({"type": "object", "properties": {"expression": {"type": "string"}}})
+    }
+
+    fn output_schema() -> JsonValue {
+        json!({"type": "object", "properties": {"value": {"type": "number"}}})
+    }
+
     fn tools_config() -> JsonObject {
-        json!({"calc": {"name": "calc", "description": "Calculator"}})
-            .as_object()
-            .unwrap()
-            .clone()
+        json!({
+            "calc": {"name": "calc", "description": "Calculator", "inputSchema": input_schema(), "outputSchema": output_schema()},
+            "clock": {"name": "clock", "description": "Current time"},
+        })
+        .as_object()
+        .unwrap()
+        .clone()
     }
 
     #[test]
@@ -150,9 +161,13 @@ mod otel {
             tools_config: Some(&config),
             ..agent_options(&hi(), "test-agent")
         }));
+        let definitions = attr_str(&capture.span("invoke_agent test-agent"), "gen_ai.tool.definitions").unwrap();
         assert_eq!(
-            attr_str(&capture.span("invoke_agent test-agent"), "gen_ai.tool.definitions"),
-            Some(serde_json::to_string(&config).unwrap())
+            serde_json::from_str::<JsonValue>(&definitions).unwrap(),
+            json!([
+                {"name": "calc", "description": "Calculator", "inputSchema": input_schema(), "outputSchema": output_schema()},
+                {"name": "clock", "description": "Current time", "inputSchema": null, "outputSchema": null},
+            ])
         );
     }
 
@@ -1162,10 +1177,7 @@ mod otel {
         }));
         let span = capture.span("invoke_agent agent");
         assert!(attr(&span, "gen_ai.provider.name").is_some());
-        assert_eq!(
-            attr_str(&span, "gen_ai.tool.definitions"),
-            Some(serde_json::to_string(&config).unwrap())
-        );
+        assert!(attr_str(&span, "gen_ai.tool.definitions").is_some());
     }
 
     #[test]

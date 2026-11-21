@@ -29,7 +29,7 @@ use super::span::{Attributes, add_event, end_span, exports, record_attributes, s
 use super::types::AttributeValue;
 use super::utils::{TracerSettings, now_ms};
 use crate::models::streaming::{Metrics, Usage};
-use crate::types::{JsonObject, Message, SystemPrompt, ToolResultBlock, ToolResultStatus, ToolUse};
+use crate::types::{JsonObject, JsonValue, Message, SystemPrompt, ToolResultBlock, ToolResultStatus, ToolUse};
 
 const TARGET: &str = "strands::telemetry";
 const OPERATION_DETAILS: &str = "gen_ai.client.inference.operation.details";
@@ -246,6 +246,23 @@ macro_rules! usage_fields {
     };
 }
 
+/// The `gen_ai.tool.definitions` entries: each tool's name, description and schemas, `null` for
+/// a schema the tool does not declare.
+fn tool_definitions(tools_config: &JsonObject) -> Vec<JsonValue> {
+    tools_config
+        .iter()
+        .map(|(name, spec)| {
+            let field = |key: &str| spec.get(key).cloned().unwrap_or(JsonValue::Null);
+            serde_json::json!({
+                "name": name,
+                "description": field("description"),
+                "inputSchema": field("inputSchema"),
+                "outputSchema": field("outputSchema"),
+            })
+        })
+        .collect()
+}
+
 impl Tracer {
     /// A tracer with the conventions the environment selects (`OTEL_SEMCONV_STABILITY_OPT_IN`,
     /// the Langfuse endpoints and `OTEL_SERVICE_NAME`).
@@ -374,7 +391,7 @@ impl Tracer {
         if self.settings.include_tool_definitions
             && let Some(tools_config) = options.tools_config
         {
-            attributes.set("gen_ai.tool.definitions", to_json(tools_config));
+            attributes.set("gen_ai.tool.definitions", to_json(&tool_definitions(tools_config)));
         }
         if let Some(system_prompt) = options.system_prompt {
             attributes.set("system_prompt", to_json(system_prompt));

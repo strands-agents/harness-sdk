@@ -1,7 +1,7 @@
 //! The agent's spans. They export through the SDK's layer to an in-memory exporter, and the checks
 //! read the finished spans. A disabled span stands in for a span whose start failed.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -26,6 +26,8 @@ use crate::telemetry::test_support::{
     attr, attr_i64, attr_str, capture_spans, capture_spans_except, capture_spans_with_baggage, event_attr, events,
     exceptions, is_error,
 };
+use crate::telemetry::tracer::Tracer;
+use crate::telemetry::utils::TracerSettings;
 use crate::test_support::MockTool;
 use crate::testing::{MockModel, MockTurn};
 use crate::tools::{Tool, ToolContext, ToolExecutorStrategy, ToolStream, create_error_result};
@@ -230,15 +232,39 @@ async fn omits_system_prompt_from_agent_span_when_not_configured() {
     assert_eq!(agent_span_system_prompt(None).await, None);
 }
 
+/// Records tool definitions, as `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_tool_definitions` does.
+fn record_tool_definitions(agent: &mut Agent) {
+    let settings = TracerSettings::from_lookup(&|key| {
+        (key == "OTEL_SEMCONV_STABILITY_OPT_IN").then(|| "gen_ai_tool_definitions".to_owned())
+    });
+    agent
+        .local_mut()
+        .set_tracer(Tracer::with_settings(settings, BTreeMap::new(), BTreeMap::new()));
+}
+
 #[tokio::test]
 async fn includes_tools_in_agent_span() {
     let capture = capture_spans();
-    let mut agent = tool_agent(MockModel::new().with_turn("Hello"), vec![ok_tool("myTool", "").into()]);
+    let tool = ok_tool("myTool", "");
+    let spec = serde_json::to_value(tool.tool_spec()).unwrap();
+    let mut agent = tool_agent(MockModel::new().with_turn("Hello"), vec![tool.into()]);
+    record_tool_definitions(&mut agent);
     agent.invoke("Hi").await.unwrap();
-    assert_eq!(
-        attr_str(&capture.span(AGENT_SPAN), "gen_ai.agent.tools").as_deref(),
-        Some(r#"["myTool"]"#)
-    );
+    let span = capture.span(AGENT_SPAN);
+    assert_eq!(attr_str(&span, "gen_ai.agent.tools").as_deref(), Some(r#"["myTool"]"#));
+    let definitions: serde_json::Value =
+        serde_json::from_str(&attr_str(&span, "gen_ai.tool.definitions").unwrap()).unwrap();
+    assert_eq!(definitions[0]["name"], json!("myTool"));
+    assert_eq!(definitions[0]["inputSchema"], spec["inputSchema"]);
+}
+
+#[tokio::test]
+async fn omits_tools_config_from_agent_span_when_agent_has_no_tools() {
+    let capture = capture_spans();
+    let mut agent = agent(MockModel::new().with_turn("Hello"));
+    record_tool_definitions(&mut agent);
+    agent.invoke("Hi").await.unwrap();
+    assert!(attr_str(&capture.span(AGENT_SPAN), "gen_ai.tool.definitions").is_none());
 }
 
 #[tokio::test(start_paused = true)]
