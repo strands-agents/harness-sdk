@@ -17,6 +17,15 @@ async fn invoke(stash: &Stash, input: JsonValue) -> JsonValue {
     invoke_within(stash, input, DEFAULT_MAX_RESULT_TOKENS).await
 }
 
+/// The error a failed retrieval raises.
+async fn invoke_error(stash: &Stash, input: JsonValue) -> String {
+    let input = serde_json::from_value(input).unwrap();
+    retrieve_context(stash, input, DEFAULT_MAX_RESULT_TOKENS * CHARS_PER_TOKEN)
+        .await
+        .unwrap_err()
+        .to_string()
+}
+
 /// Invokes the tool with a result budget of `max_result_tokens`.
 async fn invoke_within(stash: &Stash, input: JsonValue, max_result_tokens: usize) -> JsonValue {
     let input = serde_json::from_value(input).unwrap();
@@ -98,10 +107,8 @@ async fn returns_line_range() {
 #[tokio::test]
 async fn returns_error_for_unknown_reference() {
     assert_eq!(
-        invoke(&stash(), json!({"reference": "[ref: nonexistent]"})).await,
-        json!(
-            "Error: reference not found: [ref: nonexistent]. Pass only the <id> from the placeholder's \"[ref: <id>]\"."
-        )
+        invoke_error(&stash(), json!({"reference": "[ref: nonexistent]"})).await,
+        "reference not found: [ref: nonexistent]. Pass only the <id> from the placeholder's \"[ref: <id>]\". If that is what you passed, the content is unavailable — do not retry."
     );
 }
 
@@ -233,8 +240,8 @@ async fn refuses_to_serve_a_stored_placeholder_as_the_original() {
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
         assert_eq!(
-            invoke(&stash, input).await,
-            json!("Error: original content for reference tool-1 is no longer available")
+            invoke_error(&stash, input).await,
+            "original content for reference tool-1 is no longer available — do not retry."
         );
     }
 }
@@ -341,8 +348,8 @@ async fn returns_error_when_searching_non_text_content() {
         .store("tool-img", 0, &serde_json::to_vec(&data).unwrap())
         .await
         .unwrap();
-    let result = invoke(&stash, json!({ "reference": reference, "pattern": "test" })).await;
-    assert!(result.as_str().unwrap().contains("cannot search non-text content"));
+    let error = invoke_error(&stash, json!({ "reference": reference, "pattern": "test" })).await;
+    assert!(error.contains("cannot search non-text content"));
 }
 
 #[tokio::test]
@@ -439,4 +446,72 @@ async fn the_tool_validates_its_input_and_wraps_the_result() {
         panic!("expected a result");
     };
     assert_eq!(result.status, crate::types::ToolResultStatus::Error);
+}
+
+// Regression: https://github.com/strands-agents/harness-sdk/issues/4241 — failures returned their
+// text as a success result, and a model reading "Error" under success retries and then invents the
+// content. Driven through the tool, which is what produces the status the model sees.
+async fn stream_result(stash: Stash, input: JsonValue) -> crate::types::ToolResultBlock {
+    let tool = RetrievalTool::new(stash, None);
+    let context = ToolContext::new(
+        crate::types::ToolUse::new(RETRIEVAL_TOOL_NAME, "tu-1", input),
+        crate::test_support::tool_agent(),
+        crate::agent::InvocationState::new(),
+    );
+    let Some(ToolOutcome::Result(result)) = outcome(tool.stream(context)).await else {
+        panic!("expected a result");
+    };
+    result
+}
+
+fn error_text(result: &crate::types::ToolResultBlock) -> String {
+    assert_eq!(result.status, crate::types::ToolResultStatus::Error);
+    let ToolResultContent::Text(text) = &result.content[0] else {
+        panic!("not text");
+    };
+    text.text.clone()
+}
+
+#[tokio::test]
+async fn reports_an_unknown_reference_as_an_error() {
+    let text = error_text(&stream_result(stash(), json!({"reference": "tu-old_0"})).await);
+    assert!(text.contains("reference not found: tu-old_0"));
+    assert!(text.contains("do not retry"));
+}
+
+#[tokio::test]
+async fn reports_a_stored_placeholder_as_an_error() {
+    let stash = stash();
+    store(
+        &stash,
+        "tool-1",
+        0,
+        &json!({"text": "[Dropped] [ref: tool-1]", "offloaded": {"method": "drop", "ref": "tool-1"}}),
+    )
+    .await;
+    let text = error_text(&stream_result(stash, json!({"reference": "tool-1"})).await);
+    assert!(text.contains("no longer available"));
+}
+
+#[tokio::test]
+async fn reports_an_unsearchable_entry_as_an_error() {
+    let stash = stash();
+    store(
+        &stash,
+        "tool-img",
+        0,
+        &json!({"image": {"format": "png", "source": {"bytes": "iVBO"}}}),
+    )
+    .await;
+    let input = json!({"reference": "tool-img_0", "pattern": "test"});
+    let text = error_text(&stream_result(stash, input).await);
+    assert!(text.contains("cannot search non-text content"));
+}
+
+#[tokio::test]
+async fn reports_an_out_of_range_line_range_as_an_error() {
+    let (stash, reference) = stash_with_text("only one line").await;
+    let input = json!({"reference": reference, "line_range": {"start": 9, "end": 2}});
+    let text = error_text(&stream_result(stash, input).await);
+    assert!(text.contains("must be <= line_range.end"));
 }

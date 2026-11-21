@@ -9,7 +9,7 @@ use crate::experimental::context_manager::retrieval_tool::RETRIEVAL_TOOL_NAME;
 use crate::experimental::context_manager::test_support::{
     TestModel, agent_with, assistant, tool_result_message, tool_use_message, user,
 };
-use crate::models::Model;
+use crate::models::{CountTokensOptions, Model};
 use crate::plugins::PluginRegistry;
 use crate::types::{ContentBlock, Message, Role, ToolResultBlock, ToolResultContent};
 
@@ -595,4 +595,77 @@ async fn gives_each_agent_of_a_shared_manager_its_own_stash() {
     let retrieve = first.tool_registry().get(RETRIEVAL_TOOL_NAME).unwrap();
     let second_retrieve = second.tool_registry().get(RETRIEVAL_TOOL_NAME).unwrap();
     assert!(!Arc::ptr_eq(retrieve, second_retrieve));
+}
+
+async fn fire_before_model_call_unprojected(agent: &mut LocalAgent) {
+    let hooks = agent.hooks().clone();
+    let model = agent.model().clone();
+    let mut event = BeforeModelCallEvent::new(agent, InvocationState::new(), model);
+    hooks.invoke(&mut event).await.unwrap();
+}
+
+fn without_stash(strategy: impl ContextStrategy) -> ContextManager {
+    ContextManager::new(ContextManagerConfig {
+        strategies: Some(vec![strategy.into()]),
+        stash: Some(Toggle::Off),
+    })
+    .unwrap()
+}
+
+#[tokio::test]
+async fn counts_the_system_prompt_and_tool_specs_alongside_the_messages() {
+    let model = model(100, 0.5);
+    let manager = without_stash(Scripted::new(true));
+    let mut agent = agent_with(model.clone(), vec![user("hello")]);
+    agent.set_system_prompt(Some(crate::types::SystemPrompt::from("be helpful")));
+    agent
+        .tool_registry_mut()
+        .add(crate::test_support::MockTool::new("lookup"))
+        .unwrap();
+    manager.init_agent(&mut agent).await.unwrap();
+    // No projected input tokens, so the initial gate counts too; both counts see the same inputs.
+    fire_before_model_call_unprojected(&mut agent).await;
+    let expected = CountTokensOptions {
+        system_prompt: Some(crate::types::SystemPrompt::from("be helpful")),
+        tool_specs: agent
+            .tool_registry()
+            .list()
+            .iter()
+            .map(|tool| tool.tool_spec())
+            .collect(),
+    };
+    assert_eq!(model.count_options(), [expected.clone(), expected]);
+}
+
+#[tokio::test]
+async fn omits_the_system_prompt_when_the_agent_has_none() {
+    let model = model(100, 0.5);
+    let manager = without_stash(Scripted::new(false));
+    let mut agent = agent_with(model.clone(), vec![user("hello")]);
+    manager.init_agent(&mut agent).await.unwrap();
+    fire_before_model_call_unprojected(&mut agent).await;
+    assert_eq!(model.count_options(), [CountTokensOptions::default()]);
+}
+
+// The gate measures the messages it would drop, not the whole request the other gates measure.
+#[tokio::test]
+async fn leaves_messages_that_fit_the_window_in_the_emergency_truncate_gate() {
+    // The request is over the window, the messages are a tenth of it: dropping them cannot be what
+    // helps.
+    let model = Arc::new(
+        TestModel::new()
+            .with_count(|_| 1_000)
+            .with_utilization(|tokens| tokens as f64 / 10_000.0),
+    );
+    let manager = without_stash(Scripted::new(false));
+    let mut agent = agent_with(model.clone(), alternating(&["a", "b", "c", "d"]));
+    agent.set_system_prompt(Some(crate::types::SystemPrompt::from("be helpful")));
+    agent
+        .tool_registry_mut()
+        .add(crate::test_support::MockTool::new("lookup"))
+        .unwrap();
+    manager.init_agent(&mut agent).await.unwrap();
+    fire_before_model_call(&mut agent, 20_000).await;
+    assert_eq!(agent.messages().len(), 4);
+    assert_eq!(model.count_calls().len(), 1);
 }

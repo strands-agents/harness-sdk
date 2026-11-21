@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use super::model::{CountTokensOptions, Model, ModelRequest, latest_user_index};
-use crate::agent::InvocationContext;
+use crate::agent::{InvocationContext, LocalAgent};
 use crate::error::Result;
 use crate::models::streaming::Usage;
 use crate::types::{ContentBlock, Message, TextBlock, ToolResultBlock, ToolResultContent};
@@ -181,6 +181,29 @@ fn has_injected_block(message: &Message) -> bool {
         .content
         .iter()
         .any(|block| matches!(block, ContentBlock::Injected(_)))
+}
+
+/// Counts what the next request carries: the messages, plus the system prompt and tool specs that
+/// occupy the same context window, so a utilization gate that leaves them out reads low
+/// (`countRequestTokens`). A count of a single block or a subset calls `count_tokens` directly:
+/// including the system prompt there would inflate every block against its threshold.
+///
+/// # Errors
+///
+/// The model's token count error.
+pub(crate) async fn count_request_tokens(agent: &LocalAgent, messages: &[Message]) -> Result<u64> {
+    let options = CountTokensOptions {
+        system_prompt: agent.system_prompt().cloned(),
+        tool_specs: agent
+            .tool_registry()
+            .list()
+            .iter()
+            .map(|tool| tool.tool_spec())
+            .collect(),
+    };
+    ModelProxy::new(agent.model().clone())
+        .count_tokens(messages, options)
+        .await
 }
 
 #[cfg(test)]

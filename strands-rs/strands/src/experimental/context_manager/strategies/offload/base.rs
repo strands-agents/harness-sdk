@@ -477,6 +477,10 @@ impl ContextStrategy for EmergencyTruncateStrategy {
             return Ok(false);
         }
         if !context.overflow {
+            // Only what this strategy can remove, never the pipeline's whole-request utilization:
+            // that also carries the system prompt and tool specs, which dropping messages cannot
+            // shrink, and it is anchored on the last call's usage, which an earlier strategy in the
+            // pass has already invalidated.
             let model = context.agent.model().clone();
             let tokens = ModelProxy::new(model.clone())
                 .count_tokens(context.agent.messages(), CountTokensOptions::default())

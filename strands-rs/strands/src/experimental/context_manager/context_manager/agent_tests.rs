@@ -6,7 +6,7 @@ use crate::Agent;
 use crate::conversation_manager::SlidingWindowConversationManager;
 use crate::experimental::context_manager::{OffloadConditions, OffloadTarget, SummarizeConfig};
 use crate::models::streaming::Usage;
-use crate::models::{BaseModelConfig, Model, ModelInfo};
+use crate::models::{BaseModelConfig, CountTokensOptions, Model, ModelInfo};
 use crate::testing::{MockModel, MockTurn};
 use crate::types::{ContentBlock, Message};
 
