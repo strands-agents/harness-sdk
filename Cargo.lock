@@ -4570,6 +4570,7 @@ dependencies = [
  "indexmap 2.14.2",
  "jiff",
  "jsonschema",
+ "markup5ever_rcdom",
  "mcp-tools-sdk",
  "nix",
  "opentelemetry",

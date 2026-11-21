@@ -66,6 +66,7 @@ sse-stream = { workspace = true, optional = true }
 
 eventsource-stream = { workspace = true, optional = true }
 htmd.workspace = true
+markup5ever_rcdom.workspace = true
 reqwest.workspace = true
 
 opentelemetry = { workspace = true, optional = true }

@@ -2,15 +2,18 @@
 //! rules: ATX headings, fenced code, `-` bullets, inline links; non-content elements dropped; the
 //! `<title>` as a top-level heading; `data:` images reduced to their alt text; images with a
 //! `javascript:` or `vbscript:` source dropped, and links with a `javascript:`, `vbscript:` or
-//! `data:` href reduced to their text. Image alt text and sources are escaped so they cannot
-//! change the structure of the output.
+//! `data:` href reduced to their text. Body text, the page title, image alt text, and link titles
+//! and URLs are escaped so they cannot change the structure of the output.
 
 use std::sync::LazyLock;
 
 use htmd::element_handler::{HandlerResult, Handlers};
 use htmd::options::{BulletListMarker, CodeBlockStyle, HeadingStyle, LinkStyle, Options};
-use htmd::{Element, HtmlToMarkdown};
+use htmd::{Element, HtmlToMarkdown, Node};
+use markup5ever_rcdom::NodeData;
 use regex::Regex;
+
+use crate::models::is_js_whitespace;
 
 const DROPPED_ELEMENTS: [&str; 17] = [
     "script", "style", "noscript", "template", "svg", "canvas", "iframe", "object", "embed", "video", "audio", "form",
@@ -30,6 +33,8 @@ static CONVERTER: LazyLock<HtmlToMarkdown> = LazyLock::new(|| {
         .add_handler(vec!["title"], title)
         .add_handler(vec!["img"], safe_image)
         .add_handler(vec!["a"], safe_link)
+        .add_handler(vec!["code"], inline_code)
+        .add_handler(vec!["p", "div"], block_start)
         .build()
 });
 
@@ -47,8 +52,19 @@ const JS_SPACE_OR_CONTROL: &str =
 static SPACE_RUN: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(&format!("{JS_SPACE_OR_CONTROL}+")).ok());
 static SPACE_OR_SYNTAX: LazyLock<Option<Regex>> =
     LazyLock::new(|| Regex::new(&format!(r#"{JS_SPACE_OR_CONTROL}|[<>\\"`]"#)).ok());
-static IMAGE_SPECIALS: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"[\\\[\]`~]|^\^").ok());
-static OPENING_PAREN: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"(^ ?|\\\] ?)\(").ok());
+static TEXT_SPECIALS: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"[\\\[\]`~]").ok());
+static LINK_PAREN: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"(\\\] ?)\(").ok());
+static EMPHASIS: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"[*_]").ok());
+static NEWLINE: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"\r?\n|\r").ok());
+/// A block marker a bare alt text could start with: `-`, `=` or `>`, or `+`, `#`..`######` or an
+/// ordered-list number followed by a space or the end.
+static BLOCK_MARKER: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r"^( ?)([-=>]|(\+|#{1,6}|[0-9]+[.)])( |$))").ok());
+/// A block marker at the start of a block that htmd leaves as it is: an ordered-list number with
+/// `)`, or a heading `#` after a leading space.
+static UNESCAPED_BLOCK_MARKER: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r"^(\n*)(?:([0-9]+)\) | ?(#{1,6}(?: |\n|$)))").ok());
+static URL_SCHEME_PREFIX: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"^[a-zA-Z][a-zA-Z0-9+.-]*:").ok());
 
 fn replace_all(pattern: &LazyLock<Option<Regex>>, text: &str, replacement: &str) -> String {
     match pattern.as_ref() {
@@ -62,20 +78,50 @@ fn trim_c0_control_or_space(value: &str) -> &str {
     value.trim_matches(|c: char| c <= ' ')
 }
 
-/// Image text as plain text: whitespace and control characters collapsed, markdown and HTML
-/// syntax escaped. A `(` can only open a link destination at the start of the text or after a
-/// `]`, so it is escaped only there.
-fn escape_image_text(text: &str) -> String {
+/// Text as plain text: whitespace and control characters collapsed, markdown and HTML syntax
+/// escaped. A `(` can only open a link destination after a `]`, so it is escaped only there.
+fn escape_text(text: &str) -> String {
     let text = replace_all(&SPACE_RUN, text, " ");
-    let text = replace_all(&IMAGE_SPECIALS, &text, r"\$0");
-    let text = replace_all(&OPENING_PAREN, &text, r"${1}\(");
+    let text = replace_all(&TEXT_SPECIALS, &text, r"\$0");
+    let text = replace_all(&LINK_PAREN, &text, r"${1}\(");
     text.replace('<', "&lt;").replace('>', "&gt;")
 }
 
-/// An image source without tabs and newlines, as URL parsers drop them, and with what a markdown
-/// parser could read as syntax percent-encoded.
-fn escape_image_src(src: &str) -> String {
-    let src: String = src.chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
+/// Image alt text, which can directly follow a `![` or a `]`: a `^` or `(` at its start is escaped
+/// too.
+fn escape_alt_text(text: &str) -> String {
+    let text = escape_text(text);
+    if text.starts_with('^') {
+        return format!("\\{text}");
+    }
+    let space = usize::from(text.starts_with(" ("));
+    if space == 1 || text.starts_with('(') {
+        return format!("{}\\{}", &text[..space], &text[space..]);
+    }
+    text
+}
+
+/// Whether URL parsers read `\` as `/` in `url`: a relative URL, or an http(s), ftp, ws(s) or
+/// file URL.
+fn backslash_is_slash(url: &str) -> bool {
+    let Some(scheme) = URL_SCHEME_PREFIX.as_ref().and_then(|pattern| pattern.find(url)) else {
+        return true;
+    };
+    matches!(
+        scheme.as_str().to_ascii_lowercase().as_str(),
+        "http:" | "https:" | "ftp:" | "ws:" | "wss:" | "file:"
+    )
+}
+
+/// A URL without tabs and newlines, as URL parsers drop them, with `\` read as `/` before the
+/// query where URL parsers read it so, and with what a markdown parser could read as syntax
+/// percent-encoded.
+fn escape_url(url: &str) -> String {
+    let mut src: String = url.chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
+    if backslash_is_slash(&src) {
+        let path_end = src.find(['?', '#']).unwrap_or(src.len());
+        src = format!("{}{}", src[..path_end].replace('\\', "/"), &src[path_end..]);
+    }
     let mut escaped = String::with_capacity(src.len());
     for c in src.chars() {
         let syntax = SPACE_OR_SYNTAX
@@ -93,13 +139,53 @@ fn escape_image_src(src: &str) -> String {
 }
 
 /// Alt text written without its image: a trailing `!` would turn a link that follows into an
-/// image, so it is escaped.
+/// image, and a block marker at the start could start a heading, list or quote. `*` and `_` are
+/// escaped as they are in body text.
 fn bare_alt(alt: &str) -> String {
     let body = alt.strip_suffix(' ').unwrap_or(alt);
-    match body.strip_suffix('!') {
+    let alt = match body.strip_suffix('!') {
         Some(head) => format!("{head}\\{}", &alt[head.len()..]),
         None => alt.to_owned(),
+    };
+    let alt = replace_all(&EMPHASIS, &alt, r"\$0");
+    let Some(marker) = BLOCK_MARKER.as_ref().and_then(|pattern| pattern.captures(&alt)) else {
+        return alt;
+    };
+    let digits = marker.get(1).map_or(0, |space| space.end());
+    let digits = digits + alt[digits..].chars().take_while(char::is_ascii_digit).count();
+    format!("{}\\{}", &alt[..digits], &alt[digits..])
+}
+
+/// The concatenated text of `node` and its descendants (`textContent`).
+fn text_content(node: &Node) -> String {
+    let mut text = String::new();
+    collect_text(node, &mut text);
+    text
+}
+
+fn collect_text(node: &Node, text: &mut String) {
+    if let NodeData::Text { contents } = &node.data {
+        text.push_str(&contents.borrow());
     }
+    for child in node.children.borrow().iter() {
+        collect_text(child, text);
+    }
+}
+
+fn inside_pre(node: &Node) -> bool {
+    let mut parent = node.parent.take();
+    node.parent.set(parent.clone());
+    while let Some(weak) = parent {
+        let Some(current) = weak.upgrade() else {
+            return false;
+        };
+        if matches!(&current.data, NodeData::Element { name, .. } if &*name.local == "pre") {
+            return true;
+        }
+        parent = current.parent.take();
+        current.parent.set(parent.clone());
+    }
+    false
 }
 
 /// The lowercased scheme of `url`, or empty: read after the invisible characters before it, with
@@ -133,36 +219,75 @@ fn attribute(element: &Element<'_>, name: &str) -> Option<String> {
 }
 
 #[allow(clippy::needless_pass_by_value, reason = "the htmd handler signature")]
-fn title(handlers: &dyn Handlers, element: Element<'_>) -> Option<HandlerResult> {
-    let text = handlers.walk_children(element.node).content;
-    let text = text.trim();
+fn title(_handlers: &dyn Handlers, element: Element<'_>) -> Option<HandlerResult> {
+    // The title is one line of plain text. "*" and "_" are escaped as they are in body text.
+    let text = replace_all(&EMPHASIS, &escape_text(&text_content(element.node)), r"\$0");
+    let text = text.trim_matches(is_js_whitespace);
     if text.is_empty() {
         return Some("".into());
     }
-    Some(format!("# {text}\n\n").into())
+    Some(format!("\n\n# {text}\n\n").into())
+}
+
+/// Escapes a block marker at the start of the block that htmd's text escaping misses.
+fn block_start(handlers: &dyn Handlers, element: Element<'_>) -> Option<HandlerResult> {
+    let mut result = handlers.fallback(element)?;
+    let Some(pattern) = UNESCAPED_BLOCK_MARKER.as_ref() else {
+        return Some(result);
+    };
+    result.content = pattern
+        .replace(&result.content, |captures: &regex::Captures<'_>| {
+            let newlines = captures.get(1).map_or("", |m| m.as_str());
+            match (captures.get(2), captures.get(3)) {
+                (Some(number), _) => format!("{newlines}{}\\) ", number.as_str()),
+                (None, Some(heading)) => format!("{newlines}\\{}", heading.as_str()),
+                (None, None) => captures[0].to_owned(),
+            }
+        })
+        .into_owned();
+    Some(result)
+}
+
+/// Inline code is one line: a newline in it could start a block.
+fn inline_code(handlers: &dyn Handlers, element: Element<'_>) -> Option<HandlerResult> {
+    if inside_pre(element.node) {
+        return handlers.fallback(element);
+    }
+    let mut result = handlers.fallback(element)?;
+    result.content = replace_all(&NEWLINE, &result.content, " ");
+    Some(result)
 }
 
 #[allow(clippy::needless_pass_by_value, reason = "the htmd handler signature")]
 fn safe_image(_handlers: &dyn Handlers, element: Element<'_>) -> Option<HandlerResult> {
     let src = attribute(&element, "src").unwrap_or_default();
     let src = trim_c0_control_or_space(&src);
-    let alt = escape_image_text(&attribute(&element, "alt").unwrap_or_default());
+    let alt = escape_alt_text(&attribute(&element, "alt").unwrap_or_default());
     if src.is_empty() {
         return Some(bare_alt(&alt).into());
     }
     match url_scheme(src).as_str() {
         "javascript" | "vbscript" => Some("".into()),
         "data" => Some(bare_alt(&alt).into()),
-        _ => Some(format!("![{alt}]({})", escape_image_src(src)).into()),
+        _ => Some(format!("![{alt}]({})", escape_url(src)).into()),
     }
 }
 
+#[allow(clippy::needless_pass_by_value, reason = "the htmd handler signature")]
 fn safe_link(handlers: &dyn Handlers, element: Element<'_>) -> Option<HandlerResult> {
     let href = attribute(&element, "href").unwrap_or_default();
-    if matches!(url_scheme(&href).as_str(), "javascript" | "vbscript" | "data") {
-        return Some(handlers.walk_children(element.node));
+    let href = trim_c0_control_or_space(&href);
+    let content = handlers.walk_children(element.node);
+    if href.is_empty() || matches!(url_scheme(href).as_str(), "javascript" | "vbscript" | "data") {
+        return Some(content);
     }
-    handlers.fallback(element)
+    let title = escape_text(&attribute(&element, "title").unwrap_or_default()).replace('"', "\\\"");
+    let title = if title.is_empty() {
+        String::new()
+    } else {
+        format!(" \"{title}\"")
+    };
+    Some(format!("[{}]({}{title})", content.content, escape_url(href)).into())
 }
 
 /// Converts HTML to markdown for a model to read: trimmed, with one trailing
@@ -438,7 +563,7 @@ mod tests {
             ),
             (
                 "<img alt=\"x\" src=\" a\tb<c>d\\e\x01\x7f\u{85}.png\n\">",
-                "![x](ab%3Cc%3Ed%5Ce%01%7F%C2%85.png)",
+                "![x](ab%3Cc%3Ed/e%01%7F%C2%85.png)",
             ),
             (
                 "<img alt=\"x\" src=\"p.png&quot;t&quot;&#39;u&#39;`v\">",
@@ -475,5 +600,146 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    fn assert_converts(cases: &[(&str, &str)]) {
+        let mut failures = Vec::new();
+        for (html, expected) in cases {
+            let actual = html_to_markdown(html);
+            let expected = format!("{expected}\n");
+            if actual != expected {
+                failures.push(format!("{html}\n  expected {expected:?}\n  got      {actual:?}"));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn escapes_text_the_title_and_links() {
+        assert_converts(&[
+            (
+                "<p>See [the docs](https://example.com/docs) for details.</p>",
+                "See \\[the docs\\](https://example.com/docs) for details.",
+            ),
+            (
+                "<p>![logo](https://example.com/x.png) a\\[b](https://example.com/c)</p>",
+                "!\\[logo\\](https://example.com/x.png) a\\\\\\[b\\](https://example.com/c)",
+            ),
+            ("<p>Use <code>a[0]</code> and C:\\dir</p>", "Use `a[0]` and C:\\\\dir"),
+            (
+                "<title>Guide [part 1](https://example.com/one) # intro</title>",
+                "# Guide \\[part 1\\]\\(https://example.com/one) # intro",
+            ),
+            ("<title>Line one\n\n## Line two</title>", "# Line one ## Line two"),
+            (
+                "<title>snake_case *bold* &lt;b&gt;</title>",
+                "# snake\\_case \\*bold\\* &lt;b&gt;",
+            ),
+            ("<title>\n(1) Inbox\u{a0}</title>", "# (1) Inbox"),
+            (
+                "<html><head><title>\n My Page\n</title></head><body><p>body</p></body></html>",
+                "# My Page\n\nbody",
+            ),
+            ("<p>a</p><title>Mid</title><p>b</p>", "a\n\n# Mid\n\nb"),
+            (
+                "<title> </title><title>One</title><p>body</p><title># Two</title>",
+                "# One\n\nbody\n\n# # Two",
+            ),
+            (
+                "<rss><channel><title>Blog</title><item><description>Hello</description><title>Post</title></item></channel></rss>",
+                "# Blog\n\nHello\n\n# Post",
+            ),
+            (
+                "<html><head><title>T</title><body><p>body</p></body></html>",
+                "# T\n\nbody",
+            ),
+            ("<svg><title>icon</title></svg><p>body</p>", "body"),
+            (
+                "<a href=\"https://example.com/a\" title='path C:\\\" end'>link</a>",
+                "[link](https://example.com/a \"path C:\\\\\\\" end\")",
+            ),
+            (
+                "<a href=\"https://example.com/a\" title=\"two\nlines [x] &lt;b&gt;\">link</a>",
+                "[link](https://example.com/a \"two lines \\[x\\] &lt;b&gt;\")",
+            ),
+            (
+                "<a href=\"https://example.com/a)b\">odd</a>",
+                "[odd](https://example.com/a%29b)",
+            ),
+            (
+                "<a href=\"https://example.com/a b\">space</a>",
+                "[space](https://example.com/a%20b)",
+            ),
+            (
+                "<a href=\"https://example.com/a\\)b\">odd</a>",
+                "[odd](https://example.com/a/%29b)",
+            ),
+            (
+                "<a href=\"docs\\page.htm?q=a\\b\">x</a> <a href=\"mailto:a\\b\">m</a>",
+                "[x](docs/page.htm?q=a%5Cb) [m](mailto:a%5Cb)",
+            ),
+            (
+                "<a href=\"10.0.0.1:80\\a\">x</a> <a href=\"\u{200b}mailto:a\\b\">m</a>",
+                "[x](10.0.0.1:80/a) [m](\u{200b}mailto:a/b)",
+            ),
+            (
+                "<a href=\"file:///C:\\Users\\me\\doc.txt\">f</a> <a href=\"ftp://h\\a\">g</a> <a href=\"WSS://h\\a\">w</a> <a href=\"ws://h\\a\">v</a>",
+                "[f](file:///C:/Users/me/doc.txt) [g](ftp://h/a) [w](WSS://h/a) [v](ws://h/a)",
+            ),
+            ("<a href=\" \n\">blank</a>", "blank"),
+            ("<a href=\"b\">b</a>", "[b](b)"),
+            (
+                "<a href=\" /a?b=1&amp;c=2#d \" title=\"(Plain) title\">link [1]</a>",
+                "[link \\[1\\]](/a?b=1&c=2#d \"(Plain) title\")",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn escapes_block_markers_and_backticks() {
+        assert_converts(&[
+            ("<p># Not a heading</p>", "\\# Not a heading"),
+            (
+                "<p>> quote</p><p>- a</p><p>+ b</p><p>12. c</p>",
+                "\\> quote\n\n\\- a\n\n\\+ b\n\n12\\. c",
+            ),
+            ("<p>1) Not a list</p>", "1\\) Not a list"),
+            ("<p>Title</p><p>===</p><p>~~~</p>", "Title\n\n\\===\n\n\\~~~"),
+            ("<p>use `rm -rf` now</p>", "use \\`rm -rf\\` now"),
+            ("<div>1. one<br>2. two</div>", "1\\. one  \n2\\. two"),
+            ("a<div><span> # x</span></div>", "a\n\n\\# x"),
+            (
+                "<ul><li>- a</li></ul><blockquote>> b</blockquote><h2># c</h2>",
+                "-   \\- a\n\n> \\> b\n\n## \\# c",
+            ),
+            (
+                "<p><a href=\"/\">Home</a> > <a href=\"/p\">Products</a> - all, C# 1. x</p>",
+                "[Home](/) > [Products](/p) - all, C# 1. x",
+            ),
+            (
+                "<p>#hashtag</p><p>+1</p><p>3.14</p><p>\u{661}. x</p>",
+                "#hashtag\n\n+1\n\n3.14\n\n\u{661}. x",
+            ),
+            // htmd escapes a "~" at the start of text, where turndown escapes only "~~~".
+            (
+                "<p>~/projects/app</p><p>~100 and ~~ no</p>",
+                "\\~/projects/app\n\n\\~100 and ~~ no",
+            ),
+            ("<p>a<i class=\"icon\"></i> - b</p>", "a - b"),
+            (
+                "<h2>Intro<a href=\"#i\">#</a></h2><p><span>Step</span> <span>1.</span> Open</p>",
+                "## Intro[#](#i)\n\nStep 1. Open",
+            ),
+            ("<p><code>a\n# b\n[c](u)</code></p>", "`a # b [c](u)`"),
+            ("<p><img src=\"data:image/png;base64,AA\" alt=\"# x\"></p>", "\\# x"),
+            (
+                "<p><img src=\"data:image/png;base64,AA\" alt=\"* a_b\"></p>",
+                "\\* a\\_b",
+            ),
+            (
+                "<pre><code>```\ncode\n```</code></pre><p><a href=\"u\">link</a></p>",
+                "````\n```\ncode\n```\n````\n\n[link](u)",
+            ),
+        ]);
     }
 }
