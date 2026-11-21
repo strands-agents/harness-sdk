@@ -212,10 +212,13 @@ pub struct OpenAIModelConfig {
     pub model_info: Option<ModelInfo>,
     /// Extra request fields, for parameters without a config field. Built-in Responses tools go
     /// here, before the agent's tools: `{"tools": [{"type": "web_search"}]}`. The provider
-    /// manages `model`, `messages`, `stream` and `stream_options` (Chat Completions) and `model`,
-    /// `input`, `stream` and `store` (Responses); a warning is logged when `params` holds any of
-    /// them, and the provider's values win. Must be a JSON object, such as a `json!({..})`
-    /// literal.
+    /// manages `model`, `messages` and `stream` (Chat Completions) and `model`, `input`, `stream`
+    /// and `store` (Responses); a warning is logged when `params` holds any of them, and the
+    /// provider's values win. Chat Completions sends `stream_options: {"include_usage": true}`
+    /// unless `params` sets it, and omits any `params` key set to `null`, such as
+    /// `"stream_options": null` for compatible endpoints that reject the field; without
+    /// `include_usage`, the endpoint may not report usage. Must be a JSON object, such as a
+    /// `json!({..})` literal.
     pub params: Option<JsonValue>,
     /// Prompt caching. On the Responses API, models whose model info says they take cache points
     /// (GPT-5.6 and later) cache durable conversation prefixes before temporary context;

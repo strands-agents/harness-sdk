@@ -1527,3 +1527,68 @@ mod tools_on_models_that_limit_them {
         }
     }
 }
+
+mod params {
+    use super::*;
+
+    async fn stream_with_params(model_options: OpenAIModelOptions) -> JsonValue {
+        let client = capture();
+        collect(&model_with(&client, model_options), hi()).await.unwrap();
+        client.last()
+    }
+
+    fn with_params(params: JsonValue) -> OpenAIModelOptions {
+        OpenAIModelOptions {
+            params: Some(params),
+            ..pinned(OpenAIApi::Chat)
+        }
+    }
+
+    #[tokio::test]
+    async fn defaults_stream_options_to_include_usage_when_params_does_not_set_it() {
+        let request = stream_with_params(with_params(json!({"seed": 42}))).await;
+        assert_eq!(request["stream_options"], json!({"include_usage": true}));
+    }
+
+    #[tokio::test]
+    async fn passes_a_set_stream_options_through_without_a_warning() {
+        let (logs, _guard) = record_logs();
+        let request = stream_with_params(with_params(json!({"stream_options": {"include_usage": false}}))).await;
+        assert_eq!(request["stream_options"], json!({"include_usage": false}));
+        assert!(!logs.text().contains("WARN"), "{}", logs.text());
+    }
+
+    #[tokio::test]
+    async fn omits_every_params_key_set_to_null_and_passes_set_keys_through() {
+        let request = stream_with_params(with_params(
+            json!({"seed": null, "top_p": 0.8, "prompt_cache_key": null, "stream_options": null}),
+        ))
+        .await;
+        let request = request.as_object().unwrap();
+        for key in ["seed", "stream_options", "prompt_cache_key"] {
+            assert!(!request.contains_key(key), "{key}");
+        }
+        assert_eq!(request["top_p"], json!(0.8));
+    }
+
+    #[tokio::test]
+    async fn lets_dedicated_config_properties_win_over_a_null_params_key() {
+        let request = stream_with_params(OpenAIModelOptions {
+            temperature: Some(0.5),
+            ..with_params(json!({"temperature": null}))
+        })
+        .await;
+        assert_eq!(request["temperature"], json!(0.5));
+    }
+
+    #[tokio::test]
+    async fn keeps_managed_fields_when_params_sets_them_to_null() {
+        let request = stream_with_params(with_params(json!({"model": null, "messages": null, "stream": null}))).await;
+        assert_eq!(request["model"], json!("gpt-5.4"));
+        assert_eq!(request["stream"], json!(true));
+        assert_eq!(
+            request["messages"],
+            json!([{"role": "user", "content": [{"type": "text", "text": "Hi"}]}])
+        );
+    }
+}
