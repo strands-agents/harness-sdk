@@ -546,7 +546,8 @@ impl Agent {
         let tools = self.local.tool_registry().list();
         let tool_names: Vec<String> = tools.iter().map(|tool| tool.name().to_owned()).collect();
         let tracer = self.local.tracer();
-        let tools_config: Option<crate::types::JsonObject> = tracer.includes_tool_definitions().then(|| {
+        let records_definitions = tracer.includes_tool_definitions() && !tools.is_empty();
+        let tools_config: Option<crate::types::JsonObject> = records_definitions.then(|| {
             tools
                 .iter()
                 .map(|tool| {
