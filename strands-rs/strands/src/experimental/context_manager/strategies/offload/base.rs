@@ -1,417 +1,175 @@
-//! Shared offload infrastructure: target routing, eager per-block offloading on message arrival,
-//! `preserve_recent`, pair-safe message removal, removal markers and role alternation repair.
+//! Base offload strategy: conditions, target routing, eager hooks, and the shared per-block and
+//! message-level execution paths.
+//!
+//! Reading order: `apply` checks `reached`, then a block target runs `transform_blocks`, which
+//! calls each strategy's `replace_block`, and target `All` runs the strategy's
+//! `apply_per_message` on `removable_messages`, which hands them to `remove_messages` in
+//! `message_trimming` before `repair_alternation` restores alternation.
 //!
 //! Messages are identified by their index into the history.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 
+use super::conditions::{OffloadConditions, ResolvedConditions};
+use super::target::{
+    OffloadTarget, OffloadTargetMatcher, build_tool_name_map, is_media_block, is_media_content, is_protocol_block,
+    target_json,
+};
 use crate::agent::{InvocationContext, LocalAgent};
 use crate::conversation_manager::compression::pin_message::is_pinned;
 use crate::error::{Error, Result};
+use crate::experimental::context_manager::message_trimming::{
+    FormattedPlaceholder, collect_removable_with_pair, remove_messages, repair_alternation,
+};
+use crate::experimental::context_manager::placeholder::{
+    carried_tokens, format_elided, is_offloaded, offload_placeholder, offloaded_content_of,
+};
 use crate::experimental::context_manager::retrieval_tool::RETRIEVAL_TOOL_NAME;
 use crate::experimental::context_manager::stash::Stash;
 use crate::experimental::context_manager::types::{ContextState, ContextStrategy};
 use crate::hooks::MessageAddedEvent;
-use crate::models::CountTokensOptions;
+use crate::logging::warn_once;
 use crate::models::model_proxy::ModelProxy;
-use crate::types::{
-    ContentBlock, JsonObject, JsonValue, Message, MessageMetadata, Role, ToolResultBlock, ToolResultStatus,
-};
+use crate::models::{CountTokensOptions, is_js_whitespace};
+use crate::types::{ContentBlock, Message, OffloadMethod, Role, TextBlock, ToolResultBlock};
 
-/// What an offload strategy acts on (`OffloadTarget`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum OffloadTarget {
-    /// All content: tool results and text blocks (`'*'`).
-    All,
-    /// Successful tool results (`'toolResults'`).
-    ToolResults,
-    /// Failed tool results (`'toolResultErrors'`).
-    ToolResultErrors,
-    /// Text blocks of assistant messages (`'assistantText'`).
-    AssistantText,
-    /// Text blocks of user messages, tool results excluded (`'userText'`).
-    UserText,
-    /// Results of the named tools, each `tool::<name>`; a leading `!` excludes a tool instead.
-    Tools(Vec<String>),
-}
-
-impl OffloadTarget {
-    /// The results of the named tools (`['tool::bash', '!tool::read']`).
-    pub fn tools(tools: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        Self::Tools(tools.into_iter().map(Into::into).collect())
-    }
-}
-
-/// When an offload strategy fires (`OffloadConditions`).
-///
-/// `threshold` alone acts per block, eagerly on message arrival; `utilization` acts on whole
-/// messages, oldest first; both act on whole messages that hold a block over the threshold.
-#[derive(Debug, Clone, Copy, Default, PartialEq, bon::Builder)]
-pub struct OffloadConditions {
-    /// Token size above which a block is offloaded.
-    pub threshold: Option<f64>,
-    /// Context utilization (0 to 1 and above) above which the strategy fires.
-    pub utilization: Option<f64>,
-    /// Recent matching messages to leave untouched: a count of 1 or more, or a ratio between 0
-    /// and 1 exclusive.
-    pub preserve_recent: Option<f64>,
-}
-
-fn finite_or_none(value: Option<f64>) -> Option<f64> {
-    value.filter(|value| value.is_finite()).map(|value| value.max(0.0))
-}
-
-/// `toolUseId` to tool name, from every assistant tool use.
-pub(crate) fn build_tool_name_map(messages: &[Message]) -> HashMap<String, String> {
-    messages
-        .iter()
-        .filter(|message| message.role == Role::Assistant)
-        .flat_map(|message| &message.content)
-        .filter_map(|block| match block {
-            ContentBlock::ToolUse(tool_use) => Some((tool_use.tool_use_id.clone(), tool_use.name.clone())),
-            _ => None,
-        })
-        .collect()
-}
-
-/// A parsed `OffloadTarget::Tools` list.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct ToolFilter {
-    include: Option<HashSet<String>>,
-    exclude: Option<HashSet<String>>,
-}
-
-impl ToolFilter {
-    fn resolve(target: &OffloadTarget) -> Self {
-        const TOOL_PREFIX: &str = "tool::";
-        let OffloadTarget::Tools(entries) = target else {
-            return Self::default();
-        };
-        let strip = |name: &str| name.strip_prefix(TOOL_PREFIX).unwrap_or(name).to_owned();
-        let mut includes = HashSet::new();
-        let mut excludes = HashSet::new();
-        for entry in entries {
-            match entry.strip_prefix('!') {
-                Some(name) => excludes.insert(strip(name)),
-                None => includes.insert(strip(entry)),
-            };
-        }
-        if !excludes.is_empty() && !includes.is_empty() {
-            tracing::warn!("tool filter contains both includes and excludes, excludes will be ignored");
-            return Self {
-                include: Some(includes),
-                exclude: None,
-            };
-        }
-        Self {
-            include: (!includes.is_empty()).then_some(includes),
-            exclude: (!excludes.is_empty()).then_some(excludes),
-        }
-    }
-}
-
-/// Whether a tool result matches the target.
-pub(crate) fn tool_matches_target(
-    block: &ToolResultBlock,
-    target: &OffloadTarget,
-    tool_names: &HashMap<String, String>,
-    filter: &ToolFilter,
-) -> bool {
-    match target {
-        OffloadTarget::All => true,
-        OffloadTarget::ToolResults => block.status == ToolResultStatus::Success,
-        OffloadTarget::ToolResultErrors => block.status == ToolResultStatus::Error,
-        OffloadTarget::AssistantText | OffloadTarget::UserText => false,
-        OffloadTarget::Tools(_) => {
-            let Some(name) = tool_names.get(&block.tool_use_id) else {
-                return false;
-            };
-            if let Some(exclude) = &filter.exclude {
-                return !exclude.contains(name);
-            }
-            filter.include.as_ref().is_some_and(|include| include.contains(name))
-        }
-    }
-}
-
-fn has_text(message: &Message) -> bool {
-    message
-        .content
-        .iter()
-        .any(|block| matches!(block, ContentBlock::Text(_)))
-}
-
-/// Whether a message's text matches the target.
-pub(crate) fn target_matches_message(target: &OffloadTarget, message: &Message) -> bool {
-    match target {
-        OffloadTarget::All => true,
-        OffloadTarget::AssistantText => message.role == Role::Assistant && has_text(message),
-        OffloadTarget::UserText => message.role == Role::User && has_text(message),
-        _ => false,
-    }
-}
-
-/// Whether a message matches the target by text or by a tool result.
-pub(crate) fn message_matches_target(
-    message: &Message,
-    target: &OffloadTarget,
-    tool_names: &HashMap<String, String>,
-    filter: &ToolFilter,
-) -> bool {
-    if target_matches_message(target, message) {
-        return true;
-    }
-    if message.role != Role::User {
-        return false;
-    }
-    message.content.iter().any(|block| match block {
-        ContentBlock::ToolResult(result) => tool_matches_target(result, target, tool_names, filter),
-        _ => false,
-    })
-}
-
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss,
-    reason = "message counts are small and the rounded values are non-negative"
-)]
-/// The indices of target-matching messages except the most recent `preserve_recent` matches: a
-/// count of 1 or more, or a ratio between 0 and 1 exclusive, rounded up.
-pub(crate) fn get_oldest_matches(
-    messages: &[Message],
-    target: &OffloadTarget,
-    preserve_recent: f64,
-    tool_names: &HashMap<String, String>,
-    filter: &ToolFilter,
-) -> Vec<usize> {
-    let matching: Vec<usize> = (0..messages.len())
-        .filter(|&index| message_matches_target(&messages[index], target, tool_names, filter))
-        .collect();
-    let count = if preserve_recent > 0.0 && preserve_recent < 1.0 {
-        (matching.len() as f64 * preserve_recent).ceil() as usize
-    } else {
-        preserve_recent.floor() as usize
-    };
-    if count == 0 || count >= matching.len() {
-        return Vec::new();
-    }
-    matching[..matching.len() - count].to_vec()
-}
-
-fn has_tool_result(message: &Message) -> bool {
-    message
-        .content
-        .iter()
-        .any(|block| matches!(block, ContentBlock::ToolResult(_)))
-}
-
-fn has_tool_use(message: &Message) -> bool {
-    message
-        .content
-        .iter()
-        .any(|block| matches!(block, ContentBlock::ToolUse(_)))
-}
-
-/// The message at `index` and the tool-use or tool-result partner it would orphan; nothing for
-/// message 0, the last message, or a pair that reaches either.
-pub(crate) fn collect_removable_with_pair(messages: &[Message], index: usize) -> Vec<usize> {
-    let Some(message) = messages.get(index) else {
-        return Vec::new();
-    };
-    if index == 0 || index == messages.len() - 1 {
-        return Vec::new();
-    }
-    let mut result = vec![index];
-    if has_tool_result(message) && has_tool_use(&messages[index - 1]) {
-        if index - 1 == 0 {
-            return Vec::new();
-        }
-        result.push(index - 1);
-    }
-    if has_tool_use(message) && messages.get(index + 1).is_some_and(has_tool_result) {
-        if index + 1 >= messages.len() - 1 {
-            return Vec::new();
-        }
-        result.push(index + 1);
-    }
-    result
-}
-
-/// Removes the messages at `to_remove` with their tool pairs; returns how many were removed and
-/// the lowest removed index.
-pub(crate) fn splice_with_pairs(messages: &mut Vec<Message>, to_remove: &[usize]) -> (usize, usize) {
-    let indices: BTreeSet<usize> = to_remove
-        .iter()
-        .flat_map(|&index| collect_removable_with_pair(messages, index))
-        .collect();
-    let lowest = indices.first().copied().unwrap_or(messages.len());
-    for &index in indices.iter().rev() {
-        messages.remove(index);
-    }
-    (indices.len(), lowest)
-}
-
-/// Adds a removal marker as assistant text at the gap: appended to an assistant message beside
-/// it (keeping its tracking id and metadata), or as its own assistant message. It never joins
-/// message 0.
-pub(crate) fn insert_marker(messages: &mut Vec<Message>, index: usize, text: &str) {
-    let index = index.min(messages.len()).max(1);
-    for neighbor in [index - 1, index] {
-        if neighbor > 0
-            && messages
-                .get(neighbor)
-                .is_some_and(|carrier| carrier.role == Role::Assistant)
-        {
-            messages[neighbor].content.push(ContentBlock::text(text));
-            return;
-        }
-    }
-    let index = index.min(messages.len());
-    messages.insert(index, Message::new(Role::Assistant, vec![ContentBlock::text(text)]));
-}
-
-fn pinned_flag(message: &Message) -> bool {
-    message
-        .metadata
-        .as_ref()
-        .and_then(|metadata| metadata.custom.as_ref())
-        .and_then(|custom| custom.get("pinned"))
-        == Some(&JsonValue::Bool(true))
-}
-
-/// Merges consecutive same-role messages to restore user/assistant alternation; a merged message
-/// keeps the first one's tracking id and only the pin of either.
-pub(crate) fn repair_alternation(messages: &mut Vec<Message>) {
-    let mut repaired: Vec<Message> = Vec::with_capacity(messages.len());
-    for current in messages.drain(..) {
-        let Some(previous) = repaired.last_mut().filter(|previous| previous.role == current.role) else {
-            repaired.push(current);
-            continue;
-        };
-        let pinned = pinned_flag(previous) || pinned_flag(&current);
-        previous.content.extend(current.content);
-        previous.metadata = pinned.then(|| {
-            let mut custom = JsonObject::new();
-            custom.insert("pinned".to_owned(), JsonValue::Bool(true));
-            MessageMetadata::new().with_custom(custom)
-        });
-    }
-    *messages = repaired;
-}
-
-/// How one offload strategy replaces a block and marks removed messages.
+/// How one offload method replaces a block and removes whole messages.
 #[async_trait]
-pub(crate) trait BlockReplacer: Send + Sync + 'static {
-    /// The replacement for a block, or `None` to leave it.
+pub(crate) trait OffloadBehavior: Send + Sync + 'static {
+    /// The replacement for a block, or `None` to leave it. `tokens` is the size the replacement
+    /// stands for: the block's own tokens plus what a placeholder it holds already stood for.
+    /// `stash_ref` is the reference the original is retrievable under; `tool_name` names the tool
+    /// that produced a tool result, when its tool use is in the conversation.
+    #[allow(clippy::too_many_arguments, reason = "mirrors the shared replace hook")]
     async fn replace_block(
         &self,
+        core: &OffloadCore,
         block: &ContentBlock,
         tokens: u64,
         message: &Message,
         agent: &LocalAgent,
-        stash_refs: &[String],
+        stash_ref: Option<&str>,
+        tool_name: Option<&str>,
         invocation_context: Option<&InvocationContext>,
     ) -> Result<Option<ContentBlock>>;
 
-    /// The marker left where messages were removed, if any.
-    fn removal_marker(&self, _count: usize) -> Option<String> {
-        None
-    }
+    /// Message-level execution for target `All`; `apply` restores alternation afterwards.
+    async fn apply_per_message(&self, core: &OffloadCore, context: &mut ContextState<'_>) -> Result<bool>;
 }
 
-/// The state every offload strategy shares.
+/// The state every offload strategy shares: conditions, firing, granularity, eager hooks and
+/// `preserve_recent`.
 pub(crate) struct OffloadCore {
-    pub(crate) target: OffloadTarget,
-    pub(crate) threshold: Option<f64>,
-    pub(crate) utilization_threshold: Option<f64>,
-    pub(crate) preserve_recent: f64,
-    pub(crate) filter: ToolFilter,
+    pub(crate) name: String,
+    pub(crate) method: OffloadMethod,
+    pub(crate) matcher: OffloadTargetMatcher,
+    pub(crate) conditions: ResolvedConditions,
+    /// Whether the eager hook processes each message as it arrives.
+    runs_eagerly: bool,
+    /// The conditions as given to `when`, for `Debug`.
+    pub(crate) offload_conditions: Option<OffloadConditions>,
     stash: Mutex<Option<Stash>>,
 }
 
 impl OffloadCore {
+    /// A core for `method` on `target`; with `conditions` given, they are checked to leave the
+    /// strategy runnable.
+    ///
     /// # Errors
     ///
-    /// An empty tool list target.
-    pub(crate) fn new(target: OffloadTarget, conditions: OffloadConditions) -> Result<Self> {
-        if matches!(&target, OffloadTarget::Tools(tools) if tools.is_empty()) {
-            return Err(Error::other(
-                "Empty array target matches nothing — provide at least one target",
-            ));
-        }
-        let filter = ToolFilter::resolve(&target);
-        Ok(Self {
-            target,
-            threshold: finite_or_none(conditions.threshold),
-            utilization_threshold: finite_or_none(conditions.utilization),
-            preserve_recent: finite_or_none(conditions.preserve_recent).unwrap_or(0.0),
-            filter,
+    /// A target that matches nothing, an invalid condition value, or conditions that leave the
+    /// strategy unable to run.
+    pub(crate) fn new(
+        method: OffloadMethod,
+        target: OffloadTarget,
+        conditions: Option<OffloadConditions>,
+    ) -> Result<Self> {
+        let matcher = OffloadTargetMatcher::new(target)?;
+        let resolved = conditions
+            .as_ref()
+            .map(ResolvedConditions::new)
+            .transpose()?
+            .unwrap_or_default();
+        let runs_eagerly = !matcher.matches_all() && !resolved.defers_arrival();
+        let core = Self {
+            name: format!("offload:{method}"),
+            method,
+            matcher,
+            conditions: resolved,
+            runs_eagerly,
+            offload_conditions: conditions,
             stash: Mutex::new(None),
-        })
+        };
+        if core.offload_conditions.is_some() {
+            core.check_runnable()?;
+        }
+        Ok(core)
+    }
+
+    pub(crate) fn target(&self) -> &OffloadTarget {
+        &self.matcher.target
     }
 
     pub(crate) fn stash(&self) -> Option<Stash> {
         self.stash.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
-    pub(crate) fn set_stash(&self, stash: Option<Stash>) {
+    fn set_stash(&self, stash: Option<Stash>) {
         *self.stash.lock().unwrap_or_else(PoisonError::into_inner) = stash;
     }
 
-    fn is_message_level(&self) -> bool {
-        self.utilization_threshold.is_some()
-    }
-
-    /// Whether a block may be offloaded under the target. Injected text
-    /// is written after its message was stashed, so a ref to it would point at nothing.
-    pub(crate) fn block_matches_target(
-        &self,
-        block: &ContentBlock,
-        message: &Message,
-        tool_names: &HashMap<String, String>,
-        stash: Option<&Stash>,
-    ) -> bool {
-        match block {
-            ContentBlock::ToolUse(_)
-            | ContentBlock::CachePoint(_)
-            | ContentBlock::Reasoning(_)
-            | ContentBlock::Injected(_) => false,
-            ContentBlock::Text(_) => target_matches_message(&self.target, message),
-            ContentBlock::ToolResult(result) => {
-                if stash.is_some()
-                    && tool_names.get(&result.tool_use_id).map(String::as_str) == Some(RETRIEVAL_TOOL_NAME)
-                {
-                    return false;
-                }
-                tool_matches_target(result, &self.target, tool_names, &self.filter)
-            }
-            _ => self.target == OffloadTarget::All,
+    /// Rejects conditions that leave the strategy acting on every message, or removing media
+    /// unseen.
+    fn check_runnable(&self) -> Result<()> {
+        let method = self.method;
+        if self.matcher.matches_all() && self.conditions.is_empty() {
+            return Err(Error::other(format!(
+                "Offload.{method}(\"*\") would act on every message; use .when() to set contextUtilization, blockThreshold, or a preserveRecent above 0"
+            )));
         }
+        if self.matcher.target == OffloadTarget::Media && self.runs_eagerly {
+            return Err(Error::other(format!(
+                "Offload.{method}(\"media\") would remove media before the model sees it; use .when() to set contextUtilization or a preserveRecent above 0"
+            )));
+        }
+        Ok(())
     }
 
-    /// Registers the eager per-block hook for per-block strategies without `preserve_recent`
-    /// (`init`).
+    /// Checks the conditions can run on this agent, then registers the eager hook if this runs
+    /// eagerly (`init`).
+    ///
+    /// # Errors
+    ///
+    /// A whole-message strategy with none of `context_utilization`, `block_threshold` or
+    /// `preserve_recent`, a media strategy with neither `context_utilization` nor
+    /// `preserve_recent`, or a token-count `context_utilization` larger than the model's context
+    /// window.
     pub(crate) fn init(
         self: &Arc<Self>,
-        replacer: Arc<dyn BlockReplacer>,
+        behavior: Arc<dyn OffloadBehavior>,
         agent: &mut LocalAgent,
         stash: Option<&Stash>,
-    ) {
+    ) -> Result<()> {
         self.set_stash(stash.cloned());
-        if self.is_message_level() || self.preserve_recent > 0.0 {
-            return;
+        self.check_runnable()?;
+        self.conditions.check_fits(agent)?;
+        if !self.runs_eagerly {
+            return Ok(());
+        }
+        if self.conditions.is_empty() {
+            let target = target_json(&self.matcher.target);
+            warn_once(&format!(
+                "strategy=<{}>, target=<{target}> | strategy has no conditions, so it acts on every matching block as it arrives, before the model reads it | use .when() to set blockThreshold, contextUtilization, or preserveRecent",
+                self.name
+            ));
         }
         let core = self.clone();
-        let stash = stash.cloned();
         agent.add_async_hook::<MessageAddedEvent<'_>>(move |event| {
             let core = core.clone();
-            let replacer = replacer.clone();
-            let stash = stash.clone();
+            let behavior = behavior.clone();
             Box::pin(async move {
                 let tracking_id = event.message().tracking_id().to_owned();
                 let agent = event.agent_mut();
@@ -425,59 +183,65 @@ impl OffloadCore {
                 if is_pinned(agent.messages(), index) {
                     return Ok(());
                 }
+                let threshold = core.conditions.threshold_tokens(agent);
                 let tool_names = build_tool_name_map(agent.messages());
-                core.transform_blocks(replacer.as_ref(), agent, index, &tool_names, stash.as_ref(), None)
-                    .await?;
+                let stash = core.stash();
+                core.transform_blocks(
+                    behavior.as_ref(),
+                    agent,
+                    index,
+                    &tool_names,
+                    threshold,
+                    stash.as_ref(),
+                    None,
+                )
+                .await?;
                 Ok(())
             })
         });
+        Ok(())
     }
 
     /// Runs the strategy (`apply`).
-    pub(crate) async fn apply(&self, replacer: &dyn BlockReplacer, context: &mut ContextState<'_>) -> Result<bool> {
-        if context.stash.is_none() {
-            context.stash = self.stash();
+    pub(crate) async fn apply(&self, behavior: &dyn OffloadBehavior, context: &mut ContextState<'_>) -> Result<bool> {
+        if context.stash.is_some() {
+            self.set_stash(context.stash.clone());
         }
-        let Some(utilization_threshold) = self.utilization_threshold else {
-            return self.apply_per_block(replacer, context).await;
-        };
-        if !context.overflow && context.utilization < utilization_threshold {
+        if !self.conditions.reached(context) {
             return Ok(false);
         }
-        self.apply_per_message(replacer, context).await
+        if !self.matcher.matches_all() {
+            return self.apply_per_block(behavior, context).await;
+        }
+        let acted = behavior.apply_per_message(self, context).await?;
+        if acted {
+            repair_alternation(context.agent.messages_mut());
+        }
+        Ok(acted)
     }
 
-    pub(crate) async fn apply_per_block(
-        &self,
-        replacer: &dyn BlockReplacer,
-        context: &mut ContextState<'_>,
-    ) -> Result<bool> {
+    /// Per-block execution: walk each message and replace individual blocks above the threshold.
+    async fn apply_per_block(&self, behavior: &dyn OffloadBehavior, context: &mut ContextState<'_>) -> Result<bool> {
         let invocation_context = context.invocation_context.clone();
-        let stash = context.stash.clone();
+        let stash = self.stash();
         let agent = &mut *context.agent;
         let tool_names = build_tool_name_map(agent.messages());
-        let eligible: Vec<usize> = if self.preserve_recent > 0.0 {
-            get_oldest_matches(
-                agent.messages(),
-                &self.target,
-                self.preserve_recent,
-                &tool_names,
-                &self.filter,
-            )
-        } else {
-            (0..agent.messages().len()).collect()
-        };
+        let threshold = self.conditions.threshold_tokens(agent);
+        let last = agent.messages().len().saturating_sub(1);
         let mut acted = false;
-        for index in eligible {
-            if is_pinned(agent.messages(), index) {
+        for index in self.unprotected_matches(agent.messages(), &tool_names) {
+            // Without the eager hook, message 0 is the task and the last message is one the model
+            // has not yet responded to.
+            if !self.runs_eagerly && (index == 0 || index == last) {
                 continue;
             }
             if self
                 .transform_blocks(
-                    replacer,
+                    behavior,
                     agent,
                     index,
                     &tool_names,
+                    threshold,
                     stash.as_ref(),
                     invocation_context.as_ref(),
                 )
@@ -489,60 +253,153 @@ impl OffloadCore {
         Ok(acted)
     }
 
-    /// Removes eligible messages with pair safety and leaves a marker.
-    pub(crate) async fn apply_per_message(
-        &self,
-        replacer: &dyn BlockReplacer,
-        context: &mut ContextState<'_>,
-    ) -> Result<bool> {
-        if context.agent.messages().len() <= 1 {
-            return Ok(false);
-        }
-        let eligible = self.eligible_messages(context.agent, context.stash.as_ref()).await?;
-        if eligible.is_empty() {
-            return Ok(false);
-        }
-        let messages = context.agent.messages_mut();
-        let (removed, lowest) = splice_with_pairs(messages, &eligible);
-        if removed == 0 {
-            return Ok(false);
-        }
-        if let Some(marker) = replacer.removal_marker(removed) {
-            insert_marker(messages, lowest, &marker);
-        }
-        repair_alternation(messages);
-        Ok(true)
+    /// Matching messages outside `preserve_recent`, without pinned ones, in history order.
+    fn unprotected_matches(&self, messages: &[Message], tool_names: &HashMap<String, String>) -> Vec<usize> {
+        let matching: Vec<usize> = (0..messages.len())
+            .filter(|&index| self.matcher.matches_message(&messages[index], tool_names))
+            .collect();
+        self.conditions
+            .without_preserved(&matching)
+            .into_iter()
+            .filter(|&index| !is_pinned(messages, index))
+            .collect()
     }
 
-    /// Offloads the eligible blocks of the message at `index`.
+    /// Messages outside `preserve_recent` and larger than `block_threshold`, excluding message 0,
+    /// pinned messages, and messages whose tool partner is protected, since removing a message
+    /// removes its partner too.
+    ///
+    /// # Errors
+    ///
+    /// The model's token count error.
+    pub(crate) async fn removable_messages(&self, agent: &LocalAgent) -> Result<Vec<usize>> {
+        let messages = agent.messages();
+        let unprotected = self.unprotected_matches(messages, &build_tool_name_map(messages));
+        let unprotected_set: HashSet<usize> = unprotected.iter().copied().collect();
+        let removable: Vec<usize> = unprotected
+            .into_iter()
+            .filter(|&index| {
+                index != 0
+                    && collect_removable_with_pair(messages, index)
+                        .iter()
+                        .all(|removed| unprotected_set.contains(removed))
+            })
+            .collect();
+        let Some(threshold) = self.conditions.threshold_tokens(agent) else {
+            return Ok(removable);
+        };
+        let mut over = Vec::new();
+        for index in removable {
+            let size = agent
+                .model()
+                .count_tokens(std::slice::from_ref(&messages[index]), CountTokensOptions::default())
+                .await?;
+            if size > threshold {
+                over.push(index);
+            }
+        }
+        Ok(over)
+    }
+
+    /// The placeholder this strategy leaves for a block it replaced, recording the tokens it
+    /// stands for.
+    pub(crate) fn placeholder(&self, preview: &str, stash_ref: Option<&str>, tokens: u64) -> TextBlock {
+        offload_placeholder(self.method, preview, stash_ref, tokens)
+    }
+
+    /// Whether a block in `message` is content this strategy may replace.
+    fn is_offloadable(
+        &self,
+        block: &ContentBlock,
+        message: &Message,
+        tool_names: &HashMap<String, String>,
+        stash: Option<&Stash>,
+    ) -> bool {
+        if is_protocol_block(block) || is_offloaded(block) {
+            return false;
+        }
+        match block {
+            ContentBlock::Text(text) if text.text.trim_matches(is_js_whitespace).is_empty() => return false,
+            // Injected text is written after its message was stashed, so a ref to it would point at
+            // nothing.
+            ContentBlock::Injected(_) => return false,
+            ContentBlock::ToolResult(result) if self.is_protected_result(result, tool_names, stash) => return false,
+            _ => {}
+        }
+        self.matcher.matches_block(block, message, tool_names)
+    }
+
+    /// Whether a tool result is the retrieval tool's output, or already holds a placeholder this
+    /// strategy shouldn't replace. Only drop goes further, since truncate and summarize would read
+    /// the placeholder as the content.
+    fn is_protected_result(
+        &self,
+        block: &ToolResultBlock,
+        tool_names: &HashMap<String, String>,
+        stash: Option<&Stash>,
+    ) -> bool {
+        if stash.is_some() && tool_names.get(&block.tool_use_id).map(String::as_str) == Some(RETRIEVAL_TOOL_NAME) {
+            return true;
+        }
+        block
+            .content
+            .iter()
+            .find_map(offloaded_content_of)
+            .is_some_and(|placeholder| self.method != OffloadMethod::Drop || placeholder.method == OffloadMethod::Drop)
+    }
+
+    /// Replaces each eligible block of the message at `index` larger than `threshold` tokens, or
+    /// every one when unset.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the per-block pass and the eager hook share it"
+    )]
     pub(crate) async fn transform_blocks(
         &self,
-        replacer: &dyn BlockReplacer,
+        behavior: &dyn OffloadBehavior,
         agent: &mut LocalAgent,
         index: usize,
         tool_names: &HashMap<String, String>,
+        threshold: Option<u64>,
         stash: Option<&Stash>,
         invocation_context: Option<&InvocationContext>,
     ) -> Result<bool> {
-        let threshold = self.threshold.unwrap_or(0.0);
         let Some(message) = agent.messages().get(index).cloned() else {
             return Ok(false);
         };
         let mut acted = false;
         for (block_index, block) in message.content.iter().enumerate() {
-            if !self.block_matches_target(block, &message, tool_names, stash) {
+            if !self.is_offloadable(block, &message, tool_names, stash) {
                 continue;
             }
-            let tokens = count_block_tokens(agent, message.role, block).await?;
-            #[allow(clippy::cast_precision_loss, reason = "token counts are far below 2^52")]
-            if tokens as f64 <= threshold {
+            let measured = count_block_tokens(agent, message.role, block).await?;
+            // The token heuristic counts media as 0, so unmeasured media is never treated as within
+            // the threshold.
+            if threshold.is_some_and(|threshold| measured <= threshold) && !(measured == 0 && holds_media(block)) {
                 continue;
             }
-            let refs = stash
-                .map(|stash| stash.refs_for(block, &message, block_index))
-                .unwrap_or_default();
-            let Some(replacement) = replacer
-                .replace_block(block, tokens, &message, agent, &refs, invocation_context)
+            let stash_ref = match stash {
+                Some(stash) => Some(stash.ensure_stashed(block, &message, block_index).await?),
+                None => None,
+            };
+            let tool_name = match block {
+                ContentBlock::ToolResult(result) => tool_names.get(&result.tool_use_id).map(String::as_str),
+                _ => None,
+            };
+            // The threshold measures what the block occupies now; the replacement stands for what is
+            // behind it as well.
+            let tokens = measured + carried_tokens([block]);
+            let Some(replacement) = behavior
+                .replace_block(
+                    self,
+                    block,
+                    tokens,
+                    &message,
+                    agent,
+                    stash_ref.as_deref(),
+                    tool_name,
+                    invocation_context,
+                )
                 .await?
             else {
                 continue;
@@ -561,48 +418,21 @@ impl OffloadCore {
         }
         Ok(acted)
     }
+}
 
-    /// Eligible messages for message-level operations: `preserve_recent`, message 0, pins and the
-    /// threshold respected.
-    pub(crate) async fn eligible_messages(&self, agent: &LocalAgent, stash: Option<&Stash>) -> Result<Vec<usize>> {
-        let messages = agent.messages();
-        let tool_names = build_tool_name_map(messages);
-        let candidates: Vec<usize> = if self.preserve_recent > 0.0 {
-            get_oldest_matches(messages, &self.target, self.preserve_recent, &tool_names, &self.filter)
-                .into_iter()
-                .filter(|&index| index > 0 && !is_pinned(messages, index))
-                .collect()
-        } else {
-            (1..messages.len())
-                .filter(|&index| {
-                    !is_pinned(messages, index)
-                        && message_matches_target(&messages[index], &self.target, &tool_names, &self.filter)
-                })
-                .collect()
-        };
-        let Some(threshold) = self.threshold else {
-            return Ok(candidates);
-        };
-        let mut eligible = Vec::new();
-        for index in candidates {
-            let message = &messages[index];
-            for block in &message.content {
-                if !self.block_matches_target(block, message, &tool_names, stash) {
-                    continue;
-                }
-                let tokens = count_block_tokens(agent, message.role, block).await?;
-                #[allow(clippy::cast_precision_loss, reason = "token counts are far below 2^52")]
-                if tokens as f64 > threshold {
-                    eligible.push(index);
-                    break;
-                }
-            }
-        }
-        Ok(eligible)
+/// Whether a block is media, or a tool result holding media.
+fn holds_media(block: &ContentBlock) -> bool {
+    match block {
+        ContentBlock::ToolResult(result) => result.content.iter().any(is_media_content),
+        other => is_media_block(other),
     }
 }
 
 /// The tokens of one block sent alone in a message of `role`.
+///
+/// # Errors
+///
+/// The model's token count error.
 pub(crate) async fn count_block_tokens(agent: &LocalAgent, role: Role, block: &ContentBlock) -> Result<u64> {
     agent
         .model()
@@ -616,72 +446,17 @@ pub(crate) async fn count_block_tokens(agent: &LocalAgent, role: Role, block: &C
 const EMERGENCY_REMOVAL_RATIO: f64 = 0.2;
 
 /// The last-resort strategy the context manager appends: when the window still overflows after
-/// every configured strategy, it drops the oldest 20% of the messages after message 0
-/// (`EmergencyTruncateStrategy`).
-pub struct EmergencyTruncateStrategy {
-    core: OffloadCore,
-}
+/// every configured strategy, it drops the oldest 20% of the messages after message 0, ignoring
+/// pins so an all-pinned overflow is still recoverable (`EmergencyTruncateStrategy`).
+#[derive(Debug, Default)]
+pub struct EmergencyTruncateStrategy;
 
 impl EmergencyTruncateStrategy {
     /// Creates the strategy.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            core: OffloadCore {
-                target: OffloadTarget::All,
-                threshold: None,
-                utilization_threshold: None,
-                preserve_recent: 0.0,
-                filter: ToolFilter::default(),
-                stash: Mutex::new(None),
-            },
-        }
+        Self
     }
-}
-
-impl Default for EmergencyTruncateStrategy {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl std::fmt::Debug for EmergencyTruncateStrategy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EmergencyTruncateStrategy").finish_non_exhaustive()
-    }
-}
-
-pub(crate) fn elided_marker(count: usize) -> String {
-    let noun = if count == 1 { "message" } else { "messages" };
-    format!("[... {count} {noun} elided ...]")
-}
-
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss,
-    reason = "message counts are small"
-)]
-fn emergency_removal(messages: &mut Vec<Message>) -> bool {
-    if messages.len() <= 3 {
-        return false;
-    }
-    let removable: Vec<usize> = (1..messages.len()).collect();
-    let mut remove_count = ((removable.len() as f64 * EMERGENCY_REMOVAL_RATIO).floor() as usize).max(1);
-    let next_is_assistant = removable
-        .get(remove_count)
-        .is_some_and(|&index| messages[index].role == Role::Assistant);
-    if !next_is_assistant {
-        remove_count += 1;
-    }
-    let to_remove = &removable[..remove_count.min(removable.len())];
-    let (removed, lowest) = splice_with_pairs(messages, to_remove);
-    if removed == 0 {
-        return false;
-    }
-    insert_marker(messages, lowest, &elided_marker(removed));
-    repair_alternation(messages);
-    true
 }
 
 #[async_trait]
@@ -690,12 +465,15 @@ impl ContextStrategy for EmergencyTruncateStrategy {
         "offload:emergency-truncate"
     }
 
-    fn init(&self, _agent: &mut LocalAgent, stash: Option<&Stash>) {
-        self.core.set_stash(stash.cloned());
-    }
-
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        reason = "message counts are small"
+    )]
     async fn apply(&self, context: &mut ContextState<'_>) -> Result<bool> {
-        if context.agent.messages().len() <= 3 {
+        let length = context.agent.messages().len();
+        if length <= 3 {
             return Ok(false);
         }
         if !context.overflow {
@@ -707,7 +485,32 @@ impl ContextStrategy for EmergencyTruncateStrategy {
                 return Ok(false);
             }
         }
-        Ok(emergency_removal(context.agent.messages_mut()))
+        let removable: Vec<usize> = (1..length).collect();
+        let mut remove_count = ((removable.len() as f64 * EMERGENCY_REMOVAL_RATIO).floor() as usize).max(1);
+        // Cut just before an assistant message, which holds no tool result to orphan and never
+        // merges into message 0.
+        let next_is_assistant = removable
+            .get(remove_count)
+            .is_some_and(|&index| context.agent.messages()[index].role == Role::Assistant);
+        if !next_is_assistant {
+            remove_count += 1;
+        }
+        let to_remove = &removable[..remove_count.min(removable.len())];
+        let text_for = FormattedPlaceholder::new(format_elided);
+        let stash = context.stash.clone();
+        if !remove_messages(
+            context.agent,
+            to_remove,
+            &text_for,
+            OffloadMethod::Truncate,
+            stash.as_ref(),
+        )
+        .await?
+        {
+            return Ok(false);
+        }
+        repair_alternation(context.agent.messages_mut());
+        Ok(true)
     }
 }
 

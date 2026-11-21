@@ -311,6 +311,26 @@ mod tool_results {
     use super::*;
 
     #[tokio::test]
+    async fn sends_an_offloaded_block_as_the_text_the_model_receives_at_top_level_and_inside_a_tool_result() {
+        let placeholder = crate::types::TextBlock::offloaded(
+            "[Dropped] [ref: tu-1]",
+            crate::types::Offloaded::new(crate::types::OffloadMethod::Drop).with_reference("tu-1"),
+        );
+        let sent = send_messages(vec![user(vec![
+            ContentBlock::Text(placeholder.clone()),
+            tool_result(ToolResultStatus::Success, vec![ToolResultContent::Text(placeholder)]),
+        ])])
+        .await;
+        assert_eq!(
+            sent["messages"][0]["content"],
+            json!([
+                {"type": "text", "text": "[Dropped] [ref: tu-1]"},
+                {"type": "tool_result", "tool_use_id": "t1", "is_error": false, "content": "[Dropped] [ref: tu-1]"}
+            ])
+        );
+    }
+
+    #[tokio::test]
     async fn formats_simple_text_tool_result() {
         let sent = send_messages(vec![user(vec![tool_result(
             ToolResultStatus::Success,

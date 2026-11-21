@@ -11,7 +11,7 @@ use async_trait::async_trait;
 
 use super::methods::truncate::TruncateConfig;
 use super::presets::resolve_strategies;
-use super::retrieval_tool::{create_retrieval_tool, track_retrieval_tool_use_ids};
+use super::retrieval_tool::{RETRIEVAL_TOOL_NAME, create_retrieval_tool};
 use super::stash::Stash;
 use super::strategies::offload::{
     EmergencyTruncateStrategy, Offload, OffloadConditions, OffloadTarget, SummarizeConfig,
@@ -25,12 +25,9 @@ use crate::models::{CountTokensOptions, Model};
 use crate::plugins::Plugin;
 use crate::storage::{InMemoryStorage, Storage};
 use crate::tools::ToolSource;
-use crate::types::Toggle;
+use crate::types::{ContentBlock, Message, Toggle};
 
-const AUTO_TRUNCATE_THRESHOLD: f64 = 1_500.0;
-const AGENTIC_TRUNCATE_THRESHOLD: f64 = 8_000.0;
 const TRUNCATE_PREVIEW_TOKENS: f64 = 750.0;
-const AUTO_SUMMARIZE_UTILIZATION: f64 = 0.85;
 const MAX_OVERFLOW_RETRIES: u32 = 3;
 
 /// The plugin name (`name`).
@@ -123,7 +120,6 @@ pub struct ContextManager {
     strategies: Arc<[Arc<dyn ContextStrategy>]>,
     stash_storage: StashStorage,
     enable_retrieval_tool: bool,
-    retrieval_tool_use_ids: Arc<Mutex<HashSet<String>>>,
     last_stash: Arc<Mutex<Option<AgentStash>>>,
 }
 
@@ -153,7 +149,28 @@ impl fmt::Debug for ContextManager {
     }
 }
 
-fn default_strategies(truncate_threshold: f64, summarize_utilization: f64) -> Result<Vec<Arc<dyn ContextStrategy>>> {
+/// The retrieval tool calls answered by the message at `index`. Their results are copies of stashed
+/// content, so the stash leaves them out. A tool result follows the message that called it.
+fn retrieval_calls_before(messages: &[Message], index: usize) -> HashSet<String> {
+    let Some(previous) = index.checked_sub(1).and_then(|previous| messages.get(previous)) else {
+        return HashSet::new();
+    };
+    previous
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::ToolUse(tool_use) if tool_use.name == RETRIEVAL_TOOL_NAME => {
+                Some(tool_use.tool_use_id.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The strategy pipeline of a preset: tool results over `truncate_threshold` tokens truncated to a
+/// 750-token preview, then summarization at `summarize_utilization`. `auto` is also the default
+/// for a config that names none.
+fn preset_strategies(truncate_threshold: u64, summarize_utilization: &str) -> Result<Vec<Arc<dyn ContextStrategy>>> {
     let truncate = Offload::truncate(
         OffloadTarget::ToolResults,
         TruncateConfig {
@@ -162,15 +179,23 @@ fn default_strategies(truncate_threshold: f64, summarize_utilization: f64) -> Re
         },
     )?
     .when(OffloadConditions {
-        threshold: Some(truncate_threshold),
+        block_threshold: Some(truncate_threshold.into()),
         ..OffloadConditions::default()
     })?;
     let summarize = Offload::summarize(OffloadTarget::All, SummarizeConfig::default())?.when(OffloadConditions {
-        utilization: Some(summarize_utilization),
-        preserve_recent: Some(4.0),
+        context_utilization: Some(summarize_utilization.into()),
+        preserve_recent: Some(4.into()),
         ..OffloadConditions::default()
-    });
+    })?;
     Ok(vec![Arc::new(truncate), Arc::new(summarize)])
+}
+
+fn auto_strategies() -> Result<Vec<Arc<dyn ContextStrategy>>> {
+    preset_strategies(1_500, "85%")
+}
+
+fn agentic_strategies() -> Result<Vec<Arc<dyn ContextStrategy>>> {
+    preset_strategies(8_000, "100%")
 }
 
 /// Runs the pipeline once; a failing strategy is logged and the next runs.
@@ -247,7 +272,7 @@ impl ContextManager {
     pub fn new(config: ContextManagerConfig) -> Result<Self> {
         let mut strategies = match &config.strategies {
             Some(entries) => resolve_strategies(entries)?,
-            None => default_strategies(AUTO_TRUNCATE_THRESHOLD, AUTO_SUMMARIZE_UTILIZATION)?,
+            None => auto_strategies()?,
         };
         strategies.push(Arc::new(EmergencyTruncateStrategy::new()));
         let stash = config.stash.unwrap_or_else(|| Toggle::On(StashConfig::default()));
@@ -262,7 +287,6 @@ impl ContextManager {
             strategies: strategies.into(),
             stash_storage,
             enable_retrieval_tool,
-            retrieval_tool_use_ids: Arc::default(),
             last_stash: Arc::default(),
         })
     }
@@ -271,7 +295,7 @@ impl ContextManager {
     /// summarization only on overflow.
     fn agentic() -> Result<Self> {
         let mut manager = Self::new(ContextManagerConfig::default())?;
-        let mut strategies = default_strategies(AGENTIC_TRUNCATE_THRESHOLD, 1.0)?;
+        let mut strategies = agentic_strategies()?;
         strategies.push(Arc::new(EmergencyTruncateStrategy::new()));
         manager.strategies = strategies.into();
         Ok(manager)
@@ -401,34 +425,28 @@ impl Plugin for ContextManager {
         *self.lock_last_stash() = agent_stash.clone();
         let stash = agent_stash.map(|agent_stash| agent_stash.stash);
         if let Some(stash) = stash.clone() {
-            for message in agent.messages().to_vec() {
-                let skip = {
-                    let mut skip = self
-                        .retrieval_tool_use_ids
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner);
-                    track_retrieval_tool_use_ids(&message, &mut skip);
-                    skip.clone()
-                };
-                stash.store_message(&message, Some(&skip)).await;
+            let stored_keys: HashSet<String> = stash.list("").await?.into_iter().collect();
+            let messages = agent.messages().to_vec();
+            for (index, message) in messages.iter().enumerate() {
+                let skip = retrieval_calls_before(&messages, index);
+                stash.store_message(message, Some(&skip), Some(&stored_keys)).await;
             }
-            let skip_ids = self.retrieval_tool_use_ids.clone();
             agent.add_async_hook::<MessageAddedEvent<'_>>(move |event| {
                 let stash = stash.clone();
-                let skip_ids = skip_ids.clone();
                 Box::pin(async move {
                     let message = event.message().clone();
-                    let skip = {
-                        let mut skip = skip_ids.lock().unwrap_or_else(PoisonError::into_inner);
-                        track_retrieval_tool_use_ids(&message, &mut skip);
-                        skip.clone()
-                    };
-                    stash.store_message(&message, Some(&skip)).await;
+                    let messages = event.agent().messages();
+                    let index = messages
+                        .iter()
+                        .rposition(|candidate| candidate.tracking_id() == message.tracking_id())
+                        .unwrap_or(messages.len());
+                    let skip = retrieval_calls_before(messages, index);
+                    stash.store_message(&message, Some(&skip), None).await;
                 })
             });
         }
         for strategy in self.strategies.iter() {
-            strategy.init(agent, stash.as_ref());
+            strategy.init(agent, stash.as_ref())?;
         }
         let strategies = self.strategies.clone();
         let before_stash = stash.clone();

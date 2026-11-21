@@ -13,24 +13,6 @@ const MAX_PATTERN_LENGTH: usize = 200;
 /// Best-effort guard against catastrophic patterns such as `(a+)+`; it does not catch all of them.
 static NESTED_QUANTIFIER: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"[+*]\s*\)\s*[+*]").ok());
 
-const TEXT_APPLICATION_TYPES: [&str; 10] = [
-    "application/json",
-    "application/xml",
-    "application/javascript",
-    "application/typescript",
-    "application/yaml",
-    "application/x-yaml",
-    "application/toml",
-    "application/sql",
-    "application/graphql",
-    "application/xhtml+xml",
-];
-
-/// Whether content of this MIME type can be searched as text.
-pub(crate) fn is_searchable_content(content_type: &str) -> bool {
-    content_type.starts_with("text/") || TEXT_APPLICATION_TYPES.contains(&content_type)
-}
-
 /// A 1-indexed inclusive line span.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct LineRange {
@@ -248,12 +230,5 @@ mod tests {
         let output = search_content(&text, &input(None, Some((1, 20))), 30);
         assert!(output.ends_with("\n\n[output truncated, narrow your range]"));
         assert!(output.starts_with("[Lines 1-20 of 20]\n\n   1| line 1\n   2| line 2"));
-    }
-
-    #[test]
-    fn searchable_content_types() {
-        assert!(is_searchable_content("text/plain"));
-        assert!(is_searchable_content("application/json"));
-        assert!(!is_searchable_content("image/png"));
     }
 }

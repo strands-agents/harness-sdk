@@ -302,16 +302,23 @@ async fn stores_its_summary_as_text() {
         crate::experimental::context_manager::Offload::summarize(OffloadTarget::All, SummarizeConfig::default())
             .unwrap()
             .when(OffloadConditions {
-                utilization: Some(0.8),
-                preserve_recent: Some(1.0),
+                context_utilization: Some("80%".into()),
+                preserve_recent: Some(1.into()),
                 ..OffloadConditions::default()
-            });
+            })
+            .unwrap();
     let mut state = ContextState::new(&mut agent.local, 0.9);
     assert!(strategy.apply(&mut state).await.unwrap());
     agent.invoke("next").await.unwrap();
-    let marker = format!(
-        "[Summarized: 3 messages, ~{} tokens]\n\na summary",
-        super::super::js_text::with_separators(tokens)
+    let marker = super::super::placeholder::offload_placeholder(
+        crate::types::OffloadMethod::Summarize,
+        &super::super::placeholder::format_summarized(
+            super::super::placeholder::REMOVED_MESSAGES,
+            tokens,
+            Some("a summary"),
+        ),
+        None,
+        tokens,
     );
     let shape: Vec<(crate::types::Role, Vec<ContentBlock>)> = agent.messages()[..3]
         .iter()
@@ -321,7 +328,7 @@ async fn stores_its_summary_as_text() {
         shape,
         [
             (crate::types::Role::User, vec![ContentBlock::text("task")]),
-            (crate::types::Role::Assistant, vec![ContentBlock::text(marker)]),
+            (crate::types::Role::Assistant, vec![ContentBlock::Text(marker)]),
             (crate::types::Role::User, vec![ContentBlock::text("recent")]),
         ]
     );
@@ -331,4 +338,80 @@ async fn stores_its_summary_as_text() {
         .flat_map(|request| request.messages.iter().flat_map(|message| message.content.clone()))
         .any(|block| matches!(block, ContentBlock::Summary(_)));
     assert!(!sent_summary);
+}
+
+#[tokio::test]
+async fn stores_and_sends_the_model_its_text_and_resolves_the_tool_use_id_to_the_original() {
+    let rows: String = (1..=5000)
+        .map(|index| format!("row-{index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let tool_rows = rows.clone();
+    let tool = crate::test_support::MockTool::new("rows")
+        .with_description("lists rows")
+        .with_result(move |context| {
+            crate::types::ToolResultBlock::success(
+                context.tool_use().tool_use_id.clone(),
+                vec![crate::types::ToolResultContent::text(tool_rows.clone())],
+            )
+            .into()
+        });
+    let model = MockModel::new()
+        .with_turn(MockTurn::content([crate::types::ToolUseBlock::new(
+            "rows",
+            "tu-1",
+            serde_json::json!({}),
+        )]))
+        .with_turn("done");
+    let truncate = crate::experimental::context_manager::Offload::truncate(
+        OffloadTarget::ToolResults,
+        crate::experimental::context_manager::TruncateConfig {
+            preview_tokens: Some(100.0),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .when(OffloadConditions {
+        block_threshold: Some(200.into()),
+        ..OffloadConditions::default()
+    })
+    .unwrap();
+    let mut agent = Agent::builder()
+        .model(model.clone())
+        .tools([crate::tools::ToolSource::from(tool)])
+        .printer(false)
+        .context_manager(ContextManagerStrategy::Config(ContextManagerConfig {
+            strategies: Some(vec![truncate.into()]),
+            ..ContextManagerConfig::default()
+        }))
+        .build()
+        .unwrap();
+    agent.invoke("list the rows").await.unwrap();
+    let ContentBlock::ToolResult(result) = &agent.messages()[2].content[0] else {
+        panic!("not a tool result");
+    };
+    let crate::types::ToolResultContent::Text(stored) = &result.content[0] else {
+        panic!("not text");
+    };
+    let offloaded = stored.offloaded.as_ref().expect("a placeholder");
+    assert_eq!(offloaded.method, crate::types::OffloadMethod::Truncate);
+    assert_eq!(offloaded.reference.as_deref(), Some("tu-1"));
+    assert!(offloaded.tokens.is_some());
+    assert!(stored.text.ends_with(" [ref: tu-1]"));
+    let sent = &model.requests()[1].messages[2].content[0];
+    let ContentBlock::ToolResult(sent) = sent else {
+        panic!("not a tool result");
+    };
+    let crate::types::ToolResultContent::Text(received) = &sent.content[0] else {
+        panic!("not text");
+    };
+    assert_eq!(received.text, stored.text);
+    let stash = agent.context_manager().unwrap().stash().unwrap();
+    for reference in ["tu-1", "tu-1_0"] {
+        let input = serde_json::from_value(serde_json::json!({"reference": reference, "pattern": "row-4321"})).unwrap();
+        let found = super::super::retrieval_tool::retrieve_context(&stash, input, 40_000)
+            .await
+            .unwrap();
+        assert!(found.as_str().unwrap().contains("row-4321"), "{reference}");
+    }
 }

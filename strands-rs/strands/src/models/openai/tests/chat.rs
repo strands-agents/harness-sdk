@@ -1166,6 +1166,30 @@ mod tool_result_and_text_ordering {
     use super::*;
 
     #[tokio::test]
+    async fn sends_an_offloaded_block_as_the_text_the_model_receives_in_user_assistant_and_tool_result_content() {
+        let placeholder = crate::types::TextBlock::offloaded(
+            "[Dropped] [ref: tu-1]",
+            crate::types::Offloaded::new(crate::types::OffloadMethod::Drop).with_reference("tu-1"),
+        );
+        let messages = vec![
+            user(vec![ContentBlock::Text(placeholder.clone())]),
+            assistant(vec![ContentBlock::Text(placeholder.clone())]),
+            user(vec![
+                ToolResultBlock::success("tu-1", vec![crate::types::ToolResultContent::Text(placeholder)]).into(),
+            ]),
+        ];
+        let sent = sent_messages(ModelRequest::builder().messages(messages).build()).await;
+        assert_eq!(
+            sent,
+            json!([
+                {"role": "user", "content": [{"type": "text", "text": "[Dropped] [ref: tu-1]"}]},
+                {"role": "assistant", "content": "[Dropped] [ref: tu-1]"},
+                {"role": "tool", "tool_call_id": "tu-1", "content": "[Dropped] [ref: tu-1]"}
+            ])
+        );
+    }
+
+    #[tokio::test]
     async fn keeps_tool_results_adjacent_to_the_assistant_tool_calls() {
         let cases: [(&[&str], &[&str]); 3] = [
             (&["tu1", "text"], &["user", "assistant", "tool", "user"]),

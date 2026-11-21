@@ -46,7 +46,13 @@ pub trait ContextStrategy: Send + Sync + 'static {
 
     /// Called once when the context manager is attached to an agent, for example to register
     /// hooks that offload content as it arrives (`init`).
-    fn init(&self, _agent: &mut LocalAgent, _stash: Option<&Stash>) {}
+    ///
+    /// # Errors
+    ///
+    /// A strategy that cannot run on this agent; attaching the context manager fails.
+    fn init(&self, _agent: &mut LocalAgent, _stash: Option<&Stash>) -> Result<()> {
+        Ok(())
+    }
 
     /// Tries to reduce the context; returns whether it changed anything (`apply`).
     ///
@@ -161,9 +167,9 @@ toggle_from_config!(StashConfig);
 /// Configuration of a [`ContextManager`](super::ContextManager) (`ContextManagerConfig`).
 #[derive(Debug, Clone, Default, bon::Builder)]
 pub struct ContextManagerConfig {
-    /// The reduction pipeline, applied in order; presets expand in place. Defaults to truncating
-    /// tool results over 1,500 tokens to a 750-token preview and summarizing at 85% utilization.
-    /// An emergency truncation always runs last.
+    /// The reduction pipeline, applied in order; presets expand in place. Defaults to the `auto`
+    /// preset's: tool results over 1,500 tokens truncated to a 750-token preview, and
+    /// summarization at 85% context utilization. An emergency truncation always runs last.
     pub strategies: Option<Vec<StrategyEntry>>,
     /// The stash for offloaded content: `true`, a [`StashConfig`], or `false` for no stash and no
     /// retrieval tool. Defaults to enabled.

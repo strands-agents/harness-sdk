@@ -27,9 +27,9 @@ pub use media::{
 };
 pub use messages::{
     CachePointBlock, CacheType, ContentBlock, GuardContentBlock, GuardContentImage, GuardContentText, GuardImageFormat,
-    GuardImageSource, GuardQualifier, InjectedBlock, JsonBlock, Message, MessageMetadata, ReasoningBlock, Role,
-    SummaryBlock, SystemContentBlock, SystemPrompt, TextBlock, ToolResultBlock, ToolResultContent, ToolResultError,
-    ToolUseBlock, UnknownBlock,
+    GuardImageSource, GuardQualifier, InjectedBlock, JsonBlock, Message, MessageMetadata, OffloadMethod, Offloaded,
+    ReasoningBlock, Role, SummaryBlock, SystemContentBlock, SystemPrompt, TextBlock, ToolResultBlock,
+    ToolResultContent, ToolResultError, ToolUseBlock, UnknownBlock,
 };
 pub use snapshot::{SNAPSHOT_SCHEMA_VERSION, Scope, Snapshot};
 pub use stop_reason::{StopReason, UnknownStopReason};

@@ -8,7 +8,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use super::methods::truncate::TruncateConfig;
-use super::strategies::offload::{Offload, OffloadConditions, OffloadTarget, SummarizeConfig};
+use super::strategies::offload::{ConditionValue, Offload, OffloadConditions, OffloadTarget, SummarizeConfig};
 use super::types::ContextStrategy;
 use crate::error::{Error, Result};
 
@@ -16,13 +16,14 @@ use crate::error::{Error, Result};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum StrategyPresetName {
-    /// Summarizes the oldest 30% of messages at 70% utilization (`proactiveSummarization`).
+    /// Summarizes the oldest 30% of messages at 70% context utilization
+    /// (`proactiveSummarization`).
     ProactiveSummarization,
     /// Truncates tool results over 2,500 tokens to a 1,000-token preview (`largeToolOffloading`).
     LargeToolOffloading,
-    /// Truncates the oldest messages when the context window is full (`overflowProtection`).
+    /// Drops the oldest messages when the context window is full (`overflowProtection`).
     OverflowProtection,
-    /// Drops tool results older than the last five matching messages (`staleToolCleanup`).
+    /// Drops tool results outside the newest five tool-result messages (`staleToolCleanup`).
     StaleToolCleanup,
 }
 
@@ -107,10 +108,14 @@ impl<S: ContextStrategy> From<S> for StrategyEntry {
     }
 }
 
-fn conditions(threshold: Option<f64>, utilization: Option<f64>, preserve_recent: Option<f64>) -> OffloadConditions {
+fn conditions(
+    context_utilization: Option<&str>,
+    block_threshold: Option<u64>,
+    preserve_recent: Option<ConditionValue>,
+) -> OffloadConditions {
     OffloadConditions {
-        threshold,
-        utilization,
+        context_utilization: context_utilization.map(ConditionValue::from),
+        block_threshold: block_threshold.map(ConditionValue::from),
         preserve_recent,
     }
 }
@@ -122,32 +127,24 @@ fn preview(tokens: f64) -> TruncateConfig {
     }
 }
 
-/// The strategies a preset stands for.
+/// The strategies a preset stands for. Defaults are tuning decisions, not API promises.
 pub(crate) fn resolve_preset(name: StrategyPresetName) -> Result<Vec<Arc<dyn ContextStrategy>>> {
     let strategy: Arc<dyn ContextStrategy> = match name {
         StrategyPresetName::ProactiveSummarization => Arc::new(
             Offload::summarize(OffloadTarget::All, SummarizeConfig::default())?.when(conditions(
+                Some("70%"),
                 None,
-                Some(0.7),
-                Some(0.7),
-            )),
+                Some("70%".into()),
+            ))?,
         ),
         StrategyPresetName::LargeToolOffloading => Arc::new(
-            Offload::truncate(OffloadTarget::ToolResults, preview(1000.0))?.when(conditions(
-                Some(2500.0),
-                None,
-                None,
-            ))?,
+            Offload::truncate(OffloadTarget::ToolResults, preview(1000.0))?.when(conditions(None, Some(2500), None))?,
         ),
-        StrategyPresetName::OverflowProtection => Arc::new(
-            Offload::truncate(OffloadTarget::All, TruncateConfig::default())?.when(conditions(
-                None,
-                Some(1.0),
-                Some(4.0),
-            ))?,
-        ),
+        StrategyPresetName::OverflowProtection => {
+            Arc::new(Offload::drop(OffloadTarget::All)?.when(conditions(Some("100%"), None, Some(4.into())))?)
+        }
         StrategyPresetName::StaleToolCleanup => {
-            Arc::new(Offload::drop(OffloadTarget::ToolResults)?.when(conditions(None, None, Some(5.0))))
+            Arc::new(Offload::drop(OffloadTarget::ToolResults)?.when(conditions(None, None, Some(5.into())))?)
         }
     };
     Ok(vec![strategy])

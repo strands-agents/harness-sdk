@@ -44,10 +44,10 @@ fn large_tool_offloading_resolves_to_a_truncate_strategy() {
 }
 
 #[test]
-fn overflow_protection_resolves_to_a_truncate_strategy() {
+fn overflow_protection_resolves_to_a_drop_strategy() {
     assert_eq!(
         names(&resolve_preset(StrategyPresetName::OverflowProtection).unwrap()),
-        ["offload:truncate"]
+        ["offload:drop"]
     );
 }
 
@@ -81,7 +81,7 @@ fn handles_mixed_arrays_of_presets_and_raw_strategies() {
         StrategyPresetName::OverflowProtection.into(),
     ])
     .unwrap();
-    assert_eq!(names(&result), ["offload:truncate", "custom", "offload:truncate"]);
+    assert_eq!(names(&result), ["offload:truncate", "custom", "offload:drop"]);
 }
 
 #[test]
@@ -168,4 +168,17 @@ fn throws_for_unknown_preset_string_in_context_manager_from() {
         error.to_string(),
         "Unknown contextManager preset: \"atuo\". Valid presets: \"auto\", \"agentic\""
     );
+}
+
+#[test]
+fn accepts_an_offload_strategy_without_when() {
+    let strategy: Arc<dyn ContextStrategy> = Arc::new(
+        crate::experimental::context_manager::Offload::drop(
+            crate::experimental::context_manager::OffloadTarget::ToolResults,
+        )
+        .unwrap(),
+    );
+    let result = resolve_strategies(&[StrategyEntry::Strategy(strategy.clone())]).unwrap();
+    assert_eq!(result.len(), 1);
+    assert!(Arc::ptr_eq(&result[0], &strategy));
 }

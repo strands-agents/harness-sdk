@@ -1,17 +1,18 @@
 //! The `retrieve_context` tool: reads content the context manager offloaded to its stash.
 
-use std::collections::HashSet;
 use std::sync::{Arc, LazyLock};
 
 use serde::Deserialize;
 use serde_json::json;
 
-use super::search::{LineRange, SearchInput, is_searchable_content, search_content};
-use super::stash::{Stash, is_offload_placeholder_data};
+use super::content_rendering::flatten_messages_to_content;
+use super::placeholder::{is_offloaded, is_offloaded_content};
+use super::search::{LineRange, SearchInput, search_content};
+use super::stash::Stash;
 use crate::error::Result;
 use crate::experimental::context_manager::js_text::{js_len, js_prefix};
 use crate::tools::{SchemaValidator, Tool, ToolContext, ToolError, ToolOutcome, ToolStream, wrap_in_tool_result};
-use crate::types::{ContentBlock, JsonValue, Message, Role, ToolResultContent, ToolSpec};
+use crate::types::{ContentBlock, JsonValue, Message, TextBlock, ToolResultContent, ToolSpec};
 
 /// The tool's name (`RETRIEVAL_TOOL_NAME`).
 pub(crate) const RETRIEVAL_TOOL_NAME: &str = "retrieve_context";
@@ -21,7 +22,7 @@ const CHARS_PER_TOKEN: usize = 4;
 
 const DESCRIPTION: &str = "Retrieve content that was offloaded from context.
 
-When content is offloaded (truncated, dropped, or summarized), the original is persisted and a reference key is left in its place. Use this tool with that reference to access the original content.
+When content is offloaded (truncated, dropped, or summarized), the original is persisted and the placeholder left in its place ends in \"[ref: <id>]\". Pass that <id> as the reference to access the original content.
 
 Options:
   - pattern: regex/keyword to find matching lines with context
@@ -29,15 +30,18 @@ Options:
   - Without pattern/line_range: returns the full original content
 
 Examples:
-  { reference: \"1_toolu_abc_0\", pattern: \"error\" }
-  { reference: \"1_toolu_abc_0\", line_range: { start: 10, end: 25 } }
-  { reference: \"1_toolu_abc_0\" }";
+  { reference: \"toolu_abc\", pattern: \"error\" }
+  { reference: \"toolu_abc\", line_range: { start: 10, end: 25 } }
+  { reference: \"toolu_abc\" }";
 
 fn input_schema() -> JsonValue {
     json!({
         "type": "object",
         "properties": {
-            "reference": {"type": "string", "description": "The reference key from the offload placeholder."},
+            "reference": {
+                "type": "string",
+                "description": "The <id> from the \"[ref: <id>]\" at the end of the offload placeholder."
+            },
             "pattern": {
                 "type": "string",
                 "description": "Regex or keyword to grep for. Returns matching lines with context."
@@ -83,30 +87,12 @@ pub(crate) struct RetrievalInput {
     context_lines: Option<usize>,
 }
 
-/// Restores image, document and video data as tool result content.
-fn restore_media(data: &JsonValue) -> Option<JsonValue> {
-    let object = data.as_object()?;
-    if !["image", "document", "video"]
-        .iter()
-        .any(|key| object.contains_key(*key))
-    {
-        return None;
-    }
-    let content = ToolResultContent::from_data(data.clone()).ok()?;
-    serde_json::to_value(content).ok()
-}
-
-fn extract_text(data: &JsonValue) -> Option<String> {
-    if let Some(text) = data.as_str() {
-        return Some(text.to_owned());
-    }
-    let object = data.as_object()?;
-    if let Some(text) = object.get("text").and_then(JsonValue::as_str) {
-        return Some(text.to_owned());
-    }
-    object
-        .get("json")
-        .and_then(|json| serde_json::to_string_pretty(json).ok())
+/// What a stash entry holds: one stored block, or the messages removed together.
+#[derive(Debug, Clone)]
+enum StashEntry {
+    Content(ToolResultContent),
+    Block(ContentBlock),
+    Messages(Vec<Message>),
 }
 
 /// Reads a stash reference as the tool's return value.
@@ -115,37 +101,22 @@ fn extract_text(data: &JsonValue) -> Option<String> {
 ///
 /// The stash's read error.
 pub(crate) async fn retrieve_context(stash: &Stash, input: RetrievalInput, max_chars: usize) -> Result<JsonValue> {
-    let Some(data) = stash.retrieve(&input.reference).await? else {
+    let reference = input.reference.trim();
+    let entries = resolve_reference(stash, reference).await?;
+    if entries.is_empty() {
         return Ok(JsonValue::String(format!(
-            "Error: reference not found: {}",
-            input.reference
+            "Error: reference not found: {reference}. Pass only the <id> from the placeholder's \"[ref: <id>]\"."
         )));
-    };
-    if is_offload_placeholder_data(&data) {
+    }
+    if entries.iter().any(entry_is_offloaded) {
         return Ok(JsonValue::String(format!(
-            "Error: original content for reference {} is no longer available",
-            input.reference
+            "Error: original content for reference {reference} is no longer available"
         )));
     }
     let pattern = input.pattern.filter(|pattern| !pattern.is_empty());
     if pattern.is_none() && input.line_range.is_none() {
-        if let Some(media) = restore_media(&data) {
-            return Ok(media);
-        }
-        let serialized = serde_json::to_string(&data)?;
-        if js_len(&serialized) <= max_chars {
-            return Ok(data);
-        }
-        return Ok(JsonValue::String(format!(
-            "{}\n\n[truncated]",
-            js_prefix(&serialized, max_chars)
-        )));
+        return full_content(&entries, max_chars);
     }
-    let Some(text) = extract_text(&data).filter(|text| !text.is_empty() && is_searchable_content("text/plain")) else {
-        return Ok(JsonValue::String(
-            "Error: cannot search non-text content. Omit pattern/line_range to retrieve full content.".to_owned(),
-        ));
-    };
     let search = SearchInput {
         pattern,
         line_range: input.line_range.map(|range| LineRange {
@@ -154,7 +125,174 @@ pub(crate) async fn retrieve_context(stash: &Stash, input: RetrievalInput, max_c
         }),
         context_lines: input.context_lines.unwrap_or(5),
     };
-    Ok(JsonValue::String(search_content(&text, &search, max_chars)))
+    Ok(JsonValue::String(search_entries(&entries, &search, max_chars)))
+}
+
+fn entry_is_offloaded(entry: &StashEntry) -> bool {
+    match entry {
+        StashEntry::Content(content) => is_offloaded_content(content),
+        StashEntry::Block(block) => is_offloaded(block),
+        StashEntry::Messages(_) => false,
+    }
+}
+
+/// The stored content itself. Tool result items, and removed messages rendered as role markers and
+/// their content, are returned as tool result content, so media reaches the model as media and
+/// only their text is cut to `max_chars`; anything else is returned in its JSON form.
+fn full_content(entries: &[StashEntry], max_chars: usize) -> Result<JsonValue> {
+    let blocks: Option<Vec<ToolResultContent>> = entries
+        .iter()
+        .flat_map(|entry| match entry {
+            StashEntry::Messages(messages) => flatten_messages_to_content(messages)
+                .into_iter()
+                .map(|block| as_result_content(&block))
+                .collect::<Vec<_>>(),
+            StashEntry::Content(content) => vec![Some(content.clone())],
+            StashEntry::Block(block) => vec![as_result_content(block)],
+        })
+        .collect();
+    if let Some(blocks) = blocks {
+        let mut clipped = clip_text(blocks, max_chars);
+        if clipped.len() == 1 {
+            return Ok(serde_json::to_value(clipped.remove(0))?);
+        }
+        return Ok(serde_json::to_value(clipped)?);
+    }
+    let data = if let [entry] = entries {
+        entry_to_data(entry)?
+    } else {
+        JsonValue::Array(entries.iter().map(entry_to_data).collect::<Result<_>>()?)
+    };
+    let serialized = serde_json::to_string(&data)?;
+    if js_len(&serialized) <= max_chars {
+        return Ok(data);
+    }
+    Ok(JsonValue::String(format!(
+        "{}\n\n[truncated]",
+        js_prefix(&serialized, max_chars)
+    )))
+}
+
+/// A content block as tool result content, when it is one of the kinds a tool result holds.
+fn as_result_content(block: &ContentBlock) -> Option<ToolResultContent> {
+    match block {
+        ContentBlock::Text(text) => Some(ToolResultContent::Text(text.clone())),
+        ContentBlock::Image(image) => Some(ToolResultContent::Image(image.clone())),
+        ContentBlock::Video(video) => Some(ToolResultContent::Video(video.clone())),
+        ContentBlock::Document(document) => Some(ToolResultContent::Document(document.clone())),
+        _ => None,
+    }
+}
+
+/// Cuts the items' text to `max_chars` in total, in order: the item that exhausts the budget is
+/// cut and marked, later textual items are left out, and media passes through untouched.
+fn clip_text(blocks: Vec<ToolResultContent>, max_chars: usize) -> Vec<ToolResultContent> {
+    let mut budget = max_chars;
+    let mut kept = Vec::new();
+    for block in blocks {
+        let Some(text) = content_text(&block) else {
+            kept.push(block);
+            continue;
+        };
+        let length = js_len(&text);
+        if length <= budget {
+            budget -= length;
+            kept.push(block);
+        } else if budget > 0 {
+            kept.push(ToolResultContent::Text(TextBlock::new(format!(
+                "{}\n\n[truncated]",
+                js_prefix(&text, budget)
+            ))));
+            budget = 0;
+        }
+    }
+    kept
+}
+
+/// The lines of the entries' text that match the pattern or fall in the line range.
+fn search_entries(entries: &[StashEntry], search: &SearchInput, max_chars: usize) -> String {
+    let Some(text) = join_text(entries.iter().map(entry_text)) else {
+        return "Error: cannot search non-text content. Omit pattern/line_range to retrieve full content.".to_owned();
+    };
+    search_content(&text, search, max_chars)
+}
+
+/// Resolves a reference to its stored entries. An id (a tool result's `toolUseId`, or
+/// `removed-<trackingId>`) resolves to every entry keyed under it, in index order; otherwise the
+/// reference is an exact key. Ids take precedence because a placeholder references a tool result by
+/// id, and an id may itself end like a key (`tool_1`).
+async fn resolve_reference(stash: &Stash, reference: &str) -> Result<Vec<StashEntry>> {
+    let keys = stash.keys_of(reference).await?;
+    if keys.is_empty() {
+        let exact = stash.retrieve(reference).await?;
+        return Ok(exact.and_then(entry_from_data).into_iter().collect());
+    }
+    let mut entries = Vec::new();
+    for key in keys {
+        if let Some(entry) = stash.retrieve(&key).await?.and_then(entry_from_data) {
+            entries.push(entry);
+        }
+    }
+    Ok(entries)
+}
+
+/// Deserializes a stash entry with the same readers that load it from a session.
+fn entry_from_data(data: JsonValue) -> Option<StashEntry> {
+    match data {
+        JsonValue::Array(items) => items
+            .into_iter()
+            .map(|item| Message::from_message_data(item).ok())
+            .collect::<Option<Vec<_>>>()
+            .map(StashEntry::Messages),
+        object @ JsonValue::Object(_) => ToolResultContent::from_data(object.clone())
+            .map(StashEntry::Content)
+            .or_else(|_| ContentBlock::from_data(object).map(StashEntry::Block))
+            .ok(),
+        _ => None,
+    }
+}
+
+fn entry_to_data(entry: &StashEntry) -> Result<JsonValue> {
+    Ok(match entry {
+        StashEntry::Content(content) => serde_json::to_value(content)?,
+        StashEntry::Block(block) => serde_json::to_value(block)?,
+        StashEntry::Messages(messages) => serde_json::to_value(messages)?,
+    })
+}
+
+/// The searchable text of an entry: its text, JSON and tool-result text, in order.
+fn entry_text(entry: &StashEntry) -> Option<String> {
+    match entry {
+        StashEntry::Content(content) => content_text(content),
+        StashEntry::Block(block) => block_text(block),
+        StashEntry::Messages(messages) => join_text(
+            messages
+                .iter()
+                .flat_map(|message| message.content.iter().map(block_text)),
+        ),
+    }
+}
+
+fn content_text(content: &ToolResultContent) -> Option<String> {
+    match content {
+        ToolResultContent::Text(text) => Some(text.text.clone()),
+        ToolResultContent::Json(json) => serde_json::to_string_pretty(&json.json).ok(),
+        _ => None,
+    }
+}
+
+fn block_text(block: &ContentBlock) -> Option<String> {
+    match block {
+        ContentBlock::Text(text) => Some(text.text.clone()),
+        ContentBlock::ToolResult(result) => join_text(result.content.iter().map(content_text)),
+        ContentBlock::Citations(citations) => join_text(citations.content.iter().map(|cited| Some(cited.text.clone()))),
+        _ => None,
+    }
+}
+
+fn join_text(parts: impl IntoIterator<Item = Option<String>>) -> Option<String> {
+    let present: Vec<String> = parts.into_iter().flatten().collect();
+    (!present.is_empty()).then(|| present.join("\n"))
 }
 
 /// Retrieves offloaded content from the stash.
@@ -205,20 +343,6 @@ impl Tool for RetrievalTool {
 
     fn stream(&self, context: ToolContext) -> ToolStream {
         ToolStream::from_future(run(self.stash.clone(), self.max_chars, context))
-    }
-}
-
-/// Records the tool use ids of `retrieve_context` calls so their results are not stashed again.
-pub(crate) fn track_retrieval_tool_use_ids(message: &Message, skip: &mut HashSet<String>) {
-    if message.role != Role::Assistant {
-        return;
-    }
-    for block in &message.content {
-        if let ContentBlock::ToolUse(tool_use) = block
-            && tool_use.name == RETRIEVAL_TOOL_NAME
-        {
-            skip.insert(tool_use.tool_use_id.clone());
-        }
     }
 }
 

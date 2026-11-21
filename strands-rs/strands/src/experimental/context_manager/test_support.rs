@@ -16,8 +16,8 @@ use crate::models::{
 };
 use crate::testing::{MockModel, MockTurn};
 use crate::types::{
-    ContentBlock, JsonObject, JsonValue, Message, MessageMetadata, Role, SummaryBlock, ToolResultBlock,
-    ToolResultContent,
+    ContentBlock, JsonObject, JsonValue, Message, MessageMetadata, OffloadMethod, Offloaded, Role, SummaryBlock,
+    ToolResultBlock, ToolResultContent,
 };
 
 type CountFn = Box<dyn Fn(&[Message]) -> u64 + Send + Sync>;
@@ -108,8 +108,17 @@ impl TestModel {
     }
 
     pub(crate) fn with_server_side_summary(self, supported: bool) -> Self {
-        let mut info = ModelInfo::default();
-        info.capabilities.server_side_summary = Some(supported);
+        self.with_model_info(|info| info.capabilities.server_side_summary = Some(supported))
+    }
+
+    /// The model info reports `limit` as its context window.
+    pub(crate) fn with_context_window(self, limit: u64) -> Self {
+        self.with_model_info(|info| info.limits.context_window = Some(limit))
+    }
+
+    fn with_model_info(self, change: impl FnOnce(&mut ModelInfo)) -> Self {
+        let mut info = self.inner.get_config().model_info.unwrap_or_default();
+        change(&mut info);
         self.inner
             .update_config(BaseModelConfig {
                 model_info: Some(info),
@@ -282,11 +291,70 @@ pub(crate) fn turns(messages: &[Message]) -> Vec<(Role, Vec<ContentBlock>, bool)
         .collect()
 }
 
-/// The text of every text block, in order.
-pub(crate) fn all_text(messages: &[Message]) -> Vec<String> {
+/// The offload method that left `block` as a placeholder, or `None` when it is not one
+/// (`offloadedBy`).
+pub(crate) fn offloaded_by(block: &ContentBlock) -> Option<OffloadMethod> {
+    match block {
+        ContentBlock::Text(text) => text.offloaded.as_ref().map(|offloaded| offloaded.method),
+        _ => None,
+    }
+}
+
+/// The offload method that left tool result content as a placeholder.
+pub(crate) fn content_offloaded_by(content: &ToolResultContent) -> Option<OffloadMethod> {
+    match content {
+        ToolResultContent::Text(text) => text.offloaded.as_ref().map(|offloaded| offloaded.method),
+        _ => None,
+    }
+}
+
+/// What every placeholder in `messages` stands in for, including those inside tool results, in
+/// history order (`placeholdersIn`).
+pub(crate) fn placeholders_in(messages: &[Message]) -> Vec<Offloaded> {
     messages
         .iter()
         .flat_map(|message| &message.content)
-        .filter_map(|block| block.as_text().map(str::to_owned))
+        .flat_map(|block| match block {
+            ContentBlock::ToolResult(result) => result
+                .content
+                .iter()
+                .filter_map(|content| match content {
+                    ToolResultContent::Text(text) => text.offloaded.clone(),
+                    _ => None,
+                })
+                .collect(),
+            ContentBlock::Text(text) => text.offloaded.clone().into_iter().collect(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+/// A placeholder's provenance: its method and, when set, its size.
+pub(crate) fn provenance(method: OffloadMethod, tokens: Option<u64>) -> Offloaded {
+    let offloaded = Offloaded::new(method);
+    match tokens {
+        Some(tokens) => offloaded.with_tokens(tokens),
+        None => offloaded,
+    }
+}
+
+/// The text of each message's blocks (`textsOf`); a block without text reads as empty.
+pub(crate) fn texts_of(messages: &[Message]) -> Vec<Vec<String>> {
+    messages
+        .iter()
+        .map(|message| {
+            message
+                .content
+                .iter()
+                .map(|block| block.as_text().unwrap_or_default().to_owned())
+                .collect()
+        })
+        .collect()
+}
+
+/// `turns` user/assistant pairs, `q1`/`a1` and on (`conversation`).
+pub(crate) fn conversation(turns: usize) -> Vec<Message> {
+    (1..=turns)
+        .flat_map(|index| [user(&format!("q{index}")), assistant(&format!("a{index}"))])
         .collect()
 }

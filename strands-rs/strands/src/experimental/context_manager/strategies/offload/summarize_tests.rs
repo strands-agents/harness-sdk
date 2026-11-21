@@ -3,17 +3,20 @@ use std::sync::Arc;
 use super::*;
 use crate::agent::InvokeLimits;
 use crate::cancel::CancelOptions;
-use crate::experimental::context_manager::strategies::offload::Offload;
+use crate::experimental::context_manager::placeholder::{
+    REMOVED_MESSAGES, format_offloaded, format_summarized, offload_placeholder,
+};
+use crate::experimental::context_manager::strategies::offload::{ConditionValue, Offload};
 use crate::experimental::context_manager::test_support::{
-    Reply, TestModel, agent_with, assistant, pinned, stream_usage, summary_result, tool_result_message,
-    tool_use_message, turns, user,
+    Reply, TestModel, agent_with, assistant, heuristic_count_tokens, pinned, placeholders_in, stream_usage,
+    summary_result, text, texts_of, tool_result_message, tool_use_message, turns, user,
 };
 use crate::models::streaming::Usage;
 use crate::test_support::{MockTool, record_logs};
 use crate::testing::MockTurn;
 use crate::types::{
-    ImageBlock, ImageFormat, ImageSource, JsonBlock, ReasoningBlock, SystemPrompt, TextBlock, ToolUseBlock, VideoBlock,
-    VideoFormat, VideoSource,
+    ImageBlock, ImageFormat, ImageSource, ReasoningBlock, SystemPrompt, ToolResultBlock, ToolResultContent,
+    ToolUseBlock, VideoBlock, VideoFormat, VideoSource,
 };
 
 const AGENT_PROMPT: &str = "You are a coding agent.";
@@ -24,11 +27,11 @@ fn instructions() -> ContentBlock {
     ContentBlock::text(format!("{SUMMARIZE_GUARD}\n\n{DEFAULT_SUMMARIZE_INSTRUCTIONS}"))
 }
 
-fn conditions(threshold: Option<f64>, utilization: Option<f64>, preserve_recent: Option<f64>) -> OffloadConditions {
+fn conditions(threshold: Option<u64>, utilization: Option<&str>, preserve_recent: Option<u64>) -> OffloadConditions {
     OffloadConditions {
-        threshold,
-        utilization,
-        preserve_recent,
+        context_utilization: utilization.map(ConditionValue::from),
+        block_threshold: threshold.map(ConditionValue::from),
+        preserve_recent: preserve_recent.map(ConditionValue::from),
     }
 }
 
@@ -48,7 +51,9 @@ fn with_model(target: OffloadTarget, model: Arc<dyn Model>) -> SummarizeStrategy
 }
 
 fn per_message() -> SummarizeStrategy {
-    summarize(OffloadTarget::All).when(conditions(None, Some(0.8), Some(1.0)))
+    summarize(OffloadTarget::All)
+        .when(conditions(None, Some("80%"), Some(1)))
+        .unwrap()
 }
 
 fn per_block(system_prompt: Option<&str>) -> SummarizeStrategy {
@@ -58,7 +63,8 @@ fn per_block(system_prompt: Option<&str>) -> SummarizeStrategy {
     };
     Offload::summarize(OffloadTarget::ToolResults, config)
         .unwrap()
-        .when(conditions(Some(100.0), None, None))
+        .when(conditions(Some(100), None, None))
+        .unwrap()
 }
 
 fn large() -> String {
@@ -110,8 +116,18 @@ fn assert_replay_options(options: &SummarizeOptions, instructions: Option<&str>)
     assert!(options.cancel_signal.is_some());
 }
 
-fn marker(count: usize, summary: &str) -> ContentBlock {
-    ContentBlock::text(format!("[Summarized: {count} messages, ~5,000 tokens]\n\n{summary}"))
+/// The placeholder a summarized run leaves, over the 5,000 tokens the mocked count reports.
+fn marker(summary: &str) -> ContentBlock {
+    marker_of(summary, 5000)
+}
+
+fn marker_of(summary: &str, tokens: u64) -> ContentBlock {
+    ContentBlock::Text(offload_placeholder(
+        OffloadMethod::Summarize,
+        &format_summarized(REMOVED_MESSAGES, tokens, Some(summary)),
+        None,
+        tokens,
+    ))
 }
 
 fn server_side_messages() -> Vec<Message> {
@@ -133,8 +149,11 @@ fn summarized_tool_result(summary: &str) -> (Role, Vec<ContentBlock>, bool) {
         Role::User,
         vec![ContentBlock::ToolResult(ToolResultBlock::success(
             "t1",
-            vec![ToolResultContent::text(format!(
-                "[Summarized: tool result, ~5,000 tokens]\n\n{summary}"
+            vec![ToolResultContent::Text(offload_placeholder(
+                OffloadMethod::Summarize,
+                &format_summarized("tool result", 5000, Some(summary)),
+                None,
+                5000,
             ))],
         ))],
         false,
@@ -190,14 +209,18 @@ fn creates_a_strategy_with_correct_name() {
 
 #[test]
 fn creates_a_strategy_with_when_conditions() {
-    let strategy = summarize(OffloadTarget::ToolResults).when(conditions(None, Some(0.85), None));
+    let strategy = summarize(OffloadTarget::ToolResults)
+        .when(conditions(None, Some("85%"), None))
+        .unwrap();
     assert_eq!(strategy.name(), "offload:summarize");
 }
 
 #[tokio::test]
 async fn returns_false_when_blocks_are_below_threshold() {
     let mut agent = agent_with(plain_model(), vec![tool_result_message("short result", "tool-123")]);
-    let strategy = summarize(OffloadTarget::ToolResults).when(conditions(Some(2500.0), None, None));
+    let strategy = summarize(OffloadTarget::ToolResults)
+        .when(conditions(Some(2500), None, None))
+        .unwrap();
     assert!(!apply(&strategy, &mut agent, 0.9).await);
 }
 
@@ -246,7 +269,9 @@ async fn summarizes_user_text_blocks() {
 #[tokio::test]
 async fn skips_when_utilization_is_below_threshold() {
     let mut agent = agent_with(plain_model(), vec![tool_result_message(&large(), "tool-123")]);
-    let strategy = summarize(OffloadTarget::ToolResults).when(conditions(None, Some(0.85), None));
+    let strategy = summarize(OffloadTarget::ToolResults)
+        .when(conditions(None, Some("85%"), None))
+        .unwrap();
     assert!(!apply(&strategy, &mut agent, 0.5).await);
 }
 
@@ -265,7 +290,9 @@ async fn fires_when_utilization_exceeds_threshold() {
             assistant("latest"),
         ],
     );
-    let strategy = summarize(OffloadTarget::ToolResults).when(conditions(None, Some(0.85), None));
+    let strategy = summarize(OffloadTarget::ToolResults)
+        .when(conditions(None, Some("85%"), None))
+        .unwrap();
     assert!(apply(&strategy, &mut agent, 0.9).await);
 }
 
@@ -295,9 +322,12 @@ async fn adds_the_summarizer_usage_to_the_request_total_even_when_the_request_li
         agent.messages()[0].content,
         [ContentBlock::ToolResult(ToolResultBlock::success(
             "tool-123",
-            vec![ToolResultContent::text(
-                "[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output"
-            )],
+            vec![ToolResultContent::Text(offload_placeholder(
+                OffloadMethod::Summarize,
+                "[Summarized: tool result, ~2,525 tokens]\n\nSummary of tool output",
+                None,
+                2525,
+            ))],
         ))]
     );
     let recorded = invocation_context.usage();
@@ -328,26 +358,36 @@ async fn keeps_a_block_and_continues_the_pass_when_its_summarization_fails() {
     assert!(logs.text().contains("error=<rejected>"));
 }
 
+/// A task, one user message holding `media`, and a latest message.
+fn media_history(media: ContentBlock) -> Vec<Message> {
+    vec![user("task"), Message::new(Role::User, vec![media]), assistant("latest")]
+}
+
+fn media_conditions() -> OffloadConditions {
+    conditions(Some(10), Some("50%"), None)
+}
+
 #[tokio::test]
 async fn offloads_a_video_block_without_summarizing_it() {
     let summarizer = Arc::new(TestModel::new());
-    let mut agent = agent_with(
-        plain_model(),
-        vec![Message::new(
-            Role::User,
-            vec![ContentBlock::Video(VideoBlock::new(
-                VideoFormat::Mp4,
-                VideoSource::Bytes(vec![0; 4000]),
-            ))],
-        )],
-    );
-    let strategy = with_model(OffloadTarget::All, summarizer.clone()).when(conditions(Some(10.0), None, None));
+    let messages = media_history(ContentBlock::Video(VideoBlock::new(
+        VideoFormat::Mp4,
+        VideoSource::Bytes(vec![0; 4000]),
+    )));
+    let tokens = heuristic_count_tokens(&messages[1..2]);
+    let mut agent = agent_with(plain_model(), messages);
+    let strategy = with_model(OffloadTarget::Media, summarizer.clone())
+        .when(media_conditions())
+        .unwrap();
     assert!(apply(&strategy, &mut agent, 0.9).await);
-    let text = agent.messages()[0].content[0].as_text().unwrap().to_owned();
-    assert!(
-        regex::Regex::new(r"^\[Offloaded: ~\d+ tokens\]")
-            .unwrap()
-            .is_match(&text)
+    assert_eq!(
+        agent.messages()[1].content,
+        [ContentBlock::Text(offload_placeholder(
+            OffloadMethod::Summarize,
+            &format_offloaded(tokens, Some("video")),
+            None,
+            tokens
+        ))]
     );
     assert!(summarizer.summarize_calls().is_empty());
 }
@@ -356,26 +396,33 @@ async fn offloads_a_video_block_without_summarizing_it() {
 async fn offloads_a_media_block_when_its_summarization_fails() {
     let (logs, _guard) = record_logs();
     let summarizer = Arc::new(TestModel::new().summarizing_once(Reply::Error("images unsupported".into())));
-    let mut agent = agent_with(
-        plain_model(),
-        vec![Message::new(
-            Role::User,
-            vec![ContentBlock::Image(ImageBlock::new(
-                ImageFormat::Png,
-                ImageSource::Bytes(vec![0; 4000]),
-            ))],
-        )],
-    );
-    let strategy = with_model(OffloadTarget::All, summarizer).when(conditions(Some(10.0), None, None));
+    let messages = media_history(ContentBlock::Image(ImageBlock::new(
+        ImageFormat::Png,
+        ImageSource::Bytes(vec![0; 4000]),
+    )));
+    let tokens = heuristic_count_tokens(&messages[1..2]);
+    let mut agent = agent_with(plain_model(), messages);
+    let strategy = with_model(OffloadTarget::Media, summarizer)
+        .when(media_conditions())
+        .unwrap();
     assert!(apply(&strategy, &mut agent, 0.9).await);
-    let text = agent.messages()[0].content[0].as_text().unwrap().to_owned();
-    assert!(text.starts_with("[Offloaded: ~"));
+    assert_eq!(
+        agent.messages()[1].content,
+        [ContentBlock::Text(offload_placeholder(
+            OffloadMethod::Summarize,
+            &format_offloaded(tokens, Some("image")),
+            None,
+            tokens
+        ))]
+    );
     assert!(logs.text().contains("error=<images unsupported>"));
 }
 
 #[tokio::test]
 async fn keeps_summaries_out_of_a_pinned_message_0() {
-    let strategy = summarize(OffloadTarget::All).when(conditions(None, Some(0.7), Some(4.0)));
+    let strategy = summarize(OffloadTarget::All)
+        .when(conditions(None, Some("70%"), Some(4)))
+        .unwrap();
     let task = || pinned(user("task"));
     let mut agent = agent_with(plain_model(), vec![task()]);
     for index in 0..30 {
@@ -389,13 +436,9 @@ async fn keeps_summaries_out_of_a_pinned_message_0() {
     }
     assert_eq!(agent.messages()[0].content, task().content);
     assert_eq!(agent.messages()[0].metadata, task().metadata);
-    let summaries = agent
-        .messages()
-        .iter()
-        .flat_map(|message| &message.content)
-        .filter(|block| block.as_text().is_some_and(|text| text.starts_with("[Summarized:")))
-        .count();
-    assert_eq!(summaries, 1);
+    let placeholders = placeholders_in(agent.messages());
+    assert_eq!(placeholders.len(), 1);
+    assert_eq!(placeholders[0].method, OffloadMethod::Summarize);
 }
 
 // --- per-block cancellation and placement -------------------------------------------------------
@@ -417,7 +460,7 @@ async fn stops_sending_requests_after_a_cancel() {
 }
 
 #[tokio::test]
-async fn skips_a_batch_summary_once_cancelled() {
+async fn skips_a_run_summary_once_cancelled() {
     let (mut agent, model) = mock_agent(server_side_messages(), false);
     agent.cancel(CancelOptions::default());
     assert!(!apply(&per_message(), &mut agent, 0.9).await);
@@ -436,7 +479,7 @@ async fn places_only_the_first_summary_block() {
     assert_eq!(turns(agent.messages())[1], summarized_tool_result("first"));
 }
 
-// --- batch summary replays the agent request ----------------------------------------------------
+// --- a summarized run replays the agent request ----------------------------------------------------
 
 #[tokio::test]
 async fn replays_tool_calls_in_a_single_model_call() {
@@ -457,7 +500,9 @@ async fn replays_tool_calls_in_a_single_model_call() {
         user("next"),
     ];
     let (mut agent, model) = mock_agent(messages, false);
-    let strategy = summarize(OffloadTarget::All).when(conditions(None, Some(0.7), Some(2.0)));
+    let strategy = summarize(OffloadTarget::All)
+        .when(conditions(None, Some("70%"), Some(2)))
+        .unwrap();
     assert!(apply(&strategy, &mut agent, 0.9).await);
     let requests = model.mock().requests();
     assert_eq!(requests.len(), 1);
@@ -485,7 +530,7 @@ async fn sends_the_history_prefix_with_the_agent_prompt_and_tools() {
 }
 
 #[tokio::test]
-async fn sends_only_the_replaced_messages_when_a_pin_is_kept() {
+async fn summarizes_each_side_of_a_kept_pin_on_its_own() {
     let messages = vec![
         user("task"),
         assistant("old1"),
@@ -495,27 +540,37 @@ async fn sends_only_the_replaced_messages_when_a_pin_is_kept() {
     ];
     let (mut agent, model) = mock_agent(messages, false);
     assert!(apply(&per_message(), &mut agent, 0.9).await);
-    let (sent, options) = model.summarize_calls().remove(0);
+    let calls = model.summarize_calls();
+    // The later run goes first, so removing it leaves the earlier run's position unchanged.
+    let sent: Vec<_> = calls.iter().map(|(sent, _)| turns(sent)).collect();
     assert_eq!(
-        turns(&sent),
+        sent,
         [
-            turn(Role::User, texts(&["task"])),
-            turn(Role::Assistant, texts(&["old1", "old3"]))
+            vec![
+                turn(Role::User, texts(&["task"])),
+                turn(Role::Assistant, texts(&["old3"]))
+            ],
+            vec![
+                turn(Role::User, texts(&["task"])),
+                turn(Role::Assistant, texts(&["old1"]))
+            ],
         ]
     );
-    assert_replay_options(&options, None);
+    assert_replay_options(&calls[0].1, None);
     assert_eq!(
         turns(agent.messages()),
         [
             turn(Role::User, texts(&["task"])),
-            turn(Role::Assistant, vec![marker(2, "Summary of content.")]),
-            (Role::User, texts(&["pin", "recent"]), true),
+            turn(Role::Assistant, vec![marker("Summary of content.")]),
+            (Role::User, texts(&["pin"]), true),
+            turn(Role::Assistant, vec![marker("Summary of content.")]),
+            turn(Role::User, texts(&["recent"])),
         ]
     );
 }
 
 #[tokio::test]
-async fn sends_only_the_replaced_messages_when_a_threshold_skips_some() {
+async fn sends_only_the_messages_a_block_threshold_selected() {
     let messages = vec![
         user("task"),
         assistant("big1"),
@@ -538,23 +593,34 @@ async fn sends_only_the_replaced_messages_when_a_threshold_skips_some() {
         .tool_registry_mut()
         .add(MockTool::new("shell").with_description("Run a command"))
         .unwrap();
-    let strategy = summarize(OffloadTarget::All).when(conditions(Some(100.0), Some(0.8), None));
+    let strategy = summarize(OffloadTarget::All)
+        .when(conditions(Some(100), Some("80%"), None))
+        .unwrap();
     assert!(apply(&strategy, &mut agent, 0.9).await);
-    let (sent, options) = model.summarize_calls().remove(0);
+    let calls = model.summarize_calls();
+    let sent: Vec<_> = calls.iter().map(|(sent, _)| turns(sent)).collect();
     assert_eq!(
-        turns(&sent),
+        sent,
         [
-            turn(Role::User, texts(&["task"])),
-            turn(Role::Assistant, texts(&["big1", "big2"]))
+            vec![
+                turn(Role::User, texts(&["task"])),
+                turn(Role::Assistant, texts(&["big2"]))
+            ],
+            vec![
+                turn(Role::User, texts(&["task"])),
+                turn(Role::Assistant, texts(&["big1"]))
+            ],
         ]
     );
-    assert_replay_options(&options, None);
+    assert_replay_options(&calls[0].1, None);
     assert_eq!(
         turns(agent.messages()),
         [
             turn(Role::User, texts(&["task"])),
-            turn(Role::Assistant, vec![marker(2, "Summary of content.")]),
-            turn(Role::User, texts(&["question", "recent"])),
+            turn(Role::Assistant, vec![marker("Summary of content.")]),
+            turn(Role::User, texts(&["question"])),
+            turn(Role::Assistant, vec![marker("Summary of content.")]),
+            turn(Role::User, texts(&["recent"])),
         ]
     );
 }
@@ -577,7 +643,7 @@ async fn replays_the_prefix_as_sent_when_it_holds_adjacent_same_role_messages() 
 }
 
 #[tokio::test]
-async fn leaves_reasoning_out_when_a_gap_merges_assistant_turns() {
+async fn leaves_reasoning_out_of_a_run_that_is_not_the_history_prefix() {
     let messages = vec![
         user("task"),
         Message::new(Role::Assistant, vec![reasoning(), ContentBlock::text("old1")]),
@@ -587,15 +653,20 @@ async fn leaves_reasoning_out_when_a_gap_merges_assistant_turns() {
     ];
     let (mut agent, model) = mock_agent(messages, false);
     assert!(apply(&per_message(), &mut agent, 0.9).await);
-    let (sent, options) = model.summarize_calls().remove(0);
+    let sent: Vec<_> = model.summarize_calls().iter().map(|(sent, _)| turns(sent)).collect();
     assert_eq!(
-        turns(&sent),
+        sent,
         [
-            turn(Role::User, texts(&["task"])),
-            turn(Role::Assistant, texts(&["old1", "old3"]))
+            vec![
+                turn(Role::User, texts(&["task"])),
+                turn(Role::Assistant, texts(&["old3"]))
+            ],
+            vec![
+                turn(Role::User, texts(&["task"])),
+                turn(Role::Assistant, vec![reasoning(), ContentBlock::text("old1")])
+            ],
         ]
     );
-    assert_replay_options(&options, None);
 }
 
 #[tokio::test]
@@ -702,10 +773,7 @@ async fn places_a_summary_without_a_provider_as_a_client_side_marker() {
         turns(agent.messages()),
         [
             turn(Role::User, texts(&["task"])),
-            turn(
-                Role::Assistant,
-                texts(&["[Summarized: 3 messages, ~5,000 tokens]\n\nwritten client-side"])
-            ),
+            turn(Role::Assistant, vec![marker("written client-side")]),
             turn(Role::User, texts(&["recent"])),
         ]
     );
@@ -730,10 +798,10 @@ async fn passes_the_live_system_prompt_and_tools_to_the_server_side_summary() {
             system_prompt: instructions.map(str::to_owned),
             ..SummarizeConfig::default()
         };
-        let strategy =
-            Offload::summarize(OffloadTarget::All, config)
-                .unwrap()
-                .when(conditions(None, Some(0.8), Some(1.0)));
+        let strategy = Offload::summarize(OffloadTarget::All, config)
+            .unwrap()
+            .when(conditions(None, Some("80%"), Some(1)))
+            .unwrap();
         assert!(apply(&strategy, &mut agent, 0.9).await);
         let options = &model.summarize_calls()[0].1;
         assert_eq!(options.system_prompt, Some(SystemPrompt::from("be terse")));
@@ -745,39 +813,102 @@ async fn passes_the_live_system_prompt_and_tools_to_the_server_side_summary() {
 }
 
 #[tokio::test]
-async fn places_a_server_side_summary_when_the_agent_model_is_a_different_model() {
-    let other_id = TestModel::new().with_server_side_summary(true);
-    other_id
+async fn summarizes_client_side_when_the_agent_model_is_a_different_model() {
+    // The agent's model is the one that replays the summary block, so only its own model may write
+    // it.
+    let agent_model = TestModel::new().with_server_side_summary(true);
+    agent_model
         .update_config(crate::models::BaseModelConfig {
             model_id: Some("claude-opus-5-5".into()),
             ..crate::models::BaseModelConfig::default()
         })
         .unwrap();
-    let other_provider = crate::testing::MockModel::new();
-    let mut info = crate::models::ModelInfo::default();
-    info.capabilities.server_side_summary = Some(true);
-    other_provider
-        .update_config(crate::models::BaseModelConfig {
-            model_info: Some(info),
-            ..crate::models::BaseModelConfig::default()
-        })
-        .unwrap();
-    let agent_models: Vec<Arc<dyn Model>> = vec![Arc::new(other_id), Arc::new(other_provider)];
-    for agent_model in agent_models {
-        let aux = Arc::new(
-            TestModel::new()
-                .with_count(|_| 5000)
-                .with_server_side_summary(true)
-                .summarizing(result_of(vec![summary("anthropic", "compacted")])),
-        );
-        let mut agent = agent_with(agent_model, server_side_messages());
-        agent.set_aux_model(Some(aux));
-        assert!(apply(&per_message(), &mut agent, 0.9).await);
-        assert_eq!(
-            turns(agent.messages())[1],
-            turn(Role::Assistant, vec![summary("anthropic", "compacted")])
-        );
-    }
+    let aux = Arc::new(
+        TestModel::new()
+            .with_count(|_| 5000)
+            .with_server_side_summary(true)
+            .summarizing(result_of(vec![summary("anthropic", "compacted")])),
+    );
+    aux.update_config(crate::models::BaseModelConfig {
+        model_id: Some("claude-haiku-5-5".into()),
+        ..crate::models::BaseModelConfig::default()
+    })
+    .unwrap();
+    let mut agent = agent_with(Arc::new(agent_model), server_side_messages());
+    agent.set_aux_model(Some(aux));
+    assert!(apply(&per_message(), &mut agent, 0.9).await);
+    assert_eq!(
+        turns(agent.messages()),
+        [
+            turn(Role::User, texts(&["task"])),
+            turn(Role::Assistant, vec![marker("compacted")]),
+            turn(Role::User, texts(&["recent"])),
+        ]
+    );
+}
+
+/// A history where only message 3 is over a 100-token block threshold.
+fn size_filtered_messages() -> Vec<Message> {
+    vec![
+        user("task"),
+        assistant("small a1"),
+        user("small u2"),
+        assistant(&"BIG ".repeat(200)),
+        user("small u4"),
+        assistant("small a5"),
+        user("last"),
+    ]
+}
+
+fn size_filtered() -> SummarizeStrategy {
+    summarize(OffloadTarget::All)
+        .when(conditions(Some(100), Some("50%"), Some(1)))
+        .unwrap()
+}
+
+fn size_filtered_agent() -> (LocalAgent, Arc<TestModel>) {
+    let model = Arc::new(
+        TestModel::new()
+            .with_server_side_summary(true)
+            .summarizing(summary_result("compacted", Some("anthropic"))),
+    );
+    (agent_with(model.clone(), size_filtered_messages()), model)
+}
+
+#[tokio::test]
+async fn summarizes_client_side_when_a_block_threshold_selects_messages_by_size() {
+    let (_logs, _guard) = record_logs();
+    let (mut agent, _) = size_filtered_agent();
+    let big_tokens = heuristic_count_tokens(&size_filtered_messages()[3..4]);
+    assert!(apply(&size_filtered(), &mut agent, 0.9).await);
+    // A server-side summary covers the conversation's start, so it can't honour a per-message size
+    // filter.
+    let flat: Vec<String> = texts_of(agent.messages()).into_iter().flatten().collect();
+    assert_eq!(
+        flat,
+        [
+            "task".to_owned(),
+            "small a1".to_owned(),
+            "small u2".to_owned(),
+            format_summarized(REMOVED_MESSAGES, big_tokens, Some("compacted")),
+            "small u4".to_owned(),
+            "small a5".to_owned(),
+            "last".to_owned(),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn warns_once_that_a_block_threshold_rules_out_the_server_side_summary() {
+    let (logs, _guard) = record_logs();
+    let strategy = size_filtered();
+    let (mut first, _) = size_filtered_agent();
+    let (mut second, _) = size_filtered_agent();
+    assert!(apply(&strategy, &mut first, 0.9).await);
+    assert!(apply(&strategy, &mut second, 0.9).await);
+    let text = logs.text();
+    assert_eq!(text.matches("cannot honour a blockThreshold").count(), 1);
+    assert!(text.contains("blockThreshold=<100> | a server-side summary covers the conversation"));
 }
 
 #[tokio::test]
@@ -806,7 +937,7 @@ async fn falls_back_to_client_side_when_message_0_is_pinned() {
         turns(agent.messages()),
         [
             (Role::User, texts(&["task"]), true),
-            turn(Role::Assistant, vec![marker(3, "compacted")]),
+            turn(Role::Assistant, vec![marker("compacted")]),
             turn(Role::User, texts(&["recent"])),
         ]
     );
@@ -828,26 +959,20 @@ async fn falls_back_to_client_side_when_a_pin_is_summarized() {
         user("recent"),
     ];
     assert!(apply(&per_message(), &mut agent, 0.9).await);
-    let calls = model.summarize_calls();
-    assert_eq!(calls.len(), 1);
-    assert_eq!(
-        turns(&calls[0].0),
-        [
-            turn(Role::User, texts(&["task"])),
-            turn(Role::Assistant, texts(&["old1", "old3"]))
-        ]
-    );
-    assert_replay_options(&calls[0].1, None);
     assert!(
         logs.text()
             .contains("pinned=<1> | server-side summary does not support pinned messages")
     );
+    // The pin splits the removable messages into two runs, and each run gets its own summary.
+    assert_eq!(model.summarize_calls().len(), 2);
     assert_eq!(
         turns(agent.messages()),
         [
             turn(Role::User, texts(&["task"])),
-            turn(Role::Assistant, vec![marker(2, "compacted")]),
-            (Role::User, texts(&["pin", "recent"]), true),
+            turn(Role::Assistant, vec![marker("compacted")]),
+            (Role::User, texts(&["pin"]), true),
+            turn(Role::Assistant, vec![marker("compacted")]),
+            turn(Role::User, texts(&["recent"])),
         ]
     );
 }
@@ -867,7 +992,7 @@ async fn requires_both_models_to_support_server_side_summary() {
             turns(agent.messages()),
             [
                 turn(Role::User, texts(&["task"])),
-                turn(Role::Assistant, vec![marker(3, "Summary of content.")]),
+                turn(Role::Assistant, vec![marker("Summary of content.")]),
                 turn(Role::User, texts(&["recent"])),
             ]
         );
@@ -901,7 +1026,7 @@ async fn warns_that_a_client_side_summary_drops_kept_thinking() {
         turns(agent.messages()),
         [
             turn(Role::User, texts(&["task"])),
-            turn(Role::Assistant, vec![marker(3, "written client-side")]),
+            turn(Role::Assistant, vec![marker("written client-side")]),
             turn(Role::User, texts(&["recent"])),
         ]
     );
@@ -1053,7 +1178,7 @@ async fn a_custom_system_prompt_reaches_client_side_summaries() {
 }
 
 #[tokio::test]
-async fn a_custom_system_prompt_reaches_batch_summaries() {
+async fn a_custom_system_prompt_reaches_run_summaries() {
     let (mut agent, model) = summarizing_agent(
         server_side_messages(),
         Some(summary_result("provider summary", None)),
@@ -1065,7 +1190,8 @@ async fn a_custom_system_prompt_reaches_batch_summaries() {
     };
     let strategy = Offload::summarize(OffloadTarget::All, config)
         .unwrap()
-        .when(conditions(None, Some(0.8), Some(1.0)));
+        .when(conditions(None, Some("80%"), Some(1)))
+        .unwrap();
     assert!(apply(&strategy, &mut agent, 0.9).await);
     let calls = model.summarize_calls();
     assert_eq!(calls.len(), 1);
@@ -1135,38 +1261,126 @@ async fn warns_when_summarize_returns_no_text() {
     assert_eq!(turns(agent.messages()), turns(&tool_result_messages()));
 }
 
-#[test]
-fn uses_the_expected_prefix() {
-    assert!(format_summarized("test", 100, None).starts_with("[Summarized:"));
-}
-
-#[test]
-fn converts_text_content() {
+#[tokio::test]
+async fn a_block_summary_labels_a_failed_tool_result_with_its_status() {
+    let failure = "x".repeat(10000);
+    let messages = vec![
+        tool_use_message("t1", "bash"),
+        Message::new(
+            Role::User,
+            vec![ContentBlock::ToolResult(ToolResultBlock::error(
+                "t1",
+                vec![ToolResultContent::text(failure.clone())],
+            ))],
+        ),
+    ];
+    let (mut agent, model) = summarizing_agent(messages, None, false);
+    let strategy = summarize(OffloadTarget::ToolResultErrors)
+        .when(conditions(Some(100), None, None))
+        .unwrap();
+    assert!(apply(&strategy, &mut agent, 0.5).await);
     assert_eq!(
-        tool_result_to_content_blocks(&[ToolResultContent::text("hello")]),
-        [ContentBlock::text("hello")]
+        turns(&model.summarize_calls()[0].0),
+        [turn(
+            Role::User,
+            vec![
+                ContentBlock::text("<content>"),
+                ContentBlock::text("[tool result: bash (error)]"),
+                ContentBlock::text(failure),
+                ContentBlock::text("</content>"),
+            ]
+        )]
     );
 }
 
-#[test]
-fn passes_through_images() {
-    let image = ImageBlock::new(ImageFormat::Png, ImageSource::Bytes(vec![1, 2, 3]));
-    assert_eq!(
-        tool_result_to_content_blocks(&[ToolResultContent::Image(image.clone())]),
-        [ContentBlock::Image(image)]
-    );
+// --- summarizing message runs -------------------------------------------------------------------
+
+/// `values` alternating from `first`, as text messages.
+fn alternating(first: Role, values: &[&str]) -> Vec<Message> {
+    let other = if first == Role::User {
+        Role::Assistant
+    } else {
+        Role::User
+    };
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| text(if index % 2 == 0 { first } else { other }, value))
+        .collect()
 }
 
-#[test]
-fn converts_json_content_to_text() {
+#[tokio::test]
+async fn summarizes_each_contiguous_run_separately_around_pinned_messages() {
+    let model = Arc::new(
+        TestModel::new()
+            .summarizing_once(summary_result("late run", None))
+            .summarizing_once(summary_result("early run", None)),
+    );
+    let mut messages = vec![user("task"), pinned(assistant("a1"))];
+    messages.extend(alternating(Role::User, &["u2", "a3", "u4"]));
+    messages.push(pinned(assistant("a5")));
+    messages.extend(alternating(Role::User, &["u6", "a7", "u8", "a9", "u10"]));
+    let mut agent = agent_with(model.clone(), messages);
+    let strategy = summarize(OffloadTarget::All)
+        .when(conditions(None, Some("50%"), Some(3)))
+        .unwrap();
+    assert!(apply(&strategy, &mut agent, 0.9).await);
+    assert_eq!(model.summarize_calls().len(), 2);
     assert_eq!(
-        tool_result_to_content_blocks(&[
-            ToolResultContent::text("plain text"),
-            ToolResultContent::Json(JsonBlock::new(serde_json::json!({"key": "value", "count": 42}))),
-        ]),
+        texts_of(agent.messages()),
         [
-            ContentBlock::text("plain text"),
-            ContentBlock::Text(TextBlock::new("{\n  \"key\": \"value\",\n  \"count\": 42\n}")),
+            vec!["task".to_owned()],
+            vec![
+                "a1".to_owned(),
+                "[Summarized: earlier messages, ~3 tokens]\n\nearly run".to_owned(),
+                "a5".to_owned(),
+                "[Summarized: earlier messages, ~2 tokens]\n\nlate run".to_owned(),
+            ],
+            vec!["u8".to_owned()],
+            vec!["a9".to_owned()],
+            vec!["u10".to_owned()],
         ]
     );
+}
+
+#[tokio::test]
+async fn leaves_a_failed_run_intact_and_still_summarizes_the_others() {
+    let (_logs, _guard) = record_logs();
+    let model = Arc::new(
+        TestModel::new()
+            .summarizing_once(summary_result("late run", None))
+            .summarizing_once(Reply::Error("throttled".into())),
+    );
+    let mut messages = vec![user("task")];
+    messages.extend(alternating(Role::Assistant, &["a1", "u2", "a3"]));
+    messages.push(pinned(user("u4")));
+    messages.extend(alternating(Role::Assistant, &["a5", "u6", "a7"]));
+    let mut agent = agent_with(model, messages);
+    let strategy = summarize(OffloadTarget::All)
+        .when(conditions(None, Some("50%"), Some(1)))
+        .unwrap();
+    assert!(apply(&strategy, &mut agent, 0.9).await);
+    let texts = texts_of(agent.messages());
+    assert_eq!(
+        texts[..5],
+        [vec!["task"], vec!["a1"], vec!["u2"], vec!["a3"], vec!["u4"]]
+    );
+    assert!(texts[5].contains(&format_summarized(REMOVED_MESSAGES, 2, Some("late run"))));
+}
+
+#[tokio::test]
+async fn sends_an_earlier_server_side_summary_with_the_run_that_replaces_it() {
+    let earlier = summary("anthropic", "fact");
+    let history = || {
+        vec![
+            user("task"),
+            Message::new(Role::Assistant, vec![earlier.clone()]),
+            user("old1"),
+            assistant("old2"),
+            user("recent"),
+        ]
+    };
+    let (mut agent, model) = mock_agent(history(), false);
+    assert!(apply(&per_message(), &mut agent, 0.9).await);
+    assert_eq!(turns(&model.summarize_calls()[0].0), turns(&history()[..4]));
 }
