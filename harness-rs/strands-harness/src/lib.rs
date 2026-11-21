@@ -88,7 +88,7 @@ pub use config::{
 };
 pub use interventions::{InterventionValue, InterventionsOption};
 pub use models::{supports_thinking, supports_web_search};
-pub use plugins::{EnvironmentContext, EnvironmentContextConfig, TodoItem, TodoStatus, Todos, TodosConfig};
+pub use plugins::{EnvironmentContext, EnvironmentContextConfig};
 pub use prompt::{HARNESS_CONTRACT, build_system_prompt};
 pub use tools::file_tools::{edit_tool, read_tool, write_tool};
 pub use tools::programmatic_tool_caller::{

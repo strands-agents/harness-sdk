@@ -5,9 +5,11 @@
 //! directory, so the assertions on the environment block are structural.
 
 use std::collections::VecDeque;
+use std::num::NonZeroUsize;
 use std::sync::Mutex;
 
 use serde_json::Value;
+use strands::vended_plugins::todos::{Todos, TodosConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -212,7 +214,12 @@ async fn keeps_durable_checkpoints_ahead_of_changing_todos_environment_and_tool_
         model: Some("openai/gpt-6-sol".into()),
         system_prompt: Some("Keep this system prompt stable.".into()),
         builtin_tools: Some(BuiltinToolsOption::List(Vec::new())),
-        builtin_plugins: Some(vec![BuiltinPluginName::Todos, BuiltinPluginName::Environment]),
+        builtin_plugins: Some(vec![BuiltinPluginName::Environment]),
+        plugins: vec![Arc::new(Todos::new(
+            TodosConfig::builder()
+                .reminder_interval(NonZeroUsize::new(1).unwrap())
+                .build(),
+        ))],
         memory: Some(
             MemoryConfig {
                 stores: vec![Arc::new(MemoryEntryStore)],
@@ -272,10 +279,10 @@ async fn keeps_durable_checkpoints_ahead_of_changing_todos_environment_and_tool_
             tool_output.clone()
         ]
     );
-    assert_eq!(input.len(), 6);
-    assert!(input[5]["content"].to_string().contains(tool));
+    // The call carrying the todo_write result shows the list there, so no reminder follows it.
+    assert_eq!(input.len(), 5);
     assert_eq!(agent.app_state().get_value("todos"), Some(todos(tool)));
-    // Environment is user-turn only; the every-turn todo injector refreshed after todo_write.
+    // Environment is user-turn only.
     assert!(!requests[2]["input"].to_string().contains("<environment>"));
     for request in &requests[1..] {
         assert!(!request["input"].to_string().contains(first));

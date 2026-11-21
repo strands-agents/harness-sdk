@@ -136,21 +136,18 @@ pub(crate) const BUILTIN_TOOL_CONFIG_KEYS: &[(BuiltinToolName, &[&str])] = &[
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum BuiltinPluginName {
-    /// `todos`: the `todo_write` tool and a re-surfaced list before each step.
-    Todos,
     /// `environment`: platform, date, working directory and project docs before each user turn.
     Environment,
 }
 
 /// Every built-in plugin (`BUILTIN_PLUGIN_NAMES`).
-pub const BUILTIN_PLUGIN_NAMES: &[BuiltinPluginName] = &[BuiltinPluginName::Todos, BuiltinPluginName::Environment];
+pub const BUILTIN_PLUGIN_NAMES: &[BuiltinPluginName] = &[BuiltinPluginName::Environment];
 
 impl BuiltinPluginName {
-    /// The plugin's option name, such as `"todos"`.
+    /// The plugin's option name, such as `"environment"`.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Todos => "todos",
             Self::Environment => "environment",
         }
     }

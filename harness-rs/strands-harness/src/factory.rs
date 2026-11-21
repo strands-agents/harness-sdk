@@ -11,7 +11,7 @@ use strands::plugins::Plugin;
 use strands::tools::Tool;
 use strands::{Agent, ModelSource};
 
-use crate::plugins::{EnvironmentContext, Todos};
+use crate::plugins::EnvironmentContext;
 use crate::tools::file_tools;
 use crate::tools::programmatic_tool_caller::{ProgrammaticToolCallerConfig, programmatic_tool_caller};
 use crate::tools::subagent::{AgentBuilder, AgentSpec, SubagentConfig, SubagentContext, subagent_tool};
@@ -73,8 +73,6 @@ pub(crate) struct BuiltinToolFactory {
     /// Takes the portable config: `timeout` is in seconds, `Some(None)` unbounded.
     pub(crate) programmatic_tool_caller: fn(&ProgrammaticToolCallerConfig) -> strands::Result<Arc<dyn Tool>>,
     pub(crate) subagent: fn(SubagentToolOptions) -> strands::Result<Arc<dyn Tool>>,
-    /// The `todos` plugin (`new Todos()`).
-    pub(crate) todos: fn() -> Arc<dyn Plugin>,
     /// The `environment` plugin (`new EnvironmentContext()`).
     pub(crate) environment: fn() -> Arc<dyn Plugin>,
 }
@@ -95,7 +93,6 @@ pub(crate) const BUILTIN_TOOL_FACTORY: BuiltinToolFactory = BuiltinToolFactory {
     web_search: exa_web_search,
     programmatic_tool_caller: |config| Ok(Arc::new(programmatic_tool_caller(config.clone()))),
     subagent,
-    todos: || Arc::new(Todos::default()),
     environment: || Arc::new(EnvironmentContext::default()),
 };
 
@@ -138,9 +135,6 @@ fn subagent(options: SubagentToolOptions) -> strands::Result<Arc<dyn Tool>> {
         .with_inherited_mcp_servers(inherited_mcp_servers);
     Ok(Arc::new(subagent_tool(SubagentConfig { max_depth }, context)?))
 }
-
-/// The default name of the `todos` plugin (`strands:todos`).
-pub(crate) const TODOS_PLUGIN_NAME: &str = "strands:todos";
 
 /// The default name of the `environment` plugin (`strands:environment`).
 pub(crate) const ENVIRONMENT_PLUGIN_NAME: &str = "strands:environment";

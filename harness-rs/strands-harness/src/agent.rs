@@ -29,7 +29,7 @@ use crate::builtin_tools::{
 use crate::config::BuiltinPluginName;
 use crate::defaults::{DEFAULT_BUILTIN_PLUGINS, DEFAULT_MODEL, DEFAULT_SESSION_DIR, DEFAULT_SKILLS_DIR};
 use crate::env::Env;
-use crate::factory::{BUILTIN_TOOL_FACTORY, BuiltinToolFactory, ENVIRONMENT_PLUGIN_NAME, TODOS_PLUGIN_NAME};
+use crate::factory::{BUILTIN_TOOL_FACTORY, BuiltinToolFactory, ENVIRONMENT_PLUGIN_NAME};
 use crate::interventions::{InterventionsOption, resolve_interventions};
 use crate::memory::{ResolveMemoryOptions, resolve_memory};
 use crate::models::{ModelPlan, ModelRequest, resolve_model};
@@ -236,7 +236,7 @@ pub struct HarnessAgentOptions {
     pub tools: Vec<ToolSource>,
     /// Consumer plugins, registered before the harness's. An `AgentSkills` plugin here replaces
     /// the one the harness would add, and a plugin named like a built-in plugin
-    /// (`strands:todos`, `strands:environment`) replaces it. A `subagent` child inherits these.
+    /// (`strands:environment`) replaces it. A `subagent` child inherits these.
     /// Set them with the builder's `plugins(..)`.
     #[builder(field)]
     pub plugins: Vec<Arc<dyn Plugin>>,
@@ -297,8 +297,8 @@ pub struct HarnessAgentOptions {
     #[builder(into)]
     pub memory: Option<MemoryOption>,
     /// The built-in feature plugins to enable; `environment` by default, which injects the
-    /// platform, date, working directory and the project's `AGENTS.md` before each user turn.
-    /// `todos` is opt-in: it adds a `todo_write` tool and re-surfaces the list before each step.
+    /// platform, date, working directory and the project's `AGENTS.md` before each user turn. For
+    /// a task list, pass the SDK's `strands::vended_plugins::todos::Todos` in `plugins`.
     #[builder(with = |names: impl IntoIterator<Item = BuiltinPluginName>| names.into_iter().collect())]
     pub builtin_plugins: Option<Vec<BuiltinPluginName>>,
     /// Gates tool calls behind approval or a policy; off by default. A preset (`"ask"`,
@@ -474,7 +474,6 @@ fn skills_plugin(skills: SkillsOption) -> Option<Arc<dyn Plugin>> {
 
 fn builtin_plugin_name(name: BuiltinPluginName) -> &'static str {
     match name {
-        BuiltinPluginName::Todos => TODOS_PLUGIN_NAME,
         BuiltinPluginName::Environment => ENVIRONMENT_PLUGIN_NAME,
     }
 }
@@ -493,7 +492,6 @@ fn select_builtin_plugins(
                 .any(|plugin| plugin.name() == builtin_plugin_name(**name))
         })
         .map(|name| match name {
-            BuiltinPluginName::Todos => (factory.todos)(),
             BuiltinPluginName::Environment => (factory.environment)(),
         })
         .collect()

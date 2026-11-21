@@ -21,7 +21,7 @@ pub(crate) const DEFAULT_BUILTIN_TOOLS: [BuiltinToolName; 8] = [
     BuiltinToolName::Subagent,
 ];
 
-/// The built-in plugins enabled when `builtin_plugins` is unset (`todos` is opt-in).
+/// The built-in plugins enabled when `builtin_plugins` is unset.
 pub(crate) const DEFAULT_BUILTIN_PLUGINS: [BuiltinPluginName; 1] = [BuiltinPluginName::Environment];
 
 /// The root directory of the default session store.

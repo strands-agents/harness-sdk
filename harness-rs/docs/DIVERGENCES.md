@@ -31,6 +31,7 @@ Rust-native differences that the design calls for (string slicing by `char`, `Re
 | subagent | A `ModelRouter` cannot be a preset or `Choice` model value | `SpecValue` holds model instances and strings | None |
 | `OPENAI_BASE_URL` | The harness passes `OPENAI_BASE_URL` to the OpenAI provider as its base URL (Bedrock Mantle excluded); the SDK reads the same variable itself | Keeps the environment injectable in tests | None |
 | `mcp_servers` | `HarnessAgentOptions::mcp_servers` takes `McpServersOption` (a path, a JSON map, or with `mcp` an SDK `McpServersSource`); without the `mcp` feature, setting it fails at `create_harness` with `mcp_servers needs the strands-harness feature "mcp"; enable it to connect MCP servers.` | One options struct across feature sets | None |
+| built-in plugins | There is no `todos` built-in plugin and no harness `Todos` export: `builtinPlugins: ["todos"]` fails like any unknown name (`Unknown built-in plugin "todos". Available: environment.`); pass the SDK's `strands::vended_plugins::todos::Todos` in `plugins` instead | harness-ts keeps the deprecated built-in with a warning; the Rust crates are unreleased, so they carry no deprecated items | None: a portable config naming `todos` is rejected rather than read differently |
 
 ## Names
 
