@@ -363,3 +363,20 @@ async fn stops_the_session_when_a_call_is_dropped_mid_command() {
         assert!(ended, "process {pid} survived");
     }
 }
+
+#[tokio::test]
+async fn decodes_split_utf8_independently_on_stdout_and_stderr() {
+    let (tool, agent) = (bash(), agent());
+    assert_eq!(
+        execute(&tool, &agent, "printf '日本語☕😀'; printf '警告🚀' >&2").await,
+        json!({"output": "日本語☕😀", "error": "警告🚀"})
+    );
+    assert_eq!(
+        execute(&tool, &agent, r"printf '\346'; printf '\360\237' >&2").await,
+        json!({"output": "\u{FFFD}", "error": "\u{FFFD}"})
+    );
+    assert_eq!(
+        execute(&tool, &agent, "printf '次の実行'; printf '正常' >&2").await,
+        json!({"output": "次の実行", "error": "正常"})
+    );
+}
