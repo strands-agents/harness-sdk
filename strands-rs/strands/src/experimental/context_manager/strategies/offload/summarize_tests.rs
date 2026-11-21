@@ -232,14 +232,21 @@ async fn summarizes_large_tool_results() {
 }
 
 #[tokio::test]
-async fn summarizes_with_agent_aux_model_when_the_strategy_has_no_model() {
+async fn summarizes_with_agent_model_rather_than_agent_aux_model_when_the_strategy_has_no_model() {
     let main = plain_model();
     let aux = plain_model();
     let mut agent = agent_with(main.clone(), vec![tool_result_message(&large(), "tool-123")]);
     agent.set_aux_model(Some(aux.clone()));
     assert!(apply(&summarize(OffloadTarget::ToolResults), &mut agent, 0.9).await);
-    assert_eq!(aux.summarize_calls().len(), 1);
-    assert!(main.summarize_calls().is_empty());
+    assert_eq!(main.summarize_calls().len(), 1);
+    assert!(aux.summarize_calls().is_empty());
+}
+
+/// `per_message` with `model` writing the summaries.
+fn per_message_on(model: Arc<dyn Model>) -> SummarizeStrategy {
+    with_model(OffloadTarget::All, model)
+        .when(conditions(None, Some("80%"), Some(1)))
+        .unwrap()
 }
 
 #[tokio::test]
@@ -695,8 +702,7 @@ async fn leaves_reasoning_out_for_a_model_other_than_the_agent_model() {
             .summarizing(summary_result("aux summary", None)),
     );
     let (mut agent, _) = mock_agent(replay_messages(), false);
-    agent.set_aux_model(Some(aux.clone()));
-    assert!(apply(&per_message(), &mut agent, 0.9).await);
+    assert!(apply(&per_message_on(aux.clone()), &mut agent, 0.9).await);
     let mut expected = replay_messages()[..4].to_vec();
     expected[1] = assistant("old1");
     assert_eq!(turns(&aux.summarize_calls()[0].0), turns(&expected));
@@ -835,8 +841,7 @@ async fn summarizes_client_side_when_the_agent_model_is_a_different_model() {
     })
     .unwrap();
     let mut agent = agent_with(Arc::new(agent_model), server_side_messages());
-    agent.set_aux_model(Some(aux));
-    assert!(apply(&per_message(), &mut agent, 0.9).await);
+    assert!(apply(&per_message_on(aux), &mut agent, 0.9).await);
     assert_eq!(
         turns(agent.messages()),
         [
@@ -986,8 +991,7 @@ async fn requires_both_models_to_support_server_side_summary() {
                 .with_server_side_summary(aux_supports),
         );
         let (mut agent, _) = mock_agent(server_side_messages(), agent_supports);
-        agent.set_aux_model(Some(aux));
-        assert!(apply(&per_message(), &mut agent, 0.9).await);
+        assert!(apply(&per_message_on(aux), &mut agent, 0.9).await);
         assert_eq!(
             turns(agent.messages()),
             [

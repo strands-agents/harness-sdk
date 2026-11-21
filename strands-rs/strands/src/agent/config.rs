@@ -129,8 +129,9 @@ pub struct AgentConfig {
     /// model is the router's default model.
     #[builder(into)]
     pub model: Option<ModelSource>,
-    /// The model for auxiliary side calls (summaries, memory extraction, classification);
-    /// defaults to `model`. A router is rejected: side calls run outside the loop it
+    /// The model for auxiliary side calls (conversation-manager summaries, memory extraction,
+    /// classification); defaults to `model`. The context manager's summarize strategy does not
+    /// use it: it resolves its own model, then `model`. A router is rejected: side calls run outside the loop it
     /// attaches to.
     #[builder(into)]
     pub aux_model: Option<ModelSource>,
