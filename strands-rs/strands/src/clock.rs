@@ -32,7 +32,7 @@ impl Clock {
         Self(Arc::new(move || timestamp))
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "dogwood"))]
     pub(crate) fn from_fn(now: impl Fn() -> Timestamp + Send + Sync + 'static) -> Self {
         Self(Arc::new(now))
     }

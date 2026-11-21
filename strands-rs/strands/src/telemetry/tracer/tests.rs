@@ -8,7 +8,7 @@ use serde_json::json;
 
 use super::*;
 
-use crate::types::{ContentBlock, ReasoningBlock, Role};
+use crate::types::{ContentBlock, Role};
 
 fn settings(env: &[(&str, &str)]) -> TracerSettings {
     let env: BTreeMap<String, String> = env
@@ -49,6 +49,8 @@ fn tool_use(name: &str, id: &str, input: serde_json::Value) -> ToolUse {
 #[cfg(feature = "otel")]
 mod otel {
     use opentelemetry_sdk::trace::SpanData;
+
+    use crate::types::ReasoningBlock;
 
     use super::*;
     use crate::telemetry::test_support::{
