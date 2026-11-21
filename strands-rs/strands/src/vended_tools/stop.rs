@@ -97,6 +97,7 @@ fn build(name: String, description: String, max_message_length: usize) -> Functi
                 context.agent().cancel(CancelOptions {
                     message: Some(message.clone()),
                     after_current_tools: true,
+                    ..CancelOptions::default()
                 });
                 JsonValue::String(message)
             });

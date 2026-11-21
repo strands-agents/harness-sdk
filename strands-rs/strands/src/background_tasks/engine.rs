@@ -275,12 +275,16 @@ impl Engine {
     }
 
     /// Applies interrupt responses to a task that requires input and queues it once ready
-    /// (`resume`).
+    /// (`resume`); a task that is already terminal is returned unchanged.
     pub(crate) fn resume(
         &self,
         task_id: &str,
         update: impl FnOnce(InterruptStateData) -> Result<(InterruptStateData, bool)>,
     ) -> Result<TaskRecord> {
+        let current = self.get(task_id).ok_or_else(|| not_found(task_id))?;
+        if current.status.is_terminal() {
+            return Ok(current);
+        }
         let mut failure = None;
         let mut update = Some(update);
         let task = self.update(task_id, |record| {

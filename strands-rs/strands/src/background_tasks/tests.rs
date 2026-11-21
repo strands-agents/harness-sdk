@@ -12,14 +12,17 @@ use super::manager::{Manager, ManagerOptions, RunFailure, RunFn, ToolRun};
 use super::plugin::{BACKGROUND_TASKS_STATE_KEY, MANAGE_TOOL_NAME};
 use super::types::{BackgroundTask, BackgroundTaskStatus, TaskFailure, TaskFailureType};
 use crate::agent::{Agent, AgentConfig, DirectToolCallOptions, InvocationState, InvokeArgs};
-use crate::hooks::{AfterToolCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, InitializedEvent};
+use crate::cancel::CancelOptions;
+use crate::hooks::{
+    AfterInvocationEvent, AfterToolCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, InitializedEvent,
+};
 use crate::interrupt::{Interrupt, InterruptSource, InterruptStateData};
 use crate::middleware::{ExecuteToolStage, InvokeModelStage, StageStream};
 use crate::testing::{MockModel, MockTurn};
 use crate::tools::{FunctionTool, Tool, ToolContext, ToolOutcome, ToolStreamItem};
 use crate::types::{
-    ContentBlock, ImageBlock, ImageFormat, ImageSource, InterruptParams, InterruptResponse, Message, StopReason,
-    ToolResultBlock, ToolResultContent, ToolResultStatus, ToolSpec, ToolUse, ToolUseBlock,
+    ContentBlock, ImageBlock, ImageFormat, ImageSource, InterruptParams, InterruptResponse, InterruptResponseContent,
+    Message, StopReason, ToolResultBlock, ToolResultContent, ToolResultStatus, ToolSpec, ToolUse, ToolUseBlock,
 };
 
 // --- engine fixtures ----------------------------------------------------------------------------
@@ -1621,4 +1624,405 @@ async fn background_tasks_take_true_false_or_a_config() {
         agent.initialize().await.unwrap();
         assert_eq!(agent.tool_registry().get(MANAGE_TOOL_NAME).is_some(), expected);
     }
+}
+
+// --- cancel_background_tasks --------------------------------------------------------------------
+
+fn cancel_background() -> CancelOptions {
+    CancelOptions {
+        cancel_background_tasks: true,
+        ..CancelOptions::default()
+    }
+}
+
+fn statuses_of(agent: &Agent) -> Vec<BackgroundTaskStatus> {
+    persisted(agent)
+        .unwrap_or_default()
+        .iter()
+        .map(|task| task.status)
+        .collect()
+}
+
+fn waiting_tool(name: &str) -> FunctionTool {
+    FunctionTool::builder(name, "Wait until cancelled.")
+        .input_schema(object_schema())
+        .callback(|_, context| async move {
+            context.cancel_signal().cancelled().await;
+            Ok(json!("late"))
+        })
+}
+
+#[tokio::test]
+async fn cancels_queued_and_working_tasks_of_an_idle_agent_only_when_requested() {
+    let model = MockModel::from_turns([
+        uses(&[
+            ("work", "work-0", json!({"_background_execution": true})),
+            ("work", "work-1", json!({"_background_execution": true})),
+        ]),
+        MockTurn::text("Tasks admitted."),
+    ]);
+    let mut agent = background_agent(
+        model,
+        vec![waiting_tool("work").into()],
+        BackgroundTasksConfig {
+            wait_for_completion: Some(false),
+            max_concurrency: Some(1),
+            ..Default::default()
+        },
+    );
+    agent.invoke("Run work.").await.unwrap();
+    eventually(|| statuses_of(&agent) == [BackgroundTaskStatus::Working, BackgroundTaskStatus::Queued]).await;
+
+    agent.cancel_handle().cancel(CancelOptions::default());
+    assert_eq!(
+        statuses_of(&agent),
+        [BackgroundTaskStatus::Working, BackgroundTaskStatus::Queued]
+    );
+
+    agent.cancel_handle().cancel(cancel_background());
+    eventually(|| statuses_of(&agent) == [BackgroundTaskStatus::Cancelled, BackgroundTaskStatus::Cancelled]).await;
+}
+
+#[tokio::test]
+async fn cancels_background_tasks_from_a_tool_on_the_agent_loop() {
+    let stop_all = tool("stop_all", |_, context| {
+        context.agent().cancel(cancel_background());
+        json!("stopped")
+    });
+    let model = MockModel::from_turns([
+        uses(&[
+            ("work", "work-use", json!({"_background_execution": true})),
+            ("stop_all", "stop-use", json!({})),
+        ]),
+        MockTurn::text("unreachable"),
+    ]);
+    let mut agent = background_agent(
+        model,
+        vec![waiting_tool("work").into(), stop_all.into()],
+        BackgroundTasksConfig::default(),
+    );
+
+    let result = agent.invoke("Run work, then stop.").await.unwrap();
+
+    assert_eq!(result.stop_reason(), StopReason::Cancelled);
+    eventually(|| statuses_of(&agent).first() == Some(&BackgroundTaskStatus::Cancelled)).await;
+}
+
+fn approval_agent(approvals: usize) -> Agent {
+    let approval = tool("approval", |_, _| json!("approved"));
+    let calls: Vec<(String, Value)> = (0..approvals)
+        .map(|index| (format!("approval-use-{index}"), json!({"_background_execution": true})))
+        .collect();
+    let turn = MockTurn::content(
+        calls
+            .iter()
+            .map(|(id, input)| ContentBlock::from(ToolUseBlock::new("approval", id.clone(), input.clone())))
+            .collect::<Vec<_>>(),
+    );
+    let model = MockModel::from_turns([
+        turn,
+        MockTurn::text("Task admitted."),
+        MockTurn::text("Continued."),
+        MockTurn::text("Done."),
+    ]);
+    let agent = background_agent(model, vec![approval.into()], BackgroundTasksConfig::default());
+    agent.add_middleware(ExecuteToolStage::wrap(move |context, next| {
+        let name = format!("approve-{}", context.tool_use.tool_use_id);
+        if let Err(interrupt) = context.interrupt(InterruptParams::new(name).with_reason("Approve work?")) {
+            return StageStream::from_result(Err(interrupt.into()));
+        }
+        next.call(context)
+    }));
+    agent
+}
+
+#[tokio::test]
+async fn cancels_an_input_required_task_so_the_next_invoke_does_not_re_raise_its_interrupt() {
+    let mut agent = approval_agent(1);
+    let interrupted = agent.invoke("Run approval.").await.unwrap();
+    assert_eq!(interrupted.stop_reason(), StopReason::Interrupt);
+
+    agent.cancel_handle().cancel(cancel_background());
+    assert_eq!(statuses_of(&agent), [BackgroundTaskStatus::Cancelled]);
+    let resumed = agent.invoke("Continue.").await.unwrap();
+
+    assert_eq!(resumed.stop_reason(), StopReason::EndTurn);
+    assert!(!agent.local.interrupt_state().activated());
+    let delivery = deliveries(&agent).remove(0);
+    let delivered = tool_result_of(&agent, &delivery.tool_use_id);
+    assert_eq!(result_json(&delivered)[0]["json"]["status"], json!("cancelled"));
+}
+
+/// Where on the resume path a cancel lands. The TS spec lands it after 1 to 40 microtask ticks;
+/// with an immediate mock model the resumed invocation never yields, so the cancel lands from the
+/// hooks that run before the model call that applies the responses instead.
+#[derive(Clone, Copy, Debug)]
+enum CancelPoint {
+    BeforeInvocation,
+    BeforeModelCall,
+}
+
+#[tokio::test]
+async fn finishes_as_cancelled_whenever_cancel_lands_while_interrupt_responses_are_applied() {
+    for point in [CancelPoint::BeforeInvocation, CancelPoint::BeforeModelCall] {
+        let mut agent = approval_agent(1);
+        let interrupted = agent.invoke("Run approval.").await.unwrap();
+        let id = interrupted.interrupts()[0].id.clone();
+        let armed = Arc::new(AtomicBool::new(true));
+        let fire = move |agent: &crate::agent::LocalAgent| {
+            if armed.swap(false, Ordering::SeqCst) {
+                agent.cancel(cancel_background());
+            }
+        };
+        match point {
+            CancelPoint::BeforeInvocation => {
+                agent.add_hook(move |event: &mut crate::hooks::BeforeInvocationEvent<'_>| fire(event.agent()));
+            }
+            CancelPoint::BeforeModelCall => {
+                agent.add_hook(move |event: &mut BeforeModelCallEvent<'_>| fire(event.agent()));
+            }
+        }
+
+        let resumed = agent
+            .invoke(InvokeArgs::from(vec![InterruptResponseContent::new(
+                InterruptResponse::new(id, "yes"),
+            )]))
+            .await
+            .unwrap();
+
+        assert_eq!(resumed.stop_reason(), StopReason::Cancelled, "{point:?}");
+    }
+}
+
+#[tokio::test]
+async fn delivers_each_result_once_when_cancel_lands_after_a_task_interrupt_is_raised() {
+    let mut agent = approval_agent(2);
+    let interrupted = agent.invoke("Run approvals.").await.unwrap();
+    let armed = Arc::new(AtomicBool::new(true));
+    agent.add_hook(move |event: &mut AfterInvocationEvent<'_>| {
+        if armed.swap(false, Ordering::SeqCst) {
+            event.agent().cancel(cancel_background());
+        }
+    });
+
+    let id = interrupted.interrupts()[0].id.clone();
+    agent
+        .invoke(InvokeArgs::from(vec![InterruptResponseContent::new(
+            InterruptResponse::new(id, "yes"),
+        )]))
+        .await
+        .unwrap();
+    let continued = agent.invoke("Continue.").await.unwrap();
+
+    assert_eq!(continued.stop_reason(), StopReason::EndTurn);
+    assert!(!agent.local.interrupt_state().activated());
+    assert_eq!(deliveries(&agent).len(), 2);
+}
+
+#[tokio::test]
+async fn cancels_background_tasks_immediately_while_after_current_tools_lets_the_tool_batch_finish() {
+    let statuses_at_stop: Arc<Mutex<Vec<BackgroundTaskStatus>>> = Arc::default();
+    let seen = statuses_at_stop.clone();
+    let stop_all = FunctionTool::builder("stop_all", "Stop after this batch, and stop background work now.")
+        .input_schema(object_schema())
+        .callback(move |_, context| {
+            let seen = seen.clone();
+            async move {
+                context.agent().cancel(CancelOptions {
+                    after_current_tools: true,
+                    cancel_background_tasks: true,
+                    ..CancelOptions::default()
+                });
+                let tasks: Option<Vec<BackgroundTask>> =
+                    context.agent().app_state().get(BACKGROUND_TASKS_STATE_KEY).unwrap();
+                seen.lock()
+                    .unwrap()
+                    .extend(tasks.unwrap_or_default().iter().map(|task| task.status));
+                Ok(json!("stopped"))
+            }
+        });
+    let after = tool("after", |_, _| json!("ran"));
+    let model = MockModel::from_turns([
+        uses(&[
+            ("work", "work-use", json!({"_background_execution": true})),
+            ("stop_all", "stop-use", json!({})),
+            ("after", "after-use", json!({})),
+        ]),
+        MockTurn::text("unreachable"),
+    ]);
+    let mut agent = Agent::new(AgentConfig {
+        model: Some(model.into()),
+        tools: vec![waiting_tool("work").into(), stop_all.into(), after.into()],
+        background_tasks: Some(BackgroundTasksConfig::default().into()),
+        tool_executor: Some(crate::tools::ToolExecutorStrategy::Sequential),
+        printer: Some(false),
+        ..Default::default()
+    })
+    .unwrap();
+
+    let result = agent.invoke("Run work, then stop.").await.unwrap();
+
+    assert_eq!(result.stop_reason(), StopReason::Cancelled);
+    assert_eq!(*statuses_at_stop.lock().unwrap(), [BackgroundTaskStatus::Cancelled]);
+    let results: Vec<String> = blocks(&agent)
+        .into_iter()
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult(result) => Some(result.tool_use_id),
+            _ => None,
+        })
+        .collect();
+    assert!(results.contains(&"stop-use".to_owned()));
+    assert!(results.contains(&"after-use".to_owned()));
+}
+
+#[tokio::test]
+async fn returns_without_another_model_call_when_cancel_lands_while_it_waits_for_background_completion() {
+    for after_current_tools in [false, true] {
+        let model = MockModel::from_turns([
+            uses(&[("work", "work-use", json!({"_background_execution": true}))]),
+            MockTurn::text("Task admitted."),
+            MockTurn::text("Result received."),
+        ]);
+        let mut agent = background_agent(
+            model.clone(),
+            vec![waiting_tool("work").into()],
+            BackgroundTasksConfig::default(),
+        );
+        let handle = agent.cancel_handle();
+        let calls = model.clone();
+        let cancel = async {
+            while calls.call_count() < 2 {
+                tokio::task::yield_now().await;
+            }
+            for _ in 0..10 {
+                tokio::task::yield_now().await;
+            }
+            handle.cancel(CancelOptions {
+                after_current_tools,
+                cancel_background_tasks: true,
+                ..CancelOptions::default()
+            });
+        };
+
+        let (result, ()) = tokio::join!(agent.invoke("Run work."), cancel);
+        let result = result.unwrap();
+
+        assert_eq!(result.stop_reason(), StopReason::EndTurn, "{after_current_tools}");
+        assert_eq!(result.last_message().text(), "Task admitted.");
+        assert!(deliveries(&agent).is_empty());
+        assert_eq!(model.call_count(), 2);
+
+        let continued = agent.invoke("Continue.").await.unwrap();
+
+        assert_eq!(continued.stop_reason(), StopReason::EndTurn);
+        assert_eq!(deliveries(&agent).len(), 1);
+        assert!(persisted(&agent).is_none());
+    }
+}
+
+#[test]
+fn ignores_cancel_background_tasks_before_the_agent_has_initialized() {
+    let agent = background_agent(MockModel::new(), Vec::new(), BackgroundTasksConfig::default());
+    agent.cancel_handle().cancel(cancel_background());
+}
+
+#[tokio::test]
+async fn only_cancels_the_invocation_when_background_tasks_are_disabled() {
+    let stop = tool("stop", |_, context| {
+        context.agent().cancel(cancel_background());
+        json!("stopped")
+    });
+    let model = MockModel::from_turns([uses(&[("stop", "stop-use", json!({}))]), MockTurn::text("unreachable")]);
+    let mut agent = Agent::new(AgentConfig {
+        model: Some(model.into()),
+        tools: vec![stop.into()],
+        printer: Some(false),
+        ..Default::default()
+    })
+    .unwrap();
+
+    let result = agent.invoke("Stop.").await.unwrap();
+
+    assert_eq!(result.stop_reason(), StopReason::Cancelled);
+    agent.cancel_handle().cancel(cancel_background());
+}
+
+#[tokio::test]
+async fn cancels_every_non_terminal_task_synchronously_including_ones_not_yet_notified() {
+    let manager = manager();
+    let tool = work(|input, context| async move {
+        if input["value"] == "done" {
+            return Ok(json!("done"));
+        }
+        context.cancel_signal().cancelled().await;
+        Ok(json!("late"))
+    });
+    let done = submit_work(&manager, &tool, "done", "tool-use-done", "pass-done");
+    manager.wait(&done.task_id).await.unwrap();
+    let pending = [
+        submit_work(&manager, &tool, "a", "tool-use-a", "pass-a"),
+        submit_work(&manager, &tool, "b", "tool-use-b", "pass-b"),
+    ];
+
+    manager.cancel_all();
+
+    let statuses: Vec<(String, BackgroundTaskStatus)> = manager
+        .list()
+        .into_iter()
+        .map(|task| (task.task_id, task.status))
+        .collect();
+    assert_eq!(
+        statuses,
+        [
+            (done.task_id, BackgroundTaskStatus::Completed),
+            (pending[0].task_id.clone(), BackgroundTaskStatus::Cancelled),
+            (pending[1].task_id.clone(), BackgroundTaskStatus::Cancelled),
+        ]
+    );
+    manager.wait_for_idle(None).await.unwrap();
+}
+
+#[tokio::test]
+async fn returns_a_cancelled_task_unchanged_instead_of_resuming_it() {
+    let executions = Arc::new(AtomicUsize::new(0));
+    let counted = executions.clone();
+    let (engine, _) = engine_with(
+        move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(ExecutionOutcome::InputRequired(interrupt_state("waiting"))) })
+        },
+        2,
+        None,
+    );
+    let task = engine.submit(admission("work"));
+    engine.wait_for_idle().await;
+    let cancelled = engine.cancel(&task.task_id, "stop").unwrap();
+
+    let resumed = engine.resume(&task.task_id, |state| Ok((state, true))).unwrap();
+    engine.wait_for_idle().await;
+
+    assert_eq!(resumed, cancelled);
+    assert_eq!(
+        engine.get(&task.task_id).unwrap().status,
+        BackgroundTaskStatus::Cancelled
+    );
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn rejects_resuming_a_working_task() {
+    let gate = Gate::default();
+    let (engine, _) = gated_engine(&gate, 2, None);
+    let task = engine.submit(admission("work"));
+
+    let error = engine.resume(&task.task_id, |state| Ok((state, true))).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("cannot be resumed: status is 'working', not 'input_required'"),
+        "{error}"
+    );
+
+    gate.release(ExecutionOutcome::Completed(result("done")));
+    engine.wait_for_idle().await;
 }

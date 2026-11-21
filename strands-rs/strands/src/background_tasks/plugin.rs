@@ -1,6 +1,7 @@
 //! The background tasks plugin.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use async_trait::async_trait;
@@ -76,6 +77,9 @@ pub(crate) enum Route {
 struct Shared {
     /// The name the management tool is registered and delivered under.
     manage_tool_name: String,
+    /// Whether this invocation raised task interrupts: a cancel can drop the interrupt the
+    /// invocation already returns, so the interrupt state is not enough.
+    raised_interrupt: AtomicBool,
     tasks: Mutex<IndexMap<String, BackgroundTask>>,
     manager: OnceLock<Manager>,
     app_state: OnceLock<StateStore>,
@@ -283,6 +287,25 @@ impl BackgroundTasks {
         }
     }
 
+    /// Cancels every task that is not terminal and drops the agent interrupts they raised
+    /// (`cancelAll`). The tasks are recorded as cancelled before this returns; it does not wait
+    /// for their tools to stop.
+    fn cancel_all(&self, interrupt_state: &InterruptState) {
+        let Ok(manager) = self.shared.manager() else {
+            return;
+        };
+        let interrupt_ids: Vec<String> = self
+            .shared
+            .snapshot()
+            .iter()
+            .filter(|task| !task.status.is_terminal())
+            .flat_map(|task| task.interrupts.iter().flatten().map(|interrupt| interrupt.id.clone()))
+            .collect();
+        manager.cancel_all();
+        drop_interrupts(interrupt_state, &interrupt_ids);
+        self.shared.persist();
+    }
+
     /// Decides where a call runs and strips `_background_execution` from its input, so the tool
     /// never sees the selector.
     pub(crate) fn route_tool_call(
@@ -466,8 +489,15 @@ fn load_app_state(shared: &Shared, app_state: &StateStore, interrupt_state: &Int
             tasks.insert(task.task_id.clone(), task);
         }
     }
+    drop_interrupts(interrupt_state, &recovered_interrupts);
+    shared.persist();
+}
+
+/// Removes `interrupt_ids` from the agent's interrupt state, and deactivates it once no interrupt
+/// is left.
+fn drop_interrupts(interrupt_state: &InterruptState, interrupt_ids: &[String]) {
     let mut data = interrupt_state.to_data();
-    let removed = recovered_interrupts
+    let removed = interrupt_ids
         .iter()
         .filter(|id| data.interrupts.shift_remove(id.as_str()).is_some())
         .count();
@@ -477,7 +507,6 @@ fn load_app_state(shared: &Shared, app_state: &StateStore, interrupt_state: &Int
     if interrupt_state.activated() && interrupt_state.interrupt_list().is_empty() {
         interrupt_state.deactivate();
     }
-    shared.persist();
 }
 
 /// Adds the finished tasks as a synthetic `get` exchange, removed once it reaches history.
@@ -571,6 +600,7 @@ fn before_model_call(shared: &Arc<Shared>, event: &mut BeforeModelCallEvent<'_>)
         .flat_map(|task| task.interrupts.clone().unwrap_or_default())
         .collect();
     if !interrupts.is_empty() {
+        shared.raised_interrupt.store(true, Ordering::SeqCst);
         event.raise_interrupts(interrupts);
         return Ok(());
     }
@@ -583,7 +613,8 @@ fn before_model_call(shared: &Arc<Shared>, event: &mut BeforeModelCallEvent<'_>)
 /// After an invocation: waits for running tasks (unless disabled), then delivers what finished or
 /// re-enters the loop to surface the interrupts of tasks that need input.
 async fn after_invocation(shared: Arc<Shared>, wait_for_completion: bool, event: &mut AfterInvocationEvent<'_>) {
-    if event.agent().interrupt_state().activated() {
+    let raised_interrupt = shared.raised_interrupt.swap(false, Ordering::SeqCst);
+    if raised_interrupt || event.agent().interrupt_state().activated() {
         return;
     }
     let signal = event.agent().cancel_signal();
@@ -602,6 +633,10 @@ async fn after_invocation(shared: Arc<Shared>, wait_for_completion: bool, event:
         if event.resume().is_none() {
             event.set_resume(InvokeArgs::Messages(Vec::new()));
         }
+        return;
+    }
+    // Delivering would start another pass; after a cancel the results wait for the next invocation.
+    if signal.is_cancelled() || signal.is_deferred() {
         return;
     }
     if let Some(input) = delivery(&shared, &tasks) {
@@ -652,6 +687,11 @@ impl Plugin for BackgroundTasksPlugin {
         if shared.manager.set(manager).is_err() {
             return Err(Error::other("background tasks are already attached to an agent"));
         }
+        let cancelling = plugin.clone();
+        let interrupt_state = agent.interrupt_state().clone();
+        agent
+            .cancel_handle()
+            .set_background_cancel(Arc::new(move || cancelling.cancel_all(&interrupt_state)));
 
         let selector = plugin.clone();
         agent.add_middleware(InvokeModelStage::input(move |mut context| {
