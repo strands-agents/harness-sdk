@@ -43,7 +43,9 @@ pub struct ModelCapabilities {
     /// Whether and how the model caches prompts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_caching: Option<PromptCaching>,
-    /// Whether the model accepts a tool choice that forces a tool call (`Any` or a named tool).
+    /// Whether the Bedrock and Anthropic providers force the structured output tool (`Any` or a
+    /// named tool) on the structured output retry. False when the model rejects forcing, or when a
+    /// forced call degrades the response (for example, it skips thinking).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forced_tool_choice: Option<bool>,
     /// Whether the provider can make the model's text output conform to a JSON schema.
