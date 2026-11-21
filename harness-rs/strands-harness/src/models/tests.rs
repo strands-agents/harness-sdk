@@ -1100,19 +1100,19 @@ mod resolve_web_fetch_model {
     }
 
     #[test]
-    fn reuses_the_main_model_and_warns_for_an_unidentifiable_bedrock_family() {
+    fn reuses_the_main_model_and_warns_for_a_bedrock_family_with_no_mapped_summarizer() {
         let (logs, _guard) = record_logs();
         let resolved = summarizer(Some("bedrock/amazon.nova-pro-v1:0"), None, &offline_env());
         assert_eq!(resolved.model_id, "amazon.nova-pro-v1:0");
         assert!(
             logs.lines("WARN")
                 .iter()
-                .any(|line| line.contains("could not identify the Bedrock model family"))
+                .any(|line| line.contains("no small web_fetch summarizer is mapped"))
         );
     }
 
     #[test]
-    fn does_not_warn_for_an_unidentifiable_bedrock_family_with_an_explicit_override() {
+    fn does_not_warn_for_a_bedrock_family_with_no_mapped_summarizer_when_given_an_explicit_override() {
         let (logs, _guard) = record_logs();
         let override_model = mock("explicit");
         let resolved = instance(
