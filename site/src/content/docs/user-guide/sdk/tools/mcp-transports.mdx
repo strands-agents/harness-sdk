@@ -57,6 +57,9 @@ with stdio_mcp_client:
 <Tab label="TypeScript">
 
 ```typescript
+--8<-- "user-guide/sdk/tools/mcp-tools_imports.ts:mcp_client_imports"
+--8<-- "user-guide/sdk/tools/mcp-tools_imports.ts:stdio_imports"
+
 --8<-- "user-guide/sdk/tools/mcp-transports.ts:stdio_transport"
 ```
 </Tab>
@@ -188,6 +191,9 @@ mcp_client = MCPClient(lambda: aws_iam_streamablehttp_client(
 <Tab label="TypeScript">
 
 ```typescript
+--8<-- "user-guide/sdk/tools/mcp-tools_imports.ts:mcp_client_imports"
+--8<-- "user-guide/sdk/tools/mcp-tools_imports.ts:http_imports"
+
 --8<-- "user-guide/sdk/tools/mcp-transports.ts:streamable_http"
 ```
 </Tab>
@@ -215,6 +221,9 @@ with sse_mcp_client:
 <Tab label="TypeScript">
 
 ```typescript
+--8<-- "user-guide/sdk/tools/mcp-tools_imports.ts:mcp_client_imports"
+--8<-- "user-guide/sdk/tools/mcp-tools_imports.ts:sse_imports"
+
 --8<-- "user-guide/sdk/tools/mcp-transports.ts:sse_transport"
 ```
 </Tab>
