@@ -173,12 +173,20 @@ A profile that only reads data and makes no changing API calls works well for an
 
 ## Try it
 
-Box CLI runs on macOS and Linux (**TODO: requirements link**). Install it with **TODO: install command**, then run your agent from a project:
+Box CLI is in preview and runs on Apple silicon Macs with macOS 15 or later, and on Linux ARM64 and x86-64 ([requirements](https://github.com/strands-agents/box/blob/main/docs/cli/install.md#requirements)). Install it with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | BOX_VERSION=0.3.0-preview.1 sh
+```
+
+Then run your agent from a project:
 
 ```sh
 cd ~/src/my-app
 box run claude
 ```
+
+[Get started](https://github.com/strands-agents/box/blob/main/docs/cli/getting-started.md) walks through the first run, including connecting to Amazon Bedrock.
 
 The profiles and policies in this post are in **TODO: example repo**, which is the easiest place to start. Begin with the coding profile, have the agent read a file in `~/.shared/.secrets`, and watch the box refuse it. Then change a rule to fit how you work.
 
