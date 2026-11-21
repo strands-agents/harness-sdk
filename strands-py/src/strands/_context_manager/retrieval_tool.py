@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Union, cast
 from ..tools.tools import PythonAgentTool
 from ..types.tools import ToolResult, ToolResultContent, ToolSpec
 from ..vended_plugins.context_offloader.search import _search_content
-from .content_rendering import flatten_messages_to_content
+from .content_rendering import _OMITTED_KINDS, flatten_messages_to_content
 from .methods.truncate import CHARS_PER_TOKEN
 from .placeholder import is_offloaded
 
@@ -55,6 +55,11 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
         # A placeholder stands where the original content no longer is.
         if any(not isinstance(entry, list) and is_offloaded(entry) for entry in entries):
             return _error(tool_use_id, f"original content for reference {reference} is no longer available")
+        uncarried = _uncarried_media(entries)
+        if uncarried is not None:
+            return _error(
+                tool_use_id, f"content for reference {reference} is {uncarried}, which a tool result cannot carry"
+            )
 
         if inputs.get("pattern") is None and inputs.get("line_range") is None:
             return ToolResult(toolUseId=tool_use_id, status="success", content=_full_content(entries, max_chars))
@@ -128,6 +133,16 @@ async def _resolve_reference(stash: Stash, reference: str) -> list[_StashEntry]:
         return [cast("_StashEntry", entry) for entry in stored if entry is not None]
     exact = await stash.retrieve(reference)
     return [cast("_StashEntry", exact)] if exact is not None else []
+
+
+def _uncarried_media(entries: list[_StashEntry]) -> str | None:
+    """The kind of the first stored block that is media a tool result cannot carry, or None.
+
+    Only single blocks are checked: removed messages name such media with a placeholder when they are rendered.
+    """
+    return next(
+        (kind for entry in entries if not isinstance(entry, list) for kind in _OMITTED_KINDS if kind in entry), None
+    )
 
 
 def _full_content(entries: list[_StashEntry], max_chars: int) -> list[ToolResultContent]:
