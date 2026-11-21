@@ -282,12 +282,21 @@ pub(crate) enum ChatCompletionsTools {
     Unsupported,
 }
 
+/// The values of `capabilities.systemPromptPlacement` in the data (`SystemPromptPlacement`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum SystemPromptPlacement {
+    /// The system prompt goes at the start of the messages.
+    Message,
+}
+
 /// The `capabilities` fields of the shared data that [`ModelCapabilities`] does not carry, which
 /// a single provider reads.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProviderCapabilities {
     chat_completions_tools: Option<ChatCompletionsTools>,
+    system_prompt_placement: Option<SystemPromptPlacement>,
 }
 
 #[derive(Deserialize)]
@@ -322,6 +331,13 @@ fn provider_capabilities(model_id: &str) -> Option<&'static ProviderCapabilities
 #[allow(dead_code, reason = "the OpenAI Chat Completions provider reads it")]
 pub(crate) fn lookup_chat_completions_tools(model_id: &str) -> Option<ChatCompletionsTools> {
     provider_capabilities(model_id)?.chat_completions_tools
+}
+
+/// Where a model's system prompt goes when not in the provider's system prompt field: `Message`
+/// at the start of the messages, `None` when the data does not say.
+#[allow(dead_code, reason = "the OpenAI Responses provider reads it")]
+pub(crate) fn lookup_system_prompt_placement(model_id: &str) -> Option<SystemPromptPlacement> {
+    provider_capabilities(model_id)?.system_prompt_placement
 }
 
 /// What the shared model info data knows about a model; empty when it knows nothing.
@@ -448,6 +464,19 @@ mod tests {
         ];
         for (model_id, support) in cases {
             assert_eq!(lookup_chat_completions_tools(model_id), support, "{model_id}");
+        }
+    }
+
+    #[test]
+    fn reads_the_system_prompt_placement_fact_from_the_entry_the_id_resolves_to() {
+        let cases = [
+            ("gpt-6.2-sol", Some(SystemPromptPlacement::Message)),
+            ("openai.gpt-6.2-astra", Some(SystemPromptPlacement::Message)),
+            ("gpt-6.1-sol", None),
+            ("unknown-model", None),
+        ];
+        for (model_id, placement) in cases {
+            assert_eq!(lookup_system_prompt_placement(model_id), placement, "{model_id}");
         }
     }
 
@@ -598,6 +627,7 @@ mod tests {
                         ["reasoningOff", "unsupported"].contains(&value.as_str().unwrap()),
                         "{id}.{key}"
                     ),
+                    "systemPromptPlacement" => assert_eq!(value, "message", "{id}.{key}"),
                     "toolUse" => assert!(value.is_boolean(), "{id}.{key}"),
                     other => panic!("{id}.capabilities.{other} is not a ModelCapabilities field"),
                 }

@@ -181,6 +181,45 @@ mod request_formatting {
         );
     }
 
+    /// Guards against GPT-6.2 never caching instructions
+    /// ([#6367](https://github.com/strands-agents/harness-sdk/issues/6367)).
+    #[tokio::test]
+    async fn sends_the_system_prompt_as_a_developer_message_only_where_instructions_never_cache() {
+        fn cached() -> OpenAIModelOptions {
+            with_cache(CacheConfig::default())
+        }
+        type Case = (&'static str, fn() -> OpenAIModelOptions, bool);
+        let cases: [Case; 4] = [
+            ("gpt-6.2-sol", cached, true),
+            ("openai.gpt-6.2-astra", OpenAIModelOptions::default, true),
+            ("gpt-6.1-sol", cached, false),
+            ("gpt-6.2-sol", stateful, false),
+        ];
+        for (model_id, model_options, expect_developer_message) in cases {
+            let options = || OpenAIModelOptions {
+                model_id: Some(model_id.to_owned()),
+                ..model_options()
+            };
+            let request = ModelRequest::builder()
+                .messages(vec![Message::user("Hi")])
+                .system_prompt(vec![
+                    crate::types::SystemContentBlock::from("Be "),
+                    crate::types::SystemContentBlock::from("helpful."),
+                ])
+                .build();
+            let with_system_prompt = run_once(options(), request).await;
+            let mut expected = run(options()).await;
+            if expect_developer_message {
+                let developer =
+                    json!({"role": "developer", "content": [{"type": "input_text", "text": "Be helpful."}]});
+                expected["input"].as_array_mut().unwrap().insert(0, developer);
+            } else {
+                expected["instructions"] = json!("Be helpful.");
+            }
+            assert_eq!(with_system_prompt, expected, "{model_id} {expect_developer_message}");
+        }
+    }
+
     #[tokio::test]
     async fn joins_system_prompt_text_blocks_into_instructions() {
         let request = ModelRequest::builder()
