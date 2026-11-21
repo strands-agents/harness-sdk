@@ -14,6 +14,7 @@ use super::formatting::{
     positive_count, token_count, tool_result_content_type, warn_managed_params, wire_name,
 };
 use crate::models::defaults::MODEL_DEFAULTS;
+use crate::models::model_info::{SystemPromptPlacement, lookup_system_prompt_placement};
 use crate::models::streaming::{
     CitationsDelta, ModelContentBlockDeltaEvent, ModelContentBlockStartEvent, ModelContentBlockStopEvent,
     ModelMessageStartEvent, ModelMessageStopEvent, ModelMetadataEvent, ModelStreamEvent, ReasoningContentDelta,
@@ -63,11 +64,25 @@ pub(super) fn format_responses_request(
         .map(|message| (message.role, message.content.as_slice()))
         .collect();
     let dynamic_trailing_blocks = request.dynamic_trailing_blocks.unwrap_or_default();
-    let (input, explicit_cache) = if cache_messages {
+    let (mut input, explicit_cache) = if cache_messages {
         format_cacheable_messages(&messages, dynamic_trailing_blocks, messages_ttl)
     } else {
         (format_messages(&messages), false)
     };
+    let model_id = config.model_id.as_deref().unwrap_or(MODEL_DEFAULTS.openai.model_id);
+    let mut instructions = format_instructions(request.system_prompt.as_ref());
+    // Some models append instructions after the input, where they never cache; a leading developer
+    // message does. A stored conversation would keep every resent copy.
+    if let Some(system_prompt) = instructions.take_if(|text| {
+        !text.is_empty()
+            && !stateful
+            && lookup_system_prompt_placement(model_id) == Some(SystemPromptPlacement::Message)
+    }) {
+        input.insert(
+            0,
+            json!({"role": "developer", "content": [{"type": "input_text", "text": system_prompt}]}),
+        );
+    }
 
     let mut body = config
         .params
@@ -75,7 +90,6 @@ pub(super) fn format_responses_request(
         .and_then(JsonValue::as_object)
         .cloned()
         .unwrap_or_default();
-    let model_id = config.model_id.as_deref().unwrap_or(MODEL_DEFAULTS.openai.model_id);
     body.insert("model".to_owned(), model_id.into());
     body.insert("input".to_owned(), JsonValue::Array(input));
     body.insert("stream".to_owned(), true.into());
@@ -88,7 +102,7 @@ pub(super) fn format_responses_request(
         body.insert("previous_response_id".to_owned(), response_id);
     }
 
-    if let Some(instructions) = format_instructions(request.system_prompt.as_ref()) {
+    if let Some(instructions) = instructions {
         body.insert("instructions".to_owned(), instructions.into());
     }
 
