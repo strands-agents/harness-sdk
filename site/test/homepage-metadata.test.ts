@@ -281,7 +281,7 @@ describe('homepage machine-readable metadata', () => {
           text: '/box',
         },
         description:
-          'Run agents in an OS-enforced sandbox. Set which files, programs, and network destinations they can access.',
+          'Run coding agents like Claude Code in an OS-enforced sandbox. Choose which files, programs, and hosts they reach, and keep your keys out of their reach.',
         action: 'Explore Strands Box',
       },
       {

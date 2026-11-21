@@ -149,7 +149,7 @@ products:
     name: Strands Box
     slug: "/box"
     href: /docs/user-guide/box/
-    description: An agent sandbox that pairs OS containment with Dogwood policy.
+    description: Run coding agents like Claude Code in a sandbox, under a policy you control.
     repository: https://github.com/strands-agents/box
     languages:
       - Rust
