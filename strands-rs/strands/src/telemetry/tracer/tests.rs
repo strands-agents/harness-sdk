@@ -7,7 +7,8 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::*;
-use crate::types::{ContentBlock, Role};
+
+use crate::types::{ContentBlock, ReasoningBlock, Role};
 
 fn settings(env: &[(&str, &str)]) -> TracerSettings {
     let env: BTreeMap<String, String> = env
@@ -600,6 +601,92 @@ mod otel {
                 {"text": "The answer is 42"},
                 {"type": "toolUse", "name": "calc", "toolUseId": "tool-1", "input": {"expr": "6*7"}},
             ])
+        );
+    }
+
+    fn reasoning_output() -> Message {
+        Message::new(
+            Role::Assistant,
+            vec![
+                ContentBlock::Reasoning(
+                    ReasoningBlock::new()
+                        .with_text("Multiply 17 by 23.")
+                        .with_signature("sig-secret"),
+                ),
+                ContentBlock::text("391"),
+            ],
+        )
+    }
+
+    fn output_messages(span: &SpanData) -> JsonValue {
+        let details = events(span, OPERATION_DETAILS);
+        let event = details
+            .iter()
+            .find(|event| {
+                event
+                    .attributes
+                    .iter()
+                    .any(|kv| kv.key.as_str() == "gen_ai.output.messages")
+            })
+            .unwrap();
+        event_json(event, "gen_ai.output.messages")
+    }
+
+    #[test]
+    fn keeps_reasoning_text_as_a_reasoning_part_with_name_and_never_exports_the_signature() {
+        for (name, tracer) in [("stable conventions", tracer()), ("latest conventions", latest())] {
+            let capture = capture_spans();
+            let output = reasoning_output();
+            end_chat(
+                &tracer,
+                EndModelSpanOptions {
+                    output: Some(&output),
+                    stop_reason: Some("end_turn"),
+                    ..EndModelSpanOptions::default()
+                },
+            );
+            let span = capture.span("chat");
+            let read = match name {
+                "stable conventions" => event_json(&events(&span, "gen_ai.choice")[0], "message"),
+                _ => output_messages(&span),
+            };
+            let expected = match name {
+                "stable conventions" => json!([{"type": "reasoning", "text": "Multiply 17 by 23."}, {"text": "391"}]),
+                _ => json!([{
+                    "role": "assistant",
+                    "parts": [
+                        {"type": "reasoning", "content": "Multiply 17 by 23."},
+                        {"type": "text", "content": "391"},
+                    ],
+                    "finish_reason": "end_turn",
+                }]),
+            };
+            assert_eq!(read, expected, "{name}");
+            assert!(!format!("{:?}", span.events).contains("sig-secret"), "{name}");
+        }
+    }
+
+    #[test]
+    fn does_not_export_redacted_reasoning_content() {
+        let capture = capture_spans();
+        let output = Message::new(
+            Role::Assistant,
+            vec![
+                ContentBlock::Reasoning(ReasoningBlock::new().with_redacted_content(vec![1, 2, 3])),
+                ContentBlock::text("done"),
+            ],
+        );
+        end_chat(
+            &latest(),
+            EndModelSpanOptions {
+                output: Some(&output),
+                stop_reason: Some("end_turn"),
+                ..EndModelSpanOptions::default()
+            },
+        );
+        assert_eq!(
+            output_messages(&capture.span("chat"))[0]["parts"],
+            json!([{"type": "reasoningBlock"}, {"type": "text", "content": "done"}])
         );
     }
 

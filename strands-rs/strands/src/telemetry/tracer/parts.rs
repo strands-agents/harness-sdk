@@ -3,7 +3,9 @@
 use serde::Serialize;
 use serde_json::json;
 
-use crate::types::{ContentBlock, GuardContentBlock, JsonValue, Message, Role, SystemContentBlock, SystemPrompt};
+use crate::types::{
+    ContentBlock, GuardContentBlock, JsonValue, Message, ReasoningBlock, Role, SystemContentBlock, SystemPrompt,
+};
 
 /// Stands in for binary data in attribute JSON.
 const REPLACED: &str = "<replaced>";
@@ -37,6 +39,11 @@ pub(crate) fn block_type(block: &ContentBlock) -> &'static str {
     }
 }
 
+/// The reasoning text a trace keeps; the signature and redacted content are never exported.
+fn reasoning_text(reasoning: &ReasoningBlock) -> Option<&str> {
+    reasoning.text.as_deref().filter(|text| !text.is_empty())
+}
+
 /// A block in the latest-convention parts format.
 fn otel_part(block: &ContentBlock) -> JsonValue {
     match block {
@@ -54,6 +61,10 @@ fn otel_part(block: &ContentBlock) -> JsonValue {
             "id": result.tool_use_id,
             "response": result.content,
         }),
+        ContentBlock::Reasoning(reasoning) => match reasoning_text(reasoning) {
+            Some(text) => json!({"type": "reasoning", "content": text}),
+            None => json!({"type": block_type(block)}),
+        },
         other => json!({"type": block_type(other)}),
     }
 }
@@ -88,6 +99,9 @@ pub(crate) fn stable_parts(blocks: &[ContentBlock]) -> Vec<JsonValue> {
                 "toolUseId": result.tool_use_id,
                 "content": result.content,
             })),
+            ContentBlock::Reasoning(reasoning) => {
+                reasoning_text(reasoning).map(|text| json!({"type": "reasoning", "text": text}))
+            }
             _ => None,
         })
         .collect()
