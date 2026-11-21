@@ -137,7 +137,7 @@ async fn skips_unknown_content_in_a_tool_result() {
         ToolResultStatus::Success,
         vec![
             ToolResultContent::text("loaded"),
-            ToolResultContent::Unknown(unknown(json!({"toolReference": {"name": "shell"}}))),
+            ToolResultContent::Unknown(unknown(json!({"futureBlock": {"name": "shell"}}))),
         ],
     ))])];
     run(&model, request(messages, Options::default())).await;
@@ -145,6 +145,86 @@ async fn skips_unknown_content_in_a_tool_result() {
         transport.last()["messages"][0]["content"],
         json!([{"toolResult": {"toolUseId": "id-1", "content": [{"text": "loaded"}], "status": "success"}}])
     );
+}
+
+#[tokio::test]
+async fn names_the_tool_for_a_tool_reference_a_model_info_override_lets_through() {
+    let native = crate::models::ModelInfo {
+        capabilities: crate::models::ModelCapabilities {
+            deferred_tool_loading: Some(crate::models::DeferredToolLoading::Native),
+            ..crate::models::ModelCapabilities::default()
+        },
+        ..crate::models::ModelInfo::default()
+    };
+    let (model, transport) = provider(BedrockModelConfig {
+        model_info: Some(native),
+        ..BedrockModelConfig::default()
+    });
+    let messages = vec![user(vec![ContentBlock::ToolResult(ToolResultBlock::success(
+        "id-1",
+        vec![crate::types::ToolReferenceBlock::new("shell").into()],
+    ))])];
+    run(&model, request(messages, Options::default())).await;
+    assert_eq!(
+        transport.last()["messages"][0]["content"],
+        json!([{"toolResult": {"toolUseId": "id-1", "content": [{"text": "Loaded shell."}], "status": "success"}}])
+    );
+}
+
+mod deferred_tools {
+    use super::*;
+    use crate::models::DeferredToolLoading;
+
+    #[test]
+    fn reports_deferred_tool_loading_for_claude_another_model_a_model_with_strict_tools_and_a_model_that_can_not_take_stubs()
+     {
+        let cases = [
+            (
+                with_model_id("us.anthropic.claude-opus-5-5"),
+                DeferredToolLoading::Stubs,
+            ),
+            (
+                with_model_id("qwen.qwen3-235b-a22b-2507-v1:0"),
+                DeferredToolLoading::Stubs,
+            ),
+            (
+                BedrockModelConfig {
+                    strict_tools: Some(true),
+                    ..with_model_id("us.anthropic.claude-opus-5-5")
+                },
+                DeferredToolLoading::Unsupported,
+            ),
+            (
+                with_model_id("us.amazon.nova-pro-v1:0"),
+                DeferredToolLoading::Unsupported,
+            ),
+        ];
+        for (config, expected) in cases {
+            let (model, _) = provider(config);
+            assert_eq!(model.model_info().capabilities.deferred_tool_loading, Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn sends_a_deferred_tool_as_a_full_spec_when_called_directly_since_model_proxy_makes_the_stubs() {
+        let (model, transport) = provider(with_model_id("us.anthropic.claude-opus-5-5"));
+        let input_schema = json!({"type": "object", "properties": {"expression": {"type": "string"}}});
+        let request = ModelRequest {
+            deferred_tools: ["calculator".to_owned()].into(),
+            ..request(
+                hello(),
+                Options {
+                    tool_specs: vec![ToolSpec::new("calculator", "Calculate").with_input_schema(input_schema.clone())],
+                    ..Options::default()
+                },
+            )
+        };
+        run(&model, request).await;
+        assert_eq!(
+            transport.last()["toolConfig"]["tools"],
+            json!([{"toolSpec": {"name": "calculator", "description": "Calculate", "inputSchema": {"json": input_schema}}}])
+        );
+    }
 }
 
 #[tokio::test]

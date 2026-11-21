@@ -537,6 +537,22 @@ async fn sends_the_history_prefix_with_the_agent_prompt_and_tools() {
 }
 
 #[tokio::test]
+async fn sends_the_tools_of_the_agent_s_latest_model_call_so_the_summary_shares_its_prompt_cache() {
+    let (mut agent, model) = mock_agent(replay_messages(), false);
+    let loader = crate::types::ToolSpec::new("load_tools", "Load tools.")
+        .with_input_schema(serde_json::json!({"type": "object"}));
+    let call_tools = CallTools {
+        tool_specs: vec![agent.tool_registry().tool_specs().remove(0), loader],
+        deferred_tools: ["shell".to_owned()].into(),
+    };
+    *agent.latest_call_tools_record().lock().unwrap() = Some(call_tools.clone());
+    assert!(apply(&per_message(), &mut agent, 0.9).await);
+    let (_, options) = model.summarize_calls().remove(0);
+    assert_eq!(options.tool_specs, call_tools.tool_specs);
+    assert_eq!(options.deferred_tools, call_tools.deferred_tools);
+}
+
+#[tokio::test]
 async fn summarizes_each_side_of_a_kept_pin_on_its_own() {
     let messages = vec![
         user("task"),

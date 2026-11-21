@@ -38,6 +38,7 @@
 mod error;
 pub mod executors;
 mod function_tool;
+mod load_tools;
 mod noop_tool;
 mod registry;
 mod schema;
@@ -49,6 +50,8 @@ pub use error::ToolError;
 pub use executors::{ConcurrentToolExecutor, SequentialToolExecutor, ToolExecutorStrategy};
 pub(crate) use function_tool::wrap_in_tool_result;
 pub use function_tool::{FunctionTool, FunctionToolBuilder, FunctionToolItem};
+pub use load_tools::LOAD_TOOLS_TOOL_NAME;
+pub(crate) use load_tools::{DeferredToolsFn, create_load_tools};
 #[cfg(feature = "bedrock")]
 pub(crate) use noop_tool::NOOP_TOOL_SPEC;
 pub use registry::ToolRegistry;
@@ -56,7 +59,9 @@ pub use schema::{SchemaValidator, normalize_schema, schema_for};
 pub(crate) use source::SourceParts;
 pub use source::ToolSource;
 pub use structured_output_tool::{STRUCTURED_OUTPUT_TOOL_NAME, StructuredOutputTool};
-pub(crate) use tool::{DelegationToken, InterruptFn};
+#[doc(hidden)]
+pub use tool::SdkToolRole;
+pub(crate) use tool::{DelegationToken, InterruptFn, has_sdk_tool_role};
 pub use tool::{
     Tool, ToolContext, ToolOutcome, ToolStream, ToolStreamEvent, ToolStreamItem, create_error_result,
     is_valid_tool_name,

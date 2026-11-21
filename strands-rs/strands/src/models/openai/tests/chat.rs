@@ -1138,6 +1138,16 @@ mod media_blocks {
     }
 
     #[tokio::test]
+    async fn joins_the_text_blocks_of_a_tool_result_with_a_newline() {
+        let result = ToolResultBlock::success("tu-1", vec!["first".into(), "second".into()]);
+        let sent = sent_messages(request(vec![user(vec![result.into()])])).await;
+        assert_eq!(
+            sent,
+            json!([{"role": "tool", "tool_call_id": "tu-1", "content": "first\nsecond"}])
+        );
+    }
+
+    #[tokio::test]
     async fn joins_json_tool_results_and_converts_reasoning_to_text() {
         let (logs, _guard) = record_logs();
         let result = ToolResultBlock::success(
@@ -1152,7 +1162,7 @@ mod media_blocks {
         ];
         let sent = sent_messages(request(messages)).await;
         assert_eq!(sent[1], json!({"role": "assistant", "content": "thinking answer"}));
-        assert_eq!(sent[2]["content"], "a{\"b\":1}");
+        assert_eq!(sent[2]["content"], "a\n{\"b\":1}");
         assert!(
             logs.text()
                 .contains("reasoning blocks not supported by openai | converting to text"),

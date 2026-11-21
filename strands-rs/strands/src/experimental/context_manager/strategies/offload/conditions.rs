@@ -198,6 +198,20 @@ fn parse_percent(text: &str) -> Option<f64> {
 ///
 /// A value the condition does not accept.
 pub(crate) fn parse_condition(name: ConditionName, raw: Option<&ConditionValue>) -> Result<Option<ParsedCondition>> {
+    parse_condition_as(name, raw, name.as_str())
+}
+
+/// [`parse_condition`] for a condition that takes the same values under another name, which the
+/// error reports (`parseCondition` with a label).
+///
+/// # Errors
+///
+/// A value the condition does not accept.
+pub(crate) fn parse_condition_as(
+    name: ConditionName,
+    raw: Option<&ConditionValue>,
+    label: &str,
+) -> Result<Option<ParsedCondition>> {
     let Some(raw) = raw else {
         return Ok(None);
     };
@@ -220,8 +234,7 @@ pub(crate) fn parse_condition(name: ConditionName, raw: Option<&ConditionValue>)
         }
     }
     Err(Error::other(format!(
-        "{}={raw} is invalid: expected {}{}",
-        name.as_str(),
+        "{label}={raw} is invalid: expected {}{}",
         name.expected(),
         percent_hint(raw)
     )))

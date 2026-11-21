@@ -240,14 +240,14 @@ fn restores_a_tool_result_holding_content_this_version_does_not_recognize_unchan
         "content": [{"toolResult": {
             "toolUseId": "tool-1",
             "status": "success",
-            "content": [{"toolReference": {"name": "shell"}}]
+            "content": [{"futureBlock": {"name": "shell"}}]
         }}],
         "trackingId": "durable-1"
     });
     let mut agent = agent();
     agent.load_snapshot(&snapshot(json!({"messages": [saved]}))).unwrap();
 
-    let unknown = UnknownBlock::new(json!({"toolReference": {"name": "shell"}}).as_object().unwrap().clone());
+    let unknown = UnknownBlock::new(json!({"futureBlock": {"name": "shell"}}).as_object().unwrap().clone());
     assert_eq!(
         agent.messages()[0].content,
         [ContentBlock::ToolResult(ToolResultBlock::new(

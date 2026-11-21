@@ -1,5 +1,6 @@
 //! The built-in stages and their contexts and the middleware interrupt.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
@@ -155,6 +156,9 @@ pub struct InvokeModelContext {
     pub dynamic_trailing_blocks: Option<usize>,
     /// The schema this call must produce, set on the structured output retry.
     pub structured_output_schema: Option<JsonSchema>,
+    /// Names of the tools this call defers, set by deferred tool loading and passed to the
+    /// provider in [`ModelRequest::deferred_tools`](crate::models::ModelRequest::deferred_tools).
+    pub deferred_tools: HashSet<String>,
     /// The request this call belongs to.
     pub invocation_context: Option<InvocationContext>,
 }

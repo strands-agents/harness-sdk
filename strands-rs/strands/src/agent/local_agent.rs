@@ -14,6 +14,7 @@ use crate::interrupt::InterruptState;
 use crate::interventions::InterventionHandler;
 use crate::middleware::{Middleware, MiddlewareCleanup, MiddlewareRegistry, MiddlewareStage};
 use crate::models::Model;
+use crate::models::model_proxy::{CallTools, CallToolsRecord};
 use crate::sandbox::{Sandbox, default_sandbox};
 use crate::state_store::StateStore;
 use crate::storage::Storage;
@@ -53,6 +54,7 @@ pub struct LocalAgent {
     storage: Option<Arc<dyn Storage>>,
     context_manager: Option<ContextManager>,
     context_stash: Option<AgentStash>,
+    latest_call_tools: CallToolsRecord,
     interventions: Arc<[Arc<dyn InterventionHandler>]>,
 }
 
@@ -86,6 +88,7 @@ impl LocalAgent {
             storage: None,
             context_manager: None,
             context_stash: None,
+            latest_call_tools: CallToolsRecord::default(),
             interventions: Arc::from(Vec::new()),
         }
     }
@@ -143,6 +146,20 @@ impl LocalAgent {
     /// The stash the context manager made for this agent, once it is attached.
     pub(crate) fn context_stash(&self) -> Option<&AgentStash> {
         self.context_stash.as_ref()
+    }
+
+    /// Where the agent's model calls record the tools they send.
+    pub(crate) fn latest_call_tools_record(&self) -> &CallToolsRecord {
+        &self.latest_call_tools
+    }
+
+    /// The tools the agent's latest model call sent, before any stubs; `None` before its first
+    /// call (`latestCallTools`).
+    pub(crate) fn latest_call_tools(&self) -> Option<CallTools> {
+        self.latest_call_tools
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     pub(crate) fn set_cancel_handle(&mut self, cancel_handle: CancelHandle) {

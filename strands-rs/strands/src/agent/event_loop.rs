@@ -4,6 +4,7 @@
 //! Every model call goes through [`Agent::invoke_model_stage`] and every tool call through the
 //! tool pipeline's `execute_tool_stage`, the seams middleware wraps.
 
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -32,7 +33,7 @@ use crate::middleware::{
     InvokeModelContext, InvokeModelResult, InvokeModelStage, MiddlewareError, StageItem, StageResult, StageStream,
     TerminalFn,
 };
-use crate::models::model_proxy::ModelProxy;
+use crate::models::model_proxy::{CallToolsRecord, ModelProxy, count_request_tokens};
 use crate::models::routing::{RouterAttachment, same_model};
 use crate::models::{
     AggregatedEvent, CountTokensOptions, Model, ModelRequest, StreamAggregatedResult, is_js_whitespace,
@@ -886,8 +887,7 @@ impl Agent {
             }
             self.mcp.apply_changes(self.local.tool_registry_mut());
             let model = self.routed_model().unwrap_or_else(|| self.local.model().clone());
-            let tool_specs = self.tool_specs();
-            let mut projected_input_tokens = match self.estimate_input_tokens(&tool_specs).await {
+            let mut projected_input_tokens = match self.estimate_input_tokens().await {
                 Ok(tokens) => Some(tokens),
                 Err(error) => {
                     tracing::debug!("error=<{error}> | token estimation failed, proceeding without estimate");
@@ -934,7 +934,7 @@ impl Agent {
                 let messages = std::mem::take(&mut prepared.messages);
                 self.append_continuation_messages(run, messages).await?;
                 prepared.mark_appended();
-                projected_input_tokens = match self.estimate_input_tokens(&tool_specs).await {
+                projected_input_tokens = match self.estimate_input_tokens().await {
                     Ok(tokens) => Some(tokens),
                     Err(error) => {
                         tracing::debug!(
@@ -1079,6 +1079,7 @@ impl Agent {
             projected_input_tokens,
             dynamic_trailing_blocks: None,
             structured_output_schema,
+            deferred_tools: HashSet::new(),
             invocation_context: Some(run.invocation_context.clone()),
         };
         let terminal = model_terminal(ModelTerminal {
@@ -1089,6 +1090,7 @@ impl Agent {
             cancel_signal: self.local.cancel_signal(),
             invocation_context: run.invocation_context.clone(),
             invoked: invoked.clone(),
+            latest_call_tools: self.local.latest_call_tools_record().clone(),
         });
         let stream = self.local.middleware().invoke::<InvokeModelStage>(context, terminal);
         let outcome = self.drive_model_stage(run, stream).await;
@@ -1169,7 +1171,7 @@ impl Agent {
 
     /// Estimates the input tokens of the next model call: the last
     /// assistant message's known usage plus an estimate of what was added since.
-    pub(crate) async fn estimate_input_tokens(&self, tool_specs: &[ToolSpec]) -> Result<u64> {
+    pub(crate) async fn estimate_input_tokens(&self) -> Result<u64> {
         let messages = self.local.messages();
         let proxy = ModelProxy::new(self.local.model().clone());
         let baseline = messages.iter().enumerate().rev().find_map(|(index, message)| {
@@ -1177,11 +1179,7 @@ impl Agent {
             (message.role == Role::Assistant).then_some((index, usage))
         });
         let Some((index, usage)) = baseline else {
-            let options = CountTokensOptions {
-                system_prompt: self.local.system_prompt().cloned(),
-                tool_specs: tool_specs.to_vec(),
-            };
-            return proxy.count_tokens(messages, options).await;
+            return count_request_tokens(&self.local, messages).await;
         };
         let known = usage.total_prompt_tokens().saturating_add(usage.output_tokens);
         let added = &messages[index + 1..];
@@ -1373,6 +1371,7 @@ struct ModelTerminal {
     cancel_signal: CancelSignal,
     invocation_context: InvocationContext,
     invoked: Arc<Mutex<Option<Arc<dyn Model>>>>,
+    latest_call_tools: CallToolsRecord,
 }
 
 /// The innermost layer of the model stage: streams the context's model with the context's
@@ -1403,8 +1402,11 @@ fn model_terminal(terminal: ModelTerminal) -> TerminalFn<InvokeModelStage> {
             agent_metadata: terminal.agent_metadata.clone(),
             structured_output_schema: context.structured_output_schema,
             cancel_signal: Some(terminal.cancel_signal.clone()),
+            deferred_tools: context.deferred_tools,
         };
-        let request = ModelProxy::new(context.model.clone()).prepare_request(request);
+        let request = ModelProxy::new(context.model.clone())
+            .with_call_tools_record(terminal.latest_call_tools.clone())
+            .prepare_request(request);
         let mut stream = context.model.stream_aggregated(request);
         StageStream::new(async_stream::stream! {
             let signal = terminal.cancel_signal.clone();

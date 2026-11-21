@@ -180,7 +180,7 @@ async fn yields_the_same_events_as_the_underlying_model() {
 #[tokio::test]
 async fn gives_a_tool_result_whose_content_is_all_unknown_a_placeholder_text() {
     let unknown = ToolResultContent::Unknown(UnknownBlock::new(
-        serde_json::json!({"toolReference": {"name": "shell"}})
+        serde_json::json!({"futureBlock": {"name": "shell"}})
             .as_object()
             .unwrap()
             .clone(),
@@ -515,4 +515,133 @@ async fn client_side_summarize_sends_messages_the_way_the_proxy_renders_them() {
     let sent = &model.requests()[0].messages;
     assert_eq!(sent[0].content, vec![text("SUMMARY"), text("next")]);
     assert_eq!(sent[1].content[..2], [text("go"), text("\n\nreminder")]);
+}
+
+mod deferred_tools {
+    use std::collections::HashSet;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::models::DeferredToolLoading;
+    use crate::types::{ToolReferenceBlock, ToolSpec};
+
+    fn definition() -> ToolSpec {
+        ToolSpec::new("shell", "Run a command")
+            .with_input_schema(json!({"type": "object", "properties": {"command": {"type": "string"}}}))
+    }
+
+    fn pinned() -> ToolSpec {
+        ToolSpec::new("load_tools", "Load tools.").with_input_schema(json!({"type": "object"}))
+    }
+
+    fn history() -> Vec<Message> {
+        vec![
+            Message::new(
+                Role::User,
+                vec![ToolResultBlock::success("t-1", vec![ToolReferenceBlock::new("shell").into()]).into()],
+            )
+            .with_tracking_id("msg-1"),
+        ]
+    }
+
+    fn model_with(deferred_tool_loading: Option<DeferredToolLoading>) -> MockModel {
+        let model = MockModel::new().with_turn("ok");
+        with_capabilities(
+            &model,
+            ModelCapabilities {
+                deferred_tool_loading,
+                ..ModelCapabilities::default()
+            },
+        );
+        model
+    }
+
+    /// Sends the history through the proxy and returns the tool result content the model received.
+    async fn sent_content(
+        deferred_tool_loading: Option<DeferredToolLoading>,
+        tool_specs: Vec<ToolSpec>,
+    ) -> Vec<ToolResultContent> {
+        let model = model_with(deferred_tool_loading);
+        let request = ModelRequest {
+            tool_specs,
+            ..ModelRequest::builder().messages(history()).build()
+        };
+        drain(&model, request, None).await.unwrap();
+        let ContentBlock::ToolResult(result) = &model.requests()[0].messages[0].content[0] else {
+            panic!("not a tool result");
+        };
+        result.content.clone()
+    }
+
+    /// Sends a call that defers `shell` and pins `load_tools`, and returns the request the model
+    /// received.
+    async fn sent_request(deferred_tool_loading: DeferredToolLoading) -> ModelRequest {
+        let model = model_with(Some(deferred_tool_loading));
+        let request = ModelRequest {
+            tool_specs: vec![definition(), pinned()],
+            deferred_tools: HashSet::from(["shell".to_owned()]),
+            ..ModelRequest::builder().messages(vec![user("go")]).build()
+        };
+        drain(&model, request, None).await.unwrap();
+        model.requests().remove(0)
+    }
+
+    #[tokio::test]
+    async fn sends_a_deferred_spec_as_a_stub_with_an_open_schema_to_a_model_that_takes_stubs() {
+        assert_eq!(
+            sent_request(DeferredToolLoading::Stubs).await.tool_specs,
+            vec![
+                ToolSpec::new(
+                    "shell",
+                    "Run a command\nCall load_tools with this name for its parameters first."
+                )
+                .with_input_schema(json!({"type": "object"})),
+                pinned(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn sends_the_deferred_spec_as_it_is_to_a_model_that_defers_natively_and_a_model_without_deferred_tools() {
+        for deferred_tool_loading in [DeferredToolLoading::Native, DeferredToolLoading::Unsupported] {
+            let request = sent_request(deferred_tool_loading).await;
+            assert_eq!(request.tool_specs, vec![definition(), pinned()]);
+            assert_eq!(request.deferred_tools, HashSet::from(["shell".to_owned()]));
+        }
+    }
+
+    #[tokio::test]
+    async fn passes_the_reference_to_a_model_that_defers_tools_natively_whose_provider_sends_it() {
+        assert_eq!(
+            sent_content(Some(DeferredToolLoading::Native), vec![definition()]).await,
+            vec![ToolReferenceBlock::new("shell").into()]
+        );
+    }
+
+    #[tokio::test]
+    async fn sends_the_call_s_parameters_for_the_tool_as_text_to_a_model_that_takes_stubs_and_a_model_without_deferred_tools()
+     {
+        let changed =
+            ToolSpec::new("shell", "Run a command").with_input_schema(json!({"type": "object", "properties": {}}));
+        for deferred_tool_loading in [DeferredToolLoading::Stubs, DeferredToolLoading::Unsupported] {
+            assert_eq!(
+                sent_content(Some(deferred_tool_loading), vec![changed.clone()]).await,
+                vec![ToolResultContent::text(format!(
+                    "shell parameters: {}",
+                    json!({"type": "object", "properties": {}})
+                ))]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn names_the_tool_when_the_call_does_not_include_it() {
+        assert_eq!(
+            sent_content(None, Vec::new()).await,
+            vec![ToolResultContent::text(
+                "Loaded tool shell, which this request doesn't include."
+            )]
+        );
+    }
 }

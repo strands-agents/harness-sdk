@@ -1,12 +1,17 @@
 //! Request formatting for the Messages API.
 
+use std::collections::HashSet;
+use std::sync::LazyLock;
+
 use super::client::ApiVersion;
 use super::{AnthropicModelConfig, COMPACTION_BETA, TURN_SCOPED_SYSTEM_BETA};
 use crate::error::{Error, Result};
 use crate::logging::warn_once;
-use crate::models::model_info::{ModelInfo, PromptCaching};
+use crate::models::model_info::{DeferredToolLoading, ModelInfo, PromptCaching};
 use crate::models::thinking_binding::{THINKING_BINDING_BETA, thinking_with_drop_block};
+use crate::models::tool_references::{has_tool_references, with_tool_reference_text};
 use crate::models::{CacheSectionSetting, CacheStrategy, ResolvedCacheSection, resolve_cache_section};
+use crate::tools::LOAD_TOOLS_TOOL_NAME;
 use crate::types::media::base64_bytes;
 use crate::types::{
     ContentBlock, DocumentBlock, DocumentFormat, DocumentSource, ImageBlock, ImageFormat, ImageSource, JsonObject,
@@ -42,6 +47,8 @@ pub(super) struct FormatOptions<'a> {
     pub(super) tool_specs: &'a [ToolSpec],
     pub(super) tool_choice: Option<&'a ToolChoice>,
     pub(super) dynamic_trailing_blocks: usize,
+    /// The tools the call defers; sent with `defer_loading` when the model defers natively.
+    pub(super) deferred_tools: Option<&'a HashSet<String>>,
 }
 
 /// The API version Bedrock's InvokeModel takes in the body (`AnthropicBedrock`'s default). It still
@@ -225,6 +232,14 @@ impl Formatter<'_> {
         } else {
             messages
         };
+        // Requests that skip ModelProxy, such as server-side summaries and native token counts, can carry references too.
+        let referenced;
+        let messages = if has_tool_references(messages) {
+            referenced = with_tool_reference_text(messages.to_vec(), options.tool_specs, self.deferred_tools(options));
+            referenced.as_slice()
+        } else {
+            messages
+        };
 
         let mut request = JsonObject::new();
         request.insert("model".to_owned(), self.model_id().into());
@@ -284,10 +299,20 @@ impl Formatter<'_> {
         Ok(request)
     }
 
+    /// The tools the call defers, when the model defers them natively; none otherwise.
+    fn deferred_tools<'b>(&self, options: &FormatOptions<'b>) -> &'b HashSet<String> {
+        static NONE: LazyLock<HashSet<String>> = LazyLock::new(HashSet::new);
+        let native = self.model_info.capabilities.deferred_tool_loading == Some(DeferredToolLoading::Native);
+        match options.deferred_tools {
+            Some(deferred) if native => deferred,
+            _ => &NONE,
+        }
+    }
+
     /// The function tools, then the server tools unless a tool is forced, with a cache point on the
-    /// last one.
+    /// last tool that isn't deferred.
     fn format_tools(&self, options: &FormatOptions<'_>) -> Vec<JsonValue> {
-        let mut tools: Vec<JsonValue> = options.tool_specs.iter().map(format_tool_spec).collect();
+        let mut tools = format_function_tools(options.tool_specs, self.deferred_tools(options));
         let server_tools: Vec<&JsonObject> = self
             .config
             .anthropic_tools
@@ -319,8 +344,14 @@ impl Formatter<'_> {
             }
             Some(_) => {}
         }
+        // A cache_control on the last tool caches all of them, so one cache point suffices. Deferred tools are left
+        // out of the cached prefix and the API rejects cache_control on them.
         let cache = self.tools_cache();
-        if let (true, Some(JsonValue::Object(last))) = (cache.enabled, tools.last_mut()) {
+        let last = tools
+            .iter_mut()
+            .rev()
+            .find(|tool| tool.get("defer_loading") != Some(&JsonValue::Bool(true)));
+        if let (true, Some(JsonValue::Object(last))) = (cache.enabled, last) {
             last.insert("cache_control".to_owned(), cache_control(cache.ttl.as_deref()));
         }
         tools
@@ -530,6 +561,10 @@ impl Formatter<'_> {
                 ToolResultContent::Document(document) => {
                     self.format_content_block(&ContentBlock::Document(document.clone()))?
                 }
+                ToolResultContent::ToolReference(reference) => Some(object([
+                    ("type", "tool_reference".into()),
+                    ("tool_name", reference.name.clone().into()),
+                ])),
                 _ => None,
             };
             inner.extend(formatted);
@@ -596,6 +631,39 @@ pub(super) fn is_tool_forced(request: &JsonObject) -> bool {
             .and_then(JsonValue::as_str),
         Some("any" | "tool")
     )
+}
+
+/// Formats tool specs as function tools. Each deferred tool goes with `defer_loading`, and
+/// `load_tools` lists the deferred tools, since the API hides them until they are loaded.
+fn format_function_tools(tool_specs: &[ToolSpec], deferred_tools: &HashSet<String>) -> Vec<JsonValue> {
+    let loadable: Vec<String> = tool_specs
+        .iter()
+        .filter(|spec| deferred_tools.contains(&spec.name))
+        .map(|spec| format!("- {}: {}", spec.name, spec.description))
+        .collect();
+    let listing = if loadable.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nTools you can load:\n{}", loadable.join("\n"))
+    };
+    tool_specs
+        .iter()
+        .map(|spec| {
+            let mut tool = format_tool_spec(spec);
+            if let JsonValue::Object(map) = &mut tool {
+                if spec.name == LOAD_TOOLS_TOOL_NAME {
+                    map.insert(
+                        "description".to_owned(),
+                        format!("{}{listing}", spec.description).into(),
+                    );
+                }
+                if deferred_tools.contains(&spec.name) {
+                    map.insert("defer_loading".to_owned(), true.into());
+                }
+            }
+            tool
+        })
+        .collect()
 }
 
 fn format_tool_spec(spec: &ToolSpec) -> JsonValue {

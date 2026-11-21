@@ -33,6 +33,7 @@ use crate::experimental::context_manager::types::{ContextState, ContextStrategy}
 use crate::hooks::MessageAddedEvent;
 use crate::logging::warn_once;
 use crate::models::model_proxy::ModelProxy;
+use crate::models::tool_references::holds_tool_reference;
 use crate::models::{CountTokensOptions, is_js_whitespace};
 use crate::types::{ContentBlock, Message, OffloadMethod, Role, TextBlock, ToolResultBlock};
 
@@ -329,9 +330,9 @@ impl OffloadCore {
         self.matcher.matches_block(block, message, tool_names)
     }
 
-    /// Whether a tool result is the retrieval tool's output, or already holds a placeholder this
-    /// strategy shouldn't replace. Only drop goes further, since truncate and summarize would read
-    /// the placeholder as the content.
+    /// Whether a tool result is the retrieval tool's output, holds a tool reference, or already
+    /// holds a placeholder this strategy shouldn't replace. Only drop goes further, since truncate
+    /// and summarize would read the placeholder as the content.
     fn is_protected_result(
         &self,
         block: &ToolResultBlock,
@@ -339,6 +340,10 @@ impl OffloadCore {
         stash: Option<&Stash>,
     ) -> bool {
         if stash.is_some() && tool_names.get(&block.tool_use_id).map(String::as_str) == Some(RETRIEVAL_TOOL_NAME) {
+            return true;
+        }
+        // A tool reference is what keeps a loaded tool's schema in the model's context.
+        if holds_tool_reference(block) {
             return true;
         }
         block

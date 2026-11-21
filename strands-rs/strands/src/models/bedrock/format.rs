@@ -546,6 +546,12 @@ impl<'a> Formatter<'a> {
                 ToolResultContent::Image(image) => Some(format_image(image)),
                 ToolResultContent::Video(video) => Some(format_video(video)),
                 ToolResultContent::Document(document) => Some(format_document(document)),
+                // ModelProxy sends references as text unless a model_info override reports native
+                // deferral, which Converse lacks. Converse then gets every full spec, so the tool only
+                // needs naming.
+                ToolResultContent::ToolReference(reference) => {
+                    Some(json!({"text": format!("Loaded {}.", reference.name)}))
+                }
                 _ => None,
             })
             .collect();

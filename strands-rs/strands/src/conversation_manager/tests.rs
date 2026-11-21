@@ -1934,6 +1934,7 @@ fn token_context(model: Arc<dyn Model>, messages: Vec<Message>, projected: Optio
         projected_input_tokens: projected,
         dynamic_trailing_blocks: None,
         structured_output_schema: None,
+        deferred_tools: std::collections::HashSet::new(),
         invocation_context: None,
     }
 }

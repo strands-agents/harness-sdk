@@ -228,3 +228,51 @@ mod local_traces {
         assert_eq!(children, ["stream_messages", "Tool: testTool"]);
     }
 }
+
+#[tokio::test]
+async fn passes_the_deferred_tools_to_the_model_and_records_the_tools_it_received() {
+    use crate::models::{BaseModelConfig, DeferredToolLoading, ModelCapabilities, ModelInfo};
+
+    let model = MockModel::new().with_turn("Hello");
+    // A model that takes stubs would get the deferred spec as a stub.
+    model
+        .update_config(BaseModelConfig {
+            model_info: Some(ModelInfo {
+                capabilities: ModelCapabilities {
+                    deferred_tool_loading: Some(DeferredToolLoading::Native),
+                    ..ModelCapabilities::default()
+                },
+                ..ModelInfo::default()
+            }),
+            ..BaseModelConfig::default()
+        })
+        .unwrap();
+    let mut agent = test_agent(model.clone());
+    let shell = ToolSpec::new("shell", "Run a command").with_input_schema(json!({"type": "object"}));
+    let grep = ToolSpec::new("grep", "Search files").with_input_schema(json!({"type": "object"}));
+    let deferred: HashSet<String> = HashSet::from(["shell".to_owned()]);
+    let (input_shell, input_deferred) = (shell.clone(), deferred.clone());
+    agent.add_middleware(InvokeModelStage::input(move |mut context| {
+        context.tool_specs = vec![input_shell.clone()];
+        context.deferred_tools = input_deferred.clone();
+        async move { Ok(context) }
+    }));
+    let wrap_grep = grep.clone();
+    agent.add_middleware(InvokeModelStage::wrap(move |mut context, next| {
+        context.tool_specs.push(wrap_grep.clone());
+        next.call(context)
+    }));
+
+    agent.invoke("Test prompt").await.unwrap();
+
+    let request = model.requests().remove(0);
+    assert_eq!(request.tool_specs, vec![shell.clone(), grep.clone()]);
+    assert_eq!(request.deferred_tools, deferred);
+    assert_eq!(
+        agent.local().latest_call_tools(),
+        Some(crate::models::model_proxy::CallTools {
+            tool_specs: vec![shell, grep],
+            deferred_tools: deferred,
+        })
+    );
+}
