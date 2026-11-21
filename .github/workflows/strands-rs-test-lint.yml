@@ -125,6 +125,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # harness-ts is not a root workspace member. Skipping its @strands-agents/sdk peer makes it
+      # resolve the repo's strands-ts instead of a published copy.
+      - name: Install harness-ts dependencies
+        run: npm ci --prefix harness-ts --legacy-peer-deps --ignore-scripts
+
       - name: Build strands-ts
         run: npm run build -w strands-ts
 
