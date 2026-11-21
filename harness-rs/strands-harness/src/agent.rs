@@ -229,9 +229,9 @@ impl fmt::Debug for MemoryOption {
 pub struct HarnessAgentOptions {
     /// Consumer tools, added alongside the built-in tools. A tool name must be unique across all
     /// sources (built-in tools, `tools`, plugins); a collision fails at construction. To replace
-    /// a built-in, drop it first through `builtin_tools`. Consumer tools also join the
-    /// `subagent` tool's narrowable set, and a connected MCP client is offered on its
-    /// `mcp_servers` axis under its client name. Set them with the builder's `tools(..)`.
+    /// a built-in, drop it first through `builtin_tools`. Named consumer tools also join the
+    /// `subagent` tool's narrowable set, and every MCP client is handed to each delegate. Set them
+    /// with the builder's `tools(..)`.
     #[builder(field)]
     pub tools: Vec<ToolSource>,
     /// Consumer plugins, registered before the harness's. An `AgentSkills` plugin here replaces

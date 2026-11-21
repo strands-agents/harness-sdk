@@ -14,7 +14,6 @@ use strands::memory::MemoryStore;
 
 use crate::config::BuiltinToolName;
 pub(crate) use crate::tools::programmatic_tool_caller::ProgrammaticToolCallerConfig;
-pub(crate) use crate::tools::subagent::SubagentConfig;
 pub(crate) use crate::tools::web_fetch::{WebFetchConfig, WebFetchTransport};
 pub(crate) use crate::tools::web_search::WebSearchSetting;
 
@@ -155,6 +154,16 @@ setting_from!(
     crate::config::HarnessConfigWebFetch,
     crate::config::HarnessConfigMemory,
 );
+
+/// Per-tool config for the `subagent` built-in (`SubagentConfig`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, bon::Builder)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SubagentConfig {
+    /// How many levels of delegation a child may itself open; `0` removes the tool. 2 when
+    /// absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_depth: Option<usize>,
+}
 
 /// Per-tool config for the `read` built-in (`ReadConfig`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, bon::Builder)]

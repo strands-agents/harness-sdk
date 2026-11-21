@@ -6,6 +6,9 @@ use crate::types::Effort;
 /// The model a harness agent runs on when `model` is unset.
 pub(crate) const DEFAULT_MODEL: &str = "bedrock/global.anthropic.claude-opus-5";
 
+/// How many levels of delegation a `subagent` child may itself open when `maxDepth` is unset.
+pub(crate) const DEFAULT_SUBAGENT_MAX_DEPTH: usize = 2;
+
 /// The reasoning effort when `effort` is unset.
 pub(crate) const DEFAULT_EFFORT: Effort = Effort::Auto;
 

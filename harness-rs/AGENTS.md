@@ -23,7 +23,7 @@ harness-rs/
 │   │   ├── sandbox.rs          # shell dialect probe shared by tools and plugins
 │   │   ├── telemetry.rs        # OTEL_TRACES_EXPORTER -> strands::telemetry::setup_tracer
 │   │   ├── factory.rs          # constructor table for the built-in tools and plugins
-│   │   ├── tools/              # file_tools, web_fetch, web_search, programmatic_tool_caller, subagent
+│   │   ├── tools/              # file_tools, web_fetch, web_search, programmatic_tool_caller
 │   │   └── plugins/            # environment
 │   └── tests/
 └── docs/DIVERGENCES.md

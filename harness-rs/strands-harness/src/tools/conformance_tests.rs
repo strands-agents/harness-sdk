@@ -11,12 +11,9 @@ use super::programmatic_tool_caller::{
     MakeProgrammaticToolCallerOptions, ProgrammaticToolCallerConfig, make_programmatic_tool_caller,
     programmatic_tool_caller,
 };
-use super::subagent::{
-    AgentBuilder, Choice, ChoiceOption, MakeSubagentOptions, Preset, SubagentConfig, SubagentContext, generalist,
-    make_subagent, subagent_tool,
-};
 use super::web_fetch::{WebFetchConfig, web_fetch_tool};
 use super::web_search::{SearchBackend, SearchResult, WebSearchError, search_tool};
+use crate::factory::{BUILTIN_TOOL_FACTORY, SubagentToolOptions};
 
 fn fixtures() -> Vec<(String, String)> {
     let path = concat!(
@@ -46,76 +43,31 @@ impl SearchBackend for NoBackend {
     }
 }
 
-fn builder() -> AgentBuilder {
-    AgentBuilder::new(|_spec| async { Err(strands::Error::other("unused")) })
+/// The harness `subagent` over the selectable set `builtinTools: ['shell', 'read', 'subagent']` yields.
+fn default_harness_subagent() -> Arc<dyn Tool> {
+    let options = SubagentToolOptions {
+        builder: Arc::new(|_spec| Box::pin(async { Err(strands::Error::other("unused")) })),
+        inherited_tools: vec!["shell".to_owned(), "read".to_owned(), "subagent".to_owned()],
+        max_depth: None,
+    };
+    (BUILTIN_TOOL_FACTORY.subagent)(options).unwrap()
 }
 
-fn tool(name: &str) -> Box<dyn Tool> {
+fn tool(name: &str) -> Arc<dyn Tool> {
     match name {
-        "read" => Box::new(read_tool(true)),
-        "read_media_off" => Box::new(read_tool(false)),
-        "write" => Box::new(write_tool()),
-        "edit" => Box::new(edit_tool()),
-        "web_fetch" => Box::new(web_fetch_tool(WebFetchConfig::default(), None).unwrap()),
-        "web_search" => Box::new(search_tool(Arc::new(NoBackend))),
-        "programmatic_tool_caller" => Box::new(programmatic_tool_caller(ProgrammaticToolCallerConfig::default())),
-        "programmatic_tool_caller_named" => Box::new(make_programmatic_tool_caller(
+        "read" => Arc::new(read_tool(true)),
+        "read_media_off" => Arc::new(read_tool(false)),
+        "write" => Arc::new(write_tool()),
+        "edit" => Arc::new(edit_tool()),
+        "web_fetch" => Arc::new(web_fetch_tool(WebFetchConfig::default(), None).unwrap()),
+        "web_search" => Arc::new(search_tool(Arc::new(NoBackend))),
+        "programmatic_tool_caller" => Arc::new(programmatic_tool_caller(ProgrammaticToolCallerConfig::default())),
+        "programmatic_tool_caller_named" => Arc::new(make_programmatic_tool_caller(
             MakeProgrammaticToolCallerOptions::builder()
                 .name("run_code".to_owned())
                 .build(),
         )),
-        "subagent_default_harness" => Box::new(
-            subagent_tool(
-                SubagentConfig::default(),
-                SubagentContext::new(builder())
-                    .with_inherited_tools(["shell", "read"])
-                    .with_inherited_mcp_servers(["docs"]),
-            )
-            .unwrap(),
-        ),
-        "subagent_bare" => Box::new(make_subagent(MakeSubagentOptions::builder().builder(builder()).build()).unwrap()),
-        "subagent_choice_axes" => Box::new(
-            make_subagent(
-                MakeSubagentOptions::builder()
-                    .builder(builder())
-                    .presets([
-                        ("generalist", generalist()),
-                        (
-                            "reviewer",
-                            Preset::builder()
-                                .instructions("review")
-                                .tools(["read"])
-                                .description("reviews diffs")
-                                .build(),
-                        ),
-                    ])
-                    .instructions(Choice::new([
-                        ChoiceOption::new("poet")
-                            .with_value("You are a poet.")
-                            .with_description("writes verse"),
-                        ChoiceOption::new("plain"),
-                    ]))
-                    .tools(
-                        Choice::new([
-                            ChoiceOption::new("readonly")
-                                .with_value("read")
-                                .with_description("read files"),
-                            ChoiceOption::new("shell"),
-                        ])
-                        .multiple(true),
-                    )
-                    .model(Choice::new(["fast", "deep"]))
-                    .context(Choice::new([
-                        ChoiceOption::new("fresh")
-                            .with_value("none")
-                            .with_description("start over"),
-                        ChoiceOption::new("all"),
-                    ]))
-                    .name("delegate")
-                    .build(),
-            )
-            .unwrap(),
-        ),
+        "subagent_default_harness" => default_harness_subagent(),
         other => panic!("no Rust tool for fixture case {other}"),
     }
 }
@@ -123,7 +75,7 @@ fn tool(name: &str) -> Box<dyn Tool> {
 #[test]
 fn harness_tool_specs_match_the_ts_fixture() {
     let cases = fixtures();
-    assert_eq!(cases.len(), 12);
+    assert_eq!(cases.len(), 9);
     for (name, json) in cases {
         let spec = serde_json::to_string(&tool(&name).tool_spec()).unwrap();
         assert_eq!(spec, json, "{name}");

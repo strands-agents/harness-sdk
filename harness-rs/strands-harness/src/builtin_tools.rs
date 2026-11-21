@@ -5,8 +5,6 @@
 use std::sync::Arc;
 
 use strands::ModelSource;
-#[cfg(feature = "mcp")]
-use strands::mcp::McpClient;
 use strands::tools::{Tool, ToolSource};
 
 use crate::agent::{HarnessAgentOptions, MemoryOption, ParentConfig, create_harness_boxed};
@@ -169,9 +167,19 @@ pub(crate) fn resolve_builtin_tools(value: Option<&BuiltinToolsOption>) -> Resol
         programmatic_tool_caller: mapping
             .programmatic_tool_caller
             .unwrap_or_else(|| base(BuiltinToolName::ProgrammaticToolCaller).into()),
-        subagent: mapping
-            .subagent
-            .unwrap_or_else(|| base(BuiltinToolName::Subagent).into()),
+        subagent: registered_subagent(
+            mapping
+                .subagent
+                .unwrap_or_else(|| base(BuiltinToolName::Subagent).into()),
+        ),
+    }
+}
+
+/// A subagent that may not delegate even once is not registered at all.
+fn registered_subagent(setting: Setting<SubagentConfig>) -> Setting<SubagentConfig> {
+    match setting {
+        Setting::Config(SubagentConfig { max_depth: Some(0) }) => false.into(),
+        setting => setting,
     }
 }
 
@@ -295,13 +303,12 @@ pub(crate) fn build_builtin_tools(
     Ok(tools)
 }
 
-/// The parent's consumer tools by name and its MCP clients by client name: what a `subagent`
-/// child can be granted.
+/// What a `subagent` child can be granted: the parent's named consumer tools, plus its MCP
+/// clients, which every child keeps.
 #[derive(Clone, Default)]
 pub(crate) struct Delegable {
     pub(crate) tools: Vec<(String, Arc<dyn Tool>)>,
-    #[cfg(feature = "mcp")]
-    pub(crate) mcp_clients: Vec<(String, McpClient)>,
+    pub(crate) mcp_clients: Vec<ToolSource>,
 }
 
 impl Delegable {
@@ -311,23 +318,11 @@ impl Delegable {
             .find(|(candidate, _)| candidate == name)
             .map(|(_, tool)| tool)
     }
-
-    fn mcp_server_names(&self) -> Vec<String> {
-        #[cfg(feature = "mcp")]
-        {
-            self.mcp_clients.iter().map(|(name, _)| name.clone()).collect()
-        }
-        #[cfg(not(feature = "mcp"))]
-        {
-            Vec::new()
-        }
-    }
 }
 
 /// Indexes the parent's consumer tools for delegation. Only top-level named tools join the
-/// selectable set. MCP clients are keyed by client name, since the model picks servers by name:
-/// an unnamed client cannot be offered, and of two sharing a name only the first is; both are
-/// warned about.
+/// selectable set; MCP clients are shared with every child (not reconnected), so a delegate keeps
+/// every MCP tool.
 pub(crate) fn delegable(tools: &[ToolSource]) -> Delegable {
     let mut delegable = Delegable::default();
     for source in tools {
@@ -335,34 +330,16 @@ pub(crate) fn delegable(tools: &[ToolSource]) -> Delegable {
             ToolSource::Tool(tool) if delegable.tool(tool.name()).is_none() => {
                 delegable.tools.push((tool.name().to_owned(), Arc::clone(tool)));
             }
-            #[cfg(feature = "mcp")]
-            ToolSource::McpClient(client) => add_mcp_client(&mut delegable, client),
+            source if is_mcp_client(source) => delegable.mcp_clients.push(source.clone()),
             _ => {}
         }
     }
     delegable
 }
 
-#[cfg(feature = "mcp")]
-fn add_mcp_client(delegable: &mut Delegable, client: &McpClient) {
-    let name = client.client_name();
-    if name == strands::mcp::DEFAULT_CLIENT_NAME {
-        tracing::warn!(
-            "An McpClient in `tools` has no applicationName; it can't be offered to subagents on `mcp_servers`, so delegates won't get its tools. Set applicationName to name it."
-        );
-    } else if delegable.mcp_clients.iter().any(|(known, _)| known == name) {
-        tracing::warn!(
-            "Two McpClients in `tools` share the name {}; only the first is offered to subagents on `mcp_servers`.",
-            crate::types::json_string(name)
-        );
-    } else {
-        delegable.mcp_clients.push((name.to_owned(), client.clone()));
-    }
-}
-
 /// What the default `subagent` tool is built from: the child builder, the selectable tools (the
-/// parent's built-ins minus `web_search`, which is resolved per model, plus its consumer tools) and
-/// MCP servers, and the depth bound.
+/// parent's built-ins minus `web_search`, which is resolved per model, plus its consumer tools),
+/// and the depth bound.
 pub(crate) fn subagent_tool_options(
     parent: &Arc<ParentConfig>,
     config: SubagentConfig,
@@ -380,7 +357,6 @@ pub(crate) fn subagent_tool_options(
     SubagentToolOptions {
         builder: child_builder(Arc::clone(parent), Arc::clone(&delegable), env.clone()),
         inherited_tools,
-        inherited_mcp_servers: delegable.mcp_server_names(),
         max_depth: config.max_depth,
     }
 }
@@ -432,15 +408,12 @@ pub(crate) fn child_options(
             .iter()
             .filter_map(|name| delegable.tool(name))
             .map(|tool| ToolSource::Tool(Arc::clone(tool)))
+            .chain(delegable.mcp_clients.iter().cloned())
             .collect();
     }
     if let Some(model) = spec.model {
         options.model = Some(model);
     }
-    options.tools.retain(|source| !is_mcp_client(source));
-    options
-        .tools
-        .extend(selected_mcp_clients(delegable, spec.mcp_servers.as_deref()));
     Ok(options)
 }
 
@@ -479,36 +452,6 @@ fn is_mcp_client(source: &ToolSource) -> bool {
     {
         let _ = source;
         false
-    }
-}
-
-/// The parent's MCP clients the child gets: the named ones (each once), or all of them.
-fn selected_mcp_clients(delegable: &Delegable, names: Option<&[String]>) -> Vec<ToolSource> {
-    #[cfg(feature = "mcp")]
-    {
-        let all = delegable.mcp_server_names();
-        let names = names.unwrap_or(&all);
-        let mut unique: Vec<&String> = Vec::new();
-        for name in names {
-            if !unique.contains(&name) {
-                unique.push(name);
-            }
-        }
-        let by_name: std::collections::HashMap<&str, &McpClient> = delegable
-            .mcp_clients
-            .iter()
-            .map(|(name, client)| (name.as_str(), client))
-            .collect();
-        unique
-            .into_iter()
-            .filter_map(|name| by_name.get(name.as_str()))
-            .map(|client| ToolSource::McpClient((*client).clone()))
-            .collect()
-    }
-    #[cfg(not(feature = "mcp"))]
-    {
-        let _ = (delegable, names);
-        Vec::new()
     }
 }
 
