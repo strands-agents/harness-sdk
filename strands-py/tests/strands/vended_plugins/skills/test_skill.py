@@ -135,6 +135,13 @@ class TestParseFrontmatter:
         assert frontmatter["description"] == "has --- inside"
         assert body == "Body here."
 
+    def test_frontmatter_with_utf8_bom(self):
+        """A leading UTF-8 BOM does not hide the opening delimiter. Guards strands-agents/harness-sdk#6451."""
+        content = "\ufeff---\nname: test-skill\ndescription: A test\n---\nBody here."
+        frontmatter, body = _parse_frontmatter(content)
+        assert frontmatter == {"name": "test-skill", "description": "A test"}
+        assert body == "Body here."
+
 
 class TestValidateSkillName:
     """Tests for _validate_skill_name (lenient validation)."""
@@ -427,6 +434,17 @@ class TestSkillFromFile:
         _make_skill_dir(tmp_path, "valid-skill")
         skill = Skill.from_file(tmp_path / "valid-skill", strict=True)
         assert skill.name == "valid-skill"
+
+    def test_from_file_with_utf8_bom(self, tmp_path):
+        """A SKILL.md saved with a UTF-8 BOM loads from disk. Guards strands-agents/harness-sdk#6451."""
+        skill_dir = tmp_path / "test-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "\ufeff---\nname: test-skill\ndescription: A test\n---\nBody here.", encoding="utf-8"
+        )
+        skill = Skill.from_file(skill_dir)
+        assert skill.name == "test-skill"
+        assert skill.instructions == "Body here."
 
 
 class TestSkillFromDirectory:
