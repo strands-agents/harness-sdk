@@ -1,0 +1,6 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+cognitive-complexity-threshold = 25
+too-many-arguments-threshold = 8

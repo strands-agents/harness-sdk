@@ -1,0 +1,251 @@
+{
+  "spans": [
+    {
+      "name": "chat",
+      "parent": "execute_agent_loop_cycle",
+      "attributes": [
+        "gen_ai.operation.name",
+        "gen_ai.system",
+        "gen_ai.request.model",
+        "custom.key",
+        "gen_ai.agent.name",
+        "gen_ai.event.start_time",
+        "gen_ai.event.end_time",
+        "gen_ai.usage.prompt_tokens",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.completion_tokens",
+        "gen_ai.usage.output_tokens",
+        "gen_ai.usage.total_tokens",
+        "gen_ai.usage.cache_read.input_tokens",
+        "gen_ai.usage.cache_read_input_tokens"
+      ],
+      "events": [
+        "gen_ai.system.message",
+        "gen_ai.user.message",
+        "gen_ai.choice"
+      ]
+    },
+    {
+      "name": "chat",
+      "parent": "execute_agent_loop_cycle",
+      "attributes": [
+        "gen_ai.operation.name",
+        "gen_ai.system",
+        "gen_ai.request.model",
+        "custom.key",
+        "gen_ai.agent.name",
+        "gen_ai.event.start_time",
+        "gen_ai.event.end_time",
+        "gen_ai.usage.prompt_tokens",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.completion_tokens",
+        "gen_ai.usage.output_tokens",
+        "gen_ai.usage.total_tokens"
+      ],
+      "events": [
+        "gen_ai.system.message",
+        "gen_ai.user.message",
+        "gen_ai.assistant.message",
+        "gen_ai.tool.message",
+        "gen_ai.choice"
+      ]
+    },
+    {
+      "name": "chat",
+      "parent": "execute_agent_loop_cycle",
+      "attributes": [
+        "gen_ai.operation.name",
+        "gen_ai.system",
+        "gen_ai.request.model",
+        "custom.key",
+        "gen_ai.agent.name",
+        "gen_ai.event.start_time",
+        "gen_ai.event.end_time"
+      ],
+      "events": [
+        "gen_ai.system.message",
+        "gen_ai.user.message",
+        "exception"
+      ]
+    },
+    {
+      "name": "chat",
+      "parent": "execute_agent_loop_cycle",
+      "attributes": [
+        "gen_ai.operation.name",
+        "gen_ai.system",
+        "gen_ai.request.model",
+        "gen_ai.event.start_time",
+        "gen_ai.event.end_time",
+        "gen_ai.usage.prompt_tokens",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.completion_tokens",
+        "gen_ai.usage.output_tokens",
+        "gen_ai.usage.total_tokens"
+      ],
+      "events": [
+        "gen_ai.user.message",
+        "gen_ai.choice"
+      ]
+    },
+    {
+      "name": "execute_agent_loop_cycle",
+      "parent": "invoke_agent inner",
+      "attributes": [
+        "agent_loop.cycle_id",
+        "gen_ai.event.start_time",
+        "gen_ai.event.end_time"
+      ],
+      "events": []
+    },
+    {
+      "name": "execute_agent_loop_cycle",
+      "parent": "invoke_agent outer",
+      "attributes": [
+        "agent_loop.cycle_id",
+        "custom.key",
+        "gen_ai.agent.name",
+        "gen_ai.event.start_time",
+        "gen_ai.event.end_time"
+      ],
+      "events": [
+        "gen_ai.user.message",
+        "gen_ai.assistant.message",
+        "gen_ai.tool.message"
+      ]
+    },
+    {
+      "name": "execute_agent_loop_cycle",
+      "parent": "invoke_agent outer",
+      "attributes": [
+        "agent_loop.cycle_id",
+        "custom.key",
+        "gen_ai.agent.name",
+        "gen_ai.event.start_time",
+        "gen_ai.event.end_time"
+      ],
+      "events": []
+    },
+    {
+      "name": "execute_tool calc",
+      "parent": "execute_agent_loop_cycle",
+      "attributes": [
+        "gen_ai.operation.name",
+        "gen_ai.system",
+        "gen_ai.tool.name",
+        "gen_ai.tool.call.id",
+        "custom.key",
+        "gen_ai.agent.name",
+        "gen_ai.event.start_time",
+        "gen_ai.event.end_time",
+        "gen_ai.tool.status"
+      ],
+      "events": [
+        "gen_ai.tool.message",
+        "gen_ai.choice"
+      ]
+    },
+    {
+      "name": "execute_tool inner",
+      "parent": "execute_agent_loop_cycle",
+      "attributes": [
+        "gen_ai.operation.name",
+        "gen_ai.system",
+        "gen_ai.tool.name",
+        "gen_ai.tool.call.id",
+        "custom.key",
+        "gen_ai.agent.name",
+        "gen_ai.event.start_time",
+        "gen_ai.event.end_time",
+        "gen_ai.tool.status"
+      ],
+      "events": [
+        "gen_ai.tool.message",
+        "gen_ai.choice"
+      ]
+    },
+    {
+      "name": "invoke_agent inner",
+      "parent": "execute_tool inner",
+      "attributes": [
+        "gen_ai.operation.name",
+        "gen_ai.system",
+        "gen_ai.agent.name",
+        "name",
+        "gen_ai.agent.id",
+        "gen_ai.request.model",
+        "gen_ai.event.start_time",
+        "gen_ai.event.end_time",
+        "gen_ai.usage.prompt_tokens",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.completion_tokens",
+        "gen_ai.usage.output_tokens",
+        "gen_ai.usage.total_tokens"
+      ],
+      "events": [
+        "gen_ai.user.message",
+        "gen_ai.choice"
+      ]
+    },
+    {
+      "name": "invoke_agent outer",
+      "parent": null,
+      "attributes": [
+        "gen_ai.operation.name",
+        "gen_ai.system",
+        "gen_ai.agent.name",
+        "name",
+        "gen_ai.agent.id",
+        "gen_ai.request.model",
+        "gen_ai.agent.tools",
+        "system_prompt",
+        "custom.key",
+        "gen_ai.event.start_time",
+        "gen_ai.event.end_time",
+        "gen_ai.usage.prompt_tokens",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.completion_tokens",
+        "gen_ai.usage.output_tokens",
+        "gen_ai.usage.total_tokens",
+        "gen_ai.usage.cache_read.input_tokens",
+        "gen_ai.usage.cache_read_input_tokens"
+      ],
+      "events": [
+        "gen_ai.user.message",
+        "gen_ai.choice"
+      ]
+    }
+  ],
+  "traces": [
+    {
+      "name": "Cycle 1",
+      "children": [
+        {
+          "name": "stream_messages",
+          "children": []
+        },
+        {
+          "name": "stream_messages",
+          "children": []
+        },
+        {
+          "name": "Tool: calc",
+          "children": []
+        },
+        {
+          "name": "Tool: inner",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Cycle 2",
+      "children": [
+        {
+          "name": "stream_messages",
+          "children": []
+        }
+      ]
+    }
+  ]
+}

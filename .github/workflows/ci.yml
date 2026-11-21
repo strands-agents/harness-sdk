@@ -24,6 +24,8 @@ jobs:
       mcp: ${{ steps.filter.outputs.mcp }}
       harness-py: ${{ steps.filter.outputs.harness-py }}
       harness-ts: ${{ steps.filter.outputs.harness-ts }}
+      rust: ${{ steps.filter.outputs.rust }}
+      harness-rs: ${{ steps.filter.outputs.harness-rs }}
       strands-py-src: ${{ steps.filter.outputs.strands-py-src }}
       strands-ts-src: ${{ steps.filter.outputs.strands-ts-src }}
       strands-cli: ${{ steps.filter.outputs.strands-cli }}
@@ -65,6 +67,23 @@ jobs:
             harness-ts:
               - 'harness-ts/**/!(*.md)'
               - '.github/workflows/harness-ts-*'
+              - '.github/workflows/ci.yml'
+            rust:
+              - 'strands-rs/**/!(*.md)'
+              - 'harness-rs/**/!(*.md)'
+              - 'strands-ts/src/**'
+              - 'shared/model-info.json'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'deny.toml'
+              - 'rustfmt.toml'
+              - 'clippy.toml'
+              - '.github/workflows/strands-rs-*'
+              - '.github/workflows/ci.yml'
+            harness-rs:
+              - 'harness-rs/**/!(*.md)'
+              - 'strands-rs/strands/src/**'
+              - '.github/workflows/harness-rs-*'
               - '.github/workflows/ci.yml'
             # SDK runtime sources: changes here also run the harness suites against the local SDK.
             strands-py-src:
@@ -169,6 +188,26 @@ jobs:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
       local-strands-ts: ${{ needs.detect-changes.outputs.strands-ts-src == 'true' }}
 
+  rust:
+    name: Rust
+    needs: detect-changes
+    if: needs.detect-changes.outputs.rust == 'true'
+    uses: ./.github/workflows/strands-rs-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  harness-rust:
+    name: Harness Rust
+    needs: detect-changes
+    if: needs.detect-changes.outputs.harness-rs == 'true'
+    uses: ./.github/workflows/harness-rs-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
   cli:
     name: Strands CLI
     needs: detect-changes
@@ -253,6 +292,8 @@ jobs:
         mcp,
         harness-python,
         harness-typescript,
+        rust,
+        harness-rust,
         cli,
         cli-tui-integration,
         cli-package,

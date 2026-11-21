@@ -1,0 +1,153 @@
+{
+  "source": "strands-ts/src/models/streaming.ts",
+  "cases": [
+    {
+      "name": "message_start_user",
+      "json": "{\"type\":\"modelMessageStartEvent\",\"role\":\"user\"}"
+    },
+    {
+      "name": "message_start_assistant",
+      "json": "{\"type\":\"modelMessageStartEvent\",\"role\":\"assistant\"}"
+    },
+    {
+      "name": "content_block_start_empty",
+      "json": "{\"type\":\"modelContentBlockStartEvent\"}"
+    },
+    {
+      "name": "content_block_start_tool_use",
+      "json": "{\"type\":\"modelContentBlockStartEvent\",\"start\":{\"type\":\"toolUseStart\",\"name\":\"get_weather\",\"toolUseId\":\"tooluse-1\"}}"
+    },
+    {
+      "name": "content_block_start_tool_use_reasoning_signature",
+      "json": "{\"type\":\"modelContentBlockStartEvent\",\"start\":{\"type\":\"toolUseStart\",\"name\":\"search\",\"toolUseId\":\"tooluse-2\",\"reasoningSignature\":\"sig\"}}"
+    },
+    {
+      "name": "content_block_delta_text",
+      "json": "{\"type\":\"modelContentBlockDeltaEvent\",\"delta\":{\"type\":\"textDelta\",\"text\":\"Hel\"}}"
+    },
+    {
+      "name": "content_block_delta_tool_use_input",
+      "json": "{\"type\":\"modelContentBlockDeltaEvent\",\"delta\":{\"type\":\"toolUseInputDelta\",\"input\":\"{\\\"city\\\":\\\"Sea\"}}"
+    },
+    {
+      "name": "content_block_delta_reasoning_text",
+      "json": "{\"type\":\"modelContentBlockDeltaEvent\",\"delta\":{\"type\":\"reasoningContentDelta\",\"text\":\"thinking\"}}"
+    },
+    {
+      "name": "content_block_delta_reasoning_signature",
+      "json": "{\"type\":\"modelContentBlockDeltaEvent\",\"delta\":{\"type\":\"reasoningContentDelta\",\"signature\":\"sig-xyz\"}}"
+    },
+    {
+      "name": "content_block_delta_citations",
+      "json": "{\"type\":\"modelContentBlockDeltaEvent\",\"delta\":{\"type\":\"citationsDelta\",\"citations\":[{\"location\":{\"type\":\"documentChar\",\"documentIndex\":0,\"start\":1,\"end\":12},\"source\":\"doc-0\",\"sourceContent\":[{\"text\":\"source text\"}],\"title\":\"Char doc\"},{\"location\":{\"type\":\"documentPage\",\"documentIndex\":1,\"start\":2,\"end\":3},\"source\":\"doc-1\",\"sourceContent\":[{\"text\":\"page text\"}],\"title\":\"Page doc\"},{\"location\":{\"type\":\"documentChunk\",\"documentIndex\":2,\"start\":0,\"end\":4},\"source\":\"doc-2\",\"sourceContent\":[],\"title\":\"Chunk doc\"},{\"location\":{\"type\":\"searchResult\",\"searchResultIndex\":3,\"start\":5,\"end\":9},\"source\":\"search-3\",\"sourceContent\":[{\"text\":\"search text\"}],\"title\":\"Search result\"},{\"location\":{\"type\":\"web\",\"url\":\"https://example.com/page\",\"domain\":\"example.com\"},\"source\":\"web-4\",\"sourceContent\":[{\"text\":\"web text\"}],\"title\":\"Web page\"},{\"location\":{\"type\":\"web\",\"url\":\"https://example.org/\"},\"source\":\"web-5\",\"sourceContent\":[],\"title\":\"Web page without domain\"}],\"content\":[{\"text\":\"generated text\"},{\"text\":\"more generated text\"}]}}"
+    },
+    {
+      "name": "content_block_stop",
+      "json": "{\"type\":\"modelContentBlockStopEvent\"}"
+    },
+    {
+      "name": "message_stop_end_turn",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"endTurn\"}"
+    },
+    {
+      "name": "message_stop_additional_fields",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"toolUse\",\"additionalModelResponseFields\":{\"thinking\":{\"budget\":1024},\"extra\":[1,\"x\"]}}"
+    },
+    {
+      "name": "message_stop_unknown_reason",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"providerSpecificReason\"}"
+    },
+    {
+      "name": "metadata_empty",
+      "json": "{\"type\":\"modelMetadataEvent\"}"
+    },
+    {
+      "name": "message_stop_additional_fields_null",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"endTurn\",\"additionalModelResponseFields\":null}"
+    },
+    {
+      "name": "metadata_trace_null",
+      "json": "{\"type\":\"modelMetadataEvent\",\"trace\":null}"
+    },
+    {
+      "name": "content_block_delta_reasoning_redacted_content",
+      "json": "{\"type\":\"modelContentBlockDeltaEvent\",\"delta\":{\"type\":\"reasoningContentDelta\",\"redactedContent\":{\"0\":1,\"1\":2,\"2\":3}}}"
+    },
+    {
+      "name": "metadata_full",
+      "json": "{\"type\":\"modelMetadataEvent\",\"usage\":{\"inputTokens\":10,\"outputTokens\":5,\"totalTokens\":15,\"cacheReadInputTokens\":2,\"cacheWriteInputTokens\":3},\"metrics\":{\"latencyMs\":250,\"timeToFirstByteMs\":40},\"trace\":{\"guardrail\":{\"action\":\"NONE\"}}}"
+    },
+    {
+      "name": "redaction_input",
+      "json": "{\"type\":\"modelRedactionEvent\",\"inputRedaction\":{\"replaceContent\":\"[redacted input]\"}}"
+    },
+    {
+      "name": "redaction_output",
+      "json": "{\"type\":\"modelRedactionEvent\",\"outputRedaction\":{\"redactedContent\":\"secret\",\"replaceContent\":\"[redacted output]\"}}"
+    },
+    {
+      "name": "redaction_output_replace_only",
+      "json": "{\"type\":\"modelRedactionEvent\",\"outputRedaction\":{\"replaceContent\":\"[redacted]\"}}"
+    },
+    {
+      "name": "message_stop_cancelled",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"cancelled\"}"
+    },
+    {
+      "name": "message_stop_checkpoint",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"checkpoint\"}"
+    },
+    {
+      "name": "message_stop_content_filtered",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"contentFiltered\"}"
+    },
+    {
+      "name": "message_stop_guardrail_intervened",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"guardrailIntervened\"}"
+    },
+    {
+      "name": "message_stop_interrupt",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"interrupt\"}"
+    },
+    {
+      "name": "message_stop_max_tokens",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"maxTokens\"}"
+    },
+    {
+      "name": "message_stop_limit_output_tokens",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"limitOutputTokens\"}"
+    },
+    {
+      "name": "message_stop_limit_structured_output_attempts",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"limitStructuredOutputAttempts\"}"
+    },
+    {
+      "name": "message_stop_limit_total_tokens",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"limitTotalTokens\"}"
+    },
+    {
+      "name": "message_stop_limit_turns",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"limitTurns\"}"
+    },
+    {
+      "name": "message_stop_pause_turn",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"pauseTurn\"}"
+    },
+    {
+      "name": "message_stop_refusal",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"refusal\"}"
+    },
+    {
+      "name": "message_stop_stop_sequence",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"stopSequence\"}"
+    },
+    {
+      "name": "message_stop_tool_use",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"toolUse\"}"
+    },
+    {
+      "name": "message_stop_model_context_window_exceeded",
+      "json": "{\"type\":\"modelMessageStopEvent\",\"stopReason\":\"modelContextWindowExceeded\"}"
+    }
+  ]
+}

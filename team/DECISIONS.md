@@ -219,3 +219,23 @@ It does **not** govern **feature enablement**. Parameters that switch an SDK-man
 Users need a way to say "don't send this field at all" that is distinct from "I didn't specify this field." Collapsing the two either makes SDK-managed defaults impossible to opt out of, or forces the SDK to treat every unspecified field as a deliberate removal.
 
 For example, the TypeScript `OpenAIModel` manages `stream_options: { include_usage: true }` on streaming requests, but some OpenAI-compatible endpoints — e.g. Cohere's Compatibility API — reject the field entirely. [#3872](https://github.com/strands-agents/harness-sdk/pull/3872) applies this decision: an explicit `params.stream_options: null` omits the field from the wire request, while leaving it undefined keeps the managed default.
+
+## Hook Failures and Interrupts Are Separate Channels
+
+### Decision
+
+A hook callback can end in one of two ways besides returning normally. A failure (an exception in Python and TypeScript, an `Err` in Rust) fails the invocation at once and skips the remaining callbacks for that event. An interrupt is not a failure: interrupts raised by the callbacks for one event are collected, and the agent stops for them only after every callback ran. Two interrupts with the same name for one event are an error.
+
+### Rationale
+
+Callbacks for one event are often independent, for example an approval gate and an audit logger on `BeforeToolCallEvent`. If an interrupt short-circuited the registry, later callbacks would never see an event the agent did act on, and a resumed run would show it to them for the first time. Failures are different: once a callback has failed, the event's state can't be trusted, so continuing would hide the failure. Keeping the two channels apart also lets typed SDKs give interrupts their own type, so a generic error handler can't swallow one by accident.
+
+## Cross-SDK Parity Is Byte-Level Only Where It Is Observable
+
+### Decision
+
+SDKs MUST produce byte-identical output where it crosses an SDK boundary: wire formats, persisted data (sessions, snapshots, the context stash, interrupt state), prompts and tool specs the SDK sends to models, and metric and attribute names. Everything else follows the idiom of the language, including string indexing, log text, error messages and in-process event objects.
+
+### Rationale
+
+Users mix SDKs on the same sessions and dashboards, so data that crosses SDKs must match exactly. Beyond that boundary, copying another language's internals makes each SDK worse for its own users. For example, TypeScript slices strings by UTF-16 code unit and Rust by `char`; matching TypeScript there would make the Rust API surprising without helping anyone who shares data between the two.

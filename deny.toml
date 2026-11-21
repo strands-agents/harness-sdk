@@ -1,0 +1,60 @@
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+  # Unmaintained, not vulnerable: `monty` -> `postcard` (default `heapless-cas`) -> `heapless` 0.7.
+  { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill reaches strands-harness only through monty's postcard; no maintained postcard 1.x drops it" },
+  # Unmaintained, not vulnerable: chrono reaches strands only through cedar-policy, rmcp (oauth2), opentelemetry-stdout and monty.
+  { id = "RUSTSEC-2026-0543", reason = "chrono comes only from third-party dependencies (cedar-policy, rmcp's oauth2, opentelemetry-stdout, monty); strands uses jiff" },
+  # Unmaintained, not vulnerable: `dogwood-ops` -> `dogwood-language` -> `rhai` (feature `dogwood`).
+  { id = "RUSTSEC-2026-0249", reason = "smartstring reaches strands only through dogwood-language's rhai; no rhai release drops it" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "MIT",
+  "MIT-0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "CDLA-Permissive-2.0",
+  "MPL-2.0",
+  "BSL-1.0",
+  "0BSD",
+  "OpenSSL",
+]
+
+# `monty`'s CBOR codec; Blue Oak Model License 1.0.0 is OSI-approved and permissive.
+[[licenses.exceptions]]
+crate = "minicbor"
+allow = ["BlueOak-1.0.0"]
+
+[[licenses.exceptions]]
+crate = "minicbor-serde"
+allow = ["BlueOak-1.0.0"]
+
+# A build-time dependency of `const-random`, which `rhai` (through `dogwood-language`) enables in
+# `ahash`; CC0-1.0 is a public-domain dedication.
+[[licenses.exceptions]]
+crate = "tiny-keccak"
+allow = ["CC0-1.0"]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,0 +1,69 @@
+{
+  "source": "strands-ts/src/interrupt.ts",
+  "cases": [
+    {
+      "name": "interrupt_tool",
+      "json": "{\"id\":\"tool:tooluse-delete-1:confirm_delete\",\"name\":\"confirm_delete\",\"reason\":{\"message\":\"Delete these files?\",\"path\":\"/tmp/x\"},\"source\":\"tool\"}"
+    },
+    {
+      "name": "interrupt_tool_answered",
+      "json": "{\"id\":\"tool:tooluse-delete-1:confirm_delete\",\"name\":\"confirm_delete\",\"reason\":{\"message\":\"Delete these files?\",\"path\":\"/tmp/x\"},\"response\":\"yes\",\"source\":\"tool\"}"
+    },
+    {
+      "name": "interrupt_hook",
+      "json": "{\"id\":\"hook:beforeToolCall:tooluse-weather-1:approve_tool\",\"name\":\"approve_tool\",\"reason\":\"Approve get_weather?\",\"source\":\"hook\"}"
+    },
+    {
+      "name": "interrupt_minimal",
+      "json": "{\"id\":\"interrupt-1\",\"name\":\"plain\",\"source\":\"hook\"}"
+    },
+    {
+      "name": "interrupt_response_null",
+      "json": "{\"id\":\"interrupt-5\",\"name\":\"nullable\",\"reason\":null,\"response\":null,\"source\":\"tool\"}"
+    },
+    {
+      "name": "interrupt_state_resume_responses_context",
+      "json": "{\"interrupts\":{\"interrupt-6\":{\"id\":\"interrupt-6\",\"name\":\"approve\",\"reason\":\"Approve the plan?\",\"response\":{\"approved\":true},\"source\":\"tool\"}},\"resumeResponses\":[{\"interruptResponse\":{\"interruptId\":\"interrupt-6\",\"response\":{\"approved\":true}}}],\"activated\":true,\"context\":{\"subAgent\":{\"turn\":2,\"pending\":[\"a\",\"b\"]}}}"
+    },
+    {
+      "name": "interrupt_with_response",
+      "json": "{\"id\":\"interrupt-2\",\"name\":\"answered\",\"reason\":\"Why?\",\"response\":{\"ok\":true},\"source\":\"tool\"}"
+    },
+    {
+      "name": "interrupt_multiagent_hook",
+      "json": "{\"id\":\"interrupt-3\",\"name\":\"node_gate\",\"source\":\"multiagent-hook\"}"
+    },
+    {
+      "name": "interrupt_middleware",
+      "json": "{\"id\":\"interrupt-4\",\"name\":\"mw_gate\",\"source\":\"middleware\"}"
+    },
+    {
+      "name": "interrupt_response_content",
+      "json": "{\"interruptResponse\":{\"interruptId\":\"tool:tooluse-delete-1:confirm_delete\",\"response\":\"yes\"}}"
+    },
+    {
+      "name": "interrupt_state_activated",
+      "json": "{\"interrupts\":{\"tool:tooluse-delete-1:confirm_delete\":{\"id\":\"tool:tooluse-delete-1:confirm_delete\",\"name\":\"confirm_delete\",\"reason\":{\"message\":\"Delete these files?\",\"path\":\"/tmp/x\"},\"source\":\"tool\"}},\"activated\":true,\"pendingToolExecution\":{\"assistantMessageData\":{\"role\":\"assistant\",\"content\":[{\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-weather-2\",\"input\":{\"city\":\"Paris\"}}},{\"toolUse\":{\"name\":\"delete_files\",\"toolUseId\":\"tooluse-delete-1\",\"input\":{\"path\":\"/tmp/x\"}}}],\"trackingId\":\"00000000-0000-4000-8000-000000000059\"},\"completedToolResults\":{\"tooluse-weather-2\":{\"toolResult\":{\"toolUseId\":\"tooluse-weather-2\",\"status\":\"success\",\"content\":[{\"json\":{\"city\":\"Paris\",\"forecast\":\"sunny\",\"high\":22}}]}}}}}"
+    },
+    {
+      "name": "interrupt_state_after_resume",
+      "json": "{\"interrupts\":{},\"activated\":false}"
+    },
+    {
+      "name": "interrupt_state_hook",
+      "json": "{\"interrupts\":{\"hook:beforeToolCall:tooluse-weather-1:approve_tool\":{\"id\":\"hook:beforeToolCall:tooluse-weather-1:approve_tool\",\"name\":\"approve_tool\",\"reason\":\"Approve get_weather?\",\"source\":\"hook\"}},\"activated\":true,\"pendingToolExecution\":{\"assistantMessageData\":{\"role\":\"assistant\",\"content\":[{\"text\":\"Let me check.\"},{\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-weather-1\",\"input\":{\"city\":\"Seattle\"}}}],\"trackingId\":\"00000000-0000-4000-8000-000000000067\",\"metadata\":{\"usage\":{\"inputTokens\":20,\"outputTokens\":10,\"totalTokens\":30}}},\"completedToolResults\":{}}}"
+    },
+    {
+      "name": "snapshot_interrupted",
+      "json": "{\"scope\":\"agent\",\"schemaVersion\":\"1.0\",\"createdAt\":\"2026-11-11T12:00:00.000Z\",\"data\":{\"messages\":[{\"role\":\"user\",\"content\":[{\"text\":\"Clean up /tmp/x\"}],\"trackingId\":\"00000000-0000-4000-8000-000000000056\"}],\"state\":{},\"systemPrompt\":null,\"modelState\":{},\"interrupts\":{\"interrupts\":{\"tool:tooluse-delete-1:confirm_delete\":{\"id\":\"tool:tooluse-delete-1:confirm_delete\",\"name\":\"confirm_delete\",\"reason\":{\"message\":\"Delete these files?\",\"path\":\"/tmp/x\"},\"source\":\"tool\"}},\"activated\":true,\"pendingToolExecution\":{\"assistantMessageData\":{\"role\":\"assistant\",\"content\":[{\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-weather-2\",\"input\":{\"city\":\"Paris\"}}},{\"toolUse\":{\"name\":\"delete_files\",\"toolUseId\":\"tooluse-delete-1\",\"input\":{\"path\":\"/tmp/x\"}}}],\"trackingId\":\"00000000-0000-4000-8000-000000000059\"},\"completedToolResults\":{\"tooluse-weather-2\":{\"toolResult\":{\"toolUseId\":\"tooluse-weather-2\",\"status\":\"success\",\"content\":[{\"json\":{\"city\":\"Paris\",\"forecast\":\"sunny\",\"high\":22}}]}}}}}},\"appData\":{}}"
+    },
+    {
+      "name": "agent_result_interrupted",
+      "json": "{\"type\":\"agentResult\",\"stopReason\":\"interrupt\",\"lastMessage\":{\"role\":\"user\",\"content\":[{\"text\":\"Clean up /tmp/x\"}],\"trackingId\":\"00000000-0000-4000-8000-000000000056\"}}"
+    },
+    {
+      "name": "agent_result_resumed",
+      "json": "{\"type\":\"agentResult\",\"stopReason\":\"endTurn\",\"lastMessage\":{\"role\":\"assistant\",\"content\":[{\"text\":\"Deleted.\"}],\"trackingId\":\"00000000-0000-4000-8000-000000000062\"}}"
+    }
+  ]
+}

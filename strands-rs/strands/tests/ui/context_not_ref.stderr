@@ -1,0 +1,5 @@
+error: the `#[tool(context)]` parameter must have type `&ToolContext`
+ --> tests/ui/context_not_ref.rs:5:46
+  |
+5 | async fn owned_context(#[tool(context)] ctx: ToolContext) -> String {
+  |                                              ^^^^^^^^^^^

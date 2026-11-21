@@ -1,0 +1,32 @@
+name: "Rust: Security Audit"
+
+# Informational RustSec advisory check of the cargo workspace. PR-introduced
+# vulnerabilities are gated by the repo-level Dependency Review job in ci.yml.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+  workflow_dispatch:
+
+jobs:
+  security-audit:
+    name: cargo deny advisories
+    permissions:
+      contents: read
+    runs-on: strands-agents_ubuntu-latest_4-core
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+
+      - name: Audit dependencies (informational)
+        continue-on-error: true
+        run: cargo deny check advisories

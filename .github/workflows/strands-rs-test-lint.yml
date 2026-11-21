@@ -1,0 +1,140 @@
+name: "Rust: Test and Lint"
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  # rustfmt and clippy are pinned so lints and formatting rules added in a new stable release don't fail unrelated PRs.
+  # Bump deliberately, together with the lint commands in CONTRIBUTING.md, README.md and strands-rs/AGENTS.md.
+  RUST_LINT_TOOLCHAIN: '1.100.0'
+
+jobs:
+  test-lint:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: strands-agents_ubuntu-latest_4-core, name: Test and Lint }
+          - { os: strands-agents_windows-latest_4-core, name: Test and Lint (Windows) }
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Install toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup toolchain install "$RUST_LINT_TOOLCHAIN" --profile minimal --component rustfmt,clippy
+
+      - name: Format
+        run: cargo +${{ env.RUST_LINT_TOOLCHAIN }} fmt --all --check
+
+      - name: Clippy
+        run: cargo +${{ env.RUST_LINT_TOOLCHAIN }} clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Examples
+        run: cargo build --workspace --examples --all-features
+
+      - name: Test (all features)
+        run: cargo test --workspace --all-features
+
+      - name: Test (no default features)
+        run: cargo test --workspace --no-default-features
+
+      - name: Docs
+        shell: bash
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo doc --workspace --all-features --no-deps
+          cargo doc -p strands --no-deps
+          cargo doc -p strands --no-deps --no-default-features
+
+  msrv:
+    name: MSRV
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Install MSRV toolchain
+        run: rustup toolchain install 1.96.0 --profile minimal
+
+      - name: Check
+        run: cargo +1.96.0 check --workspace --all-features --locked
+
+  deny:
+    name: Dependency policy
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+
+      - name: Check licenses, bans and sources
+        run: cargo deny check licenses bans sources
+
+  conformance:
+    name: Conformance fixtures
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      # harness-ts is not a root workspace member. Skipping its @strands-agents/sdk peer makes it
+      # resolve the repo's strands-ts instead of a published copy.
+      - name: Install harness-ts dependencies
+        run: npm ci --prefix harness-ts --legacy-peer-deps --ignore-scripts
+
+      - name: Build strands-ts
+        run: npm run build -w strands-ts
+
+      - name: Regenerate fixtures
+        run: npx tsx strands-rs/conformance/generate.ts
+
+      - name: Fixtures are up to date
+        run: git diff --exit-code -- strands-rs/conformance/fixtures

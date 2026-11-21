@@ -1,0 +1,17 @@
+error: `#[tool]` methods must take `&self`
+ --> tests/ui/self_receivers.rs:9:23
+  |
+9 |     async fn by_value(self) -> u32 {
+  |                       ^^^^
+
+error: `#[tool]` methods must take `&self`
+  --> tests/ui/self_receivers.rs:15:22
+   |
+15 |     async fn mutable(&mut self) -> u32 {
+   |                      ^^^^^^^^^
+
+error: `#[tool]` methods must take `&self`
+  --> tests/ui/self_receivers.rs:21:14
+   |
+21 |     async fn associated() -> u32 {
+   |              ^^^^^^^^^^
