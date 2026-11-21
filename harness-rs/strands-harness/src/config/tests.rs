@@ -90,7 +90,7 @@ fn serializes_the_defaults_with_the_ts_keys_in_order() {
             "memory": true,
             "memoryStores": [],
             "plugins": [],
-            "builtinPlugins": ["todos", "environment"],
+            "builtinPlugins": ["environment"],
             "interventions": null,
             "interventionModules": [],
             "sandbox": null,

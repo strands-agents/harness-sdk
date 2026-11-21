@@ -77,7 +77,7 @@ let options = HarnessAgentOptions::builder()
     // .mcp_servers(".mcp.json")   MCP servers: a mcpServers JSON path or the map itself
     // .builtin_tools(..)          a list pins the set; a BuiltinToolsConfig edits the defaults (see below)
     // .background_tasks(false)    SDK Background Tasks policy; false to disable
-    .builtin_plugins([BuiltinPluginName::Todos, BuiltinPluginName::Environment]) // [] for none
+    .builtin_plugins([BuiltinPluginName::Environment]) // the default; add Todos to opt in, [] for none
     // .caching(false)             cache system prompt, tools and history where supported; false turns it off
     .context_manager(ContextManagerOption::Auto) // Auto | Agentic | a config or instance | Disabled
     .session(true) // true | a SessionConfig | a SessionManager | false
@@ -554,7 +554,7 @@ HarnessAgentOptions::builder().skills(false).build(); // no skills
 
 ## Built-in plugins
 
-The harness ships two built-in feature plugins, both on by default:
+The harness ships two built-in feature plugins. `environment` is on by default; `todos` is opt-in:
 
 - **`todos`** lets the agent keep a structured task list through a `todo_write` tool and re-surfaces it before each
   model call so it stays on plan through longer tasks. The list lives in agent state, never in durable history.
@@ -570,7 +570,7 @@ under the same name replaces the built-in:
 ```rust
 use strands_harness::{BuiltinPluginName, HarnessAgentOptions};
 
-HarnessAgentOptions::builder().builtin_plugins([BuiltinPluginName::Todos]).build(); // todos only
+HarnessAgentOptions::builder().builtin_plugins([BuiltinPluginName::Todos, BuiltinPluginName::Environment]).build(); // both
 HarnessAgentOptions::builder().builtin_plugins(Vec::<BuiltinPluginName>::new()).build(); // no built-in plugins
 ```
 
