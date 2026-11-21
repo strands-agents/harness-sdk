@@ -218,8 +218,10 @@ async fn remove_run(
         return Ok(false);
     };
     let start = run.start;
-    agent.messages_mut().drain(run);
+    // Stashed before the run is taken out, and the marker inserted with no await in between: a pass
+    // dropped at an await would otherwise leave the run neither in the history nor retrievable.
     let stash_ref = stash_removed(stash, &removed, method).await;
+    agent.messages_mut().drain(run);
     let marker = offload_placeholder(method, &placeholder.text, stash_ref.as_deref(), placeholder.tokens);
     insert_marker(agent.messages_mut(), start, marker);
     Ok(true)
