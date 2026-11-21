@@ -142,6 +142,18 @@ class TestRetrievalTool:
         assert "cannot search non-text content" in _text(result)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("extra_input", [{}, {"pattern": "A"}])
+    @pytest.mark.parametrize(("kind", "media_format"), [("video", "mp4"), ("audio", "mp3")])
+    async def test_refuses_stored_media_a_tool_result_cannot_carry(self, stash, kind, media_format, extra_input):
+        """Stored video or audio is refused rather than returned as base64 text (#6319)."""
+        reference = await _store(stash, "msg-1", 1, {kind: {"format": media_format, "source": {"bytes": "AAAA"}}})
+
+        result = await _invoke(stash, {"reference": reference, **extra_input})
+
+        assert result["status"] == "error"
+        assert _text(result) == f"Error: content for reference {reference} is {kind}, which a tool result cannot carry"
+
+    @pytest.mark.asyncio
     async def test_truncates_text_longer_than_the_result_budget(self, stash):
         reference = await _store(stash, "tool-1", 0, {"text": "x" * 50_000})
 
@@ -289,6 +301,15 @@ class TestRemovedMessages:
         assert result["content"][0] == {"text": marker}
         assert result["content"][1] == {"image": {"format": "png", "source": {"bytes": b"PNG_DATA"}}}
         assert result["content"][2] == {"text": f"{'x' * (40 - len(marker))}\n\n[truncated]"}
+
+    @pytest.mark.asyncio
+    async def test_names_video_in_the_stored_messages_with_a_placeholder(self, stash):
+        video = {"video": {"format": "mp4", "source": {"bytes": "AAAA"}}}
+        await _store(stash, "removed-m1", 0, [{"role": "user", "content": [{"text": "watch"}, video]}])
+
+        result = await _invoke(stash, {"reference": "removed-m1"})
+
+        assert result["content"] == [{"text": "\n---\n[user]"}, {"text": "watch"}, {"text": "[video omitted]"}]
 
 
 class TestInvalidLineRange:
