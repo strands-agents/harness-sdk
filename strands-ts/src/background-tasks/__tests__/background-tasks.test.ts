@@ -7,11 +7,13 @@ import type { InvocationContext } from '../../agent/invocation-context.js'
 import {
   AfterInvocationEvent,
   AfterToolCallEvent,
+  AfterToolsEvent,
   BeforeModelCallEvent,
   BeforeToolCallEvent,
   InitializedEvent,
 } from '../../hooks/events.js'
 import { Interrupt } from '../../interrupt.js'
+import type { Plugin } from '../../plugins/plugin.js'
 import { ExecuteToolStage, InvokeModelStage } from '../../middleware/index.js'
 import { tool } from '../../tools/tool-factory.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
@@ -467,6 +469,52 @@ describe('BackgroundTasks', () => {
     await expect.poll(() => persistedTasks(agent)![0]!.status).toBe('completed')
   })
 
+  it('keeps a result for the next invocation when a hook cancels after it was queued for delivery', async () => {
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const work = tool({
+      name: 'work',
+      description: 'Perform deferred work.',
+      inputSchema: z.object({}),
+      callback: async () => {
+        await released
+        return 'done'
+      },
+    })
+    const model = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: 'work', toolUseId: 'work-use', input: { _background_execution: true } })
+      .addTurn({ type: 'textBlock', text: 'Task admitted.' })
+      .addTurn({ type: 'textBlock', text: 'Result received.' })
+    // Plugins register before BackgroundTasks, so this AfterInvocationEvent callback runs after its delivery.
+    const cancelOnce: Plugin = {
+      name: 'cancel-once',
+      initAgent: (agent) => {
+        let armed = true
+        agent.addHook(AfterInvocationEvent, () => {
+          if (armed) agent.cancel()
+          armed = false
+        })
+      },
+    }
+    const agent = new Agent({ model, tools: [work], backgroundTasks: {}, plugins: [cancelOnce], printer: false })
+
+    const pending = agent.invoke('Run work.')
+    await expect.poll(() => agent.messages.at(-1)?.content[0]).toMatchObject({ text: 'Task admitted.' })
+    release()
+    const result = await pending
+
+    expect(result.stopReason).toBe('endTurn')
+    expect(deliveries(agent)).toHaveLength(0)
+    expect(model.callCount).toBe(2)
+
+    await agent.invoke('Continue.')
+
+    expect(deliveries(agent)).toHaveLength(1)
+    expect(persistedTasks(agent)).toBeUndefined()
+  })
+
   describe('cancelBackgroundTasks', () => {
     function idleAgent(): Agent {
       const work = tool({
@@ -616,6 +664,26 @@ describe('BackgroundTasks', () => {
       expect(continued.stopReason).toBe('endTurn')
       expect(agent._interruptState.activated).toBe(false)
       expect(deliveries(agent)).toHaveLength(2)
+    })
+
+    it('ends the invocation when the caller cancelSignal aborts while a task waits for input', async () => {
+      const agent = approvalAgent()
+      const controller = new AbortController()
+      agent.addHook(AfterToolsEvent, async () => {
+        await expect.poll(() => persistedTasks(agent)?.[0]?.status).toBe('input_required')
+        controller.abort()
+      })
+      let passes = 0
+      agent.addHook(AfterInvocationEvent, () => {
+        // Without this, a regression resumes forever instead of failing.
+        if (++passes > 3) agent.cancel({ cancelBackgroundTasks: true })
+      })
+
+      const result = await agent.invoke('Run approval.', { cancelSignal: controller.signal })
+
+      expect(result.stopReason).toBe('cancelled')
+      expect(passes).toBe(1)
+      expect((await agent.invoke('Continue.')).stopReason).toBe('interrupt')
     })
 
     it('cancels background tasks immediately while afterCurrentTools lets the tool batch finish', async () => {
