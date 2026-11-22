@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, relative } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
-import type { DevChatJob } from '../../ui/chat/types.js'
+import type { DevChatJob, DevChatNotice } from '../../ui/chat/types.js'
 import { WizardBroker } from '../../ui/panels/wizard-request.js'
 import { resolveModelTarget } from '../../model/selection.js'
 import { isRecord } from '../../values.js'
@@ -231,6 +231,8 @@ interface RunEntry {
   writers: Map<number, EditWriter>
   changes: readonly TemporaryKnobChange[]
   sources: FSWatcher | undefined
+  /** The notice that a review came back with strands dev, kept so it stops asking once the review is over. */
+  reminder?: DevChatNotice | undefined
 }
 
 const startingProgress = (plan: RunPlan, startedAt: number): OptimizeProgress => ({
@@ -819,6 +821,9 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   /** Nothing of the run waits on the developer any more: its record goes, and so does a question still asking. */
   private settleReview(entry: RunEntry): void {
     if (entry.record) void dropTemporaryOptimizeRecord({ record: entry.record }).catch(() => undefined)
+    if (entry.record)
+      entry.reminder?.update('success', `optimize · run ${temporaryOptimizationRunName(entry.record)} · reviewed`)
+    entry.reminder = undefined
     this.onSettled?.(entry.id)
   }
 
@@ -1457,7 +1462,10 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       announce(this.host(), 'success', `optimize · run ${name} · its edits no longer fit the agent as it is now`)
       return dropTemporaryOptimizeRecord(saved)
     }
-    announce(this.host(), 'success', `optimize · run ${name} · ${plural(ready, 'edit')} still to review · ↓ Enter`)
+    entry.reminder = this.host().context?.report(
+      'success',
+      `optimize · run ${name} · ${plural(ready, 'edit')} still to review · ↓ Enter`
+    )
   }
 
   private reportCancelled(entry: RunEntry, plan: RunPlan, record?: string): void {

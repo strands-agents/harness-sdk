@@ -1822,7 +1822,7 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldForgetTheReviewOfARunOnceItIsAnsweredAfterStrandsDevOpensAgain', async () => {
     const { workspace, record } = await closedOnAReview()
-    const { optimize } = reopened(workspace)
+    const { optimize, notices } = reopened(workspace)
     await optimize.resume()
     const [run] = optimize.snapshot().runs ?? []
 
@@ -1830,6 +1830,7 @@ describe('TEMPORARY dev sessions', () => {
 
     await vi.waitFor(() => expect(existsSync(resumeRecordOf(record))).toBe(false))
     expect(temporaryOptimizeJobs(optimize.snapshot())).toEqual([])
+    expect(notices).toEqual([{ status: 'success', text: `optimize · run ${optimizationName(record)} · reviewed` }])
     const later = reopened(workspace)
     await later.optimize.resume()
     expect(later.optimize.snapshot().runs ?? []).toEqual([])
