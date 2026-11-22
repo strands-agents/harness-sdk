@@ -757,6 +757,7 @@ class AnthropicModel(Model):
         dynamic_trailing_blocks: int = 0,
         *,
         system_prompt_content: list[SystemContentBlock] | None = None,
+        model_state: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Format an Anthropic streaming request.
 
@@ -768,6 +769,7 @@ class AnthropicModel(Model):
             dynamic_trailing_blocks: How many trailing blocks of the last user message are rebuilt on
                 every call, so the cache point stays ahead of them.
             system_prompt_content: Structured system prompt content blocks, which can carry a cache point.
+            model_state: Optional per-conversation model state dict used to scope retry latches.
 
         Returns:
             An Anthropic streaming request.
@@ -826,7 +828,12 @@ class AnthropicModel(Model):
             request = self._with_beta(request, COMPACTION_BETA)
         if any("clear_at" in message for message in request["messages"]):
             request = self._with_beta(request, TURN_SCOPED_SYSTEM_BETA)
-        if self._drop_stale_thinking_model_id == self.config["model_id"]:
+        latched_model_id = (
+            model_state.get("drop_stale_thinking_model_id")
+            if model_state is not None
+            else self._drop_stale_thinking_model_id
+        )
+        if latched_model_id == self.config["model_id"]:
             request = self._request_with_drop_block(request) or request
         if isinstance(self.client, anthropic.AsyncAnthropicBedrock):
             request["extra_body"] = {
@@ -1268,6 +1275,7 @@ class AnthropicModel(Model):
             system_prompt: Plain string system prompt. Ignored when system_prompt_content is provided.
             tool_choice: Selection strategy for tool invocation.
             system_prompt_content: Structured system prompt content blocks, which can carry a cache point.
+            model_state: Optional per-conversation model state dict used to scope retry latches.
             structured_output_model: Output model the call must produce; the request is then sent with the strongest
                 structured output mechanism the model supports.
             **kwargs: Additional keyword arguments for future extensibility.
@@ -1287,6 +1295,7 @@ class AnthropicModel(Model):
         """
         mechanism = self._structured_output_mechanism(structured_output_model, tool_choice)
 
+        model_state: dict[str, Any] | None = kwargs.get("model_state")
         logger.debug("formatting request")
         request = self.format_request(
             messages,
@@ -1295,6 +1304,7 @@ class AnthropicModel(Model):
             system_prompt_content=system_prompt_content,
             tool_choice=_mechanism_tool_choice(mechanism, tool_choice),
             dynamic_trailing_blocks=kwargs.get("dynamic_trailing_blocks", 0),
+            model_state=model_state,
         )
         request = _with_native_output(request, mechanism, structured_output_model)
         logger.debug("request=<%s>", request)
@@ -1420,14 +1430,21 @@ class AnthropicModel(Model):
                 raise ContextWindowOverflowException(message) from error
             raise
 
-        previous_drop_stale_thinking_model_id = self._drop_stale_thinking_model_id
+        previous_drop_stale_thinking_model_id = (
+            model_state.get("drop_stale_thinking_model_id")
+            if model_state is not None
+            else self._drop_stale_thinking_model_id
+        )
         if retry_with_drop_block:
-            # Stale blocks stay in history, so drop_block stays on for every later request to this model.
+            # Stale blocks stay in history, so drop_block stays on for every later request in this conversation.
             logger.warning(
                 "model_id=<%s> | history edit invalidated replayed thinking blocks, retrying with drop_block",
                 self.config["model_id"],
             )
-            self._drop_stale_thinking_model_id = self.config["model_id"]
+            if model_state is not None:
+                model_state["drop_stale_thinking_model_id"] = self.config["model_id"]
+            else:
+                self._drop_stale_thinking_model_id = self.config["model_id"]
         if retry_with_drop_block or retry_with_next_mechanism:
             yielded = False
             try:
@@ -1445,7 +1462,13 @@ class AnthropicModel(Model):
             except Exception:
                 # A rejected retry must not leave drop_block on for later requests.
                 if not yielded:
-                    self._drop_stale_thinking_model_id = previous_drop_stale_thinking_model_id
+                    if model_state is not None:
+                        if previous_drop_stale_thinking_model_id is None:
+                            model_state.pop("drop_stale_thinking_model_id", None)
+                        else:
+                            model_state["drop_stale_thinking_model_id"] = previous_drop_stale_thinking_model_id
+                    else:
+                        self._drop_stale_thinking_model_id = previous_drop_stale_thinking_model_id
                 raise
             return
 

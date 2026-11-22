@@ -696,12 +696,24 @@ class BedrockModel(Model):
 
         return {"additionalModelRequestFields": additional_fields}
 
-    def _converse(self, converse_method: Callable[..., Any], request: dict[str, Any]) -> Any:
+    def _converse(
+        self,
+        converse_method: Callable[..., Any],
+        request: dict[str, Any],
+        model_state: dict[str, Any] | None = None,
+    ) -> Any:
         """Invoke the model, retrying once with drop_block when an edit before replayed thinking made it stale.
 
-        The retry turns drop_block on for every later request to this model, since the stale blocks stay in history.
+        The retry turns drop_block on for every later request in this conversation (via ``model_state`` when
+        provided, falling back to the model instance for direct ``stream()`` calls), since the stale blocks stay
+        in history.
         """
-        if self._drop_stale_thinking_model_id == request["modelId"] and (latched := _request_with_drop_block(request)):
+        latched_model_id = (
+            model_state.get("drop_stale_thinking_model_id")
+            if model_state is not None
+            else self._drop_stale_thinking_model_id
+        )
+        if latched_model_id == request["modelId"] and (latched := _request_with_drop_block(request)):
             logger.debug("model_id=<%s> | sending drop_block for stale thinking", request["modelId"])
             request = latched
         try:
@@ -719,7 +731,10 @@ class BedrockModel(Model):
         )
         response = converse_method(**retry_request)
         # Latched only once the retry is accepted, so a rejected retry does not alter later requests.
-        self._drop_stale_thinking_model_id = request["modelId"]
+        if model_state is not None:
+            model_state["drop_stale_thinking_model_id"] = request["modelId"]
+        else:
+            self._drop_stale_thinking_model_id = request["modelId"]
         return response
 
     def _apply_system_cache_ttl(
@@ -1242,6 +1257,7 @@ class BedrockModel(Model):
         converse_method: Callable[..., Any],
         request: dict[str, Any],
         structured_output_model: type[BaseModel],
+        model_state: dict[str, Any] | None = None,
     ) -> Any:
         """Send a structured output request with the strongest mechanism the model accepts.
 
@@ -1266,13 +1282,17 @@ class BedrockModel(Model):
         for mechanism in mechanisms[:-1]:
             try:
                 return self._converse(
-                    converse_method, self._structured_output_request(request, mechanism, structured_output_model)
+                    converse_method,
+                    self._structured_output_request(request, mechanism, structured_output_model),
+                    model_state=model_state,
                 )
             except ClientError as error:
                 if not _is_unsupported_mechanism_error(error, mechanism, model_id, structured_output_model):
                     raise
         return self._converse(
-            converse_method, self._structured_output_request(request, mechanisms[-1], structured_output_model)
+            converse_method,
+            self._structured_output_request(request, mechanisms[-1], structured_output_model),
+            model_state=model_state,
         )
 
     def _client_supports_native_output(self) -> bool:
@@ -1781,6 +1801,7 @@ class BedrockModel(Model):
             kwargs.get("dynamic_trailing_blocks", 0),
             cancel_signal,
             structured_output_model,
+            kwargs.get("model_state"),
         )
         task = asyncio.create_task(thread)
         cancel_poll = asyncio.ensure_future(_poll_cancel_signal(cancel_signal)) if cancel_signal else None
@@ -1817,6 +1838,7 @@ class BedrockModel(Model):
         dynamic_trailing_blocks: int = 0,
         cancel_signal: threading.Event | None = None,
         structured_output_model: type[BaseModel] | None = None,
+        model_state: dict[str, Any] | None = None,
     ) -> None:
         """Stream conversation with the Bedrock model.
 
@@ -1834,6 +1856,7 @@ class BedrockModel(Model):
             cancel_signal: Event that stops the transfer at the next chunk boundary.
             structured_output_model: Output model the call must produce; the request is then sent with the
                 strongest structured output mechanism the model supports.
+            model_state: Optional per-conversation model state dict used to scope retry latches.
 
         Raises:
             ContextWindowOverflowException: If the input exceeds the model's context window.
@@ -1853,8 +1876,10 @@ class BedrockModel(Model):
 
             def send(request: dict[str, Any]) -> Any:
                 if structured_output_model is None:
-                    return self._converse(converse_method, request)
-                return self._converse_structured_output(converse_method, request, structured_output_model)
+                    return self._converse(converse_method, request, model_state=model_state)
+                return self._converse_structured_output(
+                    converse_method, request, structured_output_model, model_state=model_state
+                )
 
             try:
                 response = send(request)

@@ -747,6 +747,32 @@ describe('AnthropicModel', () => {
       warnSpy.mockRestore()
     })
 
+    it('scopes drop_block latch to modelState so other conversations are unaffected', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { stream, client } = createRejectingOnceClient()
+      const provider = new AnthropicModel({
+        client,
+        modelId: 'm1',
+        params: { thinking: { type: 'adaptive' } },
+      })
+      const { StateStore } = await import('../../state-store.js')
+      const stateA = new StateStore()
+      const stateB = new StateStore()
+
+      await collectIterator(provider.stream(messages, { modelState: stateA }))
+      await collectIterator(provider.stream(messages, { modelState: stateA }))
+      await collectIterator(provider.stream(messages, { modelState: stateB }))
+
+      expect((stream.mock.calls[0]?.[0] as any).thinking).toStrictEqual({ type: 'adaptive' })
+      expect((stream.mock.calls[1]?.[0] as any).thinking).toStrictEqual(dropBlockThinking)
+      expect((stream.mock.calls[2]?.[0] as any).thinking).toStrictEqual(dropBlockThinking)
+      expect((stream.mock.calls[3]?.[0] as any).thinking).toStrictEqual({ type: 'adaptive' })
+      expect(stream.mock.calls[3]?.[1]).toBeUndefined()
+      expect(stateA.get('dropStaleThinkingModelId')).toBe('m1')
+      expect(stateB.get('dropStaleThinkingModelId')).toBeUndefined()
+      warnSpy.mockRestore()
+    })
+
     it.each([
       { name: 'a record', defaultHeaders: { 'anthropic-beta': 'client-beta' }, betas: 'client-beta,' },
       { name: 'a record with a list value', defaultHeaders: { 'Anthropic-Beta': ['a', 'b'] }, betas: 'a,b,' },

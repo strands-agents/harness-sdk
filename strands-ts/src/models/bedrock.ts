@@ -1018,19 +1018,23 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     const schema = options?.structuredOutputSchema
     const modelId = this._config.modelId
     if (!schema || !modelId) {
-      return this._send(this._formatRequest(messages, options), send)
+      return this._send(this._formatRequest(messages, options), send, options?.modelState)
     }
 
     const mechanisms = structuredOutputMechanisms('bedrock', modelId, options.toolChoice, schema, this.modelInfo)
     for (const mechanism of mechanisms.slice(0, -1)) {
       try {
-        return await this._send(this._structuredOutputRequest(messages, options, mechanism, schema), send)
+        return await this._send(
+          this._structuredOutputRequest(messages, options, mechanism, schema),
+          send,
+          options?.modelState
+        )
       } catch (error) {
         if (!recordRejectedMechanism(error, mechanism, modelId, schema)) throw error
       }
     }
     const fallback = mechanisms[mechanisms.length - 1] ?? 'auto'
-    return this._send(this._structuredOutputRequest(messages, options, fallback, schema), send)
+    return this._send(this._structuredOutputRequest(messages, options, fallback, schema), send, options?.modelState)
   }
 
   /**
@@ -1073,9 +1077,13 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    */
   private async _send<T>(
     request: ConverseStreamCommandInput,
-    send: (input: ConverseStreamCommandInput) => Promise<T>
+    send: (input: ConverseStreamCommandInput) => Promise<T>,
+    modelState?: StreamOptions['modelState']
   ): Promise<T> {
-    const sent = (this._dropStaleThinkingModelId === request.modelId && requestWithDropBlock(request)) || request
+    const latchedModelId = modelState
+      ? (modelState.get('dropStaleThinkingModelId') as string | undefined)
+      : this._dropStaleThinkingModelId
+    const sent = (latchedModelId === request.modelId && requestWithDropBlock(request)) || request
     try {
       return await send(sent)
     } catch (error) {
@@ -1089,7 +1097,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       )
       const response = await send(retryRequest)
       // Latched only once the retry is accepted, so a rejected retry does not alter later requests.
-      this._dropStaleThinkingModelId = request.modelId
+      if (modelState) {
+        modelState.set('dropStaleThinkingModelId', request.modelId)
+      } else {
+        this._dropStaleThinkingModelId = request.modelId
+      }
       return response
     }
   }
