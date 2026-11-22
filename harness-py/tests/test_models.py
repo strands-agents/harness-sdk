@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 import pytest
 from strands.models import (
     BedrockModel,
@@ -286,6 +288,8 @@ _BEDROCK_REASONING_EFFORT = ("additional_request_fields", "reasoning_effort")
         ("bedrock/us.openai.gpt-5.5", _BEDROCK_GPT, "medium"),
         ("bedrock/global.openai.gpt-6-astra", _BEDROCK_GPT, "low"),
         ("bedrock/us.openai.gpt-6.1-terra", _BEDROCK_GPT, "low"),
+        ("bedrock/us.openai.gpt-6.2-astra", _BEDROCK_GPT, "low"),
+        ("bedrock/global.openai.gpt-6.2-sol", _BEDROCK_GPT, "low"),
         ("bedrock/us.openai.gpt-6-sol", _BEDROCK_GPT, "medium"),
         ("bedrock/openai.gpt-5.6-cyber", _BEDROCK_GPT, "high"),
         ("bedrock/openai.gpt-oss-120b-1:0", _BEDROCK_REASONING_EFFORT, "medium"),
@@ -657,18 +661,55 @@ def test_supports_web_search_by_provider():
     assert supports_web_search("bedrock-mantle/openai.gpt-6-astra") is True
     # https://github.com/strands-agents/harness-sdk/issues/5187
     assert supports_web_search("bedrock-mantle/openai.gpt-6.1-sol") is True
-    assert supports_web_search("bedrock-mantle/openai.gpt-oss-120b") is False
-    assert supports_web_search("bedrock-mantle/qwen.qwen3-32b-v1:0") is False
-    assert supports_web_search("bedrock/global.anthropic.claude-opus-4-8") is False
+    # Mantle models without Bedrock Web Search get AgentCore web search instead.
+    assert supports_web_search("bedrock-mantle/openai.gpt-oss-120b") is True
+    assert supports_web_search("bedrock-mantle/qwen.qwen3-32b-v1:0") is True
+    # Bedrock Converse has no native search; the harness serves AgentCore web search as a tool.
+    assert supports_web_search("bedrock/global.anthropic.claude-opus-4-8") is True
+    assert supports_web_search("global.anthropic.claude-opus-4-8") is True
     assert supports_web_search("anthropic/claude-opus-4-8") is True
+    assert supports_web_search("ollama/llama3") is False
 
 
-def test_supports_web_search_none_uses_default_provider():
+def test_supports_web_search_none_uses_default_provider(monkeypatch):
+    monkeypatch.setattr(defaults, "DEFAULT_MODEL", "ollama/llama3")
     assert supports_web_search(None) is False
+    monkeypatch.setattr(defaults, "DEFAULT_MODEL", "openai/gpt-5.6-sol")
+    assert supports_web_search(None) is True
 
 
-def test_supports_web_search_model_instance_is_false():
-    assert supports_web_search(BedrockModel(model_id="anything")) is False
+def test_supports_web_search_on_model_instances():
+    assert supports_web_search(BedrockModel(model_id="anything")) is True
+    assert supports_web_search(MagicMock(spec=Model)) is False
+    assert supports_web_search(ModelRouter([BedrockModel(model_id="a"), BedrockModel(model_id="b")])) is True
+    from strands.models.openai import OpenAIModel
+
+    other = OpenAIModel(client_args={"api_key": "x"}, model_id="gpt-5.6-sol")
+    assert supports_web_search(ModelRouter([BedrockModel(model_id="a"), other])) is False
+
+
+def test_web_search_kind_covers_every_bedrock_api():
+    from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle
+    from strands.models.anthropic import AnthropicModel
+    from strands.models.openai import OpenAIModel
+    from strands.models.openai_responses import OpenAIResponsesModel
+
+    from strands_harness.models import _web_search_kind
+
+    def anthropic_on(client):
+        return AnthropicModel(client=client, model_id="claude", max_tokens=10)
+
+    bedrock_models = [
+        anthropic_on(AsyncAnthropicBedrock(aws_region="eu-west-1")),
+        anthropic_on(AsyncAnthropicBedrockMantle(aws_region="ap-south-1")),
+        OpenAIResponsesModel(model_id="qwen.qwen3-32b-v1:0", bedrock_mantle_config={"region": "us-east-2"}),
+        OpenAIModel(model_id="qwen.qwen3-32b-v1:0", bedrock_mantle_config={"region": "ca-central-1"}),
+    ]
+    assert [_web_search_kind(model) for model in bedrock_models] == ["agentcore"] * 4
+    assert _web_search_kind(anthropic_on(AsyncAnthropic(api_key="x"))) is None
+    assert _web_search_kind(OpenAIModel(client_args={"api_key": "x"}, model_id="gpt-5.6-sol")) is None
+    assert _web_search_kind("bedrock-mantle/qwen.qwen3-32b-v1:0") == "agentcore"
+    assert _web_search_kind("bedrock-mantle/openai.gpt-6-astra") == "native"
 
 
 def test_openai_web_search_adds_tool_alongside_reasoning():
@@ -921,7 +962,7 @@ def test_bedrock_web_fetch_summarizer_keeps_the_inference_profile_prefix():
     assert _bedrock_web_fetch_model("us.anthropic.claude-opus-4-8") == (
         "global.anthropic.claude-haiku-4-5-20251001-v1:0"
     )
-    assert _bedrock_web_fetch_model("meta.llama3") == "meta.llama3-2-3b-instruct-v1:0"
+    assert _bedrock_web_fetch_model("meta.llama3") is None
     assert _bedrock_web_fetch_model("google.gemma-3-27b-it") is None
 
 
@@ -930,7 +971,6 @@ def test_bedrock_web_fetch_summarizer_maps_known_families_to_small_regionals():
 
     assert _bedrock_web_fetch_model("amazon.nova-2-lite-v1:0") == "amazon.nova-lite-v1:0"
     assert _bedrock_web_fetch_model("us.amazon.nova-pro-v1:0") == "amazon.nova-lite-v1:0"
-    assert _bedrock_web_fetch_model("us.meta.llama3-2-70b-instruct-v1:0") == "meta.llama3-2-3b-instruct-v1:0"
     assert _bedrock_web_fetch_model("mistral.mistral-large-2407-v1:0") == "mistral.mistral-small-2402-v1:0"
 
 

@@ -18,6 +18,13 @@ import modelInfoData from './model-info.json' with { type: 'json' }
 export type PromptCaching = 'unsupported' | 'auto' | 'cachePoints'
 
 /**
+ * How a model keeps deferred tool schemas out of its context until it loads them: `'native'` sends them with the
+ * API's own deferral flag, `'stubs'` sends each as its name and description with an open schema, and `'unsupported'`
+ * sends every schema.
+ */
+export type DeferredToolLoading = 'unsupported' | 'native' | 'stubs'
+
+/**
  * What the model can do. A yes/no fact is a `boolean`; a fact with more than two states is a string
  * union, like {@link PromptCaching} (which mechanism). A fact about two features together gets its
  * own field named after the pair. `undefined` is unknown either way.
@@ -27,7 +34,11 @@ export interface ModelCapabilities {
   readonly stateful?: boolean | undefined
   /** Whether and how the model caches prompts. */
   readonly promptCaching?: PromptCaching | undefined
-  /** Whether the model accepts a `toolChoice` that forces a tool call (`any` or a named tool). */
+  /**
+   * Whether the Bedrock and Anthropic providers force the structured output tool (`any` or a named tool) on the
+   * structured output retry. False when the model rejects forcing, or when a forced call degrades the response (for
+   * example, it skips thinking).
+   */
   readonly forcedToolChoice?: boolean | undefined
   /** Whether the provider can make the model's text output conform to a JSON schema. */
   readonly nativeStructuredOutput?: boolean | undefined
@@ -44,6 +55,17 @@ export interface ModelCapabilities {
    * (`AnthropicModel`). A `modelInfo` override that turns it on for another provider drops the injected text.
    */
   readonly temporaryMessages?: boolean | undefined
+  /**
+   * How the model and provider defer tool schemas; see {@link DeferredToolLoading}. In the shared data, `'native'` is
+   * the path on the model vendor's own API and `'unsupported'` marks a model that can't fill in a stub's parameters,
+   * such as one that constrains its tool calls to the stub's open schema. `Model.modelInfo` reports `'stubs'` for every
+   * other model, `'native'` only where the provider sends the deferral flag (`AnthropicModel`), and `'unsupported'`
+   * where the provider needs each tool's full input schema (`BedrockModel` with `strictTools`). A `modelInfo` override
+   * that sets `'unsupported'` sends every full spec to a model that handles stubs badly. On a provider without the
+   * flag, an override that sets `'native'` sends every full spec and only changes the `load_tools` result:
+   * `BedrockModel` names each loaded tool and other providers leave it out.
+   */
+  readonly deferredToolLoading?: DeferredToolLoading | undefined
 }
 
 /** Size limits of the model. */
@@ -122,6 +144,7 @@ const CAPABILITY_FIELDS = Object.keys({
   nativeStructuredOutput: true,
   serverSideSummary: true,
   temporaryMessages: true,
+  deferredToolLoading: true,
 } satisfies Record<keyof ModelCapabilities, true>)
 const LIMIT_FIELDS = Object.keys({ contextWindow: true, maxOutputTokens: true } satisfies Record<
   keyof ModelLimits,
@@ -156,16 +179,67 @@ const MODELS: Readonly<Record<string, ModelInfo>> = Object.fromEntries(
  * @returns The entry, or undefined when the id is not in the data
  */
 export function lookupModel(modelId: string): ModelInfo | undefined {
+  const key = lookupKey(modelId)
+  return key === undefined ? undefined : MODELS[key]
+}
+
+// Finds the key of the entry for a model id, by the rule `lookupModel` documents.
+function lookupKey(modelId: string): string | undefined {
   let candidate = modelId
   for (;;) {
     const unversioned = candidate.replace(VERSION_SUFFIX, '')
     for (const key of [candidate, unversioned, unversioned.replace(DATE_SUFFIX, '')]) {
-      if (Object.hasOwn(MODELS, key)) return MODELS[key]
+      if (Object.hasOwn(MODELS, key)) return key
     }
     const dotIndex = candidate.indexOf('.')
     if (dotIndex === -1) return undefined
     candidate = candidate.substring(dotIndex + 1)
   }
+}
+
+/**
+ * The values of `capabilities.chatCompletionsTools` in the data.
+ *
+ * @internal
+ */
+export type ChatCompletionsTools = 'reasoningOff' | 'unsupported'
+
+/**
+ * Whether OpenAI's Chat Completions API accepts tools for a model. The data carries this as
+ * `capabilities.chatCompletionsTools`, which `ModelCapabilities` does not carry.
+ *
+ * @internal
+ * @param modelId - The model id to look up
+ * @returns `'reasoningOff'` when only with reasoning off, `'unsupported'` when not at all, undefined when the data
+ *   does not say
+ */
+export function lookupChatCompletionsTools(modelId: string): ChatCompletionsTools | undefined {
+  const key = lookupKey(modelId)
+  if (key === undefined) return undefined
+  return (data.models[key]?.capabilities as { chatCompletionsTools?: ChatCompletionsTools } | undefined)
+    ?.chatCompletionsTools
+}
+
+/**
+ * The values of `capabilities.systemPromptPlacement` in the data.
+ *
+ * @internal
+ */
+export type SystemPromptPlacement = 'message'
+
+/**
+ * Where a model's system prompt goes, when not in the provider's system prompt field. The data carries this as
+ * `capabilities.systemPromptPlacement`, which `ModelCapabilities` does not carry.
+ *
+ * @internal
+ * @param modelId - The model id to look up
+ * @returns `'message'` when it goes at the start of the messages, undefined when the data does not say
+ */
+export function lookupSystemPromptPlacement(modelId: string): SystemPromptPlacement | undefined {
+  const key = lookupKey(modelId)
+  if (key === undefined) return undefined
+  return (data.models[key]?.capabilities as { systemPromptPlacement?: SystemPromptPlacement } | undefined)
+    ?.systemPromptPlacement
 }
 
 /**

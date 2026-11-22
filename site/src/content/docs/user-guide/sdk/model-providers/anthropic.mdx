@@ -486,7 +486,7 @@ agent = Agent(
 </Tab>
 </Tabs>
 
-The summarizing model, <Syntax py="agent.aux_model" ts="agent.auxModel" /> by default,
+The summarizing model, the agent's own model by default,
 must also support server-side summary. Otherwise the summary runs client-side and drops
 thinking. A pinned message inside the summarized range also sends the summary
 client-side. See

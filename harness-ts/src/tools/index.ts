@@ -14,15 +14,9 @@ export {
 export type { MakeProgrammaticToolCallerOptions } from './programmatic-tool-caller.js'
 export { makeWebFetch } from './web-fetch.js'
 export type { MakeWebFetchOptions } from './web-fetch.js'
-export { exaWebSearch, makeExaWebSearch } from './web-search.js'
-export { AgentSpec, Choice, Fixed, Inherit, makeSubagent, Open, Option, Preset } from './subagent.js'
-export type {
-  AgentBuilder,
-  ContextAxis,
-  ContextMode,
-  InstructionsMode,
-  MakeSubagentOptions,
-  ModelMode,
-  PresetOptions,
-  ToolsMode,
-} from './subagent.js'
+export { exaWebSearch, makeAgentCoreWebSearch, makeExaWebSearch } from './web-search.js'
+export type { MakeAgentCoreWebSearchOptions } from './web-search.js'
+export { AgentSpec, Choice, Fixed, Inherit, Open, Option, Preset } from '@strands-agents/sdk/multiagent'
+export type { AgentBuilder, PresetOptions } from '@strands-agents/sdk/multiagent'
+export { makeSubagent } from '@strands-agents/sdk/vended-tools/subagent'
+export type { MakeSubagentOptions } from '@strands-agents/sdk/vended-tools/subagent'

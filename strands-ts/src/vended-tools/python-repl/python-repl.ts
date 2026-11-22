@@ -70,7 +70,7 @@ function resolvePythonReplArgs(
  * The tool throws {@link SandboxTimeoutError} when execution exceeds `timeout`, with the partial
  * output appended to the message as JSON using the success field names and `exit_code` 124,
  * {@link PythonReplError} when the sandbox fails to run the code, and rethrows `SandboxAbortError`
- * when the agent cancels the call.
+ * when the agent cancels the call, with the partial output appended the same way and `exit_code` 130.
  *
  * @param sandbox - Sandbox to bind at creation. When omitted, the agent's sandbox is used at call time.
  * @param options - Tool name, description, and interpreter.
@@ -112,11 +112,10 @@ export function makePythonRepl(
         })
         return { output: result.stdout, error: result.stderr, exit_code: result.exitCode }
       } catch (err) {
-        // Let cancellation propagate as-is rather than reporting it as a sandbox failure.
-        if (err instanceof SandboxAbortError) throw err
-        if (err instanceof SandboxTimeoutError) {
+        if (err instanceof SandboxTimeoutError || err instanceof SandboxAbortError) {
           // Thrown errors reach the model as `Error: <message>`, so the partial output rides in the message.
-          const partial: PythonReplOutput = { output: err.stdout, error: err.stderr, exit_code: 124 }
+          const exitCode = err instanceof SandboxTimeoutError ? 124 : 130
+          const partial: PythonReplOutput = { output: err.stdout, error: err.stderr, exit_code: exitCode }
           err.message = `${err.message}\n${JSON.stringify(partial)}`
           throw err
         }

@@ -13,8 +13,6 @@ const CHARS_PER_TOKEN = 4
 
 /**
  * Configuration for the truncate method.
- *
- * @experimental
  */
 export interface TruncateConfig {
   /**

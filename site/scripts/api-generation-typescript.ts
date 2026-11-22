@@ -26,6 +26,9 @@ interface FileInfo {
   namespace?: string // set for members under namespaces/<ns>/
 }
 
+/** Member directories typedoc emits. Any other path segment is a module or namespace wrapper. */
+const CATEGORY_DIRS = new Set(['classes', 'interfaces', 'type-aliases', 'functions', 'variables', 'enumerations'])
+
 /**
  * Recursively get all .md files in a directory
  */
@@ -51,9 +54,12 @@ function getAllMdFiles(dir: string, baseDir: string = dir): FileInfo[] {
 
       // Find 'namespaces' segment anywhere in the path (typedoc may nest under a project-name dir)
       const nsIdx = parts.indexOf('namespaces')
+      // With more than one entry point typedoc nests every member under a module directory, so the
+      // category is the last category segment in the path rather than the first.
+      const categoryIdx = parts.findLastIndex((part) => CATEGORY_DIRS.has(part))
 
-      if (parts.length === 1) {
-        // Root level file (index.md)
+      if (categoryIdx === -1 && nsIdx === -1) {
+        // index.md, at the root or per module — the site supplies its own index page
         category = 'index'
         name = basename(entry, '.md')
         files.push({ path: fullPath, category, name })
@@ -71,11 +77,15 @@ function getAllMdFiles(dir: string, baseDir: string = dir): FileInfo[] {
           files.push({ path: fullPath, category, name, namespace: ns })
         }
         // deeper nesting not expected; ignore
-      } else {
-        // Nested file (classes/Agent.md)
-        category = parts[0]!
+      } else if (categoryIdx !== -1) {
+        // Member file ([<module>/]classes/Agent.md)
+        category = parts[categoryIdx]!
         name = basename(entry, '.md')
         files.push({ path: fullPath, category, name })
+      } else {
+        // Namespace emitted as a single file ([<module>/]namespaces/Offload.md)
+        name = basename(entry, '.md')
+        files.push({ path: fullPath, category: 'namespaces', name })
       }
     }
   }
@@ -148,8 +158,13 @@ async function processFile(file: FileInfo): Promise<void> {
   // For namespace members, also strip the extra ../ that points up from the category subfolder
   // For namespace index pages, rewrite category-prefixed links to absolute slug paths
   //   e.g. interfaces/TracerConfig.md -> /api/typescript/telemetry:TracerConfig
+  // Pages are emitted flat, so a link that crosses modules (../../interfaces/Plugin.md, or
+  // ../../context-manager/interfaces/ArchiveConfig.md) has to lose its module hops too.
   let linkedFixed = content
-    .replace(/\]\(\.\.\/(classes|interfaces|type-aliases|functions|variables|enumerations)\/([^)]+)\)/g, '](../$2)')
+    .replace(
+      /\]\((?:\.\.\/)+(?:[\w-]+\/)*(classes|interfaces|type-aliases|functions|variables|enumerations)\/([^)]+)\)/g,
+      '](../$2)'
+    )
     .replace(/\]\(\.\.\/([^./][^)]+\.md(?:#[^)]*)?)\)/g, ']($1)')
 
   if (file.namespace) {

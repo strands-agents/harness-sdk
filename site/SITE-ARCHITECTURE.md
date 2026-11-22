@@ -154,8 +154,32 @@ Each product publishes `docs/site-manifest.json` with `schemaVersion`, product m
 an ordered page list. Each page declares a unique lowercase kebab-case ID, a unique normalized
 Markdown source under `docs/`, a unique route suffix composed of lowercase kebab-case path
 components, title, description, and `nav: { group: string, order: positive integer }`.
-Group/order pairs must also be unique. The files are not evaluated as MDX, so braces and
-import/export-like prose remain literal text.
+Group/order pairs must also be unique. Source files are Markdown; the generator writes
+`.mdx` so upstream pages can use any JSX component the site has auto-imported, under the
+MDX safety rules described below.
+
+`nav.group` accepts either a non-empty string (a flat top-level group) or an array of
+non-empty strings (a path of nested sidebar groups, outermost first). Uniqueness still
+holds: no two pages may share the same `(group-path, order)` tuple. A nested group's
+sidebar position comes from the minimum `order` of its descendants, so the first entry in
+a subgroup also fixes where the subgroup sits in its parent.
+
+The transformer parses each page with `remark-mdx` and rejects, anywhere in the
+tree:
+
+- `mdxjsEsm` — `import` / `export` statements
+- `mdxFlowExpression`, `mdxTextExpression` — bare `{expression}` in prose
+- `mdxJsxExpressionAttribute` — spread or expression-only attributes (`<Foo {...rest} />`)
+- `mdxJsxAttributeValueExpression` — expression-valued attributes (`<Foo n={1} />`)
+
+A JSX element whose attributes are all literal strings (or boolean-style bare
+attributes) passes regardless of name — including raw HTML tags. Data flow
+from upstream to components stays a literal pipe. The trust boundary is
+`astro-auto-import` in `astro.config.mjs`: upstream may use any component the
+site has auto-imported, and an unknown capitalized tag fails at Astro build
+time (a CI error, not a security event). Adding a new component for upstream
+repos to use is one auto-import entry in `astro.config.mjs`; the external-docs
+pipeline needs no change.
 
 Schema version 1 accepts source files anywhere under `docs/`. This broadens the `docs/user/`
 restriction without invalidating existing manifests. Within `docs/`, the manifest's explicit
@@ -200,7 +224,7 @@ PR body link to each upstream old-to-new commit comparison.
 
 ```text
 .build/external-docs/<product-id>/
-├── content/          # Generated .md pages
+├── content/          # Generated .mdx pages
 └── navigation.json  # Generated groups and page links
 ```
 
@@ -220,8 +244,11 @@ The generator:
 - rewrites other relative links and same-repository `blob`, `tree`, and raw `main` URLs to the
   pinned commit while keeping GitHub edit URLs on the configured editable ref;
 - treats unsupported `dw` and `cedar` code fences as plain text;
-- rejects unsafe paths, source symlinks, frontmatter, MDX-style components, executable
-  snippet includes, and unsafe raw HTML.
+- passes JSX elements through to the `.mdx` output so Astro resolves them via
+  auto-import, subject to the MDX safety rules above (no `import`/`export`, no
+  bare `{expression}`, no spread or expression-valued attributes);
+- rejects unsafe paths, source symlinks, frontmatter, executable snippet
+  includes, and anything the MDX validator blocks.
 
 #### Adding a product
 
@@ -915,6 +942,7 @@ Our implementation renders documentation through Astro's container API, applies 
 - `/{slug}/index.md` - Any doc page in raw markdown format
 - `/examples/{sample}/index.md` - Any generated sample guide in raw markdown format
 - `/integrations.json` - Integrations catalog feed built from the `catalog` collection, described by `/integrations.schema.json`
+- `/openapi.json` - OpenAPI 3.1 description of the public website data feeds
 
 ### Implementation Files
 
@@ -925,6 +953,7 @@ Our implementation renders documentation through Astro's container API, applies 
 | `src/pages/[...slug]/index.md.ts` | Dynamic endpoint for individual pages |
 | `src/pages/examples/[...sample]/index.md.ts` | Dynamic endpoint for generated sample guides |
 | `src/pages/integrations.json.ts`, `src/pages/integrations.schema.json.ts` | Integrations feed and its JSON Schema (`src/util/catalog-feed.ts`) |
+| `src/pages/openapi.json.ts`, `src/util/openapi.ts` | OpenAPI document for the public integrations feed |
 | `src/util/render-to-markdown.ts` | Renders MDX entries via AstroContainer |
 | `src/util/html-to-markdown.ts` | HTML→Markdown conversion with custom rules |
 
