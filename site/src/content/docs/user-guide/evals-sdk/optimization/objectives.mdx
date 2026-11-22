@@ -1,0 +1,137 @@
+---
+title: Objectives, constraints, and budget
+description: Tell the optimizer what "better" means with objectives and constraints over evaluator scores and token usage, and size the rollout budget for a run.
+tags: [token-management]
+sidebar:
+  label: "Objectives and budget"
+---
+
+The optimizer ships whatever scores best on the objective you give it, within the
+constraints you set and the budget you allow. This page covers how to say what "better"
+means, how to rule candidates out, and how much a run costs.
+
+## Metrics you can optimize
+
+A metric is either an evaluator from your experiment or a usage number measured from the
+agent's traces.
+
+- **Evaluators**, by name with or without the `Evaluator` suffix: `"Helpfulness"` and
+  `"HelpfulnessEvaluator"` are the same metric. An evaluator's range is its
+  `score_range` attribute, or 0 to 1 when it has none.
+- **Usage**: `tokens`, `input_tokens`, `output_tokens`, `cache_read_tokens`,
+  `cache_write_tokens`, `model_calls`, and `seconds`. These count the agent the factory
+  built and every agent under it, never the judges.
+
+An unknown name fails when you build the optimizer, before any rollout.
+
+## Choose an objective
+
+Without an objective, the optimizer maximizes the mean of your evaluators, the same number
+a plain evaluation run reports. To aim at one metric, use `Maximize` or `Minimize`:
+
+```python
+from strands_evals.optimization import Maximize
+
+objective = Maximize("Helpfulness")
+```
+
+To trade two things off, combine them in a `WeightedSum`:
+
+```python
+from strands_evals.optimization import Maximize, Minimize, WeightedSum
+
+objective = WeightedSum(
+    Maximize("Helpfulness", weight=2),
+    Minimize("tokens", scale=1000),
+)
+```
+
+`scale` is the size of a meaningful change: here 1,000 tokens count as much as the whole
+Helpfulness range. An evaluator's scale defaults to its range, so you only set it for
+usage metrics, which have no upper bound. `weight` sets each term's share.
+
+When you can't name an exchange rate between quality and cost, use `Pareto` with the same
+terms. The optimizer still ships one champion, but it validates and tests the whole front
+of trade-offs so you can pick another from `result.front`.
+
+## Rule candidates out with constraints
+
+A constraint is a line a shipped candidate must not cross:
+
+```python
+from strands_evals.optimization import AtLeast, AtMost
+
+constraints = [
+    AtMost("seconds", 30),
+    AtLeast("Correctness", 0.8),
+]
+```
+
+During the search, constraints only rank: candidates likely to meet every constraint come
+first, but the others can still be parents. At the end, only a candidate that meets every
+constraint on validation can ship, and "meets" means the model puts the chance of meeting
+it at 90% or more. When no candidate qualifies, your current agent ships.
+
+Prefer a constraint over a cost term when you have a hard limit. A weighted cost term buys
+quality with tokens at a fixed rate; a constraint says "never above this".
+
+## Set the budget
+
+The budget is counted in **rollouts**: one case run once by the agent. A run stops when its
+budget is spent, and every stop still runs the end phase, because the end phase's share is
+held back from the start.
+
+```python
+from strands_evals.optimization import Budget
+
+budget = Budget(max_rollouts=300, max_iterations=20)
+```
+
+The default is 500 rollouts and no iteration cap. Each search step costs about
+`proposals x train cases x runs per candidate` rollouts; with the default four proposals
+and 8 train cases, that's 32 per step. The minimum is what the baseline and the end phase
+need, and a budget below it fails at construction with the number required.
+
+Three costs aren't counted against the budget, and the result reports each one:
+
+- **Judges**: every LLM evaluator call. On short answers, judges often use more tokens than
+  the agent.
+- **Proposers**: the text rewriter's own model calls, which can exceed the agent's and the
+  judges' spend together.
+- **Retries**: the agent's spend in attempts that failed on throttling or an outage.
+
+## Other settings that change what ships
+
+| Setting | Default | Change it when |
+|---|---|---|
+| Split | 40% train, 30% validation, 30% test | You need specific cases in a split, or more in the search |
+| Runs per candidate | 1 | Your agent is noisy and each case needs repeats |
+| Proposals per step | 4 | You want wider or narrower steps |
+| Agent failure score | `"worst"` | A crash should count as missing data, not as the worst score |
+| Final pick rule | `Mean()` | You'd rather ship cautiously: `LowerBound(q=0.1)` ranks by the pessimistic end |
+
+A crashed rollout scores each evaluator's worst value by default, so a candidate that
+crashes can't look good by skipping its hard cases. Throttling, outages, and expired
+credentials are never scored: those trials are retried.
+
+## Set them from the command line
+
+Every setting has a flag on `strands-evals optimize run`:
+
+```bash
+strands-evals optimize run experiment.json --agent agent.py:create_agent \
+  --objective maximize:Helpfulness:weight=2 \
+  --objective minimize:tokens:scale=1000 \
+  --constraint 'seconds<=30' \
+  --max-rollouts 300 \
+  --split 0.5,0.25,0.25
+```
+
+Several `--objective` flags make a weighted sum; add `--pareto` for a front. Long commands
+fit in a `.toml` run file whose keys are the flag names, passed in place of the experiment
+file. Run `strands-evals optimize run --help` for every flag.
+
+## Next steps
+
+- [Reading the results](results.md): See what the objective picked and how sure the run is
+- [Declaring what can change](tunables.md): Widen or narrow what the search may touch

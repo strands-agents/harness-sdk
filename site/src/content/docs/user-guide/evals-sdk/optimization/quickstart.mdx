@@ -1,0 +1,266 @@
+---
+title: Optimization quickstart
+description: Optimize a Strands support agent end to end, tuning its prompt style and temperature against a helpfulness judge and a token budget.
+tags: [quickstart]
+sidebar:
+  label: "Quickstart"
+---
+
+This guide optimizes a small customer-support agent end to end. You'll declare two knobs,
+run the optimizer against ten cases, and read which configuration won and why. The run
+takes a few minutes and about 60 rollouts.
+
+## Install the SDK
+
+The optimizer ships with the evals SDK behind the `optimization` extra, which adds numpy,
+scipy, Optuna, and the Strands harness:
+
+```bash
+pip install 'strands-agents-evals[optimization]' strands-agents
+```
+
+Importing `strands_evals.optimization` without the extra raises an `ImportError` that names
+this command.
+
+The agent, the judge, and the default text rewriter all call Claude on Amazon Bedrock.
+Configure AWS credentials with permission to invoke them: see the
+[evals quickstart](../quickstart.md#configure-credentials). Refresh short-lived
+credentials before a long run. Trials that fail on expired credentials are retried, never
+scored, but they keep spending rollouts.
+
+## Write the experiment
+
+The optimizer judges every configuration with an ordinary [experiment](../how-evaluation-works.md#what-an-evaluation-is-made-of): its cases are the
+work the agent should do well, and its evaluators score how well it did. If you already
+evaluate your agent, reuse that experiment. This guide builds a new one. Every case needs a
+unique name, because candidates are compared case by case:
+
+```python
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import HelpfulnessEvaluator
+
+QUESTIONS = [
+    "My package hasn't arrived after two weeks.",
+    "How do I return a damaged item?",
+    "Can I change the delivery address on my order?",
+    "I was charged twice for one order.",
+    "How long do refunds take?",
+    "The item I received is the wrong size.",
+    "Can I cancel an order that already shipped?",
+    "My discount code isn't working at checkout.",
+    "Do you ship internationally?",
+    "How do I reset my account password?",
+]
+
+experiment = Experiment(
+    cases=[Case(name=f"q{i}", input=q) for i, q in enumerate(QUESTIONS)],
+    evaluators=[HelpfulnessEvaluator()],
+)
+```
+
+Ten cases is enough to see the loop work. For a decision you'd ship, use twenty or more.
+
+## Declare what may change
+
+Write the agent as a factory function and mark the parameters the optimizer may change.
+The parameter defaults are the **baseline**: the agent you have today.
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from strands_evals.optimization import Float, OneOf, tunable
+
+STYLES = {
+    "chatty": "You are a friendly support agent. Chat with the customer.",
+    "terse": (
+        "You are a support agent. "
+        "Answer in one or two sentences and give the next step."
+    ),
+}
+
+
+@tunable(temperature=Float(0.0, 1.0), style=OneOf("chatty", "terse"))
+def create_agent(temperature=0.9, style="chatty"):
+    return Agent(
+        model=BedrockModel(
+            model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            temperature=temperature,
+        ),
+        system_prompt=STYLES[style],
+        callback_handler=None,
+    )
+```
+
+`@tunable` doesn't change how the function behaves when you call it: `create_agent()`
+still returns the baseline agent. During a run, the optimizer builds a fresh agent for
+every trial through this same function, so no state leaks between trials.
+
+## Say what "better" means
+
+Without an objective, the optimizer maximizes the mean of your evaluators. Here the goal is
+to stay helpful while writing less:
+
+```python
+from strands_evals.optimization import Budget, Maximize, Minimize, Optimizer, WeightedSum
+
+optimizer = Optimizer(
+    experiment,
+    create_agent,
+    objective=WeightedSum(Maximize("Helpfulness"), Minimize("output_tokens", scale=100)),
+    budget=Budget(max_rollouts=60),
+)
+```
+
+`scale=100` means a change of 100 output tokens weighs as much as the whole 0 to 1
+Helpfulness range. Token counts come from the agent's traces, so you don't measure
+anything yourself. A rollout is one case run once; the default budget is 500.
+
+## Run it
+
+```python
+result = optimizer.run()
+print(result.summary())
+```
+
+`run()` prints one line per step and writes everything to a run folder under
+`.strands-evals/optimization/runs/`. Use `await optimizer.run_async()` inside an event
+loop.
+
+```text
+# Example output (abridged):
+Run 20261117-154343-1a1080: the search stopped (budget) after 3 steps, 58 rollouts.
+Ships candidate 6 (8fa692ab3d44), proposed from candidate 4 (2cb2cc308e36) by numbers.
+
+Validation:
+     candidate                   objective  HelpfulnessEvaluator  output_tokens
+     the baseline                -0.3307    0.889                 155
+     candidate 5 (5bd8c1a0cfcb)  0.1758     0.889                 53.7
+  *  candidate 6 (8fa692ab3d44)  0.1918     0.889                 50.5
+
+Test, the champion vs the baseline (paired 90% interval; reported only):
+  objective             +0.754 [+0.267, +1.24] over 3 cases
+  HelpfulnessEvaluator  -0.0553 [-0.217, +0.106] over 3 cases
+  output_tokens         -156 [-240, -72.6] over 3 cases
+
+Changes: 0 text values (diff())
+  temperature: 0.9 -> 0.3894665234374012
+  style: 'chatty' -> 'terse'
+```
+
+## Read what won
+
+The summary answers three questions:
+
+- **What ships.** Candidate 6, marked `*`, scored highest on the validation cases the
+  search never saw. Helpfulness held at 0.889 while output tokens fell from 155 to about
+  50.
+- **Whether it holds up.** On the three test cases the champion used 156 fewer output
+  tokens, with an interval far from zero. Helpfulness moved by -0.06, and its interval
+  includes zero: no detectable loss, but three cases can't rule one out.
+- **What to change.** The champion's values, one line per changed setting.
+
+Not every changed value matters. The effects file tells you which ones do:
+
+```python
+for row in result.effects["effects"]:
+    low, high = row["ci90"]
+    print(f'{row["metric"]}: {row["key"]}={row["level"]} vs {row["reference"]}: '
+          f'{row["mean"]:+.3g} [{low:+.3g}, {high:+.3g}]')
+```
+
+In this run only the prompt style moved anything: about 112 fewer output tokens, with an
+interval far from zero. Temperature had an effect centered on zero, so the
+champion's `0.39` is where the search happened to be, not a finding. See
+[Reading the results](results.md#which-options-mattered) for the full effects table.
+
+## Apply the result
+
+Nothing in your code changed. The run folder holds what you need to apply by hand:
+
+- `best.values.json`: every changed number and choice, with its old and new value
+- `best.diff`: a unified diff of every changed text value (empty in this run)
+
+Here you'd switch the default style to `"terse"` and leave the rest. Then rerun your
+experiment on a few fresh cases to confirm.
+
+## Full example
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import HelpfulnessEvaluator
+from strands_evals.optimization import (
+    Budget,
+    Float,
+    Maximize,
+    Minimize,
+    OneOf,
+    Optimizer,
+    WeightedSum,
+    tunable,
+)
+
+STYLES = {
+    "chatty": "You are a friendly support agent. Chat with the customer.",
+    "terse": (
+        "You are a support agent. "
+        "Answer in one or two sentences and give the next step."
+    ),
+}
+QUESTIONS = [
+    "My package hasn't arrived after two weeks.",
+    "How do I return a damaged item?",
+    "Can I change the delivery address on my order?",
+    "I was charged twice for one order.",
+    "How long do refunds take?",
+    "The item I received is the wrong size.",
+    "Can I cancel an order that already shipped?",
+    "My discount code isn't working at checkout.",
+    "Do you ship internationally?",
+    "How do I reset my account password?",
+]
+
+
+@tunable(temperature=Float(0.0, 1.0), style=OneOf("chatty", "terse"))
+def create_agent(temperature=0.9, style="chatty"):
+    return Agent(
+        model=BedrockModel(
+            model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            temperature=temperature,
+        ),
+        system_prompt=STYLES[style],
+        callback_handler=None,
+    )
+
+
+experiment = Experiment(
+    cases=[Case(name=f"q{i}", input=q) for i, q in enumerate(QUESTIONS)],
+    evaluators=[HelpfulnessEvaluator()],
+)
+
+optimizer = Optimizer(
+    experiment,
+    create_agent,
+    objective=WeightedSum(Maximize("Helpfulness"), Minimize("output_tokens", scale=100)),
+    budget=Budget(max_rollouts=60),
+)
+result = optimizer.run()
+print(result.summary())
+```
+
+The same run from a shell, with `create_agent` saved in `agent.py` and the experiment saved
+with `experiment.to_file("experiment.json")`:
+
+```bash
+strands-evals optimize run experiment.json --agent agent.py:create_agent \
+  --objective maximize:Helpfulness --objective minimize:output_tokens:scale=100 \
+  --max-rollouts 60
+```
+
+## Next steps
+
+- [Declaring what can change](tunables.md): Rewrite prompts, swap components, tune context
+  strategies
+- [Objectives, constraints, and budget](objectives.md): Add constraints and size the budget
+- [Reading the results](results.md): The effects table, the test report, and resuming

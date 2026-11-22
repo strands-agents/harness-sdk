@@ -671,6 +671,15 @@ sidebar:
               - docs/user-guide/evals-sdk/red-teaming/custom_task
               - docs/user-guide/evals-sdk/red-teaming/evaluators
               - docs/user-guide/evals-sdk/red-teaming/reading_the_report
+          - label: Optimization
+            items:
+              - label: "Overview"
+                slug: docs/user-guide/evals-sdk/optimization
+              - docs/user-guide/evals-sdk/optimization/quickstart
+              - docs/user-guide/evals-sdk/optimization/tunables
+              - docs/user-guide/evals-sdk/optimization/entry_routes
+              - docs/user-guide/evals-sdk/optimization/objectives
+              - docs/user-guide/evals-sdk/optimization/results
           - docs/user-guide/evals-sdk/chaos_testing
       - label: CLI
         items:

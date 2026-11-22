@@ -1,0 +1,308 @@
+---
+title: Declaring what can change
+description: Mark prompts, files, skills, tool descriptions, numbers, and components as tunable, including context strategies, component swaps, and multi-agent factories.
+tags: [prompt-authoring, conversation-management]
+sidebar:
+  label: "Declaring what can change"
+---
+
+Before the optimizer can search, you tell it what it's allowed to change. You do that by
+writing the agent as a factory function and attaching a **marker** to each parameter that
+may vary. Everything without a marker is passed through unchanged. This page covers every
+marker and then the patterns that combine them: context strategies, component swaps, and
+multi-agent systems.
+
+All examples need `pip install 'strands-agents-evals[optimization]'`.
+
+## Mark a factory's parameters
+
+Decorate the factory with `@tunable` and pass one marker per tunable parameter. The
+parameter defaults are the baseline:
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from strands_evals.optimization import Float, TextValue, tunable
+
+
+@tunable(system_prompt=TextValue(), temperature=Float(0.0, 1.0))
+def create_agent(
+    system_prompt="You are a support agent for Acme Shop.", temperature=0.3
+):
+    return Agent(
+        system_prompt=system_prompt,
+        model=BedrockModel(temperature=temperature),
+        callback_handler=None,
+    )
+
+
+agent = create_agent()  # the baseline, with no optimizer involved
+```
+
+The decorated function behaves exactly as before when you call it, so production code can
+keep using it. If you'd rather not import the optimizer in production code at all, leave
+the factory undecorated and mount it from your eval script instead:
+
+```python
+from strands_evals.optimization import Float, TextValue, tunable
+
+from my_app.agents import create_agent  # a plain, undecorated factory
+
+tunable_agent = tunable(
+    create_agent,
+    inject={"system_prompt": TextValue(), "temperature": Float(0.0, 1.0)},
+)
+```
+
+Mistakes fail at declaration, before any rollout: a marker naming no parameter, a
+component whose constructor rejects its own defaults, or two markers on the same file.
+
+## The markers
+
+| Marker | Declares | Default proposer |
+|---|---|---|
+| `TextValue()` | A text value, such as a system prompt | Text rewriter |
+| `FileText(path)` | Text whose source of truth is a file | Text rewriter |
+| `JsonField(path, pointer)` | One field of a JSON file, addressed by JSON pointer | Text rewriter |
+| `SkillLibrary(path)` | Each skill's `SKILL.md` in a skills folder | Text rewriter |
+| `tool_descriptions(*tools)` | Each tool's description | Text rewriter |
+| `Int(min, max)` / `Float(min, max)` | A number, inclusive bounds | TPE |
+| `OneOf(*options)` | One of several plain values | TPE |
+| `choice(...)` of `component(...)` | A swap between constructed objects, each with its own tuned arguments | TPE |
+
+`Int`, `Float`, `OneOf`, and `TextValue` take their default from the parameter, so you
+write the baseline once. Pass `default=` only when there is no parameter default to read.
+
+## Text values
+
+A plain `TextValue` holds text that lives in your code. Text that lives in files gets a
+file marker, so the diff the optimizer returns lands on the real file:
+
+```python
+from strands import Agent
+from strands_evals.optimization import FileText, JsonField, tunable
+
+
+@tunable(
+    system_prompt=FileText("prompts/support.md"),
+    greeting=JsonField("config/agent.json", "/greeting"),
+)
+def create_agent(system_prompt: str, greeting: str):
+    return Agent(system_prompt=f"{system_prompt}\n\n{greeting}", callback_handler=None)
+```
+
+The file's current text is the baseline. Your files are never written: each candidate gets
+its own copy of the folder around the file. If the agent needs a path rather than the text,
+pass `as_path=True` and the parameter receives the path of the candidate's copy.
+
+Two settings guard every text marker:
+
+- **`size_cap`**: the longest text a proposal may be, in characters. It defaults to the
+  larger of 2,000 and three times the baseline's length, and stops prompt bloat before it
+  costs a rollout.
+- **`edit_instructions`**: guidance shown to the text rewriter next to this value, such as
+  "keep the refund policy section unchanged".
+
+## Skills
+
+To let the optimizer edit your agent's skills, point `SkillLibrary` at the skills folder.
+Each skill's `SKILL.md` becomes a tunable text, and the parameter receives the path of the
+candidate's copy:
+
+```python
+from strands import Agent
+from strands.vended_plugins.skills import AgentSkills
+from strands_evals.optimization import SkillLibrary, tunable
+
+
+@tunable(skills=SkillLibrary("skills", only=("returns", "shipping")))
+def create_agent(skills="skills"):
+    return Agent(plugins=[AgentSkills(skills=str(skills))], callback_handler=None)
+```
+
+`only=` limits editing to the named skills; the others are copied unedited. Scripts and
+reference files next to a `SKILL.md` are copied but never edited, and a proposal must keep
+the skill's frontmatter `name`.
+
+## Tool descriptions
+
+A tool's description is often the most influential text in an agent: the model reads it on
+every call. `tool_descriptions` makes each tool's description tunable, and the parameter
+receives fresh copies of the tools with the candidate's descriptions:
+
+```python
+from strands import Agent, tool
+from strands_evals.optimization import tool_descriptions, tunable
+
+
+@tool
+def lookup_order(order_id: str) -> str:
+    """Look up an order by its id."""
+    return f"Order {order_id}: shipped on Monday"
+
+
+@tunable(tools=tool_descriptions(lookup_order))
+def create_agent(tools=(lookup_order,)):
+    return Agent(tools=list(tools), callback_handler=None)
+```
+
+Your tool objects are never modified, so concurrent trials can't leak descriptions into
+each other. MCP tools can't be declared this way: their specs can't be set on a copy.
+
+## Swap components
+
+To compare constructed objects, use `choice()` with one `component()` per alternative. Each
+component's `Int`, `Float`, and `OneOf` arguments are tuned under that alternative only.
+Here two models each get their own temperature range, so the search learns a good
+temperature per model instead of one compromise for both:
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from strands_evals.optimization import Float, choice, component, tunable
+
+
+@tunable(
+    model=choice(
+        haiku=component(
+            BedrockModel,
+            model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            temperature=Float(0.0, 1.0, default=0.3),
+        ),
+        sonnet=component(
+            BedrockModel,
+            model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            temperature=Float(0.0, 0.7, default=0.3),
+        ),
+    )
+)
+def create_agent(model=None):
+    return Agent(model=model, callback_handler=None)
+```
+
+The first alternative is the baseline, and it replaces the parameter's default. Every
+trial builds a fresh component through its real constructor, so hooks register and no
+state carries over.
+
+When the only difference is the model id, a `OneOf` of ids is enough. Either way, pair a
+model choice with a cost term or a constraint. An objective that only rewards quality picks
+the larger model whenever it is no worse, because nothing tells it the larger model costs
+more. See [Objectives, constraints, and budget](objectives.md).
+
+An alternative can also be a fixed value, given by keyword. That's how you make something
+optional: `choice(on=component(...), off=None)`.
+
+## Tune context strategies
+
+Context management is a good fit for optimization: the right summarization point and the
+number of recent messages to keep depend on your workload, and nobody guesses them well.
+An `Offload` strategy takes its conditions through `.when(...)`, and the agent takes a
+whole configuration, so write a small function whose parameters are the numbers to tune,
+and give it to `component()`:
+
+```python
+from strands import Agent
+from strands.experimental.context_manager import Offload
+from strands_evals.optimization import Float, Int, choice, component, tunable
+
+
+def offload_config(summarize_at=0.85, keep_recent=4, tool_result_tokens=2000):
+    return {
+        "strategies": [
+            Offload.truncate("tool_results", {"preview_tokens": 500}).when(
+                threshold=tool_result_tokens
+            ),
+            Offload.summarize("*").when(
+                utilization=summarize_at, preserve_recent=keep_recent
+            ),
+        ],
+    }
+
+
+@tunable(
+    context_manager=choice(
+        auto="auto",
+        presets={"strategies": ["large_tool_offloading", "proactive_summarization"]},
+        custom=component(
+            offload_config,
+            summarize_at=Float(0.5, 0.95),
+            keep_recent=Int(2, 20),
+            tool_result_tokens=Int(500, 8000),
+        ),
+    )
+)
+def create_agent(context_manager="auto"):
+    return Agent(context_manager=context_manager, callback_handler=None)
+```
+
+This declares three alternatives: the built-in `"auto"` mode (the baseline), a fixed pair of
+presets, and a custom pipeline with three tuned numbers. The custom numbers are searched
+only when the custom pipeline is chosen, and the search learns them separately from the
+other alternatives. `offload_config` runs again for every agent, so no strategy object is
+shared between trials.
+
+To compare only the built-in modes, a plain `OneOf("auto", "agentic", False)` is enough.
+
+See [Custom strategies](../../sdk/context-management/custom-strategies.md) for every
+`Offload` target and condition.
+
+## Tune a multi-agent system
+
+One factory may build every agent in the system, and each agent's prompt can carry its own
+marker. Here an orchestrator calls a billing specialist as a tool:
+
+```python
+from strands import Agent
+from strands_evals.optimization import TextValue, tunable
+
+
+@tunable(orchestrator_prompt=TextValue(), billing_prompt=TextValue())
+def create_agent(
+    orchestrator_prompt="Route each customer question to the right specialist.",
+    billing_prompt="You resolve billing questions: charges, refunds, and invoices.",
+):
+    billing = Agent(
+        name="billing",
+        description="Answers billing questions.",
+        system_prompt=billing_prompt,
+        callback_handler=None,
+    )
+    return Agent(
+        system_prompt=orchestrator_prompt, tools=[billing], callback_handler=None
+    )
+```
+
+Token and latency metrics count the agent the factory returns and every agent running under
+it, so the specialist's spend is part of the candidate's cost.
+
+## Pass fixed objects safely
+
+A fixed (non-marker) argument to `component()`, and a fixed alternative in `choice()`, is
+deep-copied for every build so concurrent trials never share it. An object that can't be
+copied, such as an `Agent` or a `BedrockModel`, fails at declaration. Build it inside the
+function you pass to `component()` instead: that function is never copied, so anything it
+creates is fresh, and anything it refers to is shared on purpose.
+
+## What the optimizer sees
+
+Your declaration becomes a flat mapping of dotted keys, the **candidate**. For the context
+example above, a custom-pipeline candidate looks like this:
+
+```python
+{
+    "context_manager": "custom",
+    "context_manager.custom.summarize_at": 0.85,
+    "context_manager.custom.keep_recent": 4,
+    "context_manager.custom.tool_result_tokens": 2000,
+}
+```
+
+These keys are the names you'll see in the run's summary, `best.values.json`, and the
+effects table. Keys under an alternative exist only when that alternative is chosen.
+
+## Next steps
+
+- [Choosing an entry route](entry_routes.md): Declare the same space without a Python
+  factory
+- [Objectives, constraints, and budget](objectives.md): Say what "better" means
+- [Reading the results](results.md): See which of these options actually mattered
