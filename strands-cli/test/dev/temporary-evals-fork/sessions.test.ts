@@ -675,7 +675,7 @@ describe('TEMPORARY dev sessions', () => {
     vi.unstubAllEnvs()
   })
 
-  it('shouldKeepARecordWhileTheRunIsActiveAndDropItWhenTheRunEnds', async () => {
+  it('shouldKeepARecordWhileTheRunIsActiveAndUntilItsEditIsAnswered', async () => {
     let recorded: unknown
     const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
       process.onSpawn?.(4242)
@@ -706,7 +706,15 @@ describe('TEMPORARY dev sessions', () => {
       iterations: 4,
       space: join(dirname(record), '.state/space.json'),
     })
-    expect(existsSync(resumeRecordOf(record))).toBe(false)
+    await vi.waitFor(async () =>
+      expect(JSON.parse(await readFile(resumeRecordOf(record), 'utf8'))).toMatchObject({ record, awaitsReview: true })
+    )
+    expect(JSON.parse(await readFile(resumeRecordOf(record), 'utf8'))).not.toHaveProperty('pid')
+
+    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'reject' })
+
+    await vi.waitFor(() => expect(existsSync(resumeRecordOf(record))).toBe(false))
   })
 
   it('shouldLeaveAStoppedRunAloneUntilItIsAskedToStartItBecauseItMakesPaidModelCalls', async () => {
@@ -798,7 +806,9 @@ describe('TEMPORARY dev sessions', () => {
         '--max-workers',
         '4',
       ])
-    expect(existsSync(resume)).toBe(false)
+    await vi.waitFor(async () =>
+      expect(JSON.parse(await readFile(resume, 'utf8'))).toMatchObject({ record, awaitsReview: true })
+    )
   })
 
   it.each<[string, readonly number[] | undefined, readonly string[]]>([
@@ -1758,6 +1768,116 @@ describe('TEMPORARY dev sessions', () => {
     expect(temporaryOptimizeJobs(sessions.optimize.snapshot()).map(({ label }) => label)).toEqual([
       expect.stringContaining('1 to review'),
     ])
+  })
+
+  const closedOnAReview = async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const run = sessions.optimize.start()!
+    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    const record = recordOf(optimizing.mock.calls[0]![0].args)
+    await vi.waitFor(async () =>
+      expect(JSON.parse(await readFile(resumeRecordOf(record), 'utf8'))).toMatchObject({ awaitsReview: true })
+    )
+    return { workspace, sessions, run, record }
+  }
+
+  const reopened = (workspace: DevWorkspace) => {
+    const { context, notices } = chat()
+    const again = vi.fn()
+    const host = (): TemporarySessionHost => ({
+      workspace,
+      agent: () => ({}),
+      context,
+      dependencies: { initialCopy: madeInitialCopy, run: environmentRunner(), spawnOptimizer: again },
+    })
+    const optimize = new TemporaryOptimize(host, new TemporaryExperiments(host))
+    optimize.onReview = vi.fn()
+    return { optimize, notices, again }
+  }
+
+  it('shouldBringBackTheReviewOfARunWhenStrandsDevOpensAgainWithoutPuttingItOverTheChat', async () => {
+    const { workspace, record } = await closedOnAReview()
+    const { optimize, notices, again } = reopened(workspace)
+
+    await optimize.resume()
+
+    expect(optimize.snapshot().runs).toMatchObject([
+      { record, state: { step: 'review', review: { edits: [expect.objectContaining({ after: WINNER })] } } },
+    ])
+    expect(temporaryOptimizeJobs(optimize.snapshot()).map(({ label }) => label)).toEqual([
+      expect.stringContaining('1 to review'),
+    ])
+    expect(notices).toContainEqual({
+      status: 'success',
+      text: `optimize · run ${optimizationName(record)} · 1 edit still to review · ↓ Enter`,
+    })
+    expect(optimize.onReview).not.toHaveBeenCalled()
+    expect(again).not.toHaveBeenCalled()
+    expect(existsSync(resumeRecordOf(record))).toBe(true)
+  })
+
+  it('shouldForgetTheReviewOfARunOnceItIsAnsweredAfterStrandsDevOpensAgain', async () => {
+    const { workspace, record } = await closedOnAReview()
+    const { optimize } = reopened(workspace)
+    await optimize.resume()
+    const [run] = optimize.snapshot().runs ?? []
+
+    optimize.finishReview(run!.id)
+
+    await vi.waitFor(() => expect(existsSync(resumeRecordOf(record))).toBe(false))
+    expect(temporaryOptimizeJobs(optimize.snapshot())).toEqual([])
+    const later = reopened(workspace)
+    await later.optimize.resume()
+    expect(later.optimize.snapshot().runs ?? []).toEqual([])
+  })
+
+  it('shouldSayThatAnEditNoLongerFitsWhenTheAgentChangedBeforeStrandsDevOpenedAgain', async () => {
+    const { workspace, record } = await closedOnAReview()
+    await writeFileAt(join(workspace.root, 'instructions.md'), 'Rewritten by hand.\n')
+    const { optimize, notices } = reopened(workspace)
+
+    await optimize.resume()
+
+    expect(temporaryOptimizeJobs(optimize.snapshot())).toEqual([])
+    expect(notices).toContainEqual({
+      status: 'success',
+      text: `optimize · run ${optimizationName(record)} · its edits no longer fit the agent as it is now`,
+    })
+    expect(existsSync(resumeRecordOf(record))).toBe(false)
+  })
+
+  it('shouldTakeTheQuestionOffTheScreenWhenTheEditIsAppliedAnotherWay', async () => {
+    const { sessions, run, record } = await closedOnAReview()
+
+    sessions.optimize.accept(0, true, run)
+    sessions.optimize.apply(run)
+
+    await vi.waitFor(() => expect(sessions.ask.pending()).toBeUndefined())
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot()).toMatchObject({
+        review: {
+          applied: ['instructions.md'],
+          reviewed: true,
+          edits: [expect.objectContaining({ accepted: true })],
+        },
+      })
+    )
+    expect(temporaryOptimizeJobs(sessions.optimize.snapshot())).toEqual([])
+    await vi.waitFor(() => expect(existsSync(resumeRecordOf(record))).toBe(false))
+  })
+
+  it('shouldTakeTheQuestionOffTheScreenWhenTheReviewIsDiscarded', async () => {
+    const { sessions, run, record } = await closedOnAReview()
+
+    sessions.optimize.discard(run)
+
+    expect(sessions.ask.pending()).toBeUndefined()
+    await vi.waitFor(() => expect(existsSync(resumeRecordOf(record))).toBe(false))
+    expect(sessions.optimize.appliedChanges()).toEqual([])
   })
 
   it('shouldDropTheJobLineOnceAnAcceptedEditIsWritten', async () => {

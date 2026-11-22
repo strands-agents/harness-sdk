@@ -26,6 +26,8 @@ export interface TemporaryOptimizeRecord {
   readonly decision?: OptimizeDecision
   readonly startedAt: number
   readonly pid?: number
+  /** The run is over and an edit of it waits for the developer's answer, so the record outlives the run. */
+  readonly awaitsReview?: boolean
 }
 
 const missing = (error: unknown): boolean => isRecord(error) && error.code === 'ENOENT'
@@ -67,7 +69,8 @@ const isOptimizeRecord = (value: unknown): value is TemporaryOptimizeRecord =>
   (value.objective === undefined || recordedObjective(value.objective) !== undefined) &&
   (value.decision === undefined || isDecision(value.decision)) &&
   typeof value.startedAt === 'number' &&
-  (value.pid === undefined || Number.isInteger(value.pid))
+  (value.pid === undefined || Number.isInteger(value.pid)) &&
+  (value.awaitsReview === undefined || typeof value.awaitsReview === 'boolean')
 
 export const saveTemporaryOptimizeRecord = async (record: TemporaryOptimizeRecord): Promise<void> => {
   const path = recordPath(record)

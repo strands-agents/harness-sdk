@@ -298,11 +298,20 @@ export class WizardBroker {
    * Says whether it cancelled any, so the caller knows if a turn was let go.
    */
   dropForMessage(): boolean {
-    const held = (wizard: PendingWizard): boolean => wizard.request.standing !== true
-    const queued = this._queue.filter(held)
-    const active = this._active && held(this._active) ? this._active : undefined
+    return this._cancelWhere(({ request }) => request.standing !== true)
+  }
+
+  /** Cancels the questions about `topic`, on screen or waiting: whoever asked has its answer from elsewhere. */
+  withdraw(topic: string): void {
+    this._cancelWhere(({ request }) => request.topic === topic)
+  }
+
+  /** Cancels the matching questions, puts the next one that waits on screen, and says whether it cancelled any. */
+  private _cancelWhere(matches: (wizard: PendingWizard) => boolean): boolean {
+    const queued = this._queue.filter(matches)
+    const active = this._active && matches(this._active) ? this._active : undefined
     if (!active && queued.length === 0) return false
-    this._queue.splice(0, this._queue.length, ...this._queue.filter((wizard) => !held(wizard)))
+    this._queue.splice(0, this._queue.length, ...this._queue.filter((wizard) => !matches(wizard)))
     if (active) this._active = undefined
     for (const wizard of [...(active ? [active] : []), ...queued]) wizard.resolve(undefined)
     if (!active) return true

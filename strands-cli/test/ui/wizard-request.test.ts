@@ -272,6 +272,19 @@ describe('WizardBroker', () => {
     expect(settled).not.toHaveBeenCalled()
   })
 
+  it('shouldCancelTheQuestionsAboutATopicAndShowTheNextThatWaits', async () => {
+    const broker = new WizardBroker()
+    const first = broker.ask(request({ name: 'first', standing: true, topic: 'run-1' }))
+    void broker.ask(request({ name: 'second', standing: true, topic: 'run-2' }))
+    const third = broker.ask(request({ name: 'third', standing: true, topic: 'run-1' }))
+
+    broker.withdraw('run-1')
+
+    await expect(first).resolves.toBeUndefined()
+    await expect(third).resolves.toBeUndefined()
+    expect(broker.pending()?.name).toBe('second')
+  })
+
   it('shouldRefuseARequestThatHasNoStep', async () => {
     const broker = new WizardBroker()
 

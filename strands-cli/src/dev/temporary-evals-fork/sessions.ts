@@ -662,9 +662,11 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   }
 
   discard(id: string): void {
-    if (this.entries.get(id)?.state.step !== 'review') return
-    this.entries.get(id)?.sources?.close()
+    const entry = this.entries.get(id)
+    if (entry?.state.step !== 'review') return
+    entry.sources?.close()
     this.entries.delete(id)
+    this.settleReview(entry)
     if (this.shown === id) this.reset()
     else this.publish()
   }
@@ -782,7 +784,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
 
   accept(index: number, accepted: boolean, run?: string): void {
     const entry = this.reviewedEntry(run)
-    if (entry?.state.step !== 'review') return
+    if (entry?.state.step !== 'review' || entry.state.review.applied) return
     if (entry.state.review.edits[index]?.unavailable) {
       if (accepted) void this.recheck(entry, true, index)
       return
@@ -807,6 +809,16 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     const entry = this.entries.get(id)
     if (entry?.state.step !== 'review') return
     this.updateRun(entry, { step: 'review', review: { ...entry.state.review, reviewed: true } })
+    this.settleReview(entry)
+  }
+
+  /** Called with a run whose review is over, however it ended, so a question still on screen about it can go. */
+  onSettled: ((id: string) => void) | undefined
+
+  /** Nothing of the run waits on the developer any more: its record goes, and so does a question still asking. */
+  private settleReview(entry: RunEntry): void {
+    if (entry.record) void dropTemporaryOptimizeRecord({ record: entry.record }).catch(() => undefined)
+    this.onSettled?.(entry.id)
   }
 
   resume(): Promise<void> {
@@ -1136,10 +1148,11 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       })
       entry.record = saved.record
       this.publish()
+      if (saved.awaitsReview) return await this.restoreReview(entry, saved, knobs)
       if (await isTemporaryOptimizeAlive(saved)) return await this.follow(entry, plan, knobs, saved)
       if (await hasTemporaryRunResult(saved.record)) {
         await this.finish(entry, saved.record, plan, knobs, false)
-        return await dropTemporaryOptimizeRecord(saved)
+        return await this.keepForReview(entry, saved.record, saved)
       }
       // Restarting makes paid model calls, so a stopped run waits for an explicit resume.
       this.updateRun(entry, { step: 'cancelled', experiment: plan.experiment.name })
@@ -1222,7 +1235,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       entry.abort = undefined
     }
     await this.finish(entry, saved.record, plan, knobs, abort.signal.aborted)
-    await dropTemporaryOptimizeRecord(saved)
+    await this.keepForReview(entry, saved.record, saved)
   }
 
   private async run(
@@ -1342,9 +1355,9 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       entry.abort = undefined
     }
     await saving
-    if (record) await dropTemporaryOptimizeRecord({ record })
     if (cancelled && !record) return this.reportCancelled(entry, plan)
     await this.finish(entry, record!, plan, knobs, cancelled)
+    await this.keepForReview(entry, record!, saved)
   }
 
   private async writeSpace(plan: RunPlan, now: Date, variables: readonly TemporarySpaceVariable[]): Promise<string> {
@@ -1383,21 +1396,64 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       return
     }
     try {
-      const { review, writers, changes } = await this.review(outcome, record, knobs)
-      entry.writers = writers
-      entry.changes = changes
-      this.updateRun(entry, { step: 'review', review })
-      this.watchSources(entry)
       // Only a run that produced an edit worth applying opens the review; the rest just say they finished.
-      const ready = review.edits.filter(({ unavailable }) => unavailable === undefined).length
+      const ready = await this.enterReview(entry, outcome, record, knobs)
       const ending = ready === 0 ? 'no edits to apply' : `showing ${plural(ready, 'edit')}`
-      announce(this.host(), 'success', `optimize · run ${review.run} finished · ${ending}`)
+      announce(this.host(), 'success', `optimize · run ${name} finished · ${ending}`)
       if (ready > 0) this.onReview?.(entry.id)
     } catch (error) {
       if (cancelled) return this.reportCancelled(entry, plan, record)
       this.updateRun(entry, { step: 'failed', message: errorMessage(error), record })
       announce(this.host(), 'error', `optimize · run ${name} could not be read · /optimize shows why`)
     }
+  }
+
+  /** Puts a finished run in review, and says how many of its edits the screen can offer. */
+  private async enterReview(
+    entry: RunEntry,
+    outcome: TemporaryStudyOutcome,
+    record: string,
+    knobs: readonly TemporaryKnob[]
+  ): Promise<number> {
+    const { review, writers, changes } = await this.review(outcome, record, knobs)
+    entry.writers = writers
+    entry.changes = changes
+    this.updateRun(entry, { step: 'review', review })
+    this.watchSources(entry)
+    return editsToReview(entry.state)
+  }
+
+  /**
+   * A run with an edit still to answer keeps its record, so the review comes back when strands dev opens again.
+   * Any other run is done with it. The edit may be answered while the record is written, hence the second look.
+   */
+  private async keepForReview(
+    entry: RunEntry,
+    record: string,
+    saved: TemporaryOptimizeRecord | undefined
+  ): Promise<void> {
+    if (!saved || editsToReview(entry.state) === 0) return dropTemporaryOptimizeRecord({ record })
+    const { pid: _ended, ...finished } = saved
+    await saveTemporaryOptimizeRecord({ ...finished, awaitsReview: true })
+    if (editsToReview(entry.state) === 0) await dropTemporaryOptimizeRecord({ record })
+  }
+
+  /**
+   * A review that strands dev closed on comes back on the status line. Its result was announced when the run ended,
+   * so it does not open over the chat that just started: the line opens it.
+   */
+  private async restoreReview(
+    entry: RunEntry,
+    saved: TemporaryOptimizeRecord,
+    knobs: readonly TemporaryKnob[]
+  ): Promise<void> {
+    const name = temporaryOptimizationRunName(saved.record)
+    const ready = await this.enterReview(entry, await readTemporaryStudy(saved.record), saved.record, knobs)
+    if (ready === 0) {
+      announce(this.host(), 'success', `optimize · run ${name} · its edits no longer fit the agent as it is now`)
+      return dropTemporaryOptimizeRecord(saved)
+    }
+    announce(this.host(), 'success', `optimize · run ${name} · ${plural(ready, 'edit')} still to review · ↓ Enter`)
   }
 
   private reportCancelled(entry: RunEntry, plan: RunPlan, record?: string): void {
@@ -1504,7 +1560,12 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       this.changes[recorded] = { ...change, edits: written, ...(applyError ? { error: applyError } : {}) }
     // The writes are awaited, and the review moves on meanwhile (the walk marks it reviewed), so add to what it is now.
     const current = entry.state.step === 'review' ? entry.state.review : review
-    this.updateRun(entry, { step: 'review', review: { ...current, applied, ...(applyError ? { applyError } : {}) } })
+    // Writing ends the review, whoever asked for it: the walk on screen, or the agent's apply tool.
+    this.updateRun(entry, {
+      step: 'review',
+      review: { ...current, applied, reviewed: true, ...(applyError ? { applyError } : {}) },
+    })
+    this.settleReview(entry)
     const changed = applied.length > 0 ? `applied ${applied.join(', ')}` : 'changed nothing'
     const notice = {
       status: applyError ? ('error' as const) : ('success' as const),
@@ -1537,6 +1598,7 @@ export const temporaryDevSessions = (host: TemporarySessionHost): TemporaryDevSe
     ask: new WizardBroker(host.autofill?.() ?? false),
   }
   sessions.optimize.onReview = (id): void => void reviewOptimizeRun(sessions, id)
+  sessions.optimize.onSettled = (id): void => sessions.ask.withdraw(id)
   registry.set(key, {
     use: (next) => {
       latest = { ...latest, ...next }

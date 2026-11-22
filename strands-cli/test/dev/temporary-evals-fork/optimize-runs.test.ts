@@ -99,6 +99,14 @@ describe('TEMPORARY optimize run records', () => {
     expect(await readTemporaryOptimizeRecords(join(await temporaryDirectory(), 'strands-dev'))).toEqual([])
   })
 
+  it('shouldKeepThatTheRunAwaitsItsReviewSoThatItComesBackAsOne', async () => {
+    const workspace = await temporaryDirectory()
+    const record = { ...recordIn(workspace), awaitsReview: true }
+    await saveTemporaryOptimizeRecord(record)
+
+    expect(await readTemporaryOptimizeRecords(workspace)).toEqual([record])
+  })
+
   it('shouldKeepTheObjectiveOfARecordSoThatTheRunResumesWithIt', async () => {
     const workspace = await temporaryDirectory()
     const record = {
