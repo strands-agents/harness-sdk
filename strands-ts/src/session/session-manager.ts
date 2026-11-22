@@ -10,6 +10,7 @@ import type { Plugin } from '../plugins/plugin.js'
 import type { LocalAgent } from '../types/agent.js'
 import { Archive } from '../context-manager/archive.js'
 import { AfterInvocationEvent, AfterModelCallEvent, InitializedEvent, MessageAddedEvent } from '../hooks/events.js'
+import { HookOrder } from '../hooks/types.js'
 import { v7 as uuidV7 } from 'uuid'
 import { logger } from '../logging/logger.js'
 import type { MultiAgentPlugin, MultiAgent } from '../multiagent/index.js'
@@ -199,9 +200,13 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
         await this._onAfterModelCall(event)
       })
     }
-    agent.addHook(AfterInvocationEvent, async (event) => {
-      await this._onAfterAgentInvocation(event)
-    })
+    agent.addHook(
+      AfterInvocationEvent,
+      async (event) => {
+        await this._onAfterAgentInvocation(event)
+      },
+      { order: HookOrder.SDK_LAST }
+    )
   }
 
   private _location(agent: LocalAgent): SnapshotLocation {
