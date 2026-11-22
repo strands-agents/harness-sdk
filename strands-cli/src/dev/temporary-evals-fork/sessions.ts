@@ -590,6 +590,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   private usageProfile: TemporaryUsageProfile | undefined
   private evaluatorNames: readonly string[] = []
   private resumed: Promise<void> | undefined
+  private carried: { status: 'success' | 'error'; text: string } | undefined
   private catalog: readonly TemporaryKnob[] = []
   private page: OptimizePage = { step: 'pick' }
   private opened: ExperimentSummary | undefined
@@ -803,6 +804,13 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   resume(): Promise<void> {
     this.resumed ??= this.resumeRecords()
     return this.resumed
+  }
+
+  /** A written edit reloads the agent into a new chat, which never saw what the old one was told. Say it there once. */
+  reannounce(): void {
+    const notice = this.carried
+    this.carried = undefined
+    if (notice) announce(this.host(), notice.status, notice.text)
   }
 
   /** Called with a run that has edits to read, so a finished run shows them rather than waiting to be found. */
@@ -1481,13 +1489,18 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     }
     if (recorded !== undefined)
       this.changes[recorded] = { ...change, edits: written, ...(applyError ? { error: applyError } : {}) }
-    this.updateRun(entry, { step: 'review', review: { ...review, applied, ...(applyError ? { applyError } : {}) } })
+    // The writes are awaited, and the review moves on meanwhile (the walk marks it reviewed), so add to what it is now.
+    const current = entry.state.step === 'review' ? entry.state.review : review
+    this.updateRun(entry, { step: 'review', review: { ...current, applied, ...(applyError ? { applyError } : {}) } })
     const changed = applied.length > 0 ? `applied ${applied.join(', ')}` : 'changed nothing'
-    announce(
-      this.host(),
-      applyError ? 'error' : 'success',
-      applyError ? `optimize · ${changed} · ${applyError}` : `optimize · ${changed} · run /evaluate to check your agent`
-    )
+    const notice = {
+      status: applyError ? ('error' as const) : ('success' as const),
+      text: applyError
+        ? `optimize · ${changed} · ${applyError}`
+        : `optimize · ${changed} · run /evaluate to check your agent`,
+    }
+    if (applied.length > 0) this.carried = notice
+    announce(this.host(), notice.status, notice.text)
   }
 }
 

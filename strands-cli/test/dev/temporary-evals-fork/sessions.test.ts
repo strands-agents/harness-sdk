@@ -17,7 +17,7 @@ import {
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsExit, TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import type { TemporarySessionDependencies } from '../../../src/dev/temporary-evals-fork/host.js'
-import { temporaryDevChatPart } from '../../../src/dev/temporary-evals-fork/command.js'
+import { temporaryDevChatPart, temporaryDevCommands } from '../../../src/dev/temporary-evals-fork/command.js'
 import { TemporaryExperiments } from '../../../src/dev/temporary-evals-fork/experiments-session.js'
 import { readTemporaryTestResults, rememberTemporaryTestResults } from '../../../src/dev/temporary-evals-fork/report.js'
 import type { TemporarySessionHost } from '../../../src/dev/temporary-evals-fork/host.js'
@@ -1631,6 +1631,54 @@ describe('TEMPORARY dev sessions', () => {
       })
     )
     expect(sessions.optimize.appliedChanges()).toEqual([])
+  })
+
+  it('shouldDropTheJobLineOnceAnAcceptedEditIsWritten', async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.start()
+    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+
+    sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'accept' })
+
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'], reviewed: true } })
+    )
+    expect(temporaryOptimizeJobs(sessions.optimize.snapshot())).toEqual([])
+  })
+
+  it('shouldSayWhatWasAppliedAgainInTheChatThatTheReloadOpens', async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.start()
+    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'accept' })
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
+    )
+    const ask = temporaryDevCommands(workspace, {
+      root: workspace.root,
+      entrypoint: workspace.entrypoint,
+      language: 'python',
+    }).find(({ spec }) => spec.name === 'ask')!
+    const reloaded = chat()
+    const later = chat()
+
+    ask.attach?.(reloaded.context)
+    ask.attach?.(later.context)
+
+    const applied = {
+      status: 'success',
+      text: 'optimize · applied instructions.md · run /evaluate to check your agent',
+    }
+    expect(reloaded.notices).toContainEqual(applied)
+    expect(later.notices).not.toContainEqual(applied)
   })
 
   it('shouldTellTheReloadedAgentWhatApplyChangedInIt', async () => {

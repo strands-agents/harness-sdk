@@ -164,6 +164,7 @@ const askCommand = (sessions: Sessions): DevChatCommand => ({
   attach: (context): void => {
     const opened = sessions(context)
     opened.ask.attachOpener(() => context.openPanel('ask'))
+    opened.optimize.reannounce()
     void opened.optimize.resume()
   },
 })
