@@ -1928,6 +1928,27 @@ describe('TEMPORARY dev sessions', () => {
     expect(later.notices).not.toContainEqual(applied)
   })
 
+  it('shouldNotSayWhatWasAppliedToAChatThatOpensLongAfterTheWrite', async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.start()
+    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'accept' })
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
+    )
+    const muchLater = chat()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000)
+
+    sessions.optimize.reannounce()
+    clock.mockRestore()
+
+    expect(muchLater.notices).toEqual([])
+  })
+
   it('shouldTellTheReloadedAgentWhatApplyChangedInIt', async () => {
     const optimizing = optimizingProcess()
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })

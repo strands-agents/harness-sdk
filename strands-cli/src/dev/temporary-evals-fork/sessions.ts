@@ -147,6 +147,7 @@ export interface TemporaryDevSessions {
 
 const DEFAULT_ITERATIONS = 4
 const SOURCE_SETTLE_MS = 300
+const RELOAD_WINDOW_MS = 15_000
 const WIDTH = 4
 const REPETITIONS = 1
 const WORKERS = 4
@@ -598,7 +599,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   private usageProfile: TemporaryUsageProfile | undefined
   private evaluatorNames: readonly string[] = []
   private resumed: Promise<void> | undefined
-  private carried: { status: 'success' | 'error'; text: string } | undefined
+  private carried: { status: 'success' | 'error'; text: string; at: number } | undefined
   private catalog: readonly TemporaryKnob[] = []
   private page: OptimizePage = { step: 'pick' }
   private opened: ExperimentSummary | undefined
@@ -826,11 +827,14 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     return this.resumed
   }
 
-  /** A written edit reloads the agent into a new chat, which never saw what the old one was told. Say it there once. */
+  /**
+   * A written edit reloads the agent into a new chat, which never saw what the old one was told. Say it there once.
+   * Only the chat that the reload opens gets it: one opened long after the write has nothing to do with it.
+   */
   reannounce(): void {
     const notice = this.carried
     this.carried = undefined
-    if (notice) announce(this.host(), notice.status, notice.text)
+    if (notice && Date.now() - notice.at < RELOAD_WINDOW_MS) announce(this.host(), notice.status, notice.text)
   }
 
   /** Called with a run that has edits to read, so a finished run shows them rather than waiting to be found. */
@@ -1573,7 +1577,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
         ? `optimize · ${changed} · ${applyError}`
         : `optimize · ${changed} · run /evaluate to check your agent`,
     }
-    if (applied.length > 0) this.carried = notice
+    if (applied.length > 0) this.carried = { ...notice, at: Date.now() }
     announce(this.host(), notice.status, notice.text)
   }
 }
