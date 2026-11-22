@@ -198,10 +198,11 @@ export const temporaryTestJobs = ({ runs }: TestState): DevChatJob[] =>
  * The edits of a finished run that still wait for the developer's yes or no. An edit strands dev cannot write is not
  * one, and neither is one already answered. Closing the question is not an answer, so it leaves the count as it is.
  */
+export const temporaryEditsAwaitingAnswer = ({ reviewed, edits = [] }: OptimizeReview): number =>
+  reviewed ? 0 : edits.filter(({ unavailable, decided }) => unavailable === undefined && !decided).length
+
 const editsToReview = (state: OptimizeRunState): number =>
-  state.step === 'review' && !state.review.reviewed
-    ? (state.review.edits ?? []).filter(({ unavailable, decided }) => unavailable === undefined && !decided).length
-    : 0
+  state.step === 'review' ? temporaryEditsAwaitingAnswer(state.review) : 0
 
 /** Whether the run has an edit waiting for the developer's answer. */
 export const temporaryRunAwaitsReview = ({ runs = [] }: OptimizeState, id: string): boolean =>

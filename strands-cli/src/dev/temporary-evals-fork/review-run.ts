@@ -67,6 +67,15 @@ export const reviewOptimizeRun = async (sessions: TemporaryDevSessions, runId: s
   }
 }
 
+/**
+ * Puts a run's waiting edits in front of the developer, ahead of another question that is on screen, for when they
+ * or the agent ask for that run. False when it has nothing to ask.
+ */
+export const showOptimizeReview = (sessions: TemporaryDevSessions, runId: string): boolean => {
+  void reviewOptimizeRun(sessions, runId)
+  return sessions.ask.bringForward(runId)
+}
+
 const waitingReview = ({ optimize }: TemporaryDevSessions, runId: string): OptimizeReview | undefined => {
   const run = optimize.snapshot().runs?.find((candidate) => candidate.id === runId)
   return run?.state.step === 'review' && !run.state.review.reviewed ? run.state.review : undefined

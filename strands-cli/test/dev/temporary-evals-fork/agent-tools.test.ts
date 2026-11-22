@@ -272,15 +272,17 @@ const setup = (evaluators = vi.fn(async () => CATALOG), changes: readonly Tempor
     pastChats: vi.fn(async (): Promise<number> => 12),
     converter: vi.fn(async (): Promise<string> => 'Follow the session-converter skill below.'),
   }
+  const showReview = vi.fn((_run: string): boolean => true)
   const part = temporaryDevChatPart({
     sessions: () => fake.sessions as unknown as TemporaryDevSessions,
     evaluators,
     history,
+    showReview,
   })
   const tool = (name: string): DevChatTool => part.tools.find((candidate) => candidate.name === name)!
   const call = async (name: string, input: Record<string, JSONValue> = {}): Promise<unknown> =>
     JSON.parse(await tool(name).run(input))
-  return { ...fake, part, tool, call, evaluators, history }
+  return { ...fake, part, tool, call, evaluators, history, showReview }
 }
 
 const APPLIED: TemporaryAppliedChange = {
@@ -364,6 +366,7 @@ describe('TEMPORARY dev chat part', () => {
       ['strands_dev_ask', false],
       ['strands_dev_optimize', false],
       ['strands_dev_cancel_optimization', false],
+      ['strands_dev_review_optimization', false],
       ['strands_dev_reject_optimization', false],
       ['strands_dev_apply_optimization', false],
     ])
@@ -636,6 +639,48 @@ describe('TEMPORARY dev chat part', () => {
 
     expect(await call('strands_dev_reject_optimization')).toMatchObject({ status: 'discarded' })
     expect(sessions.optimize.apply).not.toHaveBeenCalled()
+  })
+
+  it('shouldPutTheDiffOfTheWaitingRunBackOnScreenWhenTheDeveloperAsksToSeeItAgain', async () => {
+    const { call, finishRun, showReview, sessions } = setup()
+    finishRun({ step: 'review', review: review() })
+
+    const shown = await call('strands_dev_review_optimization')
+
+    expect(showReview.mock.calls).toEqual([['run-1']])
+    expect(shown).toMatchObject({ run: review().run, shown: true, next: expect.stringContaining('Say so in one line') })
+    expect(sessions.optimize.accept).not.toHaveBeenCalled()
+    expect(sessions.optimize.apply).not.toHaveBeenCalled()
+  })
+
+  it.each<[string, Partial<OptimizeReview>, Record<string, JSONValue>, string]>([
+    ['was answered', { reviewed: true }, {}, 'No finished optimization has an edit waiting for an answer.'],
+    ['was applied', { applied: ['agent.py'] }, {}, 'No finished optimization has an edit waiting for an answer.'],
+    ['is not the one named', {}, { run: 'another-run' }, 'Run another-run has no edit waiting for an answer.'],
+  ])('shouldRefuseToShowADiffWhenTheRun%s', async (_case, change, input, message) => {
+    const { tool, finishRun, showReview } = setup()
+    finishRun({ step: 'review', review: { ...review(), ...change } })
+
+    await expect(tool('strands_dev_review_optimization').run(input)).rejects.toThrow(message)
+    expect(showReview).not.toHaveBeenCalled()
+  })
+
+  it('shouldSayThatAnEditStillWaitsWithoutCallingItOnScreen', async () => {
+    const { call, finishRun } = setup()
+    finishRun({ step: 'review', review: review() })
+
+    const waiting = (await call('strands_dev_status')) as { optimization: Record<string, unknown> }
+    finishRun({ step: 'review', review: { ...review(), reviewed: true } })
+    const answered = (await call('strands_dev_status')) as { optimization: Record<string, unknown> }
+
+    expect(waiting.optimization).toMatchObject({
+      step: 'review',
+      awaitingAnswer: 1,
+      next: expect.stringContaining('The diff may not be showing'),
+    })
+    expect(waiting.optimization.next).toContain('strands_dev_review_optimization')
+    expect(answered.optimization).not.toHaveProperty('awaitingAnswer')
+    expect(answered.optimization).not.toHaveProperty('next')
   })
 
   it('shouldNotTreatANoChangeOptimizationAsPendingEdits', async () => {

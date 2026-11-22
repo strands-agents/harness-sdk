@@ -253,6 +253,18 @@ describe('WizardBroker', () => {
     expect(seen).toEqual(['first', 'second', 'first', undefined])
   })
 
+  it('shouldOpenThePanelAgainWhenTheQuestionBroughtForwardLostItsPlaceOnScreen', () => {
+    const broker = new WizardBroker()
+    const open = vi.fn(() => true)
+    broker.attachOpener(open)
+    void broker.ask(request({ name: 'first', standing: true, topic: 'run-1' }))
+    open.mockClear()
+
+    expect(broker.bringForward('run-1')).toBe(true)
+
+    expect(open).toHaveBeenCalledOnce()
+  })
+
   it('shouldSayWhetherAQuestionAboutTheTopicWaits', () => {
     const broker = new WizardBroker()
     void broker.ask(request({ name: 'first', topic: 'run-1' }))

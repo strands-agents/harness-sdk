@@ -20,7 +20,7 @@ import { readTemporaryEvaluators } from './evaluators.js'
 import { temporaryGenerationJobs } from './experiments-session.js'
 import { temporaryJobsFeed, type TemporaryStore } from './jobs.js'
 import { temporarySessionHistory } from './session-converter.js'
-import { reviewOptimizeRun } from './review-run.js'
+import { reviewOptimizeRun, showOptimizeReview } from './review-run.js'
 import { OptimizeRunsView } from './optimize-runs-view.js'
 import {
   temporaryDevSessions,
@@ -179,8 +179,7 @@ const optimizeRunsCommand = (sessions: Sessions): DevChatCommand => ({
   openJob: (context, job): boolean => {
     const opened = sessions(context)
     if (!temporaryRunAwaitsReview(opened.optimize.snapshot(), job)) return false
-    void reviewOptimizeRun(opened, job)
-    return opened.ask.bringForward(job) && context.openPanel('ask')
+    return showOptimizeReview(opened, job) && context.openPanel('ask')
   },
   jobs: temporaryJobsFeed(sessions().optimize, temporaryOptimizeJobs),
   contentRows: (): number => {

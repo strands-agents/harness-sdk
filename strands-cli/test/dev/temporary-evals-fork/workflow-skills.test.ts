@@ -252,6 +252,10 @@ describe('optimize-harness guidance', () => {
     expect(instructions).toContain(
       'strands_dev_apply_optimization only when the developer asks in chat for an edit the screen no longer offers'
     )
+    expect(instructions).toContain('A diff they close without answering is not decided')
+    expect(instructions).toContain(
+      'call strands_dev_review_optimization when they ask to see the run or its change again'
+    )
     expect(instructions).toContain('strands_dev_cancel_optimization only when the developer asks to stop a run')
   })
 

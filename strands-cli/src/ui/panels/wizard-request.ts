@@ -281,15 +281,20 @@ export class WizardBroker {
     if (hadActive) this._notify(undefined)
   }
 
-  /** Puts the waiting question about `topic` on screen, ahead of the one that is there. False when none waits. */
+  /**
+   * Puts the waiting question about `topic` on screen, ahead of the one that is there, and opens the panel if
+   * something else took its place. False when none waits.
+   */
   bringForward(topic: string): boolean {
-    if (this._active?.request.topic === topic) return true
-    const at = this._queue.findIndex(({ request }) => request.topic === topic)
-    if (at < 0) return false
-    const [wanted] = this._queue.splice(at, 1)
-    if (this._active) this._queue.unshift(this._active)
-    this._active = wanted
-    this._notify(wanted?.request)
+    if (this._active?.request.topic !== topic) {
+      const at = this._queue.findIndex(({ request }) => request.topic === topic)
+      if (at < 0) return false
+      const [wanted] = this._queue.splice(at, 1)
+      if (this._active) this._queue.unshift(this._active)
+      this._active = wanted
+      this._notify(wanted?.request)
+    }
+    this._open?.()
     return true
   }
 
