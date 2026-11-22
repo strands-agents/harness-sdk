@@ -1870,6 +1870,22 @@ describe('TEMPORARY dev sessions', () => {
     await vi.waitFor(() => expect(existsSync(resumeRecordOf(record))).toBe(false))
   })
 
+  it('shouldWriteTheEditsOfARunOnlyOnceWhenApplyIsReachedTwice', async () => {
+    const { sessions, run } = await closedOnAReview()
+    sessions.optimize.accept(0, true, run)
+    sessions.optimize.apply(run)
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
+    )
+
+    sessions.optimize.apply(run)
+    await new Promise((done) => setTimeout(done, 50))
+
+    expect(sessions.optimize.appliedChanges()).toHaveLength(1)
+    expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
+    expect(sessions.optimize.snapshot()).not.toMatchObject({ review: { applyError: expect.anything() } })
+  })
+
   it('shouldTakeTheQuestionOffTheScreenWhenTheReviewIsDiscarded', async () => {
     const { sessions, run, record } = await closedOnAReview()
 

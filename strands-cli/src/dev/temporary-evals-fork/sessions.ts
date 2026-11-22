@@ -1529,7 +1529,8 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   }
 
   private async applyAccepted(entry: RunEntry): Promise<void> {
-    if (entry.state.step !== 'review') return
+    // A run's edits are written once: the walk on screen and the agent's apply tool can both reach here for one run.
+    if (entry.state.step !== 'review' || entry.state.review.applied) return
     const { review } = entry.state
     const accepted = review.edits.flatMap((edit, index) => {
       const write = entry.writers.get(index)
