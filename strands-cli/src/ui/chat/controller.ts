@@ -3057,6 +3057,7 @@ export class ChatController implements ChatControllerApi {
   openDevCommand(name: string, opening?: DevPanelOpening): boolean {
     const devCommand = this._devCommand(name)
     if (!devCommand || this._closed || this._panel?.kind === 'permission') return false
+    if (opening?.job !== undefined && devCommand.openJob?.(this._devCommandContext(), opening.job)) return true
     this._openDevPanel(devCommand, opening)
     return true
   }

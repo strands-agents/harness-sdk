@@ -234,6 +234,32 @@ describe('WizardBroker', () => {
     expect(broker.pending()?.name).toBe('review')
   })
 
+  it('shouldPutTheWaitingQuestionAboutATopicOnScreenAndKeepTheOtherWaiting', async () => {
+    const broker = new WizardBroker()
+    const seen: (string | undefined)[] = []
+    const first = broker.ask(request({ name: 'first', standing: true, topic: 'run-1' }))
+    void broker.ask(request({ name: 'second', standing: true, topic: 'run-2' }))
+    broker.subscribe((pending) => seen.push(pending?.name))
+
+    expect(broker.bringForward('run-2')).toBe(true)
+    expect(broker.pending()?.name).toBe('second')
+    broker.respond(broker.pending()!.id, {})
+
+    expect(broker.pending()?.name).toBe('first')
+    broker.respond(broker.pending()!.id, { answered: true })
+    await expect(first).resolves.toEqual({ answered: true })
+    expect(seen).toEqual(['first', 'second', 'first', undefined])
+  })
+
+  it('shouldSayWhetherAQuestionAboutTheTopicWaits', () => {
+    const broker = new WizardBroker()
+    void broker.ask(request({ name: 'first', topic: 'run-1' }))
+
+    expect(broker.bringForward('run-1')).toBe(true)
+    expect(broker.bringForward('run-9')).toBe(false)
+    expect(broker.pending()?.name).toBe('first')
+  })
+
   it('shouldRefuseARequestThatHasNoStep', async () => {
     const broker = new WizardBroker()
 

@@ -87,6 +87,8 @@ export interface WizardRequest {
   readonly finishLabel?: string
   /** Asked outside a turn, so no turn waits on it: a chat message leaves it on screen instead of dropping it. */
   readonly standing?: boolean
+  /** What the question is about, so whoever asked can bring it back in front of the others that wait. */
+  readonly topic?: string
 }
 
 export type WizardRequestSpec = Omit<WizardRequest, 'id'>
@@ -262,6 +264,18 @@ export class WizardBroker {
     this._active = undefined
     for (const wizard of pending) wizard.resolve(undefined)
     if (hadActive) this._notify(undefined)
+  }
+
+  /** Puts the waiting question about `topic` on screen, ahead of the one that is there. False when none waits. */
+  bringForward(topic: string): boolean {
+    if (this._active?.request.topic === topic) return true
+    const at = this._queue.findIndex(({ request }) => request.topic === topic)
+    if (at < 0) return false
+    const [wanted] = this._queue.splice(at, 1)
+    if (this._active) this._queue.unshift(this._active)
+    this._active = wanted
+    this._notify(wanted?.request)
+    return true
   }
 
   /**

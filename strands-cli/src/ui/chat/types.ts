@@ -118,6 +118,8 @@ export interface DevChatCommand {
   hidden?: boolean
   /** Typing the command runs this instead of opening the panel; the panel stays for its jobs line. */
   run?(context: DevChatCommandContext): void
+  /** Opening one of its jobs from the status line asks this first. True means it showed the job itself, so no panel opens. */
+  openJob?(context: DevChatCommandContext, job: string): boolean
   /** Keeps the panel open when the developer clicks away, for a panel something is waiting on. */
   sticky?: boolean
   /** Renders beside the transcript at the dock's width, when its content needs that width right now. */

@@ -25,6 +25,7 @@ import { OptimizeRunsView } from './optimize-runs-view.js'
 import {
   temporaryDevSessions,
   temporaryOptimizeJobs,
+  temporaryRunAwaitsReview,
   temporaryTestJobs,
   type TemporaryDevSessions,
 } from './sessions.js'
@@ -174,6 +175,13 @@ const optimizeRunsCommand = (sessions: Sessions): DevChatCommand => ({
   spec: { name: 'optimize', usage: '/optimize', description: 'Set up an optimization run of this agent' },
   // Typing it starts the skill in the chat; the panel stays as the jobs line's landing view.
   run: (context): void => context.submit('optimize'),
+  // A finished run's line is its review: open the change it waits on, not the list of runs.
+  openJob: (context, job): boolean => {
+    const opened = sessions(context)
+    if (!temporaryRunAwaitsReview(opened.optimize.snapshot(), job)) return false
+    void reviewOptimizeRun(opened, job)
+    return opened.ask.bringForward(job) && context.openPanel('ask')
+  },
   jobs: temporaryJobsFeed(sessions().optimize, temporaryOptimizeJobs),
   contentRows: (): number => {
     const runs = temporaryOptimizeJobs(sessions().optimize.snapshot()).length

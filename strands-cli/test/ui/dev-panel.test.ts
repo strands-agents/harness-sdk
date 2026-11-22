@@ -278,6 +278,27 @@ describe('dev jobs row', () => {
     expect(open).toHaveBeenLastCalledWith(expect.anything(), { job: 'a' })
   })
 
+  it.each([
+    ['ShowsItItself', true, undefined],
+    ['LeavesItToThePanel', false, { kind: 'dev', title: '/experiment' }],
+  ])('shouldAskTheCommandFirstWhenAJobIsOpenedAndItThen%s', async (_case, shown, panel) => {
+    const { command, jobs, open } = experimentWithJobs()
+    const openJob = vi.fn(() => shown)
+    const { controller, instance, click } = await mount({ ...command, openJob })
+    jobs.set([{ id: 'a', label: 'refunds', done: 3, total: 20 }])
+    await instance.waitUntilRenderFlush()
+
+    await click('refunds 3/20')
+
+    await vi.waitFor(() => expect(openJob).toHaveBeenCalledWith(expect.anything(), 'a'))
+    await vi.waitFor(() =>
+      panel
+        ? expect(controller.getSnapshot().panel).toMatchObject(panel)
+        : expect(controller.getSnapshot().panel).toBeUndefined()
+    )
+    expect(open).toHaveBeenCalledTimes(shown ? 0 : 1)
+  })
+
   it('shouldOpenTheChosenJobWhenTheUserPressesDownThenRightThenEnter', async () => {
     const { command, jobs, open } = experimentWithJobs()
     const { controller, instance, press, row } = await mount(command)

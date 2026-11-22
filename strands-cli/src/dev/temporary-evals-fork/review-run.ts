@@ -7,12 +7,18 @@ const ACCEPT = 'accept'
 
 const target = (edit: ProposedEdit): string => edit.target ?? edit.label
 
-const question = (edit: ProposedEdit, run: string, at: number, of: number): WizardRequestSpec => ({
+const question = (
+  edit: ProposedEdit,
+  { id, run }: { id: string; run: string },
+  at: number,
+  of: number
+): WizardRequestSpec => ({
   name: 'optimize',
   titleParts: of > 1 ? [run, `edit ${at + 1} of ${of}`] : [run],
   question: `Apply this change to ${edit.label}?`,
   // The run is over and no turn waits on this, so asking the agent about the change must not answer it.
   standing: true,
+  topic: id,
   steps: [
     {
       key: 'review',
@@ -66,7 +72,7 @@ const walkRun = async ({ optimize, ask }: TemporaryDevSessions, runId: string): 
   const open = run.state.review.edits.flatMap((edit, index) => (edit.unavailable ? [] : [{ edit, index }]))
   let accepted = 0
   for (const [at, { edit, index }] of open.entries()) {
-    const outcome = await ask.ask(question(edit, run.state.review.run, at, open.length))
+    const outcome = await ask.ask(question(edit, { id: runId, run: run.state.review.run }, at, open.length))
     if (outcome === undefined) {
       optimize.accept(index, false, runId)
       break

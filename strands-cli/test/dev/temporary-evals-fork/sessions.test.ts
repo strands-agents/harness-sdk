@@ -1533,8 +1533,67 @@ describe('TEMPORARY dev sessions', () => {
     expect(reviewOf(second)?.reviewed).toBeUndefined()
   })
 
+  it('shouldOpenTheReviewOfTheRunWhoseStatusLineIsOpenedAheadOfTheOneOnScreen', async () => {
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizingProcess() })
+    const capital = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    const cities = await savedExperiment(workspace, ['d0', 'd1', 'd2', 'd3'], 'cities')
+    sessions.optimize.plan(capital)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const first = sessions.optimize.start()
+    await vi.waitFor(() => expect(sessions.ask.pending()?.topic).toBe(first))
+    sessions.optimize.reset()
+    sessions.optimize.plan(cities)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const second = sessions.optimize.start()
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot().runs?.map(({ state }) => state.step)).toEqual(['review', 'review'])
+    )
+    const optimize = temporaryDevCommands(workspace, {
+      root: workspace.root,
+      entrypoint: workspace.entrypoint,
+      language: 'python',
+    }).find(({ spec }) => spec.name === 'optimize')!
+    const { context } = chat()
+
+    expect(optimize.openJob?.(context, second!)).toBe(true)
+
+    expect(sessions.ask.pending()?.topic).toBe(second)
+    expect(context.openPanel).toHaveBeenCalledWith('ask')
+    sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'reject' })
+    expect(sessions.ask.pending()?.topic).toBe(first)
+  })
+
+  it('shouldLeaveTheStatusLineOfARunWithNothingToReviewToTheRunsView', async () => {
+    const gate = held()
+    const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await gate.promise
+      await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const running = sessions.optimize.start()
+    await vi.waitFor(() => expect(optimizing).toHaveBeenCalledOnce())
+    const optimize = temporaryDevCommands(workspace, {
+      root: workspace.root,
+      entrypoint: workspace.entrypoint,
+      language: 'python',
+    }).find(({ spec }) => spec.name === 'optimize')!
+    const { context } = chat()
+
+    expect(optimize.openJob?.(context, running!)).toBe(false)
+    expect(optimize.openJob?.(context, 'no-such-run')).toBe(false)
+
+    expect(context.openPanel).not.toHaveBeenCalled()
+    gate.resolve()
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().runs?.[0]?.state.step).toBe('review'))
+  })
+
   it('shouldDropTheJobLineOnceEveryEditOfARunWasAnsweredOnScreen', () => {
-    const review = { run: 'r1', record: 'r1', baseline: 0.1, best: 0.9, measuredOn: 'validation cases', edits: [] }
+    const edit = { knob: 'instructions', kind: 'text', label: 'instructions', before: '', after: 'x', accepted: false }
+    const review = { run: 'r1', record: 'r1', baseline: 0.1, best: 0.9, measuredOn: 'validation cases', edits: [edit] }
     const state = (reviewed: boolean) => ({
       step: 'pick' as const,
       runs: [
@@ -1570,7 +1629,7 @@ describe('TEMPORARY dev sessions', () => {
     const none = temporaryOptimizeJobs(state([{ ...edit, unavailable: 'set in code' }]) as never)
 
     expect(mixed.map(({ label }) => label)).toEqual(['r1 · 1 to review'])
-    expect(none.map(({ label }) => label)).toEqual(['r1 · no edits'])
+    expect(none).toEqual([])
   })
 
   it('shouldShowTheTestCheckWithItsConfidenceRangeWhenTheRunReportsOne', async () => {
