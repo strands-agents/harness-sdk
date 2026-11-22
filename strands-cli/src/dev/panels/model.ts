@@ -355,6 +355,8 @@ export interface ProposedEdit {
   readonly before: string
   readonly after: string
   readonly accepted: boolean
+  /** The developer answered this edit, yes or no. Until then it waits, and `accepted` is only its default. */
+  readonly decided?: boolean
   readonly unavailable?: string
 }
 
@@ -471,6 +473,8 @@ export interface OptimizeSession {
   accept(index: number, accepted: boolean, run?: string): void
   apply(run?: string): void
   finishReview(id: string): void
+  /** The developer closed a run's question without answering it: the run keeps waiting. */
+  leaveReview(id: string): void
   reset(): void
   agent?(): RunAgent
 }

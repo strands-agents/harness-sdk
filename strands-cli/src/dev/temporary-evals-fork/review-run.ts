@@ -1,6 +1,6 @@
 import { createDiffPreview } from '../../agent/file-changes.js'
 import type { WizardRequestSpec } from '../../ui/panels/wizard-request.js'
-import type { ProposedEdit } from '../panels/model.js'
+import type { OptimizeReview, ProposedEdit } from '../panels/model.js'
 import type { TemporaryDevSessions } from './sessions.js'
 
 const ACCEPT = 'accept'
@@ -48,8 +48,9 @@ const question = (
 })
 
 /**
- * Walks a finished run's edits one at a time and applies only the accepted ones.
- * Cancelling a question rejects that edit and stops, so the rest stay unapplied.
+ * Asks about a finished run's edits one at a time, and writes the accepted ones once every edit has an answer.
+ * Closing a question is not an answer: the edit keeps waiting, the run stays on the status line, and opening it
+ * again carries on from the first edit without one.
  */
 const reviewing = new WeakMap<object, Set<string>>()
 
@@ -66,20 +67,32 @@ export const reviewOptimizeRun = async (sessions: TemporaryDevSessions, runId: s
   }
 }
 
-const walkRun = async ({ optimize, ask }: TemporaryDevSessions, runId: string): Promise<void> => {
-  if (!optimize.focusRun(runId)) return
+const waitingReview = ({ optimize }: TemporaryDevSessions, runId: string): OptimizeReview | undefined => {
   const run = optimize.snapshot().runs?.find((candidate) => candidate.id === runId)
-  if (run?.state.step !== 'review') return
-  const open = run.state.review.edits.flatMap((edit, index) => (edit.unavailable ? [] : [{ edit, index }]))
+  return run?.state.step === 'review' && !run.state.review.reviewed ? run.state.review : undefined
+}
+
+const walkRun = async (sessions: TemporaryDevSessions, runId: string): Promise<void> => {
+  const { optimize, ask } = sessions
+  if (!optimize.focusRun(runId)) return
+  // An edit is asked once per walk, whatever the session then says of it, so a walk always ends.
+  const asked = new Set<number>()
   let accepted = 0
-  for (const [at, { edit, index }] of open.entries()) {
-    const outcome = await ask.ask(question(edit, { id: runId, run: run.state.review.run }, at, open.length))
-    if (outcome === undefined) {
-      optimize.accept(index, false, runId)
+  for (;;) {
+    const review = waitingReview(sessions, runId)
+    if (!review) return
+    const offered = review.edits.flatMap((edit, index) => (edit.unavailable ? [] : [{ edit, index }]))
+    const at = offered.findIndex(({ edit, index }) => !edit.decided && !asked.has(index))
+    const next = offered[at]
+    if (!next) {
+      accepted += offered.filter(({ edit, index }) => edit.decided && edit.accepted && !asked.has(index)).length
       break
     }
+    asked.add(next.index)
+    const outcome = await ask.ask(question(next.edit, { id: runId, run: review.run }, at, offered.length))
+    if (outcome === undefined) return optimize.leaveReview(runId)
     const verdict = outcome.verdict === ACCEPT
-    optimize.accept(index, verdict, runId)
+    optimize.accept(next.index, verdict, runId)
     if (verdict) accepted += 1
   }
   if (accepted > 0) optimize.apply(runId)

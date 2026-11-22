@@ -260,6 +260,8 @@ const RequestView = ({
       onFinish={() => broker.respond(request.id, { ...answers.current() })}
       onCancel={() => broker.respond(request.id, undefined)}
       position={position}
+      // Closing a standing question answers nothing: whoever asked keeps it waiting, so Esc only closes it.
+      {...(request.standing ? { escapeHint: 'Esc close' } : {})}
       // Autofill is about the agent's own questions; one that stands for the developer does not offer it.
       {...(request.standing
         ? {}

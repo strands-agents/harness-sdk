@@ -194,10 +194,13 @@ export const temporaryTestJobs = ({ runs }: TestState): DevChatJob[] =>
     run.status === 'running' ? [{ id: experiment.path, label: experiment.name, done: run.done, total: run.cases }] : []
   )
 
-/** The edits of a finished run that the screen still has to ask about: an edit strands dev cannot write is not one. */
+/**
+ * The edits of a finished run that still wait for the developer's yes or no. An edit strands dev cannot write is not
+ * one, and neither is one already answered. Closing the question is not an answer, so it leaves the count as it is.
+ */
 const editsToReview = (state: OptimizeRunState): number =>
   state.step === 'review' && !state.review.reviewed
-    ? (state.review.edits ?? []).filter(({ unavailable }) => unavailable === undefined).length
+    ? (state.review.edits ?? []).filter(({ unavailable, decided }) => unavailable === undefined && !decided).length
     : 0
 
 /** Whether the run has an edit waiting for the developer's answer. */
@@ -798,7 +801,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       step: 'review',
       review: {
         ...review,
-        edits: review.edits.map((edit, position) => (position === index ? { ...edit, accepted } : edit)),
+        edits: review.edits.map((edit, position) => (position === index ? { ...edit, accepted, decided: true } : edit)),
       },
     })
   }
@@ -813,6 +816,20 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     if (entry?.state.step !== 'review') return
     this.updateRun(entry, { step: 'review', review: { ...entry.state.review, reviewed: true } })
     this.settleReview(entry)
+  }
+
+  leaveReview(id: string): void {
+    const entry = this.entries.get(id)
+    if (entry?.state.step !== 'review' || entry.state.review.reviewed) return
+    const offered = entry.state.review.edits.filter(({ unavailable }) => unavailable === undefined)
+    const answered = offered.filter(({ decided }) => decided).length
+    // With one edit the status line says it all. With several, say where the answers given so far went.
+    if (answered === 0 || answered === offered.length) return
+    announce(
+      this.host(),
+      'success',
+      `optimize · run ${entry.state.review.run} · ${answered} of ${offered.length} edits answered · nothing is written until all are · ↓ Enter`
+    )
   }
 
   /** Called with a run whose review is over, however it ended, so a question still on screen about it can go. */

@@ -1742,11 +1742,11 @@ describe('TEMPORARY dev sessions', () => {
     sessions.optimize.start()
     await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
 
-    sessions.ask.respond(sessions.ask.pending()!.id, undefined)
+    sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'reject' })
 
     await vi.waitFor(() =>
       expect(sessions.optimize.snapshot()).toMatchObject({
-        review: { edits: [expect.objectContaining({ accepted: false })] },
+        review: { reviewed: true, edits: [expect.objectContaining({ accepted: false, decided: true })] },
       })
     )
     expect(sessions.optimize.appliedChanges()).toEqual([])
@@ -1902,6 +1902,91 @@ describe('TEMPORARY dev sessions', () => {
     )
     expect(temporaryOptimizeJobs(sessions.optimize.snapshot())).toEqual([])
     await vi.waitFor(() => expect(existsSync(resumeRecordOf(record))).toBe(false))
+  })
+
+  it('shouldKeepTheRunWaitingWhenTheDeveloperClosesItsQuestionWithoutAnAnswer', async () => {
+    const { workspace, sessions, run, record } = await closedOnAReview()
+    const optimize = temporaryDevCommands(workspace, {
+      root: workspace.root,
+      entrypoint: workspace.entrypoint,
+      language: 'python',
+    }).find(({ spec }) => spec.name === 'optimize')!
+    const { context } = chat()
+
+    sessions.ask.respond(sessions.ask.pending()!.id, undefined)
+    await new Promise((done) => setTimeout(done, 20))
+
+    expect(sessions.ask.pending()).toBeUndefined()
+    expect(temporaryOptimizeJobs(sessions.optimize.snapshot()).map(({ label }) => label)).toEqual([
+      expect.stringContaining('1 to review'),
+    ])
+    expect(sessions.optimize.snapshot()).not.toMatchObject({ review: { reviewed: true } })
+    expect(sessions.optimize.appliedChanges()).toEqual([])
+    expect(existsSync(resumeRecordOf(record))).toBe(true)
+
+    expect(optimize.openJob?.(context, run)).toBe(true)
+    expect(sessions.ask.pending()?.topic).toBe(run)
+    sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'accept' })
+
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'], reviewed: true } })
+    )
+    expect(temporaryOptimizeJobs(sessions.optimize.snapshot())).toEqual([])
+  })
+
+  it('shouldWriteNothingUntilEveryEditHasAnAnswerAndCarryOnWhereTheDeveloperLeftOff', async () => {
+    const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeOptimizerRun(recordOf(args), [
+        ...studyLines(0.9, { baseline: { effort: 'low' }, winner: { effort: 'high' } }),
+        optimizerStop(),
+        optimizerPicked('win'),
+      ])
+      return exit
+    })
+    const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.toggleKnob('effort')
+    const run = sessions.optimize.start()!
+    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    const record = recordOf(optimizing.mock.calls[0]![0].args)
+    const asking = (): (string | undefined)[] => [
+      sessions.ask.pending()?.titleParts?.[0],
+      sessions.ask.pending()?.question,
+    ]
+    expect(asking()).toEqual(['edit 1 of 2', 'Apply this change to instructions?'])
+
+    sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'accept' })
+    await vi.waitFor(() => expect(asking()).toEqual(['edit 2 of 2', 'Apply this change to effort?']))
+    sessions.ask.respond(sessions.ask.pending()!.id, undefined)
+    await new Promise((done) => setTimeout(done, 20))
+
+    expect(await readFile(join(workspace.root, 'instructions.md'), 'utf8')).toBe(`${BASELINE}\n`)
+    expect(sessions.optimize.appliedChanges()).toEqual([])
+    expect(temporaryOptimizeJobs(sessions.optimize.snapshot()).map(({ label }) => label)).toEqual([
+      expect.stringContaining('1 to review'),
+    ])
+    expect(notices.at(-1)).toEqual({
+      status: 'success',
+      text: `optimize · run ${optimizationName(record)} · 1 of 2 edits answered · nothing is written until all are · ↓ Enter`,
+    })
+
+    const optimize = temporaryDevCommands(workspace, {
+      root: workspace.root,
+      entrypoint: workspace.entrypoint,
+      language: 'python',
+    }).find(({ spec }) => spec.name === 'optimize')!
+    expect(optimize.openJob?.(chat().context, run)).toBe(true)
+    expect(asking()).toEqual(['edit 2 of 2', 'Apply this change to effort?'])
+    sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'reject' })
+
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'], reviewed: true } })
+    )
+    expect(await readFile(join(workspace.root, 'instructions.md'), 'utf8')).toBe(`${WINNER}\n`)
+    expect(await readFile(workspace.entrypoint, 'utf8')).toContain('effort="low"')
+    expect(temporaryOptimizeJobs(sessions.optimize.snapshot())).toEqual([])
   })
 
   it('shouldWriteTheEditsOfARunOnlyOnceWhenApplyIsReachedTwice', async () => {

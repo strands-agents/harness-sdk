@@ -114,6 +114,8 @@ export interface WizardProps {
   readonly autofill?: { readonly on: boolean; readonly set: (on: boolean) => void }
   /** Hands the keyboard to the chat input, for a question the developer wants to leave open. */
   readonly onLeave?: () => void
+  /** What Esc is called in the hints, when leaving the form does not cancel what it asks about. */
+  readonly escapeHint?: string
 }
 
 const LABEL_WIDTH = 12
@@ -373,21 +375,21 @@ const oneQuestionActions = (field: WizardField | undefined): string[] => {
   return field.mark === 'radio' ? ['Enter pick'] : ['Space toggle', 'Enter done']
 }
 
+const CANCEL_HINT = 'Esc cancel'
+
 const rowHints = (
   row: WizardRow | undefined,
   finishHint: (blocking: WizardNotice | undefined) => string,
   blocking: WizardNotice | undefined,
-  walked: boolean,
-  autofill: boolean,
-  leave: boolean
+  { walked, autofill, leave, escape }: { walked: boolean; autofill: boolean; leave: boolean; escape: string }
 ): string[] => {
   const tab = walked ? ['Tab next tab'] : []
   const fill = autofill ? ['ctrl+a autofill'] : []
-  const hints = (...actions: string[]): string[] => [...tab, '↑↓', ...actions, ...fill, 'Esc cancel']
+  const hints = (...actions: string[]): string[] => [...tab, '↑↓', ...actions, ...fill, escape]
   if (!walked)
     return hints(...oneQuestionActions(row?.kind === 'field' ? row.field : undefined), ...(leave ? [LEAVE_HINT] : []))
   if (row?.kind === 'button') return hints(buttonHint(row.button, finishHint, blocking))
-  if (row?.kind !== 'field') return [...tab, ...fill, 'Esc cancel']
+  if (row?.kind !== 'field') return [...tab, ...fill, escape]
   if (row.field.kind === 'toggle' && row.field.unavailable !== undefined) return hints('not available')
   return hints(row.field.hint)
 }
@@ -410,6 +412,7 @@ export const Wizard = ({
   position,
   autofill,
   onLeave,
+  escapeHint = CANCEL_HINT,
 }: WizardProps): ReactElement => {
   const own = useWizardPosition()
   const at = position?.step ?? own.step
@@ -651,7 +654,12 @@ export const Wizard = ({
           active
             ? editor
               ? ['Enter save', 'Esc cancel']
-              : rowHints(focused, finishHint, blocking, walked, autofill !== undefined, onLeave !== undefined)
+              : rowHints(focused, finishHint, blocking, {
+                  walked,
+                  autofill: autofill !== undefined,
+                  leave: onLeave !== undefined,
+                  escape: escapeHint,
+                })
             : ['↑ answer this']
         }
       />

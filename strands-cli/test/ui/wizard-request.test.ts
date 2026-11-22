@@ -832,6 +832,19 @@ describe('a question that shows a change to read', () => {
     expect(lines()).toContain('  ○ Leave it as it is')
   })
 
+  it('shouldSayThatEscClosesAStandingQuestionRatherThanCancelsIt', async () => {
+    const { asked, press, text } = await reviewPanel(76, 30)
+    const settled = vi.fn()
+    void asked.then(settled)
+
+    expect(text()).toContain('Esc close')
+    expect(text()).not.toContain('Esc cancel')
+
+    await press('\u001b')
+
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(undefined))
+  })
+
   it('shouldNotOfferAutofillForAQuestionThatStandsForTheDeveloper', async () => {
     const { broker, press, text } = await reviewPanel(76, 30)
     expect(text()).not.toContain('autofill')
