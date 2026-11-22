@@ -461,7 +461,11 @@ const textFileMatcher =
 const rewriteFile = async (root: string, file: string, matcher: Matcher, after: string): Promise<void> => {
   await editFile(root, file, (content) => {
     const match = matcher(content)
-    if ('unavailable' in match) throw new Error(match.unavailable)
+    // The old text was found when the edit was offered, so not finding it now means the file changed since.
+    if ('unavailable' in match)
+      throw new Error(
+        `${relative(root, file)} changed after this edit was proposed, and the text it replaces is no longer there.`
+      )
     const rewritten = match.rewrite(after)
     if ('problem' in rewritten) throw new Error(rewritten.problem)
     return rewritten.content

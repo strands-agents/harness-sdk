@@ -1473,7 +1473,7 @@ describe('TEMPORARY dev sessions', () => {
         `The full optimizer output is in ${runLogOf(record)}.`,
       record,
     })
-    expect(notices.at(-1)).toEqual({ status: 'error', text: 'optimize · capital stopped · /optimize shows why' })
+    expect(notices.at(-1)).toEqual({ status: 'error', text: 'optimize · capital stopped · ask in the chat why' })
     expect(existsSync(resumeRecordOf(record))).toBe(false)
     expect(await readTemporaryOptimizeRecords(workspace.directory!)).toEqual([])
     expect(restarted.snapshot().runs).toEqual([])

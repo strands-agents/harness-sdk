@@ -1130,7 +1130,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       await temporaryWorkspaceReady(this.workspaceDirectory())
       records = await readTemporaryOptimizeRecords(this.workspaceDirectory())
     } catch (error) {
-      announce(this.host(), 'error', `optimize · /optimize cannot read its unfinished run: ${errorMessage(error)}`)
+      announce(this.host(), 'error', `optimize · an unfinished run cannot be read: ${errorMessage(error)}`)
       return
     }
     const known = new Set([...this.entries.values()].map(({ record }) => record))
@@ -1169,7 +1169,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       announce(
         this.host(),
         'error',
-        `optimize · ${basename(saved.experiment, '.json')} could not resume · /optimize shows why`
+        `optimize · ${basename(saved.experiment, '.json')} could not resume · ask in the chat why`
       )
       await dropTemporaryOptimizeRecord(saved)
     }
@@ -1347,7 +1347,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
         await saving
         if (record) await dropTemporaryOptimizeRecord({ record })
         this.updateRun(entry, { step: 'failed', message: errorMessage(error), ...(record ? { record } : {}) })
-        announce(this.host(), 'error', `optimize · ${plan.experiment.name} stopped · /optimize shows why`)
+        announce(this.host(), 'error', `optimize · ${plan.experiment.name} stopped · ask in the chat why`)
         return
       }
       cancelled = true
@@ -1382,7 +1382,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     } catch (error) {
       if (cancelled) return this.reportCancelled(entry, plan, record)
       this.updateRun(entry, { step: 'failed', message: errorMessage(error), record })
-      announce(this.host(), 'error', `optimize · run ${name} could not be read · /optimize shows why`)
+      announce(this.host(), 'error', `optimize · run ${name} could not be read · ask in the chat why`)
       return
     }
     if (outcome.ended === 'stopped' && outcome.error && !cancelled) {
@@ -1404,7 +1404,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     } catch (error) {
       if (cancelled) return this.reportCancelled(entry, plan, record)
       this.updateRun(entry, { step: 'failed', message: errorMessage(error), record })
-      announce(this.host(), 'error', `optimize · run ${name} could not be read · /optimize shows why`)
+      announce(this.host(), 'error', `optimize · run ${name} could not be read · ask in the chat why`)
     }
   }
 

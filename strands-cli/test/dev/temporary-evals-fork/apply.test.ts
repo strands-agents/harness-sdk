@@ -404,7 +404,9 @@ describe('TEMPORARY apply an optimized setting', () => {
     const location = target(await locate(root, 'agent.py', 'Answer in one word.'))
     await writeFile(join(root, 'agent.py'), PYTHON_AGENT('load()'))
 
-    await expect(location.write('Answer briefly.')).rejects.toThrow('the old text is not a plain string there.')
+    await expect(location.write('Answer briefly.')).rejects.toThrow(
+      'agent.py changed after this edit was proposed, and the text it replaces is no longer there.'
+    )
     expect(await read(root, 'agent.py')).toBe(PYTHON_AGENT('load()'))
   })
 
@@ -645,7 +647,7 @@ describe('TEMPORARY apply next to option saves', () => {
     const location = target(await locate(root, 'agent.py', INSTRUCTIONS))
     await editFile(root, join(root, 'agent.py'), (content) => content.replace(INSTRUCTIONS, 'Answer briefly.'))
 
-    await expect(location.write(NEW_INSTRUCTIONS)).rejects.toThrow()
+    await expect(location.write(NEW_INSTRUCTIONS)).rejects.toThrow('agent.py changed after this edit was proposed')
 
     expect(await read(root, 'agent.py')).toContain('"""Answer briefly."""')
   })
