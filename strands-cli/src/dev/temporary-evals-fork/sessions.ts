@@ -773,8 +773,8 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     entry.abort.abort()
   }
 
-  accept(index: number, accepted: boolean): void {
-    const entry = this.shownEntry()
+  accept(index: number, accepted: boolean, run?: string): void {
+    const entry = this.reviewedEntry(run)
     if (entry?.state.step !== 'review') return
     if (entry.state.review.edits[index]?.unavailable) {
       if (accepted) void this.recheck(entry, true, index)
@@ -791,8 +791,8 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     })
   }
 
-  apply(): void {
-    const entry = this.shownEntry()
+  apply(run?: string): void {
+    const entry = this.reviewedEntry(run)
     if (entry) void this.applyAccepted(entry)
   }
 
@@ -844,6 +844,11 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
 
   private shownEntry(): RunEntry | undefined {
     return this.shown === undefined ? undefined : this.entries.get(this.shown)
+  }
+
+  /** Several runs can wait for review at once, and the shown one moves as each finishes, so a walk names its own. */
+  private reviewedEntry(run: string | undefined): RunEntry | undefined {
+    return run === undefined ? this.shownEntry() : this.entries.get(run)
   }
 
   private addRun(experiment: string, startedAt: number, state: OptimizeRunState, listed = true): RunEntry {

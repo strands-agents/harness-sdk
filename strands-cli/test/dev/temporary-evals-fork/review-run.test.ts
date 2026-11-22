@@ -55,10 +55,10 @@ describe('reviewOptimizeRun', () => {
     await reviewOptimizeRun(devSessions, 'run-1')
 
     expect(accept.mock.calls).toEqual([
-      [0, true],
-      [1, false],
+      [0, true, 'run-1'],
+      [1, false, 'run-1'],
     ])
-    expect(apply).toHaveBeenCalledOnce()
+    expect(apply.mock.calls).toEqual([['run-1']])
   })
 
   it('shouldNotApplyAnythingWhenEveryEditIsRejected', async () => {
@@ -80,7 +80,7 @@ describe('reviewOptimizeRun', () => {
     await reviewOptimizeRun(devSessions, 'run-1')
 
     expect(asked).toHaveLength(1)
-    expect(accept.mock.calls).toEqual([[0, false]])
+    expect(accept.mock.calls).toEqual([[0, false, 'run-1']])
     expect(apply).not.toHaveBeenCalled()
   })
 

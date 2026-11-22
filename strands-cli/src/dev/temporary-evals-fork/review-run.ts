@@ -68,13 +68,13 @@ const walkRun = async ({ optimize, ask }: TemporaryDevSessions, runId: string): 
   for (const [at, { edit, index }] of open.entries()) {
     const outcome = await ask.ask(question(edit, run.state.review.run, at, open.length))
     if (outcome === undefined) {
-      optimize.accept(index, false)
+      optimize.accept(index, false, runId)
       break
     }
     const verdict = outcome.verdict === ACCEPT
-    optimize.accept(index, verdict)
+    optimize.accept(index, verdict, runId)
     if (verdict) accepted += 1
   }
-  if (accepted > 0) optimize.apply()
+  if (accepted > 0) optimize.apply(runId)
   optimize.finishReview(runId)
 }

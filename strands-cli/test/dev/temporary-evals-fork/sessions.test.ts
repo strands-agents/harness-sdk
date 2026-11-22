@@ -1505,6 +1505,34 @@ describe('TEMPORARY dev sessions', () => {
     expect(temporaryOptimizeJobs(both).map(({ id }) => id)).toEqual([second, first])
   })
 
+  it('shouldApplyTheEditOfTheRunWhoseQuestionWasAnsweredWhenTwoRunsWaitForReview', async () => {
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizingProcess() })
+    const capital = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    const cities = await savedExperiment(workspace, ['d0', 'd1', 'd2', 'd3'], 'cities')
+    sessions.optimize.plan(capital)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const first = sessions.optimize.start()
+    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    const firstQuestion = sessions.ask.pending()!
+    sessions.optimize.reset()
+    sessions.optimize.plan(cities)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const second = sessions.optimize.start()
+    await vi.waitFor(() =>
+      expect(sessions.optimize.snapshot().runs?.map(({ state }) => state.step)).toEqual(['review', 'review'])
+    )
+
+    sessions.ask.respond(firstQuestion.id, { verdict: 'accept' })
+
+    const reviewOf = (id: string | undefined) => {
+      const run = sessions.optimize.snapshot().runs?.find((candidate) => candidate.id === id)
+      return run?.state.step === 'review' ? run.state.review : undefined
+    }
+    await vi.waitFor(() => expect(reviewOf(first)).toMatchObject({ applied: ['instructions.md'], reviewed: true }))
+    expect(reviewOf(second)?.applied).toBeUndefined()
+    expect(reviewOf(second)?.reviewed).toBeUndefined()
+  })
+
   it('shouldDropTheJobLineOnceEveryEditOfARunWasAnsweredOnScreen', () => {
     const review = { run: 'r1', record: 'r1', baseline: 0.1, best: 0.9, measuredOn: 'validation cases', edits: [] }
     const state = (reviewed: boolean) => ({

@@ -467,8 +467,9 @@ export interface OptimizeSession {
   openRun(id: string): void
   start(): string | undefined
   stop(id?: string): void
-  accept(index: number, accepted: boolean): void
-  apply(): void
+  /** `run` names the run the answer is for; without it, the run on screen. */
+  accept(index: number, accepted: boolean, run?: string): void
+  apply(run?: string): void
   finishReview(id: string): void
   reset(): void
   agent?(): RunAgent
