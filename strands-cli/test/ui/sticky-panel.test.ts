@@ -151,6 +151,27 @@ describe('a sticky question panel', () => {
     expect(screen()).toContain('question keys:[z]')
   })
 
+  it('shouldComeBackToTheInputFromTheStatusLineBeforeUpMovesIntoTheQuestion', async () => {
+    const jobs = { subscribe: () => () => {}, snapshot: () => [{ id: 'a', label: 'refunds', done: 1, total: 1 }] }
+    const { press, screen } = await mount({ ...askCommand(), jobs })
+    await press('/ask')
+    await press('\r')
+    await press('\u001b[B')
+    expect(screen()).toContain('Enter view')
+
+    await press('\u001b[A')
+    await press('z')
+
+    expect(screen()).not.toContain('Enter view')
+    expect(screen()).toContain('question keys:[]')
+
+    await press('\u007f')
+    await press('\u001b[A')
+    await press('z')
+
+    expect(screen()).toContain('question keys:[z]')
+  })
+
   it('shouldDropThePendingQuestionAndSteerTheMessageIntoTheTurn', async () => {
     const dropped: number[] = []
     const { controller, press } = await mount(askCommand(() => dropped.push(1) > 0))

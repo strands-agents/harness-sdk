@@ -567,6 +567,60 @@ describe('WizardRequestPanel', () => {
     await expect(asked).resolves.toEqual({ iterations: '8' })
   })
 
+  const budget = (placeholder?: string): WizardRequestSpec => ({
+    name: 'optimize',
+    question: 'Budget: change any of these, or leave blank to keep them all.',
+    steps: [
+      {
+        key: 'question',
+        title: 'Question',
+        fields: [{ kind: 'text', key: 'budget', label: 'budget', ...(placeholder ? { placeholder } : {}) }],
+      },
+    ],
+  })
+
+  it('shouldShowTheExampleOfATextQuestionWhereItsAnswerGoesUntilThereIsOne', async () => {
+    const broker = new WizardBroker()
+    void broker.ask(budget('e.g. 2 steps, 2 runs'))
+    const { text } = await panel(broker)
+
+    expect(text()).toContain('budget      e.g. 2 steps, 2 runs')
+    expect(text()).not.toContain('none')
+    expect(text()).toContain('type to answer')
+  })
+
+  it('shouldTakeWhatIsTypedOnATextRowAsTheStartOfItsAnswer', async () => {
+    const broker = new WizardBroker()
+    const asked = broker.ask(budget('e.g. 2 steps, 2 runs'))
+    const { text, press } = await panel(broker)
+
+    await press('1')
+    await press(' ')
+    await press('s')
+    await press('t')
+    await press('e')
+    await press('p')
+
+    expect(text()).toContain('1 step')
+    expect(text()).toContain('Enter save · Esc cancel')
+
+    await press(ENTER)
+
+    await expect(asked).resolves.toEqual({ budget: '1 step' })
+  })
+
+  it('shouldStillOpenATextRowOnEnterAndKeepABlankAnswerBlank', async () => {
+    const broker = new WizardBroker()
+    const asked = broker.ask(budget())
+    const { text, press } = await panel(broker)
+
+    await press(ENTER)
+    expect(text()).toContain('Enter save · Esc cancel')
+    await press(ENTER)
+
+    await expect(asked).resolves.toEqual({ budget: '' })
+  })
+
   it('shouldStayIdleWhileTheChatInputHoldsTheKeyboard', async () => {
     const broker = new WizardBroker()
     const asked = broker.ask({ name: 'optimize', question: 'Which knobs?', steps: [steps[0]!] })

@@ -91,7 +91,9 @@ const toField = (
       kind: 'text',
       key: spec.key,
       label: spec.label,
-      display: value.trim() || 'none',
+      // Before an answer, the row shows the example the question gave, faint, rather than a word that reads as one.
+      display: value.trim() || spec.placeholder || 'none',
+      ...(value.trim() ? {} : { unanswered: true }),
       hint: 'Enter edit',
       edit: {
         value,

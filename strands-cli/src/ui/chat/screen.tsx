@@ -1441,8 +1441,9 @@ export function ChatApp({
       const inputHasKeyboard = snapshot.panel?.kind === 'dev' && snapshot.panel.sticky === true && !panelKeyboard
       if (snapshot.panel?.kind === 'dev') {
         if (!inputHasKeyboard) return
-        // ↑ returns to the question, but only with nothing typed, so prompt history still works.
-        if (key.upArrow && currentEditor.input.length === 0) {
+        // ↑ returns to the question, but only with nothing typed, so prompt history still works. From the status
+        // line it first comes back to the input, as it does with no question open, so one thing is focused at a time.
+        if (key.upArrow && currentEditor.input.length === 0 && !focusedStatus) {
           setPanelKeyboard(true)
           return
         }

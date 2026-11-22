@@ -63,6 +63,8 @@ export interface WizardToggle extends FieldBase {
 export interface WizardText extends FieldBase {
   readonly kind: 'text'
   readonly display: string
+  /** `display` is not an answer yet (an example, or a word for nothing), so it reads as one. */
+  readonly unanswered?: boolean
   readonly edit: WizardEdit
 }
 
@@ -214,12 +216,14 @@ const ValueRow = ({
   value,
   slider,
   active,
+  faint = false,
   onPoint,
 }: {
   label: string
   value: string
   slider?: { count: number; position: number }
   active: boolean
+  faint?: boolean
   onPoint?: () => void
 }): ReactElement => {
   const { accent, selection } = useTheme()
@@ -243,7 +247,7 @@ const ValueRow = ({
             <Text>{`  ${value}`}</Text>
           </>
         ) : (
-          <Text>{value}</Text>
+          <Text dimColor={faint}>{value}</Text>
         )}
       </Text>
     </Box>
@@ -362,7 +366,7 @@ const buttonHint = (
 const LEAVE_HINT = '↓ chat'
 
 const oneQuestionActions = (field: WizardField | undefined): string[] => {
-  if (field?.kind === 'text') return ['Enter type']
+  if (field?.kind === 'text') return ['type to answer']
   if (field?.kind === 'choice') return [field.hint, 'Enter done']
   if (field?.kind !== 'toggle') return ['Enter done']
   if (field.unavailable !== undefined) return ['not available', 'Enter done']
@@ -488,7 +492,15 @@ export const Wizard = ({
         return
       }
       const row = rows[cursor.current()]
+      const typed = shortcut(input, key)
       if (key.ctrl && input === 'a') autofill?.set(!autofill.on)
+      // A text row takes what is typed on it: the first character opens its editor and lands in it.
+      else if (row?.kind === 'field' && row.field.kind === 'text' && typed.trim() !== '')
+        editing.set({
+          key: row.field.key,
+          edit: row.field.edit,
+          value: editText(textValue(row.field.edit.value), input, key),
+        })
       else if (key.escape) onCancel()
       else if (key.tab && walked) stepTo(key.shift ? -1 : 1, [])
       else if (key.upArrow) cursor.move(-1)
@@ -499,7 +511,7 @@ export const Wizard = ({
       } else if (key.leftArrow || key.rightArrow) {
         if (row?.kind === 'field' && row.field.kind === 'choice') row.field.move(key.rightArrow ? 1 : -1)
       } else if (!walked && key.return) finishOne(row)
-      else if (key.return || shortcut(input, key) === ' ') activate(row)
+      else if (key.return || typed === ' ') activate(row)
     },
     { isActive: active }
   )
@@ -565,6 +577,7 @@ export const Wizard = ({
           label={field.label}
           value={field.display}
           active={cursorRow === row}
+          faint={field.unanswered === true}
           {...(point ? { onPoint: point } : {})}
         />
       )
