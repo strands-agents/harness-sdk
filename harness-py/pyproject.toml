@@ -29,6 +29,7 @@ classifiers = [
 # SDK 1.62.0 retries with drop_block when a history edit invalidates Opus 5.5 preserved-thinking blocks.
 # SDK 1.64.0 places OpenAI Responses cache points on GPT-5.6+, which the harness's caching relies on.
 # SDK 1.65.0 carries the AnthropicModel `client` parameter that runs Claude on Anthropic's Bedrock client.
+# SDK 1.65.0 also has the vended subagent report content_filtered/refusal as tool errors.
 # anthropic is a hard dependency because the default model runs on it; 1.7.0 is the first release that
 # raises a mid-stream Bedrock error (e.g. throttling) as an APIStatusError the SDK can map.
 # pydantic-monty is the sandbox programmatic_tool_caller runs model-authored code in; it is a hard

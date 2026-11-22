@@ -61,8 +61,7 @@ class SummarizeConfig(TypedDict, total=False):
     """Configuration for the summarize strategy.
 
     Attributes:
-        model: Model used for summarization. Resolution order: this ``model`` > ``agent.aux_model``
-            > ``agent.model``.
+        model: Model used for summarization. Resolution order: this ``model`` > ``agent.model``.
         system_prompt: Summarization instructions closing each summary request, replacing the default ones.
     """
 
@@ -325,7 +324,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return kwargs
 
     def _resolve_model(self, agent: Agent) -> Model | None:
-        return self._config.get("model") or agent.aux_model
+        return self._config.get("model") or agent.model
 
 
 def _record_summary_usage(invocation_context: InvocationContext | None, result: SummarizeResult) -> None:

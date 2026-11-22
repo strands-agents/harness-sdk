@@ -3,7 +3,7 @@ import { Offload } from '../strategies/offload/index.js'
 import { offloadPlaceholder } from '../placeholder.js'
 import { repairAlternation } from '../message-trimming.js'
 import { flattenMessagesToContent } from '../content-rendering.js'
-import { Stash } from '../stash.js'
+import { Archive } from '../archive.js'
 import { ContextManager } from '../context-manager.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from '../retrieval-tool.js'
 import { PluginRegistry } from '../../plugins/registry.js'
@@ -25,8 +25,8 @@ function invokeRetrievalTool(retrievalTool: Tool, input: unknown): Promise<unkno
   return (retrievalTool as unknown as { invoke(input: unknown): Promise<unknown> }).invoke(input)
 }
 
-async function stashAll(stash: Stash, messages: Message[]): Promise<void> {
-  for (const message of messages) await stash.storeMessage(message)
+async function archiveAll(archive: Archive, messages: Message[]): Promise<void> {
+  for (const message of messages) await archive.storeMessage(message)
 }
 
 describe('ContextManager tool registration', () => {
@@ -40,8 +40,8 @@ describe('ContextManager tool registration', () => {
     expect(agent.toolRegistry.get(RETRIEVAL_TOOL_NAME)).toBeDefined()
   })
 
-  it('does not register retrieve_context when stash is disabled', async () => {
-    const contextManager = new ContextManager({ stash: false })
+  it('does not register retrieve_context when archive is disabled', async () => {
+    const contextManager = new ContextManager({ archive: false })
     const registry = new PluginRegistry([contextManager])
     const agent = createMockAgent()
 
@@ -50,7 +50,7 @@ describe('ContextManager tool registration', () => {
     expect(agent.toolRegistry.get(RETRIEVAL_TOOL_NAME)).toBeUndefined()
   })
 
-  it('backfills stash from pre-existing messages at init', async () => {
+  it('backfills archive from pre-existing messages at init', async () => {
     const largeText = 'restored content '.repeat(500)
     const messages = [makeToolResultMessage(largeText)]
     const contextManager = new ContextManager()
@@ -59,65 +59,65 @@ describe('ContextManager tool registration', () => {
 
     await registry.initialize(agent)
 
-    const stash = contextManager.stash!
-    const keys = await stash.list()
+    const archive = contextManager.archive!
+    const keys = await archive.list()
     expect(keys.length).toBe(1)
-    const retrieved = await stash.retrieve(keys[0]!)
+    const retrieved = await archive.retrieve(keys[0]!)
     expect((retrieved!.data as { text: string }).text).toBe(largeText)
   })
 })
 
-describe('Offload strategies with stash', () => {
-  describe('truncate + stash', () => {
+describe('Offload strategies with archive', () => {
+  describe('truncate + archive', () => {
     it('resolves the reference of a block that a history edit moved into another message', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const big = 'x'.repeat(20000)
       const messages = [
         new Message({ role: 'user', content: [new TextBlock('q')], trackingId: 'u0' }),
         new Message({ role: 'assistant', content: [new TextBlock('short')], trackingId: 'a1' }),
         new Message({ role: 'assistant', content: [new TextBlock(big)], trackingId: 'a2' }),
       ]
-      await stashAll(stash, messages)
+      await archiveAll(archive, messages)
       // Merges a2 into a1: the big block is now a1_1, while it was stored on arrival as a2_0.
       repairAlternation(messages)
 
-      await Offload.truncate('assistantText', { previewTokens: 10 }).apply(makeContext(messages, { stash }))
+      await Offload.truncate('assistantText', { previewTokens: 10 }).apply(makeContext(messages, { archive }))
 
       const placeholder = messages[1]!.content[1] as OffloadedBlock
       expect(placeholder).toBeInstanceOf(OffloadedBlock)
       expect(placeholder.ref).toBe('a1_1')
-      const retrieve = createRetrievalTool(stash)
+      const retrieve = createRetrievalTool(archive)
       expect(await invokeRetrievalTool(retrieve, { reference: 'a1_1' })).toEqual(new TextBlock(big))
     })
 
-    it('persists original content to stash before truncating', async () => {
+    it('persists original content to archive before truncating', async () => {
       const storage = new InMemoryStorage()
-      const stash = new Stash(storage, 'test-session', 'test-agent')
+      const archive = new Archive(storage, 'test-session', 'test-agent')
       const largeText = 'important data '.repeat(1000)
       const messages = [makeToolResultMessage(largeText)]
-      await stashAll(stash, messages)
+      await archiveAll(archive, messages)
       const strategy = Offload.truncate('toolResults')
-      const context = makeContext(messages, { stash })
+      const context = makeContext(messages, { archive })
 
       const acted = await strategy.apply(context)
 
       expect(acted).toBe(true)
 
-      const keys = await stash.list()
+      const keys = await archive.list()
       expect(keys.length).toBe(1)
 
-      const retrieved = await stash.retrieve(keys[0]!)
+      const retrieved = await archive.retrieve(keys[0]!)
       expect(retrieved).not.toBeNull()
       expect((retrieved!.data as { text: string }).text).toBe(largeText)
     })
 
     it('leaves an OffloadedBlock referencing the tool result in the truncated preview', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const largeText = 'x'.repeat(20000)
       const messages = [makeToolResultMessage(largeText)]
-      await stashAll(stash, messages)
+      await archiveAll(archive, messages)
       const strategy = Offload.truncate('toolResults')
-      const context = makeContext(messages, { stash })
+      const context = makeContext(messages, { archive })
 
       await strategy.apply(context)
 
@@ -130,7 +130,7 @@ describe('Offload strategies with stash', () => {
     })
 
     it('never stores a seeded placeholder under the original key when a strategy acts on it', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const seeded = new Message({
         role: 'user',
         content: [
@@ -142,25 +142,25 @@ describe('Offload strategies with stash', () => {
         ],
       })
       const messages = [seeded]
-      await stashAll(stash, messages)
+      await archiveAll(archive, messages)
 
-      await Offload.drop('toolResults').apply(makeContext(messages, { stash }))
+      await Offload.drop('toolResults').apply(makeContext(messages, { archive }))
 
       expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([
         offloadPlaceholder('drop', '[Dropped: ~15 tokens]', 'tool-123', 15),
       ])
-      expect(await stash.list()).toStrictEqual([])
-      await expect(invokeRetrievalTool(createRetrievalTool(stash), { reference: 'tool-123' })).rejects.toThrow(
+      expect(await archive.list()).toStrictEqual([])
+      await expect(invokeRetrievalTool(createRetrievalTool(archive), { reference: 'tool-123' })).rejects.toThrow(
         'reference not found: tool-123'
       )
     })
 
     it('lets a later strategy act on an already truncated result and keeps its reference resolvable', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const original = 'x'.repeat(20000)
       const messages = [makeToolResultMessage(original)]
-      await stashAll(stash, messages)
-      const context = makeContext(messages, { stash })
+      await archiveAll(archive, messages)
+      const context = makeContext(messages, { archive })
       await Offload.truncate('toolResults', { previewTokens: 10 }).apply(context)
 
       const actedAgain = await Offload.drop('toolResults').apply(context)
@@ -175,12 +175,12 @@ describe('Offload strategies with stash', () => {
           tokens: 5032,
         }),
       ])
-      expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'tool-123' })).toEqual(
+      expect(await invokeRetrievalTool(createRetrievalTool(archive), { reference: 'tool-123' })).toEqual(
         new TextBlock(original)
       )
     })
 
-    it('leaves a placeholder without a reference when no stash is configured', async () => {
+    it('leaves a placeholder without a reference when no archive is configured', async () => {
       const largeText = 'x'.repeat(20000)
       const messages = [makeToolResultMessage(largeText)]
       const strategy = Offload.truncate('toolResults')
@@ -194,33 +194,33 @@ describe('Offload strategies with stash', () => {
     })
   })
 
-  describe('drop + stash', () => {
+  describe('drop + archive', () => {
     it('persists original content before dropping', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const largeText = 'critical information '.repeat(500)
       const messages = [makeToolResultMessage(largeText)]
-      await stashAll(stash, messages)
+      await archiveAll(archive, messages)
       const strategy = Offload.drop('toolResults')
-      const context = makeContext(messages, { stash })
+      const context = makeContext(messages, { archive })
 
       const acted = await strategy.apply(context)
 
       expect(acted).toBe(true)
 
-      const keys = await stash.list()
+      const keys = await archive.list()
       expect(keys.length).toBe(1)
 
-      const retrieved = await stash.retrieve(keys[0]!)
+      const retrieved = await archive.retrieve(keys[0]!)
       expect((retrieved!.data as { text: string }).text).toBe(largeText)
     })
 
     it('leaves an OffloadedBlock referencing the tool result as the drop marker', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const largeText = 'x'.repeat(20000)
       const messages = [makeToolResultMessage(largeText)]
-      await stashAll(stash, messages)
+      await archiveAll(archive, messages)
       const strategy = Offload.drop('toolResults')
-      const context = makeContext(messages, { stash })
+      const context = makeContext(messages, { archive })
 
       await strategy.apply(context)
 
@@ -237,16 +237,16 @@ describe('Offload strategies with stash', () => {
     })
 
     it('marks removed messages with an OffloadedBlock that retrieves them', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const text = (role: 'user' | 'assistant', content: string, trackingId: string): Message =>
         new Message({ role, content: [new TextBlock(content)], trackingId })
       const first = text('assistant', 'first answer', 'm1')
       const second = text('user', 'second question', 'm2')
       const messages = [text('user', 'start', 'm0'), first, second, text('assistant', 'final', 'm3')]
-      await stashAll(stash, messages)
+      await archiveAll(archive, messages)
       const strategy = Offload.drop('*').when({ contextUtilization: '50%' })
 
-      const acted = await strategy.apply(makeContext(messages, { stash, utilization: 0.9 }))
+      const acted = await strategy.apply(makeContext(messages, { archive, utilization: 0.9 }))
 
       expect(acted).toBe(true)
       const marker = new OffloadedBlock({
@@ -259,7 +259,7 @@ describe('Offload strategies with stash', () => {
         [new TextBlock('start')],
         [new TextBlock('final'), marker],
       ])
-      const retrieve = createRetrievalTool(stash)
+      const retrieve = createRetrievalTool(archive)
       expect(await invokeRetrievalTool(retrieve, { reference: 'removed-m1' })).toEqual([
         new TextBlock('\n---\n[assistant]'),
         new TextBlock('first answer'),
@@ -301,14 +301,14 @@ describe('Offload strategies with stash', () => {
       const summarizeMessages = () => Offload.summarize('*').when({ contextUtilization: '50%', preserveRecent: 1 })
 
       it('leaves an OffloadedBlock that retrieves every message it stands for', async () => {
-        const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+        const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
         const messages = history()
         // Message 0 stays in the array but a compaction block stops it being sent, so the summary stands for it too.
         const covered = messages.slice(0, 4)
-        await stashAll(stash, messages)
+        await archiveAll(archive, messages)
 
         const acted = await summarizeMessages().apply(
-          makeContext(messages, { stash, utilization: 0.9, model: serverSideModel() })
+          makeContext(messages, { archive, utilization: 0.9, model: serverSideModel() })
         )
 
         expect(acted).toBe(true)
@@ -326,17 +326,17 @@ describe('Offload strategies with stash', () => {
           ],
           [new TextBlock('latest')],
         ])
-        expect(await invokeRetrievalTool(createRetrievalTool(stash), { reference: 'removed-m0' })).toEqual(
+        expect(await invokeRetrievalTool(createRetrievalTool(archive), { reference: 'removed-m0' })).toEqual(
           flattenMessagesToContent(covered)
         )
       })
 
-      it('stands on its own when the stash write fails', async () => {
-        const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
-        vi.spyOn(stash, 'storeRemoved').mockRejectedValue(new Error('storage unavailable'))
+      it('stands on its own when the archive write fails', async () => {
+        const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
+        vi.spyOn(archive, 'storeRemoved').mockRejectedValue(new Error('storage unavailable'))
         const messages = history()
 
-        await summarizeMessages().apply(makeContext(messages, { stash, utilization: 0.9, model: serverSideModel() }))
+        await summarizeMessages().apply(makeContext(messages, { archive, utilization: 0.9, model: serverSideModel() }))
 
         expect(messages.map((message) => message.content)).toEqual([
           [new TextBlock('start')],
@@ -346,7 +346,7 @@ describe('Offload strategies with stash', () => {
       })
     })
 
-    it('leaves a marker without a reference when there is no stash', async () => {
+    it('leaves a marker without a reference when there is no archive', async () => {
       const messages = [
         makeToolResultMessage('a', 't0'),
         new Message({ role: 'assistant', content: [new TextBlock('mid')] }),
@@ -382,7 +382,7 @@ describe('Offload strategies with stash', () => {
     }
 
     it('references a multi-item tool result by its toolUseId and retrieves every item', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const messages = [
         new Message({
           role: 'user',
@@ -395,9 +395,9 @@ describe('Offload strategies with stash', () => {
           ],
         }),
       ]
-      await stashAll(stash, messages)
+      await archiveAll(archive, messages)
 
-      await Offload.drop('toolResults').apply(makeContext(messages, { stash }))
+      await Offload.drop('toolResults').apply(makeContext(messages, { archive }))
 
       const [marker] = (messages[0]!.content[0] as ToolResultBlock).content
       expect(marker).toEqual(
@@ -409,19 +409,19 @@ describe('Offload strategies with stash', () => {
         })
       )
       expect((marker as TextBlock).text).toMatch(/^\[Dropped: ~[\d,]+ tokens\] \[ref: tool-1\]$/)
-      expect(await invokeRetrievalTool(createRetrievalTool(stash, 1_000_000), { reference: 'tool-1' })).toEqual([
+      expect(await invokeRetrievalTool(createRetrievalTool(archive, 1_000_000), { reference: 'tool-1' })).toEqual([
         new TextBlock('first '.repeat(2000)),
         new TextBlock('second'),
       ])
     })
 
-    it('stashes a block not yet stored under its current key before replacing it', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+    it('archives a block not yet stored under its current key before replacing it', async () => {
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const messages = [makeToolResultMessage('x'.repeat(20000), 'tool-1')]
 
-      await Offload.drop('toolResults').apply(makeContext(messages, { stash }))
+      await Offload.drop('toolResults').apply(makeContext(messages, { archive }))
 
-      expect(await stash.takeSnapshot()).toStrictEqual({ 'tool-1_0': { text: 'x'.repeat(20000) } })
+      expect(await archive.takeSnapshot()).toStrictEqual({ 'tool-1_0': { text: 'x'.repeat(20000) } })
     })
 
     // Truncate keeps the oldest message within its preview budget, so its elided run starts one message later.
@@ -429,10 +429,10 @@ describe('Offload strategies with stash', () => {
       ['drop', Offload.drop('*'), 1],
       ['truncate', Offload.truncate('*', { previewTokens: 2 }), 2],
     ] as const)('%s message-level marker references the removed messages', async (method, strategy, first) => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const messages = conversation()
       const original = [...messages]
-      const context = makeContext(messages, { stash, utilization: 0.9 })
+      const context = makeContext(messages, { archive, utilization: 0.9 })
 
       await strategy.when({ contextUtilization: '50%' }).apply(context)
 
@@ -445,19 +445,19 @@ describe('Offload strategies with stash', () => {
       const tokens = await context.agent.model.countTokens(removed)
       expect(marker).toEqual(new OffloadedBlock({ text: marker.text, method, ref, tokens }))
       expect(marker.text.endsWith(` [ref: ${ref}]`)).toBe(true)
-      expect(await invokeRetrievalTool(createRetrievalTool(stash, 1_000_000), { reference: ref })).toEqual(
+      expect(await invokeRetrievalTool(createRetrievalTool(archive, 1_000_000), { reference: ref })).toEqual(
         flattenMessagesToContent(removed)
       )
     })
 
-    it('leaves a message-level marker without a reference when the stash write fails', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
-      vi.spyOn(stash, 'storeRemoved').mockRejectedValue(new Error('storage unavailable'))
+    it('leaves a message-level marker without a reference when the archive write fails', async () => {
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
+      vi.spyOn(archive, 'storeRemoved').mockRejectedValue(new Error('storage unavailable'))
       const messages = conversation()
 
       await Offload.drop('*')
         .when({ contextUtilization: '50%' })
-        .apply(makeContext(messages, { stash, utilization: 0.9 }))
+        .apply(makeContext(messages, { archive, utilization: 0.9 }))
 
       const marker = markerOf(messages)
       expect(marker.text).toMatch(/^\[Dropped: earlier messages, ~[\d,]+ tokens\]$/)
@@ -465,9 +465,9 @@ describe('Offload strategies with stash', () => {
     })
   })
 
-  describe('binary content stashing', () => {
-    it('stashes image content from tool results', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+  describe('binary content archiving', () => {
+    it('archives image content from tool results', async () => {
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const imageBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
       const messages = [
         new Message({
@@ -481,25 +481,25 @@ describe('Offload strategies with stash', () => {
           ],
         }),
       ]
-      await stashAll(stash, messages)
+      await archiveAll(archive, messages)
       const strategy = Offload.drop('toolResults')
-      const context = makeContext(messages, { stash })
+      const context = makeContext(messages, { archive })
 
       const acted = await strategy.apply(context)
 
       expect(acted).toBe(true)
-      const keys = await stash.list()
+      const keys = await archive.list()
       expect(keys.length).toBe(1)
 
-      const retrieved = await stash.retrieve(keys[0]!)
+      const retrieved = await archive.retrieve(keys[0]!)
       expect(retrieved).not.toBeNull()
       const data = retrieved!.data as { image: { format: string; source: { bytes: string } } }
       expect(data.image.format).toBe('png')
       expect(data.image.source.bytes).toBeDefined()
     })
 
-    it('stashes each block independently when mixed content', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+    it('archives each block independently when mixed content', async () => {
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const imageBytes = new Uint8Array([0xff, 0xd8])
       const messages = [
         new Message({
@@ -516,16 +516,16 @@ describe('Offload strategies with stash', () => {
           ],
         }),
       ]
-      await stashAll(stash, messages)
+      await archiveAll(archive, messages)
       const strategy = Offload.drop('toolResults')
-      const context = makeContext(messages, { stash })
+      const context = makeContext(messages, { archive })
 
       await strategy.apply(context)
 
-      const keys = await stash.list()
+      const keys = await archive.list()
       expect(keys.length).toBe(2)
 
-      const entries = await Promise.all(keys.map((key) => stash.retrieve(key)))
+      const entries = await Promise.all(keys.map((key) => archive.retrieve(key)))
       const textEntry = entries.find(
         (entry) => entry && typeof entry.data === 'object' && entry.data !== null && 'text' in entry.data
       )
@@ -541,38 +541,38 @@ describe('Offload strategies with stash', () => {
     })
   })
 
-  describe('eager stashing via storeMessage', () => {
+  describe('eager archiving via storeMessage', () => {
     it('persists tool result content on message arrival', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const largeText = 'important data '.repeat(500)
       const message = makeToolResultMessage(largeText, 'call-1')
 
-      await stash.storeMessage(message)
+      await archive.storeMessage(message)
 
-      const keys = await stash.list()
+      const keys = await archive.list()
       expect(keys.length).toBe(1)
-      const retrieved = await stash.retrieve(keys[0]!)
+      const retrieved = await archive.retrieve(keys[0]!)
       expect(retrieved).not.toBeNull()
       expect((retrieved!.data as { text: string }).text).toBe(largeText)
     })
 
     it('persists text blocks from assistant messages on arrival', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const assistantText = 'important analysis '.repeat(200)
       const message = new Message({ role: 'assistant', content: [new TextBlock(assistantText)] })
 
-      await stash.storeMessage(message)
+      await archive.storeMessage(message)
 
-      const keys = await stash.list()
+      const keys = await archive.list()
       expect(keys.length).toBe(1)
-      const retrieved = await stash.retrieve(keys[0]!)
+      const retrieved = await archive.retrieve(keys[0]!)
       expect((retrieved!.data as { text: string }).text).toBe(assistantText)
     })
   })
 
   describe('media restoration in retrieval', () => {
     it('restores image blocks as ImageBlock instances', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const imageBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
       const messages = [
         new Message({
@@ -586,10 +586,10 @@ describe('Offload strategies with stash', () => {
           ],
         }),
       ]
-      await stashAll(stash, messages)
+      await archiveAll(archive, messages)
 
-      const retrievalTool = createRetrievalTool(stash)
-      const keys = await stash.list()
+      const retrievalTool = createRetrievalTool(archive)
+      const keys = await archive.list()
       const result = await invokeRetrievalTool(retrievalTool, { reference: keys[0]! })
 
       expect(result).toBeInstanceOf(ImageBlock)
@@ -597,24 +597,24 @@ describe('Offload strategies with stash', () => {
     })
 
     it('returns text content normally (not treated as media)', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const messages = [makeToolResultMessage('hello world')]
-      await stashAll(stash, messages)
+      await archiveAll(archive, messages)
 
-      const retrievalTool = createRetrievalTool(stash)
-      const keys = await stash.list()
+      const retrievalTool = createRetrievalTool(archive)
+      const keys = await archive.list()
       const result = await invokeRetrievalTool(retrievalTool, { reference: keys[0]! })
 
       expect(result).toEqual(new TextBlock('hello world'))
     })
 
     it('restores document blocks as DocumentBlock instances', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const docData = { document: { format: 'pdf', source: { bytes: 'base64encodedcontent' } } }
-      await stash.store('tool-doc', 0, new TextEncoder().encode(JSON.stringify(docData)))
+      await archive.store('tool-doc', 0, new TextEncoder().encode(JSON.stringify(docData)))
 
-      const retrievalTool = createRetrievalTool(stash)
-      const keys = await stash.list()
+      const retrievalTool = createRetrievalTool(archive)
+      const keys = await archive.list()
       const result = await invokeRetrievalTool(retrievalTool, { reference: keys[0]! })
 
       expect(result).toBeInstanceOf(DocumentBlock)
@@ -623,8 +623,8 @@ describe('Offload strategies with stash', () => {
   })
 
   describe('retrieval loop prevention', () => {
-    it('does not offload retrieve_context tool results when stash is active', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+    it('does not offload retrieve_context tool results when archive is active', async () => {
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const largeRetrievalResult = 'retrieved content '.repeat(1000)
 
       const messages = [
@@ -644,7 +644,7 @@ describe('Offload strategies with stash', () => {
         }),
       ]
       const strategy = Offload.truncate('toolResults')
-      const context = makeContext(messages, { stash })
+      const context = makeContext(messages, { archive })
 
       const acted = await strategy.apply(context)
 
@@ -654,7 +654,7 @@ describe('Offload strategies with stash', () => {
       expect(text).toBe(largeRetrievalResult)
     })
 
-    it('offloads retrieve_context results when no stash (stash not configured)', async () => {
+    it('offloads retrieve_context results when no archive (archive not configured)', async () => {
       const largeRetrievalResult = 'retrieved content '.repeat(1000)
 
       const messages = [

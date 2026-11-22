@@ -1,7 +1,6 @@
 ---
 title: Custom Strategies
-description: "Build custom context management strategies with the Offload builder API, conditions, targets, and stash configuration."
-experimental: true
+description: "Build custom context management strategies with the Offload builder API, conditions, targets, and storage of offloaded content."
 tags: [conversation-management, token-management]
 sourceLinks:
   - path: strands-py/src/strands/_context_manager/strategies/offload/base.py
@@ -16,8 +15,10 @@ sourceLinks:
 addedDate: 2026-09-14
 ---
 
-:::caution[Experimental]
-The Context Manager strategy API is experimental and may change in future versions.
+:::caution[Experimental in Python]
+In Python, the `ContextManager` strategy API is still exported from
+`strands.experimental.context_manager` and may change in future versions. The
+TypeScript API is stable.
 :::
 
 When the [built-in modes](./built-in-modes) don't fit, build a custom strategy pipeline. Define which content to reduce, how to reduce it, and when each strategy fires.
@@ -70,7 +71,7 @@ The `Offload` namespace exposes three methods. Each returns a strategy builder t
 
 ### Truncate
 
-Replaces oversized content with a head/tail preview. The original content is stored in the stash for later retrieval.
+Replaces oversized content with a head/tail preview. The original content is stored in the <Syntax py="stash" ts="archive" /> for later retrieval.
 
 <Tabs>
 <Tab label="Python">
@@ -119,7 +120,7 @@ Preview modes: `"head"`, `"tail"`, <Syntax py='"head_tail"' ts='"headTail"' />.
 
 ### Summarize
 
-Replaces content with an LLM-generated summary. Uses <Syntax py="agent.aux_model" ts="agent.auxModel" /> by default.
+Replaces content with an LLM-generated summary. Uses the agent's own model by default.
 
 :::note
 On models that preserve thinking, some summaries drop thinking blocks. See [Models that preserve thinking](#models-that-preserve-thinking) for which ones keep them, including [server-side summarization](../model-providers/anthropic#server-side-summarization).
@@ -154,7 +155,7 @@ Offload.summarize("*").when(
 
 | Parameter | Key | Default |
 |-----------|-----|---------|
-| Model | `model` | `agent.aux_model` |
+| Model | `model` | `agent.model` |
 | Summarization instructions | `system_prompt` | Built-in |
 
 A batched summary resends the conversation with the agent's system prompt and tools, followed by the summarization instructions. When it runs on the agent's model, it can reuse the agent's prompt cache. If the summary leaves out messages it keeps, such as a pinned message or one under the `threshold`, it sends only the first message and the messages it replaces. Custom instructions replace the default guidance, but the client-side request always tells the model not to act on the conversation or call tools.
@@ -164,7 +165,7 @@ A batched summary resends the conversation with the agent's system prompt and to
 
 | Parameter | Key | Default |
 |-----------|-----|---------|
-| Model | `model` | `agent.auxModel` |
+| Model | `model` | `agent.model` |
 | Summarization instructions | `systemPrompt` | Built-in |
 
 A batched summary resends the conversation with the agent's system prompt and tools, followed by the summarization instructions. When it runs on the agent's model, it can reuse the agent's prompt cache. If the summary leaves out messages it keeps, such as a pinned message or one under the `threshold`, it sends only the first message and the messages it replaces. Custom instructions replace the default guidance, but the client-side request always tells the model not to act on the conversation or call tools.
@@ -174,7 +175,7 @@ A batched summary resends the conversation with the agent's system prompt and to
 
 ### Drop
 
-Removes matching content entirely. No preview, no stash entry.
+Removes matching content entirely. No preview, no <Syntax py="stash" ts="archive" /> entry.
 
 <Tabs>
 <Tab label="Python">
@@ -345,15 +346,19 @@ Targets specify which content a strategy applies to.
 
 Tool name lists use the `tool::` prefix. Prefix a name with `!` to exclude it (apply to all tools *except* the listed ones).
 
-## Stash
+## Storing originals
 
-The stash stores all message content on arrival as JSON, before any strategy runs. Truncated or summarized content can be retrieved on demand through the `retrieve_context` tool, which the SDK registers by default.
+The <Syntax py="stash" ts="archive" /> stores all message content on arrival as JSON, before any strategy runs. Truncated or summarized content can be retrieved on demand through the `retrieve_context` tool, which the SDK registers by default.
 
-Stash uses in-memory storage by default. Configure it through the <Syntax py="stash" ts="stash" /> key:
+:::note
+Configure the <Syntax py="stash" ts="archive" /> through the key below, but treat the object itself as internal. The `Offload` builders read and write it for you, and its methods are not a stable contract for code outside the SDK.
+:::
+
+The <Syntax py="stash" ts="archive" /> uses in-memory storage by default. Configure it through the <Syntax py="stash" ts="archive" /> key:
 
 - Omit or pass `true` for defaults (in-memory storage)
 - Pass a config with a custom storage backend
-- Pass `false` to disable stash entirely
+- Pass `false` to disable the <Syntax py="stash" ts="archive" /> entirely
 
 <Tabs>
 <Tab label="Python">
@@ -372,9 +377,9 @@ agent = Agent(
 <Tab label="TypeScript">
 
 ```typescript
---8<-- "user-guide/sdk/context-management/custom-strategies_imports.ts:stash_imports"
+--8<-- "user-guide/sdk/context-management/custom-strategies_imports.ts:archive_imports"
 
---8<-- "user-guide/sdk/context-management/custom-strategies.ts:stash_disabled"
+--8<-- "user-guide/sdk/context-management/custom-strategies.ts:archive_disabled"
 ```
 </Tab>
 </Tabs>
@@ -391,7 +396,7 @@ Claude models that preserve thinking bind each thinking block to the prefix that
 
 Whether a strategy keeps thinking valid depends on its granularity:
 
-- **Message-level summaries keep thinking when they run server-side.** When the summarizing model (<Syntax py="agent.aux_model" ts="agent.auxModel" /> by default) and the agent's model both support <Syntax py="server_side_summary" ts="serverSideSummary" />, a message-level summary goes through the model provider's summarization API instead of a client-side summarization request. The provider returns the summary as a single block that stands in for the start of the conversation, so the thinking after it stays valid. The [Anthropic model provider](../model-providers/anthropic#server-side-summarization) supports server-side summary. The [Amazon Bedrock model provider](../model-providers/amazon-bedrock) (`BedrockModel`) does not, so its message-level summaries are always client-side.
+- **Message-level summaries keep thinking when they run server-side.** When the summarizing model (the agent's own model by default) and the agent's model both support <Syntax py="server_side_summary" ts="serverSideSummary" />, a message-level summary goes through the model provider's summarization API instead of a client-side summarization request. The provider returns the summary as a single block that stands in for the start of the conversation, so the thinking after it stays valid. The [Anthropic model provider](../model-providers/anthropic#server-side-summarization) supports server-side summary. The [Amazon Bedrock model provider](../model-providers/amazon-bedrock) (`BedrockModel`) does not, so its message-level summaries are always client-side.
 - **Eager per-block strategies keep thinking.** A per-block strategy with only a <Syntax py="threshold" ts="blockThreshold" /> acts on each message as it is added, for any per-block [target](#targets). It rewrites a tool result or user message before the model sees it, and an assistant message before any later thinking exists, so no thinking block's prefix changes.
 - **Other strategies drop thinking.** A per-block strategy with <Syntax py="preserve_recent" ts="preserveRecent" />, or a message-level truncate or drop strategy, rewrites older content that later thinking blocks are bound to. Claude skips those thinking blocks, and the prompt cache restarts at the rewrite.
 - **Emergency truncation drops thinking.** It removes the oldest messages when the context still overflows, so the thinking after them goes stale.

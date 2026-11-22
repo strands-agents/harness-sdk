@@ -9,7 +9,8 @@ import { Agent } from '@strands-agents/sdk'
 // --8<-- [end:agentic_imports]
 
 // --8<-- [start:explicit_imports]
-import { Agent, Offload } from '@strands-agents/sdk'
+import { Agent } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/context-manager'
 import { LocalFileStorage } from '@strands-agents/sdk/storage'
 // --8<-- [end:explicit_imports]
 
@@ -18,8 +19,8 @@ import { Agent } from '@strands-agents/sdk'
 // --8<-- [end:presets_imports]
 
 // --8<-- [start:custom_summary_model_imports]
-import { Agent, Offload } from '@strands-agents/sdk'
-import { BedrockModel } from '@strands-agents/sdk'
+import { Agent, BedrockModel } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/context-manager'
 // --8<-- [end:custom_summary_model_imports]
 
 // --8<-- [start:storage_backends_imports]
