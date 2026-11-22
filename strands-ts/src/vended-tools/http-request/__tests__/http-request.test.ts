@@ -223,6 +223,24 @@ describe('httpRequest tool', () => {
       ).rejects.toThrow('Request timed out')
     })
 
+    it('throws timeout error when fetch rejects with TimeoutError from AbortSignal.timeout', async () => {
+      globalThis.fetch = vi.fn().mockImplementation(
+        async (_url, options) =>
+          new Promise((_resolve, reject) => {
+            const signal = options?.signal as AbortSignal
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+          })
+      )
+
+      await expect(
+        httpRequest.invoke({
+          method: 'GET',
+          url: 'https://slow-api.example.com/slow',
+          timeout: 0.05,
+        })
+      ).rejects.toThrow('Request timed out after 0.05 seconds: GET https://slow-api.example.com/slow')
+    })
+
     it('throws error for network failures', async () => {
       globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network error: Failed to fetch'))
 
