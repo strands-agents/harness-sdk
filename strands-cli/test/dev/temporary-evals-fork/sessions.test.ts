@@ -1523,6 +1523,28 @@ describe('TEMPORARY dev sessions', () => {
     expect(temporaryOptimizeJobs(state(true) as never)).toEqual([])
   })
 
+  it('shouldCountOnlyTheEditsTheScreenOffersInTheJobLine', () => {
+    const edit = { knob: 'instructions', kind: 'text', label: 'instructions', before: '', after: 'x', accepted: false }
+    const review = { run: 'r1', record: 'r1', baseline: 0.1, best: 0.9, measuredOn: 'validation cases' }
+    const state = (edits: readonly object[]) => ({
+      step: 'pick' as const,
+      runs: [
+        {
+          id: 'run-1',
+          experiment: 'capital',
+          startedAt: 0,
+          state: { step: 'review' as const, review: { ...review, edits } },
+        },
+      ],
+    })
+
+    const mixed = temporaryOptimizeJobs(state([edit, { ...edit, unavailable: 'set in code' }]) as never)
+    const none = temporaryOptimizeJobs(state([{ ...edit, unavailable: 'set in code' }]) as never)
+
+    expect(mixed.map(({ label }) => label)).toEqual(['r1 · 1 to review'])
+    expect(none.map(({ label }) => label)).toEqual(['r1 · no edits'])
+  })
+
   it('shouldShowTheTestCheckWithItsConfidenceRangeWhenTheRunReportsOne', async () => {
     const tested = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
       await writeOptimizerRun(recordOf(args), [

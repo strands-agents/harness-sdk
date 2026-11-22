@@ -3,6 +3,7 @@ import { extname, join, relative, resolve } from 'node:path'
 
 import { isRecord } from '../../values.js'
 import { agentChoicesProblem, saveAgentChoices, type AgentWorkspace } from '../agent-choices.js'
+import { agentOptionEditsProblem, editAgentOptions, type AgentOptionEdit } from '../agent-options.js'
 import { editFile } from '../file-edits.js'
 import type { ProfileEffort } from '../../config/store.js'
 import type { KnobKey } from '../panels/model.js'
@@ -515,6 +516,36 @@ const filesHolding = async (root: string, before: string): Promise<string[]> => 
   return held
 }
 
+const languageOf = (file: string): 'python' | 'typescript' => (extname(file) === '.py' ? 'python' : 'typescript')
+
+// A string the agent file does not hold yet: quoted the way each language's own strings are in a generated agent.
+const NEW_LITERAL = { open: 0, start: 0, end: 0, close: 0, kind: 'plain', prefix: '', depth: 0 } as const
+
+const newInstructions = (entry: string, text: string): AgentOptionEdit => ({
+  option: 'instructions',
+  value: text,
+  expected: '',
+  literal: isPython(entry)
+    ? pythonLiteral(text, { ...NEW_LITERAL, quote: '"' })
+    : javascriptLiteral(text, { ...NEW_LITERAL, quote: "'" }),
+})
+
+/** An agent that sets no instructions gets them as a new option, where a setting it leaves at its default goes. */
+const addInstructions = async (
+  workspace: AgentWorkspace,
+  after: string | undefined
+): Promise<TemporaryEditLocation> => {
+  const entry = relative(workspace.root, workspace.entrypoint)
+  const problem = await agentOptionEditsProblem(workspace, [newInstructions(entry, after ?? 'instructions')])
+  if (problem) return { unavailable: `Add the new instructions to ${entry} yourself. ${problem}` }
+  return {
+    target: entry,
+    write: async (text): Promise<void> => {
+      await editAgentOptions(workspace, [newInstructions(entry, text)])
+    },
+  }
+}
+
 const locateInstructions = async (
   root: string,
   entrypoint: string,
@@ -522,8 +553,7 @@ const locateInstructions = async (
   after: string | undefined
 ): Promise<TemporaryEditLocation> => {
   const entry = relative(root, entrypoint)
-  if (!before.trim())
-    return { unavailable: `Add the new instructions to ${entry} yourself; the agent has no instructions to replace.` }
+  if (!before.trim()) return addInstructions({ root, entrypoint, config: { language: languageOf(entrypoint) } }, after)
   const files = await filesHolding(root, before)
   const names = files.map((file) => relative(root, file))
   const source = await readFile(entrypoint, 'utf8')
@@ -540,8 +570,6 @@ const locateInstructions = async (
     unavailable: `The old instructions are in ${files.length} files (${names.join(', ')}). Paste the new instructions into the one the agent reads yourself.`,
   }
 }
-
-const languageOf = (file: string): 'python' | 'typescript' => (extname(file) === '.py' ? 'python' : 'typescript')
 
 const effortEdit = async (
   workspace: AgentWorkspace,

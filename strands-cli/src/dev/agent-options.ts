@@ -39,7 +39,13 @@ export type AgentOptionValue =
 export type AgentOptionScalar = string | boolean | readonly string[]
 
 export type AgentOptionEdit =
-  | { readonly option: string; readonly value: AgentOptionScalar; readonly expected?: AgentOptionScalar }
+  | {
+      readonly option: string
+      readonly value: AgentOptionScalar
+      readonly expected?: AgentOptionScalar
+      /** The source text to write for `value`, when the caller picks the quoting. */
+      readonly literal?: string
+    }
   | { readonly option: string; readonly removeItems: readonly number[]; readonly expectedItems: readonly string[] }
   | { readonly option: string; readonly removeKeys: readonly string[] }
 
@@ -479,8 +485,12 @@ const UNSET_OPTIONS: Readonly<Record<string, unknown>> = {
 
 export const agentOptionDefault = (option: string): unknown => UNSET_OPTIONS[camelCase(option)]
 
+// `instructions=None` is the same agent as one that leaves the option out.
+const UNSET_WHEN_NULL: ReadonlySet<string> = new Set(['instructions'])
+
 const currentScalar = (option: string, current: OptionValue | undefined): unknown => {
   if (!current) return agentOptionDefault(option)
+  if (current.value.kind === 'null' && UNSET_WHEN_NULL.has(camelCase(option))) return agentOptionDefault(option)
   if (current.value.kind === 'list') return current.value.items.map((item) => item.literal ?? item.text)
   return 'value' in current.value ? current.value.value : current.value.kind === 'null' ? null : undefined
 }
@@ -510,7 +520,7 @@ const scalarEdit = (
   if (sameScalar(edit.option, effective, edit.value)) return undefined
   const written =
     camelCase(edit.option) === 'model' && typeof edit.value === 'string' ? modelIdentity(edit.value) : edit.value
-  const text = renderScalar(written, python)
+  const text = edit.literal ?? renderScalar(written, python)
   if (current) return { start: current.start, end: current.end, text }
   if (!call.extensible)
     throw new AgentOptionsNotEditable(
@@ -563,28 +573,47 @@ const collectionEdit = (
   }
 }
 
+const editedSource = async (
+  workspace: AgentWorkspace,
+  source: string,
+  edits: readonly AgentOptionEdit[]
+): Promise<string> => {
+  const entry = relative(workspace.root, workspace.entrypoint) || workspace.entrypoint
+  const python = workspace.config.language === 'python'
+  const call = await optionCall(workspace, source)
+  const replacements: { start: number; end: number; text: string }[] = []
+  const insertions: string[] = []
+  for (const edit of edits) {
+    const change =
+      'value' in edit ? scalarEdit(source, call, { entry, python }, edit) : collectionEdit(source, call, entry, edit)
+    if (typeof change === 'string') insertions.push(change)
+    else if (change) replacements.push(change)
+  }
+  if (insertions.length) {
+    const { at, text } = call.insert(insertions)
+    replacements.push({ start: at, end: at, text })
+  }
+  return replacements
+    .sort((left, right) => right.start - left.start)
+    .reduce((text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end), source)
+}
+
 export const editAgentOptions = async (
   workspace: AgentWorkspace,
   edits: readonly AgentOptionEdit[]
-): Promise<boolean> => {
-  const entry = relative(workspace.root, workspace.entrypoint) || workspace.entrypoint
-  const python = workspace.config.language === 'python'
-  return editFile(workspace.root, workspace.entrypoint, async (source) => {
-    const call = await optionCall(workspace, source)
-    const replacements: { start: number; end: number; text: string }[] = []
-    const insertions: string[] = []
-    for (const edit of edits) {
-      const change =
-        'value' in edit ? scalarEdit(source, call, { entry, python }, edit) : collectionEdit(source, call, entry, edit)
-      if (typeof change === 'string') insertions.push(change)
-      else if (change) replacements.push(change)
-    }
-    if (insertions.length) {
-      const { at, text } = call.insert(insertions)
-      replacements.push({ start: at, end: at, text })
-    }
-    return replacements
-      .sort((left, right) => right.start - left.start)
-      .reduce((text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end), source)
-  })
+): Promise<boolean> =>
+  editFile(workspace.root, workspace.entrypoint, (source) => editedSource(workspace, source, edits))
+
+/** Why the edits cannot be written into the agent file as it is now, or nothing when they can. It writes nothing. */
+export const agentOptionEditsProblem = async (
+  workspace: AgentWorkspace,
+  edits: readonly AgentOptionEdit[]
+): Promise<string | undefined> => {
+  try {
+    await editedSource(workspace, await readFile(workspace.entrypoint, 'utf8'), edits)
+    return undefined
+  } catch (error) {
+    if (error instanceof AgentOptionsNotEditable || error instanceof AgentOptionConflict) return error.message
+    throw error
+  }
 }

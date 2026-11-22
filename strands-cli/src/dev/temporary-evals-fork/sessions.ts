@@ -201,7 +201,8 @@ export const temporaryOptimizeJobs = ({ runs = [] }: OptimizeState): DevChatJob[
       return [{ id, label: state.progress.run, done, total: state.progress.planned }]
     }
     if (state.step === 'review' && !state.review.reviewed) {
-      const edits = state.review.edits?.length ?? 0
+      // Count what the screen offers, as the finish notice does: an edit strands dev cannot write is not reviewed there.
+      const edits = (state.review.edits ?? []).filter(({ unavailable }) => unavailable === undefined).length
       const label = edits === 0 ? `${state.review.run} · no edits` : `${state.review.run} · ${edits} to review`
       return [{ id, label, done: 1, total: 1 }]
     }

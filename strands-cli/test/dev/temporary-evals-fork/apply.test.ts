@@ -408,14 +408,65 @@ describe('TEMPORARY apply an optimized setting', () => {
     expect(await read(root, 'agent.py')).toBe(PYTHON_AGENT('load()'))
   })
 
-  it('shouldAskForTheTextWhenTheAgentHasNoInstructions', async () => {
-    const root = await project({ 'agent.py': PYTHON_AGENT('None'), 'empty.md': '' })
+  const NEW_TYPESCRIPT_AGENT = [
+    "import { createHarness } from '@strands-agents/harness'",
+    '',
+    'export const agent = await createHarness({',
+    "  name: 'fresh',",
+    "  effort: 'medium',",
+    '  skills: false,',
+    '})',
+    '',
+  ].join('\n')
 
-    const location = await locate(root, 'agent.py', '  ')
+  it('shouldAddTheInstructionsWhenTheAgentSetsNone', async () => {
+    const root = await project({ 'agent.ts': NEW_TYPESCRIPT_AGENT, 'empty.md': '' })
+
+    const location = target(await locate(root, 'agent.ts', '  ', 'instructions', 'Answer briefly.'))
+    await location.write("Answer briefly, and don't explain.")
+
+    expect(location.target).toBe('agent.ts')
+    expect(await read(root, 'agent.ts')).toBe(
+      NEW_TYPESCRIPT_AGENT.replace(
+        '  skills: false,\n',
+        "  skills: false,\n  instructions: 'Answer briefly, and don\\'t explain.',\n"
+      )
+    )
+  })
+
+  it('shouldAddInstructionsOfSeveralLinesAsATemplateLiteral', async () => {
+    const root = await project({ 'agent.ts': NEW_TYPESCRIPT_AGENT })
+
+    await target(await locate(root, 'agent.ts', '')).write(`${NEW_INSTRUCTIONS}\nPrices are in \${USD}.`)
+
+    expect(await read(root, 'agent.ts')).toContain(
+      `  instructions: \`${NEW_INSTRUCTIONS}\nPrices are in \\\${USD}.\`,\n`
+    )
+  })
+
+  it('shouldAskForTheTextWhenTheAgentWithoutInstructionsPassesOptionsItCannotExtend', async () => {
+    const root = await project({
+      'agent.ts': "import { options } from './options.js'\nexport const agent = await createHarness(options)\n",
+    })
+
+    const location = await locate(root, 'agent.ts', '')
 
     expect(location).toEqual({
-      unavailable: 'Add the new instructions to agent.py yourself; the agent has no instructions to replace.',
+      unavailable:
+        'Add the new instructions to agent.ts yourself. agent.ts passes createHarness options that are not an object literal.',
     })
+  })
+
+  it('shouldRefuseToAddInstructionsWhenTheAgentGainedSomeAfterTheRun', async () => {
+    const root = await project({ 'agent.ts': NEW_TYPESCRIPT_AGENT })
+    const location = target(await locate(root, 'agent.ts', ''))
+    const edited = NEW_TYPESCRIPT_AGENT.replace("  name: 'fresh',", "  name: 'fresh',\n  instructions: 'Be kind.',")
+    await writeFile(join(root, 'agent.ts'), edited)
+
+    await expect(location.write('Answer briefly.')).rejects.toThrow(
+      'agent.ts now sets instructions to "Be kind.", not "". Review the change again.'
+    )
+    expect(await read(root, 'agent.ts')).toBe(edited)
   })
 
   it.each([
@@ -521,6 +572,35 @@ describe('TEMPORARY apply an optimized setting', () => {
 
       expect(await read(root, 'agent.py')).toBe(
         'agent = create_harness(model="bedrock/model", reasoning_effort="auto", effort="high")\n'
+      )
+    })
+
+    it.each([
+      {
+        form: 'SetsThemToNone',
+        source: 'agent = create_harness(model="bedrock/model", instructions=None, skills=False)\n',
+        written: 'agent = create_harness(model="bedrock/model", instructions="Answer briefly.", skills=False)\n',
+      },
+      {
+        form: 'LeavesThemOut',
+        source: 'agent = create_harness(model="bedrock/model", skills=False)\n',
+        written: 'agent = create_harness(model="bedrock/model", skills=False, instructions="Answer briefly.")\n',
+      },
+    ])('shouldAddTheInstructionsWhenTheAgent$form', async ({ source, written }) => {
+      const root = await project({ 'agent.py': source })
+
+      await target(await locate(root, 'agent.py', '')).write('Answer briefly.')
+
+      expect(await read(root, 'agent.py')).toBe(written)
+    })
+
+    it('shouldAddInstructionsOfSeveralLinesAsATripleQuotedString', async () => {
+      const root = await project({ 'agent.py': 'agent = create_harness(model="bedrock/model")\n' })
+
+      await target(await locate(root, 'agent.py', '')).write(NEW_INSTRUCTIONS)
+
+      expect(await read(root, 'agent.py')).toBe(
+        `agent = create_harness(model="bedrock/model", instructions="""${NEW_INSTRUCTIONS}""")\n`
       )
     })
 
