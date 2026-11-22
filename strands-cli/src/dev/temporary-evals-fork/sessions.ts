@@ -1443,7 +1443,9 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   ): Promise<void> {
     if (!saved || editsToReview(entry.state) === 0) return dropTemporaryOptimizeRecord({ record })
     const { pid: _ended, ...finished } = saved
-    await saveTemporaryOptimizeRecord({ ...finished, awaitsReview: true })
+    // If the mark cannot be written, the record stays as the run left it. The next start then reads it as a run that
+    // ended while strands dev was closed, so a run with a result still brings its review back: opened, not listed.
+    await saveTemporaryOptimizeRecord({ ...finished, awaitsReview: true }).catch(() => undefined)
     if (editsToReview(entry.state) === 0) await dropTemporaryOptimizeRecord({ record })
   }
 

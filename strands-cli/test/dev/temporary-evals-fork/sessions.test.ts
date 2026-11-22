@@ -1820,6 +1820,39 @@ describe('TEMPORARY dev sessions', () => {
     expect(existsSync(resumeRecordOf(record))).toBe(true)
   })
 
+  it('shouldStillBringTheReviewBackWhenTheRecordCouldNotBeMarkedAsWaiting', async () => {
+    const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')], {
+        baseline_id: 'base',
+        validation: { champion_id: 'win' },
+      })
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.start()
+    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    const record = recordOf(optimizing.mock.calls[0]![0].args)
+    await vi.waitFor(async () =>
+      expect(JSON.parse(await readFile(resumeRecordOf(record), 'utf8'))).toMatchObject({ awaitsReview: true })
+    )
+    const { awaitsReview: _unmarked, ...asTheRunLeftIt } = JSON.parse(
+      await readFile(resumeRecordOf(record), 'utf8')
+    ) as Record<string, unknown>
+    await writeFileAt(resumeRecordOf(record), JSON.stringify({ ...asTheRunLeftIt, pid: 999999 }))
+    const { optimize, again } = reopened(workspace)
+
+    await optimize.resume()
+
+    expect(optimize.snapshot().runs).toMatchObject([
+      { record, state: { step: 'review', review: { edits: [expect.objectContaining({ after: WINNER })] } } },
+    ])
+    expect(optimize.onReview).toHaveBeenCalledOnce()
+    expect(again).not.toHaveBeenCalled()
+  })
+
   it('shouldForgetTheReviewOfARunOnceItIsAnsweredAfterStrandsDevOpensAgain', async () => {
     const { workspace, record } = await closedOnAReview()
     const { optimize, notices } = reopened(workspace)

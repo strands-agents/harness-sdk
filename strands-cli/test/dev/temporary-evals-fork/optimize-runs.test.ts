@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
-import { mkdir, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   dropTemporaryOptimizeRecord,
@@ -12,6 +12,13 @@ import {
   type TemporaryOptimizeRecord,
 } from '../../../src/dev/temporary-evals-fork/optimize-runs.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
+
+vi.mock('node:fs/promises', async (original) => {
+  const fs = await original<typeof import('node:fs/promises')>()
+  return { ...fs, rename: vi.fn(fs.rename) }
+})
+
+const heldOpen = (): Error => Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
 
 const STAMP = '20261111-150405'
 const INSIDE_HOME = 'experiments/refunds'
@@ -97,6 +104,29 @@ describe('TEMPORARY optimize run records', () => {
 
   it('shouldFindNoRecordsWhenNoRunWasEverRecorded', async () => {
     expect(await readTemporaryOptimizeRecords(join(await temporaryDirectory(), 'strands-dev'))).toEqual([])
+  })
+
+  it('shouldSaveTheRecordWhenTheFileItReplacesIsHeldOpenForAMoment', async () => {
+    const workspace = await temporaryDirectory()
+    const record = recordIn(workspace)
+    await saveTemporaryOptimizeRecord(record)
+    vi.mocked(rename).mockRejectedValueOnce(heldOpen()).mockRejectedValueOnce(heldOpen())
+
+    await saveTemporaryOptimizeRecord({ ...record, awaitsReview: true })
+
+    expect(await readTemporaryOptimizeRecords(workspace)).toEqual([{ ...record, awaitsReview: true }])
+  })
+
+  it('shouldGiveUpAndLeaveNoStagingFileWhenTheRecordCannotBeReplaced', async () => {
+    const workspace = await temporaryDirectory()
+    const record = recordIn(workspace)
+    await saveTemporaryOptimizeRecord(record)
+    vi.mocked(rename).mockRejectedValueOnce(Object.assign(new Error('ENOSPC: no space left'), { code: 'ENOSPC' }))
+
+    await expect(saveTemporaryOptimizeRecord({ ...record, awaitsReview: true })).rejects.toThrow('ENOSPC')
+
+    expect(await readTemporaryOptimizeRecords(workspace)).toEqual([record])
+    expect(await readdir(dirname(savedRecordFile(workspace)))).toEqual(['record.json'])
   })
 
   it('shouldKeepThatTheRunAwaitsItsReviewSoThatItComesBackAsOne', async () => {
