@@ -227,15 +227,24 @@ describe('profileBaseCliChat', () => {
     expect(await profileBaseCliChat(workspace, path)).toBeUndefined()
   })
 
-  it('shouldWriteTheViewAgainWithoutAChatReloadWhenCliTomlChanges', async () => {
+  it('shouldHotReloadTheChatWhenCliTomlChangesOnDisk', async () => {
     const { path, workspace, view } = await baseCli()
     const chat = await profileBaseCliChat(workspace, path)
     await writeFile(path, profileToml('Answer in full sentences.'))
 
-    expect(await chat!.configWatch.changed()).toBe(false)
+    expect(await chat!.configWatch.changed()).toBe(true)
 
     expect(chat!.configWatch.path).toBe(path)
     expect(await view()).toContain("instructions: 'Answer in full sentences.'")
+  })
+
+  it('shouldNotReloadTheChatAgainWhenTheViewAlreadyMatches', async () => {
+    const { path, workspace } = await baseCli()
+    const chat = await profileBaseCliChat(workspace, path)
+    await writeFile(path, profileToml('Answer in full sentences.'))
+    await chat!.configWatch.changed()
+
+    expect(await chat!.configWatch.changed()).toBe(false)
   })
 })
 

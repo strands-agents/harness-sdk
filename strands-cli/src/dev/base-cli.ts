@@ -230,10 +230,9 @@ export const profileBaseCliChat = async (
     saveAgentOptions: (change): Promise<boolean> => saveBaseCliChoices(workspace, change, path),
     configWatch: {
       path,
-      changed: async (): Promise<boolean> => {
-        await refreshBaseCliFromDisk(workspace, path)
-        return false
-      },
+      // True hot-reloads the dev chat, so a cli.toml edit lands like a source edit does. A save made
+      // from dev itself already synced the view, so the watcher's refresh then changes nothing.
+      changed: (): Promise<boolean> => refreshBaseCliFromDisk(workspace, path),
     },
   }
 }
