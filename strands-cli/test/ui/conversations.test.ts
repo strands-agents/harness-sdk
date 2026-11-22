@@ -10,6 +10,7 @@ import { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { AgentMessaging } from '../../src/agent/messaging.js'
 import type { McpServerInfo } from '../../src/agent/mcp.js'
 import * as configWatch from '../../src/config/watch.js'
+import { DEFAULT_CHAT_SETTINGS } from '../../src/config/settings.js'
 import * as projectWatch from '../../src/project/watch.js'
 import type { VoiceInput, VoiceSessionSnapshot, VoiceSupervisorRequest } from '../../src/agent/voice.js'
 
@@ -80,6 +81,34 @@ describe('ConversationManager', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
       expect(reloadProject.mock.calls).toEqual(reloads)
       expect(watcher).toHaveBeenCalledWith('/home/.strands/cli.toml', expect.any(Function))
+    } finally {
+      await manager.dispose()
+      watcher.mockRestore()
+    }
+  })
+
+  it('shouldApplySavedSettingsToTheOpenChatWithoutAReload', async () => {
+    let changed: () => void = () => undefined
+    const watcher = vi.spyOn(configWatch, 'watchConfigFile').mockImplementation((_path, onChange) => {
+      changed = onChange
+      return () => undefined
+    })
+    const primary = new ChatController(backend('primary', emptyRun))
+    const reloadProject = vi.fn()
+    const manager = new ConversationManager(primary, {
+      fork: async () => primary,
+      reloadProject,
+      configWatch: {
+        path: '/home/.strands/cli.toml',
+        changed: async () => false,
+        settings: () => ({ ...DEFAULT_CHAT_SETTINGS, frogTheme: 'spectre' as const }),
+      },
+    })
+    try {
+      changed()
+
+      await vi.waitFor(() => expect(primary.getSnapshot().settings.frogTheme).toBe('spectre'))
+      expect(reloadProject).not.toHaveBeenCalled()
     } finally {
       await manager.dispose()
       watcher.mockRestore()

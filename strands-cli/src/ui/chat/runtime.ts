@@ -326,7 +326,18 @@ export async function createTypescriptChat(
             }),
         reloadProject: (conversationId, paths): void =>
           requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
-        ...(baseCli ? { configWatch: baseCli.configWatch } : {}),
+        ...(baseCli
+          ? {
+              configWatch: {
+                ...baseCli.configWatch,
+                changed: async (): Promise<boolean> => {
+                  await config.reload()
+                  return baseCli.configWatch.changed()
+                },
+                settings: (): ChatSettings => config.snapshot().settings,
+              },
+            }
+          : {}),
       }
     )
   } catch (error) {
@@ -496,7 +507,18 @@ export async function createPythonChat(
           privatePaths === null ? null : [...privatePaths, ...nestedWorkspace(project, devWorkspace)],
         reloadProject: (conversationId, paths): void =>
           requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
-        ...(baseCli ? { configWatch: baseCli.configWatch } : {}),
+        ...(baseCli
+          ? {
+              configWatch: {
+                ...baseCli.configWatch,
+                changed: async (): Promise<boolean> => {
+                  await config.reload()
+                  return baseCli.configWatch.changed()
+                },
+                settings: (): ChatSettings => config.snapshot().settings,
+              },
+            }
+          : {}),
       }
     )
   } catch (error) {
@@ -521,7 +543,12 @@ const profileReload = (
     return true
   }
   return {
-    configWatch: { path, alsoWatch: [baseCliWorkspaceConfigPath()], changed },
+    configWatch: {
+      path,
+      alsoWatch: [baseCliWorkspaceConfigPath()],
+      changed,
+      settings: (): ChatSettings => config.snapshot().settings,
+    },
     reloadProject: (conversationId: string, paths: readonly string[]): void =>
       requestSetup({ profile: config.snapshot().profile, profileSaved: true, conversationId, reloadedFiles: paths }),
   }

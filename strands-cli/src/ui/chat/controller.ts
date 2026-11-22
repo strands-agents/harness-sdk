@@ -1220,6 +1220,19 @@ export class ChatController implements ChatControllerApi {
     return this._applySettings(settings, 'settings')
   }
 
+  /** Settings already saved outside this chat, applied without writing them back. */
+  applyExternalSettings(settings: ChatSettings): void {
+    if (this._closed) return
+    this._settings = globalThis.structuredClone(settings)
+    if (this._panel?.kind === 'settings') {
+      this._panel = {
+        ...this._panel,
+        rows: sanitizeRows(this._settingsCategoryRows(this._panel.settingsCategory ?? DEFAULT_SETTINGS_CATEGORY)),
+      }
+    }
+    this._emit()
+  }
+
   async activatePanelRow(row: ChatPanelRow): Promise<boolean> {
     if (!this._panel || !row.value || this._resourceChanging) {
       return false
