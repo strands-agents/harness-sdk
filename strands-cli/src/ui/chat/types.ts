@@ -124,8 +124,11 @@ export interface DevChatCommand {
   dock?(): boolean
   /** Widens that dock, for a panel holding lines to read rather than rows to pick. */
   wideDock?(): boolean
-  /** Called when the developer submits a chat message instead of answering. */
-  dropPending?(): void
+  /**
+   * Called when the developer submits a chat message instead of answering. Says whether it let go of a question a turn
+   * was waiting on; a panel that keeps its question answers false, and the message is then sent as any other.
+   */
+  dropPending?(): boolean
   /** The rows this panel's content needs right now, to shrink the frame to it. */
   contentRows?(): number | undefined
   open(context: DevChatCommandContext, opening?: DevPanelOpening): DevChatPanelView
@@ -262,8 +265,8 @@ export type NewChatPanel =
       dock?: () => boolean
       /** Widens that dock, for a panel holding lines to read rather than rows to pick. */
       wideDock?: () => boolean
-      /** Resolves whatever this panel is waiting on, so a chat message can be sent instead. */
-      dropPending?: () => void
+      /** Resolves whatever a turn is waiting on here, so a chat message can be sent instead, and says if it did. */
+      dropPending?: () => boolean
       /** The rows its content needs, when that is fewer than the panel's usual share of the screen. */
       contentRows?: () => number | undefined
     })

@@ -74,7 +74,7 @@ const askingBackend = (broker: WizardBroker, answered: Promise<unknown>): ChatBa
 const askCommand = (broker: WizardBroker): DevChatCommand => ({
   spec: { name: 'ask', usage: '/ask', description: 'Ask' },
   sticky: true,
-  dropPending: () => broker.cancelAll(),
+  dropPending: () => broker.dropForMessage(),
   contentRows: () => wizardRequestRows(broker.pending()),
   dock: () => wizardRequestHasDiff(broker.pending()),
   attach: (context) => broker.attachOpener(() => context.openPanel('ask')),

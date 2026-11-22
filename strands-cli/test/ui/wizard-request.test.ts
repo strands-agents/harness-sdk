@@ -187,6 +187,53 @@ describe('WizardBroker', () => {
     await expect(asked).resolves.toBeUndefined()
   })
 
+  it('shouldCancelTheQuestionATurnWaitsOnWhenAMessageIsSentInstead', async () => {
+    const broker = new WizardBroker()
+    const asked = broker.ask(request())
+
+    expect(broker.dropForMessage()).toBe(true)
+
+    await expect(asked).resolves.toBeUndefined()
+    expect(broker.pending()).toBeUndefined()
+  })
+
+  it('shouldKeepAStandingQuestionOnScreenWhenAMessageIsSent', () => {
+    const broker = new WizardBroker()
+    const settled = vi.fn()
+    void broker.ask(request({ name: 'review', standing: true })).then(settled)
+
+    expect(broker.dropForMessage()).toBe(false)
+
+    expect(broker.pending()?.name).toBe('review')
+    expect(settled).not.toHaveBeenCalled()
+  })
+
+  it('shouldShowATurnsQuestionBeforeAStandingOneAndReturnToItAfterwards', async () => {
+    const broker = new WizardBroker()
+    const seen: (string | undefined)[] = []
+    void broker.ask(request({ name: 'review', standing: true }))
+    broker.subscribe((pending) => seen.push(pending?.name))
+
+    const asked = broker.ask(request({ name: 'setup' }))
+    expect(broker.pending()?.name).toBe('setup')
+    broker.respond(broker.pending()!.id, {})
+
+    await expect(asked).resolves.toEqual({})
+    expect(broker.pending()?.name).toBe('review')
+    expect(seen).toEqual(['review', 'setup', 'review'])
+  })
+
+  it('shouldDropOnlyTheTurnsQuestionWhenAStandingOneWaitsBehindIt', async () => {
+    const broker = new WizardBroker()
+    void broker.ask(request({ name: 'review', standing: true }))
+    const asked = broker.ask(request({ name: 'setup' }))
+
+    expect(broker.dropForMessage()).toBe(true)
+
+    await expect(asked).resolves.toBeUndefined()
+    expect(broker.pending()?.name).toBe('review')
+  })
+
   it('shouldRefuseARequestThatHasNoStep', async () => {
     const broker = new WizardBroker()
 

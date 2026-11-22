@@ -23,7 +23,7 @@ afterEach(async () => {
   }
 })
 
-const askCommand = (dropPending?: () => void): DevChatCommand => {
+const askCommand = (dropPending?: () => boolean): DevChatCommand => {
   const Panel = ({ close, active = true, blur }: DevChatPanelProps): ReactElement => {
     const [keys, setKeys] = useState('')
     useInput(
@@ -153,7 +153,7 @@ describe('a sticky question panel', () => {
 
   it('shouldDropThePendingQuestionAndSteerTheMessageIntoTheTurn', async () => {
     const dropped: number[] = []
-    const { controller, press } = await mount(askCommand(() => dropped.push(1)))
+    const { controller, press } = await mount(askCommand(() => dropped.push(1) > 0))
     const steer = vi.spyOn(controller, 'steer')
     await press('/ask')
     await press('\r')
@@ -167,9 +167,27 @@ describe('a sticky question panel', () => {
     expect(steer).toHaveBeenCalledWith('hi')
   })
 
+  it('shouldSendTheMessageAsAnyOtherWhenThePanelKeepsItsQuestion', async () => {
+    const { controller, press, screen } = await mount(askCommand(() => false))
+    const steer = vi.spyOn(controller, 'steer')
+    const submit = vi.spyOn(controller, 'submit')
+    await press('/ask')
+    await press('\r')
+    await press('\u001b[B')
+
+    await press('h')
+    await press('i')
+    await press('\r')
+
+    expect(steer).not.toHaveBeenCalled()
+    expect(submit).toHaveBeenCalledWith('hi')
+    expect(controller.getSnapshot().panel?.kind).toBe('dev')
+    expect(screen()).toContain('question keys:[]')
+  })
+
   it('shouldKeepThePendingQuestionWhenTheDeveloperRunsACommand', async () => {
     const dropped: number[] = []
-    const { press } = await mount(askCommand(() => dropped.push(1)))
+    const { press } = await mount(askCommand(() => dropped.push(1) > 0))
     await press('/ask')
     await press('\r')
     await press('\u001b[B')
@@ -182,7 +200,7 @@ describe('a sticky question panel', () => {
 
   it('shouldKeepThePendingQuestionWhenTheInputIsEmpty', async () => {
     const dropped: number[] = []
-    const { press } = await mount(askCommand(() => dropped.push(1)))
+    const { press } = await mount(askCommand(() => dropped.push(1) > 0))
     await press('/ask')
     await press('\r')
     await press('\u001b[B')

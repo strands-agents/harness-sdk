@@ -671,9 +671,9 @@ export function ChatApp({
       // A pending question holds the turn open, so sending a message instead means dropping it.
       // Commands are not messages: /settings or /ask must leave the question waiting.
       const panel = controller.getSnapshot().panel
-      const droppedQuestion =
-        prompt.trim() !== '' && !/^[!/$]/.test(prompt.trimStart()) && panel?.kind === 'dev' && panel.dropPending
-      if (droppedQuestion) panel.dropPending?.()
+      // A question no turn waits on (a finished run's review) stays, and then there is no turn to steer into.
+      const message = prompt.trim() !== '' && !/^[!/$]/.test(prompt.trimStart())
+      const droppedQuestion = message && panel?.kind === 'dev' && panel.dropPending?.() === true
       if (editingQueuedPromptId && controller.updateQueuedPrompt(editingQueuedPromptId, prompt)) {
         finishQueuedPromptEdit()
         return

@@ -11,6 +11,8 @@ const question = (edit: ProposedEdit, run: string, at: number, of: number): Wiza
   name: 'optimize',
   titleParts: of > 1 ? [run, `edit ${at + 1} of ${of}`] : [run],
   question: `Apply this change to ${edit.label}?`,
+  // The run is over and no turn waits on this, so asking the agent about the change must not answer it.
+  standing: true,
   steps: [
     {
       key: 'review',

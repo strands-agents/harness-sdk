@@ -138,7 +138,7 @@ const askCommand = (sessions: Sessions): DevChatCommand => ({
   // A change belongs beside the chat, and it is read line by line, so its dock is the wide one.
   dock: () => wizardRequestHasDiff(sessions().ask.pending()),
   wideDock: () => wizardRequestHasDiff(sessions().ask.pending()),
-  dropPending: () => sessions().ask.cancelAll(),
+  dropPending: () => sessions().ask.dropForMessage(),
   contentRows: () => wizardRequestRows(sessions().ask.pending()),
   spec: {
     name: 'ask',

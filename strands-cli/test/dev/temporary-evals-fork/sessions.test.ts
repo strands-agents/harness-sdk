@@ -1655,6 +1655,24 @@ describe('TEMPORARY dev sessions', () => {
     expect(sessions.optimize.appliedChanges()).toEqual([])
   })
 
+  it('shouldKeepTheReviewWaitingWhenTheDeveloperSendsAChatMessageInstead', async () => {
+    const optimizing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.start()
+    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    const question = sessions.ask.pending()!
+
+    expect(sessions.ask.dropForMessage()).toBe(false)
+
+    expect(sessions.ask.pending()).toBe(question)
+    expect(temporaryOptimizeJobs(sessions.optimize.snapshot()).map(({ label }) => label)).toEqual([
+      expect.stringContaining('1 to review'),
+    ])
+  })
+
   it('shouldDropTheJobLineOnceAnAcceptedEditIsWritten', async () => {
     const optimizing = optimizingProcess()
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })

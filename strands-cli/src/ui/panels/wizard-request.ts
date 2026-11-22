@@ -85,6 +85,8 @@ export interface WizardRequest {
   readonly status?: string
   readonly footer?: string
   readonly finishLabel?: string
+  /** Asked outside a turn, so no turn waits on it: a chat message leaves it on screen instead of dropping it. */
+  readonly standing?: boolean
 }
 
 export type WizardRequestSpec = Omit<WizardRequest, 'id'>
@@ -226,6 +228,7 @@ export class WizardBroker {
     if (this._autofill) return Promise.resolve(defaultAnswers(request.steps))
     return new Promise((resolve) => {
       this._queue.push({ request, resolve })
+      this._yieldToTurn()
       this._activateNext()
     })
   }
@@ -261,15 +264,42 @@ export class WizardBroker {
     if (hadActive) this._notify(undefined)
   }
 
+  /**
+   * Makes way for a chat message: cancels the questions a turn is waiting on and keeps the standing ones.
+   * Says whether it cancelled any, so the caller knows if a turn was let go.
+   */
+  dropForMessage(): boolean {
+    const held = (wizard: PendingWizard): boolean => wizard.request.standing !== true
+    const queued = this._queue.filter(held)
+    const active = this._active && held(this._active) ? this._active : undefined
+    if (!active && queued.length === 0) return false
+    this._queue.splice(0, this._queue.length, ...this._queue.filter((wizard) => !held(wizard)))
+    if (active) this._active = undefined
+    for (const wizard of [...(active ? [active] : []), ...queued]) wizard.resolve(undefined)
+    if (!active) return true
+    if (this._queue.length > 0) this._activateNext()
+    else this._notify(undefined)
+    return true
+  }
+
   dispose(): void {
     this._disposed = true
     this.cancelAll()
     this._listeners.clear()
   }
 
+  /** A turn is stopped until its question is answered, so that question shows before a standing one, which returns after. */
+  private _yieldToTurn(): void {
+    const active = this._active
+    if (!active?.request.standing || this._queue.every(({ request }) => request.standing)) return
+    this._active = undefined
+    this._queue.unshift(active)
+  }
+
   private _activateNext(): void {
     if (this._active || this._queue.length === 0) return
-    this._active = this._queue.shift()
+    const held = this._queue.findIndex(({ request }) => !request.standing)
+    this._active = this._queue.splice(Math.max(held, 0), 1)[0]
     this._notify(this._active?.request)
     this._open?.()
   }
