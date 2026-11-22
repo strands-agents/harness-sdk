@@ -1,4 +1,5 @@
 import type { ChatDiffPreview } from '../agent/types.js'
+import { wrapWords } from '../terminal/text.js'
 import { escapePermissionText } from './chat/panel-state.js'
 import type { Tone } from './panels/kit.js'
 
@@ -39,17 +40,34 @@ const LINE_LABEL: Record<ChatDiffPreview['lines'][number]['kind'], string> = {
   context: '',
 }
 
-/** The summary row, then one row per diff line, for every surface that shows a file change. */
-export function diffRows(diff: ChatDiffPreview): DiffRow[] {
-  const summary = diffSummaryText(diff)
-  const rows: DiffRow[] = summary === undefined ? [] : [{ label: DIFF_SUMMARY_LABEL, text: summary, tone: 'muted' }]
-  for (const line of diff.lines) {
+/** One row per diff line: its mark, its text, and its tone. */
+function diffLineRows(diff: ChatDiffPreview): DiffRow[] {
+  return diff.lines.map((line) => {
     const tone = LINE_TONE[line.kind]
-    rows.push({
+    return {
       label: LINE_LABEL[line.kind],
       text: escapePermissionText(line.text),
       ...(tone === undefined ? {} : { tone }),
-    })
-  }
-  return rows
+    }
+  })
+}
+
+/** The summary row, then one row per diff line, for every surface that shows a file change. */
+export function diffRows(diff: ChatDiffPreview): DiffRow[] {
+  const summary = diffSummaryText(diff)
+  return [
+    ...(summary === undefined ? [] : [{ label: DIFF_SUMMARY_LABEL, text: summary, tone: 'muted' as const }]),
+    ...diffLineRows(diff),
+  ]
+}
+
+/**
+ * The lines of a change at `width` columns of text, without the summary. A long line continues on the next row with no
+ * mark, and breaks between words where it can, so prose reads as prose and the spacing inside a line stays as the file
+ * has it.
+ */
+export function wrappedDiffLines(diff: ChatDiffPreview, width: number): DiffRow[] {
+  return diffLineRows(diff).flatMap((row) =>
+    wrapWords(row.text, width).map((text, index) => ({ ...row, label: index === 0 ? row.label : '', text }))
+  )
 }

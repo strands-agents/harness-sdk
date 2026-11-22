@@ -1,10 +1,12 @@
 import { createElement, type ReactElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
+import { createDiffPreview } from '../../src/agent/file-changes.js'
 import { WizardRequestPanel } from '../../src/ui/panels/wizard-request-panel.js'
 import {
   defaultAnswers,
   WizardBroker,
+  wizardRequestRows,
   type WizardRequestSpec,
   type WizardStepSpec,
 } from '../../src/ui/panels/wizard-request.js'
@@ -258,6 +260,16 @@ describe('WizardBroker', () => {
     expect(broker.bringForward('run-1')).toBe(true)
     expect(broker.bringForward('run-9')).toBe(false)
     expect(broker.pending()?.name).toBe('first')
+  })
+
+  it('shouldPutAStandingQuestionOnScreenEvenWhenAutofillIsOn', () => {
+    const broker = new WizardBroker(true)
+    const settled = vi.fn()
+
+    void broker.ask(request({ name: 'review', standing: true })).then(settled)
+
+    expect(broker.pending()?.name).toBe('review')
+    expect(settled).not.toHaveBeenCalled()
   })
 
   it('shouldRefuseARequestThatHasNoStep', async () => {
@@ -584,5 +596,193 @@ describe('WizardRequestPanel', () => {
     const { text } = await panel(new WizardBroker())
 
     expect(text()).toContain('No question is waiting.')
+  })
+})
+
+const PAGE_DOWN = '\u001b[6~'
+const PAGE_UP = '\u001b[5~'
+
+const OLD_PROMPT = [
+  'You are a careful assistant for a small support desk.',
+  '',
+  'Tone:',
+  '- Be brief and direct.',
+  '- Never apologise more than once.',
+  '',
+  'Process:',
+  '1. Read the whole question before answering.',
+  '    2. An indented   line   with   inner spacing.',
+  '3. Give the answer first, then at most one sentence of reasoning.',
+  '',
+  'Closing:',
+  '- Do not add a sign-off.',
+].join('\n')
+
+const NEW_PROMPT = OLD_PROMPT.replace(
+  'Tone:',
+  'Required reply format (highest priority, applies to every reply, including one-word answers): begin with the prefix.\n\nTone:'
+).replace('3. Give the answer first', '3. After the prefix, give the answer first')
+
+const review = (before = OLD_PROMPT, after = NEW_PROMPT): WizardRequestSpec => ({
+  name: 'optimize',
+  titleParts: ['edit 1 of 2', '20261122-162600-prefix-smoke'],
+  question: 'Apply this change to instructions?',
+  standing: true,
+  steps: [
+    {
+      key: 'review',
+      title: 'Review',
+      fields: [
+        {
+          kind: 'select',
+          key: 'verdict',
+          multiple: false,
+          options: [
+            { value: 'accept', label: 'Apply this change' },
+            { value: 'reject', label: 'Leave it as it is' },
+          ],
+        },
+        {
+          kind: 'diff',
+          key: 'change',
+          label: 'instructions',
+          path: 'agent.ts',
+          proposed: after,
+          diff: createDiffPreview('agent.ts', before, after),
+        },
+      ],
+    },
+  ],
+})
+
+const reviewPanel = async (width: number, height: number, spec = review(), active = true) => {
+  const broker = new WizardBroker()
+  const asked = broker.ask(spec)
+  const input = ttyInput()
+  const output = ttyOutput(width + 2, height + 2)
+  const frame = captureFrame(output)
+  const instance = render(createElement(WizardRequestPanel, { broker, width, height, close: vi.fn(), active }), {
+    stdin: input,
+    stdout: output,
+  })
+  await instance.waitUntilRenderFlush()
+  const press = async (key: string): Promise<void> => {
+    input.write(key)
+    await instance.waitUntilRenderFlush()
+  }
+  const lines = (): string[] => frame().map((line) => line.trimEnd())
+  return { asked, broker, press, lines, text: (): string => lines().join('\n') }
+}
+
+describe('a question that shows a change to read', () => {
+  it('shouldShowTheWholeChangeAndBothChoicesWhenThePanelHasTheRoom', async () => {
+    const { lines, text } = await reviewPanel(76, 30)
+
+    expect(text()).toContain('  agent.ts · +3 -1 lines')
+    expect(lines()).toContain('  + 3. After the prefix, give the answer first, then at most one sentence of')
+    expect(lines()).toContain('    - Do not add a sign-off.')
+    expect(lines()).toContain('› ○ Apply this change')
+    expect(lines()).toContain('  ○ Leave it as it is')
+    expect(text()).not.toMatch(/↓ \d+ more/u)
+  })
+
+  it.each([
+    [76, 10],
+    [56, 8],
+    [40, 9],
+  ])('shouldKeepBothChoicesWholeAndFillTheRestWithTheChangeAt%ix%i', async (width, height) => {
+    const { lines, text } = await reviewPanel(width, height)
+
+    expect(lines()).toHaveLength(height)
+    expect(lines()).toContain('› ○ Apply this change')
+    expect(lines()).toContain('  ○ Leave it as it is')
+    expect(lines()).toContain('    @@ -1,5 +1,7 @@')
+    expect(text()).toMatch(/↓ \d+ more · PgUp\/PgDn scroll/u)
+  })
+
+  it('shouldScrollAChangeLongerThanThePanelWithPageDownAndPageUp', async () => {
+    const { press, lines, text } = await reviewPanel(76, 12)
+    expect(text()).not.toContain('Closing:')
+
+    await press(PAGE_DOWN)
+    await press(PAGE_DOWN)
+    await press(PAGE_DOWN)
+    await press(PAGE_DOWN)
+
+    expect(text()).toContain('    - Do not add a sign-off.')
+    expect(text()).toMatch(/↑ \d+ previous · PgUp\/PgDn scroll/u)
+    expect(text()).not.toMatch(/↓ \d+ more/u)
+
+    await press(PAGE_UP)
+    await press(PAGE_UP)
+    await press(PAGE_UP)
+    await press(PAGE_UP)
+
+    expect(lines()).toContain('    @@ -1,5 +1,7 @@')
+    expect(text()).not.toContain('previous')
+  })
+
+  it('shouldLeaveTheChoiceWhereItIsWhileTheChangeScrolls', async () => {
+    const { asked, press } = await reviewPanel(76, 12)
+    await press(DOWN)
+
+    await press(PAGE_DOWN)
+    await press(ENTER)
+
+    await expect(asked).resolves.toEqual({ verdict: 'reject' })
+  })
+
+  it('shouldNotScrollWithTheKeysWhileTheChatInputHoldsTheKeyboard', async () => {
+    const { press, lines, text } = await reviewPanel(76, 12, review(), false)
+
+    await press(PAGE_DOWN)
+
+    expect(lines()).toContain('    @@ -1,5 +1,7 @@')
+    expect(text()).toMatch(/↓ \d+ more$/mu)
+    expect(text()).not.toContain('PgUp/PgDn scroll')
+  })
+
+  it('shouldKeepTheSpacingInsideALineAndStartEveryLineInTheSameColumn', async () => {
+    const { lines } = await reviewPanel(76, 30)
+
+    expect(lines()).toContain('        2. An indented   line   with   inner spacing.')
+    expect(lines()).toContain('    Tone:')
+    expect(lines()).toContain('  - 3. Give the answer first, then at most one sentence of reasoning.')
+  })
+
+  it('shouldWrapALongLineBetweenWordsUnderItsOwnText', async () => {
+    const { lines } = await reviewPanel(52, 30)
+
+    expect(lines()).toContain('  + Required reply format (highest priority, applies')
+    expect(lines()).toContain('    to every reply, including one-word answers):')
+    expect(lines()).toContain('    begin with the prefix.')
+  })
+
+  it('shouldShowTheChoicesInFullWhenTheyHaveNoDetailBesideThem', async () => {
+    const { lines } = await reviewPanel(30, 12)
+
+    expect(lines()).toContain('› ○ Apply this change')
+    expect(lines()).toContain('  ○ Leave it as it is')
+  })
+
+  it('shouldNotOfferAutofillForAQuestionThatStandsForTheDeveloper', async () => {
+    const { broker, press, text } = await reviewPanel(76, 30)
+    expect(text()).not.toContain('autofill')
+
+    await press('\u0001')
+
+    expect(broker.autofill()).toBe(false)
+  })
+
+  it('shouldCountTheWrappedLinesOfTheChangeInTheRowsItNeeds', () => {
+    const broker = new WizardBroker()
+    void broker.ask(review('one\n', 'two\n'))
+    const short = wizardRequestRows(broker.pending(), 76)
+    const wide = new WizardBroker()
+    void wide.ask(review())
+
+    expect(short).toBe(13)
+    expect(wizardRequestRows(wide.pending(), 76)).toBe(28)
+    expect(wizardRequestRows(wide.pending(), 40)).toBeGreaterThan(28)
   })
 })

@@ -140,7 +140,7 @@ const askCommand = (sessions: Sessions): DevChatCommand => ({
   dock: () => wizardRequestHasDiff(sessions().ask.pending()),
   wideDock: () => wizardRequestHasDiff(sessions().ask.pending()),
   dropPending: () => sessions().ask.dropForMessage(),
-  contentRows: () => wizardRequestRows(sessions().ask.pending()),
+  contentRows: (width) => wizardRequestRows(sessions().ask.pending(), width),
   spec: {
     name: 'ask',
     usage: '/ask',

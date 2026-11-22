@@ -14,7 +14,8 @@ const question = (
   of: number
 ): WizardRequestSpec => ({
   name: 'optimize',
-  titleParts: of > 1 ? [run, `edit ${at + 1} of ${of}`] : [run],
+  // The count comes first: a narrow panel cuts the title from its end, and the run's name is the part to lose.
+  titleParts: of > 1 ? [`edit ${at + 1} of ${of}`, run] : [run],
   question: `Apply this change to ${edit.label}?`,
   // The run is over and no turn waits on this, so asking the agent about the change must not answer it.
   standing: true,

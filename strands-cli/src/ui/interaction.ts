@@ -124,10 +124,14 @@ export function startupLockupLeft(width: number, lockupWidth: number, offset = 0
   return Math.max(0, Math.min(width - lockupWidth, Math.round((width - lockupWidth) / 2 + offset)))
 }
 
-export function devPanelHeight(terminalHeight: number, commandDeckHeight: number): number {
+/**
+ * The rows a dev panel gets above the chat input: half the terminal, with a few rows of transcript kept in view.
+ * A `reading` panel holds lines the developer has to read before answering, so it takes all but those rows.
+ */
+export function devPanelHeight(terminalHeight: number, commandDeckHeight: number, reading = false): number {
   const room = Math.max(0, terminalHeight - commandDeckHeight)
-  const half = Math.round(terminalHeight / 2)
-  return Math.min(room, Math.max(DEV_PANEL_MIN_HEIGHT, Math.min(half, room - DEV_PANEL_TRANSCRIPT_ROWS)))
+  const share = reading ? room : Math.round(terminalHeight / 2)
+  return Math.min(room, Math.max(DEV_PANEL_MIN_HEIGHT, Math.min(share, room - DEV_PANEL_TRANSCRIPT_ROWS)))
 }
 
 export function composerPanelContentHeight(panel: ChatPanel | undefined, height: number): number {

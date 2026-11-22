@@ -1,11 +1,14 @@
-import { createElement, useEffect, useState, type ReactElement } from 'react'
+import { createElement, useEffect, useMemo, useState, type ReactElement } from 'react'
+import { useInput } from 'ink'
 
-import { wrapCells } from '../../terminal/text.js'
-import { diffRows, DIFF_SUMMARY_LABEL, type DiffRow } from '../diff-rows.js'
+import { diffSummaryText, wrappedDiffLines } from '../diff-rows.js'
+import { Box } from '../theme.js'
+import { useDevPanelClicks } from './dev.js'
 import { Line, PanelTitle, useSyncedState } from './kit.js'
 import { useWizardPosition, Wizard, type WizardField, type WizardStep } from './wizard.js'
 import {
   defaultAnswers,
+  wizardDiffTextWidth,
   type WizardAnswer,
   type WizardBroker,
   type WizardDiffSpec,
@@ -121,39 +124,70 @@ const selectLabel = (spec: WizardStepSpec): string | undefined =>
 const diffOf = (spec: WizardStepSpec): WizardDiffSpec | undefined =>
   spec.fields.flatMap((field) => (field.kind === 'diff' ? [field] : []))[0]
 
-const DIFF_HEADER_ROWS = 2
-const DIFF_INDENT = 2
+const DIFF_INDENT = ' '.repeat(2)
+const DIFF_MARK_COLUMNS = 2
+const WHEEL_ROWS = 3
+const MIN_ROOM_FOR_POSITION = 3
 
-/** A long line wraps under its own gutter rather than being cut, the way the permission prompt shows a change. */
-const diffTextRows = (rows: readonly DiffRow[], width: number): DiffRow[] => {
-  const gutter = DIFF_SUMMARY_LABEL.length + 1
-  const room = Math.max(1, width - DIFF_INDENT - gutter)
-  return rows.flatMap((row) =>
-    wrapCells(row.text, room).map((text, index) => ({
-      ...row,
-      label: index === 0 ? row.label : '',
-      text,
-    }))
+/** Where the window is in a change longer than it, in the words a list uses for rows it holds back. */
+const diffPosition = (above: number, below: number, keys: boolean): string =>
+  [above > 0 ? `↑ ${above} previous` : '', below > 0 ? `↓ ${below} more` : '', keys ? 'PgUp/PgDn scroll' : '']
+    .filter(Boolean)
+    .join(' · ')
+
+/**
+ * A change to read: the file and its counts, then its lines under a +/- mark. A long line wraps between words under
+ * its own text, the spacing inside a line stays as the file has it, and a change longer than the room scrolls with
+ * PgUp/PgDn while the question holds the keyboard, and with the wheel at any time.
+ */
+const DiffBody = ({
+  spec,
+  room,
+  width,
+  active,
+}: {
+  spec: WizardDiffSpec
+  room: number
+  width: number
+  active: boolean
+}): ReactElement => {
+  const clicks = useDevPanelClicks()
+  const rows = useMemo(() => wrappedDiffLines(spec.diff, wizardDiffTextWidth(width)), [spec.diff, width])
+  const [offset, setOffset] = useState(0)
+  // The header takes a row, and a change that does not fit gives one more to saying where the window is. On a panel
+  // too short for that, the lines come first: the keys and the wheel still scroll them.
+  const fits = rows.length <= room - 1
+  const positioned = !fits && room >= MIN_ROOM_FOR_POSITION
+  const capacity = Math.max(0, room - 1 - (positioned ? 1 : 0))
+  const last = Math.max(0, rows.length - capacity)
+  const start = Math.min(offset, last)
+  const scroll = (by: number): void => setOffset((current) => Math.max(0, Math.min(last, Math.min(current, last) + by)))
+  const page = Math.max(1, capacity - 1)
+  useInput(
+    (_input, key) => {
+      if (key.pageDown) scroll(page)
+      else if (key.pageUp) scroll(-page)
+    },
+    { isActive: active && !fits }
   )
-}
-
-/** Shows as many diff rows as the room allows, and says how many it held back. */
-const DiffBody = ({ spec, room, width }: { spec: WizardDiffSpec; room: number; width: number }): ReactElement => {
-  const rows = diffTextRows(diffRows(spec.diff), width)
-  const capacity = Math.max(1, room - DIFF_HEADER_ROWS)
-  const shown = rows.slice(0, capacity)
-  const hidden = rows.length - shown.length
-  const gutter = DIFF_SUMMARY_LABEL.length + 1
+  const shown = rows.slice(start, start + capacity)
+  const header = [spec.path, diffSummaryText(spec.diff)].filter(Boolean).join(' · ')
   return (
-    <>
-      <Line tone="muted">{`${' '.repeat(DIFF_INDENT)}${spec.path}`}</Line>
+    <Box
+      flexDirection="column"
+      flexShrink={0}
+      {...(clicks && !fits ? { ref: clicks.wheel((direction) => scroll(direction * WHEEL_ROWS)) } : {})}
+    >
+      <Line tone="muted">{`${DIFF_INDENT}${header}`}</Line>
       {shown.map((row, index) => (
-        <Line key={`${row.label}-${index}`} {...(row.tone ? { tone: row.tone } : {})}>
-          {`${' '.repeat(DIFF_INDENT)}${row.label.padEnd(gutter)}${row.text}`}
+        <Line key={start + index} verbatim {...(row.tone ? { tone: row.tone } : {})}>
+          {`${DIFF_INDENT}${row.label.padEnd(DIFF_MARK_COLUMNS)}${row.text}`}
         </Line>
       ))}
-      {hidden > 0 ? <Line tone="muted">{`${' '.repeat(DIFF_INDENT)}${hidden} more lines`}</Line> : null}
-    </>
+      {positioned ? (
+        <Line tone="muted">{`${DIFF_INDENT}${diffPosition(start, rows.length - start - shown.length, active)}`}</Line>
+      ) : null}
+    </Box>
   )
 }
 
@@ -162,7 +196,7 @@ const toStep = (
   answers: Answers,
   live: () => Answers,
   update: (key: string, value: WizardAnswer) => void,
-  width: number
+  { width, active }: { width: number; active: boolean }
 ): WizardStep => ({
   key: spec.key,
   title: spec.title,
@@ -173,7 +207,11 @@ const toStep = (
       : [toField(field, answers, live, update)]
   }),
   ...(diffOf(spec)
-    ? { bodyFirst: true, body: (room: number) => createElement(DiffBody, { spec: diffOf(spec)!, room, width }) }
+    ? {
+        bodyFirst: true,
+        bodyRows: 1 + wrappedDiffLines(diffOf(spec)!.diff, wizardDiffTextWidth(width)).length,
+        body: (room: number) => createElement(DiffBody, { spec: diffOf(spec)!, room, width, active }),
+      }
     : {}),
   ...(spec.notice ? { notice: spec.notice } : {}),
   ...(selectLabel(spec) === undefined ? {} : { listLabel: selectLabel(spec)! }),
@@ -202,7 +240,7 @@ const RequestView = ({
   const answers = useSyncedState<Answers>(() => defaultAnswers(request.steps))
   const position = useWizardPosition()
   const update = (key: string, value: WizardAnswer): void => answers.set((current) => ({ ...current, [key]: value }))
-  const steps = request.steps.map((step) => toStep(step, answers.value, answers.current, update, width))
+  const steps = request.steps.map((step) => toStep(step, answers.value, answers.current, update, { width, active }))
   return (
     <Wizard
       name={request.name}
@@ -220,13 +258,18 @@ const RequestView = ({
       onFinish={() => broker.respond(request.id, { ...answers.current() })}
       onCancel={() => broker.respond(request.id, undefined)}
       position={position}
-      autofill={{
-        on: autofill,
-        set: (on) => {
-          broker.setAutofill(on)
-          onAutofill?.(on)
-        },
-      }}
+      // Autofill is about the agent's own questions; one that stands for the developer does not offer it.
+      {...(request.standing
+        ? {}
+        : {
+            autofill: {
+              on: autofill,
+              set: (on: boolean): void => {
+                broker.setAutofill(on)
+                onAutofill?.(on)
+              },
+            },
+          })}
     />
   )
 }

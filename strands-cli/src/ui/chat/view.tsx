@@ -38,7 +38,7 @@ import {
 } from '../interaction.js'
 import { PromptEditor, promptContentSize, CommandPalette } from './prompt.js'
 import { ResourcePanel } from '../panels/panel.js'
-import { DevPanelFrame, type DevPanelClicks } from '../panels/dev.js'
+import { DEV_PANEL_FRAME_COLUMNS, DevPanelFrame, type DevPanelClicks } from '../panels/dev.js'
 import { AgentsPanel, agentGridLayout, clampAgentGridViewport } from '../panels/agents.js'
 import { FROG_ANIMATION_HEIGHT, FrogEasterEgg, type FrogVariant, VOICE_FROG_HEIGHT, VoiceFrog } from '../frog.js'
 import {
@@ -333,8 +333,11 @@ function ChatViewContent({
   const restingEditorHeight = composerPanel
     ? promptEditorHeight('', 0, editorWidth, editorMaxRows, false, party, editorMaxHeight)
     : editorHeight
-  const devPanelShare = devPanel ? devPanelHeight(terminalHeight, composerStatusRows + restingEditorHeight + 2) : 0
-  const devPanelWanted = devPanel?.contentRows?.()
+  // A panel that would dock to be read (a change to review) keeps that claim when the terminal is too narrow to dock.
+  const devPanelShare = devPanel
+    ? devPanelHeight(terminalHeight, composerStatusRows + restingEditorHeight + 2, devPanel.dock?.() === true)
+    : 0
+  const devPanelWanted = devPanel?.contentRows?.(Math.max(1, editorWidth - DEV_PANEL_FRAME_COLUMNS))
   const devPanelRows =
     devPanelWanted === undefined ? devPanelShare : Math.max(1, Math.min(devPanelShare, devPanelWanted + 2))
   const commandDeckHeight = composerStatusRows + restingEditorHeight + 2 + devPanelRows

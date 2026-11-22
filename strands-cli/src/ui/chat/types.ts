@@ -131,8 +131,8 @@ export interface DevChatCommand {
    * was waiting on; a panel that keeps its question answers false, and the message is then sent as any other.
    */
   dropPending?(): boolean
-  /** The rows this panel's content needs right now, to shrink the frame to it. */
-  contentRows?(): number | undefined
+  /** The rows this panel's content needs right now at `width` columns inside its frame, to shrink the frame to it. */
+  contentRows?(width: number): number | undefined
   open(context: DevChatCommandContext, opening?: DevPanelOpening): DevChatPanelView
   attach?(context: DevChatCommandContext): void
   jobs?: DevChatJobs
@@ -269,8 +269,8 @@ export type NewChatPanel =
       wideDock?: () => boolean
       /** Resolves whatever a turn is waiting on here, so a chat message can be sent instead, and says if it did. */
       dropPending?: () => boolean
-      /** The rows its content needs, when that is fewer than the panel's usual share of the screen. */
-      contentRows?: () => number | undefined
+      /** The rows its content needs at `width` columns, when that is fewer than the panel's share of the screen. */
+      contentRows?: (width: number) => number | undefined
     })
 
 export type ChatPanel = NewChatPanel & { id: string }

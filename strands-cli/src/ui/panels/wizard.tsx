@@ -75,6 +75,8 @@ export interface WizardStep {
   readonly notice?: WizardNotice
   readonly listLabel?: string
   readonly body?: (room: number) => ReactNode
+  /** The rows the body needs to show all of itself, so one question crowds only when they do not fit. */
+  readonly bodyRows?: number
   /** Draws the body above the fields, for a body the fields are about. */
   readonly bodyFirst?: boolean
   readonly footnote?: string
@@ -150,6 +152,22 @@ const stepRows = (step: WizardStep, at: number, count: number): WizardRow[] => [
   ...step.fields.filter(selectable).map((field): WizardRow => ({ kind: 'field', field })),
   ...(count > 1 ? stepButtons(at, count).map((button): WizardRow => ({ kind: 'button', button })) : []),
 ]
+
+/**
+ * The rows one question draws around its body: the title, the question, the fields, the hints, and the gaps between
+ * them. Counted row by row, so the body gets exactly what is left and never pushes the fields out of the frame.
+ */
+const rowsAroundBody = (
+  step: WizardStep,
+  { question, footer, compact }: { question: boolean; footer: boolean; compact: boolean }
+): number => {
+  const gap = compact ? 0 : 1
+  const label = compact || step.listLabel === undefined ? 0 : 1
+  const footnote = compact || step.footnote === undefined ? 0 : 1
+  // A body the fields are about stands apart from them by a row, when there is one to spare.
+  const apart = step.bodyFirst ? gap : 0
+  return 2 + (question ? 1 : 0) + gap + apart + label + step.fields.length + footnote + gap + (footer ? 1 : 0)
+}
 
 const blockingNotice = (steps: readonly WizardStep[]): WizardNotice | undefined =>
   steps.map(({ notice }) => notice).find((notice) => notice?.tone === 'error')
@@ -400,8 +418,15 @@ export const Wizard = ({
   const blocking = blockingNotice(steps)
   const ready = blocking === undefined
   const walked = steps.length > 1
-  // One question is sized to its content, so it keeps its spacing; only a walked form has to crowd.
-  const compact = walked && height < FULL_ROWS
+  const around = { question: question !== undefined, footer: footer !== '' }
+  // One question is sized to its content, so it keeps its spacing. It crowds only when it has a body to read that
+  // does not fit otherwise; a walked form crowds on any short panel.
+  const compact = walked
+    ? height < FULL_ROWS
+    : step.body !== undefined && height < rowsAroundBody(step, { ...around, compact: false }) + (step.bodyRows ?? 0)
+  const bodyRoom = walked
+    ? height - (compact ? COMPACT_BODY_CHROME_ROWS : BODY_CHROME_ROWS)
+    : Math.max(1, height - rowsAroundBody(step, { ...around, compact }))
   const cursorRow = active ? cursor.index : -1
   const focused = active ? rows[cursor.index] : undefined
   const editor = editing.value
@@ -512,7 +537,8 @@ export const Wizard = ({
         capacity={Math.max(MIN_LIST_ROWS, Math.min(toggles.length, height - listChrome))}
         labelWidth={labelWidthFor(
           toggles.map(({ label }) => label),
-          width
+          width,
+          toggles.some(({ detail, unavailable }) => detail !== undefined || unavailable !== undefined)
         )}
         onClick={(item) => choose(toggleRows[item] ?? 0)}
         onHover={(item) => cursor.set(toggleRows[item] ?? 0)}
@@ -522,7 +548,7 @@ export const Wizard = ({
   const fieldView = (field: WizardField): ReactNode => {
     if (field.kind === 'toggle')
       return field.key === toggles[0]?.key ? (
-        <Box key={field.key} flexDirection="column">
+        <Box key={field.key} flexDirection="column" flexShrink={0}>
           {toggleList()}
         </Box>
       ) : null
@@ -580,11 +606,10 @@ export const Wizard = ({
       {steps.length > 1 ? <StepBar steps={steps} at={index} right={status} onPick={pickStep} /> : null}
       {question === undefined ? null : <Line>{`  ${question}`}</Line>}
       {compact ? null : <Gap />}
-      {step.bodyFirst && step.body ? step.body(height - (compact ? COMPACT_BODY_CHROME_ROWS : BODY_CHROME_ROWS)) : null}
+      {step.bodyFirst && step.body ? step.body(bodyRoom) : null}
+      {step.bodyFirst && step.body && !walked && !compact ? <Gap /> : null}
       {step.fields.map(fieldView)}
-      {!step.bodyFirst && step.body
-        ? step.body(height - (compact ? COMPACT_BODY_CHROME_ROWS : BODY_CHROME_ROWS))
-        : null}
+      {!step.bodyFirst && step.body ? step.body(bodyRoom) : null}
       {editor && step.editFootnote ? <Line tone="muted">{`  ${step.editFootnote}`}</Line> : null}
       {step.footnote !== undefined && !compact ? (
         <Line tone="muted">{`${' '.repeat(LABEL_WIDTH + 2)}${step.footnote}`}</Line>

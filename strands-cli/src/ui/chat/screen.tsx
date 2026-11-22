@@ -1031,6 +1031,11 @@ export function ChatApp({
           const total = awsProfileItems(snapshot.panel, viewPropsRef.current.panelFilter).length
           setModelPanelFocus('profiles')
           setModelProfileSelection((selected) => Math.max(0, Math.min(total - 1, selected + scroll)))
+        } else if (snapshot.panel?.kind === 'dev' && snapshot.panel.sticky) {
+          // A question sits beside the chat: the wheel scrolls what is under it, the question's own text or the chat.
+          if (panelElement.current && elementContainsMouse(panelElement.current, mouse))
+            devPanelClicks.wheelAt(mouse)?.(scroll)
+          else setTranscriptScroll((value) => scrollTranscript(value, scroll, maxTranscriptScrollRef.current))
         } else if (snapshot.panel) {
           const rows = panelRows ?? []
           const capacity = panelRowCapacity(

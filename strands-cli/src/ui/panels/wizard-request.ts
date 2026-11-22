@@ -1,5 +1,6 @@
 import { sanitizeTerminalText } from '../../terminal/text.js'
 import type { ChatDiffPreview } from '../../agent/types.js'
+import { wrappedDiffLines } from '../diff-rows.js'
 import type { Tone } from './kit.js'
 
 export type WizardAnswer = string | boolean | readonly string[]
@@ -145,20 +146,33 @@ const GAP_ROWS = 1
 const HINT_ROWS = 1
 const LAST_ROW_PADDING = 1
 
-const fieldRows = (field: WizardFieldSpec): number => {
+const DIFF_INDENT = 2
+const DIFF_MARK_COLUMNS = 2
+// The file and its counts above the lines, and the row that sets them apart from the answer below.
+const DIFF_FRAME_ROWS = 2
+
+/** The columns the text of a diff line gets in a panel `width` columns wide, after its indent and its +/- mark. */
+export const wizardDiffTextWidth = (width: number): number => Math.max(1, width - DIFF_INDENT - DIFF_MARK_COLUMNS)
+
+const fieldRows = (field: WizardFieldSpec, width: number | undefined): number => {
   if (field.kind === 'select') return field.options.length + (field.listLabel === undefined ? 0 : 1)
-  return 1
+  if (field.kind !== 'diff') return 1
+  const lines = width === undefined ? field.diff.lines : wrappedDiffLines(field.diff, wizardDiffTextWidth(width))
+  return DIFF_FRAME_ROWS + lines.length
 }
 
 /** A diff needs the dock's width; everything else fits above the chat input. */
 export const wizardRequestHasDiff = (request: WizardRequest | undefined): boolean =>
   request?.steps.some((step) => step.fields.some((field) => field.kind === 'diff')) === true
 
-/** The rows one question needs, so its panel is not half the terminal with the rest empty. */
-export const wizardRequestRows = (request: WizardRequest | undefined): number | undefined => {
+/**
+ * The rows one question needs, so its panel is not half the terminal with the rest empty. `width` is the panel's inner
+ * width, which a change needs to know how many rows its long lines wrap onto.
+ */
+export const wizardRequestRows = (request: WizardRequest | undefined, width?: number): number | undefined => {
   if (!request || request.steps.length !== 1) return undefined
   const step = request.steps[0]!
-  const fields = step.fields.reduce((rows, field) => rows + fieldRows(field), 0)
+  const fields = step.fields.reduce((rows, field) => rows + fieldRows(field, width), 0)
   return (
     TITLE_ROWS +
     (request.question === undefined ? 0 : QUESTION_ROWS) +
@@ -227,7 +241,8 @@ export class WizardBroker {
   ask(spec: WizardRequestSpec): Promise<WizardOutcome> {
     if (this._disposed || spec.steps.length === 0) return Promise.resolve(undefined)
     const request = cleanRequest({ ...spec, id: `strands-wizard-${this._next++}` })
-    if (this._autofill) return Promise.resolve(defaultAnswers(request.steps))
+    // Autofill hands the agent's own questions back to it. A standing question is the developer's to answer.
+    if (this._autofill && !request.standing) return Promise.resolve(defaultAnswers(request.steps))
     return new Promise((resolve) => {
       this._queue.push({ request, resolve })
       this._yieldToTurn()
