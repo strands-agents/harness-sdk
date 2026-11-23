@@ -23,7 +23,11 @@ import { TemporaryExperiments } from '../../../src/dev/temporary-evals-fork/expe
 import { readTemporaryTestResults, rememberTemporaryTestResults } from '../../../src/dev/temporary-evals-fork/report.js'
 import type { TemporarySessionHost } from '../../../src/dev/temporary-evals-fork/host.js'
 import { readTemporaryOptimizeRecords } from '../../../src/dev/temporary-evals-fork/optimize-runs.js'
-import { answerOptimizeReview, optimizeReviewContext } from '../../../src/dev/temporary-evals-fork/review-run.js'
+import {
+  answerOptimizeReview,
+  applyOptimizeEdits,
+  optimizeReviewContext,
+} from '../../../src/dev/temporary-evals-fork/review-run.js'
 import {
   TemporaryOptimize,
   TemporaryTest,
@@ -1722,6 +1726,105 @@ describe('TEMPORARY dev sessions', () => {
       await expect(refused).rejects.toThrow(showing)
       expect(sessions.ask.pending()).toBe(question)
       expect(await instructions()).toBe(`${BASELINE}\n`)
+    })
+
+    describe('edits that the developer names in chat with no diff of them on screen', () => {
+      const answers = (sessions: ReturnType<typeof temporaryDevSessions>): string[] => {
+        const state = sessions.optimize.snapshot()
+        const edits = state.step === 'review' ? state.review.edits : []
+        return edits.map(
+          ({ knob, accepted, decided }) => `${knob}: ${!decided ? 'waiting' : accepted ? 'apply' : 'leave'}`
+        )
+      }
+      const onScreen = (sessions: ReturnType<typeof temporaryDevSessions>, verdict: 'accept' | 'reject' | undefined) =>
+        sessions.ask.respond(sessions.ask.pending()!.id, verdict ? { verdict } : undefined)
+      const effortOnScreen = (sessions: ReturnType<typeof temporaryDevSessions>) =>
+        vi.waitFor(() => expect(sessions.ask.pending()?.question).toBe('Apply this change to effort?'))
+
+      it('shouldKeepTheAnswerGivenOnScreenForAnEditThatWasNotNamed', async () => {
+        const { sessions, run, instructions } = await twoEditsOnScreen()
+        onScreen(sessions, 'accept')
+        await effortOnScreen(sessions)
+        onScreen(sessions, undefined)
+        await vi.waitFor(() => expect(sessions.ask.pending()).toBeUndefined())
+
+        const applied = await applyOptimizeEdits(sessions, { run, edits: [1] })
+
+        // The instructions were answered "apply" on screen, and naming effort in chat does not take that back.
+        expect(answers(sessions)).toEqual(['instructions: apply', 'effort: apply'])
+        expect(applied).toMatchObject({ run, settled: true, applied: ['instructions.md'] })
+        expect(await instructions()).toBe(`${WINNER}\n`)
+      })
+
+      it('shouldWriteNothingWhileAnotherEditStillWaitsAndLeaveItsDiffOnScreen', async () => {
+        const { sessions, run, instructions } = await twoEditsOnScreen()
+        const question = sessions.ask.pending()
+
+        const applied = await applyOptimizeEdits(sessions, { run, edits: [1] })
+
+        expect(applied).toEqual({ run, settled: false, waiting: 1, shown: true })
+        expect(answers(sessions)).toEqual(['instructions: waiting', 'effort: apply'])
+        expect(sessions.ask.pending()).toBe(question)
+        expect(await instructions()).toBe(`${BASELINE}\n`)
+      })
+
+      it('shouldMoveTheScreenToTheEditThatStillWaitsWhenTheNamedOneWasShowing', async () => {
+        const { sessions, run, instructions } = await twoEditsOnScreen()
+
+        const applied = await applyOptimizeEdits(sessions, { run, edits: [0] })
+
+        expect(applied).toEqual({ run, settled: false, waiting: 1, shown: true })
+        expect(sessions.ask.pending()?.question).toBe('Apply this change to effort?')
+        expect(answers(sessions)).toEqual(['instructions: apply', 'effort: waiting'])
+        expect(await instructions()).toBe(`${BASELINE}\n`)
+      })
+
+      it('shouldApplyAnEditThatWasLeftOnScreenOnceTheDeveloperNamesItAndKeepTheOtherLeft', async () => {
+        const { workspace, sessions, run, instructions } = await twoEditsOnScreen()
+        onScreen(sessions, 'reject')
+        await effortOnScreen(sessions)
+        onScreen(sessions, 'reject')
+        await vi.waitFor(() => expect(sessions.optimize.snapshot()).toMatchObject({ review: { reviewed: true } }))
+
+        const applied = await applyOptimizeEdits(sessions, { run, edits: [0] })
+
+        expect(applied).toEqual({ run, settled: true, applied: ['instructions.md'] })
+        expect(answers(sessions)).toEqual(['instructions: apply', 'effort: leave'])
+        expect(await instructions()).toBe(`${WINNER}\n`)
+        expect(await readFile(workspace.entrypoint, 'utf8')).toContain('effort="low"')
+      })
+
+      it.each<[string, (run: string) => { run: string; edits: number[] }, string]>([
+        [
+          'a run that does not exist',
+          () => ({ run: '20260101-000000-other', edits: [0] }),
+          'No finished optimization is named 20260101-000000-other.',
+        ],
+        ['no edit', (run) => ({ run, edits: [] }), 'Name at least one edit to apply.'],
+        ['an edit that the run does not have', (run) => ({ run, edits: [4] }), 'has no edit 4.'],
+      ])('shouldRefuseAndChangeNothingWhenTheCallNames%s', async (_case, named, message) => {
+        const { sessions, run, instructions } = await twoEditsOnScreen()
+
+        await expect(applyOptimizeEdits(sessions, named(run))).rejects.toThrow(message)
+
+        expect(answers(sessions)).toEqual(['instructions: waiting', 'effort: waiting'])
+        expect(await instructions()).toBe(`${BASELINE}\n`)
+      })
+
+      it('shouldRefuseARunWhoseEditsWereWrittenAlready', async () => {
+        const { sessions, run } = await twoEditsOnScreen()
+        onScreen(sessions, 'accept')
+        await effortOnScreen(sessions)
+        onScreen(sessions, 'reject')
+        await vi.waitFor(() =>
+          expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
+        )
+
+        await expect(applyOptimizeEdits(sessions, { run, edits: [1] })).rejects.toThrow(
+          `The edits of run ${run} were written already: instructions.md.`
+        )
+        expect(answers(sessions)).toEqual(['instructions: apply', 'effort: leave'])
+      })
     })
 
     it('shouldRefuseAnAnswerWhenTheDeveloperClosedTheDiff', async () => {

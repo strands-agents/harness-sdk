@@ -259,3 +259,59 @@ export const answerOptimizeReview = async (
     ...(settled?.applyError ? { applyError: settled.applyError } : {}),
   }
 }
+
+export interface AppliedOptimizeEdits {
+  readonly run: string
+  /** Every edit of the run has its answer, so the review is over and the accepted edits are written. */
+  readonly settled: boolean
+  readonly applied?: readonly string[]
+  readonly applyError?: string
+  /** How many edits of the run still wait for the developer's answer. Nothing is written while one does. */
+  readonly waiting?: number
+  /** The diff of a waiting edit is on the developer's screen. */
+  readonly shown?: boolean
+}
+
+/**
+ * Answers the edits `edits` of the run `run` with apply, for a developer who named them in chat. Every other edit
+ * keeps the answer it has: the one given on screen, or none yet. As on screen, the run is written once every edit
+ * has its answer, so while one still waits its diff goes on screen and nothing is written.
+ */
+export const applyOptimizeEdits = async (
+  sessions: TemporaryDevSessions,
+  { run, edits }: { readonly run: string; readonly edits: readonly number[] }
+): Promise<AppliedOptimizeEdits> => {
+  const { optimize, ask } = sessions
+  const found = optimize.snapshot().runs?.find(({ state }) => state.step === 'review' && state.review.run === run)
+  if (found?.state.step !== 'review')
+    throw new Error(`No finished optimization is named ${run}. strands_dev_status names the runs.`)
+  const { review } = found.state
+  if (review.applied)
+    throw new Error(`The edits of run ${run} were written already: ${review.applied.join(', ') || 'none of them'}.`)
+  if (edits.length === 0) throw new Error('Name at least one edit to apply.')
+  for (const index of edits) {
+    const edit = review.edits[index]
+    if (!edit) throw new Error(`Run ${run} has no edit ${index}.`)
+    if (edit.unavailable) throw new Error(`Edit ${index} cannot be written: ${edit.unavailable}`)
+  }
+  for (const index of edits) optimize.accept(index, true, found.id)
+  const waiting = waitingReview(sessions, found.id)
+  const left = waiting ? waiting.edits.filter((edit) => edit.unavailable === undefined && !edit.decided).length : 0
+  if (left > 0) {
+    // A diff that asks about an edit which now has its answer makes way for the one that still waits.
+    const showing = optimizeReviewOnScreen(sessions)
+    if (showing?.runId === found.id && edits.includes(showing.index)) {
+      ask.withdraw(found.id)
+      await nextTurn()
+    }
+    return { run, settled: false, waiting: left, shown: showOptimizeReview(sessions, found.id) }
+  }
+  optimize.apply(found.id)
+  const settled = await written(sessions, found.id)
+  return {
+    run,
+    settled: true,
+    ...(settled?.applied ? { applied: settled.applied } : {}),
+    ...(settled?.applyError ? { applyError: settled.applyError } : {}),
+  }
+}

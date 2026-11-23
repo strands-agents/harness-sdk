@@ -25,7 +25,7 @@ import {
   TEMPORARY_TEST_SHARES,
 } from '../../../src/dev/temporary-evals-fork/plan.js'
 import type { TemporaryEvaluator } from '../../../src/dev/temporary-evals-fork/evaluators.js'
-import type { AnsweredOptimizeReview } from '../../../src/dev/temporary-evals-fork/review-run.js'
+import type { AnsweredOptimizeReview, AppliedOptimizeEdits } from '../../../src/dev/temporary-evals-fork/review-run.js'
 import type { TemporaryAppliedChange, TemporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
 
 const REFUNDS: ExperimentSummary = {
@@ -274,17 +274,25 @@ const setup = (evaluators = vi.fn(async () => CATALOG), changes: readonly Tempor
       settled: true,
     })
   )
+  const applyEdits = vi.fn(
+    async ({ run }: { run: string; edits: readonly number[] }): Promise<AppliedOptimizeEdits> => ({
+      run,
+      settled: true,
+      applied: ['agent.py'],
+    })
+  )
   const part = temporaryDevChatPart({
     sessions: () => fake.sessions as unknown as TemporaryDevSessions,
     evaluators,
     history,
     showReview,
     answerReview,
+    applyEdits,
   })
   const tool = (name: string): DevChatTool => part.tools.find((candidate) => candidate.name === name)!
   const call = async (name: string, input: Record<string, JSONValue> = {}): Promise<unknown> =>
     JSON.parse(await tool(name).run(input))
-  return { ...fake, part, tool, call, evaluators, history, showReview, answerReview }
+  return { ...fake, part, tool, call, evaluators, history, showReview, answerReview, applyEdits }
 }
 
 const APPLIED: TemporaryAppliedChange = {
@@ -669,31 +677,71 @@ describe('TEMPORARY dev chat part', () => {
     expect(planned.knobs.length).toBeGreaterThan(0)
   })
 
-  it('shouldWriteOnlyTheAcceptedEditsWhenTheDeveloperApproves', async () => {
-    const { call, optimize, sessions } = setup()
-    optimize.set({ step: 'review', review: review() })
+  it('shouldAnswerTheEditsTheDeveloperNamedWithApplyAndSayWhatWasWritten', async () => {
+    const { call, applyEdits, sessions } = setup()
 
-    const applied = await call('strands_dev_apply_optimization', { edits: [0] })
+    const applied = await call('strands_dev_apply_optimization', { run: review().run, edits: [0] })
 
-    expect(sessions.optimize.accept.mock.calls).toEqual([
-      [0, true, undefined],
-      [1, false, undefined],
-    ])
+    expect(applyEdits.mock.calls).toEqual([[{ run: review().run, edits: [0] }]])
     expect(applied).toEqual({
+      run: review().run,
       applied: ['agent.py'],
       next: 'Evaluate the experiment again, after the developer approves it, to check the change.',
     })
+    // The tool does not set the edits it was not given: each keeps the answer it has.
+    expect(sessions.optimize.accept).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      { waiting: 1, shown: true },
+      '1 other edit of this run still waits',
+      'The diff of a waiting edit is on their screen now.',
+    ],
+    [
+      { waiting: 2, shown: false },
+      '2 other edits of this run still wait',
+      'The run is on the status line under the chat input',
+    ],
+  ] as const)('shouldSayThatNothingIsWrittenWhileAnEditStillWaits %#', async (outcome, still, where) => {
+    const { call, applyEdits } = setup()
+    applyEdits.mockResolvedValue({ run: review().run, settled: false, ...outcome })
+
+    const applied = (await call('strands_dev_apply_optimization', { run: review().run, edits: [0] })) as {
+      next: string
+    }
+
+    expect(applied).toMatchObject({ run: review().run, awaitingAnswer: outcome.waiting })
+    expect(applied).not.toHaveProperty('applied')
+    expect(applied.next).toContain('Their answer is kept, and nothing is written yet')
+    expect(applied.next).toContain(still)
+    expect(applied.next).toContain(where)
   })
 
   it.each<[string, Record<string, JSONValue>, string]>([
-    ['an edit that does not exist', { edits: [4] }, 'There is no edit 4.'],
-    ['an edit that cannot be written', { edits: [1] }, 'Edit 1 cannot be written: set in code'],
-  ])('shouldRefuseToApplyWhenTheDeveloperChooses%s', async (_case, input, message) => {
-    const { tool, optimize, sessions } = setup()
-    optimize.set({ step: 'review', review: review() })
+    ['no run', { edits: [0] }, 'run is required.'],
+    ['an edit that is not a number', { run: 'r', edits: ['first'] }, 'There is no edit first.'],
+    ['an edit below zero', { run: 'r', edits: [-1] }, 'There is no edit -1.'],
+  ])('shouldApplyNothingWhenTheCallHas%s', async (_case, input, message) => {
+    const { tool, applyEdits } = setup()
 
     await expect(tool('strands_dev_apply_optimization').run(input)).rejects.toThrow(message)
-    expect(sessions.optimize.apply).not.toHaveBeenCalled()
+    expect(applyEdits).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['why the edits could not be answered', new Error('Run r has no edit 4.'), 'Run r has no edit 4.'],
+    [
+      'why an edit could not be written',
+      { run: 'r', settled: true, applied: [], applyError: 'agent.py changed.' },
+      'agent.py changed.',
+    ],
+  ] as const)('shouldPassOn%s', async (_case, outcome, message) => {
+    const { tool, applyEdits } = setup()
+    if (outcome instanceof Error) applyEdits.mockRejectedValue(outcome)
+    else applyEdits.mockResolvedValue({ ...outcome, applied: [...outcome.applied] })
+
+    await expect(tool('strands_dev_apply_optimization').run({ run: 'r', edits: [0] })).rejects.toThrow(message)
   })
 })
 
@@ -1119,38 +1167,67 @@ describe('dev chat tool errors and states', () => {
     })
   })
 
-  it('shouldRefuseToApplyWhenThereIsNoReviewTheEditsWereAppliedOrTheWriteFails', async () => {
-    const { tool, optimize, sessions } = setup()
-    const apply = (): Promise<string> => tool('strands_dev_apply_optimization').run({ edits: [0] })
+  describe('what the developer answered for each edit, in the status', () => {
+    const [offered, unavailable] = review().edits
+    const statusOf = async (change: Partial<OptimizeReview>) => {
+      const { call, finishRun } = setup()
+      finishRun({ step: 'review', review: { ...review(), ...change } })
+      return ((await call('strands_dev_status')) as { optimization: { edits: object[]; next?: string } }).optimization
+    }
 
-    await expect(apply()).rejects.toThrow('There is no finished optimization to apply.')
-    optimize.set({ step: 'review', review: { ...review(), applied: ['agent.py'] } })
-    await expect(apply()).rejects.toThrow('These edits were applied already: agent.py.')
-    optimize.set({
-      step: 'pick',
-      runs: [{ id: 'run-2', experiment: 'refunds', startedAt: 0, state: { step: 'review', review: review() } }],
+    it('shouldSayThatAnEditStillWaitsAndGiveNoAnswerForOneThatWasNeverOffered', async () => {
+      const status = await statusOf({})
+
+      expect(status.edits[0]).toMatchObject({ answer: 'waiting' })
+      expect(status.edits[1]).not.toHaveProperty('answer')
+      expect(status).toMatchObject({ awaitingAnswer: 1 })
     })
-    sessions.optimize.apply.mockImplementationOnce(() =>
-      setTimeout(
-        () =>
-          optimize.set({
-            step: 'pick',
-            runs: [
-              {
-                id: 'run-2',
-                experiment: 'refunds',
-                startedAt: 0,
-                state: { step: 'review', review: { ...review(), applied: [], applyError: 'agent.py changed.' } },
-              },
-            ],
-          }),
-        0
-      )
-    )
 
-    await expect(apply()).rejects.toThrow('agent.py changed.')
-    expect(sessions.optimize.accept).toHaveBeenCalledWith(0, true, 'run-2')
-    expect(sessions.optimize.apply).toHaveBeenCalledWith('run-2')
+    it('shouldSayThatAnEditWasLeftAsItIsSoABareYesDoesNotApplyIt', async () => {
+      const status = await statusOf({
+        reviewed: true,
+        edits: [{ ...offered!, accepted: false, decided: true }, unavailable!],
+      })
+
+      expect(status.edits[0]).toMatchObject({ answer: 'leave as it is' })
+      expect(status).not.toHaveProperty('awaitingAnswer')
+      expect(status.next).toBe(
+        'The developer left 1 edit of this run as it is. That is their answer: apply such an edit only when they ' +
+          'ask for that change in so many words, never on a bare "yes" or "ok".'
+      )
+    })
+
+    it('shouldSayBothWhenOneEditWaitsAndAnotherWasLeft', async () => {
+      const status = await statusOf({
+        edits: [
+          { ...offered!, accepted: false, decided: true },
+          { ...offered!, knob: 'effort', label: 'effort' },
+        ],
+      })
+
+      expect(status.edits).toMatchObject([{ answer: 'leave as it is' }, { answer: 'waiting' }])
+      expect(status.next).toContain('1 edit of this run still waits')
+      expect(status.next).toContain('The developer left 1 edit of this run as it is.')
+    })
+
+    it.each([
+      [
+        'was applied on screen',
+        { reviewed: true, applied: ['agent.py'], edits: [{ ...offered!, decided: true }] },
+        'apply',
+      ],
+      [
+        'was written by auto-optimize',
+        { auto: true, reviewed: true, applied: ['agent.py'], edits: [{ ...offered!, decided: true }] },
+        undefined,
+      ],
+      ['was written without an answer', { applied: ['agent.py'] }, undefined],
+    ] as const)('shouldSayWhatWasAnsweredAndNothingMoreWhenTheRun%s', async (_case, change, answer) => {
+      const status = await statusOf(change as Partial<OptimizeReview>)
+
+      expect((status.edits[0] as { answer?: string }).answer).toBe(answer)
+      expect(status).not.toHaveProperty('next')
+    })
   })
 
   it('shouldPutTheDiffOfTheWaitingRunBackOnScreenWhenTheDeveloperAsksToSeeItAgain', async () => {
