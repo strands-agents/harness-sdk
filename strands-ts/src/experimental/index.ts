@@ -9,6 +9,14 @@ export { Checkpoint, CHECKPOINT_SCHEMA_VERSION } from './checkpoint.js'
 export type { CheckpointPosition, CheckpointData, CheckpointResumeContent } from './checkpoint.js'
 export { CheckpointError } from '../errors.js'
 
+// Tool search for `Offload.defer`: its config, searchers, and the content block that keeps a provider's own tool search.
+export type { DeferConfig, ToolSearch } from '../context-manager/strategies/deferred-tool-loading.js'
+export { KeywordToolSearcher } from '../tools/search-tools.js'
+export type { ToolSearcher, ToolSearchContext } from '../tools/search-tools.js'
+export { ServerToolBlock } from '../types/messages.js'
+export type { ServerToolBlockData } from '../types/messages.js'
+export type { ServerToolDelta } from '../models/streaming.js'
+
 // Context management lives at `@strands-agents/sdk/context-manager`. These re-exports resolve to
 // the same symbols and are removed in the next minor release.
 export {

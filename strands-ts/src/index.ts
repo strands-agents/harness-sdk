@@ -58,7 +58,7 @@ export type { Interrupt, InterruptSource } from './interrupt.js'
 export type { InterruptParams, InterruptResponse, InterruptResponseContentData } from './types/interrupt.js'
 export { InterruptResponseContent } from './types/interrupt.js'
 
-// Checkpoint APIs are experimental; see '@strands-agents/sdk/experimental'.
+// Checkpoint APIs and ServerToolBlock are experimental; see '@strands-agents/sdk/experimental'.
 
 // JSON types
 export type { JSONSchema, JSONValue } from './types/json.js'
@@ -75,7 +75,6 @@ export type {
   CachePointBlockData,
   GuardContentBlockData,
   SummaryBlockData,
-  ServerToolBlockData,
   GuardContentText,
   GuardContentImage,
   GuardQualifier,
@@ -103,7 +102,6 @@ export {
   GuardContentBlock,
   InjectedBlock,
   SummaryBlock,
-  ServerToolBlock,
   ToolReferenceBlock,
   UnknownBlock,
   Message,
@@ -187,7 +185,6 @@ export type {
   ToolUseInputDelta,
   ReasoningContentDelta,
   CitationsDelta,
-  ServerToolDelta,
   ContentBlockDelta,
   ModelContentBlockDeltaEventData,
   ModelMessageStopEventData,

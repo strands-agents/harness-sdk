@@ -27,22 +27,9 @@ export type {
   /** @experimental Deferred tool loading may change in future versions. */
   DeferConditions,
   /** @experimental Deferred tool loading may change in future versions. */
-  DeferConfig,
-  /** @experimental Deferred tool loading may change in future versions. */
   DeferStrategy,
-  /** @experimental Deferred tool loading may change in future versions. */
-  ToolSearch,
 } from './strategies/offload/index.js'
-export {
-  /** @experimental Deferred tool loading may change in future versions. */
-  KeywordToolSearcher,
-} from '../tools/search-tools.js'
-export type {
-  /** @experimental Deferred tool loading may change in future versions. */
-  ToolSearcher,
-  /** @experimental Deferred tool loading may change in future versions. */
-  ToolSearchContext,
-} from '../tools/search-tools.js'
+// Tool search for `Offload.defer` is experimental; see '@strands-agents/sdk/experimental'.
 export type { TruncateConfig } from './methods/truncate.js'
 export type { SummarizeConfig } from './strategies/offload/summarize.js'
 export type { StrategyPresetName } from './presets.js'

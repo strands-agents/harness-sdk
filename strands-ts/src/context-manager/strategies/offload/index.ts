@@ -20,7 +20,7 @@ export { EmergencyTruncateStrategy } from './base.js'
 export type { OffloadStrategy } from './base.js'
 export type { OffloadConditions } from './conditions.js'
 export type { OffloadTarget } from './target.js'
-export type { DeferConditions, DeferConfig, DeferStrategy, DeferTarget, ToolSearch } from '../deferred-tool-loading.js'
+export type { DeferConditions, DeferStrategy, DeferTarget } from '../deferred-tool-loading.js'
 
 /**
  * Offload strategy namespace. Each method returns a strategy; call `.when()` on it to set when and on what it acts.

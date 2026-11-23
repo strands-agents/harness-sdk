@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Agent, tool } from '@strands-agents/sdk'
 import type { Model } from '@strands-agents/sdk'
-import { Offload, type ToolSearch } from '@strands-agents/sdk/context-manager'
+import { Offload } from '@strands-agents/sdk/context-manager'
+import type { ToolSearch } from '@strands-agents/sdk/experimental'
 import { z } from 'zod'
 import { anthropic, bedrock, gemini, openai, openaiResponses, vercelBedrock } from '../__fixtures__/model-providers.js'
 
