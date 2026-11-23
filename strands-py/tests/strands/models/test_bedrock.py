@@ -3423,7 +3423,7 @@ def test_format_request_drops_reasoning_the_model_rejects(bedrock_client, model_
 
 
 @pytest.mark.parametrize(
-    ("block_type", "block", "expected"),
+    ("block_type", "block", "exp_block"),
     [
         (
             "image",
@@ -3459,13 +3459,13 @@ def test_format_request_drops_reasoning_the_model_rejects(bedrock_client, model_
     ],
     ids=["image", "document", "video"],
 )
-def test_format_request_filters_media_content_blocks(block_type, block, expected, model, model_id):
+def test_format_request_filters_media_content_blocks(model, model_id, block_type, block, exp_block):
     """Test that format_request filters extra fields from image, document, and video content blocks."""
     messages = [{"role": "user", "content": [{block_type: block}]}]
 
-    formatted_request = model.format_request(messages)
+    tru_block = model.format_request(messages)["messages"][0]["content"][0][block_type]
 
-    assert formatted_request["messages"][0]["content"][0][block_type] == expected
+    assert tru_block == exp_block
 
 
 def test_format_request_image_s3_location_only(model, model_id):
