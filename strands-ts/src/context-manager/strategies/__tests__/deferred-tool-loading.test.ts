@@ -477,11 +477,10 @@ describe('DeferredToolLoadingStrategy', () => {
       expect(sentToolSpecs(model)[0]!.map((spec) => spec.name)).toContain('search_tools')
     })
 
-    it.each([
-      [{ search: 'hosted' }, "search=\"hosted\" is invalid: expected 'auto', 'client' or 'server'"],
-      [{ searches: 'client' }, 'unknown Offload.defer config "searches": expected search'],
-    ])('rejects %o', (config, message) => {
-      expect(() => Offload.defer('toolSpecs', config as DeferConfig)).toThrow(message)
+    it('rejects a search it does not know', () => {
+      expect(() => Offload.defer('toolSpecs', { search: 'hosted' } as unknown as DeferConfig)).toThrow(
+        "search=\"hosted\" is invalid: expected 'auto', 'client' or 'server'"
+      )
     })
   })
 

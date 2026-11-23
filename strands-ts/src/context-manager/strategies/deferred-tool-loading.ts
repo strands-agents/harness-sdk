@@ -52,10 +52,6 @@ const CONDITION_NAMES = ['toolCount', 'schemaTokens']
 
 const SEARCH_VALUES = ['auto', 'client', 'server'] as const
 
-const CONFIG_NAMES = ['search', 'searcher']
-
-const NO_TOOLS: ReadonlySet<string> = new Set()
-
 /** Input schema keywords that describe no parameter. */
 const ANNOTATION_KEYWORDS = new Set(['$schema', 'type', 'title', 'description'])
 
@@ -82,7 +78,8 @@ export type DeferTarget = 'toolSpecs' | string[]
 export type ToolSearch = (typeof SEARCH_VALUES)[number]
 
 /**
- * How `Offload.defer` lets the model find the tools it defers.
+ * Configuration for the defer strategy: how the model gets the tools it defers back. Unset, it loads them by name with
+ * `load_tools`.
  *
  * @experimental
  */
@@ -181,9 +178,9 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     return new DeferredToolLoadingStrategy(this._target, this._config, conditions)
   }
 
-  /** Whether the model searches the deferred tools, so the context manager registers `search_tools`. */
-  get searches(): boolean {
-    return this._config.search !== undefined
+  /** Who searches the deferred tools, when the config sets it; the context manager then registers `search_tools`. */
+  get search(): ToolSearch | undefined {
+    return this._config.search
   }
 
   /** The searcher `search_tools` runs, when the config names one. */
@@ -260,8 +257,8 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     const deferred = this._toDefer(agent, toolSpecs, model)
     const withoutLoader = { toolSpecs: toolSpecs.filter((spec) => spec.name !== this._loader) }
     const delivery = deferredToolLoading(model)
-    if (deferred.size === 0 || (delivery === 'unsupported' && !this.searches)) {
-      return { tools: withoutLoader, deferred: NO_TOOLS }
+    if (deferred.size === 0 || (delivery === 'unsupported' && !this.search)) {
+      return { tools: withoutLoader, deferred: new Set<string>() }
     }
     if (delivery === 'unsupported') return searchedOnly(toolSpecs, deferred, messages, model)
     const serverToolSearch =
@@ -274,7 +271,7 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
 
   /** The tool the model loads deferred tools with. */
   private get _loader(): string {
-    return this.searches ? SEARCH_TOOLS_TOOL_NAME : LOAD_TOOLS_TOOL_NAME
+    return this.search ? SEARCH_TOOLS_TOOL_NAME : LOAD_TOOLS_TOOL_NAME
   }
 
   /** Defers this call's tools, or sends every spec without the loader when the call defers none. */
@@ -283,7 +280,7 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     const { tools, deferred } = this._plan(context.agent, context.toolSpecs, context.model, context.messages)
     this._record(context.agent, deferred, context.model)
     if (
-      !this.searches &&
+      !this.search &&
       !defersTools(context.model) &&
       this._toDefer(context.agent, context.toolSpecs, context.model).size > 0
     ) {
@@ -407,11 +404,6 @@ function checkTarget(target: unknown): void {
 
 /** Rejects a config `Offload.defer` can't act on. */
 function checkConfig(config: DeferConfig): void {
-  for (const name of Object.keys(config)) {
-    if (!CONFIG_NAMES.includes(name)) {
-      throw new Error(`unknown Offload.defer config "${name}": expected ${CONFIG_NAMES.join(' or ')}`)
-    }
-  }
   if (config.search !== undefined && !SEARCH_VALUES.includes(config.search)) {
     throw new Error(`search=${JSON.stringify(config.search)} is invalid: expected 'auto', 'client' or 'server'`)
   }

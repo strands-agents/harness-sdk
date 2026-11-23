@@ -184,7 +184,7 @@ export class ContextManager implements Plugin {
     }
 
     const retrievalTools = this._enableRetrievalTool && this._archive ? [createRetrievalTool(this._archive)] : []
-    this._tools = [...retrievalTools, ...loaderFor(toolLoadingStrategy(this._strategies), agent)]
+    this._tools = [...retrievalTools, ...loadToolsFor(toolLoadingStrategy(this._strategies), agent)]
 
     agent.addHook(BeforeModelCallEvent, async (event) => {
       await this._runStrategies(event.agent, event.projectedInputTokens, undefined, event.invocationContext)
@@ -295,7 +295,7 @@ export class ContextManager implements Plugin {
  *
  * @throws Error when the agent already has a tool named `load_tools` or `search_tools`
  */
-function loaderFor(strategy: DeferredToolLoadingStrategy | undefined, agent: LocalAgent): Tool[] {
+function loadToolsFor(strategy: DeferredToolLoadingStrategy | undefined, agent: LocalAgent): Tool[] {
   if (!strategy) return []
   // Both names stay reserved, since model providers recognize either loader by its name.
   const taken = [LOAD_TOOLS_TOOL_NAME, SEARCH_TOOLS_TOOL_NAME].find((name) => agent.toolRegistry.get(name))
@@ -306,7 +306,7 @@ function loaderFor(strategy: DeferredToolLoadingStrategy | undefined, agent: Loc
     )
   }
   const deferredTools = (callingAgent: LocalAgent): string[] => strategy.deferredTools(callingAgent)
-  return [strategy.searches ? createSearchTools(deferredTools, strategy.searcher) : createLoadTools(deferredTools)]
+  return [strategy.search ? createSearchTools(deferredTools, strategy.searcher) : createLoadTools(deferredTools)]
 }
 
 /** The `Offload.defer` strategy among these, if there is one. */

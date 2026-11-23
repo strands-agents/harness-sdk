@@ -57,7 +57,7 @@ const CONTEXT_WINDOW_OVERFLOW_ERRORS = [
   'input and output tokens exceed your context limit',
 ]
 // Content blocks for tools Anthropic executes server side. They have no toolUse/toolResult equivalent
-// (the agent never runs them), so they are not streamed, but for tool search's, which ServerToolCollector keeps.
+// (the agent never runs them), so they are not streamed, but for tool search's, which ToolSearchCollector keeps.
 const SERVER_TOOL_BLOCK_TYPES = new Set([
   'bash_code_execution_tool_result',
   'code_execution_tool_result',
@@ -243,40 +243,29 @@ function isAnthropicServerTool(block: ContentBlock): block is ServerToolBlock {
 }
 
 /**
- * The server tool blocks of a stream. The provider's tool search blocks are collected whole, so each reaches the
- * history: the call, whose input streams in parts, and the result, which names the tools it loaded. Every other one is
- * left out, since it has no toolUse/toolResult equivalent and the agent never runs the tool.
+ * The provider's tool search blocks of a stream, collected whole so each reaches the history: the call, whose input
+ * streams in parts, and the result, which names the tools it loaded.
  */
-class ServerToolCollector {
-  private readonly _skipped = new Set<number>()
+class ToolSearchCollector {
   private readonly _collected = new Map<number, { block: Record<string, unknown>; input: string }>()
 
-  /** Takes the block at this index when it is a server tool block, and reports whether it is. */
-  start(index: number, block: { type: string; name?: string; content?: unknown }): boolean {
+  /** Takes the block at this index when it is a tool search call or result, and reports whether it is. */
+  start(index: number, block: { type: string; name?: string }): boolean {
     const isSearchCall = block.type === 'server_tool_use' && TOOL_SEARCH_TOOL_NAMES.has(block.name ?? '')
-    if (isSearchCall || block.type === 'tool_search_tool_result') {
-      this._collected.set(index, { block: block as unknown as Record<string, unknown>, input: '' })
-      return true
-    }
-    if (!SERVER_TOOL_BLOCK_TYPES.has(block.type)) return false
-    this._skipped.add(index)
-    logServerToolBlock(block)
+    if (!isSearchCall && block.type !== 'tool_search_tool_result') return false
+    this._collected.set(index, { block: block as unknown as Record<string, unknown>, input: '' })
     return true
   }
 
-  /** Takes a delta of the server tool block at this index, and reports whether there is one. */
+  /** Takes a delta of the tool search block at this index, and reports whether there is one. */
   delta(index: number, delta: { type: string; partial_json?: string }): boolean {
     const collected = this._collected.get(index)
     if (collected && delta.type === 'input_json_delta') collected.input += delta.partial_json ?? ''
-    return collected !== undefined || this._skipped.has(index)
+    return collected !== undefined
   }
 
-  /**
-   * The events of the server tool block at this index once it stops: none for one left out, and undefined when the
-   * block is not a server tool's.
-   */
+  /** The events of the tool search block at this index once it stops, or undefined when the block is not one. */
   stop(index: number): ModelStreamEvent[] | undefined {
-    if (this._skipped.delete(index)) return []
     const collected = this._collected.get(index)
     if (!collected) return undefined
     this._collected.delete(index)
@@ -293,20 +282,6 @@ class ServerToolCollector {
       },
       { type: 'modelContentBlockStopEvent' },
     ]
-  }
-}
-
-/**
- * Logs a skipped server-side tool block, at warn level when the tool returned an error.
- *
- * @param contentBlock - The `content_block` of a `content_block_start` event
- */
-function logServerToolBlock(contentBlock: { type: string; content?: unknown }): void {
-  const errorCode = (contentBlock.content as { error_code?: string } | undefined)?.error_code
-  if (errorCode !== undefined) {
-    logger.warn(`block_type=<${contentBlock.type}>, error_code=<${errorCode}> | server-side tool failed`)
-  } else {
-    logger.debug(`block_type=<${contentBlock.type}> | skipping server-side tool block`)
   }
 }
 
@@ -692,7 +667,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         let messageStopped = false
         const responseUsage: Record<string, number> = {}
 
-        const serverToolCollector = new ServerToolCollector()
+        const serverToolBlockIndexes = new Set<number>()
+        const toolSearchBlocks = new ToolSearchCollector()
 
         for await (const event of stream) {
           switch (event.type) {
@@ -709,7 +685,12 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
             }
 
             case 'content_block_start':
-              if (serverToolCollector.start(event.index, event.content_block)) break
+              if (toolSearchBlocks.start(event.index, event.content_block)) break
+              if (SERVER_TOOL_BLOCK_TYPES.has(event.content_block.type)) {
+                serverToolBlockIndexes.add(event.index)
+                this._logServerToolBlock(event.content_block)
+                break
+              }
 
               if (event.content_block.type === 'tool_use') {
                 yield {
@@ -753,7 +734,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
               break
 
             case 'content_block_delta':
-              if (serverToolCollector.delta(event.index, event.delta)) break
+              if (toolSearchBlocks.delta(event.index, event.delta)) break
+              if (serverToolBlockIndexes.has(event.index)) break
 
               if (event.delta.type === 'text_delta') {
                 yield {
@@ -786,9 +768,17 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
               }
               break
 
-            case 'content_block_stop':
-              yield* serverToolCollector.stop(event.index) ?? [{ type: 'modelContentBlockStopEvent' as const }]
+            case 'content_block_stop': {
+              const toolSearchEvents = toolSearchBlocks.stop(event.index)
+              if (toolSearchEvents) {
+                yield* toolSearchEvents
+                break
+              }
+              if (serverToolBlockIndexes.delete(event.index)) break
+
+              yield { type: 'modelContentBlockStopEvent' }
               break
+            }
 
             case 'message_delta':
               if (event.usage) {
@@ -1651,6 +1641,20 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       default:
         logger.warn(`citation_type=<${(citation as { type: string }).type}> | unsupported citation location | skipping`)
         return undefined
+    }
+  }
+
+  /**
+   * Logs a skipped server-side tool block, at warn level when the tool returned an error.
+   *
+   * @param contentBlock - The `content_block` of a `content_block_start` event
+   */
+  private _logServerToolBlock(contentBlock: { type: string; content?: unknown }): void {
+    const errorCode = (contentBlock.content as { error_code?: string } | undefined)?.error_code
+    if (errorCode !== undefined) {
+      logger.warn(`block_type=<${contentBlock.type}>, error_code=<${errorCode}> | server-side tool failed`)
+    } else {
+      logger.debug(`block_type=<${contentBlock.type}> | skipping server-side tool block`)
     }
   }
 

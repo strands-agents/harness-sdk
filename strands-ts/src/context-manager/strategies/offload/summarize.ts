@@ -14,7 +14,7 @@ import { isPinned } from '../../../conversation-manager/compression/pin-message.
 import { Message, ReasoningBlock, SummaryBlock, TextBlock, ToolResultBlock } from '../../../types/messages.js'
 import { DocumentBlock, ImageBlock } from '../../../types/media.js'
 import type { ContentBlock, OffloadedBlock } from '../../../types/messages.js'
-import type { Model, SummarizeOptions } from '../../../models/model.js'
+import type { CallTools, Model, SummarizeOptions } from '../../../models/model.js'
 import type { SummarizeResult } from '../../../models/summarize.js'
 import { unwrapInvocationContext, type InvocationContext } from '../../../agent/invocation-context.js'
 import { latestCallTools } from '../../../models/model-proxy.js'
@@ -333,9 +333,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
    * The tools a replay sends: those of the agent's latest model call, since the replay shares that call's prompt cache
    * only with the same tools. Before the first call, the ones it would send with the registry's tools.
    */
-  private _replayedTools(
-    agent: LocalAgent
-  ): Pick<SummarizeOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'> {
+  private _replayedTools(agent: LocalAgent): CallTools {
     const recorded = latestCallTools(agent)
     if (recorded) return recorded
     const toolSpecs = agent.toolRegistry.toolSpecs()
