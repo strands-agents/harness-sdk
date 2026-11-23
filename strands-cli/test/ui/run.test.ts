@@ -897,6 +897,46 @@ describe('runInkChat', () => {
     }
   })
 
+  it('shows a preparation step on the same row as starting the agent', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 30)
+    const frame = captureFrame(output)
+    const controller = new ChatController(idleBackend())
+    let prepared!: () => void
+    let ready!: (value: ChatController) => void
+    const pending = new Promise<ChatController>((resolve) => {
+      ready = resolve
+    })
+    const rowOf = (text: string): number => frame().findIndex((line) => line.includes(text))
+    const running = runInkChat(() => pending, {
+      input,
+      output,
+      errorOutput: output,
+      config: CliConfigStore.memory(),
+      renderApp: (element, options) => render(element, { ...options, incrementalRendering: false }),
+      prepare: (screen) => {
+        screen.show(undefined, 'Preparing runtime…')
+        return new Promise<boolean>((resolve) => {
+          prepared = () => resolve(true)
+        })
+      },
+    })
+    try {
+      await vi.waitFor(() => expect(rowOf('Preparing runtime…')).toBeGreaterThan(0))
+      const preparing = rowOf('Preparing runtime…')
+      prepared()
+      await vi.waitFor(() => expect(rowOf('Starting agent…')).toBeGreaterThan(0))
+
+      expect(rowOf('Starting agent…')).toBe(preparing)
+    } finally {
+      prepared?.()
+      ready(controller)
+      controller.close(0)
+      await running
+      input.destroy()
+    }
+  })
+
   it('renders and starts the first request when the controller is ready without waiting for the intro', async () => {
     const controller = new ChatController(idleBackend())
     const start = vi.spyOn(controller, 'start')

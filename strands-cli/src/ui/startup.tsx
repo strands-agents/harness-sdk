@@ -26,18 +26,8 @@ import { startupLockupLeft, startupLockupTopPadding, COMPACT_LOCKUP_TOP_PADDING 
 import { Text, useTheme } from './theme.js'
 import { useTerminalSize } from './terminal-size.js'
 import { type AppearanceSettings } from './setup/steps.js'
-import { useSpinner } from './animation.js'
 
 const LOCKUP_SLIDE_DURATION_MS = 400
-
-export function StartupStatus({ status, animate }: { status: string; animate: boolean }): ReactElement {
-  const spinner = useSpinner(true, animate)
-  return (
-    <Text dimColor wrap="truncate-end">
-      {spinner} {status}
-    </Text>
-  )
-}
 
 export const StartupContentRows = createContext<number | undefined>(undefined)
 

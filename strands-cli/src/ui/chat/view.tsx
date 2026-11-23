@@ -174,8 +174,11 @@ function ChatViewContent({
   attachments = [],
   party = false,
   entranceFade = true,
+  quietFooter = false,
 }: {
   startupContent?: ReactNode
+  /** Keeps the footer's rows but leaves them blank, for a startup step before any agent is open. */
+  quietFooter?: boolean
   onActionElement?: (action: FooterAction, element: DOMElement | null) => void
   snapshot: ChatSnapshot
   input: string
@@ -753,16 +756,20 @@ function ChatViewContent({
               />
             ) : null}
           </Box>
-          <ComposerFooter
-            snapshot={snapshot}
-            width={editorWidth}
-            {...(hoveredAction !== undefined ? { hoveredAction } : {})}
-            {...(availableUpdate ? { availableUpdate } : {})}
-            {...(pressedMetadata ? { pressed: pressedMetadata } : {})}
-            {...(hoveredMetadata ? { hovered: hoveredMetadata } : {})}
-            {...(onMetadataElement ? { onMetadataElement } : {})}
-            {...(onActionElement ? { onActionElement } : {})}
-          />
+          {quietFooter ? (
+            <Box height={1} marginTop={1} flexShrink={0} />
+          ) : (
+            <ComposerFooter
+              snapshot={snapshot}
+              width={editorWidth}
+              {...(hoveredAction !== undefined ? { hoveredAction } : {})}
+              {...(availableUpdate ? { availableUpdate } : {})}
+              {...(pressedMetadata ? { pressed: pressedMetadata } : {})}
+              {...(hoveredMetadata ? { hovered: hoveredMetadata } : {})}
+              {...(onMetadataElement ? { onMetadataElement } : {})}
+              {...(onActionElement ? { onActionElement } : {})}
+            />
+          )}
         </Box>
       </FadeIn>
       {startupContent ? (

@@ -19,7 +19,6 @@ import { useTerminalSize } from './terminal-size.js'
 import { resolveModelTarget } from '../model/selection.js'
 import { type SettingsUpdateStatus } from './chat/panel-state.js'
 import { ChatView } from './chat/view.js'
-import { StartupStatus } from './startup.js'
 
 export interface McpTrustRequest {
   workspace: string
@@ -235,13 +234,12 @@ export function ChatRoot({
   if (!controller) {
     placeholderEntranceFade.current ??= !deckShown.current
     deckShown.current = true
-    const startupCard =
-      startupContent ??
-      (startupStatus ? <StartupStatus status={startupStatus} animate={settings.animations} /> : undefined)
+    // A step with no content of its own shows where "Starting agent…" will, so the status never jumps.
     return (
       <StartupView
-        snapshot={startupSnapshot(settings, config)}
-        {...(startupCard ? { startupContent: startupCard } : {})}
+        snapshot={startupSnapshot(settings, config, startupContent ? undefined : startupStatus)}
+        {...(startupContent ? { startupContent } : {})}
+        quietFooter={startupContent === undefined && startupStatus !== undefined}
         entranceFade={placeholderEntranceFade.current}
         input=""
         cursor={0}
@@ -282,7 +280,7 @@ function configuredModelName(config?: CliConfigStore): string | undefined {
   }
 }
 
-function startupSnapshot(settings: ChatSettings, config?: CliConfigStore): ChatSnapshot {
+function startupSnapshot(settings: ChatSettings, config?: CliConfigStore, status = 'Starting agent…'): ChatSnapshot {
   return {
     completedTurns: [],
     pendingSteering: [],
@@ -291,7 +289,7 @@ function startupSnapshot(settings: ChatSettings, config?: CliConfigStore): ChatS
     tasks: [],
     context: {},
     status: 'idle',
-    composerStatus: 'Starting agent…',
+    composerStatus: status,
     runtime: {
       agent: 'Strands harness',
       version: readCliVersion(),
