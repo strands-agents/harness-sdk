@@ -305,7 +305,7 @@ Beyond the [question validation errors](../questions.mdx#validation), `ask` rais
 | <Syntax py="ContextWindowOverflowException" ts="ContextWindowOverflowError" /> | The request is too large (HTTP 413). Shorten the input, such as by sending only the latest messages of a conversation. |
 | <Syntax py="ValueError" ts="Error" /> | The request breaks a [limit](#limits). |
 | <Syntax py="httpx.HTTPStatusError" ts="ModelError" /> | Any other non-2xx response, such as HTTP 401 for an invalid API key. |
-| <Syntax py="httpx.TransportError" ts="ModelError" /> | The request didn't complete, because of a network failure or a timeout. |
+| <Syntax py="httpx.TransportError" ts="ModelError" /> | <Syntax plain py="The request didn't complete, because of a network failure or a timeout." ts="The request failed before the response arrived, because of a network failure or a timeout. A failure after that raises the underlying error." /> |
 | <Syntax py="StructuredOutputException" ts="ModelError" /> | Decisions API returned a response the decision model can't read, or a successful HTTP response that reports an error. |
 
 Decisions API can report a failure inside an HTTP 200 response, as a non-zero error
@@ -324,8 +324,9 @@ The cause is an `httpx.HTTPStatusError`. Read the status code and body from its
 <Tab label="TypeScript">
 
 `ModelThrottledError` and `ContextWindowOverflowError` extend `ModelError`, so check
-for them before you check for `ModelError`. A cancel signal that fires while the
-response body is downloading raises the abort error itself rather than `ModelError`.
+for them before you check for `ModelError`. A failure after the response starts, such
+as a cancel signal firing or the connection dropping while the body downloads, raises
+the underlying error rather than `ModelError`.
 
 </Tab>
 </Tabs>
