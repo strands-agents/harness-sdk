@@ -23,6 +23,7 @@ import { TemporaryExperiments } from '../../../src/dev/temporary-evals-fork/expe
 import { readTemporaryTestResults, rememberTemporaryTestResults } from '../../../src/dev/temporary-evals-fork/report.js'
 import type { TemporarySessionHost } from '../../../src/dev/temporary-evals-fork/host.js'
 import { readTemporaryOptimizeRecords } from '../../../src/dev/temporary-evals-fork/optimize-runs.js'
+import { answerOptimizeReview, optimizeReviewContext } from '../../../src/dev/temporary-evals-fork/review-run.js'
 import {
   TemporaryOptimize,
   TemporaryTest,
@@ -1595,6 +1596,144 @@ describe('TEMPORARY dev sessions', () => {
       })
     )
     expect(sessions.optimize.appliedChanges()).toEqual([])
+  })
+
+  describe('a chat message sent beside the diff of a finished run', () => {
+    /** A finished run with two edits, instructions and effort, and the diff of the first on screen. */
+    const twoEditsOnScreen = async () => {
+      const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+        await writeOptimizerRun(recordOf(args), [
+          ...studyLines(0.9, { baseline: { effort: 'low' }, winner: { effort: 'high' } }),
+          optimizerStop(),
+          optimizerPicked('win'),
+        ])
+        return exit
+      })
+      const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+      const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+      sessions.optimize.plan(experiment)
+      await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+      sessions.optimize.toggleKnob('effort')
+      sessions.optimize.start()
+      await vi.waitFor(() => expect(sessions.ask.pending()?.question).toBe('Apply this change to instructions?'))
+      const run = optimizationName(recordOf(optimizing.mock.calls[0]![0].args))
+      const instructions = (): Promise<string> => readFile(join(workspace.root, 'instructions.md'), 'utf8')
+      return { workspace, sessions, run, instructions }
+    }
+
+    it('shouldSayWhichDiffIsOnScreenAndHowToAnswerItForTheDeveloper', async () => {
+      const { workspace, sessions, run } = await twoEditsOnScreen()
+
+      const context = optimizeReviewContext(sessions)!
+
+      expect(context).toContain(`a diff from the finished optimization run ${run}`)
+      expect(context).toContain('It asks "Apply this change to instructions?"')
+      expect(context).toContain('"Apply this change" and "Leave it as it is", and they have picked neither')
+      expect(context).toContain(
+        `The diff shows edit 0 (1 of the 2 that this run offers): instructions in instructions.md: now ` +
+          `${JSON.stringify(BASELINE)}, would become ${JSON.stringify(WINNER)}`
+      )
+      expect(context).toContain(
+        '- edit 1, effort in agent.py: low (the harness default; not in the call) → high: not answered yet'
+      )
+      expect(context).toContain(
+        `call strands_dev_answer_review with run "${run}", edit 0, and answer "apply" or "leave"`
+      )
+      const ask = temporaryDevCommands(workspace, {
+        root: workspace.root,
+        entrypoint: workspace.entrypoint,
+        language: 'python',
+      }).find(({ spec }) => spec.name === 'ask')!
+      expect(ask.screenContext?.()).toBe(context)
+    })
+
+    it('shouldSayNothingOfADiffWhenAQuestionOfTheAgentIsInFrontOfIt', async () => {
+      const { sessions } = await twoEditsOnScreen()
+
+      void sessions.ask.ask({
+        name: 'experiment',
+        question: 'Which experiment?',
+        steps: [{ key: 'one', title: 'One', fields: [{ kind: 'text', key: 'answer', label: 'answer' }] }],
+      })
+
+      expect(sessions.ask.pending()?.question).toBe('Which experiment?')
+      expect(optimizeReviewContext(sessions)).toBeUndefined()
+    })
+
+    it('shouldPickTheChoiceInTheDevelopersPlaceAndShowTheNextEdit', async () => {
+      const { sessions, run, instructions } = await twoEditsOnScreen()
+
+      const answered = await answerOptimizeReview(sessions, { run, edit: 0, apply: true })
+
+      expect(answered).toEqual({
+        run,
+        settled: false,
+        next: {
+          edit: 1,
+          change: 'effort in agent.py: low (the harness default; not in the call) → high',
+          at: 1,
+          of: 2,
+        },
+      })
+      expect(sessions.ask.pending()?.question).toBe('Apply this change to effort?')
+      expect(optimizeReviewContext(sessions)).toMatch(
+        /- edit 0, instructions in instructions\.md: .*: answered on screen: apply/
+      )
+      // Nothing is written until every edit has its answer, as when the developer answers on screen.
+      expect(await instructions()).toBe(`${BASELINE}\n`)
+    })
+
+    it('shouldWriteWhatWasAcceptedAndCloseTheDiffWhenTheLastEditIsAnswered', async () => {
+      const { workspace, sessions, run, instructions } = await twoEditsOnScreen()
+      await answerOptimizeReview(sessions, { run, edit: 0, apply: true })
+
+      const answered = await answerOptimizeReview(sessions, { run, edit: 1, apply: false })
+
+      expect(answered).toEqual({ run, settled: true, applied: ['instructions.md'] })
+      expect(sessions.ask.pending()).toBeUndefined()
+      expect(optimizeReviewContext(sessions)).toBeUndefined()
+      expect(await instructions()).toBe(`${WINNER}\n`)
+      expect(await readFile(workspace.entrypoint, 'utf8')).toContain('effort="low"')
+      expect(temporaryOptimizeJobs(sessions.optimize.snapshot())).toEqual([])
+    })
+
+    it('shouldWriteNothingWhenEveryEditIsLeftAsItIs', async () => {
+      const { sessions, run, instructions } = await twoEditsOnScreen()
+      await answerOptimizeReview(sessions, { run, edit: 0, apply: false })
+
+      const answered = await answerOptimizeReview(sessions, { run, edit: 1, apply: false })
+
+      expect(answered).toEqual({ run, settled: true })
+      expect(sessions.ask.pending()).toBeUndefined()
+      expect(await instructions()).toBe(`${BASELINE}\n`)
+      expect(sessions.optimize.appliedChanges()).toEqual([])
+    })
+
+    it.each([
+      ['another edit of the run', (run: string) => ({ run, edit: 1 }), 'The diff on screen is edit 0 of run'],
+      ['another run', () => ({ run: '20260101-000000-other', edit: 0 }), 'The diff on screen is edit 0 of run'],
+    ])('shouldRefuseAnAnswerMeantFor%sAndLeaveTheDiffAsItIs', async (_case, meant, showing) => {
+      const { sessions, run, instructions } = await twoEditsOnScreen()
+      const question = sessions.ask.pending()
+
+      const refused = answerOptimizeReview(sessions, { ...meant(run), apply: true })
+
+      await expect(refused).rejects.toThrow("is not the diff on the developer's screen now, so nothing was picked")
+      await expect(refused).rejects.toThrow(showing)
+      expect(sessions.ask.pending()).toBe(question)
+      expect(await instructions()).toBe(`${BASELINE}\n`)
+    })
+
+    it('shouldRefuseAnAnswerWhenTheDeveloperClosedTheDiff', async () => {
+      const { sessions, run } = await twoEditsOnScreen()
+      sessions.ask.respond(sessions.ask.pending()!.id, undefined)
+      await vi.waitFor(() => expect(sessions.ask.pending()).toBeUndefined())
+
+      await expect(answerOptimizeReview(sessions, { run, edit: 0, apply: true })).rejects.toThrow(
+        'No optimization diff is on screen.'
+      )
+      expect(optimizeReviewContext(sessions)).toBeUndefined()
+    })
   })
 
   it('shouldKeepTheReviewWaitingWhenTheDeveloperSendsAChatMessageInstead', async () => {

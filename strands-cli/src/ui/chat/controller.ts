@@ -64,6 +64,7 @@ import { modelControlErrorMessage, profileEffort } from '../../model/selection.j
 import { isExpiredModelCredential, isModelCredentialFailure } from '../../model/credential-failure.js'
 import { devStateNotice } from '../../dev/runtime.js'
 import { presentChatStream, type StreamPresentationOptions } from './stream-presentation.js'
+import { SCREEN_CONTEXT_CLOSE, SCREEN_CONTEXT_OPEN } from '../../session/desktop-profile.js'
 import { errorMessage, sanitizeTerminalText } from '../../terminal/text.js'
 import { canUseNativePicker, chooseDirectory } from '../../terminal/directory-picker.js'
 import { copyTerminalText } from '../../terminal/terminal.js'
@@ -754,8 +755,10 @@ export class ChatController implements ChatControllerApi {
     }
     const submission = normalizeChatInput(input)
     this._closePanelsForTurn()
-    const prompt =
-      submission.attachments.length === 0 ? submission.text : attachmentContent(submission.text, submission.attachments)
+    // A message typed beside an open panel may be about what the panel shows. A command or a skill brings its own request.
+    const text =
+      displayPrompt === undefined ? withScreenContext(submission.text, this._screenContext()) : submission.text
+    const prompt = submission.attachments.length === 0 ? text : attachmentContent(text, submission.attachments)
     return this._runStream(
       displayPrompt ?? submission.text,
       this._backend.stream(prompt),
@@ -764,6 +767,12 @@ export class ChatController implements ChatControllerApi {
       undefined,
       submission.attachments
     )
+  }
+
+  /** What the open dev panel shows, for the agent to read with the message that was typed beside it. */
+  private _screenContext(): string | undefined {
+    const panel = this._panel
+    return panel?.kind === 'dev' ? this._devCommand(panel.command)?.screenContext?.() : undefined
   }
 
   private async _runPeerMessage(message: PeerMessage): Promise<ChatTurn | undefined> {
@@ -3329,6 +3338,10 @@ function skillInvocationPrompt(activation: SkillActivation, displayPrompt: strin
     '',
     displayPrompt,
   ].join('\n')
+}
+
+function withScreenContext(prompt: string, context: string | undefined): string {
+  return context ? [SCREEN_CONTEXT_OPEN, context, SCREEN_CONTEXT_CLOSE, '', prompt].join('\n') : prompt
 }
 
 function skillCommandRequest(command: string, workflow: string, prompt: string): string {

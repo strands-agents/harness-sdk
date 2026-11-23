@@ -13,7 +13,7 @@ import { temporaryDevChatPart as temporaryAgentTools } from './agent-tools.js'
 import { readTemporaryEvaluators } from './evaluators.js'
 import { temporaryGenerationJobs } from './experiments-session.js'
 import { temporaryJobsFeed } from './jobs.js'
-import { showOptimizeReview } from './review-run.js'
+import { optimizeReviewContext, showOptimizeReview } from './review-run.js'
 import { temporarySessionHistory } from './session-converter.js'
 import { temporaryCommandWorkflows } from './workflow-skills.js'
 import {
@@ -58,6 +58,7 @@ const OPTIMIZE_DETAILS = paragraphs(
   'While it runs, a line below the chat input shows the progress. Click the line to ask about it, or ask the agent to stop the run and keep the best candidate so far. You can start other runs at the same time.',
   'The run continues when you cancel the chat turn or close strands dev. When strands dev opens again, the run continues from where it stopped. On Windows, the run stops when strands dev closes, and continues at the next start.',
   'The run goes on in the background, and a notice says when it finishes. Then its proposed edits appear on screen as a diff, one edit at a time: pick Apply this change or Leave it as it is. The agent source changes once every edit has an answer, and only with the edits you applied. Then use /evaluate on the new version. Ask the agent to open the run in the evals UI for a closer look.',
+  'While a diff is on screen you can also answer it in the chat: say "approve this" or "leave it", and the agent picks that choice for you. Any other message leaves the diff where it is.',
   'Esc closes a diff without an answer. The run stays on the line below the chat input, also after strands dev opens again, and clicking that line, or asking the agent, shows the diff again.',
   'With Auto-optimize (apply edits) on in /settings, a run that finishes writes its edits to the agent source without showing them. A run that you stopped still shows its edits for review.',
   'strands dev saves the records in strands-dev/experiments/<name>/optimizations/. From a shell, strands dev optimize <experiment> runs the optimizer and prints the result, but it does not change the agent source.',
@@ -165,6 +166,8 @@ const askCommand = (sessions: Sessions): DevChatCommand => ({
   dock: () => wizardRequestHasDiff(sessions().ask.pending()),
   wideDock: () => wizardRequestHasDiff(sessions().ask.pending()),
   dropPending: () => sessions().ask.interruptForTurn(),
+  // A finished run's diff stays on screen when a message is sent, so the message says which diff that was.
+  screenContext: () => optimizeReviewContext(sessions()),
   contentRows: (width) => wizardRequestRows(sessions().ask.pending(), width),
   open:
     (context): DevChatPanelView =>

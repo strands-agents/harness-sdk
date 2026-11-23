@@ -44,7 +44,7 @@ import {
   TEMPORARY_DECISION_CHOICES,
   type TemporaryBudgetSetting,
 } from './plan.js'
-import { showOptimizeReview } from './review-run.js'
+import { answerOptimizeReview, showOptimizeReview, type AnsweredOptimizeReview } from './review-run.js'
 import type { TemporarySessionHistory } from './session-converter.js'
 import { temporaryEditsAwaitingAnswer, type TemporaryAppliedChange, type TemporaryDevSessions } from './sessions.js'
 
@@ -58,6 +58,14 @@ export interface TemporaryDevChatHost {
   readonly history: TemporarySessionHistory
   /** Puts a run's waiting edits on the developer's screen. Says whether it had any to show. */
   readonly showReview?: (run: string) => boolean
+  /** Picks a choice of the diff on the developer's screen in their place. Throws when that diff is not showing. */
+  readonly answerReview?: (answer: ReviewAnswer) => Promise<AnsweredOptimizeReview>
+}
+
+interface ReviewAnswer {
+  readonly run: string
+  readonly edit: number
+  readonly apply: boolean
 }
 
 const TEXT_LIMIT = 600
@@ -67,7 +75,7 @@ const INSTRUCTIONS = `For experiments, evaluations, and test cases, activate the
 
 Runs cost money. Name the scope in chat and end the turn; start a run only after the developer approves it in a later turn. Being asked to run, test, or improve something is not that approval. In /evaluate, picking the experiments on screen is the approval.
 
-When an optimization run finishes, its edits appear on the developer's screen as a diff, and they apply or leave each edit there, unless auto-optimize applies them. Do not print the edits or ask in chat which ones to apply; strands_dev_review_optimization puts a closed diff back on screen. Call strands_dev_apply_optimization only for edits the developer names in chat.
+When an optimization run finishes, its edits appear on the developer's screen as a diff, and they apply or leave each edit there, unless auto-optimize applies them. Do not print the edits or ask in chat which ones to apply; strands_dev_review_optimization puts a closed diff back on screen. A message that comes with a <strands_dev_screen> block was written while that diff was on their screen: when it answers the diff, such as "approve this" or "leave it", pick for them with strands_dev_answer_review as the block says, and do not ask them to confirm. Call strands_dev_apply_optimization only for edits the developer names in chat when no diff of them is on screen.
 
 Answer what was asked from tool output of this turn: call strands_dev_status again whenever the question is what exists, because runs and files change between turns. Ask the developer to choose or enter numbers with the strands_dev_ UI tools, and ask a free-form question in chat. When a question comes back interrupted, the developer wrote to you instead of answering: reply to that message and end the turn, and never take its unsubmitted draft as the answer. Never make up the evals UI address; pass on only what strands_dev_open_evals_ui returns, as a markdown link with a short label such as [open the run](url).`
 
@@ -830,6 +838,70 @@ const reviewOptimizationTool = (sessions: Sessions, show: (run: string) => boole
   },
 })
 
+const ANSWERS = ['apply', 'leave'] as const
+
+const answeredNext = ({ settled, applied, applyError, next }: AnsweredOptimizeReview, apply: boolean): string => {
+  if (next)
+    return (
+      `The diff of edit ${next.edit} of this run took its place on the developer's screen, ${next.at + 1} of ` +
+      `${next.of}: ${next.change}. If their message answered every edit of the run, such as "apply all of ` +
+      'them", answer this one the same way. Otherwise it is theirs to answer: say in one line what you picked ' +
+      'and that the next edit is on screen.'
+    )
+  if (!settled)
+    return 'Another edit of this run still waits behind a question on screen. Say in one line what you picked.'
+  if (applyError) return 'An edit could not be written: give applyError as it is, and say which edits were applied.'
+  if (applied?.length)
+    return (
+      'Every edit of this run has its answer, the diff is closed, and the edits in applied are written. The agent ' +
+      'reloads after your reply. Say so in one line, and offer to evaluate the experiment again to check the change.'
+    )
+  return apply
+    ? 'Every edit of this run has its answer and the diff is closed. Say so in one line.'
+    : 'Every edit of this run has its answer, the diff is closed, and nothing was written. Say so in one line.'
+}
+
+const answerReviewTool = (answerReview: NonNullable<TemporaryDevChatHost['answerReview']>): DevChatTool => ({
+  name: 'strands_dev_answer_review',
+  description:
+    "Pick a choice of the optimization diff on the developer's screen, in their place: apply the edit it shows, or " +
+    'leave it as it is. Call it only when their chat message came with that diff as what is on their screen and ' +
+    'the message is their answer to it, with the run and the edit named there. It does what picking the choice on ' +
+    'screen does: the diff closes, the next edit of the run shows, and the accepted edits are written once every ' +
+    'edit has its answer. It refuses when that diff is not the one showing.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      run: { type: 'string', description: 'The run that the diff on screen belongs to.' },
+      edit: { type: 'integer', description: 'The edit that the diff on screen shows, by its index in that run.' },
+      answer: {
+        type: 'string',
+        enum: [...ANSWERS],
+        description: 'apply writes the edit; leave keeps the agent as it is.',
+      },
+    },
+    required: ['run', 'edit', 'answer'],
+    additionalProperties: false,
+  },
+  run: async (input): Promise<string> => {
+    const edit = whole(input, 'edit', 0, Number.MAX_SAFE_INTEGER)
+    if (edit === undefined) throw new Error('edit must be the index of the edit that the diff on screen shows.')
+    if (input.answer !== 'apply' && input.answer !== 'leave') throw new Error('answer must be apply or leave.')
+    const apply = input.answer === 'apply'
+    const answered = await answerReview({ run: requiredText(input, 'run'), edit, apply })
+    return reply(
+      defined({
+        run: answered.run,
+        edit,
+        picked: apply ? 'Apply this change' : 'Leave it as it is',
+        applied: answered.applied,
+        applyError: answered.applyError,
+        next: answeredNext(answered, apply),
+      })
+    )
+  },
+})
+
 const applyTool = (sessions: Sessions): DevChatTool => ({
   name: 'strands_dev_apply_optimization',
   description:
@@ -927,6 +999,7 @@ export const temporaryDevChatPart = ({
   evaluators,
   history,
   showReview = (run): boolean => showOptimizeReview(sessions(), run),
+  answerReview = (answer): Promise<AnsweredOptimizeReview> => answerOptimizeReview(sessions(), answer),
 }: TemporaryDevChatHost): DevChatPart => ({
   instructions: [INSTRUCTIONS, ...changesSection(sessions().optimize.appliedChanges())].join('\n\n'),
   skills: [STRANDS_EVALS_SKILL, STRANDS_EVALS_OPTIMIZE_SKILL, ...temporaryWorkflowSkills()],
@@ -943,6 +1016,7 @@ export const temporaryDevChatPart = ({
     planTool(sessions),
     ...uiTools(() => sessions().ask),
     reviewOptimizationTool(sessions, showReview),
+    answerReviewTool(answerReview),
     applyTool(sessions),
   ],
 })

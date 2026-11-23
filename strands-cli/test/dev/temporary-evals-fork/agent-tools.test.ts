@@ -25,6 +25,7 @@ import {
   TEMPORARY_TEST_SHARES,
 } from '../../../src/dev/temporary-evals-fork/plan.js'
 import type { TemporaryEvaluator } from '../../../src/dev/temporary-evals-fork/evaluators.js'
+import type { AnsweredOptimizeReview } from '../../../src/dev/temporary-evals-fork/review-run.js'
 import type { TemporaryAppliedChange, TemporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
 
 const REFUNDS: ExperimentSummary = {
@@ -267,16 +268,23 @@ const setup = (evaluators = vi.fn(async () => CATALOG), changes: readonly Tempor
     converter: vi.fn(async (): Promise<string> => 'Follow the session-converter skill below.'),
   }
   const showReview = vi.fn((_run: string): boolean => true)
+  const answerReview = vi.fn(
+    async ({ run }: { run: string; edit: number; apply: boolean }): Promise<AnsweredOptimizeReview> => ({
+      run,
+      settled: true,
+    })
+  )
   const part = temporaryDevChatPart({
     sessions: () => fake.sessions as unknown as TemporaryDevSessions,
     evaluators,
     history,
     showReview,
+    answerReview,
   })
   const tool = (name: string): DevChatTool => part.tools.find((candidate) => candidate.name === name)!
   const call = async (name: string, input: Record<string, JSONValue> = {}): Promise<unknown> =>
     JSON.parse(await tool(name).run(input))
-  return { ...fake, part, tool, call, evaluators, history, showReview }
+  return { ...fake, part, tool, call, evaluators, history, showReview, answerReview }
 }
 
 const APPLIED: TemporaryAppliedChange = {
@@ -383,6 +391,7 @@ describe('TEMPORARY dev chat part', () => {
       ['strands_dev_number_input', false],
       ['strands_dev_confirm', false],
       ['strands_dev_review_optimization', false],
+      ['strands_dev_answer_review', false],
       ['strands_dev_apply_optimization', false],
     ])
     for (const tool of part.tools) {
@@ -1166,6 +1175,92 @@ describe('dev chat tool errors and states', () => {
 
     await expect(tool('strands_dev_review_optimization').run(input)).rejects.toThrow(message)
     expect(showReview).not.toHaveBeenCalled()
+  })
+
+  describe('an answer to the diff on screen, given in a chat message', () => {
+    const RUN = '20261123-154559-combined-all'
+
+    it('shouldPickTheChoiceOnScreenForTheDeveloperAndSayWhatWasWritten', async () => {
+      const { call, answerReview, sessions } = setup()
+      answerReview.mockResolvedValue({ run: RUN, settled: true, applied: ['cli.toml'] })
+
+      const answered = await call('strands_dev_answer_review', { run: RUN, edit: 1, answer: 'apply' })
+
+      expect(answerReview.mock.calls).toEqual([[{ run: RUN, edit: 1, apply: true }]])
+      expect(answered).toEqual({
+        run: RUN,
+        edit: 1,
+        picked: 'Apply this change',
+        applied: ['cli.toml'],
+        next: expect.stringContaining('the diff is closed, and the edits in applied are written'),
+      })
+      // It is the answer on screen and nothing else: the apply tool, which answers every edit at once, is not used.
+      expect(sessions.optimize.accept).not.toHaveBeenCalled()
+      expect(sessions.optimize.apply).not.toHaveBeenCalled()
+    })
+
+    it('shouldSayThatTheNextEditIsOnScreenAndWhoseItIsToAnswer', async () => {
+      const { call, answerReview } = setup()
+      answerReview.mockResolvedValue({
+        run: RUN,
+        settled: false,
+        next: { edit: 1, change: 'effort in cli.toml: high → low', at: 1, of: 2 },
+      })
+
+      const answered = (await call('strands_dev_answer_review', { run: RUN, edit: 0, answer: 'leave' })) as {
+        next: string
+      }
+
+      expect(answerReview.mock.calls).toEqual([[{ run: RUN, edit: 0, apply: false }]])
+      expect(answered).toMatchObject({ picked: 'Leave it as it is' })
+      expect(answered).not.toHaveProperty('applied')
+      expect(answered.next).toContain(
+        "The diff of edit 1 of this run took its place on the developer's screen, 2 of 2: effort in cli.toml: high → low."
+      )
+      expect(answered.next).toContain('If their message answered every edit of the run')
+      expect(answered.next).toContain('Otherwise it is theirs to answer')
+    })
+
+    it.each([
+      [{ settled: true }, 'leave', 'the diff is closed, and nothing was written'],
+      [{ settled: true, applied: [], applyError: 'cli.toml changed.' }, 'apply', 'give applyError as it is'],
+      [{ settled: false }, 'apply', 'still waits behind a question on screen'],
+    ] as const)('shouldSayWhereTheReviewStandsAfterTheAnswer %#', async (outcome, answer, said) => {
+      const { call, answerReview } = setup()
+      answerReview.mockResolvedValue({ run: RUN, ...outcome })
+
+      const answered = (await call('strands_dev_answer_review', { run: RUN, edit: 0, answer })) as { next: string }
+
+      expect(answered.next).toContain(said)
+    })
+
+    it('shouldPassOnWhyTheDiffCouldNotBeAnswered', async () => {
+      const { tool, answerReview } = setup()
+      answerReview.mockRejectedValue(new Error("Edit 0 of run r is not the diff on the developer's screen now."))
+
+      await expect(tool('strands_dev_answer_review').run({ run: 'r', edit: 0, answer: 'apply' })).rejects.toThrow(
+        "is not the diff on the developer's screen now"
+      )
+    })
+
+    it.each<[string, Record<string, JSONValue>, string]>([
+      ['no run', { edit: 0, answer: 'apply' }, 'run is required.'],
+      ['no edit', { run: RUN, answer: 'apply' }, 'edit must be the index of the edit'],
+      ['an answer that is neither', { run: RUN, edit: 0, answer: 'yes' }, 'answer must be apply or leave.'],
+    ])('shouldPickNothingWhenTheCallHas%s', async (_case, input, message) => {
+      const { tool, answerReview } = setup()
+
+      await expect(tool('strands_dev_answer_review').run(input)).rejects.toThrow(message)
+      expect(answerReview).not.toHaveBeenCalled()
+    })
+
+    it('shouldTellTheAgentToAnswerTheDiffThatAMessageCameWith', () => {
+      const { part } = setup()
+
+      expect(part.instructions).toContain('A message that comes with a <strands_dev_screen> block')
+      expect(part.instructions).toContain('pick for them with strands_dev_answer_review')
+      expect(part.instructions).toContain('do not ask them to confirm')
+    })
   })
 
   it('shouldSayThatAnEditStillWaitsWithoutCallingItOnScreen', async () => {

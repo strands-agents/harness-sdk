@@ -146,6 +146,11 @@ export interface DevChatCommand {
   wideDock?(): boolean
   /** A chat message is sent instead of an answer; says whether it let go of a question a turn was waiting on. */
   dropPending?(): boolean
+  /**
+   * What the panel shows that a chat message may be about, said for the agent. It goes to the agent with a message
+   * sent while the panel is open, and the chat shows the message alone.
+   */
+  screenContext?(): string | undefined
   /** The rows this panel's content needs right now at `width` columns inside its frame, to shrink the frame to it. */
   contentRows?(width: number): number | undefined
   attach?(context: DevChatCommandContext): void

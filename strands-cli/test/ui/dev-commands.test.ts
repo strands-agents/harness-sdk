@@ -541,3 +541,82 @@ describe('dev panels across turns and repeats', () => {
     expect(controller.getSnapshot().devJobs?.[0]?.jobs[0]?.label).toBe('refunds second')
   })
 })
+
+describe('a message typed beside an open dev panel', () => {
+  const SHOWN = 'A diff of the run r1 is on screen: effort high → low.'
+
+  /** A panel that stays open while the developer types, such as the diff of a finished run. */
+  const standingPanel = (shown: () => string | undefined): DevChatCommand => ({
+    spec: { name: 'ask', usage: '/ask', description: 'Answer what is on screen' },
+    sticky: true,
+    open: () => EmptyPanel,
+    screenContext: shown,
+  })
+
+  const chat = (commands: readonly DevChatCommand[], skills?: ConstructorParameters<typeof ChatController>[1]) => {
+    const prompts: unknown[] = []
+    const controller = new ChatController(
+      idleBackend({
+        async *stream(prompt) {
+          prompts.push(prompt)
+          yield* []
+          return { stopReason: 'endTurn' }
+        },
+      }),
+      { devCommands: [...commands], ...skills }
+    )
+    return { controller, prompts, shown: () => controller.getSnapshot().completedTurns.map(({ prompt }) => prompt) }
+  }
+
+  it('shouldSendWhatThePanelShowsWithTheMessageAndShowOnlyTheMessageInTheChat', async () => {
+    const { controller, prompts, shown } = chat([standingPanel(() => SHOWN)])
+    await controller.submit('/ask')
+
+    await controller.submit('approve this')
+
+    expect(prompts).toEqual([`<strands_dev_screen>\n${SHOWN}\n</strands_dev_screen>\n\napprove this`])
+    expect(shown()).toEqual(['approve this'])
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'ask' })
+  })
+
+  it('shouldReadWhatThePanelShowsWhenTheMessageIsSentAndNotBefore', async () => {
+    let showing = 'edit 1 of 2'
+    const { controller, prompts } = chat([standingPanel(() => showing)])
+    await controller.submit('/ask')
+    showing = 'edit 2 of 2'
+
+    await controller.submit('apply it')
+
+    expect(prompts).toEqual(['<strands_dev_screen>\nedit 2 of 2\n</strands_dev_screen>\n\napply it'])
+  })
+
+  it.each([
+    ['the panel shows nothing a message could be about', [standingPanel(() => undefined)], '/ask'],
+    ['the panel is closed', [standingPanel(() => SHOWN)], undefined],
+    ['the open panel is another one', [standingPanel(() => SHOWN), devCommand()], '/optimize'],
+  ] as const)('shouldSendTheMessageAloneWhen%s', async (_case, commands, open) => {
+    const { controller, prompts } = chat(commands)
+    if (open) await controller.submit(open)
+
+    await controller.submit('approve this')
+
+    expect(prompts).toEqual(['approve this'])
+  })
+
+  it('shouldNotAddItToACommandThatBringsItsOwnRequest', async () => {
+    const activate = vi.fn(async () => ({
+      skill: { name: 'strands-evals', description: 'Evals', instructions: 'Use evals.', active: true },
+      content: 'Use evals.',
+    }))
+    const { controller, prompts } = chat([standingPanel(() => SHOWN), skillCommand()], {
+      skills: { list: async () => [], activate },
+    })
+    await controller.submit('/ask')
+
+    await controller.submit('/evaluate refunds')
+
+    expect(prompts).toHaveLength(1)
+    expect(String(prompts[0])).not.toContain('<strands_dev_screen>')
+    expect(String(prompts[0]).endsWith('\n\n/evaluate refunds')).toBe(true)
+  })
+})
