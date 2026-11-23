@@ -9,8 +9,16 @@ export { Checkpoint, CHECKPOINT_SCHEMA_VERSION } from './checkpoint.js'
 export type { CheckpointPosition, CheckpointData, CheckpointResumeContent } from './checkpoint.js'
 export { CheckpointError } from '../errors.js'
 
-// Tool search for `Offload.defer`: its config, searchers, and the content block that keeps a provider's own tool search.
-export type { DeferConfig, ToolSearch } from '../context-manager/strategies/deferred-tool-loading.js'
+// Deferred tool loading (`Offload.defer`): its types, its tool search, and the content block that keeps a provider's own
+// tool search.
+export type {
+  DeferConditions,
+  DeferConfig,
+  DeferStrategy,
+  DeferTarget,
+  ToolSearch,
+} from '../context-manager/strategies/deferred-tool-loading.js'
+export type { DeferredToolLoading } from '../models/model-info.js'
 export { KeywordToolSearcher } from '../tools/search-tools.js'
 export type { ToolSearcher, ToolSearchContext } from '../tools/search-tools.js'
 export { ServerToolBlock } from '../types/messages.js'

@@ -58,7 +58,7 @@ export type { Interrupt, InterruptSource } from './interrupt.js'
 export type { InterruptParams, InterruptResponse, InterruptResponseContentData } from './types/interrupt.js'
 export { InterruptResponseContent } from './types/interrupt.js'
 
-// Checkpoint APIs and ServerToolBlock are experimental; see '@strands-agents/sdk/experimental'.
+// Checkpoint APIs, ServerToolBlock and DeferredToolLoading are experimental; see '@strands-agents/sdk/experimental'.
 
 // JSON types
 export type { JSONSchema, JSONValue } from './types/json.js'
@@ -216,7 +216,7 @@ export type {
   CacheConfig,
 } from './models/model.js'
 export type { SummarizeResult } from './models/summarize.js'
-export type { ModelCapabilities, ModelLimits, PromptCaching, DeferredToolLoading } from './models/model-info.js'
+export type { ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
 export { ModelInfo } from './models/model-info.js'
 
 export { Model } from './models/model.js'
