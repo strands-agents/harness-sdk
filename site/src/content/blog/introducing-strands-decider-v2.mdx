@@ -78,8 +78,6 @@ _Figure 3: The Strands Decider v2 architecture._
 
 Decider fits the decisions inside an agent loop that have a known set of answers: which model or tool to use, whether a tool call's arguments look right, whether an answer is grounded or safe, and which team should own a request. If you build with the [Strands Harness SDK](/), you can place Decider directly in your agent. The [Strands Decider docs](/docs/labs/strands-decider/overview/) cover the question types and when to use them, and the repo's [Strands agent example](https://github.com/strands-labs/strands-decider/tree/main/examples/strands) gates a tool call with a `before_tool_call` intervention, so the agent asks which city you mean instead of guessing.
 
-### Ticket Labeling in Amazon Internal Ticketing System
-
 Calibration makes a simple pattern work: let a small model do the job, and call a large one only when Decider doesn't trust the answer. On AutoMix's reading-comprehension benchmarks, we sent the half of Llama-2-13B's answers that v2 trusted least to Llama-2-70B. That recovered 94% to 99% of the larger model's gain. A random half recovered 50%.
 
 The same idea works before the small model acts. Used as a router without fine-tuning, Decider split requests between Claude Haiku 5.5 and Sonnet 5.5 on a mix of customer-service and app-automation tasks. It solved 94% as many tasks as Sonnet alone at 44% of the cost, 11.7 more tasks per 100 than a random split at the same cost. On LLMRouterBench, routing between DeepSeek V3 and Gemini 2.5 Pro reached 88% of Gemini 2.5 Pro's accuracy at 18% of its cost, matching the best open-source router we tested.
