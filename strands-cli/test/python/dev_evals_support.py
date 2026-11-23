@@ -83,6 +83,13 @@ SWITCHES = {"--json", "--rich"}
 
 
 class FakeHarness(types.ModuleType):
+    DEFAULT_HARNESS_AGENT_CONFIG = {
+        "builtinTools": ("files", "shell", "web"),
+        "builtinPlugins": ["environment", "todos"],
+        "skills": True,
+        "interventions": None,
+    }
+
     def __init__(self) -> None:
         super().__init__("strands_harness")
         self.calls: list[dict[str, Any]] = []

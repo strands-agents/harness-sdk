@@ -168,12 +168,6 @@ export const temporaryOptimizationOf = (record: string): TemporaryOptimizationFi
   return temporaryOptimizationFiles(home, stamp)
 }
 
-export const temporaryOptimizationLabel = (record: string): { experiment: string; startedAt?: number } => {
-  const { home, stamp } = runOf(record)
-  const startedAt = temporaryStampTime(stamp)
-  return { experiment: basename(home), ...(startedAt === undefined ? {} : { startedAt }) }
-}
-
 export const temporaryOptimizationRunName = (record: string): string => {
   const { home, stamp } = runOf(record)
   return `${stamp}-${basename(home)}`

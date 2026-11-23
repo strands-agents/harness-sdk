@@ -1,26 +1,19 @@
 import { existsSync } from 'node:fs'
-import { readdir, readFile, rm } from 'node:fs/promises'
+import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
 import type { DevChatJob } from '../../ui/chat/types.js'
 import {
   isGenerating,
-  missingCaseField,
-  type CaseChange,
-  type DraftCase,
-  type ExperimentSession,
   type ExperimentsState,
   type ExperimentSummary,
   type Generation,
   type GenerationPhase,
   type GenerationSettings,
-  type Notice,
-  type Review,
 } from '../panels/model.js'
 import { temporaryAgentContext } from './agent-context.js'
 import { generatorModelProblem } from './generator-model.js'
-import { temporaryCreateExperimentPrompt, temporaryRetryExperimentPrompt } from './create-experiment-skill.js'
 import { temporaryWorkspaceDirectory } from './evals-process.js'
 import {
   generateTemporaryExperiment,
@@ -30,34 +23,21 @@ import {
   type TemporaryGenerationEvent,
   type TemporaryGenerationFiles,
 } from './experiment.js'
-import {
-  temporaryDraftsFolder,
-  temporaryExperimentFile,
-  temporaryExperimentsFolder,
-  watchTemporaryExperiments,
-} from './layout.js'
+import { temporaryExperimentFile, temporaryExperimentsFolder, watchTemporaryExperiments } from './layout.js'
 import { temporaryWorkspaceReady } from './layout-migration.js'
 import {
   createTemporaryExperimentCases,
   listTemporaryExperiments,
   readTemporaryExperimentFile,
-  temporaryBlankCase,
   temporaryUniqueCaseNames,
-  temporaryCaseExpected,
-  temporaryCaseText,
-  temporaryCaseWithExpected,
-  writeTemporaryExperimentCases,
   type TemporaryExperimentDocument,
-  type TemporaryRawCase,
 } from './experiment-files.js'
-import { announce, plural, shownPath, type TemporaryHost } from './host.js'
+import { announce, plural, absolutePath, type TemporaryHost } from './host.js'
 import { Store } from './jobs.js'
 
-const DEFAULT_CASES = 10
+const DEFAULT_CASES = 20
 const DEFAULT_PARALLEL = 4
 const NAME_STEM = 'experiment'
-const CASE_STEM = 'case'
-const DRAFT_FILE = /^\d{8}-\d{6}-(.+)\.json$/u
 
 const PHASE_LABELS: Record<GenerationPhase, string> = {
   preparing: 'preparing',
@@ -68,12 +48,6 @@ const PHASE_LABELS: Record<GenerationPhase, string> = {
   failed: 'stopped',
 }
 
-interface ReviewCase {
-  readonly draft: DraftCase
-  readonly raw: TemporaryRawCase
-  readonly change: CaseChange
-}
-
 interface Job {
   generation: Generation
   readonly files: TemporaryGenerationFiles
@@ -81,91 +55,7 @@ interface Job {
   reported?: string
   cause?: string
   draft?: TemporaryExperimentDocument
-  cases?: readonly ReviewCase[]
 }
-
-export interface TemporaryCreatedExperiment extends ExperimentSummary {
-  readonly failed: number
-  readonly cases: readonly DraftCase[]
-}
-
-interface OpenReview {
-  readonly key: string
-  readonly name: string
-  readonly path?: string
-  readonly onDisk?: string
-  readonly raw: TemporaryExperimentDocument
-  readonly cases: readonly ReviewCase[]
-  readonly notice?: Notice
-}
-
-const fileText = (path: string): Promise<string | undefined> => readFile(path, 'utf8').catch(() => undefined)
-
-const reviewCases = (raw: TemporaryExperimentDocument, saved: boolean): ReviewCase[] => {
-  const names = temporaryUniqueCaseNames(raw.cases)
-  return raw.cases.map((rawCase, index) => {
-    const expected = temporaryCaseExpected(rawCase)
-    return {
-      raw: rawCase,
-      change: {},
-      draft: {
-        name: names[index]!,
-        input: temporaryCaseText(rawCase.input) ?? '',
-        ...(expected === undefined ? {} : { expected }),
-        kept: saved,
-        saved,
-      },
-    }
-  })
-}
-
-const withChange = (reviewCase: ReviewCase, change: CaseChange): ReviewCase => {
-  const { expected: _expected, ...draft } = reviewCase.draft
-  const expected = change.expected ?? reviewCase.draft.expected
-  return {
-    raw: reviewCase.raw,
-    change: { ...reviewCase.change, ...change },
-    draft: {
-      ...draft,
-      ...(change.input === undefined ? {} : { input: change.input }),
-      ...(expected ? { expected } : {}),
-      kept: true,
-    },
-  }
-}
-
-const freeCaseName = (cases: readonly ReviewCase[]): string => {
-  const taken = new Set(cases.map(({ draft }) => draft.name))
-  let number = cases.length + 1
-  while (taken.has(`${CASE_STEM}-${number}`)) number++
-  return `${CASE_STEM}-${number}`
-}
-
-const blankCase = (cases: readonly ReviewCase[], { input = '', expected = '' }: CaseChange): ReviewCase => {
-  const name = freeCaseName(cases)
-  return {
-    raw: temporaryBlankCase(name, input, expected),
-    change: {},
-    draft: { name, input, ...(expected ? { expected } : {}), kept: true, saved: false },
-  }
-}
-
-const rawOf = ({ raw, draft, change }: ReviewCase): TemporaryRawCase => {
-  const edited = { ...raw, name: draft.name, ...(change.input === undefined ? {} : { input: change.input }) }
-  return change.expected === undefined ? edited : temporaryCaseWithExpected(edited, change.expected)
-}
-
-const hasUnsavedChanges = ({ raw, cases }: OpenReview): boolean =>
-  cases.length !== raw.cases.length ||
-  cases.some(({ draft, change }) => !draft.saved || !draft.kept || Object.keys(change).length > 0)
-
-const reviewOf = ({ key, name, path, cases, notice }: OpenReview): Review => ({
-  key,
-  name,
-  ...(path ? { path } : {}),
-  cases: cases.map(({ draft }) => draft),
-  ...(notice ? { notice } : {}),
-})
 
 export const temporaryGenerationJobs = ({ generations }: ExperimentsState): DevChatJob[] =>
   generations.filter(isGenerating).map((generation) =>
@@ -182,15 +72,13 @@ export const temporaryGenerationJobs = ({ generations }: ExperimentsState): DevC
         }
   )
 
-export class TemporaryExperiments extends Store<ExperimentsState> implements ExperimentSession {
+export class TemporaryExperiments extends Store<ExperimentsState> {
   private readonly jobs = new Map<string, Job>()
   private saved: readonly ExperimentSummary[] = []
   private loaded = false
   private error: string | undefined
   private summary = ''
-  private opened: OpenReview | undefined
   private reloading: Promise<readonly ExperimentSummary[]> | undefined
-  private saving: Promise<unknown> = Promise.resolve()
   private stopWatching: (() => void) | undefined
   private nextId = 1
 
@@ -221,7 +109,6 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
       this.summary = context.summary
       this.error = undefined
       this.watch(folder)
-      await this.recoverDrafts()
     } catch (error) {
       this.error = `Could not read the experiments in ${folder}: ${errorMessage(error)}`
     }
@@ -238,44 +125,23 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     return this.summary
   }
 
-  startInChat(): void {
-    this.host().context?.submit(temporaryCreateExperimentPrompt())
-  }
-
-  retryInChat(id: string): void {
-    const job = this.jobs.get(id)
-    if (!job || isGenerating(job.generation)) return
-    const { name, settings, error } = job.generation
-    this.forget(id)
-    this.publish()
-    this.host().context?.submit(temporaryRetryExperimentPrompt(name, settings, error))
-  }
-
-  generate(settings: GenerationSettings, replace?: string): string | undefined {
-    const named = { ...settings, name: settings.name.trim(), task: settings.task.trim() }
-    const problem = this.problemWith(named, replace)
-    if (problem) return problem
-    if (replace) this.forget(replace)
-    const job = this.start(named)
-    void this.draft(job).then((drafted) => this.announceDraft(job, drafted))
-    return undefined
-  }
-
-  async createExperiment(settings: GenerationSettings): Promise<TemporaryCreatedExperiment> {
-    await this.reload()
+  /** Starts a generation and saves its cases when it finishes; returns why it cannot start. */
+  generateInBackground(settings: GenerationSettings): string | undefined {
     const named = { ...settings, name: settings.name.trim(), task: settings.task.trim() }
     const stopped = [...this.jobs.values()].find(
       ({ generation }) => generation.name === named.name && generation.phase === 'failed'
     )?.generation.id
     const problem = this.problemWith(named, stopped)
-    if (problem) throw new Error(problem)
+    if (problem) return problem
     if (stopped) this.forget(stopped)
     const job = this.start(named)
-    if (!(await this.draft(job)) || !job.draft) {
-      this.announceDraft(job, false)
-      throw new Error(this.failureText(job))
-    }
-    return this.saveDraft(job, job.draft)
+    void this.draft(job).then(async (drafted) => {
+      if (!drafted || !job.draft) return this.announceFailure(job)
+      await this.saveDraft(job, job.draft).catch((error: unknown) =>
+        announce(this.host(), 'error', `experiment · ${named.name} · ${errorMessage(error)}`)
+      )
+    })
+    return undefined
   }
 
   cancel(id: string): void {
@@ -284,114 +150,6 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     job.abort.abort()
     this.jobs.delete(id)
     this.publish()
-  }
-
-  dismiss(id: string): void {
-    const job = this.jobs.get(id)
-    if (!job || isGenerating(job.generation)) return
-    this.forget(id)
-    this.publish()
-  }
-
-  review(id: string): void {
-    const job = this.jobs.get(id)
-    if (!job?.draft || job.generation.phase !== 'ready') return
-    this.opened = {
-      key: id,
-      name: job.generation.name,
-      raw: job.draft,
-      cases: job.cases ?? reviewCases(job.draft, false),
-    }
-    this.publish()
-  }
-
-  open(experiment: ExperimentSummary): void {
-    void this.openSaved(experiment)
-  }
-
-  closeReview(): void {
-    if (!this.opened) return
-    const job = this.jobs.get(this.opened.key)
-    if (job) job.cases = this.opened.cases
-    this.opened = undefined
-    this.publish()
-  }
-
-  toggle(index: number): void {
-    this.change((cases) =>
-      cases.map((item, position) =>
-        position === index ? { ...item, draft: { ...item.draft, kept: !item.draft.kept } } : item
-      )
-    )
-  }
-
-  drop(index: number): void {
-    this.change((cases) => cases.filter((_item, position) => position !== index))
-  }
-
-  keepAll(): void {
-    this.change((cases) => cases.map((item) => ({ ...item, draft: { ...item.draft, kept: true } })))
-  }
-
-  edit(index: number, change: CaseChange): void {
-    this.change((cases) => cases.map((item, position) => (position === index ? withChange(item, change) : item)))
-  }
-
-  add(change: CaseChange): void {
-    this.change((cases) => [...cases, blankCase(cases, change)])
-  }
-
-  save(): Promise<ExperimentSummary | undefined> {
-    const saving = this.saveOpened()
-    this.saving = saving.catch(() => undefined)
-    return saving
-  }
-
-  private async saveOpened(): Promise<ExperimentSummary | undefined> {
-    const opened = this.opened
-    if (!opened) return undefined
-    const kept = opened.cases.filter(({ draft }) => draft.kept)
-    if (kept.length === 0)
-      return this.note({ tone: 'error', text: 'Keep at least one case with Space or a, then press Enter.' })
-    const incomplete = kept.find(({ draft }) => missingCaseField(draft))
-    if (incomplete)
-      return this.note({
-        tone: 'error',
-        text: `${incomplete.draft.name} has a blank input or expected answer. Press e to fix it, or d to drop the case.`,
-      })
-    const path = opened.path ?? temporaryExperimentFile(this.directory(), opened.name)
-    const shown = shownPath(this.host().workspace, path)
-    if (!opened.path && existsSync(path))
-      return this.note({
-        tone: 'error',
-        text: `${shown} exists already, so nothing was saved. Move that file, then save again.`,
-      })
-    if (opened.path && opened.onDisk !== undefined && (await fileText(path)) !== opened.onDisk)
-      return this.note({
-        tone: 'error',
-        text: `${opened.name} changed on disk after you opened it, for example in the evals UI. Nothing was saved. Press Esc, then open it again.`,
-      })
-    const cases = kept.map(rawOf)
-    try {
-      await (opened.path ? writeTemporaryExperimentCases : createTemporaryExperimentCases)(path, opened.raw, cases)
-    } catch (error) {
-      return this.note({ tone: 'error', text: `Could not save the cases to ${shown}: ${errorMessage(error)}` })
-    }
-    const onDisk = await fileText(path)
-    if (!opened.path) this.forget(opened.key)
-    await this.reload()
-    const raw = { ...opened.raw, cases }
-    this.opened = {
-      key: path,
-      name: opened.name,
-      path,
-      ...(onDisk === undefined ? {} : { onDisk }),
-      raw,
-      cases: reviewCases(raw, true),
-      notice: { tone: 'success', text: `Saved ${plural(cases.length, 'case')} to ${shown}` },
-    }
-    this.publish()
-    return { name: opened.name, path, caseCount: cases.length }
   }
 
   private directory(): string {
@@ -403,7 +161,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     try {
       this.stopWatching = watchTemporaryExperiments(
         folder,
-        () => void this.syncWithDisk(),
+        () => void this.reload(),
         (error) => {
           this.stopWatching = undefined
           this.error = this.cannotWatch(folder, error)
@@ -416,48 +174,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
   }
 
   private cannotWatch(folder: string, error: unknown): string {
-    return `strands dev cannot watch ${shownPath(this.host().workspace, folder)} for changes (${errorMessage(error)}). Open /experiment again to see changes made elsewhere.`
-  }
-
-  private async syncWithDisk(): Promise<void> {
-    await this.saving
-    await this.reload()
-    await this.reloadOpened()
-  }
-
-  private async reloadOpened(): Promise<void> {
-    const opened = this.opened
-    if (!opened?.path) return
-    const onDisk = await fileText(opened.path)
-    if (onDisk === undefined || onDisk === opened.onDisk || this.opened !== opened) return
-    if (hasUnsavedChanges(opened)) {
-      this.note({
-        tone: 'error',
-        text: `${opened.name} changed on disk, for example in the evals UI. Your changes here are not saved. Press Esc, then open it again.`,
-      })
-      return
-    }
-    try {
-      const { raw } = await readTemporaryExperimentFile(opened.path)
-      if (this.opened !== opened) return
-      this.opened = {
-        ...opened,
-        onDisk,
-        raw,
-        cases: reviewCases(raw, true),
-        notice: { tone: 'success', text: `${opened.name} changed on disk, so this shows the new cases.` },
-      }
-    } catch (error) {
-      if (this.opened !== opened) return
-      this.opened = {
-        ...opened,
-        notice: {
-          tone: 'error',
-          text: `${opened.name} changed on disk, but it cannot be read: ${errorMessage(error)}`,
-        },
-      }
-    }
-    this.publish()
+    return `strands dev cannot watch ${absolutePath(folder)} for changes (${errorMessage(error)}).`
   }
 
   private folder(): string {
@@ -467,25 +184,11 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
   private publish(): void {
     this.set({
       loaded: this.loaded,
-      folder: shownPath(this.host().workspace, this.folder()),
+      folder: absolutePath(this.folder()),
       saved: this.saved,
       generations: [...this.jobs.values()].map(({ generation }) => generation).reverse(),
-      ...(this.opened ? { review: reviewOf(this.opened) } : {}),
       ...(this.error ? { error: this.error } : {}),
     })
-  }
-
-  private note(notice: Notice): undefined {
-    if (this.opened) this.opened = { ...this.opened, notice }
-    this.publish()
-    return undefined
-  }
-
-  private change(update: (cases: readonly ReviewCase[]) => readonly ReviewCase[]): void {
-    if (!this.opened) return
-    const { notice: _notice, ...opened } = this.opened
-    this.opened = { ...opened, cases: update(opened.cases) }
-    this.publish()
   }
 
   private defaults(): GenerationSettings {
@@ -552,7 +255,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
         total: settings.cases,
         startedAt: Date.now(),
         status: 'Preparing the evals environment',
-        log: shownPath(this.host().workspace, files.log),
+        log: absolutePath(files.log),
       },
       files,
       abort: new AbortController(),
@@ -566,7 +269,6 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     if (!job) return
     job.abort.abort()
     this.jobs.delete(id)
-    if (this.opened?.key === id) this.opened = undefined
     if (!isGenerating(job.generation)) this.discardDraft(job)
   }
 
@@ -654,106 +356,28 @@ export class TemporaryExperiments extends Store<ExperimentsState> implements Exp
     }
   }
 
-  private announceDraft(job: Job, drafted: boolean): void {
-    const { name } = job.generation.settings
-    if (drafted) {
-      const failed = job.generation.failed > 0 ? `, ${job.generation.failed} failed` : ''
-      announce(
-        this.host(),
-        'success',
-        `experiment · ${name} · ${plural(job.generation.made, 'case')} drafted${failed} · /experiment to review`
-      )
-    } else if (job.generation.phase === 'failed' && this.jobs.get(job.generation.id) === job) {
-      announce(
-        this.host(),
-        'error',
-        `experiment · ${name} stopped: ${job.generation.error?.summary ?? 'generation failed'} · /experiment shows why`
-      )
-    }
+  private announceFailure(job: Job): void {
+    if (job.generation.phase !== 'failed' || this.jobs.get(job.generation.id) !== job) return
+    const { name, error, log } = job.generation
+    const cause = job.cause ? ` · strands-evals said: ${job.cause}` : ''
+    announce(
+      this.host(),
+      'error',
+      `experiment · ${name} stopped: ${error?.summary ?? 'generation failed'}${cause} · log in ${log}`
+    )
   }
 
-  private failureText(job: Job): string {
-    const { name, phase, error, log } = job.generation
-    if (phase !== 'failed') return `The generation of ${name} was cancelled.`
-    return [
-      `The generation of ${name} stopped: ${error?.summary ?? 'unknown error'}.`,
-      ...(job.cause ? [`strands-evals said: ${job.cause}`] : []),
-      `Log: ${log}`,
-    ].join('\n')
-  }
-
-  private async saveDraft(job: Job, draft: TemporaryExperimentDocument): Promise<TemporaryCreatedExperiment> {
+  private async saveDraft(job: Job, draft: TemporaryExperimentDocument): Promise<void> {
     const { name } = job.generation
     const path = temporaryExperimentFile(this.directory(), name)
-    const shown = shownPath(this.host().workspace, path)
-    if (existsSync(path)) {
-      throw new Error(`${shown} exists already, so the cases stay a draft. Open /experiment to review and save them.`)
-    }
-    const cases = reviewCases(draft, false)
-    await createTemporaryExperimentCases(path, draft, cases.map(rawOf))
+    const shown = absolutePath(path)
+    if (existsSync(path))
+      throw new Error(`${shown} exists already, so the cases stay in ${absolutePath(job.files.draft)}.`)
+    const names = temporaryUniqueCaseNames(draft.cases)
+    const cases = draft.cases.map((item, index) => ({ ...item, name: names[index]! }))
+    await createTemporaryExperimentCases(path, draft, cases)
     this.forget(job.generation.id)
     await this.reload()
     announce(this.host(), 'success', `experiment · ${name} · ${plural(cases.length, 'case')} saved to ${shown}`)
-    return {
-      name,
-      path,
-      caseCount: cases.length,
-      failed: job.generation.failed,
-      cases: cases.map(({ draft: item }) => ({ ...item, kept: true, saved: true })),
-    }
-  }
-
-  private async openSaved(experiment: ExperimentSummary): Promise<void> {
-    try {
-      const onDisk = await fileText(experiment.path)
-      const { raw } = await readTemporaryExperimentFile(experiment.path)
-      this.opened = {
-        key: experiment.path,
-        name: experiment.name,
-        path: experiment.path,
-        ...(onDisk === undefined ? {} : { onDisk }),
-        raw,
-        cases: reviewCases(raw, true),
-      }
-    } catch (error) {
-      this.error = errorMessage(error)
-    }
-    this.publish()
-  }
-
-  private async recoverDrafts(): Promise<void> {
-    const folder = temporaryDraftsFolder(this.directory())
-    if (!existsSync(folder)) return
-    const known = new Set([...this.jobs.values()].map(({ files }) => files.draft))
-    for (const file of (await readdir(folder)).sort()) {
-      const name = DRAFT_FILE.exec(file)?.[1]
-      const draft = join(folder, file)
-      if (!name || known.has(draft)) continue
-      const stem = draft.slice(0, -'.json'.length)
-      const job = this.track(
-        { ...this.defaults(), name },
-        { draft, log: `${stem}.log`, progress: `${stem}.progress.jsonl` }
-      )
-      const recovered = { status: 'Drafted in an earlier strands dev session', endedAt: Date.now() }
-      try {
-        const { raw } = await readTemporaryExperimentFile(draft)
-        job.draft = raw
-        job.generation = {
-          ...job.generation,
-          ...recovered,
-          phase: 'ready',
-          made: raw.cases.length,
-          total: raw.cases.length,
-        }
-      } catch (error) {
-        const detail = `${errorMessage(error)}\nDelete ${shownPath(this.host().workspace, draft)}, or press d to dismiss it.`
-        job.generation = {
-          ...job.generation,
-          ...recovered,
-          phase: 'failed',
-          error: { summary: 'The draft cannot be read', detail },
-        }
-      }
-    }
   }
 }

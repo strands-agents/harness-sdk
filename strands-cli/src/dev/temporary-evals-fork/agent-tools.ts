@@ -1,39 +1,47 @@
+import { join } from 'node:path'
+
 import type { JSONValue } from '@strands-agents/sdk'
 
+import { errorMessage } from '../../terminal/text.js'
 import type { DevChatPart, DevChatTool } from '../chat-extension.js'
+import { STRANDS_EVALS_OPTIMIZE_SKILL, STRANDS_EVALS_SKILL } from '../evals-skill.js'
+import { isGenerating, type CrashScore } from '../panels/model.js'
 import type {
-  CaseResult,
-  EvaluatorChoice,
   ExperimentRun,
   ExperimentSummary,
   Generation,
-  GenerationSettings,
   Knob,
   EvalsBrowser,
+  EvalsBrowserPlace,
   KnobKey,
   OptimizeObjective,
   OptimizeReview,
+  OptimizeRun,
   OptimizeRunState,
   OptimizeState,
   ProposedEdit,
   TestCheck,
-  TestResults,
   TestRun,
 } from '../panels/model.js'
-import { askTool } from './ask-tool.js'
+import { uiTools } from './ui-tools.js'
 import { temporaryWorkflowSkills } from './workflow-skills.js'
 import { readTemporaryExperimentFile } from './experiment-files.js'
-import { temporaryCreateExperimentSkill } from './create-experiment-skill.js'
 import type { TemporaryEvaluator } from './evaluators.js'
 import type { TemporaryStore } from './jobs.js'
-import { TEMPORARY_KNOB_NAMES } from './knobs.js'
+import {
+  BACKGROUND_COMMANDS,
+  generateFlagSettings,
+  optimizeFlagSettings,
+  runFlagCases,
+  type BackgroundCommand,
+  type OptimizeFlagSettings,
+} from './background-flags.js'
 import { checkTemporaryObjective, TEMPORARY_USAGE_METRICS, temporaryObjectiveFromRequest } from './objective.js'
 import {
+  isTemporaryBudgetValue,
+  TEMPORARY_BUDGET_MINIMUMS,
   TEMPORARY_DECISION_CHOICES,
-  TEMPORARY_ITERATION_CHOICES,
-  TEMPORARY_REPETITION_CHOICES,
-  TEMPORARY_WIDTH_CHOICES,
-  TEMPORARY_WORKER_CHOICES,
+  type TemporaryBudgetSetting,
 } from './plan.js'
 import type { TemporarySessionHistory } from './session-converter.js'
 import type { TemporaryAppliedChange, TemporaryDevSessions } from './sessions.js'
@@ -48,40 +56,14 @@ export interface TemporaryDevChatHost {
   readonly history: TemporarySessionHistory
 }
 
-const MAX_CASES = 50
-const MAX_TOPICS = 10
-const MAX_PARALLEL = 10
 const TEXT_LIMIT = 600
 const EDIT_LIMIT = 4000
-const KNOB_NAMES = TEMPORARY_KNOB_NAMES.join(', ')
 
-const INSTRUCTIONS = `strands_dev_create_experiment, strands_dev_evaluate, and strands_dev_optimize spend the developer's money the moment you call them. Two turns, never one: in the turn that asks for the work, name the experiments and case counts and stop; call the tool only in a later turn, after the developer answered. "Run my tests", "check my agent against my examples", and "make my agent better" ask for that first turn. A scope that looks obvious is still not approval, and neither is one saved experiment or one evident choice. Finish the turn with your question as the last thing you write.
+const INSTRUCTIONS = `For experiments, evaluations, and test cases, activate the strands-evals skill; to tune this agent against an experiment, activate the optimize skill; to run any strands-evals command, follow the background-evals skill. The developer can also type /experiment, /evaluate, or /optimize.
 
-Experiments, evaluations, and optimization:
-- experiments/<name>/<name>.json: a saved experiment, which the developer can commit. "cases" holds the test cases (name, input, expected_output or expected_assertion, and optional expected_trajectory and metadata). "evaluators" says how each case is scored.
-- experiments/<name>/<name>.report.json: the report of the latest evaluation run of that experiment.
-- experiments/<name>/runs/<time>/: one evaluation run, with report.json and run.log.
-- experiments/<name>/optimizations/<time>/: one optimization run, with the optimizer record in optimizer/ and run.log.
-- tmp/.state/drafts/: generated cases that wait for a review in /experiment.
+Runs cost money. Name the scope in chat and end the turn; start a run only after the developer approves it in a later turn. Being asked to run, test, or improve something is not that approval. In /evaluate, picking the experiments on screen is the approval.
 
-The developer can open a panel with /experiment, /evaluate, or /optimize, or ask you in plain words. A plain-words request still belongs to a skill: activate manage-experiments, run-evaluations, or optimize-harness before you answer one, and use these tools:
-- strands_dev_status: the experiments, the drafts, the running jobs, and the last results. Call it again in every turn that asks what exists. The developer, the panels, and finished runs change these files between turns, so an answer from an earlier turn is stale and repeating it is a false claim about the workspace.
-- strands_dev_evaluators: the evaluators that can score this agent, with what each one checks and the settings it needs.
-- strands_dev_create_experiment: generate test cases and save them as an experiment. Use the create-experiment skill to help the developer shape a test goal naturally; keep technical defaults in the background.
-- strands_dev_session_converter: the newest session-converter skill from strands-evals, to build an experiment from past chats or traces. The create-experiment skill says when to use it.
-- strands_dev_read_experiment: read saved cases and evaluator definitions without running anything. Use the manage-experiments skill for browsing and explaining them.
-- strands_dev_evaluate: run this agent on one or more experiments and report each case. Use the run-evaluations skill for plain-language requests to evaluate or test the agent.
-- strands_dev_evaluation_results: inspect existing evaluation results without rerunning an experiment.
-- strands_dev_optimize: tune the instructions or the effort of this agent against an experiment, and report the proposed edits. Use the optimize-harness skill for optimization requests.
-- strands_dev_cancel_optimization: stop the active optimization when the developer asks.
-- strands_dev_reject_optimization: discard pending optimization edits without applying them when the developer asks.
-- strands_dev_apply_optimization: write the edits that the developer accepts into the agent source.
-
-The evals UI is a local browser page with larger views of experiments, reports, and optimization runs. In /experiment, /evaluate, and /optimize, the developer presses o to open the current item there. Never write the page address yourself; strands dev gives it to the developer.
-
-Apply optimization edits only when the developer says which edits to apply. A run continues when the turn is cancelled; its progress shows below the chat input, and /evaluate or /optimize shows the result.
-
-Answer the question that was asked, from the tool output of this turn. Do not add settings, defaults, generator details, or a menu of next steps that the developer did not ask for.`
+Answer what was asked from tool output of this turn: call strands_dev_status again whenever the question is what exists, because runs and files change between turns. Ask the developer to choose or type with the strands_dev_ UI tools. Never make up the evals UI address; pass on only what strands_dev_open_evals_ui returns. Apply optimization edits only when the developer says which ones.`
 
 const reply = (value: unknown): string => JSON.stringify(value, null, 2)
 
@@ -129,56 +111,10 @@ const whole = (input: Input, key: string, min: number, max: number): number | un
   return value
 }
 
-const flag = (input: Input, key: string): boolean | undefined => {
-  const value = input[key]
-  if (value === undefined || value === null) return undefined
-  if (typeof value !== 'boolean') throw new Error(`${key} must be true or false.`)
-  return value
-}
-
-const isObject = (value: JSONValue | undefined): value is { [key: string]: JSONValue } =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const evaluatorChoice = (value: JSONValue): EvaluatorChoice => {
-  if (!isObject(value) || typeof value.name !== 'string' || !value.name.trim())
-    throw new Error('Each evaluator needs a name, for example {"name": "OutputEvaluator"}.')
-  if (value.settings !== undefined && value.settings !== null && !isObject(value.settings))
-    throw new Error(`The settings of ${value.name} must be an object.`)
-  return {
-    name: value.name.trim(),
-    ...(isObject(value.settings) && Object.keys(value.settings).length > 0 ? { settings: value.settings } : {}),
-  }
-}
-
-const evaluatorsOf = (input: Input): readonly EvaluatorChoice[] | undefined => {
-  const value = input.evaluators
-  if (value === undefined || value === null) return undefined
-  if (!Array.isArray(value) || value.length === 0)
-    throw new Error('evaluators must list at least one evaluator, for example [{"name": "OutputEvaluator"}].')
-  return value.map(evaluatorChoice)
-}
-
 type Defined<Value> = { [Key in keyof Value]?: Exclude<Value[Key], undefined> }
 
 const defined = <Value extends object>(value: Value): Defined<Value> =>
   Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as Defined<Value>
-
-const settingsFrom = (input: Input, suggested: GenerationSettings): GenerationSettings => ({
-  ...suggested,
-  ...defined({
-    name: requiredText(input, 'name'),
-    task: requiredText(input, 'task'),
-    context: text(input, 'context'),
-    cases: whole(input, 'cases', 1, MAX_CASES),
-    topics: whole(input, 'topics', 0, MAX_TOPICS),
-    model: text(input, 'model'),
-    parallel: whole(input, 'parallel', 1, MAX_PARALLEL),
-    expectedTrajectory: flag(input, 'expectedTrajectory'),
-    expectedInteractions: flag(input, 'expectedInteractions'),
-    metadata: flag(input, 'metadata'),
-    evaluators: evaluatorsOf(input),
-  }),
-})
 
 const findExperiment = async (sessions: Sessions, name: string): Promise<ExperimentSummary> => {
   const saved = await sessions().experiments.reload()
@@ -266,30 +202,6 @@ const testResultsTool = (sessions: Sessions): DevChatTool => ({
   },
 })
 
-const caseReport = ({ name, passed, input, expected, actual, verdicts }: CaseResult): object =>
-  passed
-    ? { name, passed }
-    : defined({
-        name,
-        passed,
-        input: clip(input),
-        expected: clip(expected),
-        actual: clip(actual),
-        reasons: verdicts
-          .filter((verdict) => !verdict.passed)
-          .map((verdict) => `${verdict.evaluator}: ${clip(verdict.reason)}`),
-      })
-
-const testReport = ({ experiment, cases, overall, report, seconds }: TestResults): object => ({
-  experiment,
-  passed: cases.filter((item) => item.passed).length,
-  total: cases.length,
-  score: overall,
-  seconds: Math.round(seconds),
-  report,
-  cases: cases.map(caseReport),
-})
-
 const runStatus = (run: TestRun): object => {
   if (run.status === 'running') return { status: 'running', done: run.done, cases: run.cases }
   if (run.status === 'failed') return { status: 'failed', message: run.message }
@@ -312,15 +224,20 @@ const reviewReport = ({ run, baseline, best, measuredOn, edits, applied, applyEr
     baseline,
     best,
     measuredOn,
-    edits: edits.map(({ knob, target, before, after, unavailable }, index) =>
-      defined({ index, knob, target, unavailable, before: clip(before, EDIT_LIMIT), after: clip(after, EDIT_LIMIT) })
+    edits: edits.map(({ knob, target, before, after, unavailable, added }, index) =>
+      defined({
+        index,
+        knob,
+        target,
+        unavailable,
+        before: clip(before, EDIT_LIMIT),
+        after: clip(after, EDIT_LIMIT),
+        newInCall: added,
+      })
     ),
     applied,
     applyError,
   })
-
-const hasPendingEdits = ({ edits, applied }: OptimizeReview): boolean =>
-  edits.some((edit) => !edit.unavailable) && !applied?.length
 
 interface ChosenReview {
   readonly id?: string
@@ -332,11 +249,6 @@ const listedReviews = ({ runs = [] }: OptimizeState): ChosenReview[] =>
 
 const latestReview = (state: OptimizeState): ChosenReview | undefined =>
   listedReviews(state)[0] ?? (state.step === 'review' ? { review: state.review } : undefined)
-
-const pendingReview = (state: OptimizeState): ChosenReview | undefined =>
-  [...listedReviews(state), ...(state.step === 'review' ? [{ review: state.review }] : [])].find(({ review }) =>
-    hasPendingEdits(review)
-  )
 
 const runState = ({ runs = [] }: OptimizeState, id: string): OptimizeRunState | undefined =>
   runs.find((run) => run.id === id)?.state
@@ -378,7 +290,7 @@ const lastRun = (runs: readonly ExperimentRun[], path: string): object | undefin
   return found ? runStatus(found.run) : undefined
 }
 
-const EVALS_UI_OPENING = 'The developer presses o in /experiment, /evaluate, or /optimize to open the current item.'
+const EVALS_UI_OPENING = 'strands_dev_open_evals_ui opens an experiment, a report, or an optimization run.'
 
 const evalsUiStatus = (ui: EvalsBrowser): object => {
   const { status, detail } = ui.snapshot()
@@ -409,14 +321,9 @@ const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevCh
       optimization: optimizationStatus(optimize.snapshot()),
       evalsUi: evalsUiStatus(ui),
       newExperiment: {
-        ...experiments.suggested(),
+        cases: experiments.suggested().cases,
         pastChats,
         agentContext: experiments.agentSummary(),
-        generator: {
-          provider: 'bedrock',
-          connection: 'Separate AWS connection; does not inherit the chat provider, endpoint, or credentials.',
-          defaultModel: 'evals Python SDK default (not the chat model)',
-        },
       },
     })
   },
@@ -441,65 +348,6 @@ const evaluatorsTool = (evaluators: Evaluators): DevChatTool => ({
   },
 })
 
-const createTool = (sessions: Sessions): DevChatTool => ({
-  name: 'strands_dev_create_experiment',
-  description:
-    'Start the paid generation run. This call starts the paid run itself and asks nothing first, so call it ' +
-    'only after the developer answered yes, in an earlier turn, to the proposal you named. ' +
-    'Being asked for test cases is not that answer, and a scope that looks obvious is not that answer. ' +
-    'Generates test cases with strands-evals ExperimentGenerator and saves experiments/<name>/<name>.json. ' +
-    'It takes minutes. Settings you leave out use the suggested values.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      name: { type: 'string', description: 'A new experiment name: letters, numbers, dots, dashes, and underscores.' },
-      task: { type: 'string', description: 'What the agent does in the cases.' },
-      context: { type: 'string', description: 'Scenarios, users, edge cases, or failure modes the cases must cover.' },
-      cases: { type: 'integer', minimum: 1, maximum: MAX_CASES, description: 'How many cases to write.' },
-      topics: { type: 'integer', minimum: 0, maximum: MAX_TOPICS, description: 'Topic groups. 0 turns topics off.' },
-      evaluators: {
-        type: 'array',
-        description:
-          'How each case is scored. Two evaluators of the same type need different "name" settings. Default: OutputEvaluator.',
-        items: {
-          type: 'object',
-          properties: {
-            name: { type: 'string', description: 'An evaluator name from strands_dev_evaluators.' },
-            settings: {
-              type: 'object',
-              description:
-                'The evaluator settings that strands_dev_evaluators lists, for example {"tool_name": "lookup"}.',
-            },
-          },
-          required: ['name'],
-        },
-      },
-      model: {
-        type: 'string',
-        description:
-          'Separate AWS Bedrock generator model, not the chat model. Empty uses the evals Python SDK default. OpenAI-on-Bedrock IDs require bedrock/ prefix. AWS access is required.',
-      },
-      parallel: { type: 'integer', minimum: 1, maximum: MAX_PARALLEL, description: 'Cases written at once.' },
-      expectedTrajectory: { type: 'boolean' },
-      expectedInteractions: { type: 'boolean' },
-      metadata: { type: 'boolean' },
-    },
-    required: ['name', 'task'],
-    additionalProperties: false,
-  },
-  run: async (input): Promise<string> => {
-    const { experiments } = sessions()
-    const created = await experiments.createExperiment(settingsFrom(input, experiments.suggested()))
-    return reply({
-      name: created.name,
-      file: created.path,
-      cases: created.caseCount,
-      failedCases: created.failed,
-      inputs: created.cases.map(({ name, input: question }) => ({ name, input: clip(question) })),
-    })
-  },
-})
-
 const sessionConverterTool = (history: TemporarySessionHistory): DevChatTool => ({
   name: 'strands_dev_session_converter',
   description:
@@ -510,89 +358,12 @@ const sessionConverterTool = (history: TemporarySessionHistory): DevChatTool => 
   run: (): Promise<string> => history.converter(),
 })
 
-const requestedExperiments = async (sessions: Sessions, input: Input): Promise<ExperimentSummary[]> => {
-  const names = input.experiments
-  if (names !== undefined && input.experiment !== undefined)
-    throw new Error('Give experiment or experiments, not both.')
-  if (names === undefined) return [await findExperiment(sessions, requiredText(input, 'experiment'))]
-  if (!Array.isArray(names) || names.length === 0 || names.some((name) => typeof name !== 'string' || !name.trim()))
-    throw new Error('experiments must be a nonempty list of saved experiment names.')
-  const found = await Promise.all(names.map((name) => findExperiment(sessions, (name as string).trim())))
-  return [...new Map(found.map((experiment) => [experiment.path, experiment])).values()]
-}
-
-const testTool = (sessions: Sessions): DevChatTool => ({
-  name: 'strands_dev_evaluate',
-  description:
-    'Start the paid evaluation run. This call starts the paid run itself and asks nothing first, so call it ' +
-    'only after the developer answered yes, in an earlier turn, to the experiments and cases you named. ' +
-    'Being asked to evaluate or test the agent is not that answer, and a scope that looks obvious is not that answer. ' +
-    'Runs this agent on the saved experiments and reports each case. ' +
-    'Set failedOnly to rerun only prior failures. Read a finished or running evaluation with strands_dev_evaluation_results instead.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      experiment: { type: 'string', description: 'One saved experiment name; omit when using experiments.' },
-      experiments: {
-        type: 'array',
-        items: { type: 'string' },
-        minItems: 1,
-        description: 'Saved experiments to run together.',
-      },
-      failedOnly: { type: 'boolean', description: 'Run only the cases that failed last time.' },
-    },
-    additionalProperties: false,
-  },
-  run: async (input): Promise<string> => {
-    const experiments = await requestedExperiments(sessions, input)
-    const { test } = sessions()
-    await test.show()
-    const before = new Map(test.snapshot().runs.map((entry) => [entry.experiment.path, entry.run]))
-    const failedOnly = flag(input, 'failedOnly')
-    for (const experiment of experiments) {
-      const run = before.get(experiment.path)
-      if (run?.status === 'running')
-        throw new Error(`${experiment.name} is already running. Use strands_dev_evaluation_results for progress.`)
-      if (failedOnly && (run?.status !== 'done' || run.results.cases.every((item) => item.passed)))
-        throw new Error(`${experiment.name} has no failed cases from a finished run. Run the whole experiment.`)
-    }
-    if (failedOnly) for (const experiment of experiments) test.rerunFailed(experiment.path)
-    else test.run(experiments)
-    const reports = await Promise.all(
-      experiments.map(async (experiment) => {
-        const run = await until(test, () => {
-          const current = test.snapshot().runs.find((entry) => entry.experiment.path === experiment.path)?.run
-          return current !== before.get(experiment.path) && (current?.status === 'done' || current?.status === 'failed')
-            ? current
-            : undefined
-        })
-        return run.status === 'failed'
-          ? { experiment: experiment.name, status: 'failed', message: run.message }
-          : testReport(run.results)
-      })
-    )
-    const single = reports[0]!
-    if (experiments.length === 1 && 'message' in single) throw new Error(String(single.message))
-    return reply(experiments.length === 1 ? single : { experiments: reports })
-  },
-})
-
 const textList = (input: Input, field: string): readonly string[] | undefined => {
   const value = input[field]
   if (value === undefined || value === null) return undefined
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !item))
     throw new Error(`${field} must be a list of names.`)
   return value as string[]
-}
-
-const tuneFrom = (input: Input): readonly KnobKey[] => {
-  const tune = textList(input, 'tune') ?? ['instructions']
-  const unknown = tune.filter((name) => !TEMPORARY_KNOB_NAMES.includes(name))
-  if (tune.length === 0 || unknown.length > 0)
-    throw new Error(
-      `${unknown.length > 0 ? `${unknown.join(', ')} is not a knob. ` : ''}tune must list knobs from: ${KNOB_NAMES}.`
-    )
-  return tune
 }
 
 const tunedKnobs = (knobs: readonly Knob[], tune: readonly KnobKey[]): void => {
@@ -602,26 +373,13 @@ const tunedKnobs = (knobs: readonly Knob[], tune: readonly KnobKey[]): void => {
   throw new Error(`This agent cannot tune ${unknown.join(', ')}. It can tune ${available.join(', ')}.`)
 }
 
-const objectiveFor = async (experiment: ExperimentSummary, input: Input): Promise<OptimizeObjective | undefined> => {
-  const objective = text(input, 'objective') || undefined
-  const constraints = textList(input, 'constraints')
-  if (objective === undefined && constraints === undefined) return undefined
-  const { experiment: loaded } = await readTemporaryExperimentFile(experiment.path)
-  const chosen = temporaryObjectiveFromRequest(objective, constraints, loaded.evaluators)
-  const { problem } = checkTemporaryObjective(chosen, loaded.evaluators)
-  if (problem)
-    throw new Error(`${problem} The evaluators of ${experiment.name}: ${loaded.evaluators.join(', ') || 'none'}.`)
-  return chosen
-}
-
 const planTool = (sessions: Sessions): DevChatTool => ({
   name: 'strands_dev_optimization_plan',
   description:
     'Read what an optimization of one experiment could tune, and what it would cost, without starting anything. ' +
     'Call it before you ask the developer to set up a run, so the knobs, the choices, and the estimate you show ' +
     'them are this agent’s own and not a guess. A knob with a reason cannot be tuned: show the reason and do not ' +
-    'offer it. Call it again after the developer changes a setting if you want a fresh estimate. ' +
-    'It plans a fresh run, so it clears a setup that the developer already has open in /optimize.',
+    'offer it. Call it again after the developer changes a setting if you want a fresh estimate.',
   inputSchema: {
     type: 'object',
     properties: { experiment: { type: 'string', description: 'The name of a saved experiment.' } },
@@ -642,15 +400,18 @@ const planTool = (sessions: Sessions): DevChatTool => ({
     return reply(
       defined({
         experiment: { name: plan.experiment.name, cases: plan.experiment.caseCount },
-        knobs: plan.knobs.map(({ key, label, detail, unavailable, enabled }) =>
-          defined({
-            key,
-            label,
-            detail: detail || undefined,
-            unavailable: unavailable || undefined,
-            onByDefault: enabled === true ? true : undefined,
-          })
-        ),
+        // Knobs with nothing to tune for this agent are left out, so the model cannot offer them.
+        knobs: plan.knobs
+          .filter(({ unavailable }) => !unavailable)
+          .map(({ key, label, detail, enabled, notInCall }) =>
+            defined({
+              key,
+              label,
+              detail: detail || undefined,
+              onByDefault: enabled === true ? true : undefined,
+              notInCall: notInCall === true ? true : undefined,
+            })
+          ),
         metrics: plan.metrics,
         objective: defined({
           current: plan.objective.expression || undefined,
@@ -670,11 +431,11 @@ const planTool = (sessions: Sessions): DevChatTool => ({
         }),
         cases: { split: plan.split, choices: plan.splitChoices, testShare: plan.testShare },
         budget: {
-          iterations: { value: plan.iterations, choices: plan.iterationChoices },
-          candidatesPerStep: { value: plan.width, choices: plan.widthChoices },
-          runsPerCase: { value: plan.repetitions, choices: plan.repetitionChoices },
-          parallelTrials: { value: plan.workers, choices: plan.workerChoices },
-          finalists: { value: plan.decision.finalists, choices: plan.decisionChoices.finalists },
+          iterations: { value: plan.iterations, min: TEMPORARY_BUDGET_MINIMUMS.iterations },
+          candidatesPerStep: { value: plan.width, min: TEMPORARY_BUDGET_MINIMUMS.width },
+          runsPerCase: { value: plan.repetitions, min: TEMPORARY_BUDGET_MINIMUMS.repetitions },
+          parallelTrials: { value: plan.workers, min: TEMPORARY_BUDGET_MINIMUMS.workers },
+          finalists: { value: plan.decision.finalists, min: TEMPORARY_BUDGET_MINIMUMS.finalists },
         },
         decision: {
           feasibility: { value: plan.decision.feasibility, choices: plan.decisionChoices.feasibility },
@@ -689,208 +450,295 @@ const planTool = (sessions: Sessions): DevChatTool => ({
   },
 })
 
-const optimizeTool = (sessions: Sessions): DevChatTool => ({
-  name: 'strands_dev_optimize',
-  description:
-    'Start the paid optimization run. This call starts the paid run itself and asks nothing first, so call it ' +
-    'only after the developer answered yes, in an earlier turn, to the experiment and tuning scope you named. ' +
-    'Being asked to improve the agent is not that answer, and a scope that looks obvious is not that answer. ' +
-    'Collect the settings with strands_dev_ask first and pass what the developer chose: a scope you picked for ' +
-    'them in a message is not their setup, however obvious its defaults looked. ' +
-    'Runs alongside the optimizations already going, so a run that is still going is not a reason to wait: say ' +
-    'what is already running, and start this one when the developer wants it. ' +
-    'Tunes the createHarness options of this agent (instructions, model, effort, caching, tools, and more) ' +
-    'against a saved experiment with the strands-evals optimizer, ' +
-    'and reports the score before and after with the proposed edits. It changes no file. It can take a long time.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      experiment: { type: 'string', description: 'The name of a saved experiment.' },
-      tune: {
-        type: 'array',
-        items: { type: 'string' },
-        description: `The knobs to tune, by option name: ${KNOB_NAMES}. Default: instructions.`,
-      },
-      models: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'With model in tune: the provider-qualified model ids to try besides the current model.',
-      },
-      iterations: {
-        type: 'integer',
-        enum: [...TEMPORARY_ITERATION_CHOICES],
-        description: 'How many optimizer steps to run. Default: 4.',
-      },
-      candidatesPerStep: {
-        type: 'integer',
-        enum: [...TEMPORARY_WIDTH_CHOICES],
-        description: 'How many candidates each step proposes and scores. Default: 4.',
-      },
-      runsPerCase: {
-        type: 'integer',
-        enum: [...TEMPORARY_REPETITION_CHOICES],
-        description:
-          'How many times each candidate runs each case, to average out a noisy agent. It multiplies the cost. Default: 1.',
-      },
-      parallelTrials: {
-        type: 'integer',
-        enum: [...TEMPORARY_WORKER_CHOICES],
-        description: 'How many trials run at once. Lower it when the model provider throttles. Default: 4.',
-      },
-      objective: {
-        type: 'string',
-        description:
-          'What the run optimizes, in the notation of the optimization API: Maximize(Helpfulness), ' +
-          'Minimize(tokens), WeightedSum(Maximize(Helpfulness), Minimize(tokens, scale=1000)), or ' +
-          'Pareto(Maximize(Helpfulness), Minimize(seconds, scale=10)). The metrics are the evaluators of the ' +
-          'experiment and the usage numbers tokens, input_tokens, output_tokens, cache_read_tokens, ' +
-          'cache_write_tokens, seconds, and model_calls. A bare evaluator name maximizes it, and a bare usage ' +
-          'name minimizes it. Default: the mean of every evaluator.',
-      },
-      constraints: {
-        type: 'array',
-        items: { type: 'string' },
-        description:
-          'Constraints that the chosen candidate must meet, such as "tokens <= 4000" or "Correctness >= 0.8". ' +
-          'Add an evaluator floor when every goal is a usage number.',
-      },
-      feasibilityThreshold: {
-        type: 'number',
-        enum: [...TEMPORARY_DECISION_CHOICES.feasibility],
-        description: 'How sure the optimizer must be that a candidate meets each constraint. Default: 0.9.',
-      },
-      crashes: {
-        type: 'string',
-        enum: [...TEMPORARY_DECISION_CHOICES.crashScore],
-        description:
-          'What a crashed run of the agent scores: worst gives each evaluator its worst value, none counts the ' +
-          'run as no data. Default: worst.',
-      },
-      pick: {
-        type: 'string',
-        enum: [...TEMPORARY_DECISION_CHOICES.pickRule],
-        description:
-          'How the final pick values each finalist: mean uses the posterior mean, and lower-bound-25 or ' +
-          'lower-bound-10 uses that lower bound to ship cautiously. Default: mean.',
-      },
-      finalists: {
-        type: 'integer',
-        enum: [...TEMPORARY_DECISION_CHOICES.finalists],
-        description:
-          'How many of the best candidates the optimizer measures on the validation cases before the pick. ' +
-          'Under Pareto, at least 5 go. Default: 3.',
-      },
-    },
-    required: ['experiment'],
-    additionalProperties: false,
-  },
-  run: async (input): Promise<string> => {
-    const { optimize } = sessions()
-    const current = optimize.snapshot()
-    const tune = tuneFrom(input)
-    const models = textList(input, 'models') ?? []
-    if (tune.includes('model') && models.length === 0)
-      throw new Error('Tuning model needs models: the provider-qualified ids to try besides the current model.')
-    const iterations = choiceOf(input, 'iterations', TEMPORARY_ITERATION_CHOICES)
-    const width = choiceOf(input, 'candidatesPerStep', TEMPORARY_WIDTH_CHOICES)
-    const repetitions = choiceOf(input, 'runsPerCase', TEMPORARY_REPETITION_CHOICES)
-    const workers = choiceOf(input, 'parallelTrials', TEMPORARY_WORKER_CHOICES)
-    const feasibility = oneOf(input, 'feasibilityThreshold', TEMPORARY_DECISION_CHOICES.feasibility)
-    const crashScore = oneOf(input, 'crashes', TEMPORARY_DECISION_CHOICES.crashScore)
-    const pickRule = oneOf(input, 'pick', TEMPORARY_DECISION_CHOICES.pickRule)
-    const finalists = oneOf(input, 'finalists', TEMPORARY_DECISION_CHOICES.finalists)
-    const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
-    const objective = await objectiveFor(experiment, input)
-    if (pendingReview(current))
-      throw new Error(
-        'There are pending optimization edits. Review and apply them, or explicitly discard them with strands_dev_reject_optimization, before starting another run.'
-      )
-    optimize.reset()
-    optimize.plan(experiment)
-    const planned = await until(optimize, (state) =>
-      state.step === 'setup' || state.step === 'failed' ? state : undefined
-    )
-    if (planned.step === 'failed') throw new Error(planned.message)
-    if (planned.step !== 'setup') throw new Error('The optimization could not be planned.')
-    tunedKnobs(planned.plan.knobs, tune)
-    if (tune.includes('model')) for (const model of models) optimize.pickModel(model, true)
-    for (const knob of planned.plan.knobs)
-      if (!knob.unavailable && knob.kind !== 'models' && knob.enabled !== tune.includes(knob.key))
-        optimize.toggleKnob(knob.key)
-    if (iterations !== undefined) optimize.setIterations(iterations)
-    if (width !== undefined) optimize.setWidth(width)
-    if (repetitions !== undefined) optimize.setRepetitions(repetitions)
-    if (workers !== undefined) optimize.setWorkers(workers)
-    if (objective) optimize.setObjective(objective)
-    if (feasibility !== undefined) optimize.setDecision('feasibility', feasibility)
-    if (crashScore !== undefined) optimize.setDecision('crashScore', crashScore)
-    if (pickRule !== undefined) optimize.setDecision('pickRule', pickRule)
-    if (finalists !== undefined) optimize.setDecision('finalists', finalists)
-    const ready = optimize.snapshot()
-    if (ready.step === 'setup' && ready.plan.budgetProblem) throw new Error(ready.plan.budgetProblem)
-    const started = optimize.start()
-    if (started === undefined) throw new Error('The optimization did not start.')
-    const finished = await until(optimize, (state) => {
-      const run = runState(state, started)
-      return run && run.step !== 'running' ? run : undefined
-    })
-    if (finished.step === 'failed') throw new Error(finished.message)
-    if (finished.step === 'cancelled')
-      return reply(
-        defined({
-          status: 'cancelled',
-          experiment: finished.experiment,
-          run: finished.run,
-          detail: 'The developer cancelled this optimization. No source changes were proposed or written.',
-        })
-      )
-    if (finished.step !== 'review') throw new Error('The optimization stopped without a review.')
-    return reply(reviewReport(finished.review))
-  },
-})
-
-const oneOf = <Value extends JSONValue>(input: Input, key: string, choices: readonly Value[]): Value | undefined => {
-  const value = input[key]
-  if (value === undefined || value === null) return undefined
-  const chosen = choices.find((choice) => choice === value)
-  if (chosen === undefined) throw new Error(`${key} must be one of ${choices.join(', ')}.`)
-  return chosen
-}
-
-const choiceOf = (input: Input, key: string, choices: readonly number[]): number | undefined => {
-  const value = whole(input, key, 1, Number.MAX_SAFE_INTEGER)
-  if (value !== undefined && !choices.includes(value)) throw new Error(`${key} must be one of ${choices.join(', ')}.`)
+const chosen = <Value extends JSONValue>(
+  name: string,
+  value: Value | undefined,
+  choices: readonly Value[]
+): Value | undefined => {
+  if (value === undefined) return undefined
+  if (!choices.includes(value)) throw new Error(`${name} must be one of ${choices.join(', ')}.`)
   return value
 }
 
-const cancelOptimizationTool = (sessions: Sessions): DevChatTool => ({
-  name: 'strands_dev_cancel_optimization',
-  description: 'Stop the running optimization only when the developer asks. Does not apply source changes.',
-  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-  run: async (): Promise<string> => {
-    const { optimize } = sessions()
-    const state = optimize.snapshot()
-    const running = state.runs?.find((run) => run.state.step === 'running')
-    if (!running && state.step !== 'running') throw new Error('No optimization is running.')
-    optimize.stop(running?.id)
-    return reply({ status: 'stopping' })
+const budgetValue = (name: string, setting: TemporaryBudgetSetting, value: number | undefined): number | undefined => {
+  if (value === undefined || isTemporaryBudgetValue(setting, value)) return value
+  throw new Error(`${name} must be a whole number of at least ${TEMPORARY_BUDGET_MINIMUMS[setting]}.`)
+}
+
+const objectiveFor = async (
+  experiment: ExperimentSummary,
+  { objective, constraints }: OptimizeFlagSettings
+): Promise<OptimizeObjective | undefined> => {
+  if (objective === undefined && constraints === undefined) return undefined
+  const { experiment: loaded } = await readTemporaryExperimentFile(experiment.path)
+  const picked = temporaryObjectiveFromRequest(objective, constraints, loaded.evaluators)
+  const { problem } = checkTemporaryObjective(picked, loaded.evaluators)
+  if (problem)
+    throw new Error(`${problem} The evaluators of ${experiment.name}: ${loaded.evaluators.join(', ') || 'none'}.`)
+  return picked
+}
+
+// Plans a fresh run, applies the flags of the skill, and starts it without waiting.
+const startOptimization = async (
+  sessions: Sessions,
+  experiment: ExperimentSummary,
+  settings: OptimizeFlagSettings
+): Promise<string> => {
+  const { optimize } = sessions()
+  const iterations = budgetValue('--max-iterations', 'iterations', settings.iterations)
+  const width = budgetValue('--proposals-per-iteration', 'width', settings.width)
+  const repetitions = budgetValue('--runs-per-candidate', 'repetitions', settings.repetitions)
+  const workers = budgetValue('--max-workers', 'workers', settings.workers)
+  const finalists = budgetValue('--n-finalists', 'finalists', settings.finalists)
+  const feasibility = chosen('--feasibility-threshold', settings.feasibility, TEMPORARY_DECISION_CHOICES.feasibility)
+  const crashScore = chosen(
+    '--agent-failure-score',
+    settings.crashScore as CrashScore | undefined,
+    TEMPORARY_DECISION_CHOICES.crashScore
+  )
+  const objective = await objectiveFor(experiment, settings)
+  optimize.reset()
+  optimize.plan(experiment)
+  const planned = await until(optimize, (state) =>
+    state.step === 'setup' || state.step === 'failed' ? state : undefined
+  )
+  if (planned.step === 'failed') throw new Error(planned.message)
+  if (planned.step !== 'setup') throw new Error('The optimization could not be planned.')
+  tunedKnobs(planned.plan.knobs, settings.tune)
+  if (settings.tune.includes('model')) for (const model of settings.models) optimize.pickModel(model, true)
+  for (const knob of planned.plan.knobs)
+    if (!knob.unavailable && knob.kind !== 'models' && knob.enabled !== settings.tune.includes(knob.key))
+      optimize.toggleKnob(knob.key)
+  if (iterations !== undefined) optimize.setIterations(iterations)
+  if (width !== undefined) optimize.setWidth(width)
+  if (repetitions !== undefined) optimize.setRepetitions(repetitions)
+  if (workers !== undefined) optimize.setWorkers(workers)
+  if (objective) optimize.setObjective(objective)
+  if (feasibility !== undefined) optimize.setDecision('feasibility', feasibility)
+  if (crashScore !== undefined) optimize.setDecision('crashScore', crashScore)
+  if (finalists !== undefined) optimize.setDecision('finalists', finalists)
+  const ready = optimize.snapshot()
+  if (ready.step === 'setup' && ready.plan.budgetProblem) throw new Error(ready.plan.budgetProblem)
+  const started = optimize.start()
+  if (started === undefined) throw new Error('The optimization did not start.')
+  return started
+}
+
+const caseNames = async (experiment: ExperimentSummary, names: readonly string[]): Promise<void> => {
+  const { raw } = await readTemporaryExperimentFile(experiment.path)
+  const known = raw.cases.map((item, index) => (typeof item.name === 'string' ? item.name : String(index)))
+  const unknown = names.filter((name) => !known.includes(name))
+  if (unknown.length > 0) throw new Error(`${experiment.name} has no case ${unknown.join(', ')}.`)
+}
+
+const BACKGROUND_DETAIL =
+  'It goes on in the background, with its progress on a line below the chat input. A notice says when it ' +
+  'finishes; then strands_dev_status and strands_dev_evaluation_results read the result.'
+
+const backgroundTool = (sessions: Sessions): DevChatTool => ({
+  name: 'strands_dev_run_background',
+  description:
+    'Start a paid strands-evals command in the background and return at once. This call starts the paid run ' +
+    'itself, so call it only after the developer answered yes, in an earlier turn, to the scope you named. ' +
+    'Pass the command and the flags the skill would pass: run evaluates the agent on an experiment ' +
+    '(--case NAME, repeatable, runs only those cases), optimize run takes the flags of the optimize skill ' +
+    '(--tune, --no-tune-instructions, --objective, --pareto, --constraint, --max-iterations, ' +
+    '--proposals-per-iteration, --runs-per-candidate, --n-finalists, --max-workers, --feasibility-threshold, ' +
+    '--agent-failure-score), and generate takes the flags of strands-evals generate (--task-description, ' +
+    '--context, --num-cases, --num-topics, --evaluator, --model, --expected-trajectory, and more) and saves ' +
+    'experiments/<experiment>/<experiment>.json. strands dev runs it in its prepared evals environment with ' +
+    'this agent, writes run.log and the records under strands-dev/experiments/<experiment>/, and continues ' +
+    'a run that stopped when strands dev closed. Flags that strands dev sets itself come back as ignored.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      command: { type: 'string', enum: [...BACKGROUND_COMMANDS], description: 'The strands-evals command.' },
+      experiment: {
+        type: 'string',
+        description: 'A saved experiment name, or with generate the name of the new experiment.',
+      },
+      args: { type: 'array', items: { type: 'string' }, description: 'The flags, one argument per item.' },
+    },
+    required: ['command', 'experiment'],
+    additionalProperties: false,
+  },
+  run: async (input): Promise<string> => {
+    const command = chosen('command', text(input, 'command') as BackgroundCommand, BACKGROUND_COMMANDS)
+    const args = textList(input, 'args') ?? []
+    const name = requiredText(input, 'experiment')
+    const started = (fields: object, ignored: readonly string[]): string =>
+      reply(
+        defined({
+          status: 'started',
+          command,
+          experiment: name,
+          ...fields,
+          ignored: ignored.length > 0 ? ignored : undefined,
+          detail: BACKGROUND_DETAIL,
+        })
+      )
+    if (command === 'generate') {
+      const { experiments } = sessions()
+      await experiments.reload()
+      const { settings, ignored } = generateFlagSettings(name, args, experiments.suggested())
+      const problem = experiments.generateInBackground(settings)
+      if (problem) throw new Error(problem)
+      const { folder, generations } = experiments.snapshot()
+      const log = generations.find((generation) => generation.name === settings.name)?.log
+      return started(
+        { cases: settings.cases, file: join(folder, settings.name, `${settings.name}.json`), log },
+        ignored
+      )
+    }
+    const experiment = await findExperiment(sessions, name)
+    if (command === 'optimize run') {
+      const settings = optimizeFlagSettings(args)
+      const run = await startOptimization(sessions, experiment, settings)
+      return started({ run, file: experiment.path }, settings.ignored)
+    }
+    const { cases, ignored } = runFlagCases(args)
+    const { test } = sessions()
+    await test.show()
+    if (
+      test.snapshot().runs.some((entry) => entry.experiment.path === experiment.path && entry.run.status === 'running')
+    )
+      throw new Error(`${experiment.name} is already running. strands_dev_evaluation_results reads its progress.`)
+    if (cases.length > 0) {
+      await caseNames(experiment, cases)
+      test.runOnly(experiment, cases)
+    } else test.run([experiment])
+    return started({ cases: cases.length > 0 ? cases.length : experiment.caseCount, file: experiment.path }, ignored)
   },
 })
 
-const rejectOptimizationTool = (sessions: Sessions): DevChatTool => ({
-  name: 'strands_dev_reject_optimization',
+const stopBackgroundTool = (sessions: Sessions): DevChatTool => ({
+  name: 'strands_dev_stop_background',
   description:
-    'Discard pending optimization proposals without writing source. Requires the developer to ask to discard them.',
-  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-  run: async (): Promise<string> => {
-    const { optimize } = sessions()
-    const latest = latestReview(optimize.snapshot())
-    if (!latest) throw new Error('There is no optimization proposal to discard.')
-    if (latest.review.applied?.length)
-      throw new Error('These edits were already applied. Discarding cannot undo source changes.')
-    if (latest.id) optimize.discard(latest.id)
-    else optimize.reset()
-    return reply({ status: 'discarded', run: latest.review.run })
+    'Stop a command that strands_dev_run_background started, only when the developer asks. A stopped ' +
+    'optimization keeps the best candidate so far. Cancelling the chat turn does not stop it.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      command: { type: 'string', enum: [...BACKGROUND_COMMANDS] },
+      experiment: { type: 'string', description: 'The experiment of the run.' },
+    },
+    required: ['command', 'experiment'],
+    additionalProperties: false,
+  },
+  run: async (input): Promise<string> => {
+    const command = chosen('command', text(input, 'command') as BackgroundCommand, BACKGROUND_COMMANDS)
+    const name = requiredText(input, 'experiment')
+    const { experiments, test, optimize } = sessions()
+    if (command === 'generate') {
+      const job = experiments
+        .snapshot()
+        .generations.find((generation) => generation.name === name && isGenerating(generation))
+      if (!job) throw new Error(`No generation of ${name} is running.`)
+      experiments.cancel(job.id)
+      return reply({ command, experiment: name, status: 'stopped' })
+    }
+    const experiment = await findExperiment(sessions, name)
+    if (command === 'run') {
+      await test.show()
+      const run = test.snapshot().runs.find((entry) => entry.experiment.path === experiment.path)?.run
+      if (run?.status !== 'running') throw new Error(`No evaluation of ${experiment.name} is running.`)
+      test.stop(experiment.path)
+      return reply({ command, experiment: experiment.name, status: 'stopping' })
+    }
+    const running = optimize
+      .snapshot()
+      .runs?.find((run) => run.experiment === experiment.name && run.state.step === 'running')
+    if (!running) throw new Error(`No optimization of ${experiment.name} is running.`)
+    optimize.stop(running.id)
+    return reply({ command, experiment: experiment.name, status: 'stopping' })
+  },
+})
+
+const runRecord = ({ record, state }: OptimizeRun): string | undefined =>
+  record ||
+  (state.step === 'running'
+    ? state.progress.record
+    : state.step === 'review'
+      ? state.review.record
+      : state.step === 'failed'
+        ? state.record
+        : undefined) ||
+  undefined
+
+// The newest optimization run of the experiment that has a record, else the list of optimization runs.
+const optimizationPlace = ({ runs = [] }: OptimizeState, experiment: string): EvalsBrowserPlace => {
+  const record = runs
+    .filter((run) => run.experiment === experiment)
+    .map(runRecord)
+    .find((found) => found !== undefined)
+  return record ? { view: 'optimization', record } : { view: 'opt-runs' }
+}
+
+const openEvalsUiTool = (sessions: Sessions): DevChatTool => ({
+  name: 'strands_dev_open_evals_ui',
+  readOnly: true,
+  description:
+    'Open the evals UI in the browser of the developer: an experiment with its cases, the last report of an experiment, ' +
+    'the latest optimization run of an experiment, or the list of runs when no experiment is given. ' +
+    'Returns what to tell the developer when it cannot open the browser.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      experiment: { type: 'string', description: 'A saved experiment name; omit to open the list of runs.' },
+      view: { type: 'string', enum: ['experiment', 'report', 'optimization'], description: 'Default experiment.' },
+      case: { type: 'string', description: 'A case name to open in the experiment or report view.' },
+    },
+    additionalProperties: false,
+  },
+  run: async (input): Promise<string> => {
+    const name = text(input, 'experiment')
+    const view = text(input, 'view')
+    const item = text(input, 'case')
+    const place = async (): Promise<EvalsBrowserPlace> => {
+      if (!name) return { view: view === 'optimization' ? 'opt-runs' : 'runs' }
+      const experiment = await findExperiment(sessions, name)
+      if (view === 'optimization') return optimizationPlace(sessions().optimize.snapshot(), experiment.name)
+      return {
+        view: view === 'report' ? 'report' : 'experiment',
+        experiment: experiment.path,
+        ...(item ? { case: item } : {}),
+      }
+    }
+    const notice = await sessions().ui.open(await place())
+    return reply(notice ? { opened: false, tell: notice.lines } : { opened: true })
+  },
+})
+
+const openFileTool = (sessions: Sessions): DevChatTool => ({
+  name: 'strands_dev_open_file',
+  readOnly: true,
+  description:
+    'Open a file in the editor of the developer, the way /config opens the agent: $STRANDS_EDITOR, $VISUAL, or ' +
+    '$EDITOR, else the app of the system for the file. A terminal editor takes the screen and gives it back when ' +
+    'it closes. Pass experiment for a saved experiment, or path for any other file. Do not print the file in chat.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      experiment: { type: 'string', description: 'A saved experiment name; opens its file.' },
+      path: { type: 'string', description: 'Any file path, absolute or relative to the agent folder.' },
+    },
+    additionalProperties: false,
+  },
+  run: async (input): Promise<string> => {
+    const experiment = text(input, 'experiment')
+    const given = text(input, 'path')
+    if (Boolean(experiment) === Boolean(given)) throw new Error('Give experiment or path, one of them.')
+    const path = experiment ? (await findExperiment(sessions, experiment)).path : given!
+    try {
+      await sessions().openFile(path)
+      return reply({ opened: true, file: path })
+    } catch (error) {
+      return reply({
+        opened: false,
+        file: path,
+        detail: `${errorMessage(error)} Give the path${experiment ? ', offer strands_dev_open_evals_ui,' : ''} and ask in chat what to change.`,
+      })
+    }
   },
 })
 
@@ -898,7 +746,7 @@ const applyTool = (sessions: Sessions): DevChatTool => ({
   name: 'strands_dev_apply_optimization',
   description:
     'Write the edits that the developer accepts from the last finished optimization into the agent source. ' +
-    'Give the index of each accepted edit from strands_dev_optimize or strands_dev_status.',
+    'Give the index of each accepted edit from the review in strands_dev_status.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -926,7 +774,10 @@ const applyTool = (sessions: Sessions): DevChatTool => ({
       return run?.step === 'review' && run.review.applied ? run.review : undefined
     })
     if (review.applyError) throw new Error(review.applyError)
-    return reply({ applied: review.applied, next: 'Run strands_dev_evaluate on the experiment to check the change.' })
+    return reply({
+      applied: review.applied,
+      next: 'Evaluate the experiment again, after the developer approves it, to check the change.',
+    })
   },
 })
 
@@ -949,11 +800,11 @@ const counted = (count: number, noun: string): string => `${count} ${noun}${coun
 
 const changedValue = (text: string): string => JSON.stringify(clip(text, CHANGE_LIMIT) ?? '')
 
-const changedEdit = ({ label, kind, target, before, after }: ProposedEdit): string => {
+const changedEdit = ({ label, kind, target, before, after, added }: ProposedEdit): string => {
   const where = target ? ` in ${target}` : ''
   return kind === 'text'
     ? `  - ${label}${where}: was ${changedValue(before)}, now ${changedValue(after)}`
-    : `  - ${label}${where}: ${before} → ${after}`
+    : `  - ${label}${where}: ${before} → ${after}${added ? `; ${added}` : ''}`
 }
 
 const testCheckText = (check: TestCheck | undefined): string => {
@@ -983,20 +834,19 @@ const changesSection = (changes: readonly TemporaryAppliedChange[]): string[] =>
 
 export const temporaryDevChatPart = ({ sessions, evaluators, history }: TemporaryDevChatHost): DevChatPart => ({
   instructions: [INSTRUCTIONS, ...changesSection(sessions().optimize.appliedChanges())].join('\n\n'),
-  skills: [temporaryCreateExperimentSkill(), ...temporaryWorkflowSkills()],
+  skills: [STRANDS_EVALS_SKILL, STRANDS_EVALS_OPTIMIZE_SKILL, ...temporaryWorkflowSkills()],
   tools: [
     statusTool(sessions, history),
     evaluatorsTool(once(evaluators)),
-    createTool(sessions),
     sessionConverterTool(history),
     readExperimentTool(sessions),
     testResultsTool(sessions),
-    testTool(sessions),
+    backgroundTool(sessions),
+    stopBackgroundTool(sessions),
+    openEvalsUiTool(sessions),
+    openFileTool(sessions),
     planTool(sessions),
-    askTool(() => sessions().ask),
-    optimizeTool(sessions),
-    cancelOptimizationTool(sessions),
-    rejectOptimizationTool(sessions),
+    ...uiTools(() => sessions().ask),
     applyTool(sessions),
   ],
 })

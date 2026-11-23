@@ -1,10 +1,12 @@
-import { writeFile } from 'node:fs/promises'
+import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
 
 import {
+  readTemporaryHarnessDefaults,
   readTemporaryKnobs,
+  temporaryKnobLabels,
   temporaryKnobChanges,
   temporarySpaceVariables,
   type TemporaryKnob,
@@ -23,22 +25,28 @@ export const agent = await createHarness({
   tools: [lookupOrder, refund],
   mcpServers: { github: { command: 'gh-mcp' }, docs: { url: 'https://docs.example' } },
   contextManager: 'agentic',
+  skills: ['./skills/refunds', './skills/orders'],
   plugins: makePlugins(),
   session: false,
+  memory: true,
 })
 `
 
-const workspaceWith = async (source: string): Promise<DevWorkspace> => {
+const workspaceWith = async (
+  source: string,
+  language: 'typescript' | 'python' = 'typescript'
+): Promise<DevWorkspace> => {
   const root = await temporaryDirectory()
-  await writeFile(join(root, 'agent.ts'), source)
+  const file = language === 'python' ? 'agent.py' : 'agent.ts'
+  await writeFile(join(root, file), source)
   return {
     root,
-    entrypoint: join(root, 'agent.ts'),
+    entrypoint: join(root, file),
     config: {
       version: 1,
       name: 'desk',
-      language: 'typescript',
-      entrypoint: 'agent.ts',
+      language,
+      entrypoint: file,
       origin: { kind: 'discovered' },
     },
   }
@@ -48,25 +56,50 @@ const enabled = (knobs: readonly TemporaryKnob[], keys: readonly string[]): Temp
   knobs.map((knob) => ({ ...knob, enabled: keys.includes(knob.key) }))
 
 describe('TEMPORARY optimization knobs', () => {
-  it('shouldListEveryCreateHarnessOptionWithItsKindAndWhyItIsUnavailableWhenTheAgentSetsThem', async () => {
+  it('shouldListEveryTunableOptionWithItsKindAndLeaveOutSessionAndMemory', async () => {
     const knobs = await readTemporaryKnobs(await workspaceWith(AGENT))
 
-    expect(knobs.map(({ key, kind, enabled, unavailable }) => [key, kind, enabled, unavailable ?? null])).toEqual([
-      ['instructions', 'text', true, null],
-      ['model', 'models', false, null],
-      ['effort', 'choice', false, null],
-      ['caching', 'choice', false, null],
-      ['builtinTools', 'switches', false, null],
-      ['tools', 'switches', false, null],
-      ['mcpServers', 'switches', false, null],
-      ['backgroundTasks', 'choice', false, null],
-      ['contextManager', 'choice', false, null],
-      ['session', 'choice', false, 'every trial runs without a session'],
-      ['skills', 'choice', false, null],
-      ['builtinPlugins', 'switches', false, null],
-      ['plugins', 'switches', false, 'set in code, so strands dev cannot read or change it'],
+    expect(
+      knobs.map(({ key, kind, enabled, unavailable, notInCall }) => [
+        key,
+        kind,
+        enabled,
+        unavailable ?? null,
+        notInCall === true,
+      ])
+    ).toEqual([
+      ['instructions', 'text', true, null, false],
+      [
+        'systemPrompt',
+        'text',
+        false,
+        'the call passes no system prompt, so the harness builds its own; tune the instructions instead',
+        false,
+      ],
+      ['model', 'models', false, null, false],
+      ['effort', 'choice', false, null, true],
+      ['caching', 'choice', false, null, false],
+      ['builtinTools', 'switches', false, null, false],
+      ['tools', 'switches', false, null, false],
+      ['mcpServers', 'switches', false, null, false],
+      ['backgroundTasks', 'choice', false, null, true],
+      ['contextManager', 'choice', false, null, false],
+      ['skills', 'switches', false, null, false],
+      ['builtinPlugins', 'switches', false, null, true],
+      ['plugins', 'switches', false, 'set in code, so strands dev cannot read or change it', false],
+      [
+        'interventions',
+        'switches',
+        false,
+        'the call passes no interventions, and the harness adds none by default',
+        false,
+      ],
     ])
     expect(knobs.find(({ key }) => key === 'tools')?.detail).toBe('on/off for each: lookupOrder, refund')
+    expect(knobs.find(({ key }) => key === 'backgroundTasks')).toMatchObject({
+      current: true,
+      detail: 'on · off; not in the call, so the run starts from the harness default',
+    })
     expect(knobs.find(({ key }) => key === 'contextManager')).toMatchObject({ current: 'agentic' })
   })
 
@@ -76,6 +109,7 @@ describe('TEMPORARY optimization knobs', () => {
       'model',
       'caching',
       'mcpServers',
+      'skills',
       'builtinPlugins',
     ])
 
@@ -99,6 +133,8 @@ describe('TEMPORARY optimization knobs', () => {
       { key: 'caching', kind: 'choice', option: 'caching', values: ['auto', true, false], default: true },
       { key: 'mcpServers_0', kind: 'switch', option: 'mcpServers', item: { key: 'github' }, default: true },
       { key: 'mcpServers_1', kind: 'switch', option: 'mcpServers', item: { key: 'docs' }, default: true },
+      { key: 'skills_0', kind: 'switch', option: 'skills', item: { index: 0 }, default: true },
+      { key: 'skills_1', kind: 'switch', option: 'skills', item: { index: 1 }, default: true },
       ...DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins.map((name, index) => ({
         key: `builtinPlugins_${index}`,
         kind: 'switch',
@@ -118,49 +154,61 @@ describe('TEMPORARY optimization knobs', () => {
   it('shouldTurnTheWinningValuesIntoAgentFileEditsWhenTheRunFinishes', async () => {
     const knobs = enabled(await readTemporaryKnobs(await workspaceWith(AGENT)), [
       'caching',
-      'builtinTools',
       'mcpServers',
+      'skills',
+      'backgroundTasks',
       'builtinPlugins',
     ])
     const baseline = {
       caching: true,
-      builtinTools_0: true,
-      builtinTools_1: true,
-      builtinTools_2: true,
       mcpServers_0: true,
       mcpServers_1: true,
+      backgroundTasks: true,
+      skills_0: true,
+      skills_1: true,
       builtinPlugins_0: true,
-      builtinPlugins_1: true,
     }
+    const [dropped, ...kept] = DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins
 
     const changes = temporaryKnobChanges(knobs, baseline, {
       ...baseline,
       caching: false,
-      builtinTools_2: false,
       mcpServers_1: false,
+      backgroundTasks: false,
+      skills_1: false,
       builtinPlugins_0: false,
     })
 
+    expect(changes.map(({ knob, added }) => [knob.key, added ?? null])).toEqual([
+      ['caching', null],
+      ['mcpServers', null],
+      ['backgroundTasks', 'backgroundTasks is new in the call: applying writes backgroundTasks = false'],
+      ['skills', null],
+      ['builtinPlugins', `builtinPlugins is new in the call: applying writes builtinPlugins = ${JSON.stringify(kept)}`],
+    ])
     expect(changes.map(({ knob, kind, before, after, edit }) => [knob.key, kind, before, after, edit])).toEqual([
       ['caching', 'value', 'on', 'off', { option: 'caching', value: false, expected: true }],
-      [
-        'builtinTools',
-        'value',
-        'web_search on',
-        'web_search off',
-        { option: 'builtinTools', removeItems: [2], expectedItems: ["'shell'", "'read'", "'web_search'"] },
-      ],
       ['mcpServers', 'value', 'docs on', 'docs off', { option: 'mcpServers', removeKeys: ['docs'] }],
+      [
+        'backgroundTasks',
+        'value',
+        'on (the harness default; not in the call)',
+        'off',
+        { option: 'backgroundTasks', value: false, absent: true },
+      ],
+      [
+        'skills',
+        'value',
+        './skills/orders on',
+        './skills/orders off',
+        { option: 'skills', removeItems: [1], expectedItems: ["'./skills/refunds'", "'./skills/orders'"] },
+      ],
       [
         'builtinPlugins',
         'value',
-        `${DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins[0]} on`,
-        `${DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins[0]} off`,
-        {
-          option: 'builtinPlugins',
-          value: DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins.slice(1),
-          expected: [...DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins],
-        },
+        `${dropped} on (the harness default; not in the call)`,
+        `${dropped} off`,
+        { option: 'builtinPlugins', value: kept, absent: true },
       ],
     ])
   })
@@ -176,5 +224,161 @@ describe('TEMPORARY optimization knobs', () => {
       ['instructions', false, 'the full system prompt replaces the instructions; tune it instead'],
       ['systemPrompt', false, null],
     ])
+  })
+
+  it('shouldSayWhyAKnobCannotBeTunedWhenTheCallSetsItInCodeOrListsNothing', async () => {
+    const knobs = await readTemporaryKnobs(
+      await workspaceWith(
+        "import { createHarness } from '@strands-agents/harness'\n" +
+          'export const agent = await createHarness({ model: makeModel(), tools: [], backgroundTasks: true, skills: [], interventions: STRICT })\n'
+      )
+    )
+
+    expect(knobs.map(({ key, kind, unavailable }) => [key, kind, unavailable ?? null])).toEqual([
+      ['instructions', 'text', null],
+      [
+        'systemPrompt',
+        'text',
+        'the call passes no system prompt, so the harness builds its own; tune the instructions instead',
+      ],
+      ['model', 'models', 'set in code, so strands dev cannot read or change it'],
+      ['effort', 'choice', 'the model has no reasoning levels to choose from'],
+      ['caching', 'choice', null],
+      ['builtinTools', 'switches', null],
+      ['tools', 'switches', 'the call lists no tools, so there is nothing to switch off'],
+      ['mcpServers', 'switches', 'the call passes no MCP servers, and the harness adds none by default'],
+      ['backgroundTasks', 'choice', null],
+      ['contextManager', 'choice', null],
+      ['skills', 'switches', 'the call lists no skills, so there is nothing to switch off'],
+      ['builtinPlugins', 'switches', null],
+      ['plugins', 'switches', 'the call passes no plugins, and the harness adds none by default'],
+      ['interventions', 'switches', 'set in code, so strands dev cannot read or change it'],
+    ])
+    expect(knobs.find(({ key }) => key === 'builtinTools')?.entries?.map(({ label }) => label)).toEqual(
+      (DEFAULT_HARNESS_AGENT_CONFIG.builtinTools as readonly string[]).filter((name) => name !== 'web_search')
+    )
+  })
+
+  it('shouldListTheKnobsThatAPythonCallLeavesOutFromThePythonHarnessDefaults', async () => {
+    const workspace = await workspaceWith(
+      "from strands_harness import create_harness\nagent = create_harness(instructions='Be brief.', mcp_servers={'docs': {}}, builtin_plugins=None)\n",
+      'python'
+    )
+    const options = {
+      model: 'bedrock/py',
+      effort: 'auto',
+      caching: true,
+      contextManager: 'auto',
+      skills: true,
+      builtinTools: ['shell', 'web_search'],
+      interventions: { strict: true },
+    }
+    const read = vi.fn(async () => ({ options, webSearch: true }))
+
+    const knobs = await readTemporaryKnobs(workspace, read)
+
+    expect(read).toHaveBeenCalledWith(workspace, { kind: 'unset' })
+    expect(
+      knobs.map(({ key, option, unavailable, current, entries }) => [
+        key,
+        option,
+        unavailable ?? current ?? entries?.map(({ label }) => label) ?? null,
+      ])
+    ).toEqual([
+      ['instructions', 'instructions', 'Be brief.'],
+      ['systemPrompt', 'system_prompt', expect.stringContaining('the call passes no system prompt')],
+      ['model', 'model', 'bedrock/py'],
+      ['effort', 'effort', 'the model has no reasoning levels to choose from'],
+      ['caching', 'caching', true],
+      ['builtinTools', 'builtin_tools', ['shell', 'web_search']],
+      ['tools', 'tools', 'the call passes no tools, and the harness adds none by default'],
+      ['mcpServers', 'mcp_servers', ['docs']],
+      ['backgroundTasks', 'background_tasks', true],
+      ['contextManager', 'context_manager', 'auto'],
+      ['skills', 'skills', true],
+      ['builtinPlugins', 'builtin_plugins', 'set to a value that strands dev does not tune'],
+      ['plugins', 'plugins', 'the call passes no plugins, and the harness adds none by default'],
+      [
+        'interventions',
+        'interventions',
+        'the harness default interventions are not a list of names that strands dev can switch',
+      ],
+    ])
+  })
+
+  it('shouldReadTheTypeScriptHarnessDefaultsWithNativeWebSearchOnlyForAModelThatHasIt', async () => {
+    const workspace = await workspaceWith('')
+
+    const [unset, set, code] = await Promise.all([
+      readTemporaryHarnessDefaults(workspace, { kind: 'unset' }),
+      readTemporaryHarnessDefaults(workspace, { kind: 'set', model: 'openai/gpt-5' }),
+      readTemporaryHarnessDefaults(workspace, { kind: 'code' }),
+    ])
+
+    expect(unset.options).toBe(DEFAULT_HARNESS_AGENT_CONFIG)
+    expect([unset.webSearch, set.webSearch, code.webSearch]).toEqual([false, true, false])
+  })
+
+  it.skipIf(process.platform === 'win32')('shouldReadThePythonHarnessDefaultsFromTheProjectPython', async () => {
+    const workspace = await workspaceWith('', 'python')
+    const packages = join(workspace.root, 'packages', 'strands_harness')
+    await mkdir(packages, { recursive: true })
+    await writeFile(
+      join(packages, '__init__.py'),
+      'DEFAULT_HARNESS_AGENT_CONFIG = {"builtinPlugins": ("environment",)}\n' +
+        'def supports_web_search(model):\n    return model == "openai/gpt-5"\n'
+    )
+    const python = join(workspace.root, '.venv', 'bin', 'python')
+    await mkdir(join(workspace.root, '.venv', 'bin'), { recursive: true })
+    // Drops -I so that the fake package on PYTHONPATH stands in for strands-harness.
+    await writeFile(
+      python,
+      `#!/bin/sh\nshift\nexec env PYTHONPATH="${join(workspace.root, 'packages')}" ${process.env.PYTHON ?? 'python3'} "$@"\n`
+    )
+    await chmod(python, 0o755)
+
+    const [set, code] = [
+      await readTemporaryHarnessDefaults(workspace, { kind: 'set', model: 'openai/gpt-5' }),
+      await readTemporaryHarnessDefaults(workspace, { kind: 'code' }),
+    ]
+
+    expect(set).toEqual({ options: { builtinPlugins: ['environment'] }, webSearch: true })
+    expect(code.webSearch).toBe(false)
+  })
+
+  it('shouldSayWhyEveryKnobThatTheCallLeavesOutCannotBeTunedWhenTheHarnessDefaultsCannotBeRead', async () => {
+    const workspace = await workspaceWith("export const agent = await createHarness({ model: 'bedrock/x' })\n")
+
+    const knobs = await readTemporaryKnobs(workspace, async () => {
+      throw new Error('no strands_harness')
+    })
+
+    const problem = 'strands dev could not read the strands-harness defaults: no strands_harness'
+    expect(knobs.filter(({ unavailable }) => unavailable === problem).map(({ key }) => key)).toEqual([
+      'caching',
+      'builtinTools',
+      'tools',
+      'mcpServers',
+      'backgroundTasks',
+      'contextManager',
+      'skills',
+      'builtinPlugins',
+      'plugins',
+      'interventions',
+    ])
+    expect(knobs.find(({ key }) => key === 'model')).toMatchObject({ current: 'bedrock/x' })
+  })
+
+  it('shouldNameEachSearchVariableAndLeaveOutAKnobThatDidNotChange', async () => {
+    const knobs = enabled(await readTemporaryKnobs(await workspaceWith(AGENT)), ['caching', 'contextManager', 'skills'])
+    const baseline = { caching: true, contextManager: 'agentic', skills_0: true, skills_1: true }
+
+    expect(temporaryKnobChanges(knobs, baseline, { ...baseline, contextManager: undefined })).toEqual([])
+    expect(temporaryKnobLabels(knobs)).toMatchObject({
+      caching: 'prompt caching',
+      contextManager: 'context manager',
+      skills_0: 'skills: ./skills/refunds',
+      skills_1: 'skills: ./skills/orders',
+    })
   })
 })

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import re
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ _KEY_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _ITEM_FIELDS = ("index", "key", "name")
 _SCALAR_TYPES = (str, int, float, bool, type(None))
 _NAME_ATTRIBUTES = ("tool_name", "name", "__name__")
+# A map of off switches edits the harness's own default set, so web_search stays off where the model has none.
+_DEFAULT_SET_OPTIONS = frozenset({"builtin_tools"})
 
 
 class VariableKind(str, Enum):
@@ -76,15 +79,31 @@ def without_items(collection: Any, items: list[dict[str, Any]]) -> Any:
     return [entry for index, entry in enumerate(collection) if index not in indexes and not _is_named(entry, names)]
 
 
+def harness_default(option: str) -> Any:
+    """The strands-harness default of an option, from its DEFAULT_HARNESS_AGENT_CONFIG."""
+    config = importlib.import_module("strands_harness").DEFAULT_HARNESS_AGENT_CONFIG
+    return config.get(re.sub(r"_([a-z])", lambda match: match.group(1).upper(), option))
+
+
+def default_without(option: str, items: list[dict[str, Any]]) -> Any:
+    """The harness default of an option that the agent leaves out, without the items that are off."""
+    if option in _DEFAULT_SET_OPTIONS:
+        return {item["name"]: False for item in items if "name" in item}
+    return without_items(list(harness_default(option) or []), items)
+
+
 def item_problem(options: dict[str, Any], option: str, item: dict[str, Any]) -> str | None:
-    collection = options.get(option)
+    collection = options[option] if option in options else harness_default(option)
+    owner = f"the agent's {option}" if option in options else f"the harness default {option}"
     container = dict if "key" in item else list
     if collection is None:
-        return f"the agent passes no {option}"
+        return f"the agent passes no {option}, and the harness has none by default"
+    if isinstance(collection, tuple):
+        collection = list(collection)
     if not isinstance(collection, container):
-        return f"the agent's {option} is a {type(collection).__name__}, not a {container.__name__}"
+        return f"{owner} is a {type(collection).__name__}, not a {container.__name__}"
     if len(without_items(collection, [item])) == len(collection):
-        return f"the agent's {option} has no such item"
+        return f"{owner} has no such item"
     return None
 
 

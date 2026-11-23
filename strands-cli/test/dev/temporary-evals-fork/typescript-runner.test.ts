@@ -102,6 +102,7 @@ describe('TEMPORARY TypeScript runner', () => {
           tools: [{ index: 0 }],
           mcpServers: [{ key: 'docs' }],
           builtinTools: [{ name: 'web_search' }, { name: 'shell' }],
+          builtinPlugins: [{ name: 'todos' }],
         },
       },
       input: 'question',
@@ -110,10 +111,9 @@ describe('TEMPORARY TypeScript runner', () => {
     const built = createAgent.mock.calls[0]![0] as unknown as Record<string, unknown>
     expect(built.tools).toEqual([refund])
     expect(built.mcpServers).toEqual({ github: { command: 'gh' } })
-    expect(built.builtinTools).toEqual(
-      (DEFAULT_HARNESS_AGENT_CONFIG.builtinTools as readonly string[]).filter(
-        (name) => name !== 'web_search' && name !== 'shell'
-      )
+    expect(built.builtinTools).toEqual({ web_search: false, shell: false })
+    expect(built.builtinPlugins).toEqual(
+      (DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins as readonly string[]).filter((name) => name !== 'todos')
     )
     expect(built.caching).toBe(false)
     expect(built).not.toHaveProperty('$without')

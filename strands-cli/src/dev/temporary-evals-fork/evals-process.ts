@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { closeSync, createWriteStream, openSync } from 'node:fs'
 import { open } from 'node:fs/promises'
-import { delimiter, dirname } from 'node:path'
+import { delimiter, dirname, resolve } from 'node:path'
 import type { Socket } from 'node:net'
 import { createInterface } from 'node:readline'
 import { fileURLToPath, URL } from 'node:url'
@@ -54,7 +54,7 @@ export const temporaryWorkspaceDirectory = ({ directory, entrypoint }: DevWorksp
     throw new Error(
       `${entrypoint} has no strands-dev workspace folder. Run strands dev init in its folder, then try again.`
     )
-  return directory
+  return resolve(directory)
 }
 
 export const temporaryFlagValues = (forkArguments: readonly string[], flag: string): string[] =>

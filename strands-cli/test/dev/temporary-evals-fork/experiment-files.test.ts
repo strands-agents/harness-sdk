@@ -6,9 +6,6 @@ import {
   createTemporaryExperimentCases,
   listTemporaryExperiments,
   readTemporaryExperimentFile,
-  temporaryBlankCase,
-  temporaryCaseExpected,
-  temporaryCaseWithExpected,
   temporaryDropIncompleteCases,
   temporaryNamedExperiment,
   temporaryRunnableExperiment,
@@ -209,16 +206,6 @@ describe('TEMPORARY experiment files', () => {
     expect(await readFile(path, 'utf8')).toBe(text)
   })
 
-  it.each([
-    ['an expected outcome', 'Refund it', 'Refund it'],
-    ['no expected outcome', '', null],
-  ])('shouldMakeACompleteCaseWhenABlankCaseHas%s', (_case, expected, stored) => {
-    const blank = temporaryBlankCase('case-3', 'Refund order 7', expected)
-
-    expect(blank).toMatchObject({ name: 'case-3', input: 'Refund order 7', expected_output: stored, metadata: null })
-    expect(blank.session_id).toMatch(/^[0-9a-f-]{36}$/u)
-  })
-
   it.each<[string, unknown[], string[]]>([
     ['repeat in any case', ['refund', 'refund', 'Refund'], ['refund', 'refund-2', 'Refund-3']],
     ['are missing', [null, undefined, '', 'case_1'], ['case_0', 'case_1', 'case_2', 'case_1-2']],
@@ -301,16 +288,5 @@ describe('TEMPORARY expected assertions', () => {
 
     expect(checked).toEqual({ complete: 1, dropped: 1 })
     expect(await readJson(path)).toEqual(experimentDocument(assertionCase('c0', 'The agent refunds order 7.')))
-  })
-
-  it.each([
-    ['the assertion when the case has only an assertion', assertionCase('c0', 'Old.'), { expected_assertion: 'New.' }],
-    ['the output when the case has an output', assertionCase('c0', 'Old.', 'Old answer.'), { expected_output: 'New.' }],
-    ['the output when the case has neither', assertionCase('c0', null), { expected_output: 'New.' }],
-  ])('shouldWriteAnEditedAnswerInto %s', (_case, raw, written) => {
-    const edited = temporaryCaseWithExpected(raw, 'New.')
-
-    expect(edited).toEqual({ ...raw, ...written })
-    expect(temporaryCaseExpected(edited)).toBe('New.')
   })
 })

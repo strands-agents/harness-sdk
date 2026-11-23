@@ -72,7 +72,7 @@ const rememberTest = async (
       await readTemporaryTestResults(report, { experiment: basename(home), seconds })
     )
   } catch (error) {
-    warn(`warning: /evaluate cannot show this result: ${errorMessage(error)}`)
+    warn(`warning: this result is not kept as the latest report: ${errorMessage(error)}`)
   }
 }
 

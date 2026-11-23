@@ -50,7 +50,6 @@ export const TEMPORARY_DECISION_CHOICES: DecisionChoices = {
   feasibility: [0.8, 0.9, 0.95, 0.99],
   crashScore: ['worst', 'none'],
   pickRule: ['mean', 'lower-bound-25', 'lower-bound-10'],
-  finalists: [1, 2, 3, 5],
 }
 
 export const TEMPORARY_PICK_QUANTILES: Readonly<Record<Exclude<PickRule, 'mean'>, number>> = {
@@ -69,13 +68,13 @@ export const TEMPORARY_OPTIMIZE_DEFAULTS: TemporaryOptimizeSettings = {
   decision: TEMPORARY_DECISION_DEFAULTS,
 }
 
-export const TEMPORARY_ITERATION_CHOICES: readonly number[] = [1, 2, 4, 6, 8]
+// The optimizer takes any whole number from these: 0 steps measures only the baseline (optimizer.py, budget.py).
+export const TEMPORARY_BUDGET_MINIMUMS = { iterations: 0, width: 1, repetitions: 1, workers: 1, finalists: 1 } as const
 
-export const TEMPORARY_REPETITION_CHOICES: readonly number[] = [1, 2, 3, 5]
+export type TemporaryBudgetSetting = keyof typeof TEMPORARY_BUDGET_MINIMUMS
 
-export const TEMPORARY_WIDTH_CHOICES: readonly number[] = [2, 4, 6, 8]
-
-export const TEMPORARY_WORKER_CHOICES: readonly number[] = [1, 2, 4, 8, 16]
+export const isTemporaryBudgetValue = (setting: TemporaryBudgetSetting, value: number): boolean =>
+  Number.isSafeInteger(value) && value >= TEMPORARY_BUDGET_MINIMUMS[setting]
 
 export const TEMPORARY_ROLLOUT_CAP = 500
 
@@ -113,15 +112,6 @@ export const temporarySplitChoices = (caseCount: number, testShare = TEMPORARY_T
   )
     .filter(({ train, validation }) => train > 0 && validation > 0)
     .filter((split, index, choices) => choices.findIndex((choice) => sameCaseSplit(choice, split)) === index)
-
-export const temporaryNearestSplit = (choices: readonly CaseSplit[], split: CaseSplit): CaseSplit | undefined =>
-  choices.reduce<CaseSplit | undefined>(
-    (nearest, choice) =>
-      nearest === undefined || Math.abs(choice.train - split.train) < Math.abs(nearest.train - split.train)
-        ? choice
-        : nearest,
-    undefined
-  )
 
 export const temporaryValidatedFinalists = (finalists: number, pareto: boolean): number =>
   pareto ? Math.max(finalists, PARETO_MIN_FINALISTS) : finalists

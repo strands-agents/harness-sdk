@@ -1,13 +1,14 @@
 import { sanitizeTerminalText } from '../../terminal/text.js'
-import type { Tone } from './kit.js'
 
-export type WizardAnswer = string | boolean | readonly string[]
+export type WizardAnswer = string | number | boolean | readonly string[]
 
 export interface WizardOption {
   readonly value: string
   readonly label: string
   readonly detail?: string
   readonly unavailable?: string
+  // The row is a text field: picking it answers with the typed text instead of the value.
+  readonly input?: boolean
 }
 
 /** One question, many rows: checkboxes when multiple, radio buttons when not. */
@@ -17,25 +18,6 @@ export interface WizardSelectSpec {
   readonly options: readonly WizardOption[]
   readonly multiple?: boolean
   readonly selected?: readonly string[]
-  readonly listLabel?: string
-}
-
-export interface WizardChoiceSpec {
-  readonly kind: 'choice'
-  readonly key: string
-  readonly label: string
-  readonly options: readonly string[]
-  readonly value?: string
-  readonly hint?: string
-}
-
-export interface WizardToggleSpec {
-  readonly kind: 'toggle'
-  readonly key: string
-  readonly label: string
-  readonly detail?: string
-  readonly checked?: boolean
-  readonly unavailable?: string
 }
 
 export interface WizardTextSpec {
@@ -43,35 +25,41 @@ export interface WizardTextSpec {
   readonly key: string
   readonly label: string
   readonly value?: string
-  readonly placeholder?: string
 }
 
-export type WizardFieldSpec = WizardChoiceSpec | WizardToggleSpec | WizardTextSpec | WizardSelectSpec
+/** A whole number typed in its own row; finishing waits until it fits min and max. */
+export interface WizardNumberSpec {
+  readonly kind: 'number'
+  readonly key: string
+  readonly label: string
+  readonly value?: number
+  readonly min?: number
+  readonly max?: number
+  readonly detail?: string
+}
+
+export type WizardFieldSpec = WizardTextSpec | WizardSelectSpec | WizardNumberSpec
 
 export interface WizardStepSpec {
   readonly key: string
   readonly title: string
   readonly fields: readonly WizardFieldSpec[]
-  readonly notice?: { readonly tone: Tone; readonly text: string }
-  readonly listLabel?: string
-  readonly footnote?: string
 }
 
 export interface WizardRequest {
   readonly id: string
   readonly name: string
   readonly question?: string
-  readonly titleParts?: readonly string[]
   readonly steps: readonly WizardStepSpec[]
-  readonly status?: string
-  readonly footer?: string
   readonly finishLabel?: string
+  /** Offer Back instead of Cancel; picking it resolves the request with 'back'. */
+  readonly back?: boolean
 }
 
 export type WizardRequestSpec = Omit<WizardRequest, 'id'>
 
-/** `undefined` means the user cancelled instead of finishing. */
-export type WizardOutcome = Readonly<Record<string, WizardAnswer>> | undefined
+/** `undefined` means the user cancelled instead of finishing; 'back' means they asked for the previous question. */
+export type WizardOutcome = Readonly<Record<string, WizardAnswer>> | 'back' | undefined
 
 type WizardListener = (request: WizardRequest | undefined) => void
 
@@ -92,23 +80,17 @@ const cleanField = (field: WizardFieldSpec): WizardFieldSpec => {
         ...(option.detail === undefined ? {} : { detail: cleanText(option.detail) }),
         ...(option.unavailable === undefined ? {} : { unavailable: cleanText(option.unavailable) }),
       })),
-      ...(field.listLabel === undefined ? {} : { listLabel: cleanText(field.listLabel) }),
     }
   const label = cleanText(field.label)
-  if (field.kind === 'choice') return { ...field, label, options: field.options.map(cleanText) }
-  if (field.kind === 'toggle')
-    return {
-      ...field,
-      label,
-      ...(field.detail === undefined ? {} : { detail: cleanText(field.detail) }),
-      ...(field.unavailable === undefined ? {} : { unavailable: cleanText(field.unavailable) }),
-    }
+  if (field.kind === 'number')
+    return { ...field, label, ...(field.detail === undefined ? {} : { detail: cleanText(field.detail) }) }
   return { ...field, label }
 }
 
 const cleanRequest = (request: WizardRequest): WizardRequest => ({
   ...request,
   name: cleanText(request.name),
+  ...(request.question === undefined ? {} : { question: cleanText(request.question) }),
   steps: request.steps.map((step) => ({
     ...step,
     title: cleanText(step.title),
@@ -126,13 +108,44 @@ export const defaultAnswers = (steps: readonly WizardStepSpec[]): Record<string,
         answers[field.key] = field.multiple === false ? (picked[0] ?? '') : picked
         continue
       }
-      // An unavailable toggle renders unchecked and refuses to flip, so it must not answer true.
-      if (field.kind === 'toggle') answers[field.key] = field.unavailable === undefined && field.checked === true
-      else if (field.kind === 'text') answers[field.key] = field.value ?? ''
-      else answers[field.key] = field.value ?? field.options[0] ?? ''
+      answers[field.key] = field.value ?? ''
     }
   return answers
 }
+
+/** Why a number answer cannot finish, or undefined when it fits its field. */
+export const numberProblem = (field: WizardNumberSpec, answer: WizardAnswer | undefined): string | undefined => {
+  if (typeof answer !== 'number') return `${field.label} needs a whole number.`
+  if (field.min !== undefined && answer < field.min) return `${field.label} must be at least ${field.min}.`
+  if (field.max !== undefined && answer > field.max) return `${field.label} must be at most ${field.max}.`
+  return undefined
+}
+
+/** The answers as the asker reads them: a picked input row answers with its typed text. */
+export const finishedAnswers = (
+  steps: readonly WizardStepSpec[],
+  answers: Readonly<Record<string, WizardAnswer>>,
+  typed: Readonly<Record<string, string>>
+): Record<string, WizardAnswer> => {
+  const done: Record<string, WizardAnswer> = { ...answers }
+  for (const step of steps)
+    for (const field of step.fields) {
+      if (field.kind !== 'select' || !field.options.some(({ input }) => input)) continue
+      const typedOf = (value: string): string =>
+        field.options.find((option) => option.value === value)?.input
+          ? (typed[inputKey(field.key, value)] ?? '')
+          : value
+      const answer = answers[field.key]
+      done[field.key] = Array.isArray(answer)
+        ? answer.map(typedOf)
+        : typeof answer === 'string' && answer
+          ? typedOf(answer)
+          : ''
+    }
+  return done
+}
+
+export const inputKey = (field: string, option: string): string => `${field}.${option}`
 
 /**
  * One wizard at a time, so a second request waits instead of replacing the screen.

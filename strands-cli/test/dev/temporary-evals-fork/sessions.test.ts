@@ -3,6 +3,7 @@ import { once } from 'node:events'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
 import { describe, expect, it, vi } from 'vitest'
 
 import { CliConfigStore } from '../../../src/config/store.js'
@@ -232,10 +233,17 @@ const sessionsFor = async (dependencies: Partial<TemporarySessionDependencies> =
     workspace,
     agent: () => ({ description: 'Answers capital city questions', tools: [] }),
     context,
-    dependencies: { run: environmentRunner(), initialCopy: madeInitialCopy, ...dependencies },
+    dependencies: {
+      run: environmentRunner(),
+      initialCopy: madeInitialCopy,
+      harnessDefaults: async () => ({ options: { ...DEFAULT_HARNESS_AGENT_CONFIG }, webSearch: false }),
+      ...dependencies,
+    },
   })
   return { workspace, sessions, notices }
 }
+
+const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
 
 const experimentHome = (workspace: DevWorkspace, name = 'capital'): string =>
   join(workspace.directory!, 'experiments', name)
@@ -258,6 +266,16 @@ const finished = (sessions: ReturnType<typeof temporaryDevSessions>, path: strin
   const run = sessions.test.snapshot().runs.find(({ experiment }) => experiment.path === path)?.run
   if (run?.status !== 'done') throw new Error(`expected finished results, got ${run?.status}`)
   return run.results
+}
+
+// The chat reruns the failed cases by passing their names to strands-evals run --case.
+const rerunFailed = (sessions: ReturnType<typeof temporaryDevSessions>, path: string): void => {
+  const entry = sessions.test.snapshot().runs.find(({ experiment }) => experiment.path === path)!
+  if (entry.run.status !== 'done') throw new Error('expected a finished run')
+  sessions.test.runOnly(
+    entry.experiment,
+    entry.run.results.cases.filter(({ passed }) => !passed).map(({ name }) => name)
+  )
 }
 
 const runStatus = (sessions: ReturnType<typeof temporaryDevSessions>, path: string) =>
@@ -325,6 +343,17 @@ describe('TEMPORARY dev sessions', () => {
     expect(again).toBe(sessions)
   })
 
+  it('shouldOpenAFileThroughTheLatestChatScreenAndSaySoWhenItHasNoEditor', async () => {
+    const { workspace, sessions } = await sessionsFor()
+    const openFile = vi.fn(async (_path: string): Promise<void> => {})
+
+    await expect(sessions.openFile('/w/a.json')).rejects.toThrow('This terminal cannot open an editor.')
+    temporaryDevSessions({ workspace, agent: () => ({}), context: { ...chat().context, openFile } })
+    await sessions.openFile('/w/a.json')
+
+    expect(openFile).toHaveBeenCalledWith('/w/a.json')
+  })
+
   it('shouldShowTheFailedCaseAndPostANoticeWhenATestRunFinishes', async () => {
     const { workspace, sessions, notices } = await sessionsFor({ spawnTests: testingProcess() })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
@@ -337,8 +366,27 @@ describe('TEMPORARY dev sessions', () => {
     expect(results.cases.find(({ name }) => name === 'c1')?.verdicts[0]?.reason).toBe('named the wrong city')
     expect(notices.at(-1)).toEqual({
       status: 'success',
-      text: 'evaluate · capital · 2 of 3 cases passed · /evaluate shows the results',
+      text: `evaluate · capital · 2 of 3 cases passed · report in ${join(experimentHome(workspace), 'capital.report.json')}`,
     })
+  })
+
+  it('shouldPointAtTheRunLogOrGiveTheErrorWhenATestRunStopsWithoutAReport', async () => {
+    const crashing = vi.fn(async () => ({ code: 1, stdout: '', stderrTail: ['boom'] }))
+    const { workspace, sessions, notices } = await sessionsFor({ spawnTests: crashing })
+    const experiment = await savedExperiment(workspace, ['c0'])
+    sessions.test.run([experiment, { name: 'gone', path: join(workspace.root, 'gone.json'), caseCount: 1 }])
+
+    await vi.waitFor(() => expect(notices).toHaveLength(2))
+
+    expect(notices.map(({ text }) => text).sort()).toEqual([
+      expect.stringMatching(
+        new RegExp(
+          `^evaluate · capital stopped · run log in ${escaped(join(experimentHome(workspace), 'runs'))}/.+/run\\.log$`,
+          'u'
+        )
+      ),
+      expect.stringMatching(/^evaluate · gone stopped · .*ENOENT/u),
+    ])
   })
 
   it('shouldStopARunningTestWithoutAnErrorNoticeWhenTheUserStopsIt', async () => {
@@ -368,7 +416,7 @@ describe('TEMPORARY dev sessions', () => {
     sessions.test.run([experiment])
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
 
-    sessions.test.rerunFailed(experiment.path)
+    rerunFailed(sessions, experiment.path)
     await vi.waitFor(() => expect(testing).toHaveBeenCalledTimes(2))
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
 
@@ -385,7 +433,7 @@ describe('TEMPORARY dev sessions', () => {
     sessions.test.run([experiment])
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
 
-    sessions.test.rerunFailed(experiment.path)
+    rerunFailed(sessions, experiment.path)
     await vi.waitFor(() => expect(testing).toHaveBeenCalledTimes(2))
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
 
@@ -404,7 +452,7 @@ describe('TEMPORARY dev sessions', () => {
     expect(results.report).toBe(join(experimentHome(workspace), 'capital.report.json'))
     expect(notices.at(-1)).toEqual({
       status: 'success',
-      text: 'evaluate · capital · 2 of 3 rerun cases passed · 7 of 8 cases passed · /evaluate shows the results',
+      text: `evaluate · capital · 2 of 3 rerun cases passed · 7 of 8 cases passed · report in ${join(experimentHome(workspace), 'capital.report.json')}`,
     })
   })
 
@@ -420,7 +468,7 @@ describe('TEMPORARY dev sessions', () => {
     sessions.test.run([experiment])
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
 
-    sessions.test.rerunFailed(experiment.path)
+    rerunFailed(sessions, experiment.path)
     await vi.waitFor(() => expect(spawnTests).toHaveBeenCalledTimes(2))
     const rerunning = temporaryTestJobs(sessions.test.snapshot())
     const recorded = await readTemporaryRunRecords(workspace.directory!)
@@ -451,103 +499,44 @@ describe('TEMPORARY dev sessions', () => {
     expect(before.plan.split).toEqual({ train: 10, validation: 5, test: 5 })
     expect(before.plan.knobs.map(({ key, enabled }) => [key, enabled])).toEqual([
       ['instructions', true],
+      ['systemPrompt', false],
       ['model', false],
       ['effort', false],
       ['caching', false],
       ['builtinTools', false],
+      ['tools', false],
+      ['mcpServers', false],
       ['backgroundTasks', false],
       ['contextManager', false],
       ['skills', false],
       ['builtinPlugins', false],
+      ['plugins', false],
+      ['interventions', false],
     ])
     expect(after.plan.iterations).toBe(2)
     expect(after.plan.rollouts).toBeLessThan(before.plan.rollouts)
   })
 
-  it('shouldMoveTheCasesAndUpdateTheEstimateAndWarningWhenTheDeveloperPicksAnotherSplit', async () => {
-    const { workspace, sessions } = await sessionsFor()
-    const experiment = await savedExperiment(
-      workspace,
-      Array.from({ length: 20 }, (_, index) => `c${index}`)
-    )
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-    const before = sessions.optimize.snapshot()
-
-    sessions.optimize.setSplit({ train: 16, validation: 2, test: 2 })
-    const after = sessions.optimize.snapshot()
-    sessions.optimize.setSplit({ train: 17, validation: 2, test: 1 })
-
-    if (before.step !== 'setup' || after.step !== 'setup') throw new Error('expected the setup')
-    expect(before.plan.splitChoices).toContainEqual(before.plan.split)
-    expect(after.plan.split).toEqual({ train: 16, validation: 2, test: 2 })
-    expect(after.plan.rollouts).toBeGreaterThan(before.plan.rollouts)
-    expect(before.plan.warning).toBeUndefined()
-    expect(after.plan.warning).toBeUndefined()
-    expect(sessions.optimize.snapshot()).toEqual(after)
-  })
-
-  it('shouldWarnWhenTheChosenSplitLeavesTooFewHeldOutCases', async () => {
-    const { workspace, sessions } = await sessionsFor()
-    const experiment = await savedExperiment(
-      workspace,
-      Array.from({ length: 8 }, (_, index) => `c${index}`)
-    )
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-    const state = sessions.optimize.snapshot()
-    if (state.step !== 'setup') throw new Error('expected the setup')
-
-    sessions.optimize.setSplit(state.plan.splitChoices.at(-1)!)
-
-    expect(sessions.optimize.snapshot()).toMatchObject({
-      plan: { warning: expect.stringContaining('so the scores can be luck') },
+  it('shouldReviewAndApplyTheWinningInstructionsAndSayWhichOptionIsNewInTheCallWhenTheRunFinishes', async () => {
+    const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await writeOptimizerRun(recordOf(args), [
+        ...studyLines(0.9, { baseline: { background_tasks: true }, winner: { background_tasks: false } }),
+        optimizerStop(),
+        optimizerPicked('win'),
+      ])
+      return exit
     })
-  })
-
-  it('shouldListTheProviderModelsAndTurnTheModelKnobOnWhenTheDeveloperPicksAnotherModel', async () => {
-    const discoverModels = vi.fn(async () => ({
-      options: [
-        { id: 'bedrock/global.anthropic.claude-opus-5', name: 'Claude Opus 5' },
-        { id: 'bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0', name: 'Claude Haiku 4.5' },
-      ],
-    }))
-    const { workspace, sessions } = await sessionsFor({ discoverModels })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-
-    sessions.optimize.toggleKnob('model')
-    sessions.optimize.loadModels()
-    await vi.waitFor(() =>
-      expect(sessions.optimize.snapshot()).toMatchObject({ plan: { models: { options: expect.any(Array) } } })
-    )
-    sessions.optimize.pickModel('bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0', true)
-
-    const state = sessions.optimize.snapshot()
-    if (state.step !== 'setup') throw new Error('expected the setup')
-    expect(discoverModels).toHaveBeenCalledWith('bedrock')
-    expect(state.plan.models).toMatchObject({
-      current: 'bedrock/global.anthropic.claude-opus-5',
-      picked: ['bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0'],
-    })
-    expect(state.plan.knobs.find(({ key }) => key === 'model')).toMatchObject({
-      enabled: true,
-      detail: '1 other model to try',
-    })
-  })
-
-  it('shouldReviewAndApplyTheWinningInstructionsWhenTheRunFinishes', async () => {
-    const optimizing = optimizingProcess()
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
     sessions.optimize.plan(experiment)
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    sessions.optimize.toggleKnob('backgroundTasks')
 
     sessions.optimize.start()
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
     const state = sessions.optimize.snapshot()
     if (state.step !== 'review') throw new Error('expected the review')
+    sessions.optimize.accept(1, false)
     sessions.optimize.apply()
     await vi.waitFor(() =>
       expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
@@ -555,6 +544,12 @@ describe('TEMPORARY dev sessions', () => {
 
     expect(state.review.edits).toEqual([
       expect.objectContaining({ knob: 'instructions', target: 'instructions.md', accepted: true, after: WINNER }),
+      expect.objectContaining({
+        knob: 'backgroundTasks',
+        before: 'on (the harness default; not in the call)',
+        after: 'off',
+        added: 'background_tasks is new in the call: applying writes background_tasks = false',
+      }),
     ])
     expect(state.review.best).toBeGreaterThan(state.review.baseline)
     expect(await readFile(join(workspace.root, 'instructions.md'), 'utf8')).toBe(`${WINNER}\n`)
@@ -563,6 +558,7 @@ describe('TEMPORARY dev sessions', () => {
     }
     expect(space.variables).toEqual([
       expect.objectContaining({ key: 'instructions', kind: 'text', option: 'instructions' }),
+      { key: 'background_tasks', kind: 'choice', option: 'background_tasks', values: [true, false], default: true },
     ])
   })
 
@@ -840,7 +836,7 @@ describe('TEMPORARY dev sessions', () => {
     expect(args).not.toContain('--proposals-per-iteration')
   })
 
-  it('shouldRecordTheSplitWhenARunStartsSoThatItCanResumeWithIt', async () => {
+  it('shouldGiveTheOptimizerTheSplitAndRecordItWhenARunStartsSoThatItCanResumeWithIt', async () => {
     let recorded: unknown
     const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
       process.onSpawn?.(4242)
@@ -858,29 +854,12 @@ describe('TEMPORARY dev sessions', () => {
     )
     sessions.optimize.plan(experiment)
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-    sessions.optimize.setSplit({ train: 14, validation: 3, test: 3 })
 
     sessions.optimize.start()
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
-    expect(recorded).toMatchObject({ split: [0.7, 0.15, 0.15] })
-  })
-
-  it('shouldGiveTheOptimizerTheChosenSplitWhenTheRunStarts', async () => {
-    const optimizing = optimizingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(
-      workspace,
-      Array.from({ length: 20 }, (_, index) => `c${index}`)
-    )
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-    sessions.optimize.setSplit({ train: 14, validation: 3, test: 3 })
-
-    sessions.optimize.start()
-
-    await vi.waitFor(() => expect(optimizing).toHaveBeenCalledTimes(1))
-    expect(flagValue(optimizing.mock.calls[0]![0].args, '--split')).toBe('0.7,0.15,0.15')
+    expect(recorded).toMatchObject({ split: [0.5, 0.25, 0.25] })
+    expect(flagValue(optimizing.mock.calls[0]![0].args, '--split')).toBe('0.5,0.25,0.25')
   })
 
   it('shouldGiveTheOptimizerTheBudgetOfThePlanWhenTheRunStarts', async () => {
@@ -906,9 +885,10 @@ describe('TEMPORARY dev sessions', () => {
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
     sessions.optimize.plan(experiment)
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-    sessions.optimize.setRepetitions(2)
-    sessions.optimize.setWidth(6)
-    sessions.optimize.setWorkers(8)
+    sessions.optimize.setRepetitions(3)
+    sessions.optimize.setWidth(7)
+    sessions.optimize.setWorkers(6)
+    sessions.optimize.setWidth(0)
 
     sessions.optimize.start()
 
@@ -918,7 +898,7 @@ describe('TEMPORARY dev sessions', () => {
       flagValue(args, '--runs-per-candidate'),
       flagValue(args, '--proposals-per-iteration'),
       flagValue(args, '--max-workers'),
-    ]).toEqual(['2', '6', '8'])
+    ]).toEqual(['3', '7', '6'])
   })
 
   it('shouldCountTheRunsPerCaseAndTheCandidatesPerStepInTheEstimate', async () => {
@@ -974,6 +954,7 @@ describe('TEMPORARY dev sessions', () => {
     const before = setupPlan(sessions).rollouts
 
     sessions.optimize.setDecision('finalists', 5)
+    sessions.optimize.setDecision('finalists', 0)
     sessions.optimize.setDecision('feasibility', 0.5)
 
     const plan = setupPlan(sessions)
@@ -995,24 +976,6 @@ describe('TEMPORARY dev sessions', () => {
     })
 
     expect(setupPlan(sessions)).toMatchObject({ validatedFinalists: 5, rollouts: before + 6 })
-  })
-
-  it('shouldMoveToTheNearestSplitOfTheNewChoicesWhenTheTestShareChanges', async () => {
-    const { workspace, sessions } = await sessionsFor()
-    const experiment = await savedExperiment(
-      workspace,
-      Array.from({ length: 20 }, (_, index) => `c${index}`)
-    )
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-
-    sessions.optimize.setTestShare(0)
-    sessions.optimize.setTestShare(0.25)
-
-    const plan = setupPlan(sessions)
-    expect(plan.testShare).toBe(0)
-    expect(plan.split).toEqual({ train: 10, validation: 10, test: 0 })
-    expect(plan.splitChoices.every(({ test }) => test === 0)).toBe(true)
   })
 
   it('shouldGiveTheOptimizerTheDecisionAndRecordItWhenTheRunStarts', async () => {
@@ -1227,7 +1190,7 @@ describe('TEMPORARY dev sessions', () => {
     const listed = sessions.optimize.snapshot()
     sessions.optimize.openRun(started!)
     const reopened = sessions.optimize.snapshot()
-    sessions.optimize.show()
+    sessions.optimize.reset()
     gate.resolve()
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().runs?.[0]?.state.step).toBe('review'))
@@ -1263,7 +1226,7 @@ describe('TEMPORARY dev sessions', () => {
     })
     expect(notices.at(-1)).toEqual({
       status: 'error',
-      text: `optimize · run ${optimizationName(record)} failed · /optimize shows why`,
+      text: `optimize · run ${optimizationName(record)} failed · ask the chat why`,
     })
   })
 
@@ -1297,32 +1260,6 @@ describe('TEMPORARY dev sessions', () => {
         `then start the run again. The full optimizer output is in ${runLogOf(record)}.`,
       record,
     })
-  })
-
-  it('shouldComeBackToTheOpenExperimentWhenTheDeveloperLeavesItsSetup', async () => {
-    const { workspace, sessions } = await sessionsFor()
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.openExperiment(experiment)
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-
-    sessions.optimize.reset()
-
-    expect(sessions.optimize.snapshot()).toMatchObject({ step: 'pick', experiment })
-  })
-
-  it.each([
-    ['TheDeveloperGoesBackToTheExperiments', (optimize: TemporaryOptimize) => optimize.openExperiment(undefined)],
-    ['ThePanelOpensAgain', (optimize: TemporaryOptimize) => optimize.show()],
-  ])('shouldListTheExperimentsAgainWhen%s', async (_case, leave) => {
-    const { workspace, sessions } = await sessionsFor()
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.openExperiment(experiment)
-
-    leave(sessions.optimize)
-
-    expect(sessions.optimize.snapshot()).toMatchObject({ step: 'pick' })
-    expect(sessions.optimize.snapshot()).not.toHaveProperty('experiment')
   })
 
   it('shouldMakeTheInitialCopyBeforeTheOptimizerStartsWhenARunStarts', async () => {
@@ -1385,17 +1322,6 @@ describe('TEMPORARY dev sessions', () => {
     expect(state.plan.judgeCalls).toBe(state.plan.rollouts * perRollout)
   })
 
-  it.each([
-    ['TheAgentHasAShellTool', [{ name: 'shell', description: 'Runs commands' }], ['shell']],
-    ['TheAgentOnlyReads', [{ name: 'read', description: 'Reads files' }], []],
-  ])('shouldNameTheFileToolsOfTheAgentForTheRunConfirmWhen%s', async (_case, tools, fileTools) => {
-    const workspace = await workspaceFixture()
-    const sessions = temporaryDevSessions({ workspace, agent: () => ({ model: 'us.model', tools }) })
-
-    expect(sessions.test.agent()).toEqual({ model: 'us.model', folder: workspace.root, fileTools })
-    expect(sessions.optimize.agent()).toEqual({ model: 'us.model', folder: workspace.root, fileTools })
-  })
-
   it('shouldDropTheRecordOfARunThatFailsSoThatTheNextStartDoesNotRunItAgain', async () => {
     const failing = vi.fn(async (process: TemporaryEvalsProcess) => {
       process.onSpawn?.(4242)
@@ -1423,7 +1349,7 @@ describe('TEMPORARY dev sessions', () => {
         `The full optimizer output is in ${runLogOf(record)}.`,
       record,
     })
-    expect(notices.at(-1)).toEqual({ status: 'error', text: 'optimize · capital stopped · /optimize shows why' })
+    expect(notices.at(-1)).toEqual({ status: 'error', text: 'optimize · capital stopped · ask the chat why' })
     expect(existsSync(resumeRecordOf(record))).toBe(false)
     expect(await readTemporaryOptimizeRecords(workspace.directory!)).toEqual([])
     expect(restarted.snapshot().runs).toEqual([])
@@ -1485,59 +1411,6 @@ describe('TEMPORARY dev sessions', () => {
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
     expect(sessions.optimize.snapshot()).toMatchObject({
       review: { testCheck: { difference: 0.4, cases: 5, confidence: 0.9, range: [0.1, 0.7] } },
-    })
-  })
-
-  it('shouldListEachPastRunWithItsOutcomeAndOpenItsReportAgain', async () => {
-    const optimizing = optimizingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    const stoppedEarly = optimizationFiles(workspace, '20261110-090000').record
-    const neverStarted = optimizationFiles(workspace, '20261110-080000').record
-    const olderOptimizer = optimizationFiles(workspace, '20261109-080000').record
-    await writeOptimizerRun(stoppedEarly, [
-      optimizerConfig(),
-      ...optimizerCandidate({ id: 'base', number: 0, values: { instructions: BASELINE }, train: 0.5 }),
-      optimizerIterationEnd(['base']),
-      optimizerStop(),
-    ])
-    await mkdir(neverStarted, { recursive: true })
-    await writeFileAt(join(olderOptimizer, 'study.jsonl'), '{}\n')
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-    sessions.optimize.start()
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
-    const finished = sessions.optimize.snapshot()
-    if (finished.step !== 'review') throw new Error('expected the review')
-
-    sessions.optimize.reset()
-    await vi.waitFor(() =>
-      expect(sessions.optimize.snapshot()).toMatchObject({ pastRuns: { loading: false, runs: expect.any(Array) } })
-    )
-    const listed = sessions.optimize.snapshot()
-    if (listed.step !== 'pick') throw new Error('expected the list')
-    sessions.optimize.openPastRun(finished.review.record)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
-
-    const latest = optimizationFiles(workspace, basename(dirname(finished.review.record))).record
-    expect(finished.review.run).toBe(optimizationName(latest))
-    expect(
-      listed.pastRuns?.runs.map(({ record, experiment: name, summary, opens }) => [record, name, summary, opens])
-    ).toEqual([
-      [latest, 'capital', '0.50 → 0.90 on training cases · 1 edit', true],
-      [stoppedEarly, 'capital', 'stopped early · no better candidate · 0.50 on training cases', true],
-      [neverStarted, 'capital', 'no report, because the run stopped before it started', false],
-      [olderOptimizer, 'capital', 'made by the older optimizer, so it cannot be opened', false],
-    ])
-    expect(listed.pastRuns?.runs.map(({ startedAt }) => startedAt).slice(1)).toEqual([
-      Date.UTC(2026, 10, 10, 9),
-      Date.UTC(2026, 10, 10, 8),
-      Date.UTC(2026, 10, 9, 8),
-    ])
-    expect(listed.pastRuns?.runs[0]?.startedAt).toBeGreaterThan(Date.UTC(2026, 0, 1))
-    expect(sessions.optimize.snapshot()).toMatchObject({
-      step: 'review',
-      review: { run: finished.review.run, edits: [expect.objectContaining({ after: WINNER, accepted: true })] },
     })
   })
 
@@ -1654,12 +1527,12 @@ describe('TEMPORARY dev sessions', () => {
 })
 
 describe('TEMPORARY dev sessions on open', () => {
-  it.each(['test', 'optimize'] as const)('shouldWaitForAChoiceWhenThe%sPanelOpensWithOneExperiment', async (which) => {
+  it('shouldWaitForAChoiceWhenTheTestPanelOpensWithOneExperiment', async () => {
     const tests = testingProcess()
     const { workspace, sessions } = await sessionsFor({ spawnTests: tests })
     await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
 
-    sessions[which].show()
+    sessions.test.show()
     await sessions.experiments.reload()
 
     expect(sessions.experiments.snapshot().saved).toHaveLength(1)
@@ -1673,10 +1546,15 @@ describe('TEMPORARY dev sessions on open', () => {
       release = resolve
     })
     const testing = testingProcess()
-    const held = vi.fn(async (process: TemporaryEvalsProcess) => {
-      await gate
-      return testing(process)
-    })
+    const held = vi.fn(
+      (process: TemporaryEvalsProcess): Promise<TemporaryEvalsExit> =>
+        new Promise((resolve) => {
+          process.signal?.addEventListener('abort', () => resolve({ code: 143, stdout: '', stderrTail: [] }), {
+            once: true,
+          })
+          void gate.then(() => (process.signal?.aborted ? undefined : resolve(testing(process))))
+        })
+    )
     const { workspace, sessions } = await sessionsFor({ spawnTests: held })
     const capital = await savedExperiment(workspace, ['c0', 'c1'])
     const cities = await savedExperiment(workspace, ['c0', 'c1', 'c2'], 'cities')
@@ -1684,13 +1562,15 @@ describe('TEMPORARY dev sessions on open', () => {
     sessions.test.run([capital, cities])
     await vi.waitFor(() => expect(held).toHaveBeenCalledTimes(2))
     const jobs = temporaryTestJobs(sessions.test.snapshot())
+    // Each experiment is its own run, so stopping one leaves the other running.
+    sessions.test.stop(capital.path)
+    await vi.waitFor(() => expect(runStatus(sessions, capital.path)).toBe('failed'))
+    expect(runStatus(sessions, cities.path)).toBe('running')
     release()
     await vi.waitFor(() => expect(runStatus(sessions, cities.path)).toBe('done'))
-    await vi.waitFor(() => expect(runStatus(sessions, capital.path)).toBe('done'))
 
     expect(jobs.map(({ label }) => label).sort()).toEqual(['capital', 'cities'])
     expect(finished(sessions, cities.path).cases).toHaveLength(3)
-    expect(finished(sessions, capital.path).cases).toHaveLength(2)
   })
 
   it('shouldStartOneRunWhenTheSameExperimentIsPickedTwiceQuickly', async () => {
@@ -1737,7 +1617,7 @@ describe('TEMPORARY dev sessions on open', () => {
     sessions.test.run([{ name: 'plain', path, caseCount: 5 }])
     await vi.waitFor(() => expect(runStatus(sessions, path)).toBe('done'))
 
-    sessions.test.rerunFailed(path)
+    rerunFailed(sessions, path)
     await vi.waitFor(() => expect(testing).toHaveBeenCalledTimes(2))
     await vi.waitFor(() => expect(runStatus(sessions, path)).toBe('done'))
 
@@ -1832,9 +1712,18 @@ describe('TEMPORARY dev sessions on open', () => {
     expect(notices).toEqual([
       {
         status: 'error',
-        text: expect.stringMatching(/^evaluate · capital · \/evaluate cannot show this report after a restart: /u),
+        text: expect.stringMatching(/^evaluate · capital · this report is not kept as the latest after a restart: /u),
       },
-      { status: 'success', text: 'evaluate · capital · 1 of 2 cases passed · /evaluate shows the results' },
+      {
+        status: 'success',
+        // The latest copy was not written, so the notice points at the report of the run itself.
+        text: expect.stringMatching(
+          new RegExp(
+            `^evaluate · capital · 1 of 2 cases passed · report in ${escaped(join(experimentHome(workspace), 'runs'))}/\\d{8}-\\d{6}/report\\.json$`,
+            'u'
+          )
+        ),
+      },
     ])
   })
 
@@ -1856,7 +1745,7 @@ describe('TEMPORARY dev sessions on open', () => {
     await vi.waitFor(() => expect(runStatus(sessions, path)).toBe('done'))
     const first = finished(sessions, path).cases.map(({ name, passed }) => [name, passed])
 
-    sessions.test.rerunFailed(path)
+    rerunFailed(sessions, path)
     await vi.waitFor(() => expect(testing).toHaveBeenCalledTimes(2))
     await vi.waitFor(() => expect(runStatus(sessions, path)).toBe('done'))
 
@@ -2002,7 +1891,7 @@ describe('TEMPORARY /evaluate runs after strands dev closes', () => {
     expect(spawnTests).not.toHaveBeenCalled()
     expect(notices.at(-1)).toEqual({
       status: 'success',
-      text: 'evaluate · capital · 2 of 3 cases passed · /evaluate shows the results',
+      text: `evaluate · capital · 2 of 3 cases passed · report in ${join(experimentHome(workspace), 'capital.report.json')}`,
     })
     expect(await readTemporaryRunRecords(workspace.directory!)).toEqual([])
   })
@@ -2032,7 +1921,7 @@ describe('TEMPORARY /evaluate runs after strands dev closes', () => {
     ])
     expect(notices.at(-1)).toEqual({
       status: 'success',
-      text: 'evaluate · capital · 1 of 1 rerun case passed · 3 of 3 cases passed · /evaluate shows the results',
+      text: `evaluate · capital · 1 of 1 rerun case passed · 3 of 3 cases passed · report in ${join(experimentHome(workspace), 'capital.report.json')}`,
     })
     expect(await readTemporaryRunRecords(workspace.directory!)).toEqual([])
   })

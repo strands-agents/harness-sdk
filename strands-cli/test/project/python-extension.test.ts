@@ -8,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AgentExtensionHost } from '../../src/agent/extension.js'
 import { temporaryWorkflowSkills } from '../../src/dev/temporary-evals-fork/workflow-skills.js'
-import { temporaryCreateExperimentSkill } from '../../src/dev/temporary-evals-fork/create-experiment-skill.js'
 import type { ChatEvent } from '../../src/agent/types.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { exportSourceProject } from '../../src/project/export.js'
@@ -54,7 +53,7 @@ const withInstructions = (host: AgentExtensionHost, instructions: string): Agent
 const extensionHost = (calls: [string, JSONValue][]): AgentExtensionHost => ({
   extension: {
     instructions: '<strands_dev>\nWorkspace folder: /work/strands-dev\n</strands_dev>',
-    skills: [temporaryCreateExperimentSkill(), ...temporaryWorkflowSkills()],
+    skills: temporaryWorkflowSkills(),
     tools: [
       {
         name: 'strands_dev_status',
@@ -132,7 +131,7 @@ describe.skipIf(!existsSync(python))('Python agent extension', () => {
 
   it('shouldKeepTheDevSkillOutOfStandaloneExportsAndPlainAgentLoads', { timeout: 30_000 }, async () => {
     const dev = await open([])
-    expect(dev.skills.map(({ name }) => name)).toContain('create-experiment')
+    expect(dev.skills.map(({ name }) => name)).toContain('background-evals')
     expect(dev.skills.map(({ name }) => name)).toEqual(
       expect.arrayContaining(temporaryWorkflowSkills().map(({ name }) => name))
     )
@@ -149,13 +148,13 @@ describe.skipIf(!existsSync(python))('Python agent extension', () => {
     )
     const exported = await readFile(join(destination, 'agent.py'), 'utf8')
     expect(exported).toBe(source)
-    expect(exported).not.toContain('create-experiment')
+    expect(exported).not.toContain('background-evals')
     for (const { name } of temporaryWorkflowSkills()) expect(exported).not.toContain(name)
     expect(exported).not.toContain('strands_dev')
 
     const plain = await open([], {}, source, null)
     expect(text(await turn(plain, 'echo system'))).not.toContain('<strands_dev>')
-    expect(plain.skills.map(({ name }) => name)).not.toContain('create-experiment')
+    expect(plain.skills.map(({ name }) => name)).not.toContain('background-evals')
     for (const { name } of temporaryWorkflowSkills())
       expect(plain.skills.map((skill) => skill.name)).not.toContain(name)
     expect(plain.info().tools?.some(({ name }) => name.startsWith('strands_dev_'))).toBe(false)
@@ -165,7 +164,7 @@ describe.skipIf(!existsSync(python))('Python agent extension', () => {
   it('shouldOfferTheSkillEvenWhenTheAgentTurnsSkillsOff', { timeout: 20_000 }, async () => {
     const backend = await open([])
 
-    expect(backend.skills.map((skill) => skill.name)).toContain('create-experiment')
+    expect(backend.skills.map((skill) => skill.name)).toContain('background-evals')
     expect(backend.info().tools?.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(['strands_dev_status', 'strands_dev_test', 'skills'])
     )

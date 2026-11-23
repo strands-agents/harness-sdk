@@ -99,7 +99,7 @@ describe('Wizard', () => {
     await press(ENTER)
     expect(text()).toContain('Back')
 
-    await press(DOWN)
+    await press(RIGHT)
     await press(ENTER)
 
     expect(text()).toContain('[ Next ]')
@@ -176,7 +176,7 @@ describe('Wizard', () => {
             label: 'goal',
             display: 'none',
             hint: 'Enter edit',
-            edit: { value: '', placeholder: 'type a goal', save },
+            edit: { value: '', save },
           },
         ],
       },
@@ -207,7 +207,7 @@ describe('Wizard', () => {
             label: 'goal',
             display: 'none',
             hint: 'Enter edit',
-            edit: { value: '', placeholder: 'type a goal', save },
+            edit: { value: '', save },
           },
         ],
       },
@@ -220,6 +220,35 @@ describe('Wizard', () => {
 
     expect(save).not.toHaveBeenCalled()
     expect(props.onCancel).not.toHaveBeenCalled()
+  })
+
+  it('shouldGoBackFromTheCancelButtonButStillCancelOnEscWhenTheWizardOffersBack', async () => {
+    const onBack = vi.fn()
+    const { press, text, props } = await wizard([{ key: 'one', title: 'One', fields: [choices(vi.fn())] }], { onBack })
+
+    await press(DOWN)
+    await press(RIGHT)
+    expect(text()).toContain('Enter back')
+    await press(ENTER)
+    expect(onBack).toHaveBeenCalledOnce()
+    await press(ESC)
+
+    await vi.waitFor(() => expect(props.onCancel).toHaveBeenCalledOnce())
+  })
+
+  it('shouldLineUpTheValuesWhenALabelIsLongerThanTheDefaultWidth', async () => {
+    const field = (key: string, label: string) => ({ ...choices(vi.fn()), key, label })
+    const { text } = await wizard([
+      { key: 'budget', title: 'Budget', fields: [field('steps', 'steps'), field('trials', 'trials at once')] },
+    ])
+
+    const columns = text()
+      .split('\n')
+      .filter((line) => /steps|trials at once/u.test(line))
+      .map((line) => line.indexOf('medium'))
+
+    expect(columns).toHaveLength(2)
+    expect(new Set(columns).size).toBe(1)
   })
 
   it('shouldCancelWhenTheUserPressesEscOutsideAnEditor', async () => {

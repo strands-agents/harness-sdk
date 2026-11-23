@@ -70,6 +70,8 @@ export interface DevChatCommandContext {
   submit(prompt: string): void
   /** Opens another dev command's panel, so a tool can put a question on screen. */
   openPanel(name: string): boolean
+  /** Opens a file in the developer's editor, as /config opens the agent project. */
+  openFile?(path: string): Promise<void>
 }
 
 export interface DevChatPanelProps {
@@ -108,10 +110,25 @@ export interface DevPanelOpening {
   readonly job?: string
 }
 
+/** Activates a skill and sends the workflow with the developer's request, instead of opening a panel. */
+export interface DevChatSkillRun {
+  readonly skill: string
+  readonly workflow: string
+  /** Why the skill cannot load, shown when activation finds no such skill. */
+  readonly unavailable: string
+  /** The request that a click on one of this command's jobs sends. */
+  readonly job?: (id: string) => string
+}
+
 export interface DevChatCommand {
   spec: LocalCommandSpec
-  open(context: DevChatCommandContext, opening?: DevPanelOpening): DevChatPanelView
+  open?(context: DevChatCommandContext, opening?: DevPanelOpening): DevChatPanelView
+  skill?: DevChatSkillRun
+  /** Not typed or listed as a slash command; a tool opens its panel. */
+  hidden?: boolean
   attach?(context: DevChatCommandContext): void
+  /** The developer left this command's panel or cancelled the turn, so anything it waits on is a no. */
+  abandon?(context: DevChatCommandContext): void
   jobs?: DevChatJobs
 }
 
@@ -366,6 +383,8 @@ export interface ChatControllerApi {
   notify?(status: ChatNotice['status'], text: string): void
   markReloaded?(paths: readonly string[]): void
   clearReloadStatus?(): void
+  /** The screen registers how it opens a file in an editor; the returned function removes it. */
+  attachFileOpener?(open: (path: string) => Promise<void>): () => void
   setSettings?(settings: Partial<ChatSettings>): Promise<boolean>
   toggleVoiceMute?(): boolean
   actionableCommandToken(input: string): string | undefined

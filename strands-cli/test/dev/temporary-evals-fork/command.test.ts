@@ -6,9 +6,14 @@ import { saveTemporaryRunRecord } from '../../../src/dev/temporary-evals-fork/ba
 
 import { temporaryDevCommands } from '../../../src/dev/temporary-evals-fork/command.js'
 import { temporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
+import { uiTools } from '../../../src/dev/temporary-evals-fork/ui-tools.js'
+import type { DevChatTool } from '../../../src/dev/chat-extension.js'
+import { temporaryCommandWorkflows } from '../../../src/dev/temporary-evals-fork/workflow-skills.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import type { ImportedAgentProject } from '../../../src/project/import.js'
+import { ChatController } from '../../../src/ui/chat/controller.js'
 import type { DevChatCommandContext } from '../../../src/ui/chat/types.js'
+import { idleBackend } from '../../fixtures/chat-backend.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const fixture = async (): Promise<{ workspace: DevWorkspace; project: ImportedAgentProject }> => {
@@ -32,6 +37,24 @@ const context: DevChatCommandContext = {
   openPanel: vi.fn(() => true),
 }
 
+const evaluateChat = async (
+  stream: (tool: (name: string) => DevChatTool) => Parameters<typeof idleBackend>[0]
+): Promise<{ controller: ChatController; broker: ReturnType<typeof temporaryDevSessions>['ask'] }> => {
+  const { workspace, project } = await fixture()
+  const [, evaluate, , ask] = temporaryDevCommands(workspace, project)
+  const broker = temporaryDevSessions({ workspace, agent: () => ({}) }).ask
+  const tools = uiTools(() => broker)
+  const tool = (name: string): DevChatTool => tools.find((candidate) => candidate.name === name)!
+  const controller = new ChatController(idleBackend(stream(tool)), {
+    devCommands: [evaluate!, ask!],
+    skills: {
+      list: async () => [],
+      activate: async (name) => ({ skill: { name, description: '', instructions: '', active: true }, content: '' }),
+    },
+  })
+  return { controller, broker }
+}
+
 describe('TEMPORARY dev commands', () => {
   it('shouldOfferExperimentTestOptimizeAndAskWithoutArgumentsWhenTheChatStarts', async () => {
     const { workspace, project } = await fixture()
@@ -41,9 +64,9 @@ describe('TEMPORARY dev commands', () => {
     expect(commands.map(({ spec }) => spec.usage)).toEqual(['/experiment', '/evaluate', '/optimize', '/ask'])
     expect(commands.every(({ spec }) => spec.replacement === undefined)).toBe(true)
     expect(commands.map(({ spec }) => spec.description)).toEqual([
-      'Generate test cases for this agent with strands-evals, and review them',
-      'Run this agent on an experiment and show what failed',
-      'Tune this agent against an experiment and review the changes',
+      'Make, review, and edit the test cases of this agent with the strands-evals skill',
+      'Run this agent on an experiment with the strands-evals skill and show what failed',
+      'Tune this agent against an experiment with the optimize skill and review the changes',
       'Answer the setup question that the agent is asking',
     ])
   })
@@ -64,13 +87,15 @@ describe('TEMPORARY dev commands', () => {
     expect(details.some((text) => text.includes('TEMPORARY'))).toBe(false)
   })
 
-  it('shouldExplainTheObjectiveAndItsConstraintsWhenOptimizeHelpShowsTheDetails', async () => {
+  it('shouldDescribeTheOnScreenSetupWhenOptimizeHelpShowsTheDetails', async () => {
     const { workspace, project } = await fixture()
 
     const [, , optimize] = temporaryDevCommands(workspace, project).map(({ spec }) => spec.details ?? '')
 
-    expect(optimize).toContain('The constraints row under it sets what the chosen candidate must meet')
-    expect(optimize).not.toContain('limit')
+    expect(optimize).toContain('what must stay true')
+    expect(optimize).toContain('approve the review to start the run')
+    expect(optimize).toContain('The run goes on in the background')
+    expect(optimize).not.toMatch(/five tabs|press o|Esc goes back/u)
   })
 
   it('shouldNameTheUpstreamCommandsWhenOptimizeHelpShowsTheDetails', async () => {
@@ -131,7 +156,7 @@ describe('TEMPORARY dev commands', () => {
     await vi.waitFor(() =>
       expect(announced).toHaveBeenCalledWith(
         'success',
-        'evaluate · capital · 1 of 1 case passed · /evaluate shows the results'
+        `evaluate · capital · 1 of 1 case passed · report in ${join(workspace.directory!, 'experiments', 'capital', 'capital.report.json')}`
       )
     )
   })
@@ -148,38 +173,103 @@ describe('TEMPORARY dev commands', () => {
     expect(temporaryDevSessions({ workspace, agent: () => ({}) }).ui.snapshot().status).toBe('unavailable')
   })
 
-  it('shouldKeepTheOptimizePageWhenAReloadOpensThePanelAgainButNotWhenTheDeveloperOpensIt', async () => {
+  it('shouldRunEachEvalsCommandAsItsSkillWithoutAPanel', async () => {
     const { workspace, project } = await fixture()
-    const { optimize } = temporaryDevSessions({ workspace, agent: () => ({}) })
-    const command = temporaryDevCommands(workspace, project)[2]!
-    optimize.plan({ name: 'missing', path: join(workspace.root, 'missing.json'), caseCount: 0 })
-    await vi.waitFor(() => expect(optimize.snapshot().step).toBe('failed'))
 
-    command.open(context, { restore: true })
-    const restored = optimize.snapshot().step
-    command.open(context)
+    const commands = temporaryDevCommands(workspace, project).slice(0, 3)
 
-    expect(restored).toBe('failed')
-    expect(optimize.snapshot().step).toBe('pick')
+    expect(commands.map(({ open }) => open)).toEqual([undefined, undefined, undefined])
+    expect(commands.map(({ skill }) => skill?.skill)).toEqual(['strands-evals', 'strands-evals', 'optimize'])
+    expect(commands.map(({ skill }) => skill?.workflow)).toEqual(Object.values(temporaryCommandWorkflows))
+    expect(commands[2]!.skill?.unavailable).toContain('could not load the optimize skill from https://')
+    expect(commands.map(({ skill }) => skill?.job?.('missing'))).toEqual([
+      'how is the generation of the experiment going?',
+      'how is the evaluation of the experiment going?',
+      'how is the optimization of the experiment going?',
+    ])
   })
 
-  it('shouldOpenTheRunOfAJobWhenTheJobRowOpensTheOptimizePanel', async () => {
-    const { workspace, project } = await fixture()
-    const { optimize } = temporaryDevSessions({ workspace, agent: () => ({}) })
-    const openRun = vi.spyOn(optimize, 'openRun')
-    const command = temporaryDevCommands(workspace, project)[2]!
+  it('shouldPutEachQuestionOnScreenWhenAnEvaluateTurnAsksAfterAndWithoutAPermissionPrompt', async () => {
+    let allow!: () => void
+    const allowed = new Promise<void>((resolve) => {
+      allow = resolve
+    })
+    const answers: string[] = []
+    const prompts: unknown[] = []
+    const { controller, broker } = await evaluateChat((tool) => ({
+      async *stream(prompt) {
+        prompts.push(prompt)
+        yield {
+          type: 'permission',
+          request: {
+            id: 'permission-1',
+            toolName: 'strands_dev_single_select',
+            input: {},
+            options: [{ id: 'allow', label: 'Allow once', kind: 'allow_once' }],
+          },
+        }
+        await allowed
+        for (const key of ['experiments', 'cases'])
+          answers.push(
+            await tool('strands_dev_single_select').run({ question: key, options: [{ value: 'a', label: 'a' }] })
+          )
+        return { stopReason: 'endTurn' }
+      },
+      // The worker runs the tool before its answer to the permission reply arrives.
+      respondPermission: vi.fn(async () => {
+        allow()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        return true
+      }),
+    }))
+    const answer = async (): Promise<void> => {
+      await vi.waitFor(() => expect(broker.pending()).toBeDefined())
+      const panel = controller.getSnapshot().panel
+      expect(panel).toMatchObject({ kind: 'dev', command: 'ask' })
+      const { id, steps } = broker.pending()!
+      broker.respond(id, { [steps[0]!.fields[0]!.key]: 'a' })
+      // The panel closes itself once its question is answered.
+      if (panel?.kind === 'dev') panel.close()
+    }
 
-    command.open(context, { job: 'run-1' })
+    void controller.submit('/evaluate')
+    await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('permission'))
+    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
+    await answer()
+    await answer()
+    await vi.waitFor(() => expect(answers).toHaveLength(2))
 
-    expect(openRun).toHaveBeenCalledWith('run-1')
-    expect(optimize.snapshot().step).toBe('pick')
+    expect(String(prompts[0])).toContain('<strands_dev_command name="evaluate">')
+    expect(answers.map((reply) => JSON.parse(reply) as unknown)).toEqual([
+      { status: 'answered', answer: 'a' },
+      { status: 'answered', answer: 'a' },
+    ])
+    controller.close()
   })
 
-  it.each([0, 1, 2])('shouldOpenAPanelViewWhenCommand%iRuns', async (index) => {
-    const { workspace, project } = await fixture()
+  it('shouldCancelTheQuestionAndRunTheNextCommandWhenTheDeveloperClicksOutOfItAndPressesEscape', async () => {
+    const answers: string[] = []
+    const { controller, broker } = await evaluateChat((tool) => ({
+      async *stream() {
+        yield* []
+        answers.push(await tool('strands_dev_confirm').run({ question: 'Run it?' }))
+        return { stopReason: 'endTurn' }
+      },
+    }))
+    await controller.start()
 
-    const view = temporaryDevCommands(workspace, project)[index]!.open(context)
+    void controller.submit('/evaluate')
+    await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'ask' }))
+    // A click outside the panel dismisses it, and Esc in the chat input cancels the turn.
+    controller.dismissPanel()
+    controller.cancel()
+    await vi.waitFor(() => expect(answers).toHaveLength(1))
+    void controller.submit('/evaluate')
+    await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'ask' }))
+    broker.respond(broker.pending()!.id, { answer: 'yes' })
+    await vi.waitFor(() => expect(answers).toHaveLength(2))
 
-    expect(view).toBeTypeOf('function')
+    expect(answers.map((reply) => (JSON.parse(reply) as { status: string }).status)).toEqual(['cancelled', 'answered'])
+    controller.close()
   })
 })

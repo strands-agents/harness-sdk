@@ -19,7 +19,7 @@ from strands import Agent
 from .errors import StrandsDevEvalsError
 from .imports import import_file
 from .model_effort import ModelEffort, read_model_effort
-from .space import Without, item_problem, without_items
+from .space import Without, default_without, item_problem, without_items
 from .temporary_typescript import (
     TEMPORARY_TYPESCRIPT_SUFFIXES,
     load_temporary_typescript_harness,
@@ -87,7 +87,7 @@ class PythonHarness:
         return None if model is None or isinstance(model, str) else read_model_effort(model)
 
     def build(self, values: dict[str, Any], without: Without | None = None) -> Any:
-        kept = {option: without_items(self.options[option], items) for option, items in (without or {}).items()}
+        kept = {option: self._without(option, items) for option, items in (without or {}).items()}
         overrides = {**values, **kept, **_TRIAL_OVERRIDES}
         if "effort" in overrides and self._model_effort is not None:
             overrides.update(self._model_effort.options_for(overrides.pop("effort")))
@@ -100,6 +100,11 @@ class PythonHarness:
                 "Return the agent that create_harness(...) builds, then try again."
             )
         return agent
+
+    def _without(self, option: str, items: list[dict[str, Any]]) -> Any:
+        if option in self.options:
+            return without_items(self.options[option], items)
+        return default_without(option, items)
 
     def builds_with(self, **values: Any) -> bool:
         try:

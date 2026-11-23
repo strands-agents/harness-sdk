@@ -9,7 +9,6 @@ import {
   temporaryExperimentHome,
   temporaryFreeStamp,
   temporaryOptimizationFiles,
-  temporaryOptimizationLabel,
   temporaryOptimizationOf,
   temporaryOptimizationRunName,
   temporaryRunStamp,
@@ -94,14 +93,6 @@ describe('TEMPORARY run files', () => {
 describe('TEMPORARY optimization names', () => {
   it('shouldNameAnOptimizationByItsStampAndExperimentWhenGivenItsRecord', () => {
     expect(temporaryOptimizationRunName(temporaryOptimizationFiles(HOME, STAMP).record)).toBe(`${STAMP}-refunds`)
-  })
-
-  it.each([
-    { folder: STAMP, label: { experiment: 'refunds', startedAt: NOW.getTime() } },
-    { folder: `${STAMP}-2`, label: { experiment: 'refunds', startedAt: NOW.getTime() } },
-    { folder: 'notes', label: { experiment: 'refunds' } },
-  ])('shouldLabelAnOptimizationWithItsExperimentAndStartWhenItsFolderIs$folder', ({ folder, label }) => {
-    expect(temporaryOptimizationLabel(temporaryOptimizationFiles(HOME, folder).record)).toEqual(label)
   })
 })
 

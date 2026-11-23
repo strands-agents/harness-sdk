@@ -31,8 +31,9 @@ export interface WizardNotice {
 
 export interface WizardEdit {
   readonly value: string
-  readonly placeholder: string
   readonly save: (text: string) => void
+  // Refuse every keystroke or paste that would put a non-digit in the field.
+  readonly numeric?: boolean
 }
 
 interface FieldBase {
@@ -58,6 +59,8 @@ export interface WizardToggle extends FieldBase {
   readonly unavailable?: string
   readonly mark?: 'check' | 'radio'
   readonly toggle: () => void
+  // An input row opens this editor instead of toggling.
+  readonly edit?: WizardEdit
 }
 
 export interface WizardText extends FieldBase {
@@ -100,6 +103,8 @@ export interface WizardProps {
   readonly finishHint: (blocking: WizardNotice | undefined) => string
   readonly onFinish: () => void
   readonly onCancel: () => void
+  // When set, the Cancel button reads Back and calls this; Esc still cancels.
+  readonly onBack?: () => void
   readonly active?: boolean
   // Read at keypress time, so a view that onFinish opens also swallows the rest of that input burst.
   readonly blocked?: () => boolean
@@ -132,6 +137,9 @@ interface Editor {
   readonly value: ReturnType<typeof textValue>
 }
 
+const edited = (editor: Editor, value: Editor['value']): Editor =>
+  editor.edit.numeric && /\D/u.test(value.input) ? editor : { ...editor, value }
+
 const stepButtons = (at: number, count: number): readonly WizardButton[] => {
   if (at === count - 1) return ['finish', 'cancel']
   return at === 0 ? ['next', 'cancel'] : ['next', 'back']
@@ -153,6 +161,10 @@ const MARKS = {
   radio: { on: '◉', off: '○' },
 } as const
 
+// The typed text with a bar at the cursor, for a row that is edited in place.
+const withCursor = ({ input, cursor }: { input: string; cursor: number }): string =>
+  `${input.slice(0, cursor)}▏${input.slice(cursor)}`
+
 const toggleItem = (field: WizardToggle): ListItem => {
   const marks = MARKS[field.mark ?? 'check']
   if (field.unavailable !== undefined)
@@ -168,7 +180,6 @@ const toggleItem = (field: WizardToggle): ListItem => {
     label: field.label,
     ...(field.detail === undefined ? {} : { detail: field.detail }),
     mark: field.checked ? { text: marks.on, tone: 'success' } : { text: marks.off, tone: 'muted' },
-    tone: 'muted',
   }
 }
 
@@ -191,12 +202,14 @@ const ValueRow = ({
   slider,
   active,
   onPoint,
+  labelWidth = LABEL_WIDTH,
 }: {
   label: string
   value: string
   slider?: { count: number; position: number }
   active: boolean
   onPoint?: () => void
+  labelWidth?: number
 }): ReactElement => {
   const { accent, selection } = useTheme()
   const clicks = useDevPanelClicks()
@@ -211,7 +224,7 @@ const ValueRow = ({
       <Text wrap="truncate-end">
         <Text color={accent}>{active ? '› ' : '  '}</Text>
         <Text bold={active} dimColor={!active}>
-          {label.padEnd(LABEL_WIDTH)}
+          {label.padEnd(labelWidth)}
         </Text>
         {slider ? (
           <>
@@ -269,6 +282,7 @@ const WizardButtons = ({
   buttons,
   ready,
   finishLabel,
+  cancelLabel,
   estimate,
   focused,
   onChoose,
@@ -277,6 +291,7 @@ const WizardButtons = ({
   buttons: readonly WizardButton[]
   ready: boolean
   finishLabel: string
+  cancelLabel: string
   estimate: string
   focused: WizardButton | undefined
   onChoose: (button: WizardButton) => void
@@ -284,7 +299,8 @@ const WizardButtons = ({
 }): ReactElement => {
   const { accent, selection } = useTheme()
   const clicks = useDevPanelClicks()
-  const label = (name: WizardButton): string => (name === 'finish' ? finishLabel : BUTTON_LABELS[name])
+  const label = (name: WizardButton): string =>
+    name === 'finish' ? finishLabel : name === 'cancel' ? cancelLabel : BUTTON_LABELS[name]
   const button = (name: WizardButton, text: ReactElement): ReactElement => (
     <Box
       key={name}
@@ -339,11 +355,13 @@ const rowHints = (
   row: WizardRow | undefined,
   finishHint: (blocking: WizardNotice | undefined) => string,
   blocking: WizardNotice | undefined,
-  walked: boolean
+  walked: boolean,
+  back = false
 ): string[] => {
   const tab = walked ? ['Tab next tab'] : []
-  const hints = (action: string): string[] => [...tab, '↑↓', action, 'Esc cancel']
-  if (row?.kind === 'button') return hints(buttonHint(row.button, finishHint, blocking))
+  const hints = (action: string, arrows = '↑↓'): string[] => [...tab, arrows, action, 'Esc cancel']
+  if (row?.kind === 'button')
+    return hints(back && row.button === 'cancel' ? 'Enter back' : buttonHint(row.button, finishHint, blocking), '←→')
   if (row?.kind !== 'field') return [...tab, 'Esc cancel']
   if (row.field.kind === 'toggle' && row.field.unavailable !== undefined) return hints('not available')
   return hints(row.field.hint)
@@ -362,6 +380,7 @@ export const Wizard = ({
   finishHint,
   onFinish,
   onCancel,
+  onBack,
   active = true,
   blocked,
   position,
@@ -372,6 +391,8 @@ export const Wizard = ({
   const step = steps[Math.min(at.value, steps.length - 1)] ?? steps[0]!
   const index = steps.indexOf(step)
   const rows = stepRows(step, index, steps.length)
+  // Every label of a step gets the width of its longest one, so the values line up.
+  const labelWidth = Math.max(LABEL_WIDTH, ...step.fields.map((field) => field.label.length + 2))
   const buttons = stepButtons(index, steps.length)
   const cursor = cursorIn(position?.row ?? own.row, rows.length)
   const blocking = blockingNotice(steps)
@@ -399,7 +420,7 @@ export const Wizard = ({
   const openEditor = (key: string, edit: WizardEdit): void => editing.set({ key, edit, value: textValue(edit.value) })
   const activate = (row: WizardRow | undefined): void => {
     if (row?.kind === 'button') {
-      if (row.button === 'cancel') onCancel()
+      if (row.button === 'cancel') (onBack ?? onCancel)()
       else if (row.button === 'next') stepTo(1, ['next', 'finish'])
       else if (row.button === 'back') stepTo(-1, ['back', 'next'])
       else if (ready) onFinish()
@@ -407,7 +428,9 @@ export const Wizard = ({
     }
     if (row?.kind !== 'field') return
     if (row.field.kind === 'toggle') {
-      if (row.field.unavailable === undefined) row.field.toggle()
+      if (row.field.unavailable !== undefined) return
+      if (row.field.edit) openEditor(row.field.key, row.field.edit)
+      else row.field.toggle()
     } else if (row.field.kind === 'text') openEditor(row.field.key, row.field.edit)
     else if (row.field.edit) openEditor(row.field.key, row.field.edit)
   }
@@ -424,13 +447,19 @@ export const Wizard = ({
         else if (key.return) {
           open.edit.save(open.value.input)
           editing.set(undefined)
-        } else if (!key.tab)
-          editing.set((current) => current && { ...current, value: editText(current.value, input, key) })
+        } else if (!key.tab) editing.set((current) => current && edited(current, editText(current.value, input, key)))
         return
       }
       const row = rows[cursor.current()]
       if (key.escape) onCancel()
       else if (key.tab) stepTo(key.shift ? -1 : 1, [])
+      // The buttons sit on one line, so ←→ moves between them and ↑ goes back to the fields.
+      else if (row?.kind === 'button' && (key.leftArrow || key.rightArrow)) {
+        const at = cursor.current() - firstButton + (key.rightArrow ? 1 : -1)
+        cursor.set(firstButton + Math.max(0, Math.min(at, buttons.length - 1)))
+      } else if (row?.kind === 'button' && key.upArrow) {
+        if (firstButton > 0) cursor.set(firstButton - 1)
+      } else if (row?.kind === 'button' && key.downArrow) return
       else if (key.upArrow) cursor.move(-1)
       else if (key.downArrow) cursor.move(1)
       else if (key.leftArrow || key.rightArrow) {
@@ -439,15 +468,15 @@ export const Wizard = ({
     },
     { isActive: active }
   )
-  usePaste((text) => editing.set((current) => current && { ...current, value: pasteText(current.value, text) }))
+  usePaste((text) => editing.set((current) => current && edited(current, pasteText(current.value, text))))
   const editorField = (field: WizardField): ReactElement => (
     <TextField
       label={field.label}
       value={editor?.value ?? textValue('')}
       active
-      labelWidth={LABEL_WIDTH}
+      labelWidth={labelWidth}
       width={width}
-      placeholder={editor?.edit.placeholder ?? ''}
+      placeholder=""
     />
   )
   const rowOf = (key: string): number => rows.findIndex((row) => row.kind === 'field' && row.field.key === key)
@@ -457,7 +486,9 @@ export const Wizard = ({
     <>
       {compact || step.listLabel === undefined ? null : <Line>{`  ${step.listLabel}`}</Line>}
       <ItemList
-        items={toggles.map(toggleItem)}
+        items={toggles.map((field) =>
+          field.key === editor?.key ? { ...toggleItem(field), detail: withCursor(editor.value) } : toggleItem(field)
+        )}
         selected={toggleRows.indexOf(cursor.index)}
         capacity={Math.max(
           MIN_LIST_ROWS,
@@ -489,6 +520,7 @@ export const Wizard = ({
       ) : (
         <ValueRow
           key={field.key}
+          labelWidth={labelWidth}
           label={field.label}
           value={field.display}
           active={cursor.index === row}
@@ -497,6 +529,7 @@ export const Wizard = ({
       )
     const shown = selectable(field) ? (
       <ValueRow
+        labelWidth={labelWidth}
         label={field.label}
         value={field.detail}
         {...(field.count > 1 ? { slider: { count: field.count, position: field.position } } : {})}
@@ -505,6 +538,7 @@ export const Wizard = ({
       />
     ) : (
       <ValueRow
+        labelWidth={labelWidth}
         label={field.label}
         value={field.detail}
         {...(field.count > 1 ? { slider: { count: field.count, position: field.position } } : {})}
@@ -514,11 +548,9 @@ export const Wizard = ({
     if (!field.edit && field.display === undefined) return <Box key={field.key}>{shown}</Box>
     return (
       <Box key={field.key} flexDirection="column" flexShrink={0}>
-        {shown}
-        {editor?.key === field.key ? (
-          editorField(field)
-        ) : field.display ? (
-          <Line tone="muted">{`${' '.repeat(LABEL_WIDTH + 2)}${field.display}`}</Line>
+        {editor?.key === field.key ? editorField(field) : shown}
+        {editor?.key === field.key ? null : field.display ? (
+          <Line tone="muted">{`${' '.repeat(labelWidth + 2)}${field.display}`}</Line>
         ) : null}
       </Box>
     )
@@ -538,13 +570,14 @@ export const Wizard = ({
       {step.body ? step.body(height - (compact ? COMPACT_BODY_CHROME_ROWS : BODY_CHROME_ROWS)) : null}
       {editor && step.editFootnote ? <Line tone="muted">{`  ${step.editFootnote}`}</Line> : null}
       {step.footnote !== undefined && !compact ? (
-        <Line tone="muted">{`${' '.repeat(LABEL_WIDTH + 2)}${step.footnote}`}</Line>
+        <Line tone="muted">{`${' '.repeat(labelWidth + 2)}${step.footnote}`}</Line>
       ) : null}
       {notice ? <Line tone={notice.tone}>{`  ${notice.text}`}</Line> : compact ? null : <Gap />}
       <WizardButtons
         buttons={buttons}
         ready={ready}
         finishLabel={finishLabel}
+        cancelLabel={onBack ? BUTTON_LABELS.back : BUTTON_LABELS.cancel}
         estimate={footer}
         focused={focused?.kind === 'button' ? focused.button : undefined}
         onChoose={(button) => choose(firstButton + buttons.indexOf(button))}
@@ -552,7 +585,11 @@ export const Wizard = ({
       />
       <Fill />
       <KeyHints
-        hints={editor ? ['Enter save', 'Esc cancel'] : rowHints(focused, finishHint, blocking, steps.length > 1)}
+        hints={
+          editor
+            ? ['Enter save', 'Esc cancel']
+            : rowHints(focused, finishHint, blocking, steps.length > 1, onBack !== undefined)
+        }
       />
     </>
   )

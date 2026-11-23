@@ -1,8 +1,10 @@
-import { PROVIDER_ENVIRONMENT_KEYS, type DetectedProviderEnvironment, type ProviderId } from '../../config/store.js'
-import { discoverProviderModels } from '../../model/discovery.js'
+import { DEFAULT_HARNESS_AGENT_CONFIG, supportsWebSearch } from '@strands-agents/harness'
+
 import { effortOptions } from '../../model/selection.js'
-import { agentOptionDefault, readAgentOptions, type AgentOptionEdit, type AgentOptionValue } from '../agent-options.js'
-import type { Knob, KnobGroup, KnobKind, ModelOption } from '../panels/model.js'
+import { errorMessage } from '../../terminal/text.js'
+import { readAgentOptions, type AgentOptionEdit, type AgentOptionValue } from '../agent-options.js'
+import { projectPython, readPythonSource } from '../agent-source.js'
+import type { Knob, KnobGroup, KnobKind } from '../panels/model.js'
 import type { DevWorkspace } from '../workspace.js'
 
 export type TemporaryKnobValue = string | boolean | null
@@ -52,6 +54,40 @@ export interface TemporaryKnobChange {
   readonly before: string
   readonly after: string
   readonly edit?: AgentOptionEdit
+  /** What applying writes into the call for an option that it does not set yet. */
+  readonly added?: string
+}
+
+/** The model of the call, for the harness's own default of built-in tools. */
+export type TemporaryModelReading =
+  { readonly kind: 'set'; readonly model: string } | { readonly kind: 'unset' } | { readonly kind: 'code' }
+
+export interface TemporaryHarnessDefaults {
+  /** DEFAULT_HARNESS_AGENT_CONFIG of the harness in the agent's language, with camelCase keys. */
+  readonly options: Readonly<Record<string, unknown>>
+  /** Whether the call's model gets native web search, without which the harness leaves web_search off. */
+  readonly webSearch: boolean
+}
+
+export type TemporaryHarnessDefaultsReader = (
+  workspace: DevWorkspace,
+  model: TemporaryModelReading
+) => Promise<TemporaryHarnessDefaults>
+
+const PYTHON_DEFAULTS = `import json, sys
+from strands_harness import DEFAULT_HARNESS_AGENT_CONFIG, supports_web_search
+model = json.loads(sys.stdin.read())
+search = model["kind"] != "code" and supports_web_search(model.get("model"))
+print(json.dumps({"options": DEFAULT_HARNESS_AGENT_CONFIG, "webSearch": search}, default=str))`
+
+/** The defaults of strands-harness itself: the project's Python package, or the TypeScript package. */
+export const readTemporaryHarnessDefaults: TemporaryHarnessDefaultsReader = async (workspace, model) => {
+  if (workspace.config.language === 'python')
+    return readPythonSource(PYTHON_DEFAULTS, JSON.stringify(model), projectPython(workspace.root))
+  return {
+    options: DEFAULT_HARNESS_AGENT_CONFIG as unknown as Readonly<Record<string, unknown>>,
+    webSearch: model.kind !== 'code' && supportsWebSearch(model.kind === 'set' ? model.model : undefined),
+  }
 }
 
 type Language = 'typescript' | 'python'
@@ -74,8 +110,6 @@ const OPTION_SPECS = {
   mcpServers: { name: 'mcpServers', python: 'mcp_servers', group: 'tools', label: 'MCP servers' },
   backgroundTasks: { name: 'backgroundTasks', python: 'background_tasks', group: 'tools', label: 'background tasks' },
   contextManager: { name: 'contextManager', python: 'context_manager', group: 'context', label: 'context manager' },
-  session: { name: 'session', python: 'session', group: 'context', label: 'session' },
-  memory: { name: 'memory', python: 'memory', group: 'context', label: 'memory' },
   skills: { name: 'skills', python: 'skills', group: 'skills', label: 'skills' },
   builtinPlugins: { name: 'builtinPlugins', python: 'builtin_plugins', group: 'plugins', label: 'built-in plugins' },
   plugins: { name: 'plugins', python: 'plugins', group: 'plugins', label: 'plugins' },
@@ -84,12 +118,16 @@ const OPTION_SPECS = {
 
 type OptionName = keyof typeof OPTION_SPECS
 
+// Session and memory stay out: every trial runs without them.
 export const TEMPORARY_KNOB_NAMES: readonly string[] = Object.keys(OPTION_SPECS)
 
 const GROUP_ORDER: readonly KnobGroup[] = ['prompt', 'model', 'tools', 'context', 'skills', 'plugins']
 
 const SET_IN_CODE = 'set in code, so strands dev cannot read or change it'
-const NOT_SET = 'not set'
+const NOT_TUNED = 'set to a value that strands dev does not tune'
+const FROM_DEFAULT = 'not in the call, so the run starts from the harness default'
+// Both harnesses resolve an unset backgroundTasks to on (resolveBackgroundTasks, _resolve_background_tasks).
+const BACKGROUND_TASKS_DEFAULT = true
 
 const shownValue = (value: TemporaryKnobValue | undefined): string =>
   value === true ? 'on' : value === false ? 'off' : value === null || value === undefined ? 'none' : value
@@ -101,20 +139,18 @@ const scalarOf = (value: AgentOptionValue | undefined): TemporaryKnobValue | und
   return undefined
 }
 
-const unset = (name: OptionName): TemporaryKnobValue | undefined => {
-  const value = agentOptionDefault(name)
-  return typeof value === 'string' || typeof value === 'boolean' ? value : undefined
-}
-
-const unsetList = (name: OptionName): readonly string[] => {
-  const value = agentOptionDefault(name)
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
-}
-
 interface Reading {
   readonly options: ReadonlyMap<string, AgentOptionValue>
   readonly language: Language
+  readonly defaults?: TemporaryHarnessDefaults
+  readonly defaultsProblem?: string
 }
+
+const harnessDefault = (name: OptionName, { defaults }: Reading): unknown =>
+  name === 'backgroundTasks' ? BACKGROUND_TASKS_DEFAULT : defaults?.options[name]
+
+const asScalar = (value: unknown): TemporaryKnobValue | undefined =>
+  typeof value === 'string' || typeof value === 'boolean' || value === null ? value : undefined
 
 const optionName = (name: OptionName, language: Language): string =>
   language === 'python' ? OPTION_SPECS[name].python : OPTION_SPECS[name].name
@@ -136,13 +172,26 @@ const knobBase = (
   ...(unavailable ? { unavailable } : {}),
 })
 
+const fromDefault = (knob: TemporaryKnob): TemporaryKnob => ({
+  ...knob,
+  detail: `${knob.detail}; ${FROM_DEFAULT}`,
+  notInCall: true,
+})
+
 const valueOf = (name: OptionName, reading: Reading): AgentOptionValue | undefined =>
   reading.options.get(optionName(name, reading.language))
 
-const textKnob = (name: 'instructions' | 'systemPrompt', reading: Reading): TemporaryKnob | undefined => {
+const textKnob = (name: 'instructions' | 'systemPrompt', reading: Reading): TemporaryKnob => {
   const value = valueOf(name, reading)
   if (name === 'systemPrompt') {
-    if (!value) return undefined
+    if (!value)
+      return knobBase(
+        name,
+        reading,
+        'text',
+        'text',
+        'the call passes no system prompt, so the harness builds its own; tune the instructions instead'
+      )
     if (value.kind !== 'string') return knobBase(name, reading, 'text', 'text', SET_IN_CODE)
     return {
       ...knobBase(name, reading, 'text', 'text rewritten by the optimizer'),
@@ -162,45 +211,71 @@ const textKnob = (name: 'instructions' | 'systemPrompt', reading: Reading): Temp
 
 const choiceKnob = (name: OptionName, reading: Reading, choices: readonly TemporaryKnobValue[]): TemporaryKnob => {
   const value = valueOf(name, reading)
-  const current = value ? scalarOf(value) : unset(name)
+  if (!value && reading.defaultsProblem) return knobBase(name, reading, 'choice', 'choice', reading.defaultsProblem)
+  const current = value ? scalarOf(value) : asScalar(harnessDefault(name, reading))
   if (current === undefined || !choices.includes(current))
+    return knobBase(name, reading, 'choice', 'choice', value?.kind === 'code' ? SET_IN_CODE : NOT_TUNED)
+  const knob = { ...knobBase(name, reading, 'choice', choices.map(shownValue).join(' · ')), current, choices }
+  return value ? knob : fromDefault(knob)
+}
+
+const namesOf = (value: unknown): readonly string[] | undefined =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : undefined
+
+const isEmpty = (value: unknown): boolean =>
+  value === null ||
+  value === undefined ||
+  (Array.isArray(value) && value.length === 0) ||
+  (typeof value === 'object' && Object.keys(value).length === 0)
+
+// An option the call leaves out switches the entries of the harness default.
+const defaultSwitches = (name: OptionName, reading: Reading): TemporaryKnob => {
+  const { label } = OPTION_SPECS[name]
+  if (reading.defaultsProblem) return knobBase(name, reading, 'switches', 'on/off', reading.defaultsProblem)
+  const fallback = harnessDefault(name, reading)
+  const names = namesOf(fallback)?.filter((entry) => entry !== 'web_search' || reading.defaults?.webSearch)
+  if (!names || names.length === 0)
     return knobBase(
       name,
       reading,
-      'choice',
-      'choice',
-      value?.kind === 'code' ? SET_IN_CODE : 'set to a value that strands dev does not tune'
+      'switches',
+      'on/off',
+      isEmpty(fallback) || names
+        ? `the call passes no ${label}, and the harness adds none by default`
+        : `the harness default ${label} are not a list of names that strands dev can switch`
     )
-  return {
-    ...knobBase(name, reading, 'choice', choices.map(shownValue).join(' · ')),
-    current,
-    choices,
-  }
+  const entries = names.map((entry) => ({ label: entry, item: { name: entry } }))
+  return fromDefault({ ...knobBase(name, reading, 'switches', `on/off for each: ${names.join(', ')}`), entries })
 }
 
-const switchesKnob = (name: OptionName, reading: Reading, defaults?: readonly string[]): TemporaryKnob => {
+const switchesKnob = (name: OptionName, reading: Reading): TemporaryKnob => {
   const value = valueOf(name, reading)
-  const listed = value?.kind === 'list' ? value : undefined
-  const mapped = value?.kind === 'map' ? value : undefined
-  const entries: TemporarySwitchEntry[] = listed
-    ? listed.items.map((item, index) => ({ label: item.literal ?? item.text, item: { index } }))
-    : mapped
-      ? mapped.keys.map((key) => ({ label: key, item: { key } }))
-      : !value && defaults
-        ? defaults.map((entry) => ({ label: entry, item: { name: entry } }))
-        : []
-  if (entries.length === 0) return knobBase(name, reading, 'switches', 'on/off', value ? SET_IN_CODE : NOT_SET)
+  if (!value) return defaultSwitches(name, reading)
+  if (value.kind !== 'list' && value.kind !== 'map')
+    return knobBase(name, reading, 'switches', 'on/off', value.kind === 'code' ? SET_IN_CODE : NOT_TUNED)
+  const entries: TemporarySwitchEntry[] =
+    value.kind === 'list'
+      ? value.items.map((item, index) => ({ label: item.literal ?? item.text, item: { index } }))
+      : value.keys.map((key) => ({ label: key, item: { key } }))
+  if (entries.length === 0)
+    return knobBase(
+      name,
+      reading,
+      'switches',
+      'on/off',
+      `the call lists no ${OPTION_SPECS[name].label}, so there is nothing to switch off`
+    )
   return {
     ...knobBase(name, reading, 'switches', `on/off for each: ${entries.map(({ label }) => label).join(', ')}`),
     entries,
-    ...(listed ? { sourceItems: listed.items.map((item) => item.text) } : {}),
+    ...(value.kind === 'list' ? { sourceItems: value.items.map((item) => item.text) } : {}),
   }
 }
 
-const skillsKnob = (reading: Reading): TemporaryKnob => {
-  const value = valueOf('skills', reading)
-  return value?.kind === 'list' ? switchesKnob('skills', reading) : choiceKnob('skills', reading, [true, false])
-}
+const skillsKnob = (reading: Reading): TemporaryKnob =>
+  valueOf('skills', reading)?.kind === 'list'
+    ? switchesKnob('skills', reading)
+    : choiceKnob('skills', reading, [true, false])
 
 const effortKnob = (reading: Reading, model: TemporaryKnobValue | undefined): TemporaryKnob => {
   const levels =
@@ -213,23 +288,38 @@ const effortKnob = (reading: Reading, model: TemporaryKnobValue | undefined): Te
 
 const modelKnob = (reading: Reading): TemporaryKnob => {
   const value = valueOf('model', reading)
-  const current = value ? scalarOf(value) : unset('model')
+  if (!value && reading.defaultsProblem) return knobBase('model', reading, 'models', 'choice', reading.defaultsProblem)
+  const current = value ? scalarOf(value) : asScalar(harnessDefault('model', reading))
   if (typeof current !== 'string') return knobBase('model', reading, 'models', 'choice', SET_IN_CODE)
-  return { ...knobBase('model', reading, 'models', 'choose models to try'), current }
+  const knob = { ...knobBase('model', reading, 'models', 'choose models to try'), current }
+  return value ? knob : { ...knob, notInCall: true }
 }
 
-const trialOnly = (name: 'session' | 'memory', reading: Reading): TemporaryKnob =>
-  knobBase(
-    name,
-    reading,
-    'choice',
-    'choice',
-    valueOf(name, reading) ? `every trial runs without ${name === 'session' ? 'a session' : 'memory'}` : NOT_SET
-  )
+const modelReading = (value: AgentOptionValue | undefined): TemporaryModelReading =>
+  !value ? { kind: 'unset' } : value.kind === 'string' ? { kind: 'set', model: value.value } : { kind: 'code' }
 
-export const readTemporaryKnobs = async (workspace: DevWorkspace): Promise<TemporaryKnob[]> => {
+const withDefaults = async (
+  workspace: DevWorkspace,
+  base: Reading,
+  read: TemporaryHarnessDefaultsReader
+): Promise<Reading> => {
+  try {
+    return { ...base, defaults: await read(workspace, modelReading(valueOf('model', base))) }
+  } catch (error) {
+    return {
+      ...base,
+      defaultsProblem: `strands dev could not read the strands-harness defaults: ${errorMessage(error)}`,
+    }
+  }
+}
+
+export const readTemporaryKnobs = async (
+  workspace: DevWorkspace,
+  readDefaults: TemporaryHarnessDefaultsReader = readTemporaryHarnessDefaults
+): Promise<TemporaryKnob[]> => {
   const options = await readAgentOptions(workspace)
-  const reading: Reading = { options: options ?? new Map(), language: workspace.config.language }
+  const base: Reading = { options: options ?? new Map(), language: workspace.config.language }
+  const reading = await withDefaults(workspace, base, readDefaults)
   const model = modelKnob(reading)
   const knobs = [
     textKnob('instructions', reading),
@@ -237,18 +327,16 @@ export const readTemporaryKnobs = async (workspace: DevWorkspace): Promise<Tempo
     model,
     effortKnob(reading, model.current),
     choiceKnob('caching', reading, ['auto', true, false]),
-    switchesKnob('builtinTools', reading, unsetList('builtinTools')),
+    switchesKnob('builtinTools', reading),
     switchesKnob('tools', reading),
     switchesKnob('mcpServers', reading),
     choiceKnob('backgroundTasks', reading, [true, false]),
     choiceKnob('contextManager', reading, ['auto', 'agentic', false]),
-    trialOnly('session', reading),
-    trialOnly('memory', reading),
     skillsKnob(reading),
-    switchesKnob('builtinPlugins', reading, unsetList('builtinPlugins')),
+    switchesKnob('builtinPlugins', reading),
     switchesKnob('plugins', reading),
     switchesKnob('interventions', reading),
-  ].filter((knob): knob is TemporaryKnob => knob !== undefined && knob.unavailable !== NOT_SET)
+  ]
   return [...knobs].sort((left, right) => GROUP_ORDER.indexOf(left.group) - GROUP_ORDER.indexOf(right.group))
 }
 
@@ -298,14 +386,33 @@ export const temporarySpaceVariables = (
 
 type Params = Readonly<Record<string, unknown>>
 
+const NEW_IN_CALL = ' (the harness default; not in the call)'
+
+// An option the call leaves out is written in full, and only while the call still leaves it out.
+const addedChange = (
+  knob: TemporaryKnob,
+  before: string,
+  after: string,
+  value: string | boolean | readonly string[]
+): TemporaryKnobChange => ({
+  knob,
+  kind: 'value',
+  before: `${before}${NEW_IN_CALL}`,
+  after,
+  edit: { option: knob.option, value, absent: true },
+  added: `${knob.option} is new in the call: applying writes ${knob.option} = ${JSON.stringify(value)}`,
+})
+
 const valueChange = (knob: TemporaryKnob, before: unknown, after: unknown): TemporaryKnobChange | undefined => {
   if (JSON.stringify(before) === JSON.stringify(after) || after === undefined) return undefined
   const value = after as TemporaryKnobValue
   if (typeof value !== 'string' && typeof value !== 'boolean') return undefined
+  const shown = shownValue(before as TemporaryKnobValue)
+  if (knob.notInCall) return addedChange(knob, shown, shownValue(value), value)
   return {
     knob,
     kind: 'value',
-    before: shownValue(before as TemporaryKnobValue),
+    before: shown,
     after: shownValue(value),
     edit: {
       option: knob.option,
@@ -320,18 +427,13 @@ const switchesChange = (knob: TemporaryKnob, best: Params): TemporaryKnobChange 
   const off = entries.flatMap((entry, index) => (best[switchKey(knob, index)] === false ? [{ entry, index }] : []))
   if (off.length === 0) return undefined
   const labels = off.map(({ entry }) => entry.label).join(', ')
-  const listed = entries.every(({ item }) => 'index' in item)
-  const edit: AgentOptionEdit = listed
+  if (knob.notInCall) {
+    const kept = entries.filter((_, index) => !off.some((removed) => removed.index === index)).map(({ label }) => label)
+    return addedChange(knob, `${labels} on`, `${labels} off`, kept)
+  }
+  const edit: AgentOptionEdit = entries.every(({ item }) => 'index' in item)
     ? { option: knob.option, removeItems: off.map(({ index }) => index), expectedItems: knob.sourceItems ?? [] }
-    : entries.every(({ item }) => 'key' in item)
-      ? { option: knob.option, removeKeys: off.map(({ entry }) => (entry.item as { key: string }).key) }
-      : {
-          option: knob.option,
-          value: entries
-            .filter((_, index) => !off.some((removed) => removed.index === index))
-            .map(({ label }) => label),
-          expected: entries.map(({ label }) => label),
-        }
+    : { option: knob.option, removeKeys: off.map(({ entry }) => (entry.item as { key: string }).key) }
   return { knob, kind: 'value', before: `${labels} on`, after: `${labels} off`, edit }
 }
 
@@ -362,22 +464,3 @@ export const temporaryKnobLabels = (knobs: readonly TemporaryKnob[]): Record<str
         : [[knob.option, knob.label]]
     )
   )
-
-export interface TemporaryModelDiscovery {
-  readonly options?: readonly ModelOption[]
-  readonly error?: string
-}
-
-const processEnvironment = (): DetectedProviderEnvironment =>
-  Object.fromEntries(
-    PROVIDER_ENVIRONMENT_KEYS.flatMap((key) => {
-      const value = process.env[key]
-      return value ? [[key, { value, source: 'process' as const }]] : []
-    })
-  )
-
-export const discoverTemporaryModels = async (provider: string): Promise<TemporaryModelDiscovery> => {
-  const discovery = await discoverProviderModels(provider as ProviderId, processEnvironment())
-  if (!discovery.available) return { error: discovery.error ?? `No ${provider} models could be listed.` }
-  return { options: discovery.models.map(({ id, name }) => ({ id: `${provider}/${id}`, name: name || id })) }
-}

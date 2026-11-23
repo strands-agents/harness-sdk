@@ -501,7 +501,7 @@ describe('runInkChat', () => {
       data: {},
       appData: {},
     }
-    const open = vi.fn<DevChatCommand['open']>(() => () => null)
+    const open = vi.fn<NonNullable<DevChatCommand['open']>>(() => () => null)
     const devCommands: DevChatCommand[] = [
       { spec: { name: 'optimize', usage: '/optimize', description: 'Tune this agent' }, open },
     ]

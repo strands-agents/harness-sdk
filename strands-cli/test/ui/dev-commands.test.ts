@@ -17,6 +17,16 @@ const devCommand = (open: DevChatCommand['open'] = vi.fn(() => EmptyPanel)): Dev
   open,
 })
 
+const skillCommand = (): DevChatCommand => ({
+  spec: { name: 'evaluate', usage: '/evaluate [request]', description: 'Run the cases' },
+  skill: {
+    skill: 'strands-evals',
+    workflow: 'Run the cases.',
+    unavailable: 'The skill did not load.',
+    job: (id) => `how is ${id} going?`,
+  },
+})
+
 const capture = (): { command: DevChatCommand; context: () => DevChatCommandContext } => {
   let received: DevChatCommandContext | undefined
   const command = devCommand((context) => {
@@ -128,6 +138,151 @@ describe('dev chat commands', () => {
     const controller = new ChatController(idleBackend())
 
     expect(controller.actionableCommandToken('/optimize')).toBeUndefined()
+  })
+
+  it('shouldActivateTheSkillAndSendTheWorkflowWhenTheUserTypesASkillCommand', async () => {
+    const prompts: unknown[] = []
+    const activate = vi.fn(async (name: string) =>
+      name === 'strands-evals'
+        ? { skill: { name, description: 'Evals', instructions: 'Use evals.', active: true }, content: 'Use evals.' }
+        : undefined
+    )
+    const command = skillCommand()
+    const controller = new ChatController(
+      idleBackend({
+        async *stream(prompt) {
+          prompts.push(prompt)
+          yield* []
+          return { stopReason: 'endTurn' }
+        },
+      }),
+      { devCommands: [command], skills: { list: async () => [], activate } }
+    )
+
+    await controller.submit('/evaluate refunds')
+    controller.openDevCommand('evaluate', { job: 'refunds.json' })
+    await vi.waitFor(() => expect(prompts).toHaveLength(2))
+
+    expect(activate).toHaveBeenCalledWith('strands-evals')
+    expect(prompts[0]).toContain('<skill_instructions>\nUse evals.\n</skill_instructions>')
+    expect(prompts[0]).toContain('<strands_dev_command name="evaluate">\nRun the cases.\n</strands_dev_command>')
+    expect(String(prompts[0]).endsWith('\n\n/evaluate refunds')).toBe(true)
+    expect(String(prompts[1]).endsWith('\n\n/evaluate how is refunds.json going?')).toBe(true)
+    expect(controller.getSnapshot().completedTurns.map((turn) => turn.prompt)).toEqual([
+      '/evaluate refunds',
+      '/evaluate how is refunds.json going?',
+    ])
+    expect(controller.openDevCommand('evaluate', { restore: true })).toBe(false)
+    expect(controller.getSnapshot().panel).toBeUndefined()
+  })
+
+  it('shouldOpenTheSkillCommandPanelOnlyWhenItsToolAsks', async () => {
+    let context: DevChatCommandContext | undefined
+    const command: DevChatCommand = {
+      ...skillCommand(),
+      open: vi.fn(() => EmptyPanel),
+      attach: (received) => (context = received),
+    }
+    const controller = new ChatController(idleBackend(), { devCommands: [command] })
+    await controller.start()
+
+    expect(controller.openDevCommand('evaluate')).toBe(true)
+    expect(controller.getSnapshot().panel).toBeUndefined()
+    expect(context!.openPanel('evaluate')).toBe(true)
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'evaluate', view: EmptyPanel })
+  })
+
+  it('shouldOpenAFileThroughTheScreenOpenerUntilTheScreenRemovesIt', async () => {
+    let context: DevChatCommandContext | undefined
+    const controller = new ChatController(idleBackend(), {
+      devCommands: [{ ...skillCommand(), attach: (received) => (context = received) }],
+    })
+    await controller.start()
+    const opener = vi.fn(async (_path: string): Promise<void> => {})
+    const detach = controller.attachFileOpener(opener)
+
+    await context!.openFile!('/w/a.json')
+    const removeNewer = controller.attachFileOpener(vi.fn())
+    removeNewer()
+    // An older opener's removal leaves a newer state alone.
+    detach()
+
+    expect(opener).toHaveBeenCalledWith('/w/a.json')
+    await expect(context!.openFile!('/w/b.json')).rejects.toThrow('This terminal cannot open an editor.')
+  })
+
+  it('shouldKeepOnePanelWaitingUnderAPermissionPromptWhenTheToolAsksTwice', async () => {
+    let context: DevChatCommandContext | undefined
+    const open = vi.fn(() => EmptyPanel)
+    const command: DevChatCommand = { ...skillCommand(), open, attach: (received) => (context = received) }
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield {
+            type: 'permission',
+            request: {
+              id: 'permission-1',
+              toolName: 'shell',
+              input: {},
+              options: [{ id: 'allow', label: 'Allow once', kind: 'allow_once' }],
+            },
+          }
+          await new Promise(() => undefined)
+          return { stopReason: 'endTurn' }
+        },
+        respondPermission: vi.fn(async () => true),
+      }),
+      { devCommands: [command] }
+    )
+    await controller.start()
+    void controller.submit('hello')
+    await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('permission'))
+
+    expect([context!.openPanel('evaluate'), context!.openPanel('evaluate'), context!.openPanel('missing')]).toEqual([
+      true,
+      true,
+      false,
+    ])
+    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'evaluate' })
+    controller.dismissPanel()
+
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(controller.getSnapshot().panel).toBeUndefined()
+    controller.close()
+  })
+
+  it('shouldNeitherListNorRunAHiddenCommandButStillOpenItsPanelForATool', async () => {
+    let context: DevChatCommandContext | undefined
+    const hidden: DevChatCommand = {
+      ...devCommand(vi.fn(() => EmptyPanel)),
+      spec: { name: 'ask', usage: '/ask', description: 'Answer the question' },
+      hidden: true,
+      attach: (received) => (context = received),
+    }
+    const controller = new ChatController(idleBackend(), { devCommands: [hidden] })
+    await controller.start()
+
+    expect(controller.actionableCommandToken('/ask')).toBeUndefined()
+    expect(controller.commandAssistance('/as')?.completions ?? []).not.toContainEqual(
+      expect.objectContaining({ name: 'ask' })
+    )
+    expect(context!.openPanel('ask')).toBe(true)
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'ask' })
+  })
+
+  it('shouldExplainWhyWhenTheSkillOfASkillCommandIsMissing', async () => {
+    const stream = vi.fn()
+    const controller = new ChatController(idleBackend({ stream }), {
+      devCommands: [skillCommand()],
+      skills: { list: async () => [], activate: async () => undefined },
+    })
+
+    await controller.submit('/evaluate')
+
+    expect(stream).not.toHaveBeenCalled()
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'error' })
+    expect(JSON.stringify(controller.getSnapshot().panel)).toContain('The skill did not load.')
   })
 
   it('shouldRunThePromptAsAUserTurnWhenTheDevCommandSubmitsIt', async () => {

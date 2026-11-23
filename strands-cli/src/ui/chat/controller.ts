@@ -188,6 +188,7 @@ export class ChatController implements ChatControllerApi {
   private readonly _workspaceAction: ChatControllerOptions['workspaceAction']
   private readonly _devCommands: readonly DevChatCommand[]
   private readonly _devCommandAbort = new AbortController()
+  private _fileOpener: ((path: string) => Promise<void>) | undefined
   private _stopWatchingDevJobs: readonly (() => void)[] = []
   private readonly _awsProfile: ChatControllerOptions['awsProfile']
   private readonly _builtinTools: ChatControllerOptions['builtinTools']
@@ -405,6 +406,13 @@ export class ChatController implements ChatControllerApi {
     this._emit()
   }
 
+  attachFileOpener(open: (path: string) => Promise<void>): () => void {
+    this._fileOpener = open
+    return () => {
+      if (this._fileOpener === open) this._fileOpener = undefined
+    }
+  }
+
   markReloaded(paths: readonly string[]): void {
     const changed = [...new Set(paths)]
     const label = changed.length > 1 ? `${changed.length} files` : changed[0]?.split(/[\\/]/u).at(-1) || 'agent source'
@@ -468,7 +476,7 @@ export class ChatController implements ChatControllerApi {
     }
     if (
       invocation.prefix === '/' &&
-      (LOCAL_COMMAND_NAMES.has(invocation.name.toLowerCase()) || this._devCommand(invocation.name))
+      (LOCAL_COMMAND_NAMES.has(invocation.name.toLowerCase()) || this._typedDevCommand(invocation.name))
     ) {
       return invocation.token
     }
@@ -488,7 +496,7 @@ export class ChatController implements ChatControllerApi {
       input,
       this.actionableCommandToken(input),
       this._skillCommands(),
-      this._devCommands.map((command) => command.spec)
+      this._devCommands.filter(({ hidden }) => !hidden).map((command) => command.spec)
     )
   }
 
@@ -987,6 +995,8 @@ export class ChatController implements ChatControllerApi {
     }
     execution.presentationAbort.abort()
     this._backend.cancel()
+    // A tool of the cancelled turn may wait on screen; the worker cannot cancel it across the process boundary.
+    for (const command of this._devCommands) command.abandon?.(this._devCommandContext())
     if (running) this._emit()
     return true
   }
@@ -1204,12 +1214,19 @@ export class ChatController implements ChatControllerApi {
   }
 
   dismissPanel(): boolean {
+    return this._dismissPanel(true)
+  }
+
+  private _dismissPanel(abandon: boolean): boolean {
     if (!this._panel || this._resourceChanging || this._panel.kind === 'permission') {
       return false
     }
     if (this._panel.kind === 'tools' && !this._applyBuiltinTools()) {
       return true
     }
+    // A dev panel that the developer leaves, rather than one that closes itself, gives up what it waits on.
+    if (abandon && this._panel.kind === 'dev')
+      this._devCommand(this._panel.command)?.abandon?.(this._devCommandContext())
     this._stopTaskActivity()
     this._panel = this._panelStack.pop()
     this._emit()
@@ -1517,7 +1534,7 @@ export class ChatController implements ChatControllerApi {
             tools: this._builtinTools !== undefined,
             export: this._exportAgentProject !== undefined,
             config: this._configurationSource !== undefined,
-            devCommands: this._devCommands.map((command) => command.spec),
+            devCommands: this._devCommands.filter(({ hidden }) => !hidden).map((command) => command.spec),
           }),
           searchable: true,
           filters: [
@@ -1588,7 +1605,15 @@ export class ChatController implements ChatControllerApi {
         this.close()
         break
       default: {
-        const devCommand = this._devCommand(command)
+        const devCommand = this._typedDevCommand(command)
+        if (devCommand?.skill) {
+          const { skill, workflow, unavailable } = devCommand.skill
+          const request = skillCommandRequest(devCommand.spec.name, workflow, prompt)
+          if ((await this._activateSkillAndRun(skill, prompt, request)) === null) {
+            this._openError('skill unavailable', `/${devCommand.spec.name}`, unavailable)
+          }
+          break
+        }
         if (devCommand) {
           this._openDevPanel(devCommand)
           break
@@ -2059,7 +2084,11 @@ export class ChatController implements ChatControllerApi {
     }
   }
 
-  private async _activateSkillAndRun(name: string, displayPrompt: string): Promise<ChatTurn | null | undefined> {
+  private async _activateSkillAndRun(
+    name: string,
+    displayPrompt: string,
+    request = displayPrompt
+  ): Promise<ChatTurn | null | undefined> {
     if (!this._skills || this._backend.protocol !== 'strands') {
       return null
     }
@@ -2074,7 +2103,7 @@ export class ChatController implements ChatControllerApi {
       this._skillDetails.set(skill.name, skill)
       // Start this submission before releasing queued work.
       this._resourceChanging = false
-      return this._runPrompt(skillInvocationPrompt(activation, displayPrompt), displayPrompt)
+      return this._runPrompt(skillInvocationPrompt(activation, request), displayPrompt)
     } catch (error) {
       this._openError('skill activation failed', name, errorMessage(error))
       return undefined
@@ -3043,23 +3072,44 @@ export class ChatController implements ChatControllerApi {
   openDevCommand(name: string, opening?: DevPanelOpening): boolean {
     const devCommand = this._devCommand(name)
     if (!devCommand || this._closed || this._panel?.kind === 'permission') return false
+    if (devCommand.skill) {
+      // A skill command has no panel to restore; a job click asks the chat about that job.
+      if (opening?.restore) return false
+      const request = opening?.job ? devCommand.skill.job?.(opening.job) : undefined
+      void this.submit(`/${devCommand.spec.name}${request ? ` ${request}` : ''}`)
+      return true
+    }
     this._openDevPanel(devCommand, opening)
     return true
   }
 
-  private _openDevPanel(devCommand: DevChatCommand, opening?: DevPanelOpening): void {
+  /** A tool's panel waits under a pending permission prompt and shows once that prompt is answered. */
+  private _openToolPanel(name: string): boolean {
+    const devCommand = this._devCommand(name)
+    if (!devCommand?.open || this._closed) return false
+    const waiting = this._panelStack.at(-1)
+    if (this._panel?.kind !== 'permission') this._openDevPanel(devCommand)
+    else if (waiting?.kind !== 'dev' || waiting.command !== devCommand.spec.name)
+      this._openDevPanel(devCommand, undefined, true)
+    return true
+  }
+
+  private _openDevPanel(devCommand: DevChatCommand, opening?: DevPanelOpening, underPermission = false): void {
+    if (!devCommand.open) return
     if (this._panel?.kind === 'dev' && this._panel.command === devCommand.spec.name && !opening?.job) return
-    const opened = this._openPanel({
+    const panel: NewChatPanel = {
       kind: 'dev',
       command: devCommand.spec.name,
       title: `/${devCommand.spec.name}`,
       rows: [],
       view: devCommand.open(this._devCommandContext(), opening),
       close: () => {
-        if (this._panel?.id === opened.id) this.dismissPanel()
+        if (this._panel?.id === opened.id) this._dismissPanel(false)
       },
       openCommand: (name) => this.openDevCommand(name),
-    })
+    }
+    const opened = underPermission ? this._makePanel(panel) : this._openPanel(panel)
+    if (underPermission) this._panelStack.push(opened)
   }
 
   private _devJobs(): DevChatJobGroup[] {
@@ -3073,7 +3123,14 @@ export class ChatController implements ChatControllerApi {
 
   private _isDevCommandPrompt(prompt: string): boolean {
     const invocation = parseCommandInvocation(prompt)
-    return invocation?.prefix === '/' && this._devCommand(invocation.name) !== undefined
+    // Panels open during a turn; a skill command is a turn of its own, so it queues.
+    const devCommand = invocation?.prefix === '/' ? this._typedDevCommand(invocation.name) : undefined
+    return devCommand !== undefined && devCommand.skill === undefined
+  }
+
+  private _typedDevCommand(name: string): DevChatCommand | undefined {
+    const devCommand = this._devCommand(name)
+    return devCommand?.hidden ? undefined : devCommand
   }
 
   private _devCommand(name: string): DevChatCommand | undefined {
@@ -3100,7 +3157,11 @@ export class ChatController implements ChatControllerApi {
       submit: (prompt): void => {
         void this.submit(prompt)
       },
-      openPanel: (name): boolean => this.openDevCommand(name),
+      openPanel: (name): boolean => this._openToolPanel(name),
+      openFile: async (path): Promise<void> => {
+        if (!this._fileOpener) throw new Error('This terminal cannot open an editor.')
+        await this._fileOpener(path)
+      },
     }
   }
 
@@ -3240,6 +3301,10 @@ function skillInvocationPrompt(activation: SkillActivation, displayPrompt: strin
     '',
     displayPrompt,
   ].join('\n')
+}
+
+function skillCommandRequest(command: string, workflow: string, prompt: string): string {
+  return [`<strands_dev_command name="${command}">`, workflow, '</strands_dev_command>', '', prompt].join('\n')
 }
 
 function jobLabel(label: string): string {

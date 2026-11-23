@@ -1,25 +1,19 @@
 import { createElement } from 'react'
 
 import type { ImportedAgentProject } from '../../project/import.js'
-import type {
-  DevChatCommand,
-  DevChatCommandContext,
-  DevChatJob,
-  DevChatPanelView,
-  DevPanelOpening,
-} from '../../ui/chat/types.js'
-import { ExperimentPanel } from '../panels/experiment.js'
-import { OptimizePanel } from '../panels/optimize.js'
-import { TestPanel } from '../panels/test.js'
+import type { AgentExtensionUrlSkill } from '../../agent/extension.js'
+import type { DevChatCommand, DevChatCommandContext, DevChatPanelView, DevChatSkillRun } from '../../ui/chat/types.js'
 import { WizardRequestPanel } from '../../ui/panels/wizard-request-panel.js'
 import type { DevChatPart } from '../chat-extension.js'
+import { evalsSkillUnavailable, STRANDS_EVALS_OPTIMIZE_SKILL, STRANDS_EVALS_SKILL } from '../evals-skill.js'
 import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryAgentFacts } from './agent-context.js'
 import { temporaryDevChatPart as temporaryAgentTools } from './agent-tools.js'
 import { readTemporaryEvaluators } from './evaluators.js'
 import { temporaryGenerationJobs } from './experiments-session.js'
-import { temporaryJobsFeed, type TemporaryStore } from './jobs.js'
+import { temporaryJobsFeed } from './jobs.js'
 import { temporarySessionHistory } from './session-converter.js'
+import { temporaryCommandWorkflows } from './workflow-skills.js'
 import {
   temporaryDevSessions,
   temporaryOptimizeJobs,
@@ -27,39 +21,26 @@ import {
   type TemporaryDevSessions,
 } from './sessions.js'
 
-interface PanelSession<State> extends TemporaryStore<State> {
-  show(): void
-}
-
-interface PanelCommand<State> {
-  readonly name: string
-  readonly description: string
-  readonly details: string
-  readonly session: (sessions: TemporaryDevSessions) => PanelSession<State>
-  readonly jobs: (state: State) => readonly DevChatJob[]
-  readonly view: (sessions: TemporaryDevSessions, opening?: DevPanelOpening) => DevChatPanelView
-  readonly openJob?: (sessions: TemporaryDevSessions, job: string) => void
-  readonly resume?: (sessions: TemporaryDevSessions) => Promise<void>
-}
-
 type Sessions = (context?: DevChatCommandContext) => TemporaryDevSessions
 
 const paragraphs = (...lines: readonly string[]): string => lines.join('\n\n')
 
 const EXPERIMENT_DETAILS = paragraphs(
   'An experiment is a set of test cases for this agent. Each case has an input, and it can have an expected output. The evaluators of the experiment give each answer a score.',
-  'Select New experiment, and tell the agent in the chat what to test. Before it starts, the agent asks for your approval. Then it makes the cases with an AWS Bedrock model and saves them in strands-dev/experiments/<name>/<name>.json. Generation makes paid model calls and can take minutes. Your chat model does not change.',
-  'While the agent makes the cases, a line below the chat input shows the progress. Click the line to open this panel. Generation stops if strands dev closes.',
-  'Open a saved experiment to review its cases. You can drop, edit, or add cases, and then save the experiment. When a generation fails, open it to see why. Then try it again, or fix the problem in the chat.',
+  '/experiment activates the strands-evals skill, and the agent asks on screen, one question at a time, which experiment to open, or how to make a new one. Add what you want to skip questions, for example /experiment refunds or /experiment make cases from my past chats.',
+  'For a new experiment, the agent asks what to test and asks for your approval. Then it makes the cases with an AWS Bedrock model and saves them in strands-dev/experiments/<name>/<name>.json. Generation makes paid model calls and can take minutes. Your chat model does not change.',
+  'The agent runs strands-evals generate in the background, and a line below the chat input shows the progress. Click the line to ask about it. Generation stops if strands dev closes.',
+  'The agent lists the saved experiments and Create a new experiment. A saved experiment opens in your editor ($STRANDS_EDITOR, $VISUAL, or $EDITOR, as /config uses), and the agent asks what to change. You can also view and edit it in the evals UI. For a new experiment, the agent asks whether to describe a task or to build the cases from past chats. When a generation fails, the agent says why and offers to try again.',
   'Use /evaluate to run the agent on an experiment, and /optimize to tune the agent against it. You can also ask the agent in plain words, for example "what experiments do I have?"',
   'Experimental: a fork of strands-evals makes the cases for now.'
 )
 
 const EVALUATE_DETAILS = paragraphs(
   'Run this agent on the cases of one or more experiments. The evaluators of each experiment give each answer a score.',
-  'Select one or more experiments, and start the evaluation. While it runs, a line below the chat input shows the progress. You can stop the evaluation from the panel.',
-  'The evaluation continues when you close the panel or strands dev. When strands dev opens again, it shows the results, or it continues the evaluation from where it stopped. On Windows, the evaluation stops when strands dev closes, and continues at the next start.',
-  'When the evaluation is done, open its report. The report shows each case as passed or failed. Open a case to read its input, the expected output, the output of the agent, and the score and reason from each evaluator. You can run the failed cases again, or all the cases.',
+  '/evaluate activates the strands-evals skill, and the agent asks on screen which experiments and cases to run. It names the run in chat, and starts it when you approve it in your reply; it makes paid model calls. Add what you want to skip questions, for example /evaluate refunds or /evaluate rerun the failures.',
+  'While it runs, a line below the chat input shows the progress. Click the line to ask about it, or ask the agent to stop the evaluation.',
+  'The evaluation continues when you cancel the chat turn or close strands dev. When it is done, a notice gives the path of its report, or of its run log when it stopped. When strands dev opens again, it posts that notice, or it continues the evaluation from where it stopped. On Windows, the evaluation stops when strands dev closes, and continues at the next start.',
+  'The evals UI shows each report: every case as passed or failed, and for a failed case its input, the expected output, the output of the agent, and the reason from each evaluator.',
   'An evaluation does not change the agent source. It makes paid model calls and can take minutes. strands dev saves each report in strands-dev/experiments/<name>/runs/, and the latest one as <name>.report.json.',
   'From a shell, strands dev evaluate <experiment> runs the same evaluation and prints the result.',
   'Experimental: a fork of strands-evals runs the evaluations for now.'
@@ -67,115 +48,102 @@ const EVALUATE_DETAILS = paragraphs(
 
 const OPTIMIZE_DETAILS = paragraphs(
   'Tune this agent against an experiment, and then review the changes that the optimizer proposes.',
-  'Select an experiment, and then select the knobs to tune. Each option of the createHarness or create_harness call is a knob, for example the instructions, the model, the effort, the tools, and the skills. For the model, select the other models to try. A knob that strands dev cannot change shows the reason.',
-  'The setup has five tabs: Tune, Goal, Cases, Budget, and Review. Tab goes to the next tab, and Shift+Tab goes to the previous tab. A ! marks a tab with a problem. Start is on each tab. Use ↑↓ to go to a row, and ←→ to move the selected slider. The top line shows about how many rollouts and judge calls the run makes.',
-  'Goal: the objective slider sets what the run improves. Press Enter on it to type an objective, such as Minimize(tokens). The constraints row under it sets what the chosen candidate must meet, such as tokens <= 4000, Correctness >= 0.8. With constraints, the met at slider sets how sure the optimizer must be that a candidate meets them. The crashes slider sets what a crashed run scores, and the pick slider sets how the final pick values each finalist.',
-  'Cases: the cases slider sets how many cases are for training. The test slider sets how the other cases divide between validation and test. Budget: the steps, the candidates of each step, the runs of each case, the finalists, and the parallel trials. Under Pareto, at least 5 finalists go to validation. Review shows the whole run before you start it.',
+  '/optimize activates the optimize skill of strands-evals, and the agent asks on screen, one question at a time, which experiment to use, which knobs to tune, what the run should improve, what must stay true, and the budget. Add what you want to skip questions, for example /optimize refunds for fewer tokens.',
+  'The knobs are options of the createHarness or create_harness call: the instructions or the system prompt, the model, the effort, prompt caching, the context manager, background tasks, and each skill, tool, built-in tool, MCP server, plugin, built-in plugin, and intervention on or off. An option that the call leaves out starts from the strands-harness default, and accepting its edit writes the option into the call. A knob that strands dev cannot change shows the reason. Session and memory are not knobs: every trial runs without them.',
+  'Then the agent prints a review of every setting in chat, with the estimated rollouts and judge calls, and waits for your reply. Name a setting to change it, or approve the review to start the run; a run makes many paid model calls and can take a long time.',
   'The optimizer divides the cases into training, validation, and test cases. It tries candidate changes on the training cases. The best candidate on the validation cases wins, and the test cases measure it at the end.',
-  'While it runs, the panel shows the baseline score, the best score, and each candidate. Stop the run to keep the best candidate so far. Esc goes back to the /optimize list, and the run continues. You can start other runs at the same time.',
-  'The run continues when you close the panel or strands dev. When strands dev opens again, the list shows the finished run, or the run continues from where it stopped. On Windows, the run stops when strands dev closes, and continues at the next start.',
-  'At the end, review each proposed edit. ←→ selects an edit, and ↑↓ scrolls its change. Accept or reject each edit, and then apply the accepted edits. The agent source does not change until you apply them. Then use /evaluate on the new version.',
-  'The test check shows the gain on test cases that the search did not use, and its 90% confidence range. If the range includes 0, the gain can be luck.',
-  '/optimize opens the list of experiments, with the number of runs of each. Select an experiment to start a new run, or to see its runs that go on and its past runs. Select a run to see its progress or to open its report again.',
-  'A run makes many paid model calls and can take a long time. strands dev saves the records in strands-dev/experiments/<name>/optimizations/. From a shell, strands dev optimize <experiment> runs the optimizer and prints the result, but it does not change the agent source.',
+  'While it runs, a line below the chat input shows the progress. Click the line to ask about it, or ask the agent to stop the run and keep the best candidate so far. You can start other runs at the same time.',
+  'The run continues when you cancel the chat turn or close strands dev. When strands dev opens again, the run continues from where it stopped. On Windows, the run stops when strands dev closes, and continues at the next start.',
+  'The run goes on in the background, and a notice says when it finishes. Ask the agent about it then: it shows the proposed edits and asks which ones to apply. The agent source does not change until you accept them. Then use /evaluate on the new version. Ask the agent to open the run in the evals UI for a closer look.',
+  'strands dev saves the records in strands-dev/experiments/<name>/optimizations/. From a shell, strands dev optimize <experiment> runs the optimizer and prints the result, but it does not change the agent source.',
   'Experimental: a fork of strands-evals runs the upstream optimizer for now, with strands-evals optimize run and strands-evals optimize resume.'
 )
 
-const devCommand = <State>(
-  { name, description, details, session, jobs, view, openJob, resume }: PanelCommand<State>,
-  sessions: Sessions
-): DevChatCommand => ({
-  spec: { name, usage: `/${name}`, description, details },
-  open: (context, opening): DevChatPanelView => {
-    const opened = sessions(context)
-    if (!opening?.restore) session(opened).show()
-    if (opening?.job) openJob?.(opened, opening.job)
-    return view(opened, opening)
-  },
-  attach: (context): void => void resume?.(sessions(context)),
-  jobs: temporaryJobsFeed(session(sessions()), jobs),
+const evalsSkill = (
+  workflow: string,
+  job: (id: string) => string,
+  skill: AgentExtensionUrlSkill = STRANDS_EVALS_SKILL
+): DevChatSkillRun => ({
+  skill: skill.name,
+  workflow,
+  unavailable: evalsSkillUnavailable(skill),
+  job,
 })
 
-const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
-  (sessions): DevChatCommand =>
-    devCommand(
-      {
-        name: 'experiment',
-        description: 'Generate test cases for this agent with strands-evals, and review them',
-        details: EXPERIMENT_DETAILS,
-        session: ({ experiments }) => ({
-          subscribe: experiments.subscribe,
-          snapshot: experiments.snapshot,
-          show: () => experiments.refresh(),
-        }),
-        jobs: temporaryGenerationJobs,
-        resume: async ({ ui }) => ui.start(),
-        view:
-          ({ experiments, ui }) =>
-          (props) =>
-            createElement(ExperimentPanel, { ...props, session: experiments, browser: ui }),
-      },
-      sessions
-    ),
-  (sessions): DevChatCommand =>
-    devCommand(
-      {
-        name: 'evaluate',
-        description: 'Run this agent on an experiment and show what failed',
-        details: EVALUATE_DETAILS,
-        session: ({ test }) => test,
-        jobs: temporaryTestJobs,
-        resume: ({ test }) => test.resume(),
-        view:
-          ({ test, ui }, opening) =>
-          (props) =>
-            createElement(TestPanel, {
-              ...props,
-              session: test,
-              browser: ui,
-              ...(opening?.job ? { initialRun: opening.job } : {}),
-            }),
-      },
-      sessions
-    ),
-  (sessions): DevChatCommand =>
-    devCommand(
-      {
-        name: 'optimize',
-        description: 'Tune this agent against an experiment and review the changes',
-        details: OPTIMIZE_DETAILS,
-        session: ({ optimize }) => optimize,
-        jobs: temporaryOptimizeJobs,
-        openJob: ({ optimize }, job) => optimize.openRun(job),
-        view:
-          ({ optimize, ui }) =>
-          (props) =>
-            createElement(OptimizePanel, { ...props, session: optimize, browser: ui }),
-        resume: ({ optimize }) => optimize.resume(),
-      },
-      sessions
-    ),
-]
+const generationName = (sessions: Sessions, id: string): string | undefined =>
+  sessions()
+    .experiments.snapshot()
+    .generations.find((generation) => generation.id === id)?.name
 
-const ASK_DETAILS = paragraphs(
-  'Shows the question that the agent is asking about a run it wants to set up.',
-  'The agent sends the steps and the fields, so each question looks like the flow it is guiding you through. Tab and Shift+Tab move between steps, ↑↓ go to a row, and ←→ move a slider. Enter on a text row edits it.',
-  'Finish sends your answers back to the agent, and Cancel tells it you declined. One question shows at a time; a second one waits.',
-  'Open /ask again to return to a question you left.'
-)
+const evaluationName = (sessions: Sessions, path: string): string | undefined =>
+  sessions()
+    .test.snapshot()
+    .runs.find(({ experiment }) => experiment.path === path)?.experiment.name
+
+const optimizationName = (sessions: Sessions, id: string): string | undefined =>
+  sessions()
+    .optimize.snapshot()
+    .runs?.find((run) => run.id === id)?.experiment
+
+const EVALS_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
+  (sessions): DevChatCommand => ({
+    spec: {
+      name: 'experiment',
+      usage: '/experiment',
+      description: 'Make, review, and edit the test cases of this agent with the strands-evals skill',
+      details: EXPERIMENT_DETAILS,
+    },
+    skill: evalsSkill(
+      temporaryCommandWorkflows.experiment,
+      (id) => `how is the generation of ${generationName(sessions, id) ?? 'the experiment'} going?`
+    ),
+    attach: (context): void => void sessions(context).ui.start(),
+    jobs: temporaryJobsFeed(sessions().experiments, temporaryGenerationJobs),
+  }),
+  (sessions): DevChatCommand => ({
+    spec: {
+      name: 'evaluate',
+      usage: '/evaluate',
+      description: 'Run this agent on an experiment with the strands-evals skill and show what failed',
+      details: EVALUATE_DETAILS,
+    },
+    skill: evalsSkill(
+      temporaryCommandWorkflows.evaluate,
+      (id) => `how is the evaluation of ${evaluationName(sessions, id) ?? 'the experiment'} going?`
+    ),
+    attach: (context): void => void sessions(context).test.resume(),
+    jobs: temporaryJobsFeed(sessions().test, temporaryTestJobs),
+  }),
+  (sessions): DevChatCommand => ({
+    spec: {
+      name: 'optimize',
+      usage: '/optimize',
+      description: 'Tune this agent against an experiment with the optimize skill and review the changes',
+      details: OPTIMIZE_DETAILS,
+    },
+    skill: evalsSkill(
+      temporaryCommandWorkflows.optimize,
+      (id) => `how is the optimization of ${optimizationName(sessions, id) ?? 'the experiment'} going?`,
+      STRANDS_EVALS_OPTIMIZE_SKILL
+    ),
+    attach: (context): void => void sessions(context).optimize.resume(),
+    jobs: temporaryJobsFeed(sessions().optimize, temporaryOptimizeJobs),
+  }),
+]
 
 const askCommand = (sessions: Sessions): DevChatCommand => ({
   spec: {
     name: 'ask',
     usage: '/ask',
     description: 'Answer the setup question that the agent is asking',
-    details: ASK_DETAILS,
   },
+  hidden: true,
   open:
     (context): DevChatPanelView =>
     (props) =>
       createElement(WizardRequestPanel, { ...props, broker: sessions(context).ask }),
   attach: (context): void => sessions(context).ask.attachOpener(() => context.openPanel('ask')),
+  abandon: (context): void => sessions(context).ask.cancelAll(),
 })
 
 const targetWorkspace = (workspace: DevWorkspace, project: ImportedAgentProject): DevWorkspace => ({
@@ -206,5 +174,5 @@ export const temporaryDevCommands = (
   const target = targetWorkspace(workspace, project)
   const sessions: Sessions = (context) =>
     temporaryDevSessions({ workspace: target, agent, ...(context ? { context } : {}) })
-  return [...PANEL_COMMANDS.map((make) => make(sessions)), askCommand(sessions)]
+  return [...EVALS_COMMANDS.map((make) => make(sessions)), askCommand(sessions)]
 }

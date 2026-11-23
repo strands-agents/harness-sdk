@@ -1,12 +1,28 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { URL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 
-import { spawnTemporaryEvals, temporaryEvalsFailure } from '../../../src/dev/temporary-evals-fork/evals-process.js'
+import {
+  spawnTemporaryEvals,
+  temporaryEvalsFailure,
+  temporaryWorkspaceDirectory,
+} from '../../../src/dev/temporary-evals-fork/evals-process.js'
+import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
+
+describe('TEMPORARY workspace folder', () => {
+  it('shouldGiveTheAbsoluteFolderSoEveryGeneratedPathIsAbsoluteWhenTheWorkspaceNamesItRelatively', () => {
+    const workspace = { directory: 'desk/strands-dev', entrypoint: 'desk/agent.py' } as DevWorkspace
+
+    expect(temporaryWorkspaceDirectory(workspace)).toBe(resolve('desk/strands-dev'))
+    expect(() => temporaryWorkspaceDirectory({ entrypoint: 'desk/agent.py' } as DevWorkspace)).toThrow(
+      'desk/agent.py has no'
+    )
+  })
+})
 
 describe('TEMPORARY strands-evals failures', () => {
   it.each([

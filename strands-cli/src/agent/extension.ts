@@ -1,5 +1,5 @@
 import { TextBlock, tool, type Agent, type JSONSchema, type JSONValue, type Tool } from '@strands-agents/sdk'
-import { Skill, type AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
+import { Skill, type AgentSkills, type SkillSource } from '@strands-agents/sdk/vended-plugins/skills'
 
 export interface AgentExtensionTool {
   readonly name: string
@@ -8,11 +8,19 @@ export interface AgentExtensionTool {
   readonly readOnly?: boolean
 }
 
-export interface AgentExtensionSkill {
+export interface AgentExtensionInlineSkill {
   readonly name: string
   readonly description: string
   readonly instructions: string
 }
+
+/** A skill that the skills plugin fetches from an `https://` URL to its raw SKILL.md; `name` must match its frontmatter. */
+export interface AgentExtensionUrlSkill {
+  readonly name: string
+  readonly url: string
+}
+
+export type AgentExtensionSkill = AgentExtensionInlineSkill | AgentExtensionUrlSkill
 
 export interface AgentExtension {
   readonly instructions: string
@@ -47,8 +55,8 @@ export const extensionTools = ({ extension, call }: AgentExtensionHost): Tool[] 
     })
   )
 
-export const extensionSkills = ({ skills }: AgentExtension): Skill[] =>
-  skills.map(({ name, description, instructions }) => new Skill({ name, description, instructions }))
+export const extensionSkills = ({ skills }: AgentExtension): SkillSource[] =>
+  skills.map((skill) => ('url' in skill ? skill.url : new Skill(skill)))
 
 export const extensionPolicies = ({ tools }: AgentExtension): string =>
   tools
@@ -75,7 +83,7 @@ export const addExtensionSkills = async (
 ): Promise<void> => {
   const added = extensionSkills(extension)
   if (added.length === 0) return
-  const names = new Set(added.map(({ name }) => name))
+  const names = new Set(extension.skills.map(({ name }) => name))
   const current = await plugin.getAvailableSkills(agent)
   plugin.setAvailableSkills([...current.filter(({ name }) => !names.has(name)), ...added])
 }

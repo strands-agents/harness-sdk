@@ -9,7 +9,7 @@ import { render, captureFrame, mouseInputSequence, ttyInput, ttyOutput } from '.
 
 import { ChatRoot } from '../../src/ui/app.js'
 import { ChatApp } from '../../src/ui/chat/screen.js'
-import { ChatController } from '../../src/ui/chat/controller.js'
+import { ChatController, type DevChatCommandContext } from '../../src/ui/chat/controller.js'
 import { type ChatPermissionRequest, type ChatTask } from '../../src/agent/types.js'
 import { AgentMessaging } from '../../src/agent/messaging.js'
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
@@ -125,6 +125,35 @@ describe('TUI mouse input', () => {
     await instance.waitUntilRenderFlush()
     expect(frame().join('\n')).toContain('create_harness')
     expect(controller.getSnapshot().panel?.kind).toBe('config')
+  })
+
+  it('opens a file that a dev tool asks for with the same opener as the project', async () => {
+    let context: DevChatCommandContext | undefined
+    const openProject = vi.fn(async () => {})
+    const controller = new ChatController(idleBackend(), {
+      settings: { animations: false },
+      devCommands: [
+        {
+          spec: { name: 'experiment', usage: '/experiment', description: 'Cases' },
+          attach: (received) => (context = received),
+        },
+      ],
+    })
+    await controller.start()
+    const instance = render(createElement(ChatApp, { controller, openProject }), {
+      stdin: ttyInput(),
+      stdout: ttyOutput(100, 24),
+      stderr: ttyOutput(100, 24),
+      exitOnCtrlC: false,
+      patchConsole: false,
+      interactive: true,
+    })
+    await instance.waitUntilRenderFlush()
+
+    await context!.openFile!('/w/cases.json')
+
+    expect(openProject).toHaveBeenCalledWith({ root: '/w/cases.json', entrypoint: '/w/cases.json' })
+    instance.unmount()
   })
 
   it('activates model and permission metadata and the Setup and Settings buttons from direct clicks', async () => {

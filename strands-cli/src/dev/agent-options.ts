@@ -39,7 +39,13 @@ export type AgentOptionValue =
 export type AgentOptionScalar = string | boolean | readonly string[]
 
 export type AgentOptionEdit =
-  | { readonly option: string; readonly value: AgentOptionScalar; readonly expected?: AgentOptionScalar }
+  | {
+      readonly option: string
+      readonly value: AgentOptionScalar
+      readonly expected?: AgentOptionScalar
+      // The call must still leave the option out: the edit adds it.
+      readonly absent?: boolean
+    }
   | { readonly option: string; readonly removeItems: readonly number[]; readonly expectedItems: readonly string[] }
   | { readonly option: string; readonly removeKeys: readonly string[] }
 
@@ -501,12 +507,14 @@ const scalarEdit = (
     throw new AgentOptionsNotEditable(
       `${entry} sets ${edit.option} in code. Set it to ${JSON.stringify(edit.value)} there yourself.`
     )
+  if (edit.absent && current)
+    throw new AgentOptionConflict(`${entry} now sets ${edit.option} itself. Review the change again.`)
   const effective = currentScalar(edit.option, current)
-  if (edit.expected !== undefined && !sameScalar(edit.option, effective, edit.expected))
+  if (!edit.absent && edit.expected !== undefined && !sameScalar(edit.option, effective, edit.expected))
     throw new AgentOptionConflict(
       `${entry} now sets ${edit.option} to ${JSON.stringify(effective)}, not ${JSON.stringify(edit.expected)}. Review the change again.`
     )
-  if (sameScalar(edit.option, effective, edit.value)) return undefined
+  if (!edit.absent && sameScalar(edit.option, effective, edit.value)) return undefined
   const written =
     camelCase(edit.option) === 'model' && typeof edit.value === 'string' ? modelIdentity(edit.value) : edit.value
   const text = renderScalar(written, python)

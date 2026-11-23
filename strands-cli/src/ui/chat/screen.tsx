@@ -697,6 +697,10 @@ export function ChatApp({
   const finishFrog = useCallback((id: number): void => {
     setFrog((current) => (current?.id === id ? undefined : current))
   }, [])
+  useEffect(
+    () => controller.attachFileOpener?.((path) => suspendTerminal(() => openProject({ root: path, entrypoint: path }))),
+    [controller, openProject, suspendTerminal]
+  )
   const openConfigurationProject = useCallback((): void => {
     const project = controller.getSnapshot().configuration?.project
     if (!project) return

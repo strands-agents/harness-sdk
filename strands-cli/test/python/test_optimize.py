@@ -595,6 +595,23 @@ def test_should_leave_out_each_item_whose_switch_is_off_when_a_trial_is_built(ha
     assert harness.calls[0]["builtin_tools"] == ["files", "shell", "web"]
 
 
+def test_should_start_from_the_harness_default_when_a_switched_option_is_left_out_of_the_agent(harness, tmp_path):
+    source = 'from strands_harness import create_harness\n\nagent = create_harness(model="bedrock/a")\n'
+    space = [
+        {"key": "plugin", "kind": "switch", "option": "builtin_plugins", "item": {"name": "todos"}, "default": False},
+        {"key": "shell", "kind": "switch", "option": "builtin_tools", "item": {"name": "shell"}, "default": False},
+    ]
+
+    code = optimize_space(tmp_path, space, source=source)
+
+    assert code == 0
+    trial_calls = harness.calls[1:]
+    assert trial_calls
+    assert all(call["builtin_plugins"] == ["environment"] for call in trial_calls)
+    assert all(call["builtin_tools"] == {"shell": False} for call in trial_calls)
+    assert "builtin_tools" not in harness.calls[0]
+
+
 @pytest.mark.parametrize(
     ("variable", "default", "instructions"),
     [
@@ -700,7 +717,15 @@ def test_should_name_the_problem_before_loading_the_agent_when_the_space_file_is
     [
         (
             {"key": "s", "kind": "switch", "option": "skills", "item": {"name": "x"}, "default": True},
-            'variable s cannot leave out {"name": "x"} of skills: the agent passes no skills',
+            'variable s cannot leave out {"name": "x"} of skills: the harness default skills is a bool, not a list',
+        ),
+        (
+            {"key": "s", "kind": "switch", "option": "interventions", "item": {"name": "x"}, "default": True},
+            "the agent passes no interventions, and the harness has none by default",
+        ),
+        (
+            {"key": "s", "kind": "switch", "option": "builtin_plugins", "item": {"name": "x"}, "default": True},
+            "the harness default builtin_plugins has no such item",
         ),
         (
             {"key": "s", "kind": "switch", "option": "mcp_servers", "item": {"index": 0}, "default": True},

@@ -143,7 +143,7 @@ export class TemporaryEvalsUi implements EvalsBrowser {
         tone: 'warning',
         lines: [
           ...(state.status === 'unavailable' ? [`The evals UI stopped: ${state.detail}`] : []),
-          'strands dev is starting the evals UI. Press o again in a moment.',
+          'strands dev is starting the evals UI. Try again in a moment.',
         ],
       }
     }
@@ -153,20 +153,21 @@ export class TemporaryEvalsUi implements EvalsBrowser {
     if (state.status === 'starting' || !url || this.port === undefined)
       return {
         tone: 'muted',
-        lines: [`The evals UI is starting: ${state.detail ?? 'please wait'}. Press o again in a moment.`],
+        lines: [`The evals UI is starting: ${state.detail ?? 'please wait'}. Try again in a moment.`],
       }
-    const environment = this.dependencies.environment ?? process.env
-    if (isRemote(environment))
-      return {
-        tone: 'normal',
-        lines: [
-          'strands dev runs on another machine. Forward the port on your computer first:',
-          `ssh -N -L ${this.port}:127.0.0.1:${this.port} ${(this.dependencies.machine ?? hostname)()}`,
-          `Then open ${url}`,
-        ],
-      }
+    const forward = this.forwardLines(this.port)
+    if (forward) return { tone: 'normal', lines: [...forward, `Then open ${url}`] }
     const opened = await (this.dependencies.openBrowser ?? openBrowser)(url).catch(() => false)
     return opened ? undefined : { tone: 'normal', lines: ['Open this link in a browser:', url] }
+  }
+
+  // On a remote machine the developer forwards the port before a link opens.
+  private forwardLines(port: number): string[] | undefined {
+    if (!isRemote(this.dependencies.environment ?? process.env)) return undefined
+    return [
+      'strands dev runs on another machine. Forward the port on your computer first:',
+      `ssh -N -L ${port}:127.0.0.1:${port} ${(this.dependencies.machine ?? hostname)()}`,
+    ]
   }
 
   private route(place: EvalsBrowserPlace, runFolder: string | undefined): string {
@@ -263,21 +264,14 @@ export class TemporaryEvalsUi implements EvalsBrowser {
     this.set({ status: 'ready' })
     if (this.announced) return
     this.announced = true
-    announce(
-      this.host(),
-      'success',
-      'evals UI ready · press o in /experiment, /evaluate, or /optimize to open it in a browser'
-    )
+    const link = this.link({ view: 'runs' }) ?? url
+    announce(this.host(), 'success', [`Evals UI: ${link}`, ...(this.forwardLines(port) ?? [])].join('\n'))
   }
 
   private fail(reason: string): void {
     const detail = firstLine(reason)
     this.set({ status: 'unavailable', detail })
-    announce(
-      this.host(),
-      'error',
-      `evals UI unavailable · ${detail} · press o in /experiment, /evaluate, or /optimize to retry`
-    )
+    announce(this.host(), 'error', `evals UI unavailable · ${detail} · ask the chat to retry`)
   }
 }
 

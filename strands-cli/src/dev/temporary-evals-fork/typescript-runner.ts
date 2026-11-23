@@ -56,6 +56,11 @@ const removes = (item: unknown, entry: unknown, position: number | string): bool
 
 const withoutItems = (option: string, current: unknown, items: unknown): unknown => {
   const removed = Array.isArray(items) ? items : []
+  // A map edits the harness's own default set, which also keeps web_search off on a model without native search.
+  if (current === undefined && option === 'builtinTools')
+    return Object.fromEntries(
+      removed.flatMap((item) => (isRecord(item) && typeof item.name === 'string' ? [[item.name, false]] : []))
+    )
   const base = current ?? (DEFAULT_HARNESS_AGENT_CONFIG as unknown as Record<string, unknown>)[option]
   if (Array.isArray(base)) return base.filter((entry, index) => !removed.some((item) => removes(item, entry, index)))
   if (isRecord(base))

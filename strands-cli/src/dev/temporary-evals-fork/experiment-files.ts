@@ -131,11 +131,6 @@ const expectedField = (raw: TemporaryRawCase): 'expected_output' | 'expected_ass
 export const temporaryCaseExpected = (raw: TemporaryRawCase): string | undefined =>
   temporaryCaseText(raw[expectedField(raw)])
 
-export const temporaryCaseWithExpected = (raw: TemporaryRawCase, expected: string): TemporaryRawCase => ({
-  ...raw,
-  [expectedField(raw)]: expected || null,
-})
-
 const unusableExperiment = (path: string, detail: string, cause?: unknown): Error =>
   new Error(`${path} is not a usable Experiment file (${detail}). Fix the file or delete it, then try again.`, {
     cause,
@@ -276,15 +271,3 @@ export const createTemporaryExperimentCases = async (
   raw: TemporaryExperimentDocument,
   cases: readonly TemporaryRawCase[]
 ): Promise<void> => writeDocument(path, { ...raw, cases }, placeNew)
-
-export const temporaryBlankCase = (name: string, input: string, expected: string): TemporaryRawCase => ({
-  name,
-  session_id: randomUUID(),
-  input,
-  expected_output: expected || null,
-  expected_assertion: null,
-  expected_trajectory: null,
-  expected_interactions: null,
-  expected_environment_state: null,
-  metadata: null,
-})

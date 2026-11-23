@@ -1,12 +1,16 @@
 import { useEffect, useState, type ReactElement } from 'react'
 
 import { Line, PanelTitle, useSyncedState } from './kit.js'
-import { useWizardPosition, Wizard, type WizardField, type WizardStep } from './wizard.js'
+import { useWizardPosition, Wizard, type WizardField, type WizardStep, type WizardToggle } from './wizard.js'
 import {
   defaultAnswers,
+  finishedAnswers,
+  inputKey,
+  numberProblem,
   type WizardAnswer,
   type WizardBroker,
   type WizardFieldSpec,
+  type WizardOption,
   type WizardRequest,
   type WizardSelectSpec,
   type WizardStepSpec,
@@ -21,6 +25,11 @@ export interface WizardRequestPanelProps {
 
 type Answers = Record<string, WizardAnswer>
 
+interface Typed {
+  readonly value: Readonly<Record<string, string>>
+  readonly set: (key: string, text: string) => void
+}
+
 const chosen = (answer: WizardAnswer | undefined): readonly string[] => {
   if (Array.isArray(answer)) return answer
   return typeof answer === 'string' && answer ? [answer] : []
@@ -30,13 +39,33 @@ const selectFields = (
   spec: WizardSelectSpec,
   answers: Answers,
   live: () => Answers,
-  update: (key: string, value: WizardAnswer) => void
+  update: (key: string, value: WizardAnswer) => void,
+  typed: Typed
 ): WizardField[] => {
   const single = spec.multiple === false
   const pick = (value: string): void => {
     const was = chosen(live()[spec.key])
     if (single) return update(spec.key, value)
     update(spec.key, was.includes(value) ? was.filter((item) => item !== value) : [...was, value])
+  }
+  // Saving text picks the input row, and saving it empty unpicks it.
+  const type = (value: string, text: string): void => {
+    const trimmed = text.trim()
+    typed.set(inputKey(spec.key, value), trimmed)
+    const picked = chosen(live()[spec.key]).includes(value)
+    if (trimmed && !picked) pick(value)
+    else if (!trimmed && picked) {
+      if (single) update(spec.key, '')
+      else pick(value)
+    }
+  }
+  const inputRow = (option: WizardOption): Pick<WizardToggle, 'hint' | 'detail' | 'edit'> => {
+    const text = typed.value[inputKey(spec.key, option.value)] ?? ''
+    return {
+      hint: 'Enter type',
+      detail: text || option.detail || '',
+      edit: { value: text, save: (next: string) => type(option.value, next) },
+    }
   }
   return spec.options.map((option): WizardField => ({
     kind: 'toggle',
@@ -48,83 +77,67 @@ const selectFields = (
     checked: chosen(answers[spec.key]).includes(option.value),
     hint: single ? 'Enter pick' : 'Enter toggle',
     toggle: () => pick(option.value),
+    ...(option.input ? inputRow(option) : {}),
   }))
 }
 
-const choiceOf = (field: WizardFieldSpec & { kind: 'choice' }, answer: WizardAnswer | undefined): string => {
-  const picked = typeof answer === 'string' ? answer : undefined
-  return picked !== undefined && field.options.includes(picked) ? picked : (field.options[0] ?? '')
-}
-
 const toField = (
-  spec: WizardFieldSpec,
+  spec: Exclude<WizardFieldSpec, WizardSelectSpec>,
   answers: Answers,
-  live: () => Answers,
   update: (key: string, value: WizardAnswer) => void
 ): WizardField => {
-  if (spec.kind === 'select') throw new Error('A select spec expands into several fields.')
-  if (spec.kind === 'toggle')
-    return {
-      kind: 'toggle',
-      key: spec.key,
-      label: spec.label,
-      ...(spec.detail === undefined ? {} : { detail: spec.detail }),
-      ...(spec.unavailable === undefined ? {} : { unavailable: spec.unavailable }),
-      checked: answers[spec.key] === true,
-      hint: 'Enter toggle',
-      toggle: () => update(spec.key, live()[spec.key] !== true),
-    }
-  if (spec.kind === 'text') {
-    const value = typeof answers[spec.key] === 'string' ? (answers[spec.key] as string) : ''
+  if (spec.kind === 'number') {
+    const value = answers[spec.key]
+    const shown = typeof value === 'number' ? String(value) : ''
     return {
       kind: 'text',
       key: spec.key,
       label: spec.label,
-      display: value.trim() || 'none',
+      display: [shown || 'none', spec.detail].filter(Boolean).join('   '),
       hint: 'Enter edit',
       edit: {
-        value,
-        placeholder: spec.placeholder ?? '',
-        save: (text) => update(spec.key, text),
+        value: shown,
+        numeric: true,
+        save: (text) => update(spec.key, text ? Number(text) : ''),
       },
     }
   }
-  const current = choiceOf(spec, answers[spec.key])
+  const value = typeof answers[spec.key] === 'string' ? (answers[spec.key] as string) : ''
   return {
-    kind: 'choice',
+    kind: 'text',
     key: spec.key,
     label: spec.label,
-    count: spec.options.length,
-    position: Math.max(0, spec.options.indexOf(current)),
-    detail: current,
-    hint: spec.hint ?? '←→ choose',
-    move: (step): void => {
-      const at = spec.options.indexOf(choiceOf(spec, live()[spec.key]))
-      const next = spec.options[at + step]
-      if (next !== undefined) update(spec.key, next)
+    display: value.trim() || 'none',
+    hint: 'Enter edit',
+    edit: {
+      value,
+      save: (text) => update(spec.key, text),
     },
   }
 }
 
-const selectLabel = (spec: WizardStepSpec): string | undefined =>
-  spec.listLabel ??
-  spec.fields.flatMap((field) => (field.kind === 'select' && field.listLabel ? [field.listLabel] : []))[0]
+const problemOf = (spec: WizardStepSpec, answers: Answers): string | undefined =>
+  spec.fields
+    .map((field) => (field.kind === 'number' ? numberProblem(field, answers[field.key]) : undefined))
+    .find((problem) => problem !== undefined)
 
 const toStep = (
   spec: WizardStepSpec,
   answers: Answers,
   live: () => Answers,
-  update: (key: string, value: WizardAnswer) => void
-): WizardStep => ({
-  key: spec.key,
-  title: spec.title,
-  fields: spec.fields.flatMap((field) =>
-    field.kind === 'select' ? selectFields(field, answers, live, update) : [toField(field, answers, live, update)]
-  ),
-  ...(spec.notice ? { notice: spec.notice } : {}),
-  ...(selectLabel(spec) === undefined ? {} : { listLabel: selectLabel(spec)! }),
-  ...(spec.footnote === undefined ? {} : { footnote: spec.footnote }),
-})
+  update: (key: string, value: WizardAnswer) => void,
+  typed: Typed
+): WizardStep => {
+  const problem = problemOf(spec, answers)
+  return {
+    key: spec.key,
+    title: spec.title,
+    fields: spec.fields.flatMap((field) =>
+      field.kind === 'select' ? selectFields(field, answers, live, update, typed) : [toField(field, answers, update)]
+    ),
+    ...(problem === undefined ? {} : { notice: { tone: 'error' as const, text: problem } }),
+  }
+}
 
 const RequestView = ({
   request,
@@ -139,22 +152,25 @@ const RequestView = ({
 }): ReactElement => {
   const answers = useSyncedState<Answers>(() => defaultAnswers(request.steps))
   const position = useWizardPosition()
+  const texts = useSyncedState<Record<string, string>>(() => ({}))
+  const typed: Typed = {
+    value: texts.value,
+    set: (key, text) => texts.set((current) => ({ ...current, [key]: text })),
+  }
   const update = (key: string, value: WizardAnswer): void => answers.set((current) => ({ ...current, [key]: value }))
-  const steps = request.steps.map((step) => toStep(step, answers.value, answers.current, update))
+  const steps = request.steps.map((step) => toStep(step, answers.value, answers.current, update, typed))
   return (
     <Wizard
       name={request.name}
       {...(request.question === undefined ? {} : { question: request.question })}
-      {...(request.titleParts ? { titleParts: request.titleParts } : {})}
       steps={steps}
-      {...(request.status === undefined ? {} : { status: request.status })}
-      {...(request.footer === undefined ? {} : { footer: request.footer })}
       {...(request.finishLabel === undefined ? {} : { finishLabel: request.finishLabel })}
       width={width}
       height={height}
       finishHint={(blocking) => (blocking ? 'fix the problem to finish' : 'Enter finish')}
-      onFinish={() => broker.respond(request.id, { ...answers.current() })}
+      onFinish={() => broker.respond(request.id, finishedAnswers(request.steps, answers.current(), texts.current()))}
       onCancel={() => broker.respond(request.id, undefined)}
+      {...(request.back ? { onBack: () => broker.respond(request.id, 'back') } : {})}
       position={position}
     />
   )

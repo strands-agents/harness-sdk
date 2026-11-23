@@ -1,11 +1,9 @@
-import { dirname, relative } from 'node:path'
+import { resolve } from 'node:path'
 
 import type { DevChatCommandContext } from '../../ui/chat/types.js'
-import type { RunAgent } from '../panels/model.js'
 import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryAgentFacts } from './agent-context.js'
 import type { TemporaryUiDependencies } from './evals-ui.js'
-import { temporaryWorkspaceDirectory } from './evals-process.js'
 import type { TemporaryExperimentDependencies } from './experiment.js'
 import type { TemporaryOptimizationDependencies } from './optimize.js'
 import type { TemporaryTestDependencies } from './test.js'
@@ -30,18 +28,7 @@ export const announce = (host: TemporarySessionHost, status: 'success' | 'error'
   host.context?.report(status, text)
 }
 
-export const shownPath = (workspace: DevWorkspace, path: string): string =>
-  relative(dirname(temporaryWorkspaceDirectory(workspace)), path)
+// Generated files are shown with their absolute path, so the developer and the model can open them from anywhere.
+export const absolutePath = (path: string): string => resolve(path)
 
 export const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`
-
-const FILE_TOOLS: ReadonlySet<string> = new Set(['shell', 'write', 'edit'])
-
-export const temporaryRunAgent = ({ workspace, agent }: TemporarySessionHost): RunAgent => {
-  const { model, tools = [] } = agent()
-  return {
-    ...(model ? { model } : {}),
-    folder: workspace.root,
-    fileTools: tools.map(({ name }) => name).filter((name) => FILE_TOOLS.has(name)),
-  }
-}

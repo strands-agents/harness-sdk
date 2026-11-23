@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  isTemporaryBudgetValue,
   TEMPORARY_DECISION_CHOICES,
   TEMPORARY_DECISION_DEFAULTS,
-  TEMPORARY_ITERATION_CHOICES,
   TEMPORARY_OPTIMIZE_DEFAULTS,
   TEMPORARY_PICK_QUANTILES,
   TEMPORARY_TEST_SHARES,
   temporaryCaseSplit,
-  temporaryNearestSplit,
   temporaryOptimizeWarning,
   temporaryRolloutEstimate,
   temporarySplitChoices,
@@ -58,7 +57,6 @@ describe('TEMPORARY optimize plan', () => {
     expect(TEMPORARY_DECISION_CHOICES.feasibility).toContain(TEMPORARY_DECISION_DEFAULTS.feasibility)
     expect(TEMPORARY_DECISION_CHOICES.crashScore).toContain(TEMPORARY_DECISION_DEFAULTS.crashScore)
     expect(TEMPORARY_DECISION_CHOICES.pickRule).toContain(TEMPORARY_DECISION_DEFAULTS.pickRule)
-    expect(TEMPORARY_DECISION_CHOICES.finalists).toContain(TEMPORARY_DECISION_DEFAULTS.finalists)
   })
 
   it('shouldGiveEachLowerBoundAQuantileThatTheForkAccepts', () => {
@@ -80,9 +78,9 @@ describe('TEMPORARY optimize plan', () => {
     }
   )
 
-  it('shouldOfferTheDefaultIterationsWhenTheIterationChoicesAreShown', () => {
-    expect(TEMPORARY_ITERATION_CHOICES).toEqual([1, 2, 4, 6, 8])
-    expect(TEMPORARY_ITERATION_CHOICES).toContain(TEMPORARY_OPTIMIZE_DEFAULTS.iterations)
+  it('shouldTakeAnyWholeBudgetValueFromTheOptimizerMinimum', () => {
+    expect([3, 10, 0].map((value) => isTemporaryBudgetValue('iterations', value))).toEqual([true, true, true])
+    expect([3, 7, 0, 1.5].map((value) => isTemporaryBudgetValue('width', value))).toEqual([true, true, false, false])
   })
 
   it.each([
@@ -240,18 +238,6 @@ describe('TEMPORARY optimize plan', () => {
     expect(temporarySplitChoices(20, share).map(({ train, validation, test }) => [train, validation, test])).toEqual(
       choices
     )
-  })
-
-  it.each([
-    { split: { train: 10, validation: 5, test: 5 }, nearest: { train: 10, validation: 10, test: 0 } },
-    { split: { train: 11, validation: 5, test: 4 }, nearest: { train: 10, validation: 10, test: 0 } },
-    { split: { train: 17, validation: 2, test: 1 }, nearest: { train: 16, validation: 4, test: 0 } },
-  ])('shouldKeepTheTrainCountClosestToTheCurrentOneWhenTheChoicesChange', ({ split, nearest }) => {
-    expect(temporaryNearestSplit(temporarySplitChoices(20, 0), split)).toEqual(nearest)
-  })
-
-  it('shouldFindNoSplitWhenThereIsNoChoice', () => {
-    expect(temporaryNearestSplit([], { train: 1, validation: 1, test: 1 })).toBeUndefined()
   })
 
   it.each([4, 7, 20, 33])('shouldOfferTheDefaultSplitWhenTheExperimentHas%iCases', (cases) => {

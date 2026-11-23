@@ -6,7 +6,7 @@ import { isRecord } from '../../values.js'
 import { writeEvalsOptimizeEntry, type EvalsFinalPick, type EvalsOptimizeEntry } from '../evals-agent/entry-files.js'
 import type { OptimizeDecision, OptimizeObjective } from '../panels/model.js'
 import type { DevWorkspace } from '../workspace.js'
-import type { TemporaryModelDiscovery } from './knobs.js'
+import type { TemporaryHarnessDefaultsReader } from './knobs.js'
 import { hasTemporaryRunResult, temporaryRunFolder } from './study.js'
 import { resolveTemporaryExperiment, temporaryRunnableExperiment } from './experiment-files.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment } from './environment.js'
@@ -67,7 +67,7 @@ export interface TemporaryOptimizationOutcome {
 export interface TemporaryOptimizationDependencies {
   run?: TemporaryCommandRunner
   spawnOptimizer?: TemporaryEvalsSpawner
-  discoverModels?: (provider: string) => Promise<TemporaryModelDiscovery>
+  harnessDefaults?: TemporaryHarnessDefaultsReader
 }
 
 const TUNED_BY_DEFAULT: readonly string[] = ['instructions']

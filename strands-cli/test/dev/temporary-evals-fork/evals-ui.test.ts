@@ -112,7 +112,24 @@ describe('TEMPORARY evals UI server', () => {
     expect(cwd).toBe(setup.workspace.directory)
     expect(env.PYTHONUNBUFFERED).toBe('1')
     expect(existsSync(folder)).toBe(true)
-    expect(setup.notices).toEqual([{ status: 'success', text: expect.stringContaining('evals UI ready') }])
+    expect(setup.notices).toEqual([{ status: 'success', text: `Evals UI: ${page('/runs')}` }])
+  })
+
+  it('shouldPrintTheLinkWithThePortForwardWhenItIsReadyOnAnotherMachine', async () => {
+    const setup = await harness({ environment: { SSH_CONNECTION: '10.0.0.1 22 10.0.0.2 22' }, machine: () => 'devbox' })
+
+    await started(setup)
+
+    expect(setup.notices).toEqual([
+      {
+        status: 'success',
+        text: [
+          `Evals UI: ${page('/runs')}`,
+          'strands dev runs on another machine. Forward the port on your computer first:',
+          'ssh -N -L 43210:127.0.0.1:43210 devbox',
+        ].join('\n'),
+      },
+    ])
   })
 
   it.each([
@@ -247,7 +264,7 @@ describe('TEMPORARY evals UI server', () => {
 
     expect(notice?.lines).toEqual([
       'The evals UI stopped: Traceback: address in use',
-      'strands dev is starting the evals UI. Press o again in a moment.',
+      'strands dev is starting the evals UI. Try again in a moment.',
     ])
     await vi.waitFor(() => expect(setup.servers).toHaveLength(2))
   })

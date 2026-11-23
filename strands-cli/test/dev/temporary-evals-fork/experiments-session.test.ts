@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs'
-import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { CaseChange, GenerationSettings } from '../../../src/dev/panels/model.js'
+import type { GenerationSettings } from '../../../src/dev/panels/model.js'
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsExit, TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import { temporaryGenerationJobs } from '../../../src/dev/temporary-evals-fork/experiments-session.js'
@@ -124,7 +124,7 @@ const setup = async (model = 'bedrock/us.anthropic.claude-test') => {
   })
   await experiments.reload()
   const start = (overrides: Partial<GenerationSettings> = {}): string | undefined =>
-    experiments.generate({ ...experiments.suggested(), ...overrides })
+    experiments.generateInBackground({ ...experiments.suggested(), ...overrides })
   return { workspace, experiments, generator, notices, start, context }
 }
 
@@ -141,7 +141,7 @@ describe('TEMPORARY experiment generation session', () => {
       name: 'experiment-1',
       task: 'Answers refund questions',
       model: '',
-      cases: 10,
+      cases: 20,
       evaluators: [{ name: 'OutputEvaluator' }],
     })
     expect(experiments.agentSummary()).toBe('agent.py · 1 tool · instructions.md')
@@ -168,8 +168,8 @@ describe('TEMPORARY experiment generation session', () => {
     expect(experiments.suggested().model).toBe('')
   })
 
-  it('shouldShowLiveProgressAndThenADraftToReviewWhenAGenerationRuns', async () => {
-    const { experiments, generator, notices, start } = await setup()
+  it('shouldShowLiveProgressAndThenSaveTheExperimentWhenAGenerationRuns', async () => {
+    const { workspace, experiments, generator, notices, start } = await setup()
 
     expect(start({ name: 'refunds', cases: 3 })).toBeUndefined()
     await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
@@ -181,15 +181,19 @@ describe('TEMPORARY experiment generation session', () => {
       LIVE
     )
     const live = temporaryGenerationJobs(experiments.snapshot())
+    const { id } = onlyGeneration(experiments)
+    const draft = flagValue(run!.args, '--output')
     await run!.finish(['c0', 'c1', 'c2'])
-    await vi.waitFor(() => expect(onlyGeneration(experiments).phase).toBe('ready'))
+    await vi.waitFor(() => expect(experiments.snapshot().generations).toEqual([]))
 
-    expect(live).toEqual([{ id: onlyGeneration(experiments).id, label: 'refunds', done: 1, total: 3 }])
-    expect(onlyGeneration(experiments).made).toBe(3)
-    expect(temporaryGenerationJobs(experiments.snapshot())).toEqual([])
+    const path = join(workspace.directory!, 'experiments/refunds/refunds.json')
+    expect(live).toEqual([{ id, label: 'refunds', done: 1, total: 3 }])
+    expect(JSON.parse(await readFile(path, 'utf8')).cases).toHaveLength(3)
+    await vi.waitFor(() => expect(existsSync(draft)).toBe(false))
+    expect(experiments.snapshot().saved).toEqual([{ name: 'refunds', path, caseCount: 3 }])
     expect(notices.at(-1)).toEqual({
       status: 'success',
-      text: 'experiment · refunds · 3 cases drafted · /experiment to review',
+      text: `experiment · refunds · 3 cases saved to ${path}`,
     })
   })
 
@@ -238,7 +242,7 @@ describe('TEMPORARY experiment generation session', () => {
   })
 
   it('shouldExplainTheFailureCleanlyWhenEveryCaseFails', async () => {
-    const { experiments, generator, notices, start } = await setup()
+    const { experiments, generator, notices, start, workspace } = await setup()
     start({ name: 'refunds', cases: 2, model: '' })
     await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
     const denied = 'AccessDeniedException: You do not have access to the model with the specified model ID.'
@@ -251,8 +255,14 @@ describe('TEMPORARY experiment generation session', () => {
     const { error } = onlyGeneration(experiments)
     expect(error?.summary).toBe('Bedrock denied access to the default model')
     expect(error?.detail).toContain('choose a model that your AWS account can use')
-    expect(error?.detail).toMatch(/Log: strands-dev[\\/]tmp[\\/]\.state[\\/]drafts[\\/]\d{8}-\d{6}-refunds\.log/u)
-    expect(notices.at(-1)).toMatchObject({ status: 'error', text: expect.stringContaining('Bedrock denied access') })
+    const drafts = join(workspace.directory!, 'tmp', '.state', 'drafts')
+    expect(error?.detail).toContain(`Log: ${drafts}`)
+    expect(onlyGeneration(experiments).log).toMatch(/refunds\.log$/u)
+    expect(onlyGeneration(experiments).log.startsWith(drafts)).toBe(true)
+    expect(notices.at(-1)?.text).toMatch(
+      /^experiment · refunds stopped: Bedrock denied access to the default model · strands-evals said: AccessDeniedException/u
+    )
+    expect(notices.at(-1)?.text).toContain(`· log in ${drafts}`)
   })
 
   it('shouldStopTheProcessAndForgetTheGenerationWhenItIsCancelled', async () => {
@@ -276,7 +286,7 @@ describe('TEMPORARY experiment generation session', () => {
     await vi.waitFor(() => expect(onlyGeneration(experiments).phase).toBe('failed'))
     const failed = onlyGeneration(experiments)
 
-    expect(experiments.generate(failed.settings, failed.id)).toBeUndefined()
+    expect(experiments.generateInBackground(failed.settings)).toBeUndefined()
     await vi.waitFor(() => expect(generator.runs).toHaveLength(2))
 
     expect(experiments.snapshot().generations).toHaveLength(1)
@@ -284,255 +294,8 @@ describe('TEMPORARY experiment generation session', () => {
     expect(onlyGeneration(experiments).id).not.toBe(failed.id)
   })
 
-  it('shouldSaveOnlyTheReviewedCasesWithTheirEditsWhenTheUserSaves', async () => {
-    const { workspace, experiments, generator, start } = await setup()
-    start({ name: 'refunds' })
-    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
-    await generator.runs[0]!.finish(['c0', 'c1', 'c2'])
-    await vi.waitFor(() => expect(onlyGeneration(experiments).phase).toBe('ready'))
-    const draft = flagValue(generator.runs[0]!.args, '--output')
-
-    experiments.review(onlyGeneration(experiments).id)
-    expect(experiments.snapshot().review?.cases.map(({ kept }) => kept)).toEqual([false, false, false])
-    experiments.toggle(0)
-    experiments.edit(1, { expected: 'a better answer' })
-    experiments.drop(2)
-    experiments.add({ input: 'my own question', expected: 'my own answer' })
-    const saved = await experiments.save()
-
-    const path = join(workspace.directory!, 'experiments/refunds/refunds.json')
-    expect(saved).toEqual({ name: 'refunds', path, caseCount: 3 })
-    const written = JSON.parse(await readFile(path, 'utf8')) as ReturnType<typeof experimentDocument>
-    expect(written.cases.map(({ name }) => name)).toEqual(['c0', 'c1', 'case-3'])
-    expect(written.cases[0]).toEqual(experimentDocument(['c0']).cases[0])
-    expect(written.cases[1]).toMatchObject({ session_id: 'session-c1', expected_output: 'a better answer' })
-    expect(written.cases[2]).toMatchObject({ input: 'my own question', expected_output: 'my own answer' })
-    expect(written.evaluators).toEqual(experimentDocument([]).evaluators)
-    expect(experiments.snapshot().generations).toEqual([])
-    expect(existsSync(draft)).toBe(false)
-    expect(experiments.snapshot().review).toMatchObject({
-      path,
-      notice: {
-        tone: 'success',
-        text: `Saved 3 cases to ${join('strands-dev', 'experiments', 'refunds', 'refunds.json')}`,
-      },
-    })
-  })
-
-  it('shouldShowAndEditTheAssertionWhenASavedCaseHasOnlyAnAssertion', async () => {
-    const { workspace, experiments } = await setup()
-    const path = join(workspace.directory!, 'experiments/from-chats/from-chats.json')
-    const chatCase = {
-      name: 'refund-order',
-      input: 'refund order 7',
-      expected_output: null,
-      expected_assertion: 'The agent refunds order 7.',
-      metadata: { source: 'strands' },
-    }
-    await writeFileAt(path, JSON.stringify({ cases: [chatCase], evaluators: [{ evaluator_type: 'Correctness' }] }))
-    const [saved] = await experiments.reload()
-
-    experiments.open(saved!)
-    await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(1))
-    const shown = experiments.snapshot().review!.cases[0]
-    experiments.edit(0, { expected: 'The agent refunds order 7 and says when.' })
-    await experiments.save()
-
-    expect(shown).toMatchObject({ expected: 'The agent refunds order 7.' })
-    expect(JSON.parse(await readFile(path, 'utf8')).cases).toEqual([
-      { ...chatCase, expected_assertion: 'The agent refunds order 7 and says when.' },
-    ])
-  })
-
-  it('shouldRefuseToSaveWhenTheExperimentFileChangedAfterItOpened', async () => {
-    const { workspace, experiments } = await setup()
-    const path = join(workspace.directory!, 'experiments/refunds/refunds.json')
-    await writeFileAt(path, JSON.stringify(experimentDocument(['c0', 'c1'])))
-    const [saved] = await experiments.reload()
-    experiments.open(saved!)
-    await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(2))
-    const changed = JSON.stringify(experimentDocument(['c0', 'c1', 'c2']))
-    await writeFile(path, changed)
-    experiments.edit(0, { expected: 'a better answer' })
-
-    const result = await experiments.save()
-
-    expect(result).toBeUndefined()
-    expect(experiments.snapshot().review?.notice).toEqual({
-      tone: 'error',
-      text: 'refunds changed on disk after you opened it, for example in the evals UI. Nothing was saved. Press Esc, then open it again.',
-    })
-    expect(await readFile(path, 'utf8')).toBe(changed)
-  })
-
-  it('shouldSaveAgainAfterItsOwnSaveWhenNothingElseChangedTheFile', async () => {
-    const { workspace, experiments } = await setup()
-    const path = join(workspace.directory!, 'experiments/refunds/refunds.json')
-    await writeFileAt(path, JSON.stringify(experimentDocument(['c0', 'c1'])))
-    const [saved] = await experiments.reload()
-    experiments.open(saved!)
-    await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(2))
-    experiments.edit(0, { expected: 'first edit' })
-    await experiments.save()
-    experiments.edit(1, { expected: 'second edit' })
-
-    const result = await experiments.save()
-
-    expect(result).toEqual({ name: 'refunds', path, caseCount: 2 })
-    const written = JSON.parse(await readFile(path, 'utf8')) as ReturnType<typeof experimentDocument>
-    expect(written.cases.map(({ expected_output }) => expected_output)).toEqual(['first edit', 'second edit'])
-  })
-
-  describe('an experiment that changes on disk', () => {
-    const DISK = { timeout: 5000 }
-    const replaceFile = async (path: string, text: string): Promise<void> => {
-      const staging = join(dirname(path), `.${basename(path)}.ui.tmp`)
-      await writeFile(staging, text)
-      await rename(staging, path)
-    }
-    const opened = async () => {
-      const context = await setup()
-      const path = join(context.workspace.directory!, 'experiments/refunds/refunds.json')
-      await writeFileAt(path, JSON.stringify(experimentDocument(['c0', 'c1'])))
-      const [saved] = await context.experiments.reload()
-      context.experiments.open(saved!)
-      await vi.waitFor(() => expect(context.experiments.snapshot().review?.cases).toHaveLength(2))
-      return { ...context, path }
-    }
-    const editedOnDisk = () => {
-      const document = experimentDocument(['c0', 'c1', 'c2'])
-      return {
-        ...document,
-        cases: document.cases.map((item, index) => (index === 0 ? { ...item, input: 'new question' } : item)),
-      }
-    }
-
-    it('shouldShowTheNewCasesWhenTheOpenExperimentChangesOnDisk', async () => {
-      const { experiments, path } = await opened()
-
-      await replaceFile(path, JSON.stringify(editedOnDisk()))
-
-      await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(3), DISK)
-      expect(experiments.snapshot().review?.cases[0]).toMatchObject({ name: 'c0', input: 'new question' })
-      expect(experiments.snapshot().review?.notice).toEqual({
-        tone: 'success',
-        text: 'refunds changed on disk, so this shows the new cases.',
-      })
-      expect(experiments.snapshot().saved).toEqual([expect.objectContaining({ name: 'refunds', caseCount: 3 })])
-    })
-
-    it('shouldKeepFollowingTheFileWhenItChangesOnDiskAgain', async () => {
-      const { experiments, path } = await opened()
-      await replaceFile(path, JSON.stringify(editedOnDisk()))
-      await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(3), DISK)
-
-      await replaceFile(path, JSON.stringify(experimentDocument(['c0'])))
-      await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(1), DISK)
-      await writeFile(path, JSON.stringify(experimentDocument(['c0', 'c1', 'c2', 'c3'])))
-
-      await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(4), DISK)
-    })
-
-    it('shouldListAnExperimentThatAppearsOnDisk', async () => {
-      const { workspace, experiments } = await opened()
-      experiments.closeReview()
-
-      await writeFileAt(
-        join(workspace.directory!, 'experiments/billing/billing.json'),
-        JSON.stringify(experimentDocument(['b0']))
-      )
-
-      await vi.waitFor(
-        () =>
-          expect(experiments.snapshot().saved.map(({ name, caseCount }) => [name, caseCount])).toEqual([
-            ['billing', 1],
-            ['refunds', 2],
-          ]),
-        DISK
-      )
-    })
-
-    it('shouldSaveTheReloadedCasesWhenTheUserEditsThemAfterTheChange', async () => {
-      const { experiments, path } = await opened()
-      await replaceFile(path, JSON.stringify(editedOnDisk()))
-      await vi.waitFor(() => expect(experiments.snapshot().review?.cases).toHaveLength(3), DISK)
-
-      experiments.edit(1, { expected: 'a better answer' })
-      const result = await experiments.save()
-
-      expect(result).toEqual({ name: 'refunds', path, caseCount: 3 })
-      const written = JSON.parse(await readFile(path, 'utf8')) as ReturnType<typeof experimentDocument>
-      expect(written.cases.map(({ input }) => input)).toEqual(['new question', 'question c1', 'question c2'])
-      expect(written.cases[1]).toMatchObject({ expected_output: 'a better answer' })
-    })
-
-    it('shouldKeepUnsavedChangesAndSayWhyWhenTheOpenExperimentChangesOnDisk', async () => {
-      const { experiments, path } = await opened()
-      experiments.toggle(1)
-
-      await replaceFile(path, JSON.stringify(editedOnDisk()))
-
-      await vi.waitFor(() => expect(experiments.snapshot().review?.notice?.tone).toBe('error'), DISK)
-      expect(experiments.snapshot().review?.notice?.text).toBe(
-        'refunds changed on disk, for example in the evals UI. Your changes here are not saved. Press Esc, then open it again.'
-      )
-      expect(experiments.snapshot().review?.cases.map(({ input, kept }) => [input, kept])).toEqual([
-        ['question c0', true],
-        ['question c1', false],
-      ])
-    })
-
-    it('shouldKeepItsOwnSaveNoticeWhenTheTerminalSavesTheFile', async () => {
-      const { experiments } = await opened()
-      experiments.edit(0, { expected: 'first edit' })
-
-      await experiments.save()
-      await new Promise((resolve) => setTimeout(resolve, 800))
-
-      expect(experiments.snapshot().review?.notice).toEqual({
-        tone: 'success',
-        text: `Saved 2 cases to ${join('strands-dev', 'experiments', 'refunds', 'refunds.json')}`,
-      })
-    })
-  })
-
-  it('shouldRefuseToSaveWhenNoCaseIsKept', async () => {
-    const { experiments, generator, start } = await setup()
-    start({ name: 'refunds' })
-    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
-    await generator.runs[0]!.finish(['c0'])
-    await vi.waitFor(() => expect(onlyGeneration(experiments).phase).toBe('ready'))
-    experiments.review(onlyGeneration(experiments).id)
-
-    expect(await experiments.save()).toBeUndefined()
-
-    expect(experiments.snapshot().review?.notice).toMatchObject({ tone: 'error' })
-  })
-
-  it.each<[string, CaseChange]>([
-    ['Input', { input: '  ' }],
-    ['ExpectedAnswer', { expected: '' }],
-  ])('shouldRefuseToSaveWhenAKeptCaseHasABlank%s', async (_field, change) => {
-    const { workspace, experiments, generator, start } = await setup()
-    start({ name: 'refunds' })
-    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
-    await generator.runs[0]!.finish(['c0', 'c1'])
-    await vi.waitFor(() => expect(onlyGeneration(experiments).phase).toBe('ready'))
-    experiments.review(onlyGeneration(experiments).id)
-    experiments.keepAll()
-    experiments.edit(1, change)
-
-    expect(await experiments.save()).toBeUndefined()
-
-    expect(experiments.snapshot().review?.notice).toEqual({
-      tone: 'error',
-      text: 'c1 has a blank input or expected answer. Press e to fix it, or d to drop the case.',
-    })
-    expect(existsSync(join(workspace.directory!, 'experiments/refunds/refunds.json'))).toBe(false)
-  })
-
   it('shouldLeaveOutAndCountAsFailedTheGeneratedCasesWithABlankInputOrExpectedAnswer', async () => {
-    const { experiments, generator, notices, start } = await setup()
+    const { workspace, experiments, generator, notices, start } = await setup()
     start({ name: 'refunds', cases: 3 })
     await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
     const [complete, blankInput, blankAnswer] = experimentDocument(['c0', 'c1', 'c2']).cases
@@ -541,58 +304,50 @@ describe('TEMPORARY experiment generation session', () => {
       ...experimentDocument([]),
       cases: [complete, { ...blankInput, input: ' ' }, { ...blankAnswer, expected_output: '' }],
     })
-    await vi.waitFor(() => expect(onlyGeneration(experiments).phase).toBe('ready'))
-    experiments.review(onlyGeneration(experiments).id)
+    await vi.waitFor(() => expect(experiments.snapshot().generations).toEqual([]))
 
-    expect(onlyGeneration(experiments)).toMatchObject({ made: 1, failed: 2 })
-    expect(experiments.snapshot().review?.cases.map(({ name }) => name)).toEqual(['c0'])
-    expect(notices.at(-1)).toEqual({
-      status: 'success',
-      text: 'experiment · refunds · 1 case drafted, 2 failed · /experiment to review',
-    })
+    const saved = JSON.parse(await readFile(join(workspace.directory!, 'experiments/refunds/refunds.json'), 'utf8'))
+    expect(saved.cases.map(({ name }: { name: string }) => name)).toEqual(['c0'])
+    expect(notices.at(-1)?.text).toContain('experiment · refunds · 1 case saved')
   })
 
-  it('shouldKeepTheReviewChoicesWhenTheReviewIsClosedAndOpenedAgain', async () => {
-    const { experiments, generator, start } = await setup()
+  it('shouldSaveUniqueCaseNamesWhenTheGeneratorRepeatsANameOrLeavesOneOut', async () => {
+    const { workspace, experiments, generator, start } = await setup()
+
+    start({ name: 'refunds', cases: 3 })
+    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
+    await generator.runs[0]!.finish(['refund', 'refund', ''])
+    await vi.waitFor(() => expect(experiments.snapshot().generations).toEqual([]))
+
+    const saved = JSON.parse(
+      await readFile(join(workspace.directory!, 'experiments/refunds/refunds.json'), 'utf8')
+    ) as {
+      cases: { name: string }[]
+    }
+    expect(saved.cases.map(({ name }) => name)).toEqual(['refund', 'refund-2', 'case_2'])
+  })
+
+  it('shouldKeepTheDraftAndSayWhereWhenTheExperimentFileAppearedDuringTheGeneration', async () => {
+    const { workspace, generator, notices, start } = await setup()
     start({ name: 'refunds' })
     await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
-    await generator.runs[0]!.finish(['c0', 'c1'])
-    await vi.waitFor(() => expect(onlyGeneration(experiments).phase).toBe('ready'))
-    const { id } = onlyGeneration(experiments)
-    experiments.review(id)
-    experiments.toggle(1)
-
-    experiments.closeReview()
-    experiments.review(id)
-
-    expect(experiments.snapshot().review?.cases.map(({ kept }) => kept)).toEqual([false, true])
-  })
-
-  it('shouldOfferADraftForReviewWhenAnEarlierSessionLeftOne', async () => {
-    const { workspace, experiments } = await setup()
+    const draft = flagValue(generator.runs[0]!.args, '--output')
     await writeFileAt(
-      join(workspace.directory!, 'tmp/.state/drafts/20261112-101010-refunds.json'),
-      JSON.stringify(experimentDocument(['c0', 'c1']))
+      join(workspace.directory!, 'experiments/refunds/refunds.json'),
+      JSON.stringify(experimentDocument(['x']))
     )
 
-    await experiments.reload()
+    await generator.runs[0]!.finish(['c0'])
 
-    expect(experiments.snapshot().generations).toEqual([
-      expect.objectContaining({ name: 'refunds', phase: 'ready', made: 2 }),
-    ])
+    await vi.waitFor(() => expect(notices.at(-1)?.text).toContain('exists already, so the cases stay in'))
+    expect(existsSync(draft)).toBe(true)
   })
 
-  it('shouldDeleteAnUnreadableDraftWhenItIsDismissed', async () => {
-    const { workspace, experiments } = await setup()
-    const draft = join(workspace.directory!, 'tmp/.state/drafts/20261112-101010-broken.json')
-    await writeFileAt(draft, '{"cases": [')
-    await experiments.reload()
-    expect(onlyGeneration(experiments)).toMatchObject({ name: 'broken', phase: 'failed' })
+  it('shouldRejectTheAmbiguousChatModelBeforeSchedulingAnyGeneration', async () => {
+    const { experiments, generator, start } = await setup()
 
-    experiments.dismiss(onlyGeneration(experiments).id)
-    await vi.waitFor(() => expect(existsSync(draft)).toBe(false))
-    await experiments.reload()
-
+    expect(start({ name: 'diagnostic', model: 'openai.gpt-6.1-sol' })).toContain('not the chat provider')
+    expect(generator.spawn).not.toHaveBeenCalled()
     expect(experiments.snapshot().generations).toEqual([])
   })
 
@@ -608,135 +363,5 @@ describe('TEMPORARY experiment generation session', () => {
     await vi.waitFor(() => expect(existsSync(draft)).toBe(false))
     await experiments.reload()
     expect(experiments.snapshot().generations).toEqual([])
-  })
-
-  it('shouldSaveEveryGeneratedCaseAsTheExperimentAndDropTheDraftWhenTheChatCreatesIt', async () => {
-    const { workspace, experiments, generator, notices } = await setup()
-
-    const created = experiments.createExperiment({ ...experiments.suggested(), name: 'refunds', cases: 2 })
-    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
-    const draft = flagValue(generator.runs[0]!.args, '--output')
-    await generator.runs[0]!.finish(['c0', 'c1'])
-    const result = await created
-
-    const path = join(workspace.directory!, 'experiments/refunds/refunds.json')
-    expect(result).toMatchObject({ name: 'refunds', path, caseCount: 2, failed: 0 })
-    expect(result.cases.map(({ name, input }) => [name, input])).toEqual([
-      ['c0', 'question c0'],
-      ['c1', 'question c1'],
-    ])
-    expect(JSON.parse(await readFile(path, 'utf8')).cases).toHaveLength(2)
-    expect(existsSync(draft)).toBe(false)
-    expect(experiments.snapshot().generations).toEqual([])
-    expect(experiments.snapshot().saved).toEqual([{ name: 'refunds', path, caseCount: 2 }])
-    expect(notices.at(-1)).toEqual({
-      status: 'success',
-      text: `experiment · refunds · 2 cases saved to ${join('strands-dev', 'experiments', 'refunds', 'refunds.json')}`,
-    })
-  })
-
-  it('shouldSaveUniqueCaseNamesWhenTheGeneratorRepeatsANameOrLeavesOneOut', async () => {
-    const { workspace, experiments, generator } = await setup()
-
-    const created = experiments.createExperiment({ ...experiments.suggested(), name: 'refunds', cases: 3 })
-    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
-    await generator.runs[0]!.finish(['refund', 'refund', ''])
-    await created
-
-    const saved = JSON.parse(
-      await readFile(join(workspace.directory!, 'experiments/refunds/refunds.json'), 'utf8')
-    ) as {
-      cases: { name: string }[]
-    }
-    expect(saved.cases.map(({ name }) => name)).toEqual(['refund', 'refund-2', 'case_2'])
-  })
-
-  it('shouldRejectTheChatRequestWithoutGeneratingWhenTheNameIsTaken', async () => {
-    const { workspace, experiments, generator } = await setup()
-    await writeFileAt(
-      join(workspace.directory!, 'experiments/capital/capital.json'),
-      JSON.stringify(experimentDocument(['c0']))
-    )
-
-    await expect(experiments.createExperiment({ ...experiments.suggested(), name: 'capital' })).rejects.toThrow(
-      'An experiment named capital exists already'
-    )
-    expect(generator.spawn).not.toHaveBeenCalled()
-  })
-
-  it('shouldRejectTheAmbiguousChatModelBeforeSchedulingAnyGeneration', async () => {
-    const { experiments, generator, start } = await setup()
-    const settings = { ...experiments.suggested(), name: 'diagnostic', model: 'openai.gpt-6.1-sol' }
-    await expect(experiments.createExperiment(settings)).rejects.toThrow('not the chat provider')
-    expect(start(settings)).toContain('not the chat provider')
-    expect(generator.spawn).not.toHaveBeenCalled()
-    expect(experiments.snapshot().generations).toEqual([])
-  })
-
-  it('shouldGiveTheCauseAndTheLogToTheChatWhenTheGenerationFails', async () => {
-    const { experiments, generator } = await setup()
-    const denied = 'AccessDeniedException: You do not have access to the model with the specified model ID.'
-
-    const created = experiments.createExperiment({ ...experiments.suggested(), name: 'refunds', cases: 1 })
-    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
-    await generator.runs[0]!.progress({ event: 'case', ok: false, done: 0, failed: 1, total: 1, error: denied })
-    await generator.runs[0]!.finish([])
-
-    await expect(created).rejects.toThrow(
-      /stopped: Bedrock denied access to the default model\.\nstrands-evals said: AccessDeniedException.*\nLog: strands-dev[\\/]tmp[\\/]\.state[\\/]drafts[\\/]\d{8}-\d{6}-refunds\.log/su
-    )
-  })
-
-  it('shouldReplaceAFailedChatGenerationWhenTheChatRetriesTheSameName', async () => {
-    const { experiments, generator, notices } = await setup()
-    const first = experiments.createExperiment({ ...experiments.suggested(), name: 'refunds', cases: 1 })
-    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
-    await generator.runs[0]!.finish([], 3)
-    await expect(first).rejects.toThrow('The generation of refunds stopped')
-
-    const second = experiments.createExperiment({ ...experiments.suggested(), name: 'refunds', cases: 1 })
-    await vi.waitFor(() => expect(generator.runs).toHaveLength(2))
-    await generator.runs[1]!.finish(['c0'])
-
-    await expect(second).resolves.toMatchObject({ name: 'refunds', caseCount: 1 })
-    expect(experiments.snapshot().generations).toEqual([])
-    expect(notices).toEqual([
-      { status: 'error', text: expect.stringMatching(/^experiment · refunds stopped: .* · \/experiment shows why$/u) },
-      { status: 'success', text: expect.stringContaining('experiment · refunds · 1 case saved') },
-    ])
-  })
-
-  it('shouldStartTheCreateExperimentSkillInTheChatWhenTheUserAsksForANewExperiment', async () => {
-    const { experiments, context } = await setup()
-
-    experiments.startInChat()
-
-    expect(context.submit).toHaveBeenCalledWith('$create-experiment')
-  })
-
-  it('shouldDismissTheFailureAndSendItsCauseAndSettingsToTheChatWhenTheUserAsksForAFix', async () => {
-    const { experiments, generator, context, start } = await setup()
-    start({
-      name: 'refunds',
-      cases: 3,
-      model: 'bedrock/openai.gpt-oss-120b-1:0',
-      evaluators: [{ name: 'OutputEvaluator' }, { name: 'ToolCalled', settings: { tool_name: 'lookup_order' } }],
-      expectedTrajectory: true,
-    })
-    await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
-    await generator.runs[0]!.progress({ event: 'failed', error: 'ValidationException: model identifier is invalid' })
-    await generator.runs[0]!.finish([], 1)
-    await vi.waitFor(() => expect(onlyGeneration(experiments).phase).toBe('failed'))
-
-    experiments.retryInChat(onlyGeneration(experiments).id)
-
-    expect(experiments.snapshot().generations).toEqual([])
-    expect(context.submit).toHaveBeenCalledWith(
-      '$create-experiment The experiment refunds stopped: Bedrock cannot use bedrock/openai.gpt-oss-120b-1:0. ' +
-        'Its settings were: task "Answers refund questions", 3 cases, 0 topics, ' +
-        'evaluators OutputEvaluator and ToolCalled {"tool_name":"lookup_order"}, ' +
-        'expected trajectory on, expected interactions off, metadata off, Bedrock generator model bedrock/openai.gpt-oss-120b-1:0, 4 at once. ' +
-        'Help me fix the settings, then generate it again.'
-    )
   })
 })

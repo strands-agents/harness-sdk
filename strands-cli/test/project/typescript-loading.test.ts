@@ -718,7 +718,7 @@ const timer = setInterval(() => {
       mcpPaths: [],
       mcpStrictPaths: [],
     }
-    const devSkills = ['create-experiment', 'manage-experiments', 'run-evaluations', 'optimize-harness']
+    const devSkills = ['background-evals', 'strands-evals']
 
     const chat = await createTypescriptChat(project().entrypoint, config, options, AbortSignal.timeout(30000), vi.fn())
     const listed = (input: string): string[] => chat.commandAssistance(input)?.completions.map(({ name }) => name) ?? []
@@ -730,7 +730,7 @@ const timer = setInterval(() => {
       expect(listed('/')).toEqual(expect.arrayContaining(['experiment', 'evaluate', 'optimize']))
       expect(listed('/').filter((name) => devSkills.includes(name))).toEqual([])
       expect(listed('/opt')).toEqual(['optimize'])
-      expect(chat.actionableCommandToken('/optimize-harness')).toBeUndefined()
+      expect(chat.actionableCommandToken('/background-evals')).toBeUndefined()
     } finally {
       await chat.dispose()
     }

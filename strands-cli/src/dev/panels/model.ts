@@ -22,11 +22,6 @@ export interface Experiment {
   readonly evaluators: readonly string[]
 }
 
-export interface DraftCase extends EvalCase {
-  readonly kept: boolean
-  readonly saved: boolean
-}
-
 export interface EvaluatorChoice {
   readonly name: string
   readonly settings?: Readonly<Record<string, unknown>>
@@ -69,51 +64,12 @@ export interface Generation {
   readonly error?: GenerationError
 }
 
-export interface Notice {
-  readonly text: string
-  readonly tone: 'success' | 'error'
-}
-
-export interface Review {
-  readonly key: string
-  readonly name: string
-  readonly path?: string
-  readonly cases: readonly DraftCase[]
-  readonly notice?: Notice
-}
-
 export interface ExperimentsState {
   readonly loaded: boolean
   readonly folder: string
   readonly saved: readonly ExperimentSummary[]
   readonly generations: readonly Generation[]
-  readonly review?: Review
   readonly error?: string
-}
-
-export interface CaseChange {
-  readonly input?: string
-  readonly expected?: string
-}
-
-export interface ExperimentSession {
-  subscribe(listener: () => void): () => void
-  snapshot(): ExperimentsState
-  refresh(): void
-  startInChat(): void
-  retryInChat(id: string): void
-  generate(settings: GenerationSettings, replace?: string): string | undefined
-  cancel(id: string): void
-  dismiss(id: string): void
-  review(id: string): void
-  open(experiment: ExperimentSummary): void
-  closeReview(): void
-  toggle(index: number): void
-  drop(index: number): void
-  keepAll(): void
-  edit(index: number, change: CaseChange): void
-  add(change: CaseChange): void
-  save(): Promise<ExperimentSummary | undefined>
 }
 
 export const isGenerating = ({ phase }: Generation): boolean => phase !== 'ready' && phase !== 'failed'
@@ -165,22 +121,6 @@ export interface TestState {
   readonly runs: readonly ExperimentRun[]
 }
 
-export interface RunAgent {
-  readonly model?: string
-  readonly folder: string
-  readonly fileTools: readonly string[]
-}
-
-export interface TestSession {
-  readonly experiments: ExperimentSession
-  subscribe(listener: () => void): () => void
-  snapshot(): TestState
-  run(experiments: readonly ExperimentSummary[]): void
-  rerunFailed(path: string): void
-  stop(path: string): void
-  agent?(): RunAgent
-}
-
 export type KnobKey = string
 
 export type KnobGroup = 'prompt' | 'model' | 'tools' | 'context' | 'skills' | 'plugins'
@@ -195,19 +135,13 @@ export interface Knob {
   readonly kind: KnobKind
   readonly enabled: boolean
   readonly unavailable?: string
-}
-
-export interface ModelOption {
-  readonly id: string
-  readonly name: string
+  /** The call leaves this option out, so the run starts from the harness default. */
+  readonly notInCall?: boolean
 }
 
 export interface ModelChoices {
   readonly current: string
   readonly picked: readonly string[]
-  readonly options?: readonly ModelOption[]
-  readonly loading?: boolean
-  readonly error?: string
 }
 
 export interface CaseSplit {
@@ -218,14 +152,6 @@ export interface CaseSplit {
 
 export const sameCaseSplit = (left: CaseSplit, right: CaseSplit): boolean =>
   left.train === right.train && left.validation === right.validation && left.test === right.test
-
-const NARROW_TEST_CASES = 5
-
-export const smallSplitWarning = ({ train, test }: CaseSplit): string | undefined => {
-  if (train === 1) return 'The split leaves 1 train case, so the measured effects are less certain.'
-  if (test === 0 || test >= NARROW_TEST_CASES) return undefined
-  return `The split leaves ${test} test ${test === 1 ? 'case' : 'cases'}, so the range of the test check will be wide.`
-}
 
 export interface OptimizeObjective {
   readonly expression: string
@@ -243,17 +169,14 @@ export interface OptimizeDecision {
   readonly finalists: number
 }
 
-export type DecisionChoices = { readonly [Setting in keyof OptimizeDecision]: readonly OptimizeDecision[Setting][] }
+export type DecisionSetting = Exclude<keyof OptimizeDecision, 'finalists'>
+
+export type DecisionChoices = { readonly [Setting in DecisionSetting]: readonly OptimizeDecision[Setting][] }
 
 export interface ObjectivePreset {
   readonly label: string
   readonly objective: OptimizeObjective
 }
-
-const compact = (text: string): string => text.replace(/\s+/gu, '')
-
-export const sameObjective = (left: OptimizeObjective, right: OptimizeObjective): boolean =>
-  compact(left.expression) === compact(right.expression) && compact(left.constraints) === compact(right.constraints)
 
 export interface UsageRange {
   readonly low: number
@@ -282,13 +205,9 @@ export interface OptimizePlan {
   readonly decisionChoices: DecisionChoices
   readonly validatedFinalists: number
   readonly repetitions: number
-  readonly repetitionChoices: readonly number[]
   readonly width: number
-  readonly widthChoices: readonly number[]
   readonly workers: number
-  readonly workerChoices: readonly number[]
   readonly iterations: number
-  readonly iterationChoices: readonly number[]
   readonly rollouts: number
   readonly budgetProblem?: string
   readonly judgeCalls: number
@@ -356,6 +275,8 @@ export interface ProposedEdit {
   readonly after: string
   readonly accepted: boolean
   readonly unavailable?: string
+  /** What applying writes for an option that the call does not set yet. */
+  readonly added?: string
 }
 
 export interface TestCheck {
@@ -370,32 +291,6 @@ export type ObjectiveMeasure =
   | { readonly kind: 'metric'; readonly metric: string; readonly usage: boolean; readonly lower: boolean }
   | { readonly kind: 'combined' }
 
-const COUNT_DIGITS = 1
-
-const usageText = (value: number, metric: string): string =>
-  metric === 'seconds'
-    ? `${value.toFixed(COUNT_DIGITS)} s`
-    : metric === 'model_calls'
-      ? `${value.toFixed(COUNT_DIGITS)} model calls`
-      : `${Math.round(value).toLocaleString('en-US')} ${metric.replaceAll('_', ' ')}`
-
-const signedText = (value: number): string => `${value >= 0 ? '+' : ''}${value.toFixed(2)}`
-
-export const formatObjective = (value: number, measure: ObjectiveMeasure | undefined): string => {
-  if (measure?.kind !== 'metric') return value.toFixed(2)
-  const shown = measure.lower ? -value : value
-  return measure.usage ? usageText(shown, measure.metric) : shown.toFixed(2)
-}
-
-export const formatObjectiveChange = (delta: number, measure: ObjectiveMeasure | undefined): string => {
-  if (measure?.kind !== 'metric') return signedText(delta)
-  if (!measure.usage) return signedText(measure.lower ? -delta : delta)
-  if (delta === 0) return `no change in ${measure.metric.replaceAll('_', ' ')}`
-  const amount = usageText(Math.abs(delta), measure.metric)
-  const fewer = delta > 0 === measure.lower
-  return `${amount} ${fewer ? (measure.metric === 'seconds' ? 'less' : 'fewer') : 'more'}`
-}
-
 export interface OptimizeReview {
   readonly run: string
   readonly record: string
@@ -407,20 +302,6 @@ export interface OptimizeReview {
   readonly testCheck?: TestCheck
   readonly applied?: readonly string[]
   readonly applyError?: string
-}
-
-export interface PastRun {
-  readonly record: string
-  readonly experiment: string
-  readonly startedAt?: number
-  readonly summary: string
-  readonly opens: boolean
-}
-
-export interface PastRuns {
-  readonly loading: boolean
-  readonly runs: readonly PastRun[]
-  readonly error?: string
 }
 
 export type OptimizeRunState =
@@ -438,38 +319,9 @@ export interface OptimizeRun {
 }
 
 export type OptimizePage =
-  | { readonly step: 'pick'; readonly pastRuns?: PastRuns; readonly experiment?: ExperimentSummary }
-  | { readonly step: 'setup'; readonly plan: OptimizePlan }
-  | OptimizeRunState
+  { readonly step: 'pick' } | { readonly step: 'setup'; readonly plan: OptimizePlan } | OptimizeRunState
 
 export type OptimizeState = OptimizePage & { readonly runs?: readonly OptimizeRun[] }
-
-export interface OptimizeSession {
-  readonly experiments: ExperimentSession
-  subscribe(listener: () => void): () => void
-  snapshot(): OptimizeState
-  plan(experiment: ExperimentSummary): void
-  toggleKnob(key: KnobKey): void
-  loadModels(): void
-  pickModel(id: string, picked: boolean): void
-  setIterations(iterations: number): void
-  setRepetitions(repetitions: number): void
-  setWidth(width: number): void
-  setWorkers(workers: number): void
-  setSplit(split: CaseSplit): void
-  setTestShare(share: number): void
-  setObjective(objective: OptimizeObjective): void
-  setDecision<Setting extends keyof OptimizeDecision>(setting: Setting, value: OptimizeDecision[Setting]): void
-  openExperiment(experiment?: ExperimentSummary): void
-  openPastRun(record: string): void
-  openRun(id: string): void
-  start(): string | undefined
-  stop(id?: string): void
-  accept(index: number, accepted: boolean): void
-  apply(): void
-  reset(): void
-  agent?(): RunAgent
-}
 
 export type EvalsBrowserPlace =
   | { readonly view: 'runs' }

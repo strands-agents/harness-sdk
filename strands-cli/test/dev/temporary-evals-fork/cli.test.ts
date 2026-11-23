@@ -148,6 +148,8 @@ describe('TEMPORARY strands dev optimize command', () => {
     const lines = stdout.text().trim().split('\n')
     expect(lines[0]).toBe(`${passes.filter(Boolean).length} of 2 checks passed (overall score 0.50)`)
     expect(lines.at(-1)).toContain(last)
+    expect(lines[1]).toMatch(/^Report: .+[\\/]report\.json$/u)
+    expect(lines[1]!.startsWith(`Report: ${join(workspace.directory!, 'experiments', 'support', 'runs')}`)).toBe(true)
   })
 
   it('shouldKeepTheWorkspaceInTheNextStepWhenDevTestRunsOnAnotherWorkspace', async () => {
@@ -219,7 +221,9 @@ describe('TEMPORARY strands dev optimize command', () => {
     )
 
     expect(exit).toBe(0)
-    expect(stderr.text()).toMatch(/warning: \/evaluate cannot show this result: .+ is not a usable evaluation report/u)
+    expect(stderr.text()).toMatch(
+      /warning: this result is not kept as the latest report: .+ is not a usable evaluation report/u
+    )
     expect(existsSync(join(workspace.directory!, 'experiments/support/.state/latest.json'))).toBe(false)
   })
 })

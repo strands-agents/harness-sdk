@@ -333,6 +333,11 @@ describe('reading and editing every createHarness option in TypeScript source', 
     ],
     ['an option that code sets', { option: 'plugins', value: false }, AgentOptionsNotEditable],
     [
+      'an option that the run found missing and the call now sets',
+      { option: 'caching', value: false, absent: true },
+      AgentOptionConflict,
+    ],
+    [
       'a list edit on an option that is not a list',
       { option: 'caching', removeItems: [0], expectedItems: [] },
       AgentOptionsNotEditable,
@@ -398,8 +403,12 @@ describe('unset createHarness options', () => {
     await editAgentOptions(workspace, [
       { option: 'caching', value: true, expected: 'auto' },
       { option: 'contextManager', value: false, expected: 'auto' },
+      { option: 'effort', value: 'auto', absent: true },
+      { option: 'builtinPlugins', value: ['environment'], absent: true },
     ])
 
-    expect(await readFile(workspace.entrypoint, 'utf8')).toContain('caching: true, contextManager: false')
+    expect(await readFile(workspace.entrypoint, 'utf8')).toContain(
+      "caching: true, contextManager: false, effort: 'auto', builtinPlugins: ['environment']"
+    )
   })
 })
