@@ -298,12 +298,12 @@ describe('the look of the Base CLI', () => {
     const config = await devSettings(path, directory)
     const chat = await profileBaseCliChat(workspace, path)
 
-    await chat!.saveSettings(config, { uiAutofill: true, toolOutput: 'full' })
+    await chat!.saveSettings(config, { sessionModelSync: true, toolOutput: 'full' })
 
     // Dev switched telemetry off for its own session, and that is not a choice to save for plain strands.
-    expect(await savedSettings(path)).toMatchObject({ toolOutput: 'full', uiAutofill: false, telemetry: true })
-    expect(config.snapshot().settings).toMatchObject({ toolOutput: 'full', uiAutofill: true, telemetry: false })
-    expect(await workspaceCli(directory)).toEqual({ settings: { uiAutofill: true } })
+    expect(await savedSettings(path)).toMatchObject({ toolOutput: 'full', sessionModelSync: false, telemetry: true })
+    expect(config.snapshot().settings).toMatchObject({ toolOutput: 'full', sessionModelSync: true, telemetry: false })
+    expect(await workspaceCli(directory)).toEqual({ settings: { sessionModelSync: true } })
   })
 
   it('shouldTakeAThemeThatPlainStrandsSavedIntoTheOpenDevChatWithoutReloadingTheAgent', async () => {
@@ -321,7 +321,7 @@ describe('the look of the Base CLI', () => {
 
   it('shouldMoveAThemeThatTheWorkspaceStillHoldsIntoCliTomlWhenDevOpensIt', async () => {
     const { path, directory } = await opened('frogTheme = "spectre"', {
-      settings: { frogTheme: 'green', uiAutofill: true },
+      settings: { frogTheme: 'green', sessionModelSync: true },
     })
     const config = await devSettings(path, directory)
     const shownBefore = config.snapshot().settings.frogTheme
@@ -330,14 +330,14 @@ describe('the look of the Base CLI', () => {
 
     expect(shownBefore).toBe('green')
     expect((await savedSettings(path)).frogTheme).toBe('green')
-    expect(config.snapshot().settings).toMatchObject({ frogTheme: 'green', uiAutofill: true })
-    expect(await workspaceCli(directory)).toEqual({ settings: { uiAutofill: true } })
+    expect(config.snapshot().settings).toMatchObject({ frogTheme: 'green', sessionModelSync: true })
+    expect(await workspaceCli(directory)).toEqual({ settings: { sessionModelSync: true } })
   })
 
   it('shouldTakeOverAThemeThatTheWorkspaceStillHoldsWhenPlainStrandsStarts', async () => {
     const permissions = { mode: 'default', allow: ['shell'], deny: [] }
     const { path, directory } = await opened('frogTheme = "spectre"', {
-      settings: { frogTheme: 'green', uiAutofill: true },
+      settings: { frogTheme: 'green', sessionModelSync: true },
       permissions,
     })
     const config = await CliConfigStore.load(path)
@@ -346,7 +346,7 @@ describe('the look of the Base CLI', () => {
 
     expect(config.snapshot().settings.frogTheme).toBe('green')
     expect((await savedSettings(path)).frogTheme).toBe('green')
-    expect(await workspaceCli(directory)).toEqual({ settings: { uiAutofill: true }, permissions })
+    expect(await workspaceCli(directory)).toEqual({ settings: { sessionModelSync: true }, permissions })
   })
 
   it('shouldDropTheSettingsOfTheWorkspaceWhenTheLookWasAllItHeld', async () => {
@@ -358,7 +358,7 @@ describe('the look of the Base CLI', () => {
   })
 
   it.each([
-    ['holds no look', { settings: { uiAutofill: true } }],
+    ['holds no look', { settings: { sessionModelSync: true } }],
     ['holds a theme that does not exist', { settings: { frogTheme: 'neon' } }],
     ['holds no settings', undefined],
   ])('shouldLeaveBothFilesAloneWhenTheWorkspace%s', async (_case, held) => {

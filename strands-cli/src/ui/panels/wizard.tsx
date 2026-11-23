@@ -114,8 +114,6 @@ export interface WizardProps {
   // Read at keypress time, so a view that onFinish opens also swallows the rest of that input burst.
   readonly blocked?: () => boolean
   readonly position?: WizardPosition
-  /** Lets the developer hand the agent's next questions back to it with ctrl+a. */
-  readonly autofill?: { readonly on: boolean; readonly set: (on: boolean) => void }
   /** Hands the keyboard to the chat input, for a question the developer wants to leave open. */
   readonly onLeave?: () => void
   /** What Esc is called in the hints, when leaving the form does not cancel what it asks about. */
@@ -375,16 +373,10 @@ const rowHints = (
   row: WizardRow | undefined,
   finishHint: (blocking: WizardNotice | undefined) => string,
   blocking: WizardNotice | undefined,
-  {
-    walked,
-    back,
-    autofill,
-    leave,
-    escape,
-  }: { walked: boolean; back: boolean; autofill: boolean; leave: boolean; escape: string }
+  { walked, back, leave, escape }: { walked: boolean; back: boolean; leave: boolean; escape: string }
 ): string[] => {
   const tab = walked ? ['Tab next tab'] : []
-  const rest = [...(autofill ? ['ctrl+a autofill'] : []), ...(leave && !walked ? ['↓ chat'] : []), escape]
+  const rest = [...(leave && !walked ? ['↓ chat'] : []), escape]
   const hints = (action: string, arrows = '↑↓'): string[] => [...tab, arrows, action, ...rest]
   if (row?.kind === 'button')
     return hints(back && row.button === 'cancel' ? 'Enter back' : buttonHint(row.button, finishHint, blocking), '←→')
@@ -410,7 +402,6 @@ export const Wizard = ({
   active = true,
   blocked,
   position,
-  autofill,
   onLeave,
   escapeHint = 'Esc cancel',
 }: WizardProps): ReactElement => {
@@ -492,9 +483,8 @@ export const Wizard = ({
       }
       const row = rows[cursor.current()]
       const typed = shortcut(input, key)
-      if (key.ctrl && input === 'a' && autofill) autofill.set(!autofill.on)
       // A text row takes what is typed on it: the first character opens its editor and lands in it.
-      else if (row?.kind === 'field' && row.field.kind === 'text' && !key.ctrl && typed.trim() !== '') {
+      if (row?.kind === 'field' && row.field.kind === 'text' && !key.ctrl && typed.trim() !== '') {
         const opened = { key: row.field.key, edit: row.field.edit, value: textValue(row.field.edit.value) }
         editing.set(edited(opened, editText(opened.value, input, key)))
       } else if (key.escape) onCancel()
@@ -650,7 +640,6 @@ export const Wizard = ({
               : rowHints(focused, finishHint, blocking, {
                   walked,
                   back: onBack !== undefined,
-                  autofill: autofill !== undefined,
                   leave: onLeave !== undefined,
                   escape: escapeHint,
                 })

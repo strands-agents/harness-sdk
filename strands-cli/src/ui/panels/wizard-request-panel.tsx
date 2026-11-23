@@ -29,8 +29,6 @@ export interface WizardRequestPanelProps {
   readonly close: () => void
   readonly active?: boolean
   readonly blur?: () => void
-  /** Reports the autofill state under the chat input, so the component stays about the question. */
-  readonly onAutofill?: (on: boolean) => void
 }
 
 type Answers = Record<string, WizardAnswer>
@@ -228,8 +226,6 @@ const toStep = (
 const RequestView = ({
   request,
   broker,
-  autofill,
-  onAutofill,
   active,
   blur,
   width,
@@ -237,8 +233,6 @@ const RequestView = ({
 }: {
   request: WizardRequest
   broker: WizardBroker
-  autofill: boolean
-  onAutofill?: (on: boolean) => void
   active: boolean
   blur?: () => void
   width: number
@@ -277,18 +271,6 @@ const RequestView = ({
       position={position}
       // Closing a standing question answers nothing: whoever asked keeps it waiting, so Esc only closes it.
       {...(request.standing ? { escapeHint: 'Esc close' } : {})}
-      // Autofill is about the agent's own questions; one that stands for the developer does not offer it.
-      {...(request.standing
-        ? {}
-        : {
-            autofill: {
-              on: autofill,
-              set: (on: boolean): void => {
-                broker.setAutofill(on)
-                onAutofill?.(on)
-              },
-            },
-          })}
     />
   )
 }
@@ -300,18 +282,9 @@ export const WizardRequestPanel = ({
   close,
   active = true,
   blur,
-  onAutofill,
 }: WizardRequestPanelProps): ReactElement => {
   const [request, setRequest] = useState(() => broker.pending())
-  const [autofill, setAutofill] = useState(() => broker.autofill())
-  useEffect(
-    () =>
-      broker.subscribe((pending) => {
-        setRequest(pending)
-        setAutofill(broker.autofill())
-      }),
-    [broker]
-  )
+  useEffect(() => broker.subscribe(setRequest), [broker])
   useEffect(() => {
     if (!request) close()
   }, [request, close])
@@ -328,8 +301,6 @@ export const WizardRequestPanel = ({
       key={request.id}
       request={request}
       broker={broker}
-      autofill={autofill}
-      {...(onAutofill ? { onAutofill } : {})}
       active={active}
       {...(blur ? { blur } : {})}
       width={width}

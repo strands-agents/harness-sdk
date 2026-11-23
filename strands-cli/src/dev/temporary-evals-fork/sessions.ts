@@ -1486,16 +1486,8 @@ export const temporaryDevSessions = (host: TemporarySessionHost): TemporaryDevSe
     test: new TemporaryTest(current, experiments),
     optimize: new TemporaryOptimize(current, experiments),
     ui: new TemporaryEvalsUi(current, host.evalsUi),
-    ask: new WizardBroker(host.autofill?.() ?? false, (event) =>
-      recordDevEvent(
-        event === 'shown'
-          ? 'ask_shown'
-          : event === 'answered'
-            ? 'ask_answered'
-            : event === 'cancelled'
-              ? 'ask_cancelled'
-              : 'ask_autofilled'
-      )
+    ask: new WizardBroker((event) =>
+      recordDevEvent(event === 'shown' ? 'ask_shown' : event === 'answered' ? 'ask_answered' : 'ask_cancelled')
     ),
     openFile: async (path: string): Promise<void> => {
       const open = latest.context?.openFile

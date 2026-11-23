@@ -215,42 +215,22 @@ export class WizardBroker {
   private readonly _queue: PendingWizard[] = []
   private _active: PendingWizard | undefined
   private _open: (() => boolean) | undefined
-  private _autofill: boolean
   private _next = 1
   private _disposed = false
   // What each shown question holds on screen, so a chat message that drops it can pass the inputs on.
   private readonly _drafts = new Map<string, Readonly<Record<string, WizardAnswer>>>()
 
-  /** `autofill` starts from the saved setting; `track` hears outcomes for funnel counts, never content. */
-  constructor(
-    autofill = false,
-    private readonly _track?: (event: 'shown' | 'answered' | 'cancelled' | 'autofilled') => void
-  ) {
-    this._autofill = autofill
-  }
+  /** `track` hears outcomes for funnel counts, never content. */
+  constructor(private readonly _track?: (event: 'shown' | 'answered' | 'cancelled') => void) {}
 
   /** The panel command registers this, so asking also brings the panel on screen. */
   attachOpener(open: () => boolean): void {
     this._open = open
   }
 
-  autofill(): boolean {
-    return this._autofill
-  }
-
-  setAutofill(on: boolean): void {
-    this._autofill = on
-    this._notify(this._active?.request)
-  }
-
   ask(spec: WizardRequestSpec): Promise<WizardOutcome> {
     if (this._disposed || spec.steps.length === 0) return Promise.resolve(undefined)
     const request = cleanRequest({ ...spec, id: `strands-wizard-${this._next++}` })
-    // Autofill hands the agent's own questions back to it. A standing question is the developer's to answer.
-    if (this._autofill && !request.standing) {
-      this._track?.('autofilled')
-      return Promise.resolve(defaultAnswers(request.steps))
-    }
     this._track?.('shown')
     return new Promise((resolve) => {
       this._queue.push({ request, resolve })

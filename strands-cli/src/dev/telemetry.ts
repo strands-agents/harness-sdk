@@ -7,7 +7,6 @@ export type DevTelemetryEvent =
   | 'ask_shown'
   | 'ask_answered'
   | 'ask_cancelled'
-  | 'ask_autofilled'
   | 'optimize_run_started'
   | 'optimize_run_finished'
   | 'optimize_edits_applied'

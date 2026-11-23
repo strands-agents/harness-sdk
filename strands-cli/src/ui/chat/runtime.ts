@@ -186,7 +186,6 @@ export async function createTypescriptChat(
                 devWorkspace,
                 project,
                 () => backend.info?.() ?? {},
-                () => config.snapshot().settings.uiAutofill,
                 () => config.snapshot().settings.autoOptimize
               ),
               skillsWithoutCommands: extension?.extension.skills.map(({ name }) => name) ?? [],
@@ -422,7 +421,6 @@ export async function createPythonChat(
               devWorkspace,
               project,
               () => backend.info?.() ?? {},
-              () => config.snapshot().settings.uiAutofill,
               () => config.snapshot().settings.autoOptimize
             ),
             skillsWithoutCommands: extension?.extension.skills.map(({ name }) => name) ?? [],

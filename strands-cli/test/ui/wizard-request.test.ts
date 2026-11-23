@@ -67,11 +67,8 @@ const show = async (element: ReactElement, rows = 20) => {
   return { text: (): string => frame().join('\n'), press }
 }
 
-const panel = async (
-  broker: WizardBroker,
-  rows = 20,
-  options: { onAutofill?: (on: boolean) => void; active?: boolean; blur?: () => void } = {}
-) => show(createElement(WizardRequestPanel, { broker, width: 96, height: rows - 2, close: vi.fn(), ...options }), rows)
+const panel = async (broker: WizardBroker, rows = 20, options: { active?: boolean; blur?: () => void } = {}) =>
+  show(createElement(WizardRequestPanel, { broker, width: 96, height: rows - 2, close: vi.fn(), ...options }), rows)
 
 describe('defaultAnswers', () => {
   it('shouldSeedEveryFieldFromItsSpecAndLeaveOutAnUnavailablePick', () => {
@@ -119,21 +116,6 @@ describe('WizardBroker', () => {
     await expect(second).resolves.toEqual({})
     expect(seen).toEqual(['first', 'second', undefined])
     expect(open).toHaveBeenCalledTimes(2)
-  })
-
-  it('shouldAnswerWithTheDefaultsWithoutShowingAnythingWhenAutofillIsOnButShowAStandingQuestion', async () => {
-    const broker = new WizardBroker(true)
-    const open = vi.fn(() => true)
-    broker.attachOpener(open)
-
-    await expect(broker.ask(question([tune, objective]))).resolves.toEqual({
-      tune: ['instructions'],
-      objective: 'mean',
-    })
-    expect(open).not.toHaveBeenCalled()
-    void broker.ask({ ...question([tune], 'review'), standing: true })
-    expect(broker.pending()?.name).toBe('review')
-    expect(new WizardBroker().autofill()).toBe(false)
   })
 
   it('shouldDropTheTurnsQuestionAndKeepAStandingOneWhenAMessageIsSent', async () => {
@@ -249,17 +231,16 @@ describe('WizardRequestPanel', () => {
     await expect(fixed).resolves.toEqual({ iterations: 4, workers: 3 })
   })
 
-  it('shouldTurnAutofillOnWithCtrlAAndReportItOutward', async () => {
+  it('shouldKeepAQuestionOnScreenAndOfferNoAutofillWhenTheUserPressesCtrlA', async () => {
     const broker = new WizardBroker()
-    const reported: boolean[] = []
     void broker.ask(question([tune]))
-    const { text, press } = await panel(broker, 20, { onAutofill: (on) => reported.push(on) })
+    const { text, press } = await panel(broker)
 
-    expect(text()).toContain('ctrl+a autofill')
+    expect(text()).not.toContain('autofill')
     await press(CTRL_A)
 
-    expect(broker.autofill()).toBe(true)
-    expect(reported).toEqual([true])
+    expect(broker.pending()?.name).toBe('optimize')
+    expect(text()).toContain('instructions')
   })
 
   it('shouldTakeWhatIsTypedOnATextRowAsTheStartOfItsAnswer', async () => {
@@ -436,13 +417,10 @@ describe('a question that shows a change to read', () => {
     expect(narrow.lines()).toContain('    to every reply, including one-word answers):')
   })
 
-  it('shouldCloseAStandingQuestionOnEscWithoutAnswerAndOfferNoAutofill', async () => {
-    const { asked, broker, press, text } = await reviewPanel(76, 34)
+  it('shouldCloseAStandingQuestionOnEscWithoutAnswer', async () => {
+    const { asked, press, text } = await reviewPanel(76, 34)
 
     expect(text()).toContain('Esc close')
-    expect(text()).not.toContain('autofill')
-    await press(CTRL_A)
-    expect(broker.autofill()).toBe(false)
     await press(ESCAPE)
 
     await expect(asked).resolves.toBeUndefined()

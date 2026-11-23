@@ -2290,7 +2290,6 @@ describe('TEMPORARY dev sessions', () => {
         workspace,
         project,
         () => ({}),
-        undefined,
         () => on
       )
       commands.find(({ spec }) => spec.name === 'ask')!.attach?.(chat().context)

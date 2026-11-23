@@ -160,13 +160,6 @@ const askCommand = (sessions: Sessions): DevChatCommand => ({
       createElement(WizardRequestPanel, {
         ...props,
         broker: sessions(context).ask,
-        onAutofill: (on) =>
-          void context.report(
-            'success',
-            on
-              ? 'Autofill on · the agent answers its own questions with their defaults'
-              : 'Autofill off · the agent asks, and you answer on screen'
-          ),
       }),
   attach: (context): void => sessions(context).ask.attachOpener(() => context.openPanel('ask')),
   // A standing question, such as a finished run's diff, is not the turn's, so it stays.
@@ -197,7 +190,6 @@ export const temporaryDevCommands = (
   workspace: DevWorkspace,
   project: ImportedAgentProject,
   agent: () => TemporaryAgentFacts = () => ({}),
-  autofill?: () => boolean,
   autoOptimize?: () => boolean
 ): DevChatCommand[] => {
   const target = targetWorkspace(workspace, project)
@@ -205,7 +197,6 @@ export const temporaryDevCommands = (
     temporaryDevSessions({
       workspace: target,
       agent,
-      ...(autofill ? { autofill } : {}),
       ...(autoOptimize ? { autoOptimize } : {}),
       ...(context ? { context } : {}),
     })
