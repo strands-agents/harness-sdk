@@ -844,6 +844,7 @@ class TestParseCondition:
         "context_utilization": (
             'a float above 0 up to 1.0, a "N%" string up to "100%", or a whole token count of at least 1000'
         ),
+        "block_threshold": 'a "N%" string below "100%" or a whole token count above 0',
         "preserve_recent": 'a "N%" string below "100%" or a whole message count',
     }
 
@@ -897,6 +898,9 @@ class TestParseCondition:
             ("context_utilization", 1, '; for 100%, write 1.0 or "100%"'),
             ("context_utilization", 999, ""),
             ("context_utilization", 50_000.0, "; for a count, write 50000"),
+            ("context_utilization", 1.5, ""),
+            ("block_threshold", 1.0, "; for a count, write 1"),
+            ("preserve_recent", 4.0, "; for a count, write 4"),
             ("preserve_recent", 0.07, '; for 7%, write "7%"'),
         ],
     )

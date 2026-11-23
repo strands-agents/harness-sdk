@@ -65,7 +65,6 @@ class _ConditionRule:
     min_count: int
     expected: str
     float_share: bool = False
-    """Whether a float fraction like ``0.8`` is a share, as well as a ``"N%"`` string."""
 
 
 # ``[0-9]`` keeps the digits ASCII, so what matches is what ``float`` below parses.
@@ -127,9 +126,12 @@ def _share(rule: _ConditionRule, raw: Any) -> float | None:
 
 def _share_hint(rule: _ConditionRule, raw: Any) -> str:
     """Suggest the right spelling for a rejected value that reads as a share, a percent, or a float count."""
-    if isinstance(raw, float) and raw.is_integer() and raw > 100 and raw >= rule.min_count:
+    if isinstance(raw, float) and raw.is_integer() and raw >= rule.min_count:
         return f"; for a count, write {int(raw)}"
     if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not 0 < raw <= 100:
+        return ""
+    # A fractional float above 1, like 1.2, is more likely a mistyped share than a percent.
+    if isinstance(raw, float) and raw > 1 and not raw.is_integer():
         return ""
     share = raw if raw <= 1 else raw / 100
     percent = f"{share * 100:g}"
