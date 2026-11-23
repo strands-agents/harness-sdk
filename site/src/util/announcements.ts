@@ -15,6 +15,7 @@ export interface HomepageBanner {
   title: string
   href: string
   linkText: string
+  links?: { title: string; href: string }[]
   date: Date
   expires?: string
 }
@@ -47,10 +48,20 @@ export function latestPostBanner(posts: BannerBlogPost[]): HomepageBanner | unde
 }
 
 /** Newest blog post not already promoted by the homepage banner. */
-export function homepageCommunityPost(posts: BannerBlogPost[], bannerHref?: string): BannerBlogPost | undefined {
+export function homepageCommunityPost(
+  posts: BannerBlogPost[],
+  bannerHrefs: string | string[] = []
+): BannerBlogPost | undefined {
+  const promoted = new Set(typeof bannerHrefs === 'string' ? [bannerHrefs] : bannerHrefs)
   return [...posts]
     .sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
-    .find((post) => `/blog/${post.id}/` !== bannerHref)
+    .find((post) => !promoted.has(`/blog/${post.id}/`))
+}
+
+/** Every href the banner links to. */
+export function bannerHrefs(banner: HomepageBanner | undefined): string[] {
+  if (!banner) return []
+  return banner.links ? banner.links.map((link) => link.href) : [banner.href]
 }
 
 /**
@@ -70,6 +81,7 @@ export function homepageBanner(
       title: manual.title,
       href: manual.href,
       linkText: manual.linkText,
+      ...(manual.links && { links: manual.links }),
       date: manual.date,
       expires: announcementExpires(manual),
     }

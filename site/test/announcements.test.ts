@@ -3,6 +3,7 @@ import { getCollection } from 'astro:content'
 import {
   activeAnnouncement,
   announcementExpires,
+  bannerHrefs,
   ANNOUNCEMENT_DAYS,
   homepageBanner,
   homepageCommunityPost,
@@ -103,6 +104,10 @@ describe('homepageCommunityPost', () => {
   it('returns undefined when the banner uses the only post', () => {
     expect(homepageCommunityPost([posts[0]], '/blog/newest-post/')).toBeUndefined()
   })
+
+  it('skips every post the banner links to', () => {
+    expect(homepageCommunityPost(posts, ['/blog/newest-post/', '/blog/older-post/'])).toBeUndefined()
+  })
 })
 
 describe('homepageBanner', () => {
@@ -162,6 +167,17 @@ describe('homepageBanner', () => {
       date: new Date('2026-10-15T00:00:00Z'),
       expires: '2026-10-28',
     })
+  })
+
+  it('passes links through from a manual announcement', () => {
+    const links = [
+      { title: 'First', href: '/blog/first/' },
+      { title: 'Second', href: '/blog/second/' },
+    ]
+    const manual = { ...makeAnnouncement('2026-10-15', 'Two launches'), links }
+    const banner = homepageBanner([manual], [makePost('2026-10-15', 'Second')], day('2026-10-15'))
+    expect(banner?.links).toEqual(links)
+    expect(bannerHrefs(banner)).toEqual(['/blog/first/', '/blog/second/'])
   })
 
   it('returns undefined when there are no announcements or posts', () => {

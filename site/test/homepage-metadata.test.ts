@@ -4,6 +4,8 @@ import { getCollection } from 'astro:content'
 import { parse } from 'node-html-parser'
 import { describe, expect, it } from 'vitest'
 
+import { bannerHrefs, homepageBanner, homepageCommunityPost } from '../src/util/announcements'
+
 function configuredPathWithBase(value: string): string {
   const base = (process.env.ASTRO_BASE_PATH ?? '/').replace(/\/$/, '')
   const normalizedValue = value.startsWith('/') ? value : `/${value}`
@@ -412,19 +414,33 @@ describe('homepage machine-readable metadata', () => {
 
     const latestPost = posts[0]
     if (!latestPost) throw new Error('expected at least one published blog post')
-    const communityPost = posts[1] ?? latestPost
+
+    const announcements = (await getCollection('announcements')).map((entry) => entry.data)
+    const banner = homepageBanner(announcements, posts, new Date())
+    const promoted = bannerHrefs(banner)
+    const communityPost = homepageCommunityPost(posts, promoted) ?? latestPost
 
     const announcement = homepage.querySelector('.announcement')
-    const bannerLink = announcement?.querySelector('.announcement__link')
     const communityLink = homepage.querySelector('.community__blog-link')
 
-    expect(bannerLink?.getAttribute('href')).toBe(configuredPathWithBase(`/blog/${latestPost.id}/`))
-    expect(bannerLink?.querySelector('.announcement__title')?.text.trim()).toBe(latestPost.data.title)
-    expect(announcement?.getAttribute('data-expires')).toBeUndefined()
-    expect(announcement?.querySelector('.announcement__fallback')).toBeNull()
+    if (banner?.links) {
+      const items = announcement?.querySelectorAll('.announcement__item') ?? []
+      expect(items.map((item) => item.getAttribute('href'))).toEqual(promoted.map(configuredPathWithBase))
+      expect(items.map((item) => item.text.trim())).toEqual(banner.links.map((link) => link.title))
+    } else {
+      const bannerLink = announcement?.querySelector('.announcement__link')
+      expect(bannerLink?.getAttribute('href')).toBe(configuredPathWithBase(banner!.href))
+      expect(bannerLink?.querySelector('.announcement__title')?.text.trim()).toBe(banner!.title)
+    }
+    if (!banner?.expires) {
+      expect(announcement?.getAttribute('data-expires')).toBeUndefined()
+      expect(announcement?.querySelector('.announcement__fallback')).toBeNull()
+    }
     expect(communityLink?.getAttribute('href')).toBe(configuredPathWithBase(`/blog/${communityPost.id}/`))
     expect(communityLink?.text.trim()).toBe(communityPost.data.title)
-    if (posts.length > 1) expect(communityLink?.getAttribute('href')).not.toBe(bannerLink?.getAttribute('href'))
+    if (posts.length > promoted.length) {
+      expect(promoted.map(configuredPathWithBase)).not.toContain(communityLink?.getAttribute('href'))
+    }
   })
 
   it('shows five FAQ previews and links to the standalone FAQ page', () => {

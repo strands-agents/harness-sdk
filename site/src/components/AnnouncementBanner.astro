@@ -20,12 +20,27 @@ const fallback = announcement?.expires ? latestPostBanner(posts) : undefined;
 const isExternal = announcement && /^https?:\/\//.test(announcement.href);
 const href = announcement && (isExternal ? announcement.href : pathWithBase(announcement.href));
 const fallbackHref = fallback && pathWithBase(fallback.href);
+const linkHref = (target: string) => (/^https?:\/\//.test(target) ? target : pathWithBase(target));
 ---
 
 {
   announcement && (
     <>
       <aside class="announcement" aria-label="Announcement" data-expires={announcement.expires}>
+        {announcement.links ? (
+          <div class="announcement__links">
+            <span class="announcement__frog" set:html={frog} aria-hidden="true" />
+            {announcement.links.map((link, i) => (
+              <>
+                {i > 0 && <span class="announcement__sep" aria-hidden="true">·</span>}
+                <a class="announcement__item" href={linkHref(link.href)}>
+                  {link.title}
+                  <span class="announcement__arrow" set:html={arrow} aria-hidden="true" />
+                </a>
+              </>
+            ))}
+          </div>
+        ) : (
         <a class="announcement__link" href={href} {...(isExternal && {
             target: '_blank',
             rel: 'noopener',
@@ -38,6 +53,7 @@ const fallbackHref = fallback && pathWithBase(fallback.href);
             <span class="announcement__arrow" set:html={arrow} aria-hidden="true" />
           </span>
         </a>
+        )}
         {
           fallback && (
             <template class="announcement__fallback">
@@ -84,6 +100,34 @@ const fallbackHref = fallback && pathWithBase(fallback.href);
     text-decoration: none;
   }
 
+  .announcement__links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 4px 12px;
+    max-width: 1442px;
+    margin: 0 auto;
+    padding: 8px clamp(16px, 5vw, 96px);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  .announcement__item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .announcement__item:hover {
+    text-decoration-thickness: 2px;
+  }
+
   .announcement__frog {
     display: inline-flex;
     flex: none;
@@ -118,10 +162,15 @@ const fallbackHref = fallback && pathWithBase(fallback.href);
   }
 
   @media (max-width: 767px) {
-    .announcement__link {
+    .announcement__link,
+    .announcement__links {
       flex-wrap: wrap;
       font-size: 13px;
       text-align: center;
+    }
+
+    .announcement__sep {
+      display: none;
     }
 
     .announcement__frog {

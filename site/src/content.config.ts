@@ -281,6 +281,12 @@ export const announcementSchema = z
     title: z.string(),
     href: z.string(),
     linkText: z.string().default('Learn more'),
+    // Several links side by side (e.g. two launches on one day). Replaces title/linkText on screen;
+    // title stays the accessible label and href the primary link.
+    links: z
+      .array(z.object({ title: z.string(), href: z.string() }))
+      .min(2)
+      .optional(),
     // Shown for ANNOUNCEMENT_DAYS from this date; bump it when the content is updated.
     date: eventDate,
     // Last day shown, overriding the ANNOUNCEMENT_DAYS window.
