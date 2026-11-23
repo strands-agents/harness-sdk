@@ -93,6 +93,13 @@ def test_model_key_names_the_provider_of_each_vended_class_and_of_its_subclasses
             ("bedrock", "openai.gpt-a"),
         ),
         (
+            lambda: OpenAIModel(
+                client_args={"base_url": "https://bedrock-runtime-fips.us-east-1.amazonaws.com/openai/v1"},
+                model_id="openai.gpt-a",
+            ),
+            ("bedrock", "openai.gpt-a"),
+        ),
+        (
             lambda: OpenAIModel(client_args={"base_url": "https://bedrock-mantle.example.com/v1"}, model_id="m"),
             (None, "m"),
         ),
@@ -138,6 +145,7 @@ def test_model_key_names_the_provider_of_each_vended_class_and_of_its_subclasses
         "openai-on-bedrock-runtime",
         "openai-responses-client-with-mantle-base-url",
         "openai-with-bedrock-runtime-base-url",
+        "openai-with-bedrock-runtime-fips-base-url",
         "openai-with-a-bedrock-lookalike-base-url",
         "litellm-is-not-openai",
         "anthropic",

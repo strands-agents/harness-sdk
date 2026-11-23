@@ -130,6 +130,18 @@ def test_usage_by_model_returns_a_copy():
         request.usage_by_model[0].model_id = "model-b"
 
 
+def test_model_usage_records_that_are_equal_hash_equal():
+    usage = {"inputTokens": 3, "outputTokens": 1, "totalTokens": 4}
+
+    tru_records = {
+        ModelUsage(provider_name="bedrock", model_id="model-a", usage=usage),
+        ModelUsage(provider_name="bedrock", model_id="model-a", usage=dict(usage)),
+        ModelUsage(provider_name="bedrock", model_id="model-a", usage={**usage, "inputTokens": 4}),
+    }
+
+    assert len(tru_records) == 2
+
+
 @pytest.mark.usefixtures("frequent_thread_switches")
 def test_usage_by_model_records_every_update_made_from_concurrent_threads():
     request = _create_invocation_context()

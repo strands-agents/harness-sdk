@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from typing_extensions import Required
@@ -45,7 +45,7 @@ class ModelUsage:
 
     provider_name: str | None
     model_id: str | None
-    usage: Usage
+    usage: Usage = field(hash=False)
 
 
 # Contexts are shared across threads: sync tools, and the agents they call, run on worker threads.

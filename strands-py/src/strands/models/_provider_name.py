@@ -23,7 +23,7 @@ _PROVIDER_NAMES = {
     "strands.models.sagemaker.SageMakerAIModel": "sagemaker",
     "strands.models.writer.WriterModel": "writer",
 }
-_BEDROCK_HOSTS = re.compile(r"bedrock-mantle\.[a-z0-9-]+\.api\.aws|bedrock-runtime\.[a-z0-9-]+\.amazonaws\.com")
+_BEDROCK_HOSTS = re.compile(r"bedrock-mantle\.[a-z0-9-]+\.api\.aws|bedrock-runtime(-fips)?\.[a-z0-9-]+\.amazonaws\.com")
 _ANTHROPIC_CLIENTS = {
     "AsyncAnthropic": "anthropic",
     "AsyncAnthropicBedrock": "bedrock",

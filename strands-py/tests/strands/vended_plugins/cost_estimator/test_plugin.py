@@ -17,6 +17,7 @@ from strands import Agent, tool  # noqa: E402
 from strands.agent.invocation_context import ModelUsage, _create_invocation_context  # noqa: E402
 from strands.middleware import InvokeModelStage, ModelStopReason  # noqa: E402
 from strands.models._provider_name import _model_key  # noqa: E402
+from strands.models.bedrock import BedrockModel  # noqa: E402
 from strands.models.sagemaker import SageMakerAIModel  # noqa: E402
 from strands.multiagent.base import MultiAgentResult  # noqa: E402
 from strands.types.tools import ToolContext  # noqa: E402
@@ -276,6 +277,18 @@ def test_model_price_rejects_a_rate_that_is_not_a_finite_non_negative_number(rat
 def test_types_take_keyword_arguments_only(record_type, args):
     with pytest.raises(TypeError, match="positional"):
         record_type(*args)
+
+
+def test_estimates_that_are_equal_hash_equal():
+    cost = GenAIPricesEstimator(prices=[MAIN_PRICE])
+
+    tru_estimates = {
+        cost.estimate(_request((_usage(1_000, 100), None, "main"))),
+        cost.estimate(_request((_usage(1_000, 100), None, "main"))),
+        cost.estimate(_request((_usage(2_000, 100), None, "main"))),
+    }
+
+    assert len(tru_estimates) == 2
 
 
 def test_estimate_leaves_the_total_empty_when_a_model_has_no_price(genai_lookups):
@@ -538,6 +551,24 @@ async def test_stream_reports_a_model_call_without_a_price_as_unpriced(alist):
 
     tru_model_calls = [event["model_call"] for event in events if "model_call" in event]
     assert tru_model_calls == [_model_estimate(None, "unlisted", _usage(1_000, 100), None, None)]
+
+
+@pytest.mark.asyncio
+async def test_stream_prices_a_vended_model_class_from_the_bundled_data(alist):
+    class BedrockNamedModel(NamedModel, BedrockModel):
+        """A Bedrock model that replays canned responses."""
+
+        config = {}
+
+    model = BedrockNamedModel("us.anthropic.claude-sonnet-4-20250514-v1:0", [_text("done")], [_usage(1_000, 100)])
+    agent = Agent(model=model, plugins=[GenAIPricesEstimator()], callback_handler=None)
+
+    events = await alist(agent.stream_async("go"))
+
+    tru_model_call = next(event["model_call"] for event in events if "model_call" in event)
+    assert tru_model_call.provider_name == "bedrock"
+    assert tru_model_call.price_source.startswith("genai-prices:aws/")
+    assert tru_model_call.cost_usd > 0
 
 
 @pytest.mark.asyncio

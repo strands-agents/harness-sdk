@@ -11,7 +11,7 @@ import logging
 import math
 import sys
 from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -105,7 +105,7 @@ class ModelCostEstimate:
 
     provider_name: str | None
     model_id: str | None
-    usage: Usage
+    usage: Usage = field(hash=False)
     cost_usd: float | None
     price: ModelPrice | None
     price_source: str | None
