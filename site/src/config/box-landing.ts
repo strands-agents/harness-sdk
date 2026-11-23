@@ -10,7 +10,6 @@ const BOX_PACKS_URL = `${BOX_REPOSITORY_URL}/blob/main/resources/packs`
 
 // Canonical release and platform requirements: docs/cli/install.md in the public Box repository.
 export const BOX_RELEASE_STATUS = 'Preview'
-export const BOX_VERSION = '0.3.0-preview.1'
 export const BOX_PLATFORMS = [
   {
     label: 'macOS 15+ (Apple silicon)',
@@ -22,7 +21,7 @@ export const BOX_PLATFORMS = [
   },
 ] as const
 
-export const BOX_INSTALL_COMMAND = `curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | BOX_VERSION=${BOX_VERSION} sh`
+export const BOX_INSTALL_COMMAND = 'curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | sh'
 export const BOX_VERIFY_COMMAND = 'box --version'
 
 export const BOX_LINKS = {
