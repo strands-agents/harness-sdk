@@ -26,6 +26,7 @@ from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec, ToolUse
 from ._cache_points import (
     MAX_CACHE_POINTS,
+    cache_control,
     cache_point,
     messages_with_cache_point,
     section_ttl,
@@ -284,10 +285,7 @@ class LiteLLMModel(OpenAIModel):
                 # Apply cache control to the immediately preceding content block
                 # for LiteLLM/Anthropic compatibility
                 if system_content:
-                    cache_control: dict[str, Any] = {"type": "ephemeral"}
-                    if ttl := block["cachePoint"].get("ttl"):
-                        cache_control["ttl"] = ttl
-                    system_content[-1]["cache_control"] = cache_control
+                    system_content[-1]["cache_control"] = cache_control(block["cachePoint"].get("ttl"))
 
         # Create single system message with content array rather than multiple system messages
         return [{"role": "system", "content": system_content}] if system_content else []
@@ -950,10 +948,7 @@ def _mark_last_part(formatted: list[dict[str, Any]], cache_point: CachePoint) ->
         return
     if isinstance(message["content"], str):
         message["content"] = [{"type": "text", "text": message["content"]}]
-    cache_control: dict[str, Any] = {"type": "ephemeral"}
-    if ttl := cache_point.get("ttl"):
-        cache_control["ttl"] = ttl
-    message["content"][-1]["cache_control"] = cache_control
+    message["content"][-1]["cache_control"] = cache_control(cache_point.get("ttl"))
 
 
 def _append_tail(formatted: list[dict[str, Any]], tail: list[dict[str, Any]]) -> None:
@@ -980,8 +975,8 @@ def _add_tools_cache_point(request: dict[str, Any], cache_config: CacheConfig | 
     """Mark the last tool with ``cache_control`` when ``tools_ttl`` is True or a TTL string."""
     if cache_config is None or cache_config.tools_ttl in (None, False) or not request.get("tools"):
         return
-    ttl = cache_config.tools_ttl if isinstance(cache_config.tools_ttl, str) else cache_config.ttl
-    marked = {**request["tools"][-1], "cache_control": {"type": "ephemeral", **({"ttl": ttl} if ttl else {})}}
+    ttl = section_ttl(cache_config.tools_ttl, cache_config.ttl)
+    marked = {**request["tools"][-1], "cache_control": cache_control(ttl)}
     request["tools"] = [*request["tools"][:-1], marked]
 
 

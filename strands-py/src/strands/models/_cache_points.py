@@ -30,6 +30,11 @@ def cache_point(ttl: str | None) -> CachePoint:
     return CachePoint(type="default", ttl=ttl) if ttl else CachePoint(type="default")
 
 
+def cache_control(ttl: str | None) -> dict[str, Any]:
+    """An Anthropic ``cache_control`` value, carrying ``ttl`` when one is given; ``ephemeral`` is its only type."""
+    return {"type": "ephemeral", "ttl": ttl} if ttl else {"type": "ephemeral"}
+
+
 def with_point_ttls(blocks: list[_BlockT] | None, ttl: str | None) -> list[_BlockT] | None:
     """The blocks with each cache point that carries no TTL given ``ttl``; a TTL the caller wrote is kept.
 

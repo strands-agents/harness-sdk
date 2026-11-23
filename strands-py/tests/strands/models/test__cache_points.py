@@ -5,6 +5,7 @@ import copy
 import pytest
 
 from strands.models._cache_points import (
+    cache_control,
     cache_point,
     messages_with_cache_point,
     section_ttl,
@@ -29,6 +30,13 @@ def test_section_ttl_prefers_the_sections_own_ttl(section, ttl, exp_ttl):
 @pytest.mark.parametrize(("ttl", "exp_point"), [("1h", {"type": "default", "ttl": "1h"}), (None, {"type": "default"})])
 def test_cache_point_carries_a_ttl_only_when_given(ttl, exp_point):
     assert cache_point(ttl) == exp_point
+
+
+@pytest.mark.parametrize(
+    ("ttl", "exp_cache_control"), [("1h", {"type": "ephemeral", "ttl": "1h"}), ("", {"type": "ephemeral"})]
+)
+def test_cache_control_carries_a_ttl_only_when_given(ttl, exp_cache_control):
+    assert cache_control(ttl) == exp_cache_control
 
 
 def test_with_point_ttls_fills_only_points_without_a_ttl():

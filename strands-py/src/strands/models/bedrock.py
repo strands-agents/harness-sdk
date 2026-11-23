@@ -34,7 +34,7 @@ from ..types.exceptions import (
 )
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolSpec
-from ._cache_points import MAX_CACHE_POINTS, step_back_over_documents
+from ._cache_points import MAX_CACHE_POINTS, cache_point, section_ttl, step_back_over_documents
 from ._defaults import resolve_config_metadata, resolve_max_tokens
 from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelCapabilities, ModelInfo
 from ._native_output import (
@@ -732,15 +732,13 @@ class BedrockModel(Model):
         caching = cache_config is not None and self._cache_strategy == "anthropic"
         if caching and cache_config is not None:
             system_prompt_ttl = cache_config.system_prompt_ttl
-            section_ttl = self._supported_ttl(
-                system_prompt_ttl if isinstance(system_prompt_ttl, str) else cache_config.ttl
-            )
-            if section_ttl:
+            system_ttl = self._supported_ttl(section_ttl(system_prompt_ttl, cache_config.ttl))
+            if system_ttl:
                 tools_ttl_differs = bool(tools_cache_point) and (
-                    tools_cache_point[0]["cachePoint"].get("ttl") != section_ttl
+                    tools_cache_point[0]["cachePoint"].get("ttl") != system_ttl
                 )
                 if isinstance(system_prompt_ttl, str) or not tools_ttl_differs:
-                    ttl = section_ttl
+                    ttl = system_ttl
 
         normalized: list[SystemContentBlock] = []
         for block in system_blocks:
@@ -818,12 +816,7 @@ class BedrockModel(Model):
         if tools_ttl is False or self._cache_strategy != "anthropic":
             return []
 
-        ttl = tools_ttl if isinstance(tools_ttl, str) else cache_config.ttl
-        cache_point: dict[str, Any] = {"type": "default"}
-        if ttl:
-            cache_point["ttl"] = ttl
-
-        return [{"cachePoint": cache_point}]
+        return [{"cachePoint": cache_point(section_ttl(tools_ttl, cache_config.ttl))}]
 
     def _build_deprecated_cache_tools_point(self, cache_config: CacheConfig | None) -> list[dict[str, Any]]:
         """Build the tools cache point from the deprecated model-level ``cache_tools`` option.
@@ -966,9 +959,7 @@ class BedrockModel(Model):
                     )
 
         if last_user_idx is not None and messages[last_user_idx].get("content"):
-            cache_point: dict[str, Any] = {"type": "default"}
-            if ttl := self._supported_ttl(_messages_cache_ttl(self.config.get("cache_config"))):
-                cache_point["ttl"] = ttl
+            point = cache_point(self._supported_ttl(_messages_cache_ttl(self.config.get("cache_config"))))
 
             content = messages[last_user_idx]["content"]
 
@@ -1023,7 +1014,7 @@ class BedrockModel(Model):
                 if boundary_idx == 0:
                     logger.debug("msg_idx=<%s> | skipped cache point, no durable prefix", last_user_idx)
                     return
-                content.insert(boundary_idx, {"cachePoint": cache_point})
+                content.insert(boundary_idx, {"cachePoint": point})
                 # A False here means a leading document left no prefix to cache; automatic placement
                 # declines for the same reason, so there is nothing to fall back to.
                 self._honor_placed_cache_point(content, boundary_idx, last_user_idx)
@@ -1039,9 +1030,9 @@ class BedrockModel(Model):
             # Insert the cache point before the first non-PDF document so it is not directly
             # preceded by that block, which Bedrock rejects with a ValidationException
             if first_non_pdf_doc_idx is None:
-                content.append({"cachePoint": cache_point})
+                content.append({"cachePoint": point})
             elif first_non_pdf_doc_idx > 0:
-                content.insert(first_non_pdf_doc_idx, {"cachePoint": cache_point})
+                content.insert(first_non_pdf_doc_idx, {"cachePoint": point})
             else:
                 # A leading non-PDF document leaves no prefix to cache and Bedrock rejects it
                 logger.debug("msg_idx=<%s> | skipped cache point for leading non-PDF document", last_user_idx)
