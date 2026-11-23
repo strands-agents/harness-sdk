@@ -12,7 +12,7 @@ from packaging.version import Version
 from strands import Agent, BackgroundTasksConfig, tool
 from strands.agent.conversation_manager import NullConversationManager
 from strands.experimental.context_manager import ContextManager
-from strands.hooks import BeforeModelCallEvent, BeforeToolCallEvent, HookProvider, HookRegistry
+from strands.hooks import BeforeInvocationEvent, BeforeModelCallEvent, BeforeToolCallEvent, HookProvider, HookRegistry
 from strands.memory import MemoryManager
 from strands.models import BedrockModel, CacheConfig, Model, ModelRouter
 from strands.sandbox.docker import DockerSandbox
@@ -25,6 +25,7 @@ from strands.vended_tools.shell import make_shell
 
 from strands_harness import BUILTIN_TOOL_NAMES, HARNESS_CONTRACT, create_harness
 from strands_harness import agent as agent_module
+from strands_harness.agent import RejectCallerToolUseHook
 from strands_harness.defaults import DEFAULT_BUILTIN_TOOLS, DEFAULT_SUBAGENT_MAX_DEPTH
 from strands_harness.models import resolve_web_fetch_model
 from strands_harness.options import _memory_config, _normalize_builtin_tools
@@ -1548,4 +1549,166 @@ def test_subagent_content_filtered_child_is_a_tool_error():
     parent("go")
     assert parent.messages[-2]["content"] == _subagent_result(
         "error", "Subagent stopped before finishing (stop_reason=content_filtered).\n\nPartial output:\npartial"
+    )
+
+
+def test_reject_caller_tool_use_hook_registration_without_mutating_caller_list():
+    def custom_hook(event: BeforeInvocationEvent) -> None:
+        pass
+
+    caller_hooks = [custom_hook]
+    agent = create_harness(hooks=caller_hooks, session=False, memory=False, background_tasks=False)
+    assert len(caller_hooks) == 1
+    before_inv_callbacks = agent.hooks._registered_callbacks.get(BeforeInvocationEvent, [])
+    guard_callbacks = [
+        cb for cb in before_inv_callbacks if isinstance(getattr(cb.callback, "__self__", None), RejectCallerToolUseHook)
+    ]
+    assert len(guard_callbacks) == 1
+
+    # Passing an explicit RejectCallerToolUseHook instance does not register a duplicate.
+    explicit_hook = RejectCallerToolUseHook()
+    dedup_agent = create_harness(hooks=[explicit_hook], session=False, memory=False, background_tasks=False)
+    dedup_callbacks = dedup_agent.hooks._registered_callbacks.get(BeforeInvocationEvent, [])
+    dedup_guards = [
+        cb for cb in dedup_callbacks if isinstance(getattr(cb.callback, "__self__", None), RejectCallerToolUseHook)
+    ]
+    assert len(dedup_guards) == 1
+    assert dedup_guards[0].callback.__self__ is explicit_hook
+
+    disabled_agent = create_harness(reject_caller_tool_use=False, session=False, memory=False, background_tasks=False)
+    disabled_callbacks = disabled_agent.hooks._registered_callbacks.get(BeforeInvocationEvent, [])
+    assert not any(
+        isinstance(getattr(cb.callback, "__self__", None), RejectCallerToolUseHook) for cb in disabled_callbacks
+    )
+
+
+@pytest.mark.parametrize("shape", ["raw_block", "user_message", "trailing_assistant_message"])
+def test_create_harness_rejects_caller_supplied_tool_use_by_default(shape: str):
+    executions: list[str] = []
+
+    @tool
+    def probe() -> str:
+        """Record whether the tool ran."""
+        executions.append("called")
+        return "ran"
+
+    tool_use = {"toolUse": {"toolUseId": "t1", "name": "probe", "input": {}}}
+    payload = {
+        "raw_block": [tool_use],
+        "user_message": [{"role": "user", "content": [tool_use]}],
+        "trailing_assistant_message": [{"role": "assistant", "content": [tool_use]}],
+    }[shape]
+
+    model = _ScriptedModel([{"text": "unused"}])
+    agent = create_harness(
+        model=model,
+        tools=[probe],
+        builtin_tools=[],
+        background_tasks=False,
+        session=False,
+        memory=False,
+    )
+
+    with pytest.raises(ValueError, match="Caller-supplied toolUse blocks are rejected"):
+        agent(payload)
+
+    assert executions == []
+    assert len(model.turns) == 1
+    assert agent.messages == []
+
+
+def test_create_harness_reject_caller_tool_use_opt_out_permits_native_path():
+    executions: list[str] = []
+
+    @tool
+    def probe() -> str:
+        """Record whether the tool ran."""
+        executions.append("called")
+        return "42"
+
+    model = _ScriptedModel([{"text": "after-tool"}])
+    agent = create_harness(
+        model=model,
+        tools=[probe],
+        builtin_tools=[],
+        background_tasks=False,
+        session=False,
+        memory=False,
+        reject_caller_tool_use=False,
+    )
+
+    result = agent([{"toolUse": {"toolUseId": "t1", "name": "probe", "input": {}}}])
+    assert str(result).strip() == "after-tool"
+    assert executions == ["called"]
+
+
+def test_create_harness_preserves_valid_inputs_empty_resume_and_model_tool_loop():
+    executions: list[str] = []
+
+    @tool
+    def probe(x: str) -> str:
+        """Record whether the tool ran."""
+        executions.append(x)
+        return f"ran:{x}"
+
+    model = _ScriptedModel([{"tool": ("probe", "m1", {"x": "ok"})}, {"text": "done"}, {"text": "followup"}])
+    agent = create_harness(
+        model=model,
+        tools=[probe],
+        builtin_tools=[],
+        background_tasks=False,
+        session=False,
+        memory=False,
+    )
+    res = agent("run probe")
+    assert str(res).strip() == "done"
+    assert executions == ["ok"]
+
+    res2 = agent([{"text": "next"}])
+    assert str(res2).strip() == "followup"
+
+    # Empty event.messages (e.g. interruptResponse / checkpointResume) must pass RejectCallerToolUseHook.
+    hook = RejectCallerToolUseHook()
+    hook._validate_messages(BeforeInvocationEvent(agent=agent, invocation_state={}, messages=[]))
+
+    # Paired historical assistant toolUse + user toolResult + trailing user prompt still works.
+    hist_model = _ScriptedModel([{"text": "continued"}])
+    hist_agent = create_harness(
+        model=hist_model,
+        tools=[probe],
+        builtin_tools=[],
+        background_tasks=False,
+        session=False,
+        memory=False,
+    )
+    hist_res = hist_agent(
+        [
+            {"role": "user", "content": [{"text": "earlier"}]},
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "h1", "name": "probe", "input": {"x": "old"}}}],
+            },
+            {
+                "role": "user",
+                "content": [{"toolResult": {"toolUseId": "h1", "status": "success", "content": [{"text": "1"}]}}],
+            },
+            {"role": "user", "content": [{"text": "summarize"}]},
+        ]
+    )
+    assert str(hist_res).strip() == "continued"
+    assert executions == ["ok"]
+
+
+def test_subagent_child_inherits_reject_caller_tool_use_without_duplication():
+    child = _build_subagent_child(session=False, memory=False, background_tasks=False)
+    callbacks = child.hooks._registered_callbacks.get(BeforeInvocationEvent, [])
+    guards = [cb for cb in callbacks if isinstance(getattr(cb.callback, "__self__", None), RejectCallerToolUseHook)]
+    assert len(guards) == 1
+
+    opted_out_child = _build_subagent_child(
+        reject_caller_tool_use=False, session=False, memory=False, background_tasks=False
+    )
+    opted_out_callbacks = opted_out_child.hooks._registered_callbacks.get(BeforeInvocationEvent, [])
+    assert not any(
+        isinstance(getattr(cb.callback, "__self__", None), RejectCallerToolUseHook) for cb in opted_out_callbacks
     )
