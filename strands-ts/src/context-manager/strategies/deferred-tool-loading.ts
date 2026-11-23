@@ -6,7 +6,7 @@
  * so its shape and behavior may change in future versions.
  */
 
-import { AfterToolsEvent, BeforeToolsEvent } from '../../hooks/events.js'
+import { BeforeToolsEvent } from '../../hooks/events.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { isManageTool } from '../../background-tasks/background-tasks.js'
@@ -166,8 +166,9 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
   /** The model each agent's latest model call went to, whose tool calls the guard checks. */
   private readonly _models = new WeakMap<LocalAgent, Model>()
   /**
-   * The assistant message whose tool calls each agent is running. The agent adds it to its messages after running
-   * them, or keeps it in its interrupt state while they wait, so the guard can't read its loads there.
+   * The assistant message whose tool calls each agent ran last. The agent adds it to its messages only after its tool
+   * calls, or keeps it in its interrupt state while they wait, and a background call may start later still, so the
+   * guard reads its loads here. Every batch of tool calls replaces it before any of them runs.
    */
   private readonly _running = new WeakMap<LocalAgent, Message>()
 
@@ -215,9 +216,6 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     agent.addHook(BeforeToolsEvent, (event) => {
       this._running.set(agent, event.message)
     })
-    agent.addHook(AfterToolsEvent, () => {
-      this._running.delete(agent)
-    })
     agent.addMiddleware(ExecuteToolStage, (context, next) => this._guardUnloaded(context, next))
   }
 
@@ -246,7 +244,7 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
 
   /**
    * The tools an agent's model call with these tool specs on this model sends: every spec, the names of the ones it
-   * defers and whether the provider searches them itself; only the ones it searched for on a model that can't take
+   * defers and the config's `search`; only the ones it searched for on a model that can't take
    * stubs under `search: 'client'`; or every spec but the loader when it defers none.
    *
    * @param agent - The agent making the call
