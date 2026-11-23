@@ -1,0 +1,79 @@
+---
+import Analytics from './Analytics.astro'
+import SiteScripts from './SiteScripts.astro'
+import { pathWithBase } from '../util/links'
+import { baseSchemas, serializeJsonLd } from '../util/structured-data'
+import type { JsonLdNode } from '../util/structured-data'
+
+interface Props {
+  title: string
+  description: string
+  canonicalPath: string
+  markdownPath: string
+  ogImageAlt: string
+  structuredData?: JsonLdNode[]
+  serviceDescriptionPath?: string
+}
+
+const {
+  title,
+  description,
+  canonicalPath,
+  markdownPath,
+  ogImageAlt,
+  structuredData = [],
+  serviceDescriptionPath,
+} = Astro.props
+
+const base = import.meta.env.BASE_URL || '/'
+const faviconHref = base.endsWith('/') ? `${base}favicon.svg` : `${base}/favicon.svg`
+const siteOrigin = Astro.site ?? 'https://strandsagents.com'
+const canonicalHref = new URL(pathWithBase(canonicalPath), siteOrigin).href
+const markdownHref = pathWithBase(markdownPath)
+const serviceDescriptionHref = serviceDescriptionPath ? pathWithBase(serviceDescriptionPath) : undefined
+const ogImageHref = new URL('og-image.png', siteOrigin).href
+const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [...baseSchemas(siteUrl), ...structuredData],
+}
+---
+
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{title}</title>
+<meta name="description" content={description} />
+<link rel="canonical" href={canonicalHref} />
+<link rel="alternate" type="text/markdown" href={markdownHref} />
+{serviceDescriptionHref && <link rel="service-desc" type="application/json" href={serviceDescriptionHref} />}
+<link rel="icon" type="image/svg+xml" href={faviconHref} />
+<meta property="og:type" content="website" />
+<meta property="og:url" content={canonicalHref} />
+<meta property="og:title" content={title} />
+<meta property="og:description" content={description} />
+<meta property="og:image" content={ogImageHref} />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content={ogImageAlt} />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content={title} />
+<meta name="twitter:description" content={description} />
+<meta name="twitter:image" content={ogImageHref} />
+{Astro.site?.origin !== 'https://strandsagents.com' && <meta name="robots" content="noindex, nofollow" />}
+<script type="application/ld+json" set:html={serializeJsonLd(jsonLd)} />
+<script is:inline>
+  ;(function () {
+    try {
+      var saved = localStorage.getItem('starlight-theme')
+      var theme =
+        saved === 'dark' || saved === 'light'
+          ? saved
+          : matchMedia('(prefers-color-scheme: dark)').matches
+            ? 'dark'
+            : 'light'
+      document.documentElement.dataset.theme = theme
+    } catch (_) {}
+  })()
+</script>
+<SiteScripts />
+<Analytics />

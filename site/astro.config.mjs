@@ -53,7 +53,7 @@ export default defineConfig({
   integrations: [
     // Sitemap with git-based <lastmod> dates — must be before Starlight
     // so Starlight detects it and skips its own sitemap integration
-    sitemapWithLastmod('src/content'),
+    sitemapWithLastmod({ contentDir: 'src/content', sourceRoot: 'src' }),
     astroExpressiveCode({
       themes: ['github-light', 'github-dark'],
       // Follow Starlight's data-theme attribute instead of the browser's prefers-color-scheme

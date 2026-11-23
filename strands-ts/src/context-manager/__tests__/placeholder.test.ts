@@ -11,13 +11,13 @@ import {
 import { OffloadedBlock } from '../../types/messages.js'
 
 describe('offloadPlaceholder', () => {
-  it('appends the stash ref and records what the placeholder stands for', () => {
+  it('appends the archive ref and records what the placeholder stands for', () => {
     expect(offloadPlaceholder('drop', '[Dropped: earlier messages]', 'removed-abc')).toStrictEqual(
       new OffloadedBlock({ text: '[Dropped: earlier messages] [ref: removed-abc]', method: 'drop', ref: 'removed-abc' })
     )
   })
 
-  it('leaves out the ref when the original was not stashed', () => {
+  it('leaves out the ref when the original was not archived', () => {
     expect(offloadPlaceholder('drop', '[Dropped]', undefined)).toStrictEqual(
       new OffloadedBlock({ text: '[Dropped]', method: 'drop' })
     )

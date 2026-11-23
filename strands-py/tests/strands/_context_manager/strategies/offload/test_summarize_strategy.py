@@ -267,7 +267,7 @@ class TestSummarizeStrategyPerBlock:
     @pytest.mark.asyncio
     async def test_skips_when_no_model(self):
         agent = unittest.mock.MagicMock()
-        agent.aux_model = None
+        agent.model = None
         strategy = Offload.summarize("assistant_text").when(block_threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -500,7 +500,7 @@ class TestSummarizeStrategyMessageLevel:
     @pytest.mark.asyncio
     async def test_no_model_returns_false(self):
         agent = unittest.mock.MagicMock()
-        agent.aux_model = None
+        agent.model = None
         strategy = Offload.summarize("*").when(context_utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -782,10 +782,9 @@ class TestRunSummaryReplaysTheAgentRequest:
         aux_model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
         aux_model.summarize = unittest.mock.AsyncMock(return_value=_summary("aux summary"))
         aux_model.model_info.capabilities.server_side_summary = False
-        mock_agent.aux_model = aux_model
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*", {"model": aux_model}).when(context_utilization="80%", preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
@@ -918,11 +917,10 @@ class TestServerSideSummary:
         aux_model.stream = _make_stream_events("Summary of content.")
         aux_model.summarize = _base_summarize(aux_model)
         aux_model.model_info.capabilities.server_side_summary = aux_supports
-        mock_agent.aux_model = aux_model
         mock_agent.model.model_info.capabilities.server_side_summary = agent_supports
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*", {"model": aux_model}).when(context_utilization="80%", preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
@@ -957,6 +955,32 @@ class TestServerSideSummary:
         mock_agent.model.summarize.assert_awaited_once()
         assert messages == self._messages()
         assert log in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_leaves_the_summary_unplaced_when_the_messages_it_covers_leave_the_history(self, mock_agent, caplog):
+        mock_agent.model.model_info.capabilities.server_side_summary = True
+        messages = self._messages()
+        mock_agent.messages = messages
+
+        async def summarize(*_args, **_kwargs):
+            # The messages the summary covers leave the history while the provider is writing it.
+            del messages[1:3]
+            return _summary("compacted", "anthropic")
+
+        mock_agent.model.summarize = unittest.mock.AsyncMock(side_effect=summarize)
+        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+
+        with caplog.at_level(logging.WARNING):
+            assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is False
+
+        assert "leaving the summary unplaced" in caplog.text
+        # A summary stands in for the conversation's exact start, so placing it over a shortened history would take
+        # the message the next model call responds to.
+        assert without_tracking_ids(messages) == [
+            Message(role="user", content=[ContentBlock(text="task")]),
+            Message(role="assistant", content=[ContentBlock(text="old3")]),
+            Message(role="user", content=[ContentBlock(text="recent")]),
+        ]
 
     @pytest.mark.asyncio
     async def test_warns_that_a_client_side_summary_drops_kept_thinking(self, mock_agent, caplog):
@@ -1397,7 +1421,7 @@ class TestSummarizerDiagnosticsAndModelChoice:
         assert request.usage == {"turns_taken": 5, **usage}
 
     @pytest.mark.asyncio
-    async def test_summarizes_with_the_agents_aux_model_when_the_strategy_has_no_model(self):
+    async def test_summarizes_with_the_agent_model_rather_than_its_aux_model_when_the_strategy_has_no_model(self):
         messages = [make_tool_result_message(LARGE_TEXT)]
         main_model = heuristic_model(summarize=_mock_summarize())
         aux_model = heuristic_model(summarize=_mock_summarize())
@@ -1406,5 +1430,5 @@ class TestSummarizerDiagnosticsAndModelChoice:
 
         assert await Offload.summarize("tool_results").apply(context) is True
 
-        aux_model.summarize.assert_awaited_once()
-        main_model.summarize.assert_not_awaited()
+        main_model.summarize.assert_awaited_once()
+        aux_model.summarize.assert_not_awaited()

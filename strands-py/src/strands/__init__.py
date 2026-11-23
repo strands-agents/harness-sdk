@@ -13,7 +13,7 @@ from .sandbox import (
     PosixShellSandbox,
     Sandbox,
 )
-from .sandbox.errors import SandboxPathNotFoundError, SandboxTimeoutError
+from .sandbox.errors import SandboxAbortError, SandboxPathNotFoundError, SandboxTimeoutError
 from .tools.decorator import tool
 from .types._snapshot import Snapshot
 from .types.agent import LocalAgent
@@ -40,6 +40,7 @@ __all__ = [
     "Plugin",
     "PosixShellSandbox",
     "Sandbox",
+    "SandboxAbortError",
     "SandboxPathNotFoundError",
     "SandboxTimeoutError",
     "Skill",

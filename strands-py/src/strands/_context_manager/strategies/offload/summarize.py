@@ -15,6 +15,7 @@ from ....types.content import ContentBlock, Message, Messages, split_system_prom
 from ....types.tools import ToolResultContent
 from ...content_rendering import format_tool_result_label, tool_result_to_content_blocks
 from ...message_trimming import (
+    _holds_run,
     _replace_run,
     _split_into_runs,
     new_message,
@@ -61,8 +62,7 @@ class SummarizeConfig(TypedDict, total=False):
     """Configuration for the summarize strategy.
 
     Attributes:
-        model: Model used for summarization. Resolution order: this ``model`` > ``agent.aux_model``
-            > ``agent.model``.
+        model: Model used for summarization. Resolution order: this ``model`` > ``agent.model``.
         system_prompt: Summarization instructions closing each summary request, replacing the default ones.
     """
 
@@ -190,11 +190,15 @@ class SummarizeStrategy(BaseOffloadStrategy):
         is sent. The summary becomes an assistant message at index 1, followed by the placeholder the messages it
         stands for are retrievable under. A summary without a ``provider``, which a capable model returns when its
         own summary request failed, is placed as a client-side marker instead.
+
+        The messages the summary covers are held by identity across the model call, so a summary whose messages left
+        the history is dropped rather than placed over whatever took their place.
         """
         messages = context.messages
-        replaced = end - 1
+        covered = list(messages[:end])
+        replaced = len(covered) - 1
         try:
-            result = await model.summarize(messages[:end], **self._summarize_kwargs(context.agent, replay=True))
+            result = await model.summarize(covered, **self._summarize_kwargs(context.agent, replay=True))
         except Exception as error:
             logger.warning("messages=<%d>, error=<%s> | summarization failed", replaced, error, exc_info=True)
             return False
@@ -202,23 +206,30 @@ class SummarizeStrategy(BaseOffloadStrategy):
         # Only a summary the provider wrote can be replayed by the agent's model.
         summary = _first_summary(result)
         if summary is None or not summary["summary"].get("provider"):
-            return await self._place_text_summary(context, model, end, _summary_text(result))
+            return await self._place_text_summary(context, model, covered, _summary_text(result))
 
         # Message 0 stays in the history, but a provider sending the summary as a compaction block stops sending
         # anything before it, so the summary stands for message 0 too and a retrieval has to be able to return it.
         content = [summary]
-        stash_ref = await stash_removed(context.stash, messages[:end], self._method)
+        stash_ref = await stash_removed(context.stash, covered, self._method)
         if stash_ref is not None:
             # The reference follows the summary because a compaction block drops the content before it, which is also
             # why it is a block of its own: a provider's summary text is signed, so nothing can be written into it.
-            tokens = await removed_tokens(messages[:end], model)
+            tokens = await removed_tokens(covered, model)
             marker = format_summarized(REMOVED_MESSAGES, tokens)
             content.append(offload_placeholder(self._method, marker, stash_ref, tokens))
-        messages[1:end] = [new_message("assistant", content)]
+        if not _holds_run(messages, 0, covered):
+            logger.warning(
+                "summarized=<%d> | the summarized messages are no longer the history's start"
+                " | leaving the summary unplaced",
+                replaced,
+            )
+            return False
+        messages[1 : len(covered)] = [new_message("assistant", content)]
         logger.debug("summarized=<%s> | summarized opening messages server-side", replaced)
         return True
 
-    async def _place_text_summary(self, context: ContextState, model: Model, end: int, summary: str) -> bool:
+    async def _place_text_summary(self, context: ContextState, model: Model, covered: Messages, summary: str) -> bool:
         """Place the client-side summary a server-side-capable model fell back to.
 
         It covers the messages the server-side summary would have, so the summary already paid for is the one used.
@@ -233,7 +244,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         )
         return await remove_messages(
             context.messages,
-            list(context.messages[1:end]),
+            covered[1:],
             model,
             lambda tokens: format_summarized(REMOVED_MESSAGES, tokens, summary),
             "summarize",
@@ -314,7 +325,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         return kwargs
 
     def _resolve_model(self, agent: Agent) -> Model | None:
-        return self._config.get("model") or agent.aux_model
+        return self._config.get("model") or agent.model
 
 
 def _record_summary_usage(invocation_context: InvocationContext | None, result: SummarizeResult, model: Model) -> None:

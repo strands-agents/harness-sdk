@@ -10,7 +10,7 @@ interface CodeRow {
 }
 
 interface CodeSample {
-  language: 'policy' | 'shell';
+  language: 'policy' | 'shell' | 'toml';
   rows: CodeRow[];
 }
 
@@ -31,6 +31,7 @@ const initialLanguage = code?.language ?? (codeTs ? 'typescript' : 'python');
 const languageNames = {
   policy: 'Policy',
   shell: 'Shell',
+  toml: 'TOML',
   typescript: 'TypeScript',
   python: 'Python',
 };
@@ -240,6 +241,7 @@ const languageNames = {
   const languageNames: Record<string, string> = {
     policy: 'Policy',
     shell: 'Shell',
+    toml: 'TOML',
     typescript: 'TypeScript',
     python: 'Python',
   }
@@ -266,7 +268,9 @@ const languageNames = {
     const activeLanguage = language === 'Python' ? 'python' : 'typescript'
 
     document.querySelectorAll<HTMLElement>('[data-toolkit-terminal]').forEach((terminal) => {
-      const generic = terminal.querySelector<HTMLElement>('[data-lang-code="policy"], [data-lang-code="shell"]')
+      const generic = terminal.querySelector<HTMLElement>(
+        '[data-lang-code="policy"], [data-lang-code="shell"], [data-lang-code="toml"]'
+      )
       if (generic) {
         terminal.querySelectorAll<HTMLElement>('[data-lang-code]').forEach((panel) => {
           panel.hidden = panel !== generic
