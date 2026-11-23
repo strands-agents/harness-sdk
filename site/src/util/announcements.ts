@@ -48,11 +48,8 @@ export function latestPostBanner(posts: BannerBlogPost[]): HomepageBanner | unde
 }
 
 /** Newest blog post not already promoted by the homepage banner. */
-export function homepageCommunityPost(
-  posts: BannerBlogPost[],
-  bannerHrefs: string | string[] = []
-): BannerBlogPost | undefined {
-  const promoted = new Set(typeof bannerHrefs === 'string' ? [bannerHrefs] : bannerHrefs)
+export function homepageCommunityPost(posts: BannerBlogPost[], bannerHrefs: string[] = []): BannerBlogPost | undefined {
+  const promoted = new Set(bannerHrefs)
   return [...posts]
     .sort((a, b) => b.data.date.getTime() - a.data.date.getTime())
     .find((post) => !promoted.has(`/blog/${post.id}/`))
@@ -79,7 +76,8 @@ export function homepageBanner(
   if (manual && (manual.expires || !latestPost || toIsoDate(manual.date) >= toIsoDate(latestPost.date))) {
     return {
       title: manual.title,
-      href: manual.href,
+      // The schema guarantees href or links.
+      href: manual.href ?? manual.links![0]!.href,
       linkText: manual.linkText,
       ...(manual.links && { links: manual.links }),
       date: manual.date,

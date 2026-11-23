@@ -20,7 +20,8 @@ const fallback = announcement?.expires ? latestPostBanner(posts) : undefined;
 const isExternal = announcement && /^https?:\/\//.test(announcement.href);
 const href = announcement && (isExternal ? announcement.href : pathWithBase(announcement.href));
 const fallbackHref = fallback && pathWithBase(fallback.href);
-const linkHref = (target: string) => (/^https?:\/\//.test(target) ? target : pathWithBase(target));
+const linkIsExternal = (target: string) => /^https?:\/\//.test(target);
+const linkHref = (target: string) => (linkIsExternal(target) ? target : pathWithBase(target));
 ---
 
 {
@@ -28,12 +29,16 @@ const linkHref = (target: string) => (/^https?:\/\//.test(target) ? target : pat
     <>
       <aside class="announcement" aria-label="Announcement" data-expires={announcement.expires}>
         {announcement.links ? (
-          <div class="announcement__links">
+          <div class="announcement__links" role="group" aria-label={announcement.title}>
             <span class="announcement__frog" set:html={frog} aria-hidden="true" />
             {announcement.links.map((link, i) => (
               <>
                 {i > 0 && <span class="announcement__sep" aria-hidden="true">·</span>}
-                <a class="announcement__item" href={linkHref(link.href)}>
+                <a class="announcement__item" href={linkHref(link.href)} {...(linkIsExternal(link.href) && {
+                    target: '_blank',
+                    rel: 'noopener',
+                    'aria-label': `${link.title} (opens in a new tab)`,
+                  })}>
                   {link.title}
                   <span class="announcement__arrow" set:html={arrow} aria-hidden="true" />
                 </a>
@@ -114,10 +119,9 @@ const linkHref = (target: string) => (/^https?:\/\//.test(target) ? target : pat
     line-height: 1.4;
   }
 
+  /* Inline (not flex) so the arrow stays after the last word when the title wraps. */
   .announcement__item {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
+    display: inline;
     color: inherit;
     font-weight: 600;
     text-decoration: underline;
@@ -159,6 +163,10 @@ const linkHref = (target: string) => (/^https?:\/\//.test(target) ? target : pat
     display: inline-flex;
     width: 11px;
     height: 9px;
+  }
+
+  .announcement__item .announcement__arrow {
+    margin-left: 6px;
   }
 
   @media (max-width: 767px) {

@@ -432,7 +432,14 @@ describe('homepage machine-readable metadata', () => {
       expect(bannerLink?.getAttribute('href')).toBe(configuredPathWithBase(banner!.href))
       expect(bannerLink?.querySelector('.announcement__title')?.text.trim()).toBe(banner!.title)
     }
-    if (!banner?.expires) {
+    if (banner?.links) {
+      expect(announcement?.querySelector('.announcement__links')?.getAttribute('aria-label')).toBe(banner.title)
+    }
+    if (banner?.expires) {
+      // A manual announcement swaps to the latest post on the client once it expires.
+      expect(announcement?.getAttribute('data-expires')).toBe(banner.expires)
+      expect(announcement?.querySelector('.announcement__fallback')).not.toBeNull()
+    } else {
       expect(announcement?.getAttribute('data-expires')).toBeUndefined()
       expect(announcement?.querySelector('.announcement__fallback')).toBeNull()
     }

@@ -19,8 +19,8 @@ date: 2026-10-01
 expires: 2026-10-19 # optional, pins the announcement through this day
 ```
 
-To link several posts at once (for example, two launches on the same day), add `links`. The banner then shows each link
-side by side instead of `title` and `linkText`; `title` stays as the summary and `href` as the primary link.
+To link several posts at once (for example, two launches on the same day), add `links` instead of `href`. The banner
+then shows each link side by side instead of `title` and `linkText`, and screen readers announce `title` for the group.
 
 ```yaml
 links:

@@ -279,10 +279,11 @@ export type LearnEvent = z.infer<typeof eventSchema>
 export const announcementSchema = z
   .object({
     title: z.string(),
-    href: z.string(),
+    // Required unless `links` is set.
+    href: z.string().optional(),
     linkText: z.string().default('Learn more'),
-    // Several links side by side (e.g. two launches on one day). Replaces title/linkText on screen;
-    // title stays the accessible label and href the primary link.
+    // Several links side by side (e.g. two launches on one day). Shown instead of title and
+    // linkText; title becomes the accessible label for the group.
     links: z
       .array(z.object({ title: z.string(), href: z.string() }))
       .min(2)
@@ -295,6 +296,10 @@ export const announcementSchema = z
   .refine((a) => a.expires === undefined || a.expires >= a.date, {
     message: 'expires must not be before date',
     path: ['expires'],
+  })
+  .refine((a) => a.href !== undefined || a.links !== undefined, {
+    message: 'href is required unless links is set',
+    path: ['href'],
   })
 export type Announcement = z.infer<typeof announcementSchema>
 
