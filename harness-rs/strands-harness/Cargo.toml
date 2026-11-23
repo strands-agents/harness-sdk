@@ -2,6 +2,8 @@
 name = "strands-harness"
 description = "A preconfigured Strands agent in one call"
 readme = "../README.md"
+# Listed so the git-ignored model-info.json copied in before packaging is shipped.
+include = ["/build.rs", "/model-info.json", "/src/**", "/tests/**"]
 keywords = ["agents", "ai", "llm", "strands", "harness"]
 categories = ["api-bindings", "asynchronous"]
 version.workspace = true
