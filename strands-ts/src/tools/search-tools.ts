@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { logger } from '../logging/logger.js'
+import { STOP_WORDS } from '../storage/search/keyword.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { ToolReferenceBlock } from '../types/messages.js'
 import { LOAD_TOOLS_TOOL_NAME, loadableNames } from './load-tools.js'
@@ -74,8 +75,8 @@ export interface ToolSearcher {
  * The searcher `search_tools` uses unless `Offload.defer` names another, and when that one declines: a keyword search.
  * A tool named exactly as the query comes first, then the rest by score, in tool order on a tie. A query word found in
  * a tool's name or MCP server scores twice what it scores in its description, weighted down by how many of the tools it
- * matches, so a word every tool has counts for little. There are no embeddings, so the same query and tools always give
- * the same result.
+ * matches, so a word every tool has counts for little. Common words such as `the` and `in` don't count. There are no
+ * embeddings, so the same query and tools always give the same result.
  *
  * @experimental
  */
@@ -253,7 +254,7 @@ export function withToolListing(description: string, listing: string): string {
 function keywordSearch(query: string, tools: readonly Tool[], limit: number): Tool[] {
   const fields = tools.map(searchFields)
   const scores = tools.map((candidate) => (candidate.name.toLowerCase() === query.toLowerCase() ? Infinity : 0))
-  for (const word of new Set(words(query))) {
+  for (const word of new Set(words(query).filter((word) => !STOP_WORDS.has(word)))) {
     const hits = fields.map(
       (field) => 2 * Number(hasWord(field.names, word)) + Number(hasWord(field.description, word))
     )
@@ -311,5 +312,7 @@ function firstSentence(description: string | undefined): string {
   const text = (description ?? '').replace(/\s+/g, ' ').trim()
   if (text === '') return ''
   const sentence = /^.*?[.!?](?=\s|$)/.exec(text)?.[0] ?? text
-  return `: ${sentence.length <= SENTENCE_LIMIT ? sentence : `${sentence.slice(0, SENTENCE_LIMIT - 1)}…`}`
+  // Cut by code point, since a lone surrogate makes the request invalid JSON.
+  const characters = [...sentence]
+  return `: ${characters.length <= SENTENCE_LIMIT ? sentence : `${characters.slice(0, SENTENCE_LIMIT - 1).join('')}…`}`
 }

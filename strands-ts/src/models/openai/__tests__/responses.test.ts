@@ -1329,8 +1329,11 @@ describe("OpenAIModel (api: 'responses') tool search", () => {
     expect(request.tools).toEqual([functionTool(weather, true), functionTool(forecast, true), { type: 'tool_search' }])
   })
 
-  it('keeps a tool search the caller put in params, and adds no other', async () => {
-    const { request } = await run(deferring(true), { params: { tools: [{ type: 'tool_search' }] } })
+  it.each([
+    ['with serverToolSearch', true],
+    ['in place of the client loader, since a request takes one tool search', undefined],
+  ])('keeps a tool search the caller put in params, and adds no other, %s', async (_name, serverToolSearch) => {
+    const { request } = await run(deferring(serverToolSearch), { params: { tools: [{ type: 'tool_search' }] } })
 
     expect(request.tools).toEqual([{ type: 'tool_search' }, functionTool(weather, true), functionTool(forecast, true)])
   })

@@ -33,6 +33,12 @@ describe('toolListing', () => {
 
     expect(toolListing(listed, 200_000)).toBe(`- reader: Reads a file.\n- long: ${'x'.repeat(119)}…\n- bare`)
   })
+
+  it('cuts by character, so an emoji at the cut stays whole', () => {
+    const listing = toolListing([spec('emoji', `${'a'.repeat(118)}😀 and more words past the limit.`)], 200_000)
+
+    expect(listing).toBe(`- emoji: ${'a'.repeat(118)}😀…`)
+  })
 })
 
 describe('loaderListing', () => {
@@ -70,6 +76,27 @@ describe('KeywordToolSearcher', () => {
     }
 
     expect(await new KeywordToolSearcher().search(context)).toEqual([tools[3], tools[0]])
+  })
+
+  it('leaves common words out of the query', async () => {
+    const make = (name: string, description: string): Tool =>
+      tool({ name, description, inputSchema: z.object({ city: z.string() }), callback: () => 'ok' })
+    const tools = [
+      make('get_weather', 'Get the current weather for a city.'),
+      make('github_list_issues', 'List the open issues in a repository.'),
+      make('slack_list_channels', 'List the channels in a workspace.'),
+    ]
+    const search = (query: string): Promise<readonly Tool[] | undefined> =>
+      new KeywordToolSearcher().search({
+        query,
+        tools,
+        limit: 5,
+        agent: {} as LocalAgent,
+        cancelSignal: new AbortController().signal,
+      })
+
+    expect(await search('weather in paris')).toEqual([tools[0]])
+    expect(await search('the')).toEqual([])
   })
 })
 

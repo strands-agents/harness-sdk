@@ -168,7 +168,7 @@ export function formatResponsesRequest(
 /**
  * The request's tools: a function per spec, each deferred one with `defer_loading`. When the request defers tools,
  * the loader becomes a client tool search, or the provider's tool search takes its place under `serverToolSearch`
- * unless the caller configured one.
+ * or when the caller configured one, since a request takes one tool search.
  */
 function formatTools(
   toolSpecs: ToolSpec[],
@@ -176,13 +176,13 @@ function formatTools(
   existingTools: readonly Tool[]
 ): Tool[] {
   const deferred = deferral?.deferred ?? new Set<string>()
+  const configured = existingTools.some((tool) => tool.type === 'tool_search')
   const tools = toolSpecs.flatMap((spec): Tool[] => {
     if (!deferral || deferred.size === 0 || !isLoaderName(spec.name)) {
       return [functionTool(spec, deferred.has(spec.name))]
     }
-    return deferral.onServer ? [] : [clientToolSearch(spec, deferral.listing)]
+    return deferral.onServer || configured ? [] : [clientToolSearch(spec, deferral.listing)]
   })
-  const configured = existingTools.some((tool) => tool.type === 'tool_search')
   if (deferral?.onServer && !configured) tools.push({ type: 'tool_search' })
   return tools
 }
