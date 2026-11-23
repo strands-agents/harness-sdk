@@ -97,6 +97,10 @@ How caching reaches the provider depends on the provider:
 - On Google, caching happens automatically server-side, so there is nothing for Strands harness to
   configure.
 
+On models with only implicit caching, such as OpenAI models on the Amazon Bedrock Converse API, the
+context Strands harness injects each turn changes the request and breaks the cache. See
+[Prompt caching: known gaps](../../../sdk/model-providers/prompt-caching/#known-gaps).
+
 Pass `caching` off to disable what Strands harness configures:
 
 <Tabs>
