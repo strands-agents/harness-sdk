@@ -27,7 +27,7 @@ import { isMissingPathError, strandsUserPath } from '../paths.js'
 import { errorMessage, isControlCharacter } from '../terminal/text.js'
 import { withProcessLock, type LockBusyMessage } from '../process-lock.js'
 import { isRecord } from '../values.js'
-import { DEFAULT_CHAT_SETTINGS, parseSettings, type ChatSettings } from './settings.js'
+import { DEFAULT_CHAT_SETTINGS, migrateSavedSettings, parseSettings, type ChatSettings } from './settings.js'
 
 export {
   applyProviderEnvironmentValues,
@@ -628,7 +628,9 @@ function layeredValues(base: LayeredValues, saved: unknown, source: string): Lay
     throw new Error(`Invalid CLI settings in ${source}: cli.providers must be an object`)
   }
   return {
-    settings: saved.settings ? parseSettings({ ...base.settings, ...saved.settings }) : base.settings,
+    settings: saved.settings
+      ? parseSettings({ ...base.settings, ...migrateSavedSettings(saved.settings) })
+      : base.settings,
     permissions: saved.permissions === undefined ? base.permissions : parsePermissions(saved.permissions, source),
     providers: providers?.enabled === undefined ? base.providers : parseProviders(providers, source),
     providerEnvironment:

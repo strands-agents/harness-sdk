@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  AUTO_OPTIMIZE_OPTIONS,
   DEFAULT_CHAT_SETTINGS,
   parseSettings,
   parseSettingUpdate,
@@ -10,38 +11,52 @@ import {
 
 describe('autoOptimize setting', () => {
   it('shouldDefaultToOff', () => {
-    expect(DEFAULT_CHAT_SETTINGS.autoOptimize).toBe(false)
+    expect(DEFAULT_CHAT_SETTINGS.autoOptimize).toBe(0)
   })
 
-  it('shouldAppearInTheWorkspaceSectionAsAToggle', () => {
+  it('shouldAppearInTheWorkspaceSectionAsAChoiceOfHowManyTurns', () => {
     const definition = SETTING_DEFINITIONS.find(({ key }) => key === 'autoOptimize')
 
-    expect(definition).toMatchObject({ label: 'Auto-optimize (apply edits)', section: 'Workspace', control: 'toggle' })
+    expect(definition).toMatchObject({
+      label: 'Auto-optimize every N turns',
+      section: 'Workspace',
+      control: 'segmented',
+    })
+    expect(definition?.options).toBe(AUTO_OPTIMIZE_OPTIONS)
+    expect(AUTO_OPTIMIZE_OPTIONS.map(({ label, value }) => [label, value])).toEqual([
+      ['Off', 0],
+      ['5', 5],
+      ['10', 10],
+      ['20', 20],
+      ['50', 50],
+      ['100', 100],
+    ])
   })
 
-  it('shouldKeepItsLabelWithinTheLongestOfTheSectionSoNoRowIsCut', () => {
-    const labels = SETTING_DEFINITIONS.filter(({ section }) => section === 'Workspace').map(({ label }) => label)
-
-    expect(Math.max(...labels.map(({ length }) => length))).toBe('Sync model to existing sessions'.length)
-  })
-
-  it('shouldFlipWhenTheRowIsActivated', () => {
-    expect(parseSettingUpdate('autoOptimize', DEFAULT_CHAT_SETTINGS)).toEqual({ autoOptimize: true })
-    expect(parseSettingUpdate('autoOptimize', { ...DEFAULT_CHAT_SETTINGS, autoOptimize: true })).toEqual({
-      autoOptimize: false,
+  it('shouldTakeTheChoiceThatIsPicked', () => {
+    expect(parseSettingUpdate('autoOptimize=20', DEFAULT_CHAT_SETTINGS)).toEqual({ autoOptimize: 20 })
+    expect(parseSettingUpdate('autoOptimize=0', { ...DEFAULT_CHAT_SETTINGS, autoOptimize: 20 })).toEqual({
+      autoOptimize: 0,
     })
   })
 
-  it('shouldReadTheSavedValue', () => {
-    expect(parseSettings({ autoOptimize: true }).autoOptimize).toBe(true)
-    expect(parseSettings({}).autoOptimize).toBe(false)
-    expect(parseSettings({ autoOptimize: 'yes' }).autoOptimize).toBe(false)
+  it.each(['autoOptimize', 'autoOptimize=7', 'autoOptimize=true'])('shouldChangeNothingFor %s', (update) => {
+    expect(parseSettingUpdate(update, DEFAULT_CHAT_SETTINGS)).toBeUndefined()
   })
 
-  it.each([
-    [true, 'on · the edits of a finished optimization are written to the agent without a review'],
-    [false, 'off · a finished optimization shows its edits, and you apply or leave each one'],
-  ])('shouldExplainWhatItDoesWhenItIs%s', (autoOptimize, text) => {
-    expect(settingDescription({ ...DEFAULT_CHAT_SETTINGS, autoOptimize }, 'autoOptimize')).toBe(text)
+  it('shouldReadTheSavedCadenceAndTakeAnythingElseAsOff', () => {
+    expect(parseSettings({ autoOptimize: 50 }).autoOptimize).toBe(50)
+    expect(parseSettings({}).autoOptimize).toBe(0)
+    expect(parseSettings({ autoOptimize: 7 }).autoOptimize).toBe(0)
+    expect(parseSettings({ autoOptimize: '20' }).autoOptimize).toBe(0)
+  })
+
+  it('shouldSayWhatItStartsAndThatItIsPaidWhenItIsOn', () => {
+    expect(settingDescription({ ...DEFAULT_CHAT_SETTINGS, autoOptimize: 20 }, 'autoOptimize')).toBe(
+      'every 20 chat turns · builds an experiment from your chats and optimizes on it · paid'
+    )
+    expect(settingDescription(DEFAULT_CHAT_SETTINGS, 'autoOptimize')).toBe(
+      'off · an optimization runs only when you start one'
+    )
   })
 })

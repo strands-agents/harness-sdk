@@ -234,7 +234,7 @@ const madeInitialCopy = async (): Promise<string> => 'initial-copy'
 
 const sessionsFor = async (
   dependencies: Partial<TemporarySessionDependencies> = {},
-  settings: Pick<TemporarySessionHost, 'autoOptimize'> = {}
+  settings: Pick<TemporarySessionHost, 'settings'> = {}
 ) => {
   const workspace = await workspaceFixture()
   const { context, notices } = chat()
@@ -1871,7 +1871,7 @@ describe('TEMPORARY dev sessions', () => {
     return { workspace, sessions, run, record }
   }
 
-  const reopened = (workspace: DevWorkspace, settings: Pick<TemporarySessionHost, 'autoOptimize'> = {}) => {
+  const reopened = (workspace: DevWorkspace, settings: Pick<TemporarySessionHost, 'settings'> = {}) => {
     const { context, notices } = chat()
     const again = vi.fn()
     const host = (): TemporarySessionHost => ({
@@ -2256,12 +2256,93 @@ describe('TEMPORARY dev sessions', () => {
     expect(existsSync(join(workspace.root, 'instructions.md'))).toBe(true)
   })
 
-  describe('with auto-optimize', () => {
+  describe('an optimization that starts by itself every so many chat turns', () => {
+    const everyFive: Pick<TemporarySessionHost, 'settings'> = {
+      settings: () => ({ autoAcceptOptimizationResults: false, autoOptimize: 5 }),
+    }
+    const REQUEST = '/optimize auto-optimize: 5 chat turns since the last one'
+    const FIVE = ['one', 'two', 'three', 'four', 'five']
+
+    it('shouldSendItsRequestThroughTheChatWhenTheOptimizeCommandHearsThatManyTurnsEnd', async () => {
+      const { workspace } = await sessionsFor({}, everyFive)
+      const optimize = temporaryDevCommands(
+        workspace,
+        { root: workspace.root, entrypoint: workspace.entrypoint, language: 'python' },
+        () => ({}),
+        everyFive.settings
+      ).find(({ spec }) => spec.name === 'optimize')!
+      const { context } = chat()
+
+      // The turn that set the cadence is not counted.
+      for (const prompt of ['optimize every 5 turns', ...FIVE.slice(0, 4)]) optimize.turnEnded?.(context, { prompt })
+      await new Promise((done) => setTimeout(done, 20))
+      const before = vi.mocked(context.submit).mock.calls.length
+      optimize.turnEnded?.(context, { prompt: 'five' })
+
+      await vi.waitFor(() => expect(context.submit).toHaveBeenCalledExactlyOnceWith(REQUEST))
+      expect(before).toBe(0)
+    })
+
+    it('shouldWaitUntilTheEditsOfAFinishedRunHaveTheirAnswer', async () => {
+      const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizingProcess() }, everyFive)
+      const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+      sessions.optimize.plan(experiment)
+      await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+      sessions.optimize.start()
+      await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+      const { context } = chat()
+
+      for (const prompt of ['optimize every 5 turns', ...FIVE]) await sessions.auto.turnEnded(context, { prompt })
+      const whileTheDiffWaits = vi.mocked(context.submit).mock.calls.length
+      sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'reject' })
+      await vi.waitFor(() => expect(sessions.optimize.snapshot()).toMatchObject({ review: { reviewed: true } }))
+      await sessions.auto.turnEnded(context, { prompt: 'six' })
+
+      expect(whileTheDiffWaits).toBe(0)
+      expect(context.submit).toHaveBeenCalledExactlyOnceWith(REQUEST)
+    })
+
+    it('shouldChangeASettingThroughTheChatThatIsOpenAndSayWhenItCannot', async () => {
+      const { workspace, sessions } = await sessionsFor()
+      const unsaved = sessions.setSettings({ autoOptimize: 20 })
+      await expect(unsaved).rejects.toThrow('No chat is open to change the settings through.')
+      const setSettings = vi.fn(async () => true)
+      temporaryDevSessions({ workspace, agent: () => ({}), context: { ...chat().context, setSettings } })
+
+      await sessions.setSettings({ autoOptimize: 20 })
+      setSettings.mockResolvedValueOnce(false)
+
+      expect(setSettings).toHaveBeenCalledExactlyOnceWith({ autoOptimize: 20 })
+      await expect(sessions.setSettings({ autoOptimize: 5 })).rejects.toThrow('The setting could not be saved.')
+    })
+
+    it('shouldGiveTheSettingsOfTheWorkspaceAsTheyAreNow', async () => {
+      let every = 5
+      const { sessions } = await sessionsFor(
+        {},
+        { settings: () => ({ autoAcceptOptimizationResults: true, autoOptimize: every }) }
+      )
+
+      const before = sessions.settings()
+      every = 20
+
+      expect(before).toMatchObject({ autoOptimize: 5, autoAcceptOptimizationResults: true })
+      expect(sessions.settings()).toMatchObject({ autoOptimize: 20 })
+      expect(await sessions.auto.status()).toEqual({ everyTurns: 20, turnsSince: 0 })
+    })
+  })
+
+  describe('with auto-accept', () => {
+    /** The settings of a workspace whose finished runs are written without a review, or not. */
+    const accepting = (on: () => boolean = () => true): Pick<TemporarySessionHost, 'settings'> => ({
+      settings: () => ({ autoAcceptOptimizationResults: on(), autoOptimize: 0 }),
+    })
+
     const planned = async (
       optimizing: NonNullable<TemporarySessionDependencies['spawnOptimizer']>,
       on: () => boolean = () => true
     ) => {
-      const opened = await sessionsFor({ spawnOptimizer: optimizing }, { autoOptimize: on })
+      const opened = await sessionsFor({ spawnOptimizer: optimizing }, accepting(on))
       const experiment = await savedExperiment(opened.workspace, ['c0', 'c1', 'c2', 'c3'])
       opened.sessions.optimize.plan(experiment)
       await vi.waitFor(() => expect(opened.sessions.optimize.snapshot().step).toBe('setup'))
@@ -2286,12 +2367,7 @@ describe('TEMPORARY dev sessions', () => {
       let on = false
       const { workspace, sessions } = await sessionsFor()
       const project = { root: workspace.root, entrypoint: workspace.entrypoint, language: 'python' as const }
-      const commands = temporaryDevCommands(
-        workspace,
-        project,
-        () => ({}),
-        () => on
-      )
+      const commands = temporaryDevCommands(workspace, project, () => ({}), accepting(() => on).settings)
       commands.find(({ spec }) => spec.name === 'ask')!.attach?.(chat().context)
 
       const before = sessions.optimize.autoApplies()
@@ -2329,8 +2405,8 @@ describe('TEMPORARY dev sessions', () => {
       expect(temporaryOptimizeJobs(sessions.optimize.snapshot())).toEqual([])
       const record = recordOf(optimizing.mock.calls[0]![0].args)
       expect(notices.map(({ text }) => text).filter((text) => text.startsWith('optimize · '))).toEqual([
-        `optimize · run ${optimizationName(record)} finished · auto-optimize is on · applying 1 edit`,
-        'optimize · auto-optimize applied instructions.md · run the experiment again from /experiment to check your agent',
+        `optimize · run ${optimizationName(record)} finished · auto-accept is on · applying 1 edit`,
+        'optimize · auto-accept applied instructions.md · run the experiment again from /experiment to check your agent',
       ])
       expect(sessions.optimize.appliedChanges()).toEqual([
         expect.objectContaining({ auto: true, edits: [expect.objectContaining({ after: WINNER })] }),
@@ -2340,7 +2416,7 @@ describe('TEMPORARY dev sessions', () => {
 
     const APPLIED = {
       status: 'success',
-      text: 'optimize · auto-optimize applied instructions.md · run the experiment again from /experiment to check your agent',
+      text: 'optimize · auto-accept applied instructions.md · run the experiment again from /experiment to check your agent',
     }
 
     /** The chat that opens `after` milliseconds past the write of a run's edits, and what it was told. */
@@ -2432,7 +2508,7 @@ describe('TEMPORARY dev sessions', () => {
 
     it('shouldLeaveAReviewThatWaitedWhenStrandsDevClosedWaitingWhenItOpensAgain', async () => {
       const { workspace, record } = await closedOnAReview()
-      const { optimize, notices } = reopened(workspace, { autoOptimize: () => true })
+      const { optimize, notices } = reopened(workspace, accepting())
 
       await optimize.resume()
 
@@ -2461,7 +2537,7 @@ describe('TEMPORARY dev sessions', () => {
         await readFile(resumeRecordOf(record), 'utf8')
       ) as Record<string, unknown>
       await writeFileAt(resumeRecordOf(record), JSON.stringify({ ...asTheRunLeftIt, pid: 999999 }))
-      const { optimize, notices, again } = reopened(workspace, { autoOptimize: () => true })
+      const { optimize, notices, again } = reopened(workspace, accepting())
 
       await optimize.resume()
 
@@ -2472,7 +2548,7 @@ describe('TEMPORARY dev sessions', () => {
       expect(optimize.onReview).not.toHaveBeenCalled()
       expect(again).not.toHaveBeenCalled()
       expect(notices.map(({ text }) => text)).toContainEqual(
-        'optimize · auto-optimize applied instructions.md · run the experiment again from /experiment to check your agent'
+        'optimize · auto-accept applied instructions.md · run the experiment again from /experiment to check your agent'
       )
     })
   })

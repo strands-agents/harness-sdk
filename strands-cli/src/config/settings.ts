@@ -26,6 +26,18 @@ export const CONTEXT_OFFLOAD_THRESHOLD_OPTIONS = [
 
 export type ContextOffloadThreshold = (typeof CONTEXT_OFFLOAD_THRESHOLD_OPTIONS)[number]['value']
 
+/** How many chat turns pass between the optimizations that strands dev starts by itself; 0 starts none. */
+export const AUTO_OPTIMIZE_OPTIONS = [
+  { label: 'Off', value: 0 },
+  { label: '5', value: 5 },
+  { label: '10', value: 10 },
+  { label: '20', value: 20 },
+  { label: '50', value: 50 },
+  { label: '100', value: 100 },
+] as const
+
+export type AutoOptimizeCadence = (typeof AUTO_OPTIMIZE_OPTIONS)[number]['value']
+
 export const SETTINGS_CATEGORIES = [
   {
     id: 'Appearance',
@@ -95,7 +107,9 @@ export interface ChatSettings {
   /** Apply model changes made in a strands dev session to existing saved sessions. */
   sessionModelSync: boolean
   /** Write the edits of a finished strands dev optimization to the agent source without showing them for review. */
-  autoOptimize: boolean
+  autoAcceptOptimizationResults: boolean
+  /** Start a strands dev optimization from the chat history every this many chat turns; 0 starts none. */
+  autoOptimize: AutoOptimizeCadence
 }
 
 export type ThemeSettings = Pick<ChatSettings, 'frogTheme'>
@@ -114,7 +128,8 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   updatePrompts: true,
   contextOffloadThreshold: 'default',
   sessionModelSync: false,
-  autoOptimize: false,
+  autoAcceptOptimizationResults: false,
+  autoOptimize: 0,
 }
 
 export type SettingKey =
@@ -130,6 +145,7 @@ export type SettingKey =
   | 'updatePrompts'
   | 'contextOffloadThreshold'
   | 'sessionModelSync'
+  | 'autoAcceptOptimizationResults'
   | 'autoOptimize'
 
 export interface SettingDefinition {
@@ -238,7 +254,14 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
   },
   {
     key: 'autoOptimize',
-    label: 'Auto-optimize (apply edits)',
+    label: 'Auto-optimize every N turns',
+    section: 'Workspace',
+    control: 'segmented',
+    options: AUTO_OPTIMIZE_OPTIONS,
+  },
+  {
+    key: 'autoAcceptOptimizationResults',
+    label: 'Auto-accept optimization results',
     section: 'Workspace',
     control: 'toggle',
     options: [
@@ -296,10 +319,14 @@ export function settingDescription(settings: ChatSettings, key: SettingKey): str
       return settings.updatePrompts
         ? 'on · asks before installing an available update'
         : 'off · available updates remain visible in the footer'
-    case 'autoOptimize':
-      return settings.autoOptimize
+    case 'autoAcceptOptimizationResults':
+      return settings.autoAcceptOptimizationResults
         ? 'on · the edits of a finished optimization are written to the agent without a review'
         : 'off · a finished optimization shows its edits, and you apply or leave each one'
+    case 'autoOptimize':
+      return settings.autoOptimize === 0
+        ? 'off · an optimization runs only when you start one'
+        : `every ${settings.autoOptimize} chat turns · builds an experiment from your chats and optimizes on it · paid`
     case 'sessionModelSync':
       return settings.sessionModelSync
         ? 'on · existing sessions use the current model configuration'
@@ -311,10 +338,21 @@ export function settingDescription(settings: ChatSettings, key: SettingKey): str
   }
 }
 
-export function parseSettings(value: unknown): ChatSettings {
-  if (!isRecord(value)) {
+/**
+ * Saved settings in today's names. Until the two were split, autoOptimize was the on/off of what is now
+ * autoAcceptOptimizationResults; merge saved settings over others only after this, or the old value is lost.
+ */
+export function migrateSavedSettings(saved: Record<string, unknown>): Record<string, unknown> {
+  if (typeof saved.autoOptimize !== 'boolean') return saved
+  const { autoOptimize, ...rest } = saved
+  return { autoAcceptOptimizationResults: autoOptimize, ...rest }
+}
+
+export function parseSettings(saved: unknown): ChatSettings {
+  if (!isRecord(saved)) {
     return globalThis.structuredClone(DEFAULT_CHAT_SETTINGS)
   }
+  const value = migrateSavedSettings(saved)
   const booleanSetting = (key: keyof ChatSettings): boolean => {
     const selected = value[key]
     return typeof selected === 'boolean' ? selected : DEFAULT_CHAT_SETTINGS[key] === true
@@ -354,7 +392,10 @@ export function parseSettings(value: unknown): ChatSettings {
     updatePrompts: booleanSetting('updatePrompts'),
     contextOffloadThreshold,
     sessionModelSync: booleanSetting('sessionModelSync'),
-    autoOptimize: booleanSetting('autoOptimize'),
+    autoAcceptOptimizationResults: booleanSetting('autoAcceptOptimizationResults'),
+    autoOptimize:
+      AUTO_OPTIMIZE_OPTIONS.find(({ value: option }) => option === value.autoOptimize)?.value ??
+      DEFAULT_CHAT_SETTINGS.autoOptimize,
   }
 }
 
@@ -379,7 +420,7 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     case 'telemetry':
     case 'updatePrompts':
     case 'sessionModelSync':
-    case 'autoOptimize':
+    case 'autoAcceptOptimizationResults':
       return { [name]: !current[name] }
     case 'toolOutput':
       if (selected !== undefined && selected !== 'hidden' && selected !== 'compact' && selected !== 'full') {
@@ -393,6 +434,10 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     case 'frogTheme': {
       const frogTheme = FROG_THEMES.find((theme) => theme === selected)
       return frogTheme === undefined ? undefined : { frogTheme }
+    }
+    case 'autoOptimize': {
+      const cadence = AUTO_OPTIMIZE_OPTIONS.find(({ value }) => String(value) === selected)?.value
+      return cadence === undefined ? undefined : { autoOptimize: cadence }
     }
     case 'contextOffloadThreshold': {
       const threshold =

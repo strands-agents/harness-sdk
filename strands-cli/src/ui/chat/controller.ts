@@ -890,6 +890,7 @@ export class ChatController implements ChatControllerApi {
         await this._applyDeferredModelRestart()
         this._startBackgroundContinuation()
         this._startPendingSubmissions()
+        if (finished && mode === 'model') this._tellDevCommandsOfTurn(finished)
       }
     }
 
@@ -1630,7 +1631,12 @@ export class ChatController implements ChatControllerApi {
         const devCommand = this._typedDevCommand(command)
         if (devCommand?.skill) {
           const { skill, workflow, unavailable } = devCommand.skill
-          const request = skillCommandRequest(devCommand.spec.name, workflow, prompt)
+          const asked = parseCommandInvocation(prompt)?.argument ?? ''
+          const request = skillCommandRequest(
+            devCommand.spec.name,
+            typeof workflow === 'function' ? workflow(asked) : workflow,
+            prompt
+          )
           if ((await this._activateSkillAndRun(skill, prompt, request)) === null) {
             this._openError('skill unavailable', `/${devCommand.spec.name}`, unavailable)
           }
@@ -3199,6 +3205,22 @@ export class ChatController implements ChatControllerApi {
         if (!this._fileOpener) throw new Error('This terminal cannot open an editor.')
         await this._fileOpener(path)
       },
+      setSettings: (update): Promise<boolean> => this.setSettings(update),
+    }
+  }
+
+  /** Tells the dev commands that a turn of the developer's ended, after everything that follows a turn has started. */
+  private _tellDevCommandsOfTurn(turn: ChatTurn): void {
+    if (turn.status !== 'complete' || turn.source) return
+    const listening = this._devCommands.filter((command) => command.turnEnded)
+    if (listening.length === 0) return
+    const context = this._devCommandContext()
+    for (const command of listening) {
+      try {
+        command.turnEnded!(context, { prompt: turn.prompt })
+      } catch {
+        // A command that fails here must not take the chat with it.
+      }
     }
   }
 

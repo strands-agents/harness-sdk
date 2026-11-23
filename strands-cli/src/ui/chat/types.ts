@@ -72,6 +72,14 @@ export interface DevChatCommandContext {
   openPanel(name: string): boolean
   /** Opens a file in the developer's editor, as /config opens the agent project. */
   openFile?(path: string): Promise<void>
+  /** Changes settings as the settings panel does, for a tool the developer asked to change one. False when it failed. */
+  setSettings?(update: Partial<ChatSettings>): Promise<boolean>
+}
+
+/** A turn that just ended, as a dev command hears of it. */
+export interface DevChatTurnEnd {
+  /** What the developer sent, as the chat shows it. */
+  readonly prompt: string
 }
 
 export interface DevChatPanelProps {
@@ -121,7 +129,8 @@ export interface DevPanelOpening {
 /** Activates a skill and sends the workflow with the developer's request, instead of opening a panel. */
 export interface DevChatSkillRun {
   readonly skill: string
-  readonly workflow: string
+  /** The workflow that goes with the request, or how to pick it from what follows the command name. */
+  readonly workflow: string | ((request: string) => string)
   /** Why the skill cannot load, shown when activation finds no such skill. */
   readonly unavailable: string
   /** The request that a click on one of this command's jobs sends. */
@@ -154,6 +163,8 @@ export interface DevChatCommand {
   /** The rows this panel's content needs right now at `width` columns inside its frame, to shrink the frame to it. */
   contentRows?(width: number): number | undefined
   attach?(context: DevChatCommandContext): void
+  /** A turn that the developer started ended with a reply. Not called for a failed or cancelled one. */
+  turnEnded?(context: DevChatCommandContext, turn: DevChatTurnEnd): void
   /** The developer left this command's panel or cancelled the turn, so anything it waits on is a no. */
   abandon?(context: DevChatCommandContext): void
   jobs?: DevChatJobs

@@ -28,13 +28,25 @@ When the skill asks which experiment to use, call strands_dev_single_select with
 
 strands_dev_optimization_plan gives the knobs this agent can tune, the case split, and the budget; use them instead of reading the agent file. Offer exactly the knobs it returns, no others, even where the skill lists more. A list knob such as tools or MCP servers turns each entry on or off; pass --tune KEY for each one picked, such as --tune tools. A knob with notInCall is an option the call leaves out: the run starts it from the strands-harness default, and applying its edit writes the option into the call, so say that in the review. In the constraints question, leave out the skill's list of what can be constrained: no parenthetical of metrics in the question or the rows. Ask the budget in one strands_dev_number_input, one field per setting (steps, candidates, runs, finalists, trials at once), each with the plan's value and min. Any whole number from the min works; the estimate says when the total passes the rollout cap.
 
-Print the review in chat in the skill's own format and end the turn; the developer's reply approves it or changes a row. When strands_dev_optimization_plan returns autoOptimize, say in the review that the edits will be applied without a diff. When the run finishes, its edits appear on the developer's screen as a diff, and they apply or leave each one there; an applied edit is written and hot-reloaded without you. Report the run in a line or two, the score before and after, and do not print the edit text or ask which edits to apply, even where the skill says to apply the best version when asked. A diff closed without an answer keeps waiting on its line below the chat input; strands_dev_review_optimization puts it back on screen. Call strands_dev_apply_optimization only for edits the developer names in chat. Read a run through strands_dev_status, never the files of its run folder such as best.diff or best.values.json, and do not write the skill's named copy of the experiment: strands dev names every case. Skip the skill's "Resuming a run" section: strands dev continues a stopped run itself. Where the skill says a TypeScript agent's steps are traced, they are not here: strands dev runs a TypeScript agent in its own runner, which records the answer and the token usage but no trace, so strands_dev_evaluators marks trace evaluators unavailable. Explain an incompatible experiment instead of removing its evaluators.`
+Print the review in chat in the skill's own format and end the turn; the developer's reply approves it or changes a row. When strands_dev_optimization_plan returns autoAccept, say in the review that the edits will be applied without a diff. When the run finishes, its edits appear on the developer's screen as a diff, and they apply or leave each one there; an applied edit is written and hot-reloaded without you. Report the run in a line or two, the score before and after, and do not print the edit text or ask which edits to apply, even where the skill says to apply the best version when asked. A diff closed without an answer keeps waiting on its line below the chat input; strands_dev_review_optimization puts it back on screen. Call strands_dev_apply_optimization only for edits the developer names in chat. Read a run through strands_dev_status, never the files of its run folder such as best.diff or best.values.json, and do not write the skill's named copy of the experiment: strands dev names every case. Skip the skill's "Resuming a run" section: strands dev continues a stopped run itself. Where the skill says a TypeScript agent's steps are traced, they are not here: strands dev runs a TypeScript agent in its own runner, which records the answer and the token usage but no trace, so strands_dev_evaluators marks trace evaluators unavailable. Explain an incompatible experiment instead of removing its evaluators.`
 
 const BACKGROUND_EVALS = `# Run strands-evals in the background
 
 strands dev runs strands-evals commands for you with strands_dev_run_background, in its prepared evals environment and with the agent of this workspace. Pass the command (run, optimize run, or generate), the experiment name, and the flags the skill would pass in args; leave out --agent, the experiment file, and the output paths, which strands dev sets. Each run starts at once, shows its progress on a line below the chat input, writes run.log under strands-dev/experiments/<name>/, and posts a notice when it finishes. A run that stopped when strands dev closed continues by itself at the next start, so there is no resume command.
 
 Read the results with strands_dev_status and strands_dev_evaluation_results. Stop a run with strands_dev_stop_background only when the developer asks; cancelling the chat turn leaves it running. List the evaluators with strands_dev_evaluators.`
+
+const AUTO_OPTIMIZE_COMMAND = `# /optimize auto-optimize
+
+The optimize skill is active, and this chat runs in strands dev. This request starts an optimization from the chats of the developer with this agent. strands dev sends it when they turned on Auto-optimize every N turns in /settings and that many chat turns have passed; they can also type it. Either way it is their approval of this run and of what it costs. So ask nothing, show no question on screen, print no review, and wait for no approval, also where a skill says to. Do it all in this turn:
+
+1. Make an experiment from their chats with this agent. Call strands_dev_session_converter and follow what it returns, with two changes: answer each of its questions yourself with the option it recommends, and include this chat, although its rules say to skip it. Name the experiment history-<year><month><day>-<hour><minute>.
+2. Score it only with evaluators that strands_dev_evaluators lists as available: call it before you write the evaluators, and where the skill picks one that is unavailable, take the nearest available one. The optimizer refuses an experiment with an unavailable evaluator.
+3. When the chats give fewer than three cases, say in one line that there is too little history to tune on yet, and stop.
+4. Start the optimizer on that experiment through the background-evals skill, never from a shell, with the knobs and the budget that strands_dev_optimization_plan gives by default.
+5. Say in two lines what you made and what you started. When the run finishes, its edits show on the developer's screen as a diff, or are written without one when strands_dev_optimization_plan returned autoAccept.
+
+When a step fails, say what failed in one line and stop. With Auto-optimize on, the next run comes after the same number of turns.`
 
 /** Runtime-only guidance that the skill commands and plain requests share. */
 export const temporaryWorkflowSkills = (): AgentExtensionInlineSkill[] => [
@@ -47,6 +59,9 @@ export const temporaryWorkflowSkills = (): AgentExtensionInlineSkill[] => [
     instructions: BACKGROUND_EVALS,
   },
 ]
+
+/** What /optimize sends instead of its own workflow when the request is the one auto-optimize makes. */
+export const temporaryAutoOptimizeWorkflow = AUTO_OPTIMIZE_COMMAND
 
 /** The text that each skill command sends with its skill. */
 export const temporaryCommandWorkflows = {

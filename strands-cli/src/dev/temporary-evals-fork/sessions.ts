@@ -55,7 +55,17 @@ import { temporaryWorkspaceReady } from './layout-migration.js'
 import { TemporaryEvalsUi } from './evals-ui.js'
 import { readTemporaryExperimentFile, readTemporaryRunnableCases, temporaryCaseCount } from './experiment-files.js'
 import { TemporaryExperiments } from './experiments-session.js'
-import { announce, plural, absolutePath, evalsLinkText, type TemporaryHost, type TemporarySessionHost } from './host.js'
+import {
+  announce,
+  plural,
+  absolutePath,
+  evalsLinkText,
+  type TemporaryDevSettings,
+  type TemporaryHost,
+  type TemporarySessionHost,
+} from './host.js'
+import { TemporaryAutoOptimize } from './auto-optimize.js'
+import type { ChatSettings } from '../../config/settings.js'
 import { temporaryJudgeEvaluatorCount } from './evaluators.js'
 import { Store, watchTemporaryFileCount, type TemporaryTail } from './jobs.js'
 import {
@@ -123,7 +133,7 @@ export interface TemporaryAppliedChange {
   readonly testCheck?: TestCheck
   readonly edits: readonly ProposedEdit[]
   readonly error?: string
-  /** Auto-optimize wrote these edits as the run ended: the developer did not see them first. */
+  /** Auto-accept wrote these edits as the run ended: the developer did not see them first. */
   readonly auto?: boolean
 }
 
@@ -131,6 +141,12 @@ export interface TemporaryDevSessions {
   readonly experiments: TemporaryExperiments
   readonly test: TemporaryTest
   readonly optimize: TemporaryOptimize
+  /** Starts an optimization from the chats every so many chat turns, when the developer set that. */
+  readonly auto: TemporaryAutoOptimize
+  /** Changes a setting of the workspace through the chat screen, as its settings panel does. */
+  readonly setSettings: (update: Partial<ChatSettings>) => Promise<void>
+  /** The settings of the workspace as they are now. */
+  readonly settings: () => TemporaryDevSettings | undefined
   readonly ui: TemporaryEvalsUi
   readonly ask: WizardBroker
   /** Opens a file in the developer's editor through the chat screen; a relative path is from the agent folder. */
@@ -140,7 +156,7 @@ export interface TemporaryDevSessions {
 const DEFAULT_ITERATIONS = 4
 const SOURCE_SETTLE_MS = 300
 const RELOAD_WINDOW_MS = 15_000
-// Auto-optimize writes as the agent starts reporting the run, and the reload waits for that turn to end.
+// Auto-accept writes as the agent starts reporting the run, and the reload waits for that turn to end.
 const AUTO_RELOAD_WINDOW_MS = 120_000
 const WIDTH = 4
 const REPETITIONS = 1
@@ -216,7 +232,7 @@ export const temporaryOptimizeJobs = ({ runs = [] }: OptimizeState): DevChatJob[
       : []
   })
 
-/** Every edit the screen would have offered, answered with apply: what auto-optimize does in the developer's place. */
+/** Every edit the screen would have offered, answered with apply: what auto-accept does in the developer's place. */
 const autoAnswered = (review: OptimizeReview): OptimizeReview => ({
   ...review,
   auto: true,
@@ -755,7 +771,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
   }
 
   autoApplies(): boolean {
-    return this.host().autoOptimize?.() ?? false
+    return this.host().settings?.().autoAcceptOptimizationResults ?? false
   }
 
   finishReview(id: string): void {
@@ -1274,7 +1290,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
         ready === 0
           ? 'no edits to apply'
           : auto
-            ? `auto-optimize is on · applying ${plural(ready, 'edit')}`
+            ? `auto-accept is on · applying ${plural(ready, 'edit')}`
             : `showing ${plural(ready, 'edit')}`
       const folder = await temporaryRunFolder(record).catch(() => undefined)
       const link = evalsLinkText(this.host(), { view: 'optimization', record }, folder)
@@ -1286,7 +1302,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
       return
     }
     if (ready === 0) return
-    // With auto-optimize the edits are answered already, so there is nothing to show: they are written here.
+    // With auto-accept the edits are answered already, so there is nothing to show: they are written here.
     if (auto) await this.applyAccepted(entry)
     else this.onReview?.(entry.id)
   }
@@ -1456,7 +1472,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
     this.settleReview(entry)
     const did = applied.length > 0 ? `applied ${applied.join(', ')}` : 'changed nothing'
     // Nobody saw these edits before they were written, so the notice says who applied them.
-    const changed = review.auto ? `auto-optimize ${did}` : did
+    const changed = review.auto ? `auto-accept ${did}` : did
     const notice = {
       status: applyError ? ('error' as const) : ('success' as const),
       text: applyError
@@ -1481,10 +1497,21 @@ export const temporaryDevSessions = (host: TemporarySessionHost): TemporaryDevSe
   let latest = host
   const current = (): TemporarySessionHost => latest
   const experiments = new TemporaryExperiments(current)
+  const optimize = new TemporaryOptimize(current, experiments)
   const sessions = {
     experiments,
     test: new TemporaryTest(current, experiments),
-    optimize: new TemporaryOptimize(current, experiments),
+    optimize,
+    // A run that is going, or one whose edits still wait for an answer, is done with before the next one starts.
+    auto: new TemporaryAutoOptimize(current, {
+      busy: (): boolean => temporaryOptimizeJobs(optimize.snapshot()).length > 0,
+    }),
+    setSettings: async (update: Partial<ChatSettings>): Promise<void> => {
+      const set = latest.context?.setSettings
+      if (!set) throw new Error('No chat is open to change the settings through.')
+      if (!(await set(update))) throw new Error('The setting could not be saved.')
+    },
+    settings: (): TemporaryDevSettings | undefined => latest.settings?.(),
     ui: new TemporaryEvalsUi(current, host.evalsUi),
     ask: new WizardBroker((event) =>
       recordDevEvent(event === 'shown' ? 'ask_shown' : event === 'answered' ? 'ask_answered' : 'ask_cancelled')

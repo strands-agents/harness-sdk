@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { JSONValue } from '@strands-agents/sdk'
 
 import { errorMessage } from '../../terminal/text.js'
+import { AUTO_OPTIMIZE_OPTIONS } from '../../config/settings.js'
 import type { DevChatPart, DevChatTool } from '../chat-extension.js'
 import { STRANDS_EVALS_OPTIMIZE_SKILL, STRANDS_EVALS_SKILL } from '../evals-skill.js'
 import { isGenerating, type CrashScore } from '../panels/model.js'
@@ -85,7 +86,9 @@ const INSTRUCTIONS = `For experiments, evaluations, and test cases, activate the
 
 Runs cost money. Name the scope in chat and end the turn; start a run only after the developer approves it in a later turn. Being asked to run, test, or improve something is not that approval. In /experiment, picking Run, or the experiments to run, on screen is the approval.
 
-When an optimization run finishes, its edits appear on the developer's screen as a diff, and they apply or leave each edit there, unless auto-optimize applies them. Do not print the edits or ask in chat which ones to apply; strands_dev_review_optimization puts a closed diff back on screen. A message that comes with a <strands_dev_screen> block was written while that diff was on their screen: when it answers the diff, such as "approve this" or "leave it", pick for them with strands_dev_answer_review as the block says, and do not ask them to confirm. Call strands_dev_apply_optimization only for edits the developer names in chat when no diff of them is on screen. strands_dev_status gives each edit's answer: one they left as it is has been answered, so a bare "yes" never applies it.
+When an optimization run finishes, its edits appear on the developer's screen as a diff, and they apply or leave each edit there, unless auto-accept writes them. Do not print the edits or ask in chat which ones to apply; strands_dev_review_optimization puts a closed diff back on screen. A message that comes with a <strands_dev_screen> block was written while that diff was on their screen: when it answers the diff, such as "approve this" or "leave it", pick for them with strands_dev_answer_review as the block says, and do not ask them to confirm. Call strands_dev_apply_optimization only for edits the developer names in chat when no diff of them is on screen. strands_dev_status gives each edit's answer: one they left as it is has been answered, so a bare "yes" never applies it.
+
+Optimization can also run by itself. Auto-optimize every N turns makes an experiment from the chats of the developer with this agent every N chat turns and tunes the agent on it; Auto-accept optimization results writes the edits of a finished run without showing them. Both are in /settings under Strands dev workspace, and strands_dev_auto_optimize reads and sets them, so do not search files for how they work. When the developer asks for it, such as "optimize every 20 turns from my history", say what it does and that every automatic run is paid. A question whether you can is not yet a request: set it once they say to.
 
 Answer what was asked from tool output of this turn: call strands_dev_status again whenever the question is what exists, because runs and files change between turns. Ask the developer to choose or enter numbers with the strands_dev_ UI tools, and ask a free-form question in chat. When a question comes back interrupted, the developer wrote to you instead of answering: reply to that message and end the turn, and never take its unsubmitted draft as the answer. Never make up the evals UI address; pass on only what strands_dev_open_evals_ui returns, as a markdown link with a short label such as [open the run](url).`
 
@@ -124,6 +127,13 @@ const text = (input: Input, key: string): string | undefined => {
 const requiredText = (input: Input, key: string): string => {
   const value = text(input, key)
   if (!value) throw new Error(`${key} is required.`)
+  return value
+}
+
+const flag = (input: Input, key: string): boolean | undefined => {
+  const value = input[key]
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'boolean') throw new Error(`${key} must be true or false.`)
   return value
 }
 
@@ -244,7 +254,7 @@ const generationStatus = ({ name, phase, made, failed, total, error, log }: Gene
 
 /**
  * What the developer answered for an edit, on screen or through the agent. An edit they were never offered has no
- * answer, and neither has one that auto-optimize or an older apply wrote without asking.
+ * answer, and neither has one that auto-accept or an older apply wrote without asking.
  */
 const answerOf = (edit: ProposedEdit, { auto, applied, reviewed }: OptimizeReview): string | undefined => {
   if (edit.unavailable !== undefined || auto) return undefined
@@ -273,13 +283,13 @@ const reviewReport = (review: OptimizeReview): object => {
     ),
     applied,
     applyError,
-    // Written by the auto-optimize setting as the run ended: the developer saw no diff of these edits.
+    // Written by the auto-accept setting as the run ended: the developer saw no diff of these edits.
     autoApplied: auto ? true : undefined,
   })
 }
 
 const AUTO_PLAN =
-  'Auto-optimize is on in the settings of this workspace: when this run finishes, strands dev writes its edits to ' +
+  'Auto-accept optimization results is on in the settings of this workspace: when this run finishes, strands dev writes its edits to ' +
   'the agent source without showing them. Say so in the review the developer approves before the run starts. A ' +
   'run they stop early is not applied. They turn the setting off in /settings, under Strands dev workspace.'
 
@@ -446,6 +456,67 @@ const sessionConverterTool = (history: TemporarySessionHistory): DevChatTool => 
   run: (): Promise<string> => history.converter(),
 })
 
+const AUTO_OPTIMIZE_TURNS = AUTO_OPTIMIZE_OPTIONS.map(({ value }) => value)
+
+const AUTO_OPTIMIZE_ON =
+  'Every that many chat turns, strands dev sends you an "/optimize auto-optimize" request: you then make an ' +
+  'experiment from the chats of the developer with this agent and start an optimization on it, without asking. ' +
+  'Each one is a paid run. A new everyTurns starts the count at 0 after the turn that set it.'
+
+const autoOptimizeReport = async (sessions: Sessions): Promise<object> => {
+  const { everyTurns, turnsSince } = await sessions().auto.status()
+  const accept = sessions().settings()?.autoAcceptOptimizationResults ?? false
+  return {
+    autoOptimize:
+      everyTurns === 0
+        ? { everyTurns: 0, state: 'off: an optimization starts only when the developer asks for one' }
+        : { everyTurns, turnsSinceTheLastOne: turnsSince, state: AUTO_OPTIMIZE_ON },
+    autoAcceptOptimizationResults: accept
+      ? 'on: the edits of a finished run are written to the agent source without a diff to answer'
+      : 'off: the edits of a finished run show as a diff, and the developer applies or leaves each one',
+    choices: { everyTurns: AUTO_OPTIMIZE_TURNS },
+    where: 'Both are in /settings, under Strands dev workspace.',
+  }
+}
+
+const autoOptimizeTool = (sessions: Sessions): DevChatTool => ({
+  name: 'strands_dev_auto_optimize',
+  description:
+    'Read or change the two settings that make optimization automatic in this workspace. everyTurns starts an ' +
+    'optimization by itself every that many chat turns, from an experiment made of the chats of the developer with ' +
+    'this agent: what they mean by "optimize every 20 turns from my history". acceptResults writes the edits of a ' +
+    'finished run to the agent source without showing them. With no input it reads both. Change one only when the ' +
+    'developer asks for that change, after you said that each automatic run is paid.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      everyTurns: {
+        type: 'integer',
+        enum: [...AUTO_OPTIMIZE_TURNS],
+        description: 'How many chat turns pass between the automatic optimizations. 0 turns them off.',
+      },
+      acceptResults: {
+        type: 'boolean',
+        description: 'Whether the edits of a finished run are written without a diff to answer.',
+      },
+    },
+    additionalProperties: false,
+  },
+  run: async (input): Promise<string> => {
+    const every = input.everyTurns
+    const cadence = AUTO_OPTIMIZE_OPTIONS.find(({ value }) => value === every)?.value
+    if (every !== undefined && every !== null && cadence === undefined)
+      throw new Error(`everyTurns must be one of ${AUTO_OPTIMIZE_TURNS.join(', ')}.`)
+    const accept = flag(input, 'acceptResults')
+    if (cadence !== undefined || accept !== undefined)
+      await sessions().setSettings({
+        ...(cadence === undefined ? {} : { autoOptimize: cadence }),
+        ...(accept === undefined ? {} : { autoAcceptOptimizationResults: accept }),
+      })
+    return reply(await autoOptimizeReport(sessions))
+  },
+})
+
 const textList = (input: Input, field: string): readonly string[] | undefined => {
   const value = input[field]
   if (value === undefined || value === null) return undefined
@@ -533,7 +604,7 @@ const planTool = (sessions: Sessions): DevChatTool => ({
         estimate: defined({ rollouts: plan.rollouts, judgeCalls: plan.judgeCalls, usage: plan.usage }),
         problem: plan.budgetProblem ?? plan.objectiveProblem,
         warning: plan.warning ?? plan.objectiveWarning,
-        autoOptimize: optimize.autoApplies() ? AUTO_PLAN : undefined,
+        autoAccept: optimize.autoApplies() ? AUTO_PLAN : undefined,
       })
     )
   },
@@ -626,7 +697,7 @@ const BACKGROUND_DETAIL =
 
 const OPTIMIZE_DETAIL =
   `${BACKGROUND_DETAIL} When it finishes, its edits appear on the developer's screen as a diff to apply or leave, ` +
-  'and an applied edit is written and hot-reloaded without you; with auto-optimize on, they are written unasked.'
+  'and an applied edit is written and hot-reloaded without you; with auto-accept on, they are written unasked.'
 
 const backgroundTool = (sessions: Sessions): DevChatTool => ({
   name: 'strands_dev_run_background',
@@ -1019,10 +1090,10 @@ const testCheckText = (check: TestCheck | undefined): string => {
 }
 
 const changeSummary = (change: TemporaryAppliedChange): string =>
-  `- ${new Date(change.appliedAt).toISOString()}: ${change.auto ? 'auto-optimize' : '/optimize'} applied ` +
+  `- ${new Date(change.appliedAt).toISOString()}: ${change.auto ? 'auto-accept' : '/optimize'} applied ` +
   `${counted(change.edits.length, 'edit')} from run ${change.run} of the experiment ${change.experiment}. ` +
   (change.auto
-    ? 'The developer has auto-optimize on, so they were not shown these edits before they were written. '
+    ? 'The developer has auto-accept on, so they were not shown these edits before they were written. '
     : '') +
   `The best candidate scored ${change.baseline.toFixed(2)} → ${change.best.toFixed(2)} on the ${change.measuredOn}.` +
   testCheckText(change.testCheck) +
@@ -1060,6 +1131,7 @@ export const temporaryDevChatPart = ({
     openFileTool(sessions),
     planTool(sessions),
     ...uiTools(() => sessions().ask),
+    autoOptimizeTool(sessions),
     reviewOptimizationTool(sessions, showReview),
     answerReviewTool(answerReview),
     applyTool(applyEdits),

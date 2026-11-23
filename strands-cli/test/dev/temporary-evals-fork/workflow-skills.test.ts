@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  temporaryAutoOptimizeWorkflow,
   temporaryCommandWorkflows,
   temporaryWorkflowSkills,
 } from '../../../src/dev/temporary-evals-fork/workflow-skills.js'
@@ -108,6 +109,39 @@ describe('/optimize constraints question', () => {
   })
 })
 
+describe('the request that auto-optimize sends', () => {
+  it('shouldMakeAnExperimentFromTheChatsAndStartARunWithoutAskingAnything', () => {
+    const workflow = temporaryAutoOptimizeWorkflow
+
+    expect(workflow).toContain('it is their approval of this run and of what it costs')
+    expect(workflow).toContain('ask nothing, show no question on screen, print no review, and wait for no approval')
+    expect(workflow).toContain('Call strands_dev_session_converter and follow what it returns')
+    expect(workflow).toContain('answer each of its questions yourself with the option it recommends')
+    expect(workflow).toContain('include this chat, although its rules say to skip it')
+    expect(workflow).toContain('Name the experiment history-<year><month><day>-<hour><minute>')
+    expect(workflow).toContain('through the background-evals skill, never from a shell')
+    expect(workflow).toContain('strands_dev_optimization_plan gives by default')
+  })
+
+  it('shouldScoreOnlyWithEvaluatorsThatCanScoreThisAgent', () => {
+    // A TypeScript agent gives no trace, and the optimizer refuses an experiment whose evaluator needs one.
+    expect(temporaryAutoOptimizeWorkflow).toContain(
+      'Score it only with evaluators that strands_dev_evaluators lists as available'
+    )
+    expect(temporaryAutoOptimizeWorkflow).toContain('The optimizer refuses an experiment with an unavailable evaluator')
+  })
+
+  it('shouldStopWhenTheChatsAreTooFewOrAStepFails', () => {
+    expect(temporaryAutoOptimizeWorkflow).toContain('fewer than three cases')
+    expect(temporaryAutoOptimizeWorkflow).toContain('When a step fails, say what failed in one line and stop')
+  })
+
+  it('shouldStayOutOfWhatOptimizeSendsForAnOrdinaryRequest', () => {
+    expect(temporaryCommandWorkflows.optimize).not.toContain('auto-optimize')
+    expect(temporaryCommandWorkflows.optimize).not.toContain('strands_dev_session_converter')
+  })
+})
+
 describe('/optimize after the run', () => {
   it('shouldLeaveTheEditsToTheDiffOnScreenAndAnswerWhatTheFetchedSkillAsks', () => {
     const { optimize } = temporaryCommandWorkflows
@@ -115,7 +149,7 @@ describe('/optimize after the run', () => {
     expect(optimize).toContain("its edits appear on the developer's screen as a diff")
     expect(optimize).toContain('do not print the edit text or ask which edits to apply')
     expect(optimize).toContain('strands_dev_review_optimization puts it back on screen')
-    expect(optimize).toContain('When strands_dev_optimization_plan returns autoOptimize')
+    expect(optimize).toContain('When strands_dev_optimization_plan returns autoAccept')
     expect(optimize).toContain('best.diff or best.values.json')
     expect(optimize).toContain('Skip the skill\'s "Resuming a run" section')
     expect(optimize).toContain("Where the skill says a TypeScript agent's steps are traced, they are not here")

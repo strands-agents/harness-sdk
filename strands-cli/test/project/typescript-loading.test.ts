@@ -761,7 +761,7 @@ const timer = setInterval(() => {
       expect(chat.getSnapshot().panel?.filters?.map(({ id }) => id)).toContain('settings:Workspace')
       expect(await chat.activatePanelRow({ label: '', description: '', value: 'settings:Workspace' })).toBe(true)
       expect(chat.getSnapshot().panel?.rows.map(({ value }) => value)).toEqual(
-        expect.arrayContaining(['workspace:edit', 'sessionModelSync', 'autoOptimize'])
+        expect.arrayContaining(['workspace:edit', 'sessionModelSync', 'autoOptimize', 'autoAcceptOptimizationResults'])
       )
     } finally {
       await chat.dispose()

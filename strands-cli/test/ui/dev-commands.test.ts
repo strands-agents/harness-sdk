@@ -620,3 +620,139 @@ describe('a message typed beside an open dev panel', () => {
     expect(String(prompts[0]).endsWith('\n\n/evaluate refunds')).toBe(true)
   })
 })
+
+describe('what a dev command hears and can change', () => {
+  const replying = (fail = false) =>
+    idleBackend({
+      async *stream() {
+        if (fail) throw new Error('The model did not answer.')
+        yield { type: 'textDelta', text: 'done' } as const
+        return { stopReason: 'endTurn' }
+      },
+    })
+
+  const listening = (): { command: DevChatCommand; heard: string[]; contexts: DevChatCommandContext[] } => {
+    const heard: string[] = []
+    const contexts: DevChatCommandContext[] = []
+    const command: DevChatCommand = {
+      ...devCommand(),
+      turnEnded: (context, { prompt }) => {
+        contexts.push(context)
+        heard.push(prompt)
+      },
+    }
+    return { command, heard, contexts }
+  }
+
+  it('shouldTellACommandOfEachTurnOfTheDeveloperThatEndedWithAReply', async () => {
+    const { command, heard } = listening()
+    const controller = new ChatController(replying(), { devCommands: [command] })
+
+    await controller.submit('first message')
+    await controller.submit('second message')
+
+    expect(heard).toEqual(['first message', 'second message'])
+  })
+
+  it('shouldNotTellACommandOfATurnThatFailed', async () => {
+    const { command, heard } = listening()
+    const controller = new ChatController(replying(true), { devCommands: [command] })
+
+    await controller.submit('a message the model does not answer')
+
+    expect(heard).toEqual([])
+  })
+
+  it('shouldKeepTheChatGoingWhenACommandFailsOnTheEndOfATurn', async () => {
+    const failing: DevChatCommand = {
+      ...devCommand(),
+      turnEnded: () => {
+        throw new Error('the command broke')
+      },
+    }
+    const controller = new ChatController(replying(), { devCommands: [failing] })
+
+    await controller.submit('first message')
+    await controller.submit('second message')
+
+    expect(controller.getSnapshot().completedTurns.map(({ prompt, status }) => [prompt, status])).toEqual([
+      ['first message', 'complete'],
+      ['second message', 'complete'],
+    ])
+  })
+
+  it('shouldLetACommandSendARequestWhenATurnEndsWhichThenRunsAsATurn', async () => {
+    const sent: unknown[] = []
+    const command: DevChatCommand = {
+      ...devCommand(),
+      turnEnded: (context, { prompt }) => {
+        if (prompt === 'the turn that makes it due') context.submit('sent by the command')
+      },
+    }
+    const controller = new ChatController(
+      idleBackend({
+        async *stream(prompt) {
+          sent.push(prompt)
+          yield { type: 'textDelta', text: 'done' } as const
+          return { stopReason: 'endTurn' }
+        },
+      }),
+      { devCommands: [command] }
+    )
+
+    await controller.submit('the turn that makes it due')
+
+    await vi.waitFor(() => expect(sent).toEqual(['the turn that makes it due', 'sent by the command']))
+  })
+
+  it('shouldLetACommandChangeASettingAsTheSettingsPanelDoes', async () => {
+    const { command, contexts } = listening()
+    const setSettings = vi.fn(async () => undefined)
+    const controller = new ChatController(replying(), { devCommands: [command], setSettings })
+    await controller.submit('a message')
+
+    const saved = await contexts[0]!.setSettings?.({ autoOptimize: 20 })
+
+    expect(saved).toBe(true)
+    expect(setSettings).toHaveBeenCalledExactlyOnceWith({ autoOptimize: 20 })
+    expect(controller.getSnapshot().settings.autoOptimize).toBe(20)
+  })
+
+  it('shouldSendTheWorkflowThatTheCommandPicksForTheRequest', async () => {
+    const prompts: unknown[] = []
+    const picking: DevChatCommand = {
+      ...skillCommand(),
+      skill: {
+        ...skillCommand().skill!,
+        workflow: (request) => (request.startsWith('auto') ? 'Ask nothing.' : 'Run the cases.'),
+      },
+    }
+    const controller = new ChatController(
+      idleBackend({
+        async *stream(prompt) {
+          prompts.push(prompt)
+          yield* []
+          return { stopReason: 'endTurn' }
+        },
+      }),
+      {
+        devCommands: [picking],
+        skills: {
+          list: async () => [],
+          activate: async (name) => ({
+            skill: { name, description: 'Evals', instructions: 'Use evals.', active: true },
+            content: 'Use evals.',
+          }),
+        },
+      }
+    )
+
+    await controller.submit('/evaluate auto: 5 turns')
+    await controller.submit('/evaluate refunds')
+
+    expect(String(prompts[0])).toContain('<strands_dev_command name="evaluate">\nAsk nothing.\n</strands_dev_command>')
+    expect(String(prompts[1])).toContain(
+      '<strands_dev_command name="evaluate">\nRun the cases.\n</strands_dev_command>'
+    )
+  })
+})

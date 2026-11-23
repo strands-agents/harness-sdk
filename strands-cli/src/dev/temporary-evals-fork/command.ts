@@ -12,10 +12,12 @@ import type { TemporaryAgentFacts } from './agent-context.js'
 import { temporaryDevChatPart as temporaryAgentTools } from './agent-tools.js'
 import { readTemporaryEvaluators } from './evaluators.js'
 import { temporaryGenerationJobs } from './experiments-session.js'
+import type { TemporaryDevSettings } from './host.js'
 import { mergedJobsFeed, temporaryJobsFeed } from './jobs.js'
 import { optimizeReviewContext, showOptimizeReview } from './review-run.js'
 import { temporarySessionHistory } from './session-converter.js'
-import { temporaryCommandWorkflows } from './workflow-skills.js'
+import { temporaryAutoOptimizeWorkflow, temporaryCommandWorkflows } from './workflow-skills.js'
+import { isAutoOptimizeRequest } from './auto-optimize.js'
 import {
   temporaryDevSessions,
   temporaryOptimizeJobs,
@@ -51,13 +53,13 @@ const OPTIMIZE_DETAILS = paragraphs(
   'The run goes on in the background, and a notice says when it finishes. Then its proposed edits appear on screen as a diff, one edit at a time: pick Apply this change or Leave it as it is. The agent source changes once every edit has an answer, and only with the edits you applied. Then run the experiment again from /experiment. Ask the agent to open the run in the evals UI for a closer look.',
   'While a diff is on screen you can also answer it in the chat: say "approve this" or "leave it", and the agent picks that choice for you. Any other message leaves the diff where it is.',
   'Esc closes a diff without an answer. The run stays on the line below the chat input, also after strands dev opens again, and clicking that line, or asking the agent, shows the diff again.',
-  'With Auto-optimize (apply edits) on in /settings, a run that finishes writes its edits to the agent source without showing them. A run that you stopped still shows its edits for review.',
+  'With Auto-accept optimization results on in /settings, a run that finishes writes its edits to the agent source without showing them. A run that you stopped still shows its edits for review.',
   'strands dev saves the records in strands-dev/experiments/<name>/optimizations/. From a shell, strands dev optimize <experiment> runs the optimizer and prints the result, but it does not change the agent source.',
   'Experimental: a fork of strands-evals runs the upstream optimizer for now, with strands-evals optimize run and strands-evals optimize resume.'
 )
 
 const evalsSkill = (
-  workflow: string,
+  workflow: DevChatSkillRun['workflow'],
   job: (id: string) => string,
   skill: AgentExtensionUrlSkill = STRANDS_EVALS_SKILL
 ): DevChatSkillRun => ({
@@ -118,7 +120,9 @@ const EVALS_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
       details: OPTIMIZE_DETAILS,
     },
     skill: evalsSkill(
-      temporaryCommandWorkflows.optimize,
+      // The request that auto-optimize makes brings its own workflow: nothing is asked, and the chats are the cases.
+      (request) =>
+        isAutoOptimizeRequest(request) ? temporaryAutoOptimizeWorkflow : temporaryCommandWorkflows.optimize,
       (id) => `how is the optimization of ${optimizationName(sessions, id) ?? 'the experiment'} going?`,
       STRANDS_EVALS_OPTIMIZE_SKILL
     ),
@@ -127,6 +131,8 @@ const EVALS_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
       optimize.reannounce()
       void optimize.resume()
     },
+    // Auto-optimize counts the chat turns and sends its own /optimize when the cadence comes round.
+    turnEnded: (context, turn): void => void sessions(context).auto.turnEnded(context, turn),
     jobs: temporaryJobsFeed(sessions().optimize, temporaryOptimizeJobs),
     backgroundTools: BACKGROUND_TOOLS,
     // A finished run's line is its review: open the diff it waits on instead of asking the chat.
@@ -190,14 +196,14 @@ export const temporaryDevCommands = (
   workspace: DevWorkspace,
   project: ImportedAgentProject,
   agent: () => TemporaryAgentFacts = () => ({}),
-  autoOptimize?: () => boolean
+  settings?: () => TemporaryDevSettings
 ): DevChatCommand[] => {
   const target = targetWorkspace(workspace, project)
   const sessions: Sessions = (context) =>
     temporaryDevSessions({
       workspace: target,
       agent,
-      ...(autoOptimize ? { autoOptimize } : {}),
+      ...(settings ? { settings } : {}),
       ...(context ? { context } : {}),
     })
   return [...EVALS_COMMANDS.map((make) => make(sessions)), askCommand(sessions)]

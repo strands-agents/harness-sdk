@@ -308,7 +308,7 @@ export interface OptimizeReview {
   readonly applyError?: string
   /** Every edit was answered on screen, so nothing is waiting on the developer. */
   readonly reviewed?: boolean
-  /** Auto-optimize answered every edit with apply when the run ended, so the developer was never asked. */
+  /** Auto-accept answered every edit with apply when the run ended, so the developer was never asked. */
   readonly auto?: boolean
 }
 

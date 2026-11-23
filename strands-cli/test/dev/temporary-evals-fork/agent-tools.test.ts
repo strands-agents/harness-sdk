@@ -154,6 +154,7 @@ const fakeSessions = () => {
   const test = state<TestState>({ runs: [] })
   const optimize = state<OptimizeState>({ step: 'pick' })
   const ui = state<EvalsBrowserState>({ status: 'ready' })
+  const settings = { autoAcceptOptimizationResults: false, autoOptimize: 0 }
   const finishRun = (run: OptimizeRunState): void =>
     optimize.set({ ...run, runs: [{ id: 'run-1', experiment: 'refunds', startedAt: 0, state: run }] })
   const sessions = {
@@ -211,6 +212,12 @@ const fakeSessions = () => {
     },
     ui: { ...ui, open: vi.fn() },
     openFile: vi.fn(async (_path: string): Promise<void> => {}),
+    auto: { status: vi.fn(async () => ({ everyTurns: settings.autoOptimize, turnsSince: 3 })) },
+    settings: vi.fn(() => settings),
+    // As the settings panel does: what is set is what the workspace then goes by.
+    setSettings: vi.fn(async (update: Partial<typeof settings>): Promise<void> => {
+      Object.assign(settings, update)
+    }),
   }
   return { sessions, experiments, test, optimize, ui, finishRun }
 }
@@ -354,12 +361,12 @@ describe('TEMPORARY dev chat instructions', () => {
     )
   })
 
-  it('shouldTellTheAgentThatAutoOptimizeMadeAChangeTheDeveloperWasNotShown', () => {
+  it('shouldTellTheAgentThatAutoAcceptMadeAChangeTheDeveloperWasNotShown', () => {
     const { part } = setup(undefined, [{ ...APPLIED, auto: true }])
 
     expect(part.instructions).toContain(
-      '- 2026-11-17T14:52:03.000Z: auto-optimize applied 3 edits from run 20261117-144415-diffs of the experiment diffs. ' +
-        'The developer has auto-optimize on, so they were not shown these edits before they were written. ' +
+      '- 2026-11-17T14:52:03.000Z: auto-accept applied 3 edits from run 20261117-144415-diffs of the experiment diffs. ' +
+        'The developer has auto-accept on, so they were not shown these edits before they were written. ' +
         'The best candidate scored 0.00 → 1.00 on the test cases.'
     )
   })
@@ -398,6 +405,7 @@ describe('TEMPORARY dev chat part', () => {
       ['strands_dev_multi_select', false],
       ['strands_dev_number_input', false],
       ['strands_dev_confirm', false],
+      ['strands_dev_auto_optimize', false],
       ['strands_dev_review_optimization', false],
       ['strands_dev_answer_review', false],
       ['strands_dev_apply_optimization', false],
@@ -1217,7 +1225,7 @@ describe('dev chat tool errors and states', () => {
         'apply',
       ],
       [
-        'was written by auto-optimize',
+        'was written by auto-accept',
         { auto: true, reviewed: true, applied: ['agent.py'], edits: [{ ...offered!, decided: true }] },
         undefined,
       ],
@@ -1252,6 +1260,82 @@ describe('dev chat tool errors and states', () => {
 
     await expect(tool('strands_dev_review_optimization').run(input)).rejects.toThrow(message)
     expect(showReview).not.toHaveBeenCalled()
+  })
+
+  describe('optimization that runs by itself', () => {
+    it('shouldSayThatBothAreOffAndWhereTheDeveloperSetsThem', async () => {
+      const { call, sessions } = setup()
+
+      const read = await call('strands_dev_auto_optimize')
+
+      expect(read).toEqual({
+        autoOptimize: { everyTurns: 0, state: 'off: an optimization starts only when the developer asks for one' },
+        autoAcceptOptimizationResults:
+          'off: the edits of a finished run show as a diff, and the developer applies or leaves each one',
+        choices: { everyTurns: [0, 5, 10, 20, 50, 100] },
+        where: 'Both are in /settings, under Strands dev workspace.',
+      })
+      expect(sessions.setSettings).not.toHaveBeenCalled()
+    })
+
+    it('shouldSetHowManyTurnsPassBetweenTheRunsAndSayWhatThenHappens', async () => {
+      const { call, sessions } = setup()
+
+      const set = (await call('strands_dev_auto_optimize', { everyTurns: 20 })) as {
+        autoOptimize: { state: string }
+      }
+
+      expect(sessions.setSettings.mock.calls).toEqual([[{ autoOptimize: 20 }]])
+      expect(set.autoOptimize).toMatchObject({ everyTurns: 20, turnsSinceTheLastOne: 3 })
+      expect(set.autoOptimize.state).toContain('strands dev sends you an "/optimize auto-optimize" request')
+      expect(set.autoOptimize.state).toContain('Each one is a paid run.')
+    })
+
+    it('shouldSetWhetherTheEditsAreWrittenWithoutADiffAndLeaveTheTurnsAsTheyAre', async () => {
+      const { call, sessions } = setup()
+
+      const set = await call('strands_dev_auto_optimize', { acceptResults: true })
+
+      expect(sessions.setSettings.mock.calls).toEqual([[{ autoAcceptOptimizationResults: true }]])
+      expect(set).toMatchObject({
+        autoOptimize: { everyTurns: 0 },
+        autoAcceptOptimizationResults:
+          'on: the edits of a finished run are written to the agent source without a diff to answer',
+      })
+    })
+
+    it('shouldTurnBothOffInOneCall', async () => {
+      const { call, sessions } = setup()
+      await call('strands_dev_auto_optimize', { everyTurns: 50, acceptResults: true })
+
+      await call('strands_dev_auto_optimize', { everyTurns: 0, acceptResults: false })
+
+      expect(sessions.setSettings.mock.calls.at(-1)).toEqual([
+        { autoOptimize: 0, autoAcceptOptimizationResults: false },
+      ])
+    })
+
+    it.each<[string, Record<string, JSONValue>, string]>([
+      ['a number of turns that is not offered', { everyTurns: 7 }, 'everyTurns must be one of 0, 5, 10, 20, 50, 100.'],
+      ['turns that are not a number', { everyTurns: 'often' }, 'everyTurns must be one of 0, 5, 10, 20, 50, 100.'],
+      ['an answer that is not yes or no', { acceptResults: 'yes' }, 'acceptResults must be true or false.'],
+    ])('shouldChangeNothingWhenTheCallGives%s', async (_case, input, message) => {
+      const { tool, sessions } = setup()
+
+      await expect(tool('strands_dev_auto_optimize').run(input)).rejects.toThrow(message)
+      expect(sessions.setSettings).not.toHaveBeenCalled()
+    })
+
+    it('shouldTellTheAgentWhatTheTwoSettingsDoSoItDoesNotGoLookingForThem', () => {
+      const { part, tool } = setup()
+
+      expect(part.instructions).toContain('Auto-optimize every N turns makes an experiment from the chats')
+      expect(part.instructions).toContain('Auto-accept optimization results writes the edits of a finished run')
+      expect(part.instructions).toContain('strands_dev_auto_optimize reads and sets them, so do not search files')
+      expect(part.instructions).toContain('say what it does and that every automatic run is paid')
+      expect(part.instructions).toContain('A question whether you can is not yet a request')
+      expect(tool('strands_dev_auto_optimize').description).toContain('"optimize every 20 turns from my history"')
+    })
   })
 
   describe('an answer to the diff on screen, given in a chat message', () => {
@@ -1376,7 +1460,7 @@ describe('dev chat tool errors and states', () => {
     })
   })
 
-  it('shouldSayInThePlanAndTheStatusWhenAutoOptimizeWritesTheEditsWithoutAReview', async () => {
+  it('shouldSayInThePlanAndTheStatusWhenAutoAcceptWritesTheEditsWithoutAReview', async () => {
     const { call, sessions, finishRun } = setup()
 
     const off = await call('strands_dev_optimization_plan', { experiment: 'refunds' })
@@ -1385,8 +1469,8 @@ describe('dev chat tool errors and states', () => {
     finishRun({ step: 'review', review: { ...review(), auto: true, reviewed: true, applied: ['agent.py'] } })
     const status = (await call('strands_dev_status')) as { optimization: object }
 
-    expect(off).not.toHaveProperty('autoOptimize')
-    expect(on).toMatchObject({ autoOptimize: expect.stringContaining('writes its edits to the agent source') })
+    expect(off).not.toHaveProperty('autoAccept')
+    expect(on).toMatchObject({ autoAccept: expect.stringContaining('writes its edits to the agent source') })
     expect(status.optimization).toMatchObject({ step: 'review', autoApplied: true, applied: ['agent.py'] })
     expect(status.optimization).not.toHaveProperty('awaitingAnswer')
   })

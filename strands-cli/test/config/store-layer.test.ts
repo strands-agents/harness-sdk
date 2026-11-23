@@ -173,6 +173,33 @@ describe('CliConfigStore layer', () => {
     })
   })
 
+  describe('with autoOptimize saved before it was split in two', () => {
+    it('shouldReadTheOldOnOffAsAutoAcceptWhenTheLayerIsAttached', async () => {
+      const { config } = await devStore()
+
+      await config.useLayer(layer({ settings: { autoOptimize: true } }))
+
+      // Merged over the CLI's own settings unmigrated, the old value was dropped and auto-accept read off.
+      expect(config.snapshot().settings).toMatchObject({ autoAcceptOptimizationResults: true, autoOptimize: 0 })
+    })
+
+    it('shouldSaveItUnderTheNewNameOnceAnotherSettingChanges', async () => {
+      const { config } = await devStore()
+      const target = layer({ settings: { autoOptimize: true } })
+      await config.useLayer(target)
+
+      await config.setSettings({ autoOptimize: 20 })
+
+      expect(target.writes.at(-1)).toEqual({ settings: { autoAcceptOptimizationResults: true, autoOptimize: 20 } })
+    })
+
+    it('shouldReadTheOldOnOffFromTheCliFileToo', async () => {
+      const { config } = await devStore('[settings]\nautoOptimize = true\n')
+
+      expect(config.snapshot().settings).toMatchObject({ autoAcceptOptimizationResults: true, autoOptimize: 0 })
+    })
+  })
+
   it('shouldRejectALayerThatIsNotValid', async () => {
     const { config } = await devStore()
 

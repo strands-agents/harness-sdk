@@ -16,11 +16,18 @@ export type TemporarySessionDependencies = TemporaryExperimentDependencies &
     readonly initialCopy?: (workspace: DevWorkspace, signal: AbortSignal) => Promise<unknown>
   }
 
+/** The settings of the workspace that the dev sessions go by. They are read when needed, so a change counts at once. */
+export interface TemporaryDevSettings {
+  /** A finished optimization's edits are written without a review. */
+  readonly autoAcceptOptimizationResults: boolean
+  /** An optimization starts by itself every this many chat turns; 0 starts none. */
+  readonly autoOptimize: number
+}
+
 export interface TemporarySessionHost {
   readonly workspace: DevWorkspace
   readonly agent: () => TemporaryAgentFacts
-  /** Whether a finished optimization's edits are written without a review. Read when a run ends, so a change counts. */
-  readonly autoOptimize?: () => boolean
+  readonly settings?: () => TemporaryDevSettings
   readonly context?: DevChatCommandContext
   readonly dependencies?: TemporarySessionDependencies
   readonly evalsUi?: TemporaryUiDependencies
