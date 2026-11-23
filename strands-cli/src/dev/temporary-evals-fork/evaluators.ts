@@ -1,4 +1,5 @@
 import { isRecord } from '../../values.js'
+import { evalsCommandArguments } from '../evals-agent/entry-files.js'
 import type { EvaluatorChoice } from '../panels/model.js'
 import type { DevWorkspace, DevWorkspaceConfig } from '../workspace.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment, type TemporaryCommandRunner } from './environment.js'
@@ -43,8 +44,8 @@ export interface TemporaryEvaluatorsDependencies {
 
 const KINDS: readonly TemporaryEvaluatorKind[] = ['rubric', 'judge', 'multimodal', 'check', 'chaos']
 const SETTING_TYPES: readonly TemporaryEvaluatorSettingType[] = ['string', 'boolean', 'any']
-const CATALOG_ARGUMENTS = ['-m', 'strands_evals.cli', 'evaluators', '--json']
-const CATALOG_NEXT_STEP = 'Restart strands dev so that it installs the evals fork again, then try again.'
+const CATALOG_ARGUMENTS = evalsCommandArguments('evaluators')
+const CATALOG_NEXT_STEP = 'Restart strands dev so that it sets up strands-agents-evals again, then try again.'
 
 const unreadableCatalog = (): Error =>
   new Error(`strands-evals evaluators printed a list that strands dev cannot read. ${CATALOG_NEXT_STEP}`)

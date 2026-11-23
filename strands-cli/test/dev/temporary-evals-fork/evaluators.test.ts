@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
+import { evalsCommandArguments } from '../../../src/dev/evals-agent/entry-files.js'
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsExit, TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import {
@@ -88,7 +89,7 @@ const read = async (workspace: DevWorkspace, spawnEvals: ReturnType<typeof listi
   readTemporaryEvaluators(workspace, {}, { run: environmentRunner(), spawnEvals })
 
 describe('TEMPORARY evaluator catalog', () => {
-  it('shouldRunTheCatalogCommandOfTheForkInTheProjectWhenItReadsTheEvaluators', async () => {
+  it('shouldRunTheEvaluatorsCommandInTheProjectWhenItReadsTheEvaluators', async () => {
     const workspace = await workspaceFixture()
     const spawnEvals = listing(JSON.stringify(CATALOG))
 
@@ -96,7 +97,7 @@ describe('TEMPORARY evaluator catalog', () => {
 
     expect(spawnEvals).toHaveBeenCalledOnce()
     expect(spawnEvals.mock.calls[0]![0]).toMatchObject({
-      args: ['-m', 'strands_evals.cli', 'evaluators', '--json'],
+      args: evalsCommandArguments('evaluators'),
       cwd: workspace.root,
     })
   })
@@ -143,11 +144,14 @@ describe('TEMPORARY evaluator catalog', () => {
 
   it('shouldSayWhatFailedAndWhatToDoWhenTheCatalogCommandFails', async () => {
     const workspace = await workspaceFixture()
-    const spawnEvals = listing('', 2, ["strands-evals: error: argument command: invalid choice: 'evaluators'"])
+    const spawnEvals = listing('', 1, [
+      'Traceback (most recent call last):',
+      "ModuleNotFoundError: No module named 'strands_evals'",
+    ])
 
     await expect(read(workspace, spawnEvals)).rejects.toThrow(
-      "strands-evals evaluators stopped with exit code 2: argument command: invalid choice: 'evaluators'\n" +
-        'Restart strands dev so that it installs the evals fork again, then try again.'
+      "strands-evals evaluators stopped with exit code 1: ModuleNotFoundError: No module named 'strands_evals'\n" +
+        'Restart strands dev so that it sets up strands-agents-evals again, then try again.'
     )
   })
 
@@ -157,7 +161,7 @@ describe('TEMPORARY evaluator catalog', () => {
     ['an entry without a description', JSON.stringify([{ ...CATALOG[0], description: undefined }])],
     ['an unknown kind', JSON.stringify([{ ...CATALOG[0], kind: 'oracle' }])],
     ['a setting of an unknown type', JSON.stringify([{ ...CATALOG[2], settings: [{ name: 'value', type: 'list' }] }])],
-  ])('shouldRefuseTheCatalogWhenTheForkPrints %s', async (_case, stdout) => {
+  ])('shouldRefuseTheCatalogWhenTheCommandPrints %s', async (_case, stdout) => {
     const workspace = await workspaceFixture()
 
     await expect(read(workspace, listing(stdout))).rejects.toThrow(
