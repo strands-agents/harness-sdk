@@ -1,0 +1,53 @@
+---
+import BoxGettingStarted from '../components/box/BoxGettingStarted.astro'
+import BoxHero from '../components/box/BoxHero.astro'
+import NextSteps from '../components/NextSteps.astro'
+import { products } from '../config/navbar'
+import {
+  BOX_LANDING_DESCRIPTION,
+  BOX_LANDING_TITLE,
+  BOX_LINKS,
+} from '../config/box-landing'
+import ProductLandingLayout from '../layouts/ProductLandingLayout.astro'
+import { productSchema } from '../util/structured-data'
+
+const boxProduct = products.find((product) => product.slug === '/box')
+if (!boxProduct) throw new Error('Missing Box product navigation entry')
+
+const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
+---
+
+<ProductLandingLayout
+  title={BOX_LANDING_TITLE}
+  description={BOX_LANDING_DESCRIPTION}
+  canonicalPath="/box/"
+  markdownPath="/box/index.md"
+  ogImageAlt="Strands Box: put your agent in a box"
+  structuredData={[productSchema(boxProduct, siteUrl)]}
+  footerTopShape={false}
+>
+  <div class="box-main">
+    <BoxHero />
+    <BoxGettingStarted />
+  </div>
+  <NextSteps
+    title="Start with Box"
+    ctas={[
+      { label: 'Install Box', href: BOX_LINKS.install },
+      { label: 'Deploy Box', href: BOX_LINKS.deployment },
+      { label: 'How Box protects your agent', href: BOX_LINKS.security },
+    ]}
+  />
+</ProductLandingLayout>
+
+<style>
+  .box-main {
+    --accent-green: var(--card-accent-purple);
+    --eyebrow: var(--card-accent-purple);
+    --cta-green: var(--card-accent-purple);
+    --halftone-dot: var(--card-accent-purple);
+    --toggle-active-bg: var(--card-accent-purple);
+    background: var(--bg);
+    color: var(--fg);
+  }
+</style>
