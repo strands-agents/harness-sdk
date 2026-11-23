@@ -68,6 +68,7 @@ component whose constructor rejects its own defaults, or two markers on the same
 | `tool_descriptions(*tools)` | Each tool's description | Text rewriter |
 | `Int(min, max)` / `Float(min, max)` | A number, inclusive bounds | TPE |
 | `OneOf(*options)` | One of several plain values | TPE |
+| `JsonChoice(*options)` | One of several JSON values, lists and objects included | TPE |
 | `choice(...)` of `component(...)` | A swap between constructed objects, each with its own tuned arguments | TPE |
 
 `Int`, `Float`, `OneOf`, and `TextValue` take their default from the parameter, so you
@@ -148,6 +149,46 @@ def create_agent(tools=(lookup_order,)):
 
 Your tool objects are never modified, so concurrent trials can't leak descriptions into
 each other. MCP tools can't be declared this way: their specs can't be set on a copy.
+
+## Choose a tool set
+
+Sometimes the question isn't how to describe a tool but whether the agent should have it at
+all: extra tools cost tokens on every call and give the model more ways to go wrong. To
+search over which tools the agent gets, make each option a list with `JsonChoice`:
+
+```python
+from strands import Agent, tool
+from strands_evals.optimization import JsonChoice, tunable
+
+
+@tool
+def lookup_order(order_id: str) -> str:
+    """Look up an order by its id."""
+    return f"Order {order_id}: shipped on Monday"
+
+
+@tool
+def issue_refund(order_id: str) -> str:
+    """Refund an order in full."""
+    return f"Order {order_id}: refunded"
+
+
+TOOLS = {"lookup_order": lookup_order, "issue_refund": issue_refund}
+
+
+@tunable(tool_names=JsonChoice([], ["lookup_order"], ["lookup_order", "issue_refund"]))
+def create_agent(tool_names=("lookup_order",)):
+    return Agent(tools=[TOOLS[name] for name in tool_names], callback_handler=None)
+```
+
+The factory receives the chosen list itself. `JsonChoice` takes any JSON value as an
+option (strings, numbers, lists, objects, or a mix), so the same marker fits any setting
+whose value is a structure.
+
+Each option is one whole set, not a subset search: the optimizer picks among exactly the
+lists you write, so list the combinations worth comparing. Options are stored as canonical
+JSON text, which is what you'll see in the run's summary and `best.values.json`. A
+`JsonChoice` can't be an argument of a `component()`; declare it on the factory itself.
 
 ## Swap components
 

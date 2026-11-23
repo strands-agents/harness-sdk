@@ -24,7 +24,8 @@ lives in `strands_evals.optimization` and needs the `optimization` extra:
 If you'd rather not write the run by hand, the evals repo ships an `optimize`
 [agent skill](https://agentskills.io) that guides the coding assistant you already use
 (Claude Code, Kiro, or any assistant that reads skills) through it. The skill works with
-agents built with the Strands harness, from an `agent.py` or `agent.ts` file. It asks what
+agents built with the Strands harness, from an `agent.py` or `agent.ts` file, and with
+Python tunable factories. It asks what
 may change, what "better" means, any limits, and how much to spend, all in plain language.
 It then shows you the exact command to review, runs it with progress, and reports what
 won. It never applies the result unless you ask.

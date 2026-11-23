@@ -162,9 +162,19 @@ Each `--tune` takes one of four forms:
 | Form | Declares |
 |---|---|
 | `--tune PATH` | A text field, rewritten by the text rewriter. `skills` makes each skill's `SKILL.md` tunable |
-| `--tune 'PATH=["a", "b"]'` | A choice among plain JSON values; the config's current value is the baseline |
+| `--tune 'PATH=["a", "b"]'` | A choice among JSON values, lists and objects included; the config's current value is the baseline |
 | `--tune PATH=int:LO..HI` | An integer in an inclusive range |
 | `--tune PATH=float:LO..HI` | A number in an inclusive range |
+
+A choice's options may be lists or objects, which is how you search tool sets. With
+`"builtinTools": ["read"]` in the config, this compares no built-in tools, read only, and
+read plus edit:
+
+```bash
+--tune 'builtinTools=[[], ["read"], ["read", "edit"]]'
+```
+
+Each option is one whole set, not a subset search.
 
 Pass `--no-tune-instructions` to leave the instructions alone. Every choice and range is
 checked against the harness's own schema before the run starts, so a value no trial could
@@ -178,9 +188,10 @@ folder, so trials never see each other's state.
 
 - **No model parameters.** The config has no temperature field, so temperature can't be
   tuned here. `model` and `effort` can be choices. Use a tunable factory to tune sampling.
-- **No components.** Choices take plain values only. The harness's own switches
-  (`contextManager`, `builtinTools`) are plain values, but a custom `Offload` pipeline with
-  tuned numbers needs a [tunable factory](tunables.md#tune-context-strategies).
+- **No components.** Choices take JSON values (strings, numbers, lists, objects), never
+  constructed objects. The harness's own switches (`contextManager`, `builtinTools`) are
+  JSON values, but a custom `Offload` pipeline with tuned numbers needs a
+  [tunable factory](tunables.md#tune-context-strategies).
 - **No subagent prompts.** Subagents are module references, so their prompts aren't in the
   file.
 - **One skills folder.** `--tune skills` works only when `skills` is a single local folder.
@@ -255,8 +266,8 @@ cost a rollout.
 - **Only <Syntax py="create_harness" ts="createHarness" /> is captured.** A plain Strands
   `Agent` built directly isn't, because its settings live in other constructors. Write a
   tunable factory for that.
-- **Plain values only.** Like a config file: no components, no model objects, so no
-  temperature. `model` is a string here, so it can be a choice.
+- **JSON values only.** Like a config file: no components, no model objects, so no
+  temperature. Lists and objects work, so tool sets can be a choice. `model` is a string here, so it can be a choice.
 - **The harness's own subagents only.** Their prompts aren't arguments of the call.
 - **CLI only.** The Python `Optimizer` still takes a tunable factory.
 - **Option values aren't checked before the run**, unlike a config file's. A value the
