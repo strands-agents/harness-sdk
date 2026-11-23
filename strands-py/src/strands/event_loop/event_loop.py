@@ -75,16 +75,19 @@ _MAX_EMPTY_TOOL_USE_RETRIES = 2
 
 
 def _has_tool_use_in_latest_message(messages: "Messages") -> bool:
-    """Check if the latest message contains any ToolUse content blocks.
+    """Check if the latest message is an assistant message containing any ToolUse content blocks.
 
     Args:
         messages: List of messages in the conversation.
 
     Returns:
-        True if the latest message contains at least one ToolUse content block, False otherwise.
+        True if the latest message has role ``"assistant"`` and contains at least one ToolUse content block,
+        False otherwise.
     """
     if len(messages) > 0:
         latest_message = messages[-1]
+        if latest_message.get("role") != "assistant":
+            return False
         content_blocks = latest_message.get("content", [])
 
         for content_block in content_blocks:

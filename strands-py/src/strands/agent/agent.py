@@ -218,6 +218,17 @@ def _raise_if_blank_user_message(messages: Messages) -> None:
             raise ValueError("Input prompt is blank. Provide non-blank text or at least one non-text content block.")
 
 
+def _raise_if_user_tool_use(messages: Messages) -> None:
+    """Reject a user message carrying a toolUse block before it enters the conversation.
+
+    toolUse blocks belong to assistant turns; accepting them on a user message is invalid
+    for model providers and must not trigger unmediated tool dispatch.
+    """
+    for message in messages:
+        if message["role"] == "user" and any("toolUse" in block for block in message["content"]):
+            raise ValueError("User messages cannot contain 'toolUse' content blocks.")
+
+
 class Agent(AgentBase, LocalAgent):
     """Core Agent implementation.
 
@@ -2139,6 +2150,7 @@ class Agent(AgentBase, LocalAgent):
         if messages is None:
             raise ValueError("Input prompt must be of type: `str | list[Contentblock] | Messages | None`.")
         _raise_if_blank_user_message(messages)
+        _raise_if_user_tool_use(messages)
         return messages
 
     def _start_agent_trace_span(self, messages: Messages) -> trace_api.Span:

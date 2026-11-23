@@ -2491,3 +2491,30 @@ async def test_swarm_node_failure_on_resume_clears_interrupt_state(mock_strands_
     agent.stream_async = create_mock_agent("test_agent").stream_async
     result = await swarm.invoke_async("new task")
     assert result.status == Status.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_swarm_rejects_content_block_tool_use_task():
+    """Passing a toolUse ContentBlock list into Swarm must fail node invocation without calling the tool."""
+    import strands
+    from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+    calls: list[str] = []
+
+    @strands.tool
+    def probe() -> str:
+        calls.append("called")
+        return "ran"
+
+    model = MockedModelProvider([])
+    entry = Agent(model=model, tools=[probe], callback_handler=None, name="entry")
+    swarm = Swarm([entry])
+
+    result = await swarm.invoke_async([{"toolUse": {"toolUseId": "s1", "name": "probe", "input": {}}}])
+
+    assert result.status == Status.FAILED
+    assert isinstance(result.results["entry"].result, ValueError)
+    assert "User messages cannot contain 'toolUse' content blocks" in str(result.results["entry"].result)
+    assert calls == []
+    assert model.index == 0
+    assert entry.messages == []
