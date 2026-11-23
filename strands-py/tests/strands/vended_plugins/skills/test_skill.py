@@ -1,5 +1,6 @@
 """Tests for the Skill dataclass and loading utilities."""
 
+import json
 import logging
 from pathlib import Path
 
@@ -427,6 +428,41 @@ class TestSkillFromFile:
         _make_skill_dir(tmp_path, "valid-skill")
         skill = Skill.from_file(tmp_path / "valid-skill", strict=True)
         assert skill.name == "valid-skill"
+
+    @pytest.mark.parametrize(
+        "mcp_config",
+        [
+            {"mcpServers": {"weather": {"command": "weather-server"}}},
+            {"weather": {"command": "weather-server"}},
+        ],
+    )
+    def test_reads_mcp_servers_from_mcp_json(self, tmp_path, mcp_config):
+        skill_dir = _make_skill_dir(tmp_path, "weather")
+        (skill_dir / "mcp.json").write_text(json.dumps(mcp_config))
+
+        skill = Skill.from_file(skill_dir)
+
+        assert skill.mcp_servers == {"weather": {"command": "weather-server"}}
+
+    def test_has_no_mcp_servers_without_mcp_json(self, tmp_path):
+        skill = Skill.from_file(_make_skill_dir(tmp_path, "plain"))
+
+        assert skill.mcp_servers == {}
+
+    @pytest.mark.parametrize(
+        ("content", "message"),
+        [
+            ("{not json", "malformed mcp.json"),
+            ('["weather"]', "must map server names to server configs"),
+            ('{"mcpServers": {"weather": "weather-server"}}', "must map server names to server configs"),
+        ],
+    )
+    def test_rejects_malformed_mcp_json(self, tmp_path, content, message):
+        skill_dir = _make_skill_dir(tmp_path, "weather")
+        (skill_dir / "mcp.json").write_text(content)
+
+        with pytest.raises(ValueError, match=message):
+            Skill.from_file(skill_dir)
 
 
 class TestSkillFromDirectory:

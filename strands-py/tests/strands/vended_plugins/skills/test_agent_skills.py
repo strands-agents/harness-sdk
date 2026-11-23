@@ -9,9 +9,10 @@ via ``get_available_skills()`` with no agent.
 
 """
 
+import json
 import logging
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -19,6 +20,7 @@ from strands.hooks.events import BeforeInvocationEvent
 from strands.hooks.registry import HookRegistry
 from strands.plugins.registry import _PluginRegistry
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
+from strands.tools.mcp import MCPClient
 from strands.types.tools import ToolContext
 from strands.vended_plugins.skills.agent_skills import AgentSkills
 from strands.vended_plugins.skills.skill import Skill
@@ -1027,3 +1029,216 @@ class TestSetStateField:
         agent.state.set(plugin._state_key, "not-a-dict")
         with pytest.raises(TypeError, match="expected dict for state key"):
             plugin._set_state_field(agent, "k", "v")
+
+
+_WEATHER_SERVERS = {"weather": {"command": "weather-server"}}
+
+
+def _make_mcp_skill(mcp_servers: dict | None = None, path: Path | None = None) -> Skill:
+    return Skill(
+        name="weather",
+        description="Weather lookups",
+        instructions="Use the weather tools.",
+        path=path,
+        mcp_servers=_WEATHER_SERVERS if mcp_servers is None else mcp_servers,
+    )
+
+
+class TestSkillMcpServers:
+    @pytest.fixture
+    def load_servers(self):
+        with patch.object(MCPClient, "load_servers", return_value=["weather-client"]) as mocked:
+            yield mocked
+
+    @pytest.mark.asyncio
+    async def test_activation_starts_mcp_servers_and_lists_their_tools(self, load_servers):
+        plugin = AgentSkills(skills=[_make_mcp_skill()], allow_mcp_servers=True)
+        agent = _mock_agent()
+        agent.tool_registry.process_tools.return_value = ["get_forecast", "get_alerts"]
+
+        result = await plugin.skills(skill_name="weather", tool_context=_mock_tool_context(agent))
+
+        load_servers.assert_called_once_with({"weather": {"command": "weather-server"}})
+        agent.tool_registry.process_tools.assert_called_once_with(["weather-client"])
+        assert result == "Use the weather tools.\n\nMCP tools now available: get_forecast, get_alerts"
+
+    @pytest.mark.asyncio
+    async def test_activation_leaves_mcp_servers_stopped_when_not_allowed(self, load_servers, caplog):
+        plugin = AgentSkills(skills=[_make_mcp_skill()])
+        agent = _mock_agent()
+
+        with caplog.at_level(logging.WARNING):
+            result = await plugin.skills(skill_name="weather", tool_context=_mock_tool_context(agent))
+
+        load_servers.assert_not_called()
+        agent.tool_registry.process_tools.assert_not_called()
+        assert result == "Use the weather tools."
+        assert "set allow_mcp_servers=True to start them" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_skill_without_mcp_servers_starts_nothing(self, load_servers):
+        plugin = AgentSkills(skills=[_make_skill()], allow_mcp_servers=True)
+        agent = _mock_agent()
+
+        result = await plugin.skills(skill_name="test-skill", tool_context=_mock_tool_context(agent))
+
+        load_servers.assert_not_called()
+        assert result == "Do the thing."
+
+    @pytest.mark.asyncio
+    async def test_reactivation_reuses_started_mcp_servers(self, load_servers):
+        plugin = AgentSkills(skills=[_make_mcp_skill()], allow_mcp_servers=True)
+        agent = _mock_agent()
+        agent.tool_registry.process_tools.return_value = ["get_forecast"]
+        tool_context = _mock_tool_context(agent)
+
+        await plugin.skills(skill_name="weather", tool_context=tool_context)
+        result = await plugin.skills(skill_name="weather", tool_context=tool_context)
+
+        agent.tool_registry.process_tools.assert_called_once_with(["weather-client"])
+        assert result.endswith("MCP tools now available: get_forecast")
+
+    @pytest.mark.asyncio
+    async def test_starts_mcp_servers_for_each_agent(self, load_servers):
+        plugin = AgentSkills(skills=[_make_mcp_skill()], allow_mcp_servers=True)
+        first_agent, second_agent = _mock_agent(), _mock_agent()
+
+        await plugin.skills(skill_name="weather", tool_context=_mock_tool_context(first_agent))
+        await plugin.skills(skill_name="weather", tool_context=_mock_tool_context(second_agent))
+
+        first_agent.tool_registry.process_tools.assert_called_once_with(["weather-client"])
+        second_agent.tool_registry.process_tools.assert_called_once_with(["weather-client"])
+
+    @pytest.mark.asyncio
+    async def test_failed_mcp_server_is_reported_and_retried_on_next_activation(self, load_servers):
+        plugin = AgentSkills(skills=[_make_mcp_skill()], allow_mcp_servers=True)
+        agent = _mock_agent()
+        agent.tool_registry.process_tools.side_effect = [RuntimeError("connection refused"), ["get_forecast"]]
+        tool_context = _mock_tool_context(agent)
+
+        first = await plugin.skills(skill_name="weather", tool_context=tool_context)
+        second = await plugin.skills(skill_name="weather", tool_context=tool_context)
+
+        assert first == "Use the weather tools.\n\nMCP server 'weather' failed to start: connection refused"
+        assert second == "Use the weather tools.\n\nMCP tools now available: get_forecast"
+
+    @pytest.mark.asyncio
+    async def test_reports_the_cause_of_a_tool_registry_failure(self, load_servers):
+        def fail_to_load(tools):
+            raise ValueError(f"Failed to load tool {tools[0]}: server exited") from RuntimeError("server exited")
+
+        plugin = AgentSkills(skills=[_make_mcp_skill()], allow_mcp_servers=True)
+        agent = _mock_agent()
+        agent.tool_registry.process_tools.side_effect = fail_to_load
+
+        result = await plugin.skills(skill_name="weather", tool_context=_mock_tool_context(agent))
+
+        assert result.endswith("MCP server 'weather' failed to start: server exited")
+
+    @pytest.mark.asyncio
+    async def test_reports_an_invalid_mcp_server_config(self, load_servers):
+        load_servers.side_effect = ValueError("missing environment variable WEATHER_TOKEN")
+        plugin = AgentSkills(skills=[_make_mcp_skill()], allow_mcp_servers=True)
+        agent = _mock_agent()
+
+        result = await plugin.skills(skill_name="weather", tool_context=_mock_tool_context(agent))
+
+        agent.tool_registry.process_tools.assert_not_called()
+        assert result.endswith("MCP server 'weather' failed to start: missing environment variable WEATHER_TOKEN")
+
+    @pytest.mark.asyncio
+    async def test_one_failed_mcp_server_does_not_block_the_others(self, load_servers):
+        servers = {"alerts": {"url": "https://alerts.example.com/mcp"}, "forecast": {"command": "forecast-server"}}
+        plugin = AgentSkills(skills=[_make_mcp_skill(servers)], allow_mcp_servers=True)
+        agent = _mock_agent()
+        agent.tool_registry.process_tools.side_effect = [RuntimeError("timed out"), ["get_forecast"]]
+
+        result = await plugin.skills(skill_name="weather", tool_context=_mock_tool_context(agent))
+
+        assert result.endswith("MCP tools now available: get_forecast\nMCP server 'alerts' failed to start: timed out")
+
+    @pytest.mark.asyncio
+    async def test_runs_stdio_servers_in_the_skill_directory(self, load_servers, tmp_path):
+        plugin = AgentSkills(skills=[_make_mcp_skill(path=tmp_path)], allow_mcp_servers=True)
+        agent = _mock_agent()
+
+        await plugin.skills(skill_name="weather", tool_context=_mock_tool_context(agent))
+
+        load_servers.assert_called_once_with({"weather": {"command": "weather-server", "cwd": str(tmp_path)}})
+
+    @pytest.mark.parametrize(
+        "server_config",
+        [
+            {"command": "weather-server", "cwd": "/srv/weather"},
+            {"url": "https://weather.example.com/mcp"},
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_keeps_an_explicit_cwd_and_remote_servers_unchanged(self, load_servers, tmp_path, server_config):
+        plugin = AgentSkills(skills=[_make_mcp_skill({"weather": server_config}, tmp_path)], allow_mcp_servers=True)
+        agent = _mock_agent()
+
+        await plugin.skills(skill_name="weather", tool_context=_mock_tool_context(agent))
+
+        load_servers.assert_called_once_with({"weather": server_config})
+
+    @pytest.mark.asyncio
+    async def test_keeps_server_config_when_the_skill_directory_is_not_on_this_host(self, load_servers, tmp_path):
+        plugin = AgentSkills(skills=[_make_mcp_skill(path=tmp_path / "in-container")], allow_mcp_servers=True)
+        agent = _mock_agent()
+
+        await plugin.skills(skill_name="weather", tool_context=_mock_tool_context(agent))
+
+        load_servers.assert_called_once_with({"weather": {"command": "weather-server"}})
+
+    @pytest.mark.asyncio
+    async def test_restores_mcp_servers_of_activated_skills_once(self, load_servers):
+        plugin = AgentSkills(skills=[_make_mcp_skill()], allow_mcp_servers=True)
+        agent = _mock_agent()
+        agent.state.set(plugin._state_key, {"activated_skills": ["weather"]})
+
+        await plugin._on_before_invocation(BeforeInvocationEvent(agent=agent))
+        await plugin._on_before_invocation(BeforeInvocationEvent(agent=agent))
+        await plugin.skills(skill_name="weather", tool_context=_mock_tool_context(agent))
+
+        agent.tool_registry.process_tools.assert_called_once_with(["weather-client"])
+
+    @pytest.mark.parametrize(
+        ("allow_mcp_servers", "activated_skills"),
+        [(False, ["weather"]), (True, ["removed-skill"]), (True, [])],
+    )
+    @pytest.mark.asyncio
+    async def test_restore_starts_nothing(self, load_servers, allow_mcp_servers, activated_skills):
+        plugin = AgentSkills(skills=[_make_mcp_skill()], allow_mcp_servers=allow_mcp_servers)
+        agent = _mock_agent()
+        agent.state.set(plugin._state_key, {"activated_skills": activated_skills})
+
+        await plugin._on_before_invocation(BeforeInvocationEvent(agent=agent))
+
+        load_servers.assert_not_called()
+
+    @pytest.mark.parametrize("source", ["parent", "skill_dir", "skill_md"])
+    @pytest.mark.asyncio
+    async def test_loads_mcp_servers_from_mcp_json_through_the_sandbox(self, tmp_path, source):
+        skill_dir = _make_skill_dir(tmp_path, "weather")
+        (skill_dir / "mcp.json").write_text(json.dumps({"mcpServers": _WEATHER_SERVERS}))
+        sources = {"parent": tmp_path, "skill_dir": skill_dir, "skill_md": skill_dir / "SKILL.md"}
+        plugin = AgentSkills(skills=[str(sources[source])])
+        agent = _mock_agent()
+
+        await plugin.init_agent(agent)
+
+        assert [skill.mcp_servers for skill in plugin.get_available_skills(agent)] == [_WEATHER_SERVERS]
+
+    @pytest.mark.asyncio
+    async def test_skips_a_skill_with_malformed_mcp_json(self, tmp_path, caplog):
+        skill_dir = _make_skill_dir(tmp_path, "weather")
+        (skill_dir / "mcp.json").write_text("{not json")
+        plugin = AgentSkills(skills=[str(skill_dir)])
+        agent = _mock_agent()
+
+        with caplog.at_level(logging.WARNING):
+            await plugin.init_agent(agent)
+
+        assert plugin.get_available_skills(agent) == []
+        assert "malformed mcp.json" in caplog.text
