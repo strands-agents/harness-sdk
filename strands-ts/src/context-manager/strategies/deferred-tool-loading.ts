@@ -14,7 +14,7 @@ import {
   type InvokeModelContext,
 } from '../../middleware/stages.js'
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../models/defaults.js'
-import { heuristicJson, type CallTools, type Model } from '../../models/model.js'
+import { heuristicJson, type Model, type StreamOptions } from '../../models/model.js'
 import { lookupModel, type DeferredToolLoading } from '../../models/model-info.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../../tools/load-tools.js'
 import { SEARCH_TOOLS_TOOL_NAME, toolListing, withToolListing, type ToolSearcher } from '../../tools/search-tools.js'
@@ -243,7 +243,7 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     toolSpecs: readonly ToolSpec[],
     model: Model,
     messages: readonly Message[] = agent.messages
-  ): CallTools {
+  ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'> {
     return this._plan(agent, toolSpecs, model, messages).tools
   }
 
@@ -253,7 +253,7 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     toolSpecs: readonly ToolSpec[],
     model: Model,
     messages: readonly Message[]
-  ): { tools: CallTools; deferred: ReadonlySet<string> } {
+  ): { tools: Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'>; deferred: ReadonlySet<string> } {
     const deferred = this._toDefer(agent, toolSpecs, model)
     const withoutLoader = { toolSpecs: toolSpecs.filter((spec) => spec.name !== this._loader) }
     const delivery = deferredToolLoading(model)
@@ -440,7 +440,7 @@ function searchedOnly(
   deferred: ReadonlySet<string>,
   messages: readonly Message[],
   model: Model
-): { tools: CallTools; deferred: ReadonlySet<string> } {
+): { tools: Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'>; deferred: ReadonlySet<string> } {
   const loaded = loadOrder(messages).filter((name) => deferred.has(name))
   const specs = new Map(toolSpecs.map((spec) => [spec.name, spec]))
   const listing = toolListing(

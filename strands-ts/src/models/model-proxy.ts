@@ -6,7 +6,7 @@ import { SEARCH_TOOLS_TOOL_NAME } from '../tools/search-tools.js'
 import { latestUserIndex } from './model.js'
 import { hasToolReferences, withToolReferenceSchemas, withToolReferenceText } from './tool-references.js'
 import type { ToolSpec } from '../tools/types.js'
-import type { CallTools, CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
+import type { CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
 import type { ModelStreamEvent } from './streaming.js'
 import { wellFormedRequest } from './well-formed-request.js'
 
@@ -181,7 +181,7 @@ export async function countRequestTokens(agent: LocalAgent, messages: Message[])
 }
 
 /** Each agent's latest model call tools, as the call passed them, before any stubs. */
-const latestTools = new WeakMap<LocalAgent, CallTools>()
+const latestTools = new WeakMap<LocalAgent, Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'>>()
 
 /**
  * The tools the agent's latest model call sent.
@@ -190,7 +190,9 @@ const latestTools = new WeakMap<LocalAgent, CallTools>()
  * @returns The tools, or undefined before the agent's first model call
  * @internal
  */
-export function latestCallTools(agent: LocalAgent): CallTools | undefined {
+export function latestCallTools(
+  agent: LocalAgent
+): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'> | undefined {
   return latestTools.get(agent)
 }
 

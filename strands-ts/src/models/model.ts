@@ -312,13 +312,6 @@ export interface StreamOptions {
 }
 
 /**
- * The tools of a model call, as deferred tool loading sends them.
- *
- * @internal
- */
-export type CallTools = Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'>
-
-/**
  * Options for counting tokens in a set of messages.
  */
 export interface CountTokensOptions {

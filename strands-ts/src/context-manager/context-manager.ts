@@ -7,7 +7,7 @@
 import type { Plugin } from '../plugins/plugin.js'
 import type { Tool } from '../tools/tool.js'
 import type { ToolSpec } from '../tools/types.js'
-import type { CallTools, Model } from '../models/model.js'
+import type { Model, StreamOptions } from '../models/model.js'
 import { createAuxiliaryInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import type { LocalAgent } from '../types/agent.js'
 import { AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent } from '../hooks/events.js'
@@ -147,7 +147,12 @@ export class ContextManager implements Plugin {
    * @returns The call's tool specs, and the names of the ones it defers; every spec without an `Offload.defer` strategy
    * @internal
    */
-  callTools(agent: LocalAgent, toolSpecs: readonly ToolSpec[], model: Model, messages?: readonly Message[]): CallTools {
+  callTools(
+    agent: LocalAgent,
+    toolSpecs: readonly ToolSpec[],
+    model: Model,
+    messages?: readonly Message[]
+  ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'> {
     const strategy = toolLoadingStrategy(this._strategies)
     return strategy?.callTools(agent, toolSpecs, model, messages) ?? { toolSpecs: [...toolSpecs] }
   }
