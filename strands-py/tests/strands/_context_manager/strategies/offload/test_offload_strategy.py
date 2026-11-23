@@ -6,6 +6,7 @@ import math
 import re
 import unittest.mock
 import warnings
+from fractions import Fraction
 
 import pytest
 
@@ -848,15 +849,16 @@ class TestParseCondition:
     @pytest.mark.parametrize(
         ("name", "raw", "parsed"),
         [
-            ("context_utilization", 0.7, ParsedCondition(70, True)),
-            ("context_utilization", 0.07, ParsedCondition(7, True)),
-            ("context_utilization", 1.0, ParsedCondition(100, True)),
+            ("context_utilization", 0.7, ParsedCondition(Fraction(7, 10), True)),
+            ("context_utilization", 0.07, ParsedCondition(Fraction(7, 100), True)),
+            ("context_utilization", 1.0, ParsedCondition(Fraction(1), True)),
             ("context_utilization", 50_000, ParsedCondition(50_000, False)),
             ("context_utilization", 1000, ParsedCondition(1000, False)),
             ("block_threshold", 2500, ParsedCondition(2500, False)),
-            ("block_threshold", "5%", ParsedCondition(5, True)),
+            ("block_threshold", "5%", ParsedCondition(Fraction(5, 100), True)),
+            ("block_threshold", "1.1%", ParsedCondition(Fraction(11, 1000), True)),
             ("preserve_recent", 4, ParsedCondition(4, False)),
-            ("preserve_recent", "50%", ParsedCondition(50, True)),
+            ("preserve_recent", "50%", ParsedCondition(Fraction(1, 2), True)),
         ],
     )
     def test_accepts(self, name, raw, parsed):
@@ -870,6 +872,7 @@ class TestParseCondition:
             ("context_utilization", 1, "1"),
             ("context_utilization", 1.5, "1.5"),
             ("context_utilization", float("nan"), "nan"),
+            ("context_utilization", float("inf"), "inf"),
             ("context_utilization", "70%", '"70%"'),
             ("context_utilization", "0.7", '"0.7"'),
             ("block_threshold", -1, "-1"),
@@ -895,6 +898,7 @@ class TestParseCondition:
             ("context_utilization", 1, "; for 100%, write 1.0"),
             ("context_utilization", "80%", "; for 80%, write 0.8"),
             ("context_utilization", 999, ""),
+            ("context_utilization", 50_000.0, "; for a count, write 50000"),
             ("preserve_recent", 0.07, '; for 7%, write "7%"'),
         ],
     )
