@@ -41,9 +41,11 @@ interface OffloadNamespace {
   summarize(target: OffloadTarget, config?: SummarizeConfig): OffloadStrategy
   /**
    * Keep tools' input schemas out of the context until the model loads them with `load_tools`, or with
-   * `config.search` set, until it searches for them. The model still sees each deferred tool's name and description,
-   * except where a search listing outgrows 1% of the context window. Without `.when()` conditions, defers at any tool
-   * count. One per agent, the `deferredToolLoading` preset included.
+   * `config.search` set, until it searches for them. Without search, the model still sees each deferred tool's name
+   * and description. With it, the model may see less: `search_tools` lists each tool's name and the first sentence of
+   * its description, cut at 120 characters, or only names past 1% of the context window, and the provider's tool
+   * search lists none. Without `.when()` conditions, defers at any tool count. One per agent, the
+   * `deferredToolLoading` preset included.
    *
    * @throws Error when the target is neither `'toolSpecs'` nor a list of tool names, or the config is invalid
    * @experimental

@@ -24,10 +24,10 @@ import { Offload } from './strategies/offload/index.js'
  *   the model searches for them (`Offload.defer('toolSpecs', { search: 'auto' })`). Claude 4.5 and later through
  *   `AnthropicModel` and GPT-5.4 and later through the OpenAI API's Responses endpoint defer natively and search with
  *   the provider's tool search; most other models get each deferred tool as a stub (name and description) and
- *   search with `search_tools`; models that can't use stubs (`deferredToolLoading: 'unsupported'`) search with
- *   `search_tools` and get each tool it returns in full, so their tools list changes with each load. The SDK's own
- *   tools and tools without parameters are always sent in full and every other tool is deferred, so the model searches
- *   even for its most used tools first; `Offload.defer` keeps the ones you name
+ *   search with `search_tools`; models that can't use stubs (`deferredToolLoading: 'unsupported'`) get every tool
+ *   spec, as without the preset. The SDK's own tools and tools without parameters are always sent in full and every
+ *   other tool is deferred, so the model searches even for its most used tools first; `Offload.defer` keeps the ones
+ *   you name
  */
 export const STRATEGY_PRESET_NAMES = [
   'proactiveSummarization',

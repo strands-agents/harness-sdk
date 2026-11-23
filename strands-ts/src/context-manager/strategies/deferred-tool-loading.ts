@@ -3,6 +3,7 @@
  * build it with `Offload.defer`.
  */
 
+import { BeforeToolsEvent } from '../../hooks/events.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { isManageTool } from '../../background-tasks/background-tasks.js'
@@ -70,8 +71,8 @@ export type DeferTarget = 'toolSpecs' | string[]
  * where the call's model has one and `search_tools` elsewhere. The provider's tool search runs on a model whose
  * provider defers tools natively (`modelInfo.capabilities.deferredToolLoading` is `'native'`: Claude 4.5 and later
  * through `AnthropicModel`, GPT-5.4 and later through the OpenAI API's Responses endpoint), and `'server'` throws on
- * any other. A model that can't take stubs gets each tool `search_tools` returns in full from then on, so its tools
- * list changes with each load.
+ * any other. A model that can't take stubs gets every spec under `'auto'`, as without search; under `'client'` it gets
+ * only `search_tools` and each tool that returns, in full from then on, so its tools list changes with each load.
  *
  * @experimental
  */
@@ -130,8 +131,8 @@ export interface DeferStrategy extends ContextStrategy {
 /**
  * The strategy behind `Offload.defer`. On every model call it picks the tools to defer from that call's tools and
  * passes their names on the call as its `deferredTools`. The call's model decides how a deferred tool reaches it
- * (`modelInfo.capabilities.deferredToolLoading`); a model that can't defer tools gets every spec, or with `search` set,
- * only the tools it searched for. The model loads a schema with the loader the context manager registers,
+ * (`modelInfo.capabilities.deferredToolLoading`); a model that can't defer tools gets every spec, or with `search`
+ * `'client'`, only the tools it searched for. The model loads a schema with the loader the context manager registers,
  * `load_tools` or with `search` set `search_tools`, or with the provider's tool search, which the call asks for
  * with `serverToolSearch`. A call to a deferred tool before its load gets the schema back instead of running. SDK
  * tools such as the loaders and `retrieve_context` are never deferred, nor is a tool that takes no parameters, since
@@ -150,11 +151,13 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
   private readonly _schemaTokens: ParsedCondition | undefined
   /** The tools each agent's latest model call deferred. */
   private readonly _deferred = new WeakMap<LocalAgent, ReadonlySet<string>>()
+  /** The model each agent's latest model call went to, whose tool calls the guard checks. */
+  private readonly _models = new WeakMap<LocalAgent, Model>()
   /**
-   * The tools each agent's latest model response loaded with the provider's tool search. The agent adds the
-   * response to its messages after running its tool calls, so the guard can't read these loads there yet.
+   * The assistant message whose tool calls each agent is running. The agent adds it to its messages after running
+   * them, or keeps it in its interrupt state while they wait, so the guard can't read its loads there.
    */
-  private readonly _searched = new WeakMap<LocalAgent, ReadonlySet<string>>()
+  private readonly _running = new WeakMap<LocalAgent, Message>()
 
   /**
    * @param target - Which tools to defer
@@ -197,9 +200,8 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
       )
     }
     agent.addMiddleware(InvokeModelStage.Input, (context) => this._render(context))
-    agent.addMiddleware(InvokeModelStage.Output, (output) => {
-      this._searched.set(agent, new Set(output.result.message.content.flatMap(blockLoads)))
-      return output
+    agent.addHook(BeforeToolsEvent, (event) => {
+      this._running.set(agent, event.message)
     })
     agent.addMiddleware(ExecuteToolStage, (context, next) => this._guardUnloaded(context, next))
   }
@@ -230,7 +232,7 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
   /**
    * The tools an agent's model call with these tool specs on this model sends: every spec, the names of the ones it
    * defers and whether the provider searches them itself; only the ones it searched for on a model that can't take
-   * stubs; or every spec but the loader when it defers none.
+   * stubs under `search: 'client'`; or every spec but the loader when it defers none.
    *
    * @param agent - The agent making the call
    * @param toolSpecs - The tool specs of the call
@@ -257,7 +259,7 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     const deferred = this._toDefer(agent, toolSpecs, model)
     const withoutLoader = { toolSpecs: toolSpecs.filter((spec) => spec.name !== this._loader) }
     const delivery = deferredToolLoading(model)
-    if (deferred.size === 0 || (delivery === 'unsupported' && !this.search)) {
+    if (deferred.size === 0 || (delivery === 'unsupported' && this.search !== 'client')) {
       return { tools: withoutLoader, deferred: new Set<string>() }
     }
     if (delivery === 'unsupported') return searchedOnly(toolSpecs, deferred, messages, model)
@@ -280,7 +282,7 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     const { tools, deferred } = this._plan(context.agent, context.toolSpecs, context.model, context.messages)
     this._record(context.agent, deferred, context.model)
     if (
-      !this.search &&
+      this.search !== 'client' &&
       !defersTools(context.model) &&
       this._toDefer(context.agent, context.toolSpecs, context.model).size > 0
     ) {
@@ -306,6 +308,7 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
       logger.debug(`model_id=<${model.modelId}>, deferred=<${deferred.size}> | deferred tools changed`)
     }
     this._deferred.set(agent, deferred)
+    this._models.set(agent, model)
   }
 
   /** The tools among these specs the target covers, when either condition is met; none otherwise. */
@@ -345,11 +348,20 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     return this._toolCount === undefined && this._schemaTokens === undefined
   }
 
-  /** The tools the agent's conversation loaded, those of the response whose tool calls run included. */
-  private _loads(agent: LocalAgent): Set<string> {
-    const loads = loadedTools(agent.messages)
-    for (const name of this._searched.get(agent) ?? []) loads.add(name)
-    return loads
+  /**
+   * The tools the agent's conversation loaded for this model, those of the response whose tool calls run included. A
+   * load by the provider's tool search counts only for a model that defers tools natively, since no other model gets
+   * its block back.
+   */
+  private _loads(agent: LocalAgent, model: Model): Set<string> {
+    const native = deferredToolLoading(model) === 'native'
+    const running = this._running.get(agent)
+    const messages = running ? [...agent.messages, running] : agent.messages
+    return new Set(
+      messages.flatMap((message) =>
+        message.content.flatMap((block) => (native || block.type !== 'serverToolBlock' ? blockLoads(block) : []))
+      )
+    )
   }
 
   /**
@@ -366,10 +378,10 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
   ): AsyncGenerator<AgentStreamEvent, ExecuteToolResult, undefined> {
     const { agent, toolUse } = context
     const { name, toolUseId } = toolUse
+    const model = this._models.get(agent) ?? agent.model
     const deferred =
-      this._deferred.get(agent) ??
-      this._plan(agent, agent.toolRegistry.toolSpecs(), agent.model, agent.messages).deferred
-    if (!context.tool || !deferred.has(name) || this._loads(agent).has(name)) {
+      this._deferred.get(agent) ?? this._plan(agent, agent.toolRegistry.toolSpecs(), model, agent.messages).deferred
+    if (!context.tool || !deferred.has(name) || this._loads(agent, model).has(name)) {
       return yield* next(context)
     }
     return {
@@ -431,9 +443,9 @@ function checkServerSearch(search: ToolSearch | undefined, model: Model): void {
 }
 
 /**
- * The tools a call to a model that can't take stubs sends when the model searches: every tool it doesn't defer, then
- * each deferred one the conversation loaded, in load order, with its full spec. `search_tools` lists every deferred
- * tool, since the model sees none of them until it loads them.
+ * The tools a call to a model that can't take stubs sends under `search: 'client'`: every tool it doesn't defer, then
+ * each deferred one the conversation loaded, in load order, with its full spec. `search_tools` lists the deferred
+ * tools not loaded yet, since the model sees none of them until it loads them.
  */
 function searchedOnly(
   toolSpecs: readonly ToolSpec[],
@@ -444,7 +456,7 @@ function searchedOnly(
   const loaded = loadOrder(messages).filter((name) => deferred.has(name))
   const specs = new Map(toolSpecs.map((spec) => [spec.name, spec]))
   const listing = toolListing(
-    toolSpecs.filter((spec) => deferred.has(spec.name)),
+    toolSpecs.filter((spec) => deferred.has(spec.name) && !loaded.includes(spec.name)),
     model.modelInfo.limits?.contextWindow || DEFAULT_CONTEXT_WINDOW_LIMIT
   )
   const kept = toolSpecs
@@ -467,20 +479,15 @@ function checkConditionNames(conditions: DeferConditions | undefined): void {
   }
 }
 
-/**
- * The tools these messages loaded: with a `ToolReferenceBlock` in a tool result, or with the provider's tool search,
- * whose `ServerToolBlock` names them.
- */
-function loadedTools(messages: readonly Message[]): Set<string> {
-  return new Set(loadOrder(messages))
-}
-
 /** The tools these messages loaded, each once, in the order they were first loaded. */
 function loadOrder(messages: readonly Message[]): string[] {
   return [...new Set(messages.flatMap((message) => message.content.flatMap(blockLoads)))]
 }
 
-/** The tools one content block loads. */
+/**
+ * The tools one content block loads: with a `ToolReferenceBlock` in a tool result, or with the provider's tool search,
+ * whose `ServerToolBlock` names them.
+ */
 function blockLoads(block: ContentBlock): readonly string[] {
   if (block.type === 'serverToolBlock') return block.loadedTools ?? []
   if (block.type !== 'toolResultBlock') return []

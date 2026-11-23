@@ -394,8 +394,8 @@ describe('DeferredToolLoadingStrategy', () => {
       }
     )
 
-    it('sends a model that can not take stubs only the tools it searched for, in full, in load order', async () => {
-      const { agent, model } = makeAgent('unsupported', { strategy: searching('auto') })
+    it("sends a model that can not take stubs only the tools it searched for under 'client', in full, in load order", async () => {
+      const { agent, model } = makeAgent('unsupported', { strategy: searching('client') })
       model
         .addTurn({ type: 'toolUseBlock', name: 'search_tools', toolUseId: 'search-1', input: { names: ['write'] } })
         .addTurn({ type: 'toolUseBlock', name: 'search_tools', toolUseId: 'search-2', input: { names: ['shell'] } })
@@ -412,9 +412,14 @@ describe('DeferredToolLoadingStrategy', () => {
         ['retrieve_context', 'search_tools', 'write', 'shell'],
       ])
       expect(sentToolSpecs(model)[2]!.at(-1)).toEqual(shell.toolSpec)
-      expect(sentToolSpecs(model)[0]!.find((spec) => spec.name === 'search_tools')!.description).toContain(
-        'Tools you can load:\n- shell: Run shell.\n- read: Run read.\n- write: Run write.'
+      const listings = sentToolSpecs(model).map(
+        (specs) => specs.find((spec) => spec.name === 'search_tools')!.description.split('Tools you can load:\n')[1]
       )
+      expect(listings.slice(0, 3)).toEqual([
+        '- shell: Run shell.\n- read: Run read.\n- write: Run write.',
+        '- shell: Run shell.\n- read: Run read.',
+        '- read: Run read.',
+      ])
       expect(vi.mocked(model.stream).mock.calls.map(([, options]) => options?.deferredTools)).toEqual(
         Array(4).fill(undefined)
       )
@@ -422,7 +427,7 @@ describe('DeferredToolLoadingStrategy', () => {
     })
 
     it('answers a call to a tool a model that can not take stubs has not searched for, and loads it', async () => {
-      const { agent, model } = makeAgent('unsupported', { strategy: searching('auto') })
+      const { agent, model } = makeAgent('unsupported', { strategy: searching('client') })
       model
         .addTurn({ type: 'toolUseBlock', name: 'shell', toolUseId: 'early', input: { value: 'ls' } })
         .addTurn({ type: 'textBlock', text: 'done' })
@@ -438,13 +443,19 @@ describe('DeferredToolLoadingStrategy', () => {
       expect(sentToolSpecs(model)[1]!.map((spec) => spec.name)).toEqual(['retrieve_context', 'search_tools', 'shell'])
     })
 
-    it('sends every full spec without a loader to a model that can not take stubs when the model loads by name', async () => {
-      const { agent, model } = makeAgent('unsupported')
-      model.addTurn({ type: 'textBlock', text: 'ok' })
+    it.each([
+      ['the model loads by name', undefined],
+      ["search is 'auto'", 'auto' as const],
+    ])('sends every full spec without a loader to a model that can not take stubs when %s', async (_name, search) => {
+      const { agent, model } = makeAgent('unsupported', search ? { strategy: searching(search) } : {})
+      model.addTurn({ type: 'toolUseBlock', name: 'shell', toolUseId: 'shell-1', input: { value: 'ls' } })
+      model.addTurn({ type: 'textBlock', text: 'done' })
 
-      await agent.invoke('Hi.')
+      await agent.invoke('List the files.')
 
+      expect(sentToolSpecs(model)[0]!.slice(0, 3)).toEqual([shell, read, write].map((each) => each.toolSpec))
       expect(sentToolSpecs(model)[0]!.map((spec) => spec.name)).toEqual(['shell', 'read', 'write', 'retrieve_context'])
+      expect(agent.messages[2]!.content[0]).toMatchObject({ toolUseId: 'shell-1', status: 'success' })
     })
 
     it("runs a call to a tool the provider's own search loaded", async () => {
@@ -471,6 +482,85 @@ describe('DeferredToolLoadingStrategy', () => {
       await agent.invoke('List the files.')
 
       expect(callback).toHaveBeenCalledTimes(1)
+    })
+
+    it("runs an approved call on a restored agent to a tool the provider's search loaded in the same response", async () => {
+      const callback = vi.fn(() => 'ok')
+      const build = (): { agent: Agent; model: MockMessageModel } => {
+        const searched = tool({
+          name: 'shell',
+          description: 'Run shell.',
+          inputSchema: z.object({ value: z.string() }),
+          callback,
+        })
+        const built = makeAgent('native', { tools: [searched, read, write], strategy: searching('auto') })
+        built.agent.addHook(BeforeToolCallEvent, (event) => {
+          if (event.interrupt<string>({ name: 'approve', reason: 'Run this tool?' }) !== 'yes') event.cancel = 'no'
+        })
+        return built
+      }
+      const { agent, model } = build()
+      model.addTurn([
+        {
+          type: 'serverToolBlock',
+          provider: 'anthropic',
+          data: { type: 'tool_search_tool_result' },
+          loadedTools: ['shell'],
+        },
+        { type: 'toolUseBlock', name: 'shell', toolUseId: 'shell-1', input: { value: 'ls' } },
+      ])
+      const first = await agent.invoke('List the files.')
+      const snapshot = JSON.parse(JSON.stringify(agent.takeSnapshot({ preset: 'session' }))) as Snapshot
+      const { agent: restored, model: restoredModel } = build()
+      restoredModel.addTurn({ type: 'textBlock', text: 'done' })
+      restored.loadSnapshot(snapshot)
+
+      await restored.invoke([new InterruptResponseContent({ interruptId: first.interrupts![0]!.id, response: 'yes' })])
+
+      expect(callback).toHaveBeenCalledTimes(1)
+    })
+
+    it("answers a call to a tool the provider's search loaded when the call's model only got its stub", async () => {
+      const callback = vi.fn(() => 'ok')
+      const searched = tool({
+        name: 'shell',
+        description: 'Run shell.',
+        inputSchema: z.object({ value: z.string() }),
+        callback,
+      })
+      const native = new MockMessageModel()
+      native.updateConfig({ modelInfo: { capabilities: { deferredToolLoading: 'native' } } })
+      const stubs = new MockMessageModel()
+      stubs.updateConfig({ modelInfo: { capabilities: { deferredToolLoading: 'stubs' } } })
+      native.addTurn([
+        {
+          type: 'serverToolBlock',
+          provider: 'anthropic',
+          data: { type: 'tool_search_tool_result' },
+          loadedTools: ['shell'],
+        },
+        { type: 'textBlock', text: 'Which directory?' },
+      ])
+      stubs
+        .addTurn({ type: 'toolUseBlock', name: 'shell', toolUseId: 'shell-1', input: { value: 'ls' } })
+        .addTurn({ type: 'textBlock', text: 'done' })
+      let call = 0
+      const agent = new Agent({
+        model: new ModelRouter([native, stubs], {
+          strategy: { select: async (context) => context.candidates[call++ === 0 ? 0 : 1] },
+        }),
+        tools: [searched, read, write],
+        contextManager: { strategies: [searching('auto')] },
+        printer: false,
+      })
+
+      await agent.invoke('List the files.')
+      await agent.invoke('The current one.')
+
+      expect(callback).not.toHaveBeenCalled()
+      expect((agent.messages[4]!.content[0] as ToolResultBlock).content.at(-1)).toEqual(
+        new ToolReferenceBlock({ name: 'shell' })
+      )
     })
 
     it('keeps the config when .when() sets conditions', async () => {
@@ -830,11 +920,17 @@ describe('DeferredToolLoadingStrategy', () => {
     ])
   })
 
-  it('sends every spec without the loader on a model that can not defer tools', async () => {
+  it.each([
+    ['', undefined, 'never-defers'],
+    [" with search 'auto'", 'auto' as const, 'never-defers-auto'],
+  ])('sends every spec without the loader on a model that can not defer tools%s', async (_name, search, modelId) => {
     using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const { agent, model } = makeAgent('unsupported')
+    const { agent, model } = makeAgent(
+      'unsupported',
+      search ? { strategy: Offload.defer('toolSpecs', { search }) } : {}
+    )
     // The warning is once per process and model, so this model has an id no other test uses.
-    model.updateConfig({ modelId: 'never-defers' })
+    model.updateConfig({ modelId })
     model.addTurn({ type: 'textBlock', text: 'ok' })
 
     await agent.invoke('Hi.')
@@ -842,8 +938,9 @@ describe('DeferredToolLoadingStrategy', () => {
     const [toolSpecs] = sentToolSpecs(model)
     expect(deferredNames(model)).toEqual([])
     expect(toolSpecs!.map((spec) => spec.name)).not.toContain('load_tools')
+    expect(toolSpecs!.map((spec) => spec.name)).not.toContain('search_tools')
     expect(warnSpy).toHaveBeenCalledWith(
-      'model_id=<never-defers> | model or its config can not defer tool schemas | sending every tool spec'
+      `model_id=<${modelId}> | model or its config can not defer tool schemas | sending every tool spec`
     )
   })
 
