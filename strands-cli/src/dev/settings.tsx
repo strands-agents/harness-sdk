@@ -1,5 +1,6 @@
 import { useState, type ReactElement } from 'react'
-import { Box, useInput } from 'ink'
+import { Box } from 'ink'
+import { useInput } from '../ui/input.js'
 import { Text } from '../ui/theme.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { useCopyableError } from '../ui/clipboard.js'

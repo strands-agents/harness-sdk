@@ -1,5 +1,6 @@
 import { createElement, type ComponentProps, type ReactElement } from 'react'
-import { render, useInput, type Instance } from 'ink'
+import { render, type Instance } from 'ink'
+import { useInput } from './input.js'
 
 import { ChatRoot, type ChatLaunch, type ProviderSetup, type SetupBridge, type McpTrustRequest } from './app.js'
 import type { ChatControllerApi } from './chat/controller.js'

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useInput, useStdout, type Key } from 'ink'
+import { useStdout, type Key } from 'ink'
+import { useInput } from './input.js'
 import { copyTerminalText } from '../terminal/terminal.js'
 import { graphemes, sanitizeTerminalText } from '../terminal/text.js'
 

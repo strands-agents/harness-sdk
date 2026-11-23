@@ -8,7 +8,7 @@ import type { DiscoveredHarness } from '../../src/dev/search.js'
 import * as terminal from '../../src/terminal/terminal.js'
 import { sanitizeTerminalText } from '../../src/terminal/text.js'
 import { StartupContentRows } from '../../src/ui/startup.js'
-import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
+import { captureFrame, mouseInputSequence, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 
 const harness = {
   name: 'Project harness',
@@ -134,6 +134,36 @@ describe('HarnessPicker', () => {
 
     await vi.waitFor(() =>
       expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'python' })
+    )
+  })
+
+  it('shouldNotTypeTheMouseReportsOfTheTerminalIntoTheNameOfANewHarness', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 36)
+    const frame = captureFrame(output)
+    const selected = vi.fn()
+    render(
+      createElement(HarnessPicker, {
+        cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+        harnesses: [],
+        onSelect: selected,
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Create a new harness'))
+    input.write('\u001b[B')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
+    input.write('\r')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Name: new-harness'))
+
+    input.write('-2')
+    input.write(mouseInputSequence(64, 49, 19, 'M') + mouseInputSequence(35, 49, 19, 'M'))
+    input.write('b')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Name: new-harness-2b'))
+    input.write('\r')
+
+    await vi.waitFor(() =>
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness-2b', language: 'typescript' })
     )
   })
 

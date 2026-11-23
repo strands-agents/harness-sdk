@@ -3,6 +3,8 @@ import stringWidth from 'string-width'
 // Ink can pass mouse reports with the leading escape byte removed.
 // eslint-disable-next-line no-control-regex
 const SGR_MOUSE_PATTERN = /^\u001b?\[<(\d+);(\d+);(\d+)([Mm])$/
+// eslint-disable-next-line no-control-regex
+const SGR_MOUSE_START = /\u001b\[<[\d;]*$/
 const MOUSE_MOVE_INTERVAL_MS = 33
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
@@ -44,6 +46,18 @@ export function shouldProcessMouseInput(mouse: MouseInput, state: MouseMoveState
   state.row = mouse.row
   state.acceptedAt = now
   return true
+}
+
+/**
+ * Cuts off the mouse report that `value` stops in the middle of, so it can wait for its end. The terminal sends a
+ * report whole, but a read can stop inside one when many arrive at once or the link is slow. Ink waits only a moment
+ * for the rest of an escape sequence, and then hands both pieces to its handlers as typed text.
+ */
+export function splitUnfinishedMouseReport(value: string): { finished: string; unfinished: string } {
+  const start = value.search(SGR_MOUSE_START)
+  return start < 0
+    ? { finished: value, unfinished: '' }
+    : { finished: value.slice(0, start), unfinished: value.slice(start) }
 }
 
 export function parseMouseInput(value: string): MouseInput | undefined {

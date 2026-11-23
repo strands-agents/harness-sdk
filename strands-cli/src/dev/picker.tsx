@@ -1,5 +1,6 @@
 import { createElement, useRef, useState, type ReactElement } from 'react'
-import { Box, useInput, type Key } from 'ink'
+import { Box, type Key } from 'ink'
+import { useInput } from '../ui/input.js'
 import { Text, useTheme } from '../ui/theme.js'
 import type { StartupScreen } from '../ui/run.js'
 import { emptyEditor, reduceInputSequence } from '../terminal/composer.js'

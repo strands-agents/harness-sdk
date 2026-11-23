@@ -1,5 +1,6 @@
 import { type ReactElement, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
-import { Box, useInput, useStdout } from 'ink'
+import { Box, useStdout } from 'ink'
+import { useInput } from './input.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { pauseMouseReporting } from '../terminal/terminal.js'
 import { Text, useTheme, ThemeProvider } from './theme.js'

@@ -8,7 +8,8 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react'
-import { Box, useInput, useStdout, type DOMElement } from 'ink'
+import { Box, useStdout, type DOMElement } from 'ink'
+import { useTerminalInput } from '../input.js'
 import { useTerminalSize } from '../terminal-size.js'
 import { DEFAULT_HARNESS_AGENT_CONFIG, supportsWebSearch, type HarnessAgentConfig } from '@strands-agents/harness'
 import stringWidth from 'string-width'
@@ -2115,7 +2116,7 @@ function SetupWizardContent({
   const frogClockMs = useBrandAnimation(frogAnimationId)
   const frogElapsedMs = useBrandAnimationFrame(frogClockMs, brandFrame.width, brandFrame.height)
 
-  useInput((input, key) => {
+  useTerminalInput((input, key) => {
     if (panelTransition.transitioning) return
     const mouse = parseMouseInput(input)
     if (mouse) {

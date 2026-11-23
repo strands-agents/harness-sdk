@@ -1,5 +1,5 @@
 import { createElement, useEffect, useMemo, useState, type ReactElement } from 'react'
-import { useInput } from 'ink'
+import { useInput } from '../input.js'
 
 import { diffSummaryText, wrappedDiffLines } from '../diff-rows.js'
 import { Box } from '../theme.js'

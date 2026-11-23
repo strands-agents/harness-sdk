@@ -8,7 +8,8 @@ import {
   useSyncExternalStore,
   type ReactElement,
 } from 'react'
-import { renderToString, useApp, useInput, usePaste, useStdout, type DOMElement, type Key } from 'ink'
+import { renderToString, useApp, usePaste, useStdout, type DOMElement, type Key } from 'ink'
+import { useTerminalInput } from '../input.js'
 
 import type {
   ChatAttachment,
@@ -2201,7 +2202,7 @@ export function ChatApp({
   )
   const inputHandlerRef = useRef({ handleInput, editingQueuedPromptId, currentInputQueue })
   inputHandlerRef.current = { handleInput, editingQueuedPromptId, currentInputQueue }
-  useInput(
+  useTerminalInput(
     (text, key) => {
       const pending = currentInputQueue()
       if (pending && !(key.ctrl && (text === 'c' || text === 'd'))) {

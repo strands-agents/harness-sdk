@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
-import { useInput, type Key } from 'ink'
+import { type Key } from 'ink'
+import { useInput } from '../input.js'
 
 import { emptyEditor, reduceInputSequence, type EditorState } from '../../terminal/composer.js'
 import { graphemes, sanitizeTerminalText } from '../../terminal/text.js'

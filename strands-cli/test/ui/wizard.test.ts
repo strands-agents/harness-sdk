@@ -2,7 +2,7 @@ import { createElement, type ReactElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { Wizard, type WizardProps, type WizardStep } from '../../src/ui/panels/wizard.js'
-import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
+import { captureFrame, mouseInputSequence, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 
 const ENTER = '\r'
 const TAB = '\t'
@@ -193,6 +193,38 @@ describe('Wizard', () => {
     await press(ENTER)
 
     expect(save).toHaveBeenCalledWith('hi')
+  })
+
+  it('shouldNotTypeTheMouseReportsOfTheTerminalIntoATextField', async () => {
+    const save = vi.fn()
+    const steps: WizardStep[] = [
+      {
+        key: 'one',
+        title: 'One',
+        fields: [
+          { kind: 'text', key: 'goal', label: 'goal', display: 'none', hint: 'Enter edit', edit: { value: '', save } },
+        ],
+      },
+      { key: 'two', title: 'Two', fields: [], body: () => null },
+    ]
+    const { text, press } = await wizard(steps)
+    // The mouse moves, moves with Shift and Alt held, and the wheel turns: each is a report on the same input.
+    const mouse = async (): Promise<void> => {
+      for (const button of [35, 47, 64, 65]) await press(mouseInputSequence(button, 49, 19, 'M'))
+    }
+
+    await mouse()
+    const onTheRow = text()
+    await press('h')
+    await mouse()
+    await press('i')
+    const inTheEditor = text()
+    await press(ENTER)
+
+    expect(onTheRow).not.toContain('[<')
+    expect(onTheRow).not.toContain('Enter save')
+    expect(inTheEditor).not.toContain('[<')
+    expect(save).toHaveBeenCalledExactlyOnceWith('hi')
   })
 
   it('shouldDropTheEditWhenTheUserPressesEscInTheEditor', async () => {

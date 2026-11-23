@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
-import { Box, useInput, useStdout, type DOMElement } from 'ink'
+import { Box, useStdout, type DOMElement } from 'ink'
+import { useTerminalInput } from './input.js'
 
 import { parseMouseInput } from '../terminal/mouse-input.js'
 import { errorMessage, sanitizeTerminalText } from '../terminal/text.js'
@@ -85,7 +86,7 @@ export function UpdatePrompt({
       .finally(() => setBusy(false))
   }
 
-  useInput((input, key) => {
+  useTerminalInput((input, key) => {
     if (key.ctrl && (input === 'c' || input === 'd')) {
       onExit(input === 'c' ? 130 : 0)
       return

@@ -11,7 +11,7 @@ import { runInkChat } from '../../src/ui/run.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
-import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
+import { captureFrame, mouseInputSequence, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 import * as terminal from '../../src/terminal/terminal.js'
 
 const info = {
@@ -120,6 +120,32 @@ describe('workspace Settings', () => {
     } finally {
       await dev.dispose()
     }
+  })
+
+  it('shouldNotTypeTheMouseReportsOfTheTerminalIntoTheConfirmation', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(120, 35)
+    const frame = captureFrame(output)
+    const confirm = vi.fn()
+    render(
+      createElement(WorkspaceReplacementConfirmation, {
+        directory: info.root,
+        replacement: 'Other agent · /agents/other/agent.ts',
+        onConfirm: confirm,
+        onCancel: vi.fn(),
+      }),
+      { stdin: input, stdout: output }
+    )
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('This is a DELETE operation.'))
+
+    input.write('DEL')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('confirm: DEL▏'))
+    input.write(mouseInputSequence(64, 49, 19, 'M') + mouseInputSequence(35, 49, 19, 'M'))
+    input.write('ETE')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('confirm: DELETE▏'))
+    input.write('\r')
+
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
   })
 
   it('shouldRequireTypedDeleteBeforeConfirmingTheReplacement', async () => {

@@ -1,5 +1,6 @@
 import { type ReactElement, type ReactNode } from 'react'
-import { useInput, usePaste } from 'ink'
+import { usePaste } from 'ink'
+import { useInput } from '../input.js'
 
 import { Box, Text, useTheme } from '../theme.js'
 import { useDevPanelClicks } from './dev.js'
