@@ -21,7 +21,8 @@ export const BOX_PLATFORMS = [
   },
 ] as const
 
-export const BOX_INSTALL_COMMAND = 'curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | sh'
+export const BOX_INSTALL_COMMAND =
+  'curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | sh'
 export const BOX_VERIFY_COMMAND = 'box --version'
 
 export const BOX_LINKS = {
