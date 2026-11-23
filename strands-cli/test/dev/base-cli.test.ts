@@ -398,6 +398,7 @@ describe('sessionModelSyncEnabled', () => {
   it('shouldPreferTheBaseCliWorkspaceValueOverCliTomlWhenTheWorkspaceSetsIt', async () => {
     const home = await temporaryDirectory()
     vi.stubEnv('HOME', home)
+    vi.stubEnv('USERPROFILE', home)
     const path = join(home, '.strands', 'cli.toml')
     await mkdir(join(home, '.strands'))
     await writeFile(path, `${profileToml('Answer briefly.')}\n[settings]\nsessionModelSync = true\n`)

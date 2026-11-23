@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -255,6 +255,7 @@ const sessionsFor = async (
   return { workspace, sessions, notices }
 }
 
+const RECORD_WAIT_MS = 10_000
 const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
 
 const experimentHome = (workspace: DevWorkspace, name = 'capital'): string =>
@@ -363,7 +364,7 @@ describe('TEMPORARY dev sessions', () => {
     temporaryDevSessions({ workspace, agent: () => ({}), context: { ...chat().context, openFile } })
     await sessions.openFile('/w/a.json')
 
-    expect(openFile).toHaveBeenCalledWith('/w/a.json')
+    expect(openFile).toHaveBeenCalledWith(resolve(workspace.root, '/w/a.json'))
   })
 
   it('shouldShowTheFailedCaseAndPostANoticeWhenATestRunFinishes', async () => {
@@ -393,7 +394,7 @@ describe('TEMPORARY dev sessions', () => {
     expect(notices.map(({ text }) => text).sort()).toEqual([
       expect.stringMatching(
         new RegExp(
-          `^evaluate · capital stopped · run log in ${escaped(join(experimentHome(workspace), 'runs'))}/.+/run\\.log$`,
+          `^evaluate · capital stopped · run log in ${escaped(join(experimentHome(workspace), 'runs'))}${escaped(sep)}.+${escaped(sep)}run\\.log$`,
           'u'
         )
       ),
@@ -2853,7 +2854,7 @@ describe('TEMPORARY dev sessions on open', () => {
         // The latest copy was not written, so the notice points at the report of the run itself.
         text: expect.stringMatching(
           new RegExp(
-            `^evaluate · capital · 1 of 2 cases passed · report in ${escaped(join(experimentHome(workspace), 'runs'))}/\\d{8}-\\d{6}/report\\.json$`,
+            `^evaluate · capital · 1 of 2 cases passed · report in ${escaped(join(experimentHome(workspace), 'runs'))}${escaped(sep)}\\d{8}-\\d{6}${escaped(sep)}report\\.json$`,
             'u'
           )
         ),
@@ -3084,7 +3085,9 @@ describe('TEMPORARY /evaluate runs after strands dev closes', () => {
     let directory = ''
     const spawnTests = vi.fn(async (request: TemporaryEvalsProcess) => {
       request.onSpawn?.(4242)
-      await vi.waitFor(async () => expect((await readTemporaryRunRecords(directory))[0]?.pid).toBe(4242))
+      await vi.waitFor(async () => expect((await readTemporaryRunRecords(directory))[0]?.pid).toBe(4242), {
+        timeout: RECORD_WAIT_MS,
+      })
       return testing(request)
     })
     const { workspace, sessions } = await sessionsFor({ spawnTests })
@@ -3093,7 +3096,7 @@ describe('TEMPORARY /evaluate runs after strands dev closes', () => {
 
     sessions.test.run([experiment])
 
-    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
+    await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'), { timeout: RECORD_WAIT_MS })
     await vi.waitFor(async () => expect(await readTemporaryRunRecords(directory)).toEqual([]))
   })
 })

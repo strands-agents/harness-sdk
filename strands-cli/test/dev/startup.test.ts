@@ -14,6 +14,7 @@ import { idleBackend } from '../fixtures/chat-backend.js'
 import type { DevWorkspace } from '../../src/dev/workspace.js'
 
 const STRANDS_WORDMARK = /STRANDS|▄▟[ █]{3}▙▄|█▀▀ ▀█▀ █▀█ ▄▀█ █▄ █ █▀▄ █▀▀|▀▀ ▀ ▀ {2}▀ {2}▄▀ {3}▄ {4}▀▄ {2}▀▀/
+const INTRO_TEST_TIMEOUT_MS = 20_000
 
 type RenderApp = NonNullable<NonNullable<Parameters<typeof runInkChat>[1]>['renderApp']>
 
@@ -348,54 +349,58 @@ describe('dev startup screen', () => {
     expect(factory).not.toHaveBeenCalled()
   })
 
-  it('shouldPutTheStartupCardInPlaceAtOnceWhenAKeyIsPressedWhileItRises', async () => {
-    vi.useFakeTimers()
-    const input = ttyInput()
-    const output = ttyOutput(120, 40)
-    const frame = captureFrame(output)
-    const cardTop = (): number => frame().findIndex((line) => line.includes('╭'))
-    const logo = (): string[] => frame().slice(0, 18)
-    const keys: string[] = []
-    const KeyProbe = (): ReactElement => {
-      useInput((key) => {
-        keys.push(key)
-      })
-      return createElement(Box, { height: useStartupContentRows() }, createElement(Text, {}, 'Choose a harness'))
-    }
-    const instance = render(
-      createElement(ChatRoot, {
-        intro: true,
-        setup: false,
-        setupBridge: { request: () => {}, confirmMcp: async () => true },
-        onSetupComplete: () => {},
-        onExitSetup: () => {},
-        startupContent: createElement(KeyProbe),
-      }),
-      { stdin: input, stdout: output, stderr: ttyOutput(120, 40) }
-    )
-    try {
-      await vi.advanceTimersByTimeAsync(500)
-      const rising = cardTop()
-      input.write('x')
-      await vi.advanceTimersByTimeAsync(100)
-      const fastTracked = cardTop()
-      const playing = logo()
-      await vi.advanceTimersByTimeAsync(FROG_INTRO_DURATION_MS)
+  it(
+    'shouldPutTheStartupCardInPlaceAtOnceWhenAKeyIsPressedWhileItRises',
+    { timeout: INTRO_TEST_TIMEOUT_MS },
+    async () => {
+      vi.useFakeTimers()
+      const input = ttyInput()
+      const output = ttyOutput(120, 40)
+      const frame = captureFrame(output)
+      const cardTop = (): number => frame().findIndex((line) => line.includes('╭'))
+      const logo = (): string[] => frame().slice(0, 18)
+      const keys: string[] = []
+      const KeyProbe = (): ReactElement => {
+        useInput((key) => {
+          keys.push(key)
+        })
+        return createElement(Box, { height: useStartupContentRows() }, createElement(Text, {}, 'Choose a harness'))
+      }
+      const instance = render(
+        createElement(ChatRoot, {
+          intro: true,
+          setup: false,
+          setupBridge: { request: () => {}, confirmMcp: async () => true },
+          onSetupComplete: () => {},
+          onExitSetup: () => {},
+          startupContent: createElement(KeyProbe),
+        }),
+        { stdin: input, stdout: output, stderr: ttyOutput(120, 40) }
+      )
+      try {
+        await vi.advanceTimersByTimeAsync(500)
+        const rising = cardTop()
+        input.write('x')
+        await vi.advanceTimersByTimeAsync(100)
+        const fastTracked = cardTop()
+        const playing = logo()
+        await vi.advanceTimersByTimeAsync(FROG_INTRO_DURATION_MS)
 
-      expect(rising).toBeGreaterThan(fastTracked)
-      expect(fastTracked).toBe(cardTop())
-      expect(playing).not.toEqual(logo())
-      expect(keys).toEqual(['x'])
-    } finally {
-      instance.unmount()
-      vi.useRealTimers()
+        expect(rising).toBeGreaterThan(fastTracked)
+        expect(fastTracked).toBe(cardTop())
+        expect(playing).not.toEqual(logo())
+        expect(keys).toEqual(['x'])
+      } finally {
+        instance.unmount()
+        vi.useRealTimers()
+      }
     }
-  })
+  )
 
   it.each([
     ['During', FROG_INTRO_DURATION_MS / 2],
     ['After', FROG_INTRO_DURATION_MS + 500],
-  ])('shouldNotReplayTheIntroWhenTheHarnessOpens%sIt', async (_, openAfterMs) => {
+  ])('shouldNotReplayTheIntroWhenTheHarnessOpens%sIt', { timeout: INTRO_TEST_TIMEOUT_MS }, async (_, openAfterMs) => {
     vi.useFakeTimers()
     const input = ttyInput()
     const output = ttyOutput(120, 40)

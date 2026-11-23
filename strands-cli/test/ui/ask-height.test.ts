@@ -1,5 +1,4 @@
 import { createElement } from 'react'
-import { writeFileSync } from 'node:fs'
 import { afterEach, describe, expect, it } from 'vitest'
 import { type Instance } from 'ink'
 
@@ -139,7 +138,6 @@ describe('the panel around one question', () => {
     const lines = screen().split('\n')
     const top = lines.findIndex((line) => line.includes('╭'))
     const bottom = lines.findIndex((line) => line.includes('╰'))
-    writeFileSync('/tmp/ask-height.txt', lines.slice(Math.max(0, top - 1), bottom + 2).join('\n'))
 
     expect(top).toBeGreaterThanOrEqual(0)
     expect(bottom - top).toBeLessThanOrEqual(9)
