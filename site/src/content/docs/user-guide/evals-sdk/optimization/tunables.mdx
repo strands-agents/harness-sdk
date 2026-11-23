@@ -195,6 +195,34 @@ lists you write, so list the combinations worth comparing. Options are stored as
 JSON text, which is what you'll see in the run's summary and `best.values.json`. A
 `JsonChoice` can't be an argument of a `component()`; declare it on the factory itself.
 
+## Choose which skills load
+
+The same idea works for skills, and it combines with rewriting them. `SkillLibrary` makes
+each skill's `SKILL.md` tunable, its frontmatter description included, and a `JsonChoice`
+picks which of those skills the agent loads:
+
+```python
+from pathlib import Path
+
+from strands import Agent
+from strands.vended_plugins.skills import AgentSkills
+from strands_evals.optimization import JsonChoice, SkillLibrary, tunable
+
+
+@tunable(
+    skills=SkillLibrary("skills"),
+    enabled=JsonChoice(
+        ["returns"], ["returns", "shipping"], ["returns", "shipping", "billing"]
+    ),
+)
+def create_agent(skills="skills", enabled=("returns", "shipping", "billing")):
+    folders = [str(Path(skills) / name) for name in enabled]
+    return Agent(plugins=[AgentSkills(skills=folders)], callback_handler=None)
+```
+
+`skills` is the candidate's copy of the folder, so the chosen skills load with the
+candidate's rewrites. The baseline loads all three, as written today.
+
 ## Swap components
 
 To compare constructed objects, use `choice()` with one `component()` per alternative. Each
@@ -335,7 +363,7 @@ mount the outer factory from your eval script, with every marker in one call:
 ```python
 from strands_evals.optimization import TextValue, tunable
 
-from my_app.agents import create_support_agent  # builds the orchestrator and its specialist
+from my_app.agents import create_support_agent  # builds both agents
 
 tunable_agent = tunable(
     create_support_agent,
