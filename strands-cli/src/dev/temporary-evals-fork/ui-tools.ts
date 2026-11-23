@@ -2,6 +2,7 @@ import type { JSONSchema, JSONValue } from '@strands-agents/sdk'
 
 import {
   numberProblem,
+  WizardInterruption,
   type WizardFieldSpec,
   type WizardNumberSpec,
   type WizardOption,
@@ -142,6 +143,17 @@ const CANCELLED = reply({
   detail: 'The developer closed the question without answering. Treat this as a no.',
 })
 
+// A chat message dropped the question: pass on what it asked and what the developer had entered.
+const interrupted = (input: Input, { entered }: WizardInterruption): string =>
+  reply({
+    status: 'interrupted',
+    question: input.question,
+    ...(Object.keys(entered).length === 0 ? {} : { entered: entered[ANSWER] ?? entered }),
+    detail:
+      'The developer sent a chat message instead of finishing this question; read it next. Treat entered as what ' +
+      'they had on screen, not a final answer, and ask again only if the message does not settle it.',
+  })
+
 const BACK = reply({
   status: 'back',
   detail:
@@ -184,7 +196,7 @@ interface UiTool {
   readonly properties: Record<string, JSONSchema>
   readonly required: readonly string[]
   readonly fields: (input: Input) => readonly WizardFieldSpec[]
-  readonly answer: (outcome: Exclude<WizardOutcome, 'back' | undefined>) => JSONValue
+  readonly answer: (outcome: Exclude<WizardOutcome, 'back' | WizardInterruption | undefined>) => JSONValue
 }
 
 const UI_TOOLS: readonly UiTool[] = [
@@ -270,6 +282,7 @@ export const uiTools = (broker: () => UiToolsBroker): DevChatTool[] =>
     run: async (input): Promise<string> => {
       const outcome = await broker().ask(uiRequest(input, tool.fields(input)))
       if (outcome === undefined) return CANCELLED
+      if (outcome instanceof WizardInterruption) return interrupted(input, outcome)
       return outcome === 'back' ? BACK : reply({ status: 'answered', answer: tool.answer(outcome) })
     },
   }))

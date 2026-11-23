@@ -96,6 +96,23 @@ describe('strands dev UI tools', () => {
     expect(reply).toEqual({ status: 'answered', answer: { iterations: 2, workers: 8 } })
   })
 
+  it('shouldPassOnTheQuestionAndWhatWasEnteredWhenAChatMessageDropsIt', async () => {
+    const { broker, tool } = setup()
+    const options = [
+      { value: 'a', label: 'A' },
+      { value: 'b', label: 'B' },
+    ]
+    const asked = tool('strands_dev_multi_select').run({ question: 'Which?', options })
+    await vi.waitFor(() => expect(broker.pending()).toBeDefined())
+    broker.draft(broker.pending()!.id, { answer: ['b'] })
+    const untouched = tool('strands_dev_confirm').run({ question: 'Sure?' })
+
+    expect(broker.interruptForTurn()).toBe(true)
+
+    expect(JSON.parse(await asked)).toMatchObject({ status: 'interrupted', question: 'Which?', entered: ['b'] })
+    expect(JSON.parse(await untouched)).not.toHaveProperty('entered')
+  })
+
   it.each([
     [undefined, 'cancelled'],
     ['back', 'back'],

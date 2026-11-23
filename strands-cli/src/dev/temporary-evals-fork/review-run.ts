@@ -1,5 +1,5 @@
 import { createDiffPreview } from '../../agent/file-changes.js'
-import type { WizardRequestSpec } from '../../ui/panels/wizard-request.js'
+import { WizardInterruption, type WizardRequestSpec } from '../../ui/panels/wizard-request.js'
 import type { OptimizeReview, ProposedEdit } from '../panels/model.js'
 import type { TemporaryDevSessions } from './sessions.js'
 
@@ -94,7 +94,12 @@ const walkRun = async (sessions: TemporaryDevSessions, runId: string): Promise<v
     asked.add(next.index)
     const outcome = await ask.ask(question(next.edit, { id: runId, run: review.run }, at, offered.length))
     // Closing the question, or finishing it with nothing picked, is not an answer: the edit keeps waiting.
-    if (outcome === undefined || outcome === 'back' || (outcome.verdict !== ACCEPT && outcome.verdict !== REJECT))
+    if (
+      outcome === undefined ||
+      outcome === 'back' ||
+      outcome instanceof WizardInterruption ||
+      (outcome.verdict !== ACCEPT && outcome.verdict !== REJECT)
+    )
       return optimize.leaveReview(runId)
     const verdict = outcome.verdict === ACCEPT
     optimize.accept(next.index, verdict, runId)

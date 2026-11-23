@@ -255,6 +255,10 @@ const RequestView = ({
   const steps = request.steps.map((step) =>
     toStep(step, answers.value, answers.current, update, typed, { width, active })
   )
+  useEffect(
+    () => broker.draft(request.id, finishedAnswers(request.steps, answers.value, texts.value)),
+    [broker, request, answers.value, texts.value]
+  )
   return (
     <Wizard
       name={request.name}

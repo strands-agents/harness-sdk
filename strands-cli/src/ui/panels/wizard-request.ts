@@ -75,7 +75,12 @@ export interface WizardRequest {
 export type WizardRequestSpec = Omit<WizardRequest, 'id'>
 
 /** `undefined` means the user cancelled instead of finishing; 'back' means they asked for the previous question. */
-export type WizardOutcome = Readonly<Record<string, WizardAnswer>> | 'back' | undefined
+/** The developer sent a chat message instead of finishing; `entered` is what the question held on screen then. */
+export class WizardInterruption {
+  constructor(readonly entered: Readonly<Record<string, WizardAnswer>>) {}
+}
+
+export type WizardOutcome = Readonly<Record<string, WizardAnswer>> | 'back' | WizardInterruption | undefined
 
 type WizardListener = (request: WizardRequest | undefined) => void
 
@@ -209,6 +214,8 @@ export class WizardBroker {
   private _autofill: boolean
   private _next = 1
   private _disposed = false
+  // What each shown question holds on screen, so a chat message that drops it can pass the inputs on.
+  private readonly _drafts = new Map<string, Readonly<Record<string, WizardAnswer>>>()
 
   /** `autofill` starts from the saved setting and lasts for this session only. */
   constructor(autofill = false) {
@@ -245,10 +252,16 @@ export class WizardBroker {
     return this._active?.request
   }
 
+  /** Records what the question `id` holds on screen. */
+  draft(id: string, answers: Readonly<Record<string, WizardAnswer>>): void {
+    if (this._active?.request.id === id) this._drafts.set(id, answers)
+  }
+
   respond(id: string, outcome: WizardOutcome): boolean {
     const active = this._active
     if (!active || active.request.id !== id) return false
     this._active = undefined
+    this._drafts.delete(id)
     active.resolve(outcome)
     // Activating before notifying keeps a queued request on screen: the panel closes itself on undefined.
     if (this._queue.length > 0) this._activateNext()
@@ -291,6 +304,11 @@ export class WizardBroker {
     return this._cancelWhere(({ request }) => request.standing !== true)
   }
 
+  /** As dropForTurn, for a chat message sent instead: each dropped question answers with what it held on screen. */
+  interruptForTurn(): boolean {
+    return this._cancelWhere(({ request }) => request.standing !== true, true)
+  }
+
   /** Cancels the questions about `topic`, on screen or waiting: whoever asked has its answer from elsewhere. */
   withdraw(topic: string): void {
     this._cancelWhere(({ request }) => request.topic === topic)
@@ -302,13 +320,17 @@ export class WizardBroker {
     this._listeners.clear()
   }
 
-  private _cancelWhere(matches: (wizard: PendingWizard) => boolean): boolean {
+  private _cancelWhere(matches: (wizard: PendingWizard) => boolean, interrupted = false): boolean {
     const queued = this._queue.filter(matches)
     const active = this._active && matches(this._active) ? this._active : undefined
     if (!active && queued.length === 0) return false
     this._queue.splice(0, this._queue.length, ...this._queue.filter((wizard) => !matches(wizard)))
     if (active) this._active = undefined
-    for (const wizard of [...(active ? [active] : []), ...queued]) wizard.resolve(undefined)
+    for (const wizard of [...(active ? [active] : []), ...queued]) {
+      const entered = this._drafts.get(wizard.request.id) ?? {}
+      this._drafts.delete(wizard.request.id)
+      wizard.resolve(interrupted ? new WizardInterruption(entered) : undefined)
+    }
     if (!active) return true
     if (this._queue.length > 0) this._activateNext()
     else this._notify(undefined)
