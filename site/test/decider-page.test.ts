@@ -12,6 +12,7 @@ import {
   DECIDER_LINKS,
   DECIDER_OVERVIEW_DESCRIPTION,
   DECIDER_QUESTION_TYPES,
+  DECIDER_RECORDED_EXAMPLE,
   DECIDER_REPOSITORY_URL,
   buildDeciderLandingMarkdown,
 } from '../src/config/decider-landing'
@@ -109,6 +110,41 @@ describe('Decider landing page', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
+  it('keeps the visual examples aligned with one recorded model run', () => {
+    const choice = DECIDER_DECISION_EXAMPLES.find((example) => example.id === 'choice')
+    const noul = DECIDER_DECISION_EXAMPLES.find((example) => example.id === 'noul')
+    const score = DECIDER_DECISION_EXAMPLES.find((example) => example.id === 'score')
+
+    expect(choice).toMatchObject({
+      state: DECIDER_RECORDED_EXAMPLE.state,
+      question: DECIDER_RECORDED_EXAMPLE.choice.question,
+      answer: DECIDER_RECORDED_EXAMPLE.choice.answer,
+      detailLabel: 'confidence',
+      detailValue: DECIDER_RECORDED_EXAMPLE.choice.confidence.toFixed(3),
+    })
+    expect(choice?.probabilities).toEqual(DECIDER_RECORDED_EXAMPLE.choice.probabilities)
+
+    expect(noul).toMatchObject({
+      state: DECIDER_RECORDED_EXAMPLE.state,
+      question: DECIDER_RECORDED_EXAMPLE.noul.question,
+      answer: DECIDER_RECORDED_EXAMPLE.noul.answer.toFixed(3),
+    })
+
+    expect(score).toMatchObject({
+      state: DECIDER_RECORDED_EXAMPLE.state,
+      question: DECIDER_RECORDED_EXAMPLE.score.question,
+      answer: DECIDER_RECORDED_EXAMPLE.score.answer.toFixed(2),
+      detailLabel: 'confidence',
+      detailValue: DECIDER_RECORDED_EXAMPLE.score.confidence.toFixed(3),
+    })
+    expect(score?.probabilities).toEqual(DECIDER_RECORDED_EXAMPLE.score.probabilities)
+    expect(score?.probabilities).toHaveLength(score?.criteria.length ?? 0)
+
+    const expectedScore =
+      score?.probabilities.reduce((total, probability, index) => total + probability.value * index, 0) ?? Number.NaN
+    expect(expectedScore.toFixed(2)).toBe(score?.answer)
+  })
+
   it('uses public, valid destinations for every rendered link', () => {
     const configuredExternalLinks = [DECIDER_REPOSITORY_URL, ...Object.values(DECIDER_LINKS)].filter((href) =>
       href.startsWith('http')
@@ -172,5 +208,8 @@ describe('Decider landing page', () => {
 
     expect(markdown).toBe(buildDeciderLandingMarkdown())
     expect(markdown).not.toContain('staging-')
+    expect(markdown).toContain('--noul "Does this convey urgency?"')
+    expect(markdown).toContain('--score "How frustrated is the writer?=calm,frustrated,depressed"')
+    expect(markdown).toContain('- Score: `1.03` (confidence `0.509`)')
   })
 })

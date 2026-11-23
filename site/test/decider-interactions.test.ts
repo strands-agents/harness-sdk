@@ -48,15 +48,16 @@ describe('Decider landing page interactions', () => {
     expect(links.map((link) => link.getAttribute('aria-current'))).toEqual([null, 'true', null])
     expect(panels.map((panel) => panel.hidden)).toEqual([true, false, true])
     expect(window.location.hash).toBe('#decider-example-noul')
-    expect(panels[1].textContent).toContain('Is this request urgent?')
-    expect(panels[1].textContent).toContain('0.94')
+    expect(panels[1].textContent).toContain('Does this convey urgency?')
+    expect(panels[1].textContent).toContain('0.858')
 
     links[2].click()
 
     expect(links.map((link) => link.getAttribute('aria-current'))).toEqual([null, null, 'true'])
     expect(panels.map((panel) => panel.hidden)).toEqual([true, true, false])
-    expect(panels[2].textContent).toContain('Order #4421 never arrived')
-    expect(panels[2].textContent).toContain('1.71')
+    expect(panels[2].textContent).toContain('Help! My payouts have been failing for 3 days!')
+    expect(panels[2].textContent).toContain('1.03')
+    expect(panels[2].textContent).toContain('0.509')
   })
 
   it('opens the example selected by the URL hash', () => {

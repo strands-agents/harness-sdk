@@ -108,7 +108,7 @@ if (examples.length !== DECIDER_DECISION_EXAMPLES.length) {
                     {example.criteria.map((item) => (
                       <li>
                         <strong>{item.label}</strong>
-                        <span>{item.detail}</span>
+                        {item.detail && <span>{item.detail}</span>}
                       </li>
                     ))}
                   </ul>

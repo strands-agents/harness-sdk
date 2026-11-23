@@ -11,9 +11,6 @@ export const DECIDER_DEFAULT_MODEL = 'StrandsAgents/strands-decider-E2B-gemma4-v
 export const DECIDER_INSTALL_COMMAND = 'pip install strands-decider'
 const DECIDER_HUGGING_FACE_URL = 'https://huggingface.co/StrandsAgents'
 const DECIDER_MATURITY_NOTE = 'Strands Labs · Experimental'
-const DECIDER_ASK_COMMAND = `strands-decider ask ${DECIDER_DEFAULT_MODEL} \\
-  --state "Help! My payouts have been failing for 3 days." \\
-  --choice "team=billing,technical,sales"`
 
 export const DECIDER_LINKS = {
   quickstart: '/docs/labs/strands-decider/quickstart/',
@@ -25,35 +22,71 @@ export const DECIDER_LINKS = {
 export const DECIDER_HERO_META = ['Python 3.11+', 'Choice', 'Yes / no', 'Score'] as const
 
 export const DECIDER_OVERVIEW_DESCRIPTION =
-  'Strands Decider is a System One model for repeated decisions. It scores a known output space (Choice, Yes / no, or Score) and returns a typed answer with calibrated confidence instead of generated text.'
+  'Strands Decider is a System One model for repeated decisions. It scores a known output space (Choice, Yes / no, or Score) and returns a typed answer with calibrated confidence instead of generated text. These examples use recorded E2B output; results can vary slightly by device.'
+
+export const DECIDER_RECORDED_EXAMPLE = {
+  state: 'Help! My payouts have been failing for 3 days!',
+  choice: {
+    question: 'Which team should handle this?',
+    criteria: [
+      { label: 'billing', detail: '' },
+      { label: 'sales', detail: '' },
+      { label: 'retail', detail: '' },
+    ],
+    answer: 'billing',
+    confidence: 0.659,
+    probabilities: [
+      { id: 'billing', label: 'billing', value: 0.773 },
+      { id: 'sales', label: 'sales', value: 0.121 },
+      { id: 'retail', label: 'retail', value: 0.106 },
+    ],
+  },
+  noul: {
+    question: 'Does this convey urgency?',
+    answer: 0.858,
+  },
+  score: {
+    question: 'How frustrated is the writer?',
+    criteria: [
+      { label: 'calm', detail: '0' },
+      { label: 'frustrated', detail: '1' },
+      { label: 'depressed', detail: '2' },
+    ],
+    answer: 1.03,
+    confidence: 0.509,
+    probabilities: [
+      { id: 'calm', label: 'calm', value: 0.196 },
+      { id: 'frustrated', label: 'frustrated', value: 0.574 },
+      { id: 'depressed', label: 'depressed', value: 0.23 },
+    ],
+  },
+} as const
+
+const DECIDER_ASK_COMMAND = `strands-decider ask ${DECIDER_DEFAULT_MODEL} \\
+  --state "${DECIDER_RECORDED_EXAMPLE.state}" \\
+  --choice "${DECIDER_RECORDED_EXAMPLE.choice.question}=${DECIDER_RECORDED_EXAMPLE.choice.criteria.map(({ label }) => label).join(',')}" \\
+  --noul "${DECIDER_RECORDED_EXAMPLE.noul.question}" \\
+  --score "${DECIDER_RECORDED_EXAMPLE.score.question}=${DECIDER_RECORDED_EXAMPLE.score.criteria.map(({ label }) => label).join(',')}"`
 
 export const DECIDER_DECISION_EXAMPLES = [
   {
     id: 'choice',
-    state: 'Help! My payouts have been failing for 3 days.',
-    question: 'Which team should handle this?',
-    answerSpaceLabel: 'Available answers and criteria',
-    criteria: [
-      { label: 'billing', detail: 'billing and payments' },
-      { label: 'technical', detail: 'bugs and outages' },
-      { label: 'sales', detail: 'pre-sales questions' },
-    ],
+    state: DECIDER_RECORDED_EXAMPLE.state,
+    question: DECIDER_RECORDED_EXAMPLE.choice.question,
+    answerSpaceLabel: 'Available answers',
+    criteria: DECIDER_RECORDED_EXAMPLE.choice.criteria,
     responseLabel: 'Choice result',
     answerLabel: 'selected answer',
-    answer: 'billing',
-    probabilitiesLabel: 'Example answer probabilities',
-    probabilities: [
-      { id: 'billing', label: 'billing', value: 0.8505 },
-      { id: 'technical', label: 'technical', value: 0.1469 },
-      { id: 'sales', label: 'sales', value: 0.0026 },
-    ],
+    answer: DECIDER_RECORDED_EXAMPLE.choice.answer,
+    probabilitiesLabel: 'Recorded answer probabilities',
+    probabilities: DECIDER_RECORDED_EXAMPLE.choice.probabilities,
     detailLabel: 'confidence',
-    detailValue: '0.7757',
+    detailValue: DECIDER_RECORDED_EXAMPLE.choice.confidence.toFixed(3),
   },
   {
     id: 'noul',
-    state: 'Help! My payouts have been failing for 3 days.',
-    question: 'Is this request urgent?',
+    state: DECIDER_RECORDED_EXAMPLE.state,
+    question: DECIDER_RECORDED_EXAMPLE.noul.question,
     answerSpaceLabel: 'Fixed yes / no space',
     criteria: [
       { label: 'no', detail: '0' },
@@ -61,41 +94,32 @@ export const DECIDER_DECISION_EXAMPLES = [
     ],
     responseLabel: 'Noul result',
     answerLabel: 'noul',
-    answer: '0.94',
+    answer: DECIDER_RECORDED_EXAMPLE.noul.answer.toFixed(3),
     probabilitiesLabel: 'Probability that the answer is yes',
-    probabilities: [{ id: 'yes', label: 'yes', value: 0.94 }],
+    probabilities: [{ id: 'yes', label: 'yes', value: DECIDER_RECORDED_EXAMPLE.noul.answer }],
     detailLabel: 'at a 0.50 threshold',
     detailValue: 'yes',
   },
   {
     id: 'score',
-    state: 'Order #4421 never arrived and the tracking link is broken.',
-    question: 'How urgent is this?',
+    state: DECIDER_RECORDED_EXAMPLE.state,
+    question: DECIDER_RECORDED_EXAMPLE.score.question,
     answerSpaceLabel: 'Ordered scale',
-    criteria: [
-      { label: 'low', detail: '0' },
-      { label: 'medium', detail: '1' },
-      { label: 'high', detail: '2' },
-      { label: 'critical', detail: '3' },
-    ],
+    criteria: DECIDER_RECORDED_EXAMPLE.score.criteria,
     responseLabel: 'Score result',
-    answerLabel: 'expected level',
-    answer: '1.71',
-    probabilitiesLabel: 'Most likely level',
-    probabilities: [{ id: 'high', label: 'high', value: 0.31 }],
-    detailLabel: 'position',
-    detailValue: 'between medium and high',
+    answerLabel: 'expected score',
+    answer: DECIDER_RECORDED_EXAMPLE.score.answer.toFixed(2),
+    probabilitiesLabel: 'Recorded level probabilities',
+    probabilities: DECIDER_RECORDED_EXAMPLE.score.probabilities,
+    detailLabel: 'confidence',
+    detailValue: DECIDER_RECORDED_EXAMPLE.score.confidence.toFixed(3),
   },
 ] as const
 
 const DECIDER_CLI_EXAMPLE = {
-  answer: 'technical',
-  confidence: 0.697,
-  probabilities: [
-    { label: 'technical', value: 0.798 },
-    { label: 'billing', value: 0.195 },
-    { label: 'sales', value: 0.007 },
-  ],
+  choice: DECIDER_RECORDED_EXAMPLE.choice,
+  noul: DECIDER_RECORDED_EXAMPLE.noul,
+  score: DECIDER_RECORDED_EXAMPLE.score,
 } as const
 
 export const DECIDER_QUESTION_TYPES = [
@@ -163,13 +187,17 @@ export function buildDeciderLandingMarkdown(headingLevel = 1): string {
     DECIDER_ASK_COMMAND,
     '```',
     '',
-    'The quickstart command returns:',
+    'The recorded combined example returns:',
     '',
-    `- Selected answer: \`${DECIDER_CLI_EXAMPLE.answer}\``,
-    `- Confidence: \`${DECIDER_CLI_EXAMPLE.confidence}\``,
-    ...DECIDER_CLI_EXAMPLE.probabilities.map((item) => `- \`${item.label}\`: ${probability(item.value)}`),
+    `- Choice: \`${DECIDER_CLI_EXAMPLE.choice.answer}\` (confidence \`${probability(DECIDER_CLI_EXAMPLE.choice.confidence)}\`)`,
+    ...DECIDER_CLI_EXAMPLE.choice.probabilities.map((item) => `  - \`${item.label}\`: ${probability(item.value)}`),
+    `- Noul: \`${probability(DECIDER_CLI_EXAMPLE.noul.answer)}\``,
+    `- Score: \`${DECIDER_CLI_EXAMPLE.score.answer.toFixed(2)}\` (confidence \`${probability(DECIDER_CLI_EXAMPLE.score.confidence)}\`)`,
+    ...DECIDER_CLI_EXAMPLE.score.probabilities.map(
+      (item, index) => `  - \`${index}: ${item.label}\`: ${probability(item.value)}`
+    ),
     '',
-    'Model outputs vary with the model and request. Validate accuracy and thresholds on your own traffic.',
+    'These recorded outputs are illustrative. Results can vary slightly by device, and you should validate accuracy and thresholds on your own traffic.',
     '',
     heading(root + 1, 'Answer shapes'),
     '',

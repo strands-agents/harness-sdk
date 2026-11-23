@@ -1269,9 +1269,9 @@ const learnCategories = [
   });
 
   // Spacebar easter egg: each press hops a pixel frog one step forward along
-  // the bottom of the page, Chrome-dino style. Ignored while an interactive
-  // element has focus; does not block space-to-scroll (the frog is a bonus,
-  // not a takeover). When it reaches the right edge it wraps back to the left.
+  // the bottom of the page, Chrome-dino style. Ignored while typing in a
+  // field; does not block space-to-scroll (the frog is a bonus, not a
+  // takeover). When it reaches the right edge it wraps back to the left.
   const frogEgg = document.querySelector<HTMLElement>('[data-frog-egg]');
   if (frogEgg) {
     const STEP = 90; // px advanced per hop
@@ -1281,18 +1281,16 @@ const learnCategories = [
     let hopping = false;
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
-    const focusedElementUsesSpace = () => {
-      const element = document.activeElement as HTMLElement | null;
-      if (!element) return false;
-      return (
-        element.isContentEditable ||
-        element.matches('button, a[href], input, textarea, select, summary')
-      );
+    const typingInField = () => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
     };
 
     window.addEventListener('keydown', (e) => {
       if (e.code !== 'Space' && e.key !== ' ') return;
-      if (focusedElementUsesSpace() || reduce || hopping) return;
+      if (typingInField() || reduce || hopping) return;
 
       frogEgg.classList.add('is-active');
       // Wrap back to just off the left edge once the frog runs off the right.
