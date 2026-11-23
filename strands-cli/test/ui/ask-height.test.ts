@@ -84,7 +84,7 @@ const askCommand = (broker: WizardBroker): DevChatCommand => ({
 describe('wizardRequestRows', () => {
   it('shouldCountTheQuestionItsOptionsAndOnePaddingRow', () => {
     expect(wizardRequestRows(undefined)).toBeUndefined()
-    expect(wizardRequestRows({ ...twoOptions, id: 'r1' })).toBe(7)
+    expect(wizardRequestRows({ ...twoOptions, id: 'r1' })).toBe(8)
   })
 
   it('shouldGrowWithTheOptionCount', () => {
@@ -106,7 +106,7 @@ describe('wizardRequestRows', () => {
       ],
     }
 
-    expect(wizardRequestRows(five)).toBe(10)
+    expect(wizardRequestRows(five)).toBe(11)
   })
 
   it('shouldSizeAWalkedFormToItsTallestStepPlusItsStepBar', () => {
@@ -124,7 +124,7 @@ describe('wizardRequestRows', () => {
     }
     const walked = { ...twoOptions, id: 'r4', steps: [twoOptions.steps[0]!, taller] }
 
-    expect(wizardRequestRows(walked)).toBe(single + 2 + 1)
+    expect(wizardRequestRows(walked)).toBe(single + 2 + 2)
   })
 })
 
@@ -143,5 +143,32 @@ describe('the panel around one question', () => {
 
     expect(top).toBeGreaterThanOrEqual(0)
     expect(bottom - top).toBeLessThanOrEqual(9)
+  })
+
+  it.each([
+    ['one step', 1],
+    ['a walked form', 2],
+  ])('shouldShowEveryOptionOfALongListIn%s', async (_name, stepCount) => {
+    const labels = Array.from({ length: 10 }, (_, index) => `experiment-${index + 1}`)
+    const step = (key: string) => ({
+      key,
+      title: key,
+      fields: [
+        {
+          kind: 'select' as const,
+          key,
+          multiple: false,
+          options: labels.map((label) => ({ value: label, label, detail: '5 cases' })),
+        },
+      ],
+    })
+    const broker = new WizardBroker()
+    void broker.ask({ ...twoOptions, steps: Array.from({ length: stepCount }, (_, index) => step(`step${index}`)) })
+    const { press, screen } = await mount(askCommand(broker), 50)
+    await press('/ask')
+    await press('\r')
+
+    for (const label of labels) expect(screen()).toContain(label)
+    expect(screen()).not.toMatch(/↓ \d+ more/u)
   })
 })

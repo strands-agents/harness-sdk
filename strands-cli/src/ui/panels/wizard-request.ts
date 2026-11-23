@@ -124,7 +124,9 @@ const cleanRequest = (request: WizardRequest): WizardRequest => ({
 const DIFF_INDENT = 2
 const DIFF_MARK_COLUMNS = 2
 // The title, the question, the gap under it, the row under the fields, the buttons, and the key hints.
-const CHROME_ROWS = 5
+const CHROME_ROWS = 6
+// The step bar of a walked request and the gap under it.
+const STEP_BAR_ROWS = 2
 // The file and its counts above the lines, and the gap that sets the change apart from the fields.
 const DIFF_FRAME_ROWS = 2
 
@@ -149,7 +151,9 @@ export const wizardRequestRows = (request: WizardRequest | undefined, width?: nu
   const fields = Math.max(
     ...request.steps.map((step) => step.fields.reduce((rows, field) => rows + fieldRows(field, width), 0))
   )
-  return CHROME_ROWS - (request.question === undefined ? 1 : 0) + (request.steps.length > 1 ? 1 : 0) + fields
+  return (
+    CHROME_ROWS - (request.question === undefined ? 1 : 0) + (request.steps.length > 1 ? STEP_BAR_ROWS : 0) + fields
+  )
 }
 
 export const defaultAnswers = (steps: readonly WizardStepSpec[]): Record<string, WizardAnswer> => {
