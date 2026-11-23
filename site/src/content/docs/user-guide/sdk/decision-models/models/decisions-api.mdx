@@ -1,0 +1,335 @@
+---
+title: Decisions API
+description: "Answer decision model questions with a model hosted on decisionapi.net: set the API key, read confidence, tune the uncertainty threshold, and handle errors."
+tags: [decision-models]
+sourceLinks:
+  - path: strands-py/src/strands/decisions/decisions_api_decision_model.py
+  - path: strands-py/src/strands/decisions/_system_one_http_adapter.py
+  - path: strands-ts/src/decisions/decisions-api-decision-model.ts
+  - path: strands-ts/src/decisions/system-one-http-adapter.ts
+---
+
+[Decisions API][decisions-api] serves decision models at decisionapi.net, with model
+identifiers such as `~typesafe/jev-latest`. `DecisionsAPIDecisionModel` sends your
+questions there and returns the same result as every other
+[decision model](index.mdx), plus a probability for each label and a confidence for
+each answer. By default it asks TypeSafe's Jev model.
+
+Use it when you have a Decisions API key. If you have a TypeSafe key, use
+[`TypeSafeDecisionModel`](typesafe.mdx) instead: it calls Jev on TypeSafe directly,
+reports the exact Jev version that answered, and isn't capped at eight questions per
+call.
+
+Follow the [quickstart](../quickstart.mdx) to ask your first questions. Swap in
+`DecisionsAPIDecisionModel` and the rest of the code stays the same.
+
+## Installation
+
+`DecisionsAPIDecisionModel` ships with the SDK and needs no extra:
+
+<Tabs>
+<Tab label="Python">
+
+```bash
+pip install strands-agents
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```bash
+npm install @strands-agents/sdk
+```
+
+The class runs on the server only. Constructing it in a browser throws, because the
+request would expose your API key.
+
+</Tab>
+</Tabs>
+
+## Credentials
+
+Get an API key from Decisions API and set it in your environment:
+
+```bash
+export JEV_API_KEY="your-api-key"
+```
+
+`DecisionsAPIDecisionModel` reads `JEV_API_KEY` when you construct it. The variable
+holds a decisionapi.net key, not a TypeSafe key, despite the name. To pass the key
+directly, set <Syntax py="api_key" ts="apiKey" />. The constructor raises an error when
+neither is set.
+
+## Configuration
+
+| Option | Description |
+| --- | --- |
+| <Syntax py="api_key" ts="apiKey" /> | Decisions API key. Defaults to `JEV_API_KEY`. |
+| <Syntax py="model_id" ts="modelId" /> | Decisions API model identifier. Defaults to `~typesafe/jev-latest`. |
+| <Syntax py="default_min_confidence" ts="defaultMinConfidence" /> | Confidence below which an answer comes back `Uncertain`, in `[0.0, 1.0]`. Defaults to `0.5`. See [Confidence and uncertainty](#confidence-and-uncertainty). |
+| <Syntax py="http_client" ts="fetch" /> | How the request is sent. Defaults to a new client per call. See [Timeouts and connections](#timeouts-and-connections). |
+
+See the API reference for [Python][model-api] or [TypeScript][model-api-ts] for all
+constructor options.
+
+## Ask questions
+
+This example asks two questions about a support message and prints each answer with
+its confidence:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import asyncio
+
+from strands.decisions import DecisionsAPIDecisionModel
+
+message = "I was charged twice for order 1182. Please refund one charge today."
+
+
+async def main():
+    decisions = DecisionsAPIDecisionModel()
+    result = await decisions.ask(
+        message,
+        {
+            "urgent": {
+                "question": "Does the customer need help today?",
+                "choices": "boolean",
+            },
+            "team": {
+                "question": "Which team should handle this message?",
+                "choices": ["billing", "shipping", "technical"],
+            },
+        },
+    )
+    confidence = result.metadata.confidence
+    print(result.answers["urgent"], f"{confidence['urgent']:.2f}")
+    print(result.answers["team"], f"{confidence['team']:.2f}")
+    print(result.metadata.model_id)
+
+
+asyncio.run(main())
+
+# Typical output:
+# True 0.90
+# billing 1.00
+# ~typesafe/jev-latest
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/decision-models/models/decisions-api_imports.ts:configuration_imports"
+
+--8<-- "user-guide/sdk/decision-models/models/decisions-api.ts:configuration"
+```
+
+</Tab>
+</Tabs>
+
+Decisions API doesn't say which model version answered, so the result reports the model
+you requested, such as `~typesafe/jev-latest`, unless the response names one. When you
+need to trace each decision to a model version, use
+[`TypeSafeDecisionModel`](typesafe.mdx).
+
+
+The result also carries the call's token usage in `usage` and its latency in
+<Syntax py="metadata.latency_ms" ts="metadata.latencyMs" />, which the
+[decision span](../observability.mdx) records too.
+
+## Confidence and uncertainty
+
+Every answer carries a confidence in `[0.0, 1.0]`, and the result keeps it in
+`metadata.confidence`, keyed by question id. When an answer's confidence falls below
+the minimum, the decision model returns `Uncertain` in its place. The probabilities
+and confidence stay in the metadata either way, so you can still see what the model
+leaned toward.
+
+How the confidence is measured depends on the question:
+
+- **Yes/no**: the model returns the probability of yes. The answer is yes when that
+  probability is at least 0.5, and the confidence is how far it sits from a coin flip:
+  0 at 0.5, 1 at 0.0 or 1.0. `metadata.probabilities` holds the probability of
+  `"true"` and `"false"`. With the default minimum of 0.5, a yes/no answer comes back
+  `Uncertain` unless the probability of yes is at least 0.75 or at most 0.25.
+- **Multiple choice**: the model returns a probability for each label and its own
+  confidence in the label it picked. `metadata.probabilities` holds every label's
+  probability.
+
+The default minimum of 0.5 suits most routing and triage questions. Raise it for
+questions where a wrong answer costs more than asking a person. Set it on the question,
+not the decision model, so the other questions keep the default. This question needs a
+confidence of 0.8, and prints the probability of yes when the answer is uncertain:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import asyncio
+
+from strands import Uncertain
+from strands.decisions import DecisionsAPIDecisionModel
+
+
+async def main():
+    decisions = DecisionsAPIDecisionModel()
+    result = await decisions.ask(
+        "The customer says the delivery was fine, I guess.",
+        {
+            "satisfied": {
+                "question": "Is the customer satisfied?",
+                "choices": "boolean",
+                "uncertainty": {"min_confidence": 0.8},
+            },
+        },
+    )
+    answer = result.answers["satisfied"]
+    if isinstance(answer, Uncertain):
+        yes = result.metadata.probabilities["satisfied"]["true"]
+        print(f"Uncertain, probability of yes {yes:.2f}")
+    else:
+        print(answer)
+
+
+asyncio.run(main())
+
+# Typical output:
+# Uncertain, probability of yes 0.49
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/decision-models/models/decisions-api_imports.ts:uncertain_imports"
+
+--8<-- "user-guide/sdk/decision-models/models/decisions-api.ts:uncertain"
+```
+
+</Tab>
+</Tabs>
+
+A question's own minimum overrides
+<Syntax py="default_min_confidence" ts="defaultMinConfidence" />. A question with
+uncertainty turned off always returns the model's choice, however low the confidence.
+[Uncertainty](../questions.mdx#uncertainty) covers the settings.
+
+## Timeouts and connections
+
+Each decision is one HTTP request to decisionapi.net.
+
+<Tabs>
+<Tab label="Python">
+
+With no client configured, the decision model opens a new `httpx.AsyncClient` with a
+30-second timeout for every call. httpx applies a timeout to each phase of the request,
+such as connecting or reading, not to the whole call. Pass your own client to reuse
+connections across decisions, set a different timeout, or add headers. You own the
+client, so close it when you're done:
+
+```python
+import asyncio
+
+import httpx
+
+from strands.decisions import DecisionsAPIDecisionModel
+
+messages = ["My package never arrived.", "The app crashes when I log in."]
+
+
+async def main():
+    # Reuse one connection pool, and give up if connecting or any read takes over
+    # five seconds
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+        decisions = DecisionsAPIDecisionModel(http_client=client)
+        for message in messages:
+            result = await decisions.ask(
+                message,
+                {
+                    "team": {
+                        "question": "Which team should handle this message?",
+                        "choices": ["billing", "shipping", "technical"],
+                    },
+                },
+            )
+            print(result.answers["team"])
+
+
+asyncio.run(main())
+
+# Typical output:
+# shipping
+# technical
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+The decision model sends the request with the global `fetch` and sets no timeout of its
+own. Pass a `cancelSignal` to `ask` to bound how long a decision can take:
+
+```typescript
+--8<-- "user-guide/sdk/decision-models/models/decisions-api_imports.ts:timeout_imports"
+
+--8<-- "user-guide/sdk/decision-models/models/decisions-api.ts:timeout"
+```
+
+To change how requests are sent, such as routing them through a proxy, pass your own
+implementation as `fetch` when you construct the decision model.
+
+</Tab>
+</Tabs>
+
+## Limits
+
+`ask` rejects these requests before it calls Decisions API:
+
+- More than eight questions. Split a larger set across several `ask` calls.
+- A multiple-choice question with more than 255 labels.
+- Input with binary content, such as an image or document passed as bytes. Send text
+  instead.
+- Input that can't be serialized to JSON. Python also rejects NaN and infinity;
+  TypeScript sends them as `null`.
+
+Decisions API applies its own size limit to the request, which the errors below cover.
+
+## Errors
+
+Beyond the [question validation errors](../questions.mdx#validation), `ask` raises:
+
+| Error | When |
+| --- | --- |
+| <Syntax py="ModelThrottledException" ts="ModelThrottledError" /> | Decisions API is throttling or temporarily unavailable (HTTP 429, 503, or 529). Retry with backoff. |
+| <Syntax py="ContextWindowOverflowException" ts="ContextWindowOverflowError" /> | The request is too large (HTTP 413). Shorten the input, such as by sending only the latest messages of a conversation. |
+| <Syntax py="ValueError" ts="Error" /> | The request breaks a [limit](#limits). |
+| <Syntax py="httpx.HTTPStatusError" ts="ModelError" /> | Any other non-2xx response, such as HTTP 401 for an invalid API key. |
+| <Syntax py="httpx.TransportError" ts="ModelError" /> | The request didn't complete, because of a network failure or a timeout. |
+| <Syntax py="StructuredOutputException" ts="ModelError" /> | Decisions API returned a response the decision model can't read, or a successful HTTP response that reports an error. |
+
+Decisions API can report a failure inside an HTTP 200 response, as a non-zero error
+`code` with a message. The decision model raises it as an error that includes both,
+rather than returning a result with no answers.
+
+The throttling and context window errors keep the HTTP failure as their cause.
+
+<Tabs>
+<Tab label="Python">
+
+The cause is an `httpx.HTTPStatusError`. Read the status code and body from its
+`response`.
+
+</Tab>
+<Tab label="TypeScript">
+
+`ModelThrottledError` and `ContextWindowOverflowError` extend `ModelError`, so check
+for them before you check for `ModelError`. A cancel signal that fires while the
+response body is downloading raises the abort error itself rather than `ModelError`.
+
+</Tab>
+</Tabs>
+
+[decisions-api]: https://decisionapi.net
+[model-api-ts]: @api/typescript/DecisionsAPIDecisionModelOptions
+[model-api]: @api/python/strands.decisions.decisions_api_decision_model#strands.decisions.decisions_api_decision_model.DecisionsAPIDecisionModel.__init__

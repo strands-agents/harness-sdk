@@ -26,8 +26,8 @@ your code stays as it is.
 | Decision model | Class | Answers with | Reports |
 | --- | --- | --- | --- |
 | [LLM decision model](llm.mdx) | `LLMDecisionModel` | Any model provider | Latency, token usage |
-| TypeSafe Jev | `TypeSafeDecisionModel` | TypeSafe's hosted Jev model | Latency, token usage when the provider returns it |
-| Decisions API | `DecisionsAPIDecisionModel` | A decision model hosted on decisionapi.net | Latency, token usage when the provider returns it |
+| [TypeSafe Jev](typesafe.mdx) | `TypeSafeDecisionModel` | TypeSafe's hosted Jev model | Latency, per-answer confidence, token usage when the provider returns it |
+| [Decisions API](decisions-api.mdx) | `DecisionsAPIDecisionModel` | A decision model hosted on decisionapi.net | Latency, per-answer confidence, token usage when the provider returns it |
 | Amazon SageMaker AI | `SageMakerDecisionModel` | A decision model deployed to your SageMaker AI real-time endpoint | Latency, token usage when the endpoint returns it |
 
 ## Custom decision models
