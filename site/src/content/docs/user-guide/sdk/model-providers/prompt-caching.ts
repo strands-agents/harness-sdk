@@ -8,7 +8,7 @@ import { Agent, BedrockModel } from '@strands-agents/sdk'
 export async function explicitCacheConfig() {
   // --8<-- [start:explicit_cache_config]
   // The default Bedrock model is Anthropic Claude.
-  const model = new BedrockModel({ cacheConfig: {} })
+  const model = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
 
   const agent = new Agent({ model })
   // --8<-- [end:explicit_cache_config]

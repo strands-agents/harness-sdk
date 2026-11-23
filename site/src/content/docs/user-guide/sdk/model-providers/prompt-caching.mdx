@@ -24,8 +24,8 @@ These models take explicit cache points:
 - Amazon Nova on Amazon Bedrock.
 - OpenAI GPT-5.6 and later on the Responses API, through OpenAI or Bedrock Mantle.
 
-To use them, set a cache configuration on the model. Its strategy defaults to `auto`,
-so Strands places the cache points for you:
+To use them, set a cache configuration on the model with the `auto` strategy, which is
+also the default. Strands then places the cache points for you:
 
 <Tabs>
 <Tab label="Python">
@@ -35,7 +35,7 @@ from strands import Agent
 from strands.models import BedrockModel, CacheConfig
 
 # The default Bedrock model is Anthropic Claude.
-model = BedrockModel(cache_config=CacheConfig())
+model = BedrockModel(cache_config=CacheConfig(strategy="auto"))
 
 agent = Agent(model=model)
 ```
