@@ -5,9 +5,10 @@ On overflow, runs the strategy pipeline (including an emergency truncation as th
 
 from __future__ import annotations
 
+import inspect
 import logging
 import warnings
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..agent.invocation_context import _create_auxiliary_invocation_context
 from ..hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
@@ -16,15 +17,17 @@ from ..plugins.plugin import Plugin
 from ..storage.in_memory_storage import InMemoryStorage
 from ..storage.storage import _EPHEMERAL
 from ..types.exceptions import ContextWindowOverflowException
+from .archive import Archive
 from .message_trimming import _index_of
 from .presets import _resolve_strategies
 from .retrieval_tool import _create_retrieval_tool, _retrieval_calls_before
-from .stash import Stash
 from .strategies.offload import Offload
 from .strategies.offload.base import EmergencyTruncateStrategy
-from .types import ContextManagerConfig, ContextState, ContextStrategy, StashConfig
+from .types import ArchiveConfig, ContextManagerConfig, ContextState, ContextStrategy
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ..agent.agent import Agent
     from ..agent.conversation_manager import ConversationManager
     from ..agent.invocation_context import InvocationContext
@@ -38,6 +41,9 @@ _TRUNCATE_PREVIEW_TOKENS = 750
 _AUTO_SUMMARIZE_UTILIZATION = "85%"
 
 CONTEXT_MANAGER_PRESETS: tuple[str, ...] = ("auto", "agentic")
+
+_ARCHIVE_KEYWORDS = ("archive", "stash")
+"""The keyword a strategy's optional ``init`` takes the archive under; ``stash`` is the pre-rename name."""
 
 ContextManagerStrategy = Literal["auto", "agentic"]
 """Supported preset strings for the ``context_manager`` parameter.
@@ -70,16 +76,27 @@ class ContextManager(Plugin):
         self,
         *,
         strategies: list[ContextStrategy | str] | None = None,
-        stash: StashConfig | bool | None = None,
+        archive: ArchiveConfig | bool | None = None,
+        stash: ArchiveConfig | bool | None = None,
     ) -> None:
         """Initialize with an optional ordered list of strategies (defaults provided).
 
         Args:
             strategies: Ordered pipeline of context reduction strategies.
                 Accepts concrete strategies and/or preset name strings.
-            stash: L1 stash configuration. Omit or True for defaults (InMemoryStorage);
+            archive: L1 archive configuration. Omit or True for defaults (InMemoryStorage);
                 False to disable; dict for custom storage/options.
+            stash: Deprecated name for ``archive``, honored when ``archive`` is omitted.
+                Removed in v1.68.0.
         """
+        if archive is None and stash is not None:
+            warnings.warn(
+                "ContextManager(stash=...) is deprecated and will be removed in v1.68.0. Pass archive= instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            archive = stash
+
         user_strategies: list[ContextStrategy]
         if strategies is not None:
             user_strategies = _resolve_strategies(strategies)
@@ -92,31 +109,52 @@ class ContextManager(Plugin):
             ]
         self._strategies: list[ContextStrategy] = [*user_strategies, EmergencyTruncateStrategy()]
 
-        stash_obj: StashConfig | None = stash if isinstance(stash, dict) else None
-        self._stash_disabled = stash is False
-        self._stash_explicit_storage: Storage | None = stash_obj.get("storage") if stash_obj else None
-        self._enable_retrieval_tool: bool = stash is not False and (
-            stash_obj.get("retrieval_tool", True) if stash_obj else True
+        archive_obj: ArchiveConfig | None = archive if isinstance(archive, dict) else None
+        self._archive_disabled = archive is False
+        self._archive_explicit_storage: Storage | None = archive_obj.get("storage") if archive_obj else None
+        self._enable_retrieval_tool: bool = archive is not False and (
+            archive_obj.get("retrieval_tool", True) if archive_obj else True
         )
 
-        self._stash: Stash | None = None
-        self._stash_is_durable: bool = False
+        self._archive: Archive | None = None
+        self._archive_is_durable: bool = False
         self._backfill_done: bool = False
 
         super().__init__()
 
     @property
-    def stash(self) -> Stash | None:
-        """The L1 stash instance, if stash is enabled and the agent has been initialized."""
-        return self._stash
+    def archive(self) -> Archive | None:
+        """The L1 archive instance, if archive is enabled and the agent has been initialized."""
+        return self._archive
+
+    @property
+    def archive_is_durable(self) -> bool:
+        """Whether the archive is backed by durable storage that survives process restarts.
+
+        When True, archive data does not need to be embedded in session snapshots.
+        """
+        return self._archive_is_durable
+
+    @property
+    def stash(self) -> Archive | None:
+        """Deprecated name for :attr:`archive`. Removed in v1.68.0."""
+        warnings.warn(
+            "ContextManager.stash is deprecated and will be removed in v1.68.0. Use ContextManager.archive instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._archive
 
     @property
     def stash_is_durable(self) -> bool:
-        """Whether the stash is backed by durable storage that survives process restarts.
-
-        When True, stash data does not need to be embedded in session snapshots.
-        """
-        return self._stash_is_durable
+        """Deprecated name for :attr:`archive_is_durable`. Removed in v1.68.0."""
+        warnings.warn(
+            "ContextManager.stash_is_durable is deprecated and will be removed in v1.68.0. "
+            "Use ContextManager.archive_is_durable instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._archive_is_durable
 
     @staticmethod
     def from_strategy(
@@ -193,38 +231,35 @@ class ContextManager(Plugin):
 
     def init_agent(self, agent: Agent) -> None:
         """Register strategy hooks for proactive compression and overflow recovery."""
-        if not self._stash_disabled:
-            storage = self._stash_explicit_storage or getattr(agent, "storage", None) or InMemoryStorage()
-            self._stash_is_durable = getattr(storage, "_ephemeral", None) is not _EPHEMERAL
-            # Only explicit stash storage may be a shared root; agent.storage is shared with other subsystems.
-            self._stash = Stash(
+        if not self._archive_disabled:
+            storage = self._archive_explicit_storage or getattr(agent, "storage", None) or InMemoryStorage()
+            self._archive_is_durable = getattr(storage, "_ephemeral", None) is not _EPHEMERAL
+            # Only explicit archive storage may be a shared root; agent.storage is shared with other subsystems.
+            self._archive = Archive(
                 storage,
                 agent.session_id,
                 agent.agent_id,
-                custom_stash_namespace=self._stash_explicit_storage is not None,
+                custom_archive_namespace=self._archive_explicit_storage is not None,
             )
 
-        if self._stash is not None:
-            stash = self._stash
+        if self._archive is not None:
+            archive = self._archive
 
             async def _on_message_added(event: MessageAddedEvent) -> None:
                 messages = event.agent.messages
                 index = _index_of(messages, event.message)
-                await stash.store_message(event.message, _retrieval_calls_before(messages, index))
+                await archive.store_message(event.message, _retrieval_calls_before(messages, index))
 
             agent.hooks.add_callback(MessageAddedEvent, _on_message_added)
 
-        if self._stash is not None and self._enable_retrieval_tool:
-            retrieval_tool = _create_retrieval_tool(self._stash)
+        if self._archive is not None and self._enable_retrieval_tool:
+            retrieval_tool = _create_retrieval_tool(self._archive)
             self._tools.append(retrieval_tool)  # type: ignore[arg-type]
 
         for strategy in self._strategies:
             init = getattr(strategy, "init", None)
             if init is not None:
-                try:
-                    init(agent, stash=self._stash)
-                except TypeError:
-                    init(agent)
+                _init_strategy(init, agent, self._archive)
 
         async def _on_before_model_call(event: BeforeModelCallEvent) -> None:
             await self._run_strategies(
@@ -257,23 +292,23 @@ class ContextManager(Plugin):
 
         agent.hooks.add_callback(AfterModelCallEvent, _on_after_model_call)
 
-    async def _backfill_stash(self, agent: Agent) -> None:
-        """Stash any messages already on the agent that were not seen by the hook.
+    async def _backfill_archive(self, agent: Agent) -> None:
+        """Archive any messages already on the agent that were not seen by the hook.
 
         Covers Agent(messages=[...]) and session restore, which bypass MessageAddedEvent.
-        Existing entries are kept: after a restore the stash holds the originals, while the
+        Existing entries are kept: after a restore the archive holds the originals, while the
         matching messages on the agent may already be offloaded previews.
         """
-        if self._backfill_done or self._stash is None:
+        if self._backfill_done or self._archive is None:
             return
         self._backfill_done = True
         for index, message in enumerate(agent.messages):
             try:
-                await self._stash.store_message(
+                await self._archive.store_message(
                     message, _retrieval_calls_before(agent.messages, index), keep_existing=True
                 )
             except Exception:
-                logger.warning("agent_id=<%s> | failed to backfill stash", agent.agent_id, exc_info=True)
+                logger.warning("agent_id=<%s> | failed to backfill archive", agent.agent_id, exc_info=True)
 
     async def _run_strategies(
         self,
@@ -284,7 +319,7 @@ class ContextManager(Plugin):
         invocation_context: InvocationContext | None = None,
     ) -> bool:
         """Run the strategy pipeline, recomputing utilization after each acting strategy."""
-        await self._backfill_stash(agent)
+        await self._backfill_archive(agent)
         messages = agent.messages
         if precomputed_input_tokens is not None:
             input_tokens = precomputed_input_tokens
@@ -300,7 +335,7 @@ class ContextManager(Plugin):
             agent=agent,
             utilization=agent.model.estimate_utilization(input_tokens),
             overflow=overflow,
-            stash=self._stash,
+            archive=self._archive,
             invocation_context=_create_auxiliary_invocation_context(invocation_context),
         )
 
@@ -323,3 +358,25 @@ class ContextManager(Plugin):
                     exc_info=True,
                 )
         return any_acted
+
+
+def _init_strategy(init: Callable[..., Any], agent: Agent, archive: Archive | None) -> None:
+    """Call a strategy's optional ``init`` with the archive, under whichever keyword it declares.
+
+    The keyword is read off the signature rather than tried and retried, so a ``TypeError`` raised by ``init``
+    itself is never mistaken for one it does not accept. A strategy that declares neither keyword, nor
+    ``**kwargs``, is called with the agent alone.
+    """
+    try:
+        parameters = inspect.signature(init).parameters
+    except (TypeError, ValueError):
+        init(agent, archive=archive)
+        return
+    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+        init(agent, archive=archive)
+        return
+    keyword = next((name for name in _ARCHIVE_KEYWORDS if name in parameters), None)
+    if keyword is None:
+        init(agent)
+        return
+    init(agent, **{keyword: archive})

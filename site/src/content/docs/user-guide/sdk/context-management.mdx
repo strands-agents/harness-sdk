@@ -8,12 +8,6 @@ sourceLinks:
 addedDate: 2026-06-12
 ---
 
-:::caution[Experimental in Python]
-In Python, the `ContextManager` strategy API is still exported from
-`strands.experimental.context_manager` and may change in future versions. The
-TypeScript API is stable.
-:::
-
 As conversations grow, your agent's context window fills with messages, tool results, and system prompts. Without management, this leads to token limit errors, degraded performance, and loss of relevant information.
 
 The SDK ships context management that works out of the box. Pick a mode and the SDK wires up an ordered strategy pipeline with tuned defaults.
@@ -49,7 +43,7 @@ The <Syntax py="context_manager" ts="contextManager" /> parameter is a first-cla
 
 The ContextManager runs strategies as an ordered pipeline. Each strategy sees the output of the previous one. The SDK always appends an emergency truncation strategy as the final step, which only fires when the window is still overflowing after all other strategies have run.
 
-A <Syntax py="stash" ts="archive" /> stores all message content on arrival as JSON, before any strategy acts. Truncated or summarized content is preserved and retrievable on demand through the `retrieve_context` tool, registered by default.
+An archive stores all message content on arrival as JSON, before any strategy acts. Truncated or summarized content is preserved and retrievable on demand through the `retrieve_context` tool, registered by default.
 
 When <Syntax py="context_manager" ts="contextManager" /> is set, any co-provided <Syntax py="conversation_manager" ts="conversationManager" /> is ignored. The ContextManager owns overflow recovery and proactive compression internally.
 
@@ -66,7 +60,7 @@ See [Built-in Modes](./context-management/built-in-modes) for details on `"auto"
 
 ## Storage backends
 
-The `ContextManager` uses in-memory <Syntax py="stash" ts="archive" /> storage by default. Content does not persist across process restarts. Provide a durable storage backend when the <Syntax py="stash" ts="archive" /> needs to survive restarts:
+The `ContextManager` uses in-memory archive storage by default. Content does not persist across process restarts. Provide a durable storage backend when the archive needs to survive restarts:
 
 <Tabs>
 <Tab label="Python">
@@ -75,14 +69,10 @@ The `ContextManager` uses in-memory <Syntax py="stash" ts="archive" /> storage b
 from strands.storage import LocalFileStorage, S3Storage
 
 # Local filesystem
-stash = {"storage": LocalFileStorage("./artifacts/")}
+archive_local = {"storage": LocalFileStorage("./artifacts/")}
 
 # S3, using ambient AWS credentials
-stash = {
-    "storage": S3Storage(
-        "my-bucket", prefix="agent-stash/",
-    ),
-}
+archive_s3 = {"storage": S3Storage("my-bucket", prefix="agent-archive/")}
 ```
 </Tab>
 <Tab label="TypeScript">
@@ -95,7 +85,7 @@ stash = {
 </Tab>
 </Tabs>
 
-Pass one of these <Syntax py="stash" ts="archive" /> values in your context manager configuration. See [Storage](./storage) for the full storage backend reference.
+Pass one of these archive values in your context manager configuration. See [Storage](./storage) for the full storage backend reference.
 
 ## Limitations
 
@@ -133,7 +123,21 @@ If you currently use `SummarizingConversationManager`, `ContextOffloader`, or `c
 <Tabs>
 <Tab label="Python">
 
-No changes. The Python API is still `strands.experimental.context_manager`, and the names below are unchanged.
+The Python API moved out of `strands.experimental`, and the stash was renamed to the archive.
+
+| Before | After |
+|--------|-------|
+| `from strands.experimental.context_manager import …` | `from strands.context_manager import …` |
+| `StashConfig` | `ArchiveConfig` |
+| `{"stash": …}` | `{"archive": …}` |
+| `ContextManager(stash=…)` | `ContextManager(archive=…)` |
+| `context_manager.stash` | `context_manager.archive` |
+| `context_manager.stash_is_durable` | `context_manager.archive_is_durable` |
+| `ContextState.stash` | `ContextState.archive` |
+
+The old names still work this release, deprecated, and are removed in the next minor. `context_manager="auto"` and `context_manager="agentic"` are unchanged.
+
+Sessions saved before the rename still resume, but the compatibility read goes away with the deprecated names — resume each one once on this release to migrate it forward.
 
 </Tab>
 <Tab label="TypeScript">

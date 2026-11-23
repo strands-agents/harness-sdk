@@ -18,11 +18,11 @@ from ...message_trimming import (
     _holds_run,
     _replace_run,
     _split_into_runs,
+    archive_removed,
     new_message,
     remove_messages,
     removed_tokens,
     repair_alternation,
-    stash_removed,
     with_pairs,
 )
 from ...placeholder import (
@@ -132,7 +132,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 continue
             tokens = await removed_tokens(run, model)
             marker = format_summarized(REMOVED_MESSAGES, tokens, summary)
-            if await _replace_run(messages, run, marker, tokens, "summarize", context.stash):
+            if await _replace_run(messages, run, marker, tokens, "summarize", context.archive):
                 logger.debug("summarized=<%s>, tokens=<%s> | summarized message run", len(run), tokens)
                 acted = True
         return acted
@@ -211,13 +211,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
         # Message 0 stays in the history, but a provider sending the summary as a compaction block stops sending
         # anything before it, so the summary stands for message 0 too and a retrieval has to be able to return it.
         content = [summary]
-        stash_ref = await stash_removed(context.stash, covered, self._method)
-        if stash_ref is not None:
+        archive_ref = await archive_removed(context.archive, covered, self._method)
+        if archive_ref is not None:
             # The reference follows the summary because a compaction block drops the content before it, which is also
             # why it is a block of its own: a provider's summary text is signed, so nothing can be written into it.
             tokens = await removed_tokens(covered, model)
             marker = format_summarized(REMOVED_MESSAGES, tokens)
-            content.append(offload_placeholder(self._method, marker, stash_ref, tokens))
+            content.append(offload_placeholder(self._method, marker, archive_ref, tokens))
         if not _holds_run(messages, 0, covered):
             logger.warning(
                 "summarized=<%d> | the summarized messages are no longer the history's start"
@@ -248,7 +248,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
             model,
             lambda tokens: format_summarized(REMOVED_MESSAGES, tokens, summary),
             "summarize",
-            context.stash,
+            context.archive,
         )
 
     async def _replace_block(
