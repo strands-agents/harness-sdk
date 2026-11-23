@@ -38,7 +38,7 @@ describe('skill command workflows', () => {
     expect(experiment).toContain('then a last row "Create a new experiment" with the value new. Offer no other rows.')
     expect(experiment).toContain('call strands_dev_open_file')
     expect(experiment).toContain('do not print the file in chat')
-    expect(experiment).toContain('ask the task straight away with strands_dev_text_input')
+    expect(experiment).toContain('ask the task straight away in chat')
     expect(experiment).toContain('Do not ask first how to build it.')
     expect(experiment).toContain('strands_dev_session_converter')
     expect(experiment).toContain('Do not ask about the number of cases, evaluators, the model')

@@ -351,4 +351,5 @@ export interface EvalsBrowser {
   subscribe(listener: () => void): () => void
   snapshot(): EvalsBrowserState
   open(place: EvalsBrowserPlace): Promise<EvalsBrowserNotice | undefined>
+  link?(place: EvalsBrowserPlace, runFolder?: string): string | undefined
 }

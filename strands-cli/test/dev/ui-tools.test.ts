@@ -31,7 +31,6 @@ describe('strands dev UI tools', () => {
     expect(tools.map(({ name }) => name)).toEqual([
       'strands_dev_single_select',
       'strands_dev_multi_select',
-      'strands_dev_text_input',
       'strands_dev_number_input',
       'strands_dev_confirm',
     ])
@@ -46,13 +45,18 @@ describe('strands dev UI tools', () => {
 
     const { request, reply } = (await ask(
       'strands_dev_single_select',
-      { question: 'What should the optimizer improve?', title: 'optimize', options: OPTIONS, selected: 'mean' },
+      { question: 'What should the optimizer improve?', title: 'optimize', options: OPTIONS },
       { answer: 'fewer tokens' }
     )) as { request: { name: string; steps: { fields: unknown[] }[] }; reply: unknown }
 
     expect(request.name).toBe('optimize')
     expect(request.steps[0]!.fields).toEqual([
-      { kind: 'select', key: 'answer', multiple: false, selected: ['mean'], options: OPTIONS },
+      {
+        kind: 'select',
+        key: 'answer',
+        multiple: false,
+        options: OPTIONS.map((option, index) => ({ ...option, label: `${index + 1}. ${option.label}` })),
+      },
     ])
     expect(reply).toEqual({ status: 'answered', answer: 'fewer tokens' })
   })
@@ -69,18 +73,9 @@ describe('strands dev UI tools', () => {
       { question: 'What may change?', options, selected: ['instructions'] },
       { answer: ['instructions', 'effort'] }
     )
-    const typed = await ask(
-      'strands_dev_text_input',
-      { question: 'Which path?', value: 'a.json' },
-      { answer: 'b.json' }
-    )
     const confirmed = await ask('strands_dev_confirm', { question: 'Fix it?' }, { answer: 'no' })
 
     expect(picks).toMatchObject({ reply: { status: 'answered', answer: ['instructions', 'effort'] } })
-    expect(typed).toMatchObject({
-      request: { steps: [{ fields: [{ kind: 'text', key: 'answer', value: 'a.json' }] }] },
-      reply: { answer: 'b.json' },
-    })
     expect(confirmed).toMatchObject({ reply: { status: 'answered', answer: false } })
   })
 
@@ -135,10 +130,10 @@ describe('strands dev UI tools', () => {
       'selected names no such option: b.',
     ],
     [
-      'a picked input row',
+      'a picked single select',
       'strands_dev_single_select',
-      { question: 'q', options: OPTIONS, selected: 'other' },
-      'cannot name an input row: other starts empty.',
+      { question: 'q', options: OPTIONS, selected: 'mean' },
+      'A single select starts with nothing picked',
     ],
     [
       'an input row in a multi select',

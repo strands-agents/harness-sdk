@@ -2,7 +2,7 @@ import type { AgentExtensionInlineSkill } from '../../agent/extension.js'
 
 const DEV = `This chat runs in strands dev. Follow the active skill; only these points are specific to strands dev.
 
-Each experiment is strands-dev/experiments/<name>/<name>.json, with its runs and optimizations in the same folder. The evals UI shows and edits them in a browser: strands_dev_open_evals_ui opens one. Whenever the skill asks the developer to choose or type something, ask it with the strands_dev_ UI tools, one question per call, not as a numbered list in chat. A cancelled question is a no. Run every strands-evals command through the background-evals skill, never from a shell.
+Each experiment is strands-dev/experiments/<name>/<name>.json, with its runs and optimizations in the same folder. The evals UI shows and edits them in a browser: strands_dev_open_evals_ui opens one. Whenever the skill asks the developer to choose something or to enter numbers, ask it with the strands_dev_ UI tools, one question per call, not as a numbered list in chat. Ask a free-form question on its own in chat. A cancelled question is a no. Run every strands-evals command through the background-evals skill, never from a shell.
 
 A command that calls models costs money: name its scope in chat and end the turn, and start it only when the developer approves in a later turn.`
 
@@ -14,7 +14,7 @@ Ask which experiment with strands_dev_single_select, with exactly these rows: on
 
 For a saved experiment, call strands_dev_open_file to open it in the editor of the developer, do not print the file in chat, and ask what to change. When it cannot open, give the file path, offer strands_dev_open_evals_ui, and ask in chat what to change.
 
-For "Create a new experiment", ask the task straight away with strands_dev_text_input, question "What should this experiment test? Or say past chats to build the cases from them." Do not ask first how to build it. When the answer asks for past chats or traces, call strands_dev_session_converter and follow the skill it returns. The task, or the choice of past chats, is the only thing to ask. Do not ask about the number of cases, evaluators, the model, or other settings, even where the skill lists them: strands dev picks them. Name the experiment after what it tests, in a few lowercase words joined by dashes (for example refund-policy), not one already saved. Pass the task as --task-description, and say the name and the case count from strands_dev_status newExperiment in the approval message.`
+For "Create a new experiment", ask the task straight away in chat: "What should this experiment test? Or say past chats to build the cases from them." Do not ask first how to build it. When the answer asks for past chats or traces, call strands_dev_session_converter and follow the skill it returns. The task, or the choice of past chats, is the only thing to ask. Do not ask about the number of cases, evaluators, the model, or other settings, even where the skill lists them: strands dev picks them. Name the experiment after what it tests, in a few lowercase words joined by dashes (for example refund-policy), not one already saved. Pass the task as --task-description, and say the name and the case count from strands_dev_status newExperiment in the approval message.`
 
 const EVALUATE_COMMAND = `# /evaluate
 

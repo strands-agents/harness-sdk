@@ -439,7 +439,6 @@ const TOOL_ACTIONS: Readonly<Record<string, string>> = {
   strands_dev_number_input: 'Ask',
   strands_dev_optimization_plan: 'Optimization plan',
   strands_dev_single_select: 'Ask',
-  strands_dev_text_input: 'Ask',
   strands_manage_background_task: 'Background tasks',
   todo_write: 'Update tasks',
   web_fetch: 'Fetch',

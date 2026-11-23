@@ -380,7 +380,6 @@ describe('TEMPORARY dev chat part', () => {
       ['strands_dev_optimization_plan', false],
       ['strands_dev_single_select', false],
       ['strands_dev_multi_select', false],
-      ['strands_dev_text_input', false],
       ['strands_dev_number_input', false],
       ['strands_dev_confirm', false],
       ['strands_dev_review_optimization', false],

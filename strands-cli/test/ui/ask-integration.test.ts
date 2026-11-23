@@ -60,7 +60,7 @@ const askingBackend = (broker: WizardBroker, answered: Promise<unknown>): ChatBa
       yield {
         type: 'toolStart',
         toolUseId: 'use-1',
-        name: 'strands_dev_text_input',
+        name: 'strands_dev_confirm',
         input: { question: question.question! },
       } as never
       void broker.ask(question)

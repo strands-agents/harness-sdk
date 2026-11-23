@@ -24,20 +24,20 @@ describe('isOnScreenQuestionTool', () => {
 
 describe('the turn line while a question is on screen', () => {
   it('shouldSayItWaitsForTheDeveloperRatherThanWorking', () => {
-    expect(turnActivity(turn('strands_dev_text_input', 'running'), false)).toBe('awaitingAnswer')
+    expect(turnActivity(turn('strands_dev_confirm', 'running'), false)).toBe('awaitingAnswer')
   })
 
   it('shouldKeepWorkingWhenTheQuestionIsAnswered', () => {
-    expect(turnActivity(turn('strands_dev_text_input', 'success'), false)).toBe('working')
+    expect(turnActivity(turn('strands_dev_confirm', 'success'), false)).toBe('working')
   })
 
   it('shouldLeaveApprovalAhead', () => {
-    expect(turnActivity(turn('strands_dev_text_input', 'running'), true)).toBe('awaitingApproval')
+    expect(turnActivity(turn('strands_dev_confirm', 'running'), true)).toBe('awaitingApproval')
   })
 
   it('shouldNotOfferEscBecauseTheQuestionOwnsIt', () => {
     expect(TURN_ACTIVITY.awaitingAnswer.interruptible).toBe(false)
-    expect(turnActivityText('awaitingAnswer', turn('strands_dev_text_input', 'running'), '|')).toBe(
+    expect(turnActivityText('awaitingAnswer', turn('strands_dev_confirm', 'running'), '|')).toBe(
       '◆ Waiting for your answer'
     )
   })

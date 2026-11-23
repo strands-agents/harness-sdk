@@ -69,7 +69,7 @@ Runs cost money. Name the scope in chat and end the turn; start a run only after
 
 When an optimization run finishes, its edits appear on the developer's screen as a diff, and they apply or leave each edit there, unless auto-optimize applies them. Do not print the edits or ask in chat which ones to apply; strands_dev_review_optimization puts a closed diff back on screen. Call strands_dev_apply_optimization only for edits the developer names in chat.
 
-Answer what was asked from tool output of this turn: call strands_dev_status again whenever the question is what exists, because runs and files change between turns. Ask the developer to choose or type with the strands_dev_ UI tools. Never make up the evals UI address; pass on only what strands_dev_open_evals_ui returns, as a markdown link with a short label such as [open the run](url).`
+Answer what was asked from tool output of this turn: call strands_dev_status again whenever the question is what exists, because runs and files change between turns. Ask the developer to choose or enter numbers with the strands_dev_ UI tools, and ask a free-form question in chat. Never make up the evals UI address; pass on only what strands_dev_open_evals_ui returns, as a markdown link with a short label such as [open the run](url).`
 
 const reply = (value: unknown): string => JSON.stringify(value, null, 2)
 
@@ -353,7 +353,13 @@ const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevCh
     return reply({
       experimentsFolder: folder,
       experiments: saved.map(({ name, caseCount, path }) =>
-        defined({ name, cases: caseCount, file: path, lastTest: lastRun(runs, path) })
+        defined({
+          name,
+          cases: caseCount,
+          file: path,
+          evalsUi: ui.link?.({ view: 'experiment', experiment: path }),
+          lastTest: lastRun(runs, path),
+        })
       ),
       generations: generations.map(generationStatus),
       optimization: optimizationStatus(optimize.snapshot()),

@@ -81,8 +81,18 @@ const selectedAt = (value: JSONValue | undefined, options: readonly WizardOption
 
 const selectField = (input: Input, multiple: boolean): WizardFieldSpec => {
   const options = optionsAt(input.options, !multiple)
+  // A single select is numbered like the skill's list and starts with nothing picked.
+  if (!multiple) {
+    if (input.selected !== undefined && input.selected !== null)
+      throw new Error('A single select starts with nothing picked; leave out selected and keep (Default) in its label.')
+    return {
+      kind: 'select',
+      key: ANSWER,
+      options: options.map((option, index) => ({ ...option, label: `${index + 1}. ${option.label}` })),
+      multiple,
+    }
+  }
   const selected = selectedAt(input.selected, options)
-  if (!multiple && selected.length > 1) throw new Error('selected names one option in a single select.')
   return { kind: 'select', key: ANSWER, options, multiple, ...(selected.length === 0 ? {} : { selected }) }
 }
 
@@ -114,16 +124,6 @@ const numberFields = (value: JSONValue | undefined): WizardNumberSpec[] => {
   const keys = fields.map(({ key }) => key)
   if (new Set(keys).size !== keys.length) throw new Error('fields must not repeat a key.')
   return fields
-}
-
-const textField = (input: Input): WizardFieldSpec => {
-  const value = optionalString(input.value, 'value')
-  return {
-    kind: 'text',
-    key: ANSWER,
-    label: optionalString(input.label, 'label') ?? ANSWER,
-    ...(value === undefined ? {} : { value }),
-  }
 }
 
 /** One question, one component: the request the panel renders. */
@@ -192,11 +192,11 @@ const UI_TOOLS: readonly UiTool[] = [
     name: 'strands_dev_single_select',
     description:
       'Show the developer a radio list and wait for one pick. Use it when a skill asks to pick one option, such as ' +
-      'a numbered list with a (Default). Put the default in selected. For "Your own" or "something else", add a last ' +
-      'row with input true; the answer is then the typed text, so ask no follow-up.',
+      'a numbered list with a (Default). The rows are numbered for you and none starts picked; keep (Default) in the ' +
+      'default row\'s label. For "Your own" or "something else", add a last row with input true; the answer is then ' +
+      'the typed text, so ask no follow-up.',
     properties: {
       options: { type: 'array', items: TYPED_OPTION, description: 'The rows, in the order the skill lists them.' },
-      selected: { type: 'string', description: 'The value of the row that starts picked.' },
     },
     required: ['options'],
     fields: (input) => [selectField(input, false)],
@@ -213,19 +213,6 @@ const UI_TOOLS: readonly UiTool[] = [
     },
     required: ['options'],
     fields: (input) => [selectField(input, true)],
-    answer: (outcome) => outcome[ANSWER] as JSONValue,
-  },
-  {
-    name: 'strands_dev_text_input',
-    description:
-      'Show the developer one text field and wait for what they type. Use it when a skill asks for a free-form ' +
-      'answer on its own, such as a description or a path. Prefill value with the current value.',
-    properties: {
-      label: { type: 'string', description: 'The short name beside the field.' },
-      value: { type: 'string', description: 'The starting text.' },
-    },
-    required: [],
-    fields: (input) => [textField(input)],
     answer: (outcome) => outcome[ANSWER] as JSONValue,
   },
   {

@@ -97,7 +97,6 @@ export function isConfigurationTool(name: string): boolean {
 export const ON_SCREEN_QUESTION_TOOLS: ReadonlySet<string> = new Set([
   'strands_dev_single_select',
   'strands_dev_multi_select',
-  'strands_dev_text_input',
   'strands_dev_number_input',
   'strands_dev_confirm',
 ])
