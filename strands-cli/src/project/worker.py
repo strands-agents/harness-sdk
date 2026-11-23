@@ -10,6 +10,7 @@ import importlib.machinery
 import importlib.util
 import inspect
 import json
+import logging
 import os
 import re
 import sys
@@ -179,6 +180,16 @@ def host_tool(spec):
         {"name": spec["name"], "description": spec["description"], "inputSchema": {"json": spec["inputSchema"]}},
         call,
     )
+
+
+def extension_skill(spec):
+    if "url" not in spec:
+        return Skill(**spec)
+    try:
+        return Skill.from_url(spec["url"])
+    except (RuntimeError, ValueError) as error:
+        logging.getLogger(__name__).warning("url=<%s> | failed to load skill from URL: %s", spec["url"], error)
+        return None
 
 
 def replace_instructions(agent, instructions):
@@ -550,7 +561,7 @@ class Runtime:
         tools = [host_tool(spec) for spec in self.extension.get("tools", []) if spec["name"] not in registered]
         if tools:
             agent.tool_registry.process_tools(tools)
-        added = [Skill(**skill) for skill in self.extension.get("skills", [])]
+        added = [skill for spec in self.extension.get("skills", []) if (skill := extension_skill(spec))]
         if added:
             skills = next(
                 (plugin for plugin in agent._plugin_registry._plugins.values() if isinstance(plugin, AgentSkills)),

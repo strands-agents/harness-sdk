@@ -220,7 +220,7 @@ ${(name === 'memory store'
     await writeFile(entrypoint, factorySource)
     const directory = join(root, 'strands-dev')
     await bindExistingAgent(directory, entrypoint)
-    const devSkills = ['create-experiment', 'manage-experiments', 'run-evaluations', 'optimize-harness']
+    const devSkills = ['background-evals', 'strands-evals']
     const chat = await createPythonChat(
       entrypoint,
       CliConfigStore.memory(),
@@ -235,10 +235,11 @@ ${(name === 'memory store'
 
     await vi.waitFor(() => expect(chat.getSnapshot().panel?.title).toMatch(/^Skills \(\d+\)$/))
     expect(chat.getSnapshot().panel?.rows.map(({ label }) => label)).toEqual(expect.arrayContaining(devSkills))
-    expect(listed('/')).toEqual(expect.arrayContaining(['experiment', 'evaluate', 'optimize']))
+    expect(listed('/')).toEqual(expect.arrayContaining(['experiment', 'optimize']))
+    expect(listed('/')).not.toContain('evaluate')
     expect(listed('/').filter((name) => devSkills.includes(name))).toEqual([])
     expect(listed('/opt')).toEqual(['optimize'])
-    expect(chat.actionableCommandToken('/optimize-harness')).toBeUndefined()
+    expect(chat.actionableCommandToken('/background-evals')).toBeUndefined()
   })
 
   it('shouldTurnOffTheCustomSessionManagerWhenADevChatOpensTheAgent', { timeout: 30_000 }, async () => {
