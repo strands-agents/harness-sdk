@@ -18,7 +18,7 @@ from strands._context_manager.placeholder import (
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.summarize import BLOCK_SUMMARY_INSTRUCTIONS
 from strands._context_manager.types import ContextState
-from strands.agent.invocation_context import _create_invocation_context
+from strands.agent.invocation_context import ModelUsage, _create_invocation_context
 from strands.models import Model, SummarizeResult
 from strands.models._summarize import _SUMMARIZE_GUARD, DEFAULT_SUMMARIZE_INSTRUCTIONS
 from strands.tools.registry import ToolRegistry
@@ -267,7 +267,7 @@ class TestSummarizeStrategyPerBlock:
     @pytest.mark.asyncio
     async def test_skips_when_no_model(self):
         agent = unittest.mock.MagicMock()
-        agent.aux_model = None
+        agent.model = None
         strategy = Offload.summarize("assistant_text").when(block_threshold=100)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -500,7 +500,7 @@ class TestSummarizeStrategyMessageLevel:
     @pytest.mark.asyncio
     async def test_no_model_returns_false(self):
         agent = unittest.mock.MagicMock()
-        agent.aux_model = None
+        agent.model = None
         strategy = Offload.summarize("*").when(context_utilization="80%")
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
@@ -782,10 +782,9 @@ class TestRunSummaryReplaysTheAgentRequest:
         aux_model.count_tokens = unittest.mock.AsyncMock(return_value=5000)
         aux_model.summarize = unittest.mock.AsyncMock(return_value=_summary("aux summary"))
         aux_model.model_info.capabilities.server_side_summary = False
-        mock_agent.aux_model = aux_model
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*", {"model": aux_model}).when(context_utilization="80%", preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
@@ -918,11 +917,10 @@ class TestServerSideSummary:
         aux_model.stream = _make_stream_events("Summary of content.")
         aux_model.summarize = _base_summarize(aux_model)
         aux_model.model_info.capabilities.server_side_summary = aux_supports
-        mock_agent.aux_model = aux_model
         mock_agent.model.model_info.capabilities.server_side_summary = agent_supports
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*", {"model": aux_model}).when(context_utilization="80%", preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
@@ -1181,6 +1179,24 @@ class TestClientSideSummariesUseModelSummarize:
         assert request.usage == {"turns_taken": 0, "inputTokens": 100, "outputTokens": 20, "totalTokens": 120}
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("server_side_summary", [False, True])
+    async def test_a_summary_adds_its_usage_under_the_model_that_wrote_it(self, mock_agent, server_side_summary):
+        mock_agent.model.model_info.capabilities.server_side_summary = server_side_summary
+        mock_agent.model.get_config = unittest.mock.Mock(return_value={"model_id": "summary-model"})
+        usage = Usage(inputTokens=100, outputTokens=20, totalTokens=120)
+        content = [ContentBlock(summary={"provider": "anthropic", "text": "compacted"})]
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=SummarizeResult(content, usage))
+        messages = TestServerSideSummary._messages()
+        mock_agent.messages = messages
+        request = _create_invocation_context()
+        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, invocation_context=request)
+        assert await strategy.apply(context) is True
+
+        assert request.usage_by_model == [ModelUsage(provider_name=None, model_id="summary-model", usage=usage)]
+
+    @pytest.mark.asyncio
     async def test_warns_when_summarize_returns_no_text(self, mock_agent, caplog):
         mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=SummarizeResult())
         messages = _tool_result_messages()
@@ -1405,7 +1421,7 @@ class TestSummarizerDiagnosticsAndModelChoice:
         assert request.usage == {"turns_taken": 5, **usage}
 
     @pytest.mark.asyncio
-    async def test_summarizes_with_the_agents_aux_model_when_the_strategy_has_no_model(self):
+    async def test_summarizes_with_the_agent_model_rather_than_its_aux_model_when_the_strategy_has_no_model(self):
         messages = [make_tool_result_message(LARGE_TEXT)]
         main_model = heuristic_model(summarize=_mock_summarize())
         aux_model = heuristic_model(summarize=_mock_summarize())
@@ -1414,5 +1430,5 @@ class TestSummarizerDiagnosticsAndModelChoice:
 
         assert await Offload.summarize("tool_results").apply(context) is True
 
-        aux_model.summarize.assert_awaited_once()
-        main_model.summarize.assert_not_awaited()
+        main_model.summarize.assert_awaited_once()
+        aux_model.summarize.assert_not_awaited()

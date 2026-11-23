@@ -12,6 +12,7 @@ import base64
 import errno
 import logging
 import shlex
+import threading
 import uuid
 from abc import ABC
 from collections.abc import AsyncGenerator
@@ -101,6 +102,8 @@ class PosixShellSandbox(Sandbox, ABC):
       does not wire ``timeout`` into its process supervision will silently run
       without any time limit.
     - ``cwd`` — similarly must be applied by the subclass.
+    - ``cancel_signal`` — a subclass that does not watch it keeps running after
+      the caller cancels.
     """
 
     async def execute_code_streaming(
@@ -111,6 +114,7 @@ class PosixShellSandbox(Sandbox, ABC):
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ExecutionResult, None]:
         """Execute code by piping it to a language interpreter over the shell.
@@ -127,6 +131,7 @@ class PosixShellSandbox(Sandbox, ABC):
             timeout: Maximum execution time in seconds. ``None`` means no timeout.
             cwd: Working directory for execution.
             env: Environment variables to set for this execution.
+            cancel_signal: Aborts the execution when set.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
@@ -141,6 +146,8 @@ class PosixShellSandbox(Sandbox, ABC):
         encoded = base64.b64encode(code.encode()).decode("ascii")
         eof = _eof_marker()
         command = f"base64 -d << '{eof}' | {language}\n{encoded}\n{eof}"
+        if cancel_signal is not None:
+            kwargs["cancel_signal"] = cancel_signal
         async for chunk in self.execute_streaming(command, timeout=timeout, cwd=cwd, env=env, **kwargs):
             yield chunk
 

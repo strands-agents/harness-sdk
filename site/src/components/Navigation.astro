@@ -26,11 +26,11 @@ const docsCategories = [
   ...(await Promise.all(
     products.map(async (p) => ({
       title: p.slug,
-      description: p.description,
+      description: p.navDescription ?? p.description,
       href: p.href,
       accent: p.accent,
       pages: p.pages,
-      nav: await getProductNav(p.href, [p.label, p.name]),
+      nav: await getProductNav(p.docsHref ?? p.href, [p.label, p.name]),
     })),
   )),
   {

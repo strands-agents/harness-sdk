@@ -21,14 +21,14 @@ import type { ContextManagerConfig, ContextStrategy, ContextState } from './type
 import { EmergencyTruncateStrategy, Offload } from './strategies/offload/index.js'
 import { DeferredToolLoadingStrategy } from './strategies/deferred-tool-loading.js'
 import { resolveStrategies } from './presets.js'
-import { Stash } from './stash.js'
+import { Archive } from './archive.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from './retrieval-tool.js'
 import { createLoadTools, LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
 import { ToolUseBlock, type Message } from '../types/messages.js'
 
 /**
  * The retrieval tool calls answered by the message at `index`. Their results are copies of
- * stashed content, so the stash leaves them out. A tool result follows the message that called it.
+ * archived content, so the archive leaves them out. A tool result follows the message that called it.
  */
 function retrievalCallsBefore(messages: readonly Message[], index: number): Set<string> {
   const ids = new Set<string>()
@@ -62,8 +62,9 @@ const PRESET_STRATEGIES: Record<ContextManagerPreset, () => ContextStrategy[]> =
  * Supported values for the `contextManager` parameter.
  *
  * - `"auto"`: Managed context with proactive compression + offloading.
- * - `"agentic"`: Model-driven context management via injected tools.
- * - {@link ContextManagerConfig}: Custom strategy pipeline and stash configuration.
+ * - `"agentic"`: (Experimental) Model-driven context management via injected tools.
+ *   This mode may change in future versions.
+ * - {@link ContextManagerConfig}: Custom strategy pipeline and archive configuration.
  * - {@link ContextManager}: A pre-built instance, used as-is. An instance binds to one agent;
  *   construct one per `Agent`.
  * - `false`: Explicitly disable all context management (no compression, no offloading).
@@ -78,24 +79,22 @@ export type ContextManagerStrategy = ContextManagerPreset | ContextManagerConfig
  * window is still overflowing after the user strategies have run.
  *
  * Configured through the Agent's `contextManager` parameter — pass a preset
- * string (`'auto'`, `'agentic'`), a `ContextManagerConfig`, or a `ContextManager`
- * instance; the Agent registers the manager. When present, it owns overflow
+ * string (`'auto'`, or the experimental `'agentic'`), a `ContextManagerConfig`, or a
+ * `ContextManager` instance; the Agent registers the manager. When present, it owns overflow
  * recovery and proactive compression — no separate ConversationManager is needed.
- *
- * @experimental
  */
 export class ContextManager implements Plugin {
   readonly name = 'strands:context-manager'
 
   private readonly _strategies: ContextStrategy[]
-  private readonly _stashStorage: Storage | false | undefined
+  private readonly _archiveStorage: Storage | false | undefined
   private readonly _enableRetrievalTool: boolean
   private _tools: Tool[] = []
-  private _stash: Stash | undefined
-  private _stashIsDurable = false
+  private _archive: Archive | undefined
+  private _archiveIsDurable = false
 
   /**
-   * @param config - The strategies and stash to use; the default pipeline when omitted
+   * @param config - The strategies and archive to use; the default pipeline when omitted
    * @throws Error when the strategies hold more than one `Offload.defer` strategy, the `deferredToolLoading` preset
    *   included
    */
@@ -103,10 +102,13 @@ export class ContextManager implements Plugin {
     const userStrategies = config?.strategies ? resolveStrategies(config.strategies) : PRESET_STRATEGIES.auto()
     checkOneToolLoadingStrategy(userStrategies)
     this._strategies = [...userStrategies, new EmergencyTruncateStrategy()]
-    const stashConfig = config?.stash
-    const stashObj = typeof stashConfig === 'object' ? stashConfig : undefined
-    this._stashStorage = stashConfig === false ? false : stashObj?.storage
-    this._enableRetrievalTool = stashConfig !== false && stashObj?.retrievalTool !== false
+    const archiveConfig = config?.archive ?? config?.stash
+    if (config?.archive === undefined && config?.stash !== undefined) {
+      logger.warn('config_key=<stash> | stash was renamed to archive, the stash key is removed in the next minor')
+    }
+    const archiveObj = typeof archiveConfig === 'object' ? archiveConfig : undefined
+    this._archiveStorage = archiveConfig === false ? false : archiveObj?.storage
+    this._enableRetrievalTool = archiveConfig !== false && archiveObj?.retrievalTool !== false
   }
 
   /**
@@ -152,34 +154,37 @@ export class ContextManager implements Plugin {
   }
 
   async initAgent(agent: LocalAgent): Promise<void> {
-    if (this._stashStorage !== false) {
-      const storage = this._stashStorage ?? agent.storage ?? new InMemoryStorage()
-      this._stashIsDurable = !(EPHEMERAL in storage)
-      // Only explicit stash storage may be a shared root; agent.storage is shared with other subsystems.
+    if (this._archiveStorage !== false) {
+      const storage = this._archiveStorage ?? agent.storage ?? new InMemoryStorage()
+      this._archiveIsDurable = !(EPHEMERAL in storage)
+      // Only explicit archive storage may be a shared root; agent.storage is shared with other subsystems.
       // Plain (non-namespaced) explicit storage still gets the per-agent prefix. Mirrors strands-py.
-      this._stash = new Stash(storage, agent.sessionId, agent.id, {
-        customStashNamespace: this._stashStorage !== undefined,
+      this._archive = new Archive(storage, agent.sessionId, agent.id, {
+        customArchiveNamespace: this._archiveStorage !== undefined,
       })
     }
 
-    if (this._stash) {
-      const stash = this._stash
-      const storedKeys = new Set(await stash.list())
+    if (this._archive) {
+      const archive = this._archive
+      const storedKeys = new Set(await archive.list())
       for (const [index, message] of agent.messages.entries()) {
-        await stash.storeMessage(message, retrievalCallsBefore(agent.messages, index), storedKeys)
+        await archive.storeMessage(message, retrievalCallsBefore(agent.messages, index), storedKeys)
       }
       agent.addHook(MessageAddedEvent, async (event) => {
         const messages = event.agent.messages
         const index = messages.indexOf(event.message)
-        await stash.storeMessage(event.message, retrievalCallsBefore(messages, index === -1 ? messages.length : index))
+        await archive.storeMessage(
+          event.message,
+          retrievalCallsBefore(messages, index === -1 ? messages.length : index)
+        )
       })
     }
 
     for (const strategy of this._strategies) {
-      strategy.init?.(agent, this._stash)
+      strategy.init?.(agent, this._archive)
     }
 
-    const retrievalTools = this._enableRetrievalTool && this._stash ? [createRetrievalTool(this._stash)] : []
+    const retrievalTools = this._enableRetrievalTool && this._archive ? [createRetrievalTool(this._archive)] : []
     this._tools = [...retrievalTools, ...loadToolsFor(toolLoadingStrategy(this._strategies), agent)]
 
     agent.addHook(BeforeModelCallEvent, async (event) => {
@@ -212,22 +217,38 @@ export class ContextManager implements Plugin {
   }
 
   /**
-   * The L1 stash instance, if stash is enabled and the agent has been initialized.
+   * The L1 archive instance, if archive is enabled and the agent has been initialized.
    *
-   * @returns The stash, or undefined if stash is disabled or initAgent has not run
+   * @returns The archive, or undefined if archive is disabled or initAgent has not run
    */
-  get stash(): Stash | undefined {
-    return this._stash
+  get archive(): Archive | undefined {
+    return this._archive
   }
 
   /**
-   * Whether the stash is backed by durable storage that survives process restarts.
-   * When true, stash data does not need to be embedded in session snapshots.
+   * Whether the archive is backed by durable storage that survives process restarts.
+   * When true, archive data does not need to be embedded in session snapshots.
    *
-   * @returns true if the stash storage is not ephemeral
+   * @returns true if the archive storage is not ephemeral
+   */
+  get archiveIsDurable(): boolean {
+    return this._archiveIsDurable
+  }
+
+  /**
+   * @deprecated Renamed to {@link ContextManager.archive}. Removed in the next minor.
+   * @returns The archive, or undefined if archive is disabled or initAgent has not run
+   */
+  get stash(): Archive | undefined {
+    return this._archive
+  }
+
+  /**
+   * @deprecated Renamed to {@link ContextManager.archiveIsDurable}. Removed in the next minor.
+   * @returns true if the archive storage is not ephemeral
    */
   get stashIsDurable(): boolean {
-    return this._stashIsDurable
+    return this._archiveIsDurable
   }
 
   private async _runStrategies(
@@ -245,7 +266,7 @@ export class ContextManager implements Plugin {
       agent,
       utilization: agent.model.estimateUtilization(inputTokens),
       ...(overflow ? { overflow: true } : {}),
-      ...(this._stash ? { stash: this._stash } : {}),
+      ...(this._archive ? { archive: this._archive, stash: this._archive } : {}),
       ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
     }
 
