@@ -3,7 +3,7 @@ import { logger } from '../logging/logger.js'
 import { STOP_WORDS } from '../storage/search/keyword.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { ToolReferenceBlock } from '../types/messages.js'
-import { LOAD_TOOLS_TOOL_NAME, loadableNames } from './load-tools.js'
+import { isLoadTools, LOAD_TOOLS_TOOL_NAME, loadableNames } from './load-tools.js'
 import { McpTool } from './mcp-tool.js'
 import { tool } from './tool-factory.js'
 import type { InvocationContext } from '../agent/invocation-context.js'
@@ -101,6 +101,25 @@ export class KeywordToolSearcher implements ToolSearcher {
  */
 export function isLoaderName(name: string): boolean {
   return name === LOAD_TOOLS_TOOL_NAME || name === SEARCH_TOOLS_TOOL_NAME
+}
+
+/**
+ * Rejects an agent tool named as a loader that isn't the SDK's, since model providers take either name for a loader.
+ *
+ * @param agent - The agent whose tools to check
+ * @throws Error when the agent has a tool named `load_tools` or `search_tools` that the SDK didn't make
+ * @internal
+ */
+export function checkLoaderNames(agent: LocalAgent): void {
+  const taken = [LOAD_TOOLS_TOOL_NAME, SEARCH_TOOLS_TOOL_NAME].find((name) => {
+    const registered = agent.toolRegistry.get(name)
+    return registered !== undefined && !isLoadTools(registered) && !isSearchTools(registered)
+  })
+  if (taken === undefined) return
+  throw new Error(
+    `contextManager reserves the tool names '${LOAD_TOOLS_TOOL_NAME}' and '${SEARCH_TOOLS_TOOL_NAME}' for ` +
+      `Offload.defer and the 'deferredToolLoading' preset, and the agent has a tool named '${taken}'; rename it`
+  )
 }
 
 /**
@@ -307,11 +326,14 @@ function namesAndMore(shown: readonly string[], total: number): string {
   return `${shown.join(', ')}, and ${total - shown.length} more; search to find them`
 }
 
-/** `: ` and the first sentence of a description, cut at {@link SENTENCE_LIMIT} characters; empty without one. */
+/**
+ * `: ` and the first sentence of a description, cut at {@link SENTENCE_LIMIT} characters; empty without one. A period
+ * after `e.g.`, `i.e.`, `etc.` or `vs.` doesn't end the sentence.
+ */
 function firstSentence(description: string | undefined): string {
   const text = (description ?? '').replace(/\s+/g, ' ').trim()
   if (text === '') return ''
-  const sentence = /^.*?[.!?](?=\s|$)/.exec(text)?.[0] ?? text
+  const sentence = /^.*?(?<!\b(?:e\.g|i\.e|etc|vs))[.!?](?=\s|$)/i.exec(text)?.[0] ?? text
   // Cut by code point, since a lone surrogate makes the request invalid JSON.
   const characters = [...sentence]
   return `: ${characters.length <= SENTENCE_LIMIT ? sentence : `${characters.slice(0, SENTENCE_LIMIT - 1).join('')}…`}`

@@ -3,7 +3,7 @@
  * build it with `Offload.defer`.
  */
 
-import { BeforeToolsEvent } from '../../hooks/events.js'
+import { AfterToolsEvent, BeforeToolsEvent } from '../../hooks/events.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { isManageTool } from '../../background-tasks/background-tasks.js'
@@ -18,7 +18,13 @@ import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../models/defaults.js'
 import { heuristicJson, type Model, type StreamOptions } from '../../models/model.js'
 import { lookupModel, type DeferredToolLoading } from '../../models/model-info.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../../tools/load-tools.js'
-import { SEARCH_TOOLS_TOOL_NAME, toolListing, withToolListing, type ToolSearcher } from '../../tools/search-tools.js'
+import {
+  checkLoaderNames,
+  SEARCH_TOOLS_TOOL_NAME,
+  toolListing,
+  withToolListing,
+  type ToolSearcher,
+} from '../../tools/search-tools.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../tools/structured-output-tool.js'
 import {
   TextBlock,
@@ -207,6 +213,9 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     agent.addHook(BeforeToolsEvent, (event) => {
       this._running.set(agent, event.message)
     })
+    agent.addHook(AfterToolsEvent, () => {
+      this._running.delete(agent)
+    })
     agent.addMiddleware(ExecuteToolStage, (context, next) => this._guardUnloaded(context, next))
   }
 
@@ -282,6 +291,8 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
 
   /** Defers this call's tools, or sends every spec without the loader when the call defers none. */
   private _render(context: InvokeModelContext): InvokeModelContext {
+    // Again on each call, since a tool added after init could take the name of the loader not in use.
+    checkLoaderNames(context.agent)
     checkServerSearch(this._config.search, context.model)
     const { tools, deferred } = this._plan(context.agent, context.toolSpecs, context.model, context.messages)
     this._record(context.agent, deferred, context.model)
@@ -353,19 +364,18 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
   }
 
   /**
-   * The tools the agent's conversation loaded for this model, those of the response whose tool calls run included. A
-   * load by the provider's tool search counts only for a model that defers tools natively, since no other model gets
-   * its block back.
+   * The tools the agent's conversation loaded for this model, those of the response whose tool calls run included. An
+   * earlier load by the provider's tool search counts only for a model that defers tools natively, since no other model
+   * gets its block back. One in the running response always counts: the model that loaded the tool made its calls.
    */
   private _loads(agent: LocalAgent, model: Model): Set<string> {
     const native = deferredToolLoading(model) === 'native'
-    const running = this._running.get(agent)
-    const messages = running ? [...agent.messages, running] : agent.messages
-    return new Set(
-      messages.flatMap((message) =>
+    return new Set([
+      ...agent.messages.flatMap((message) =>
         message.content.flatMap((block) => (native || block.type !== 'serverToolBlock' ? blockLoads(block) : []))
-      )
-    )
+      ),
+      ...(this._running.get(agent)?.content.flatMap(blockLoads) ?? []),
+    ])
   }
 
   /**

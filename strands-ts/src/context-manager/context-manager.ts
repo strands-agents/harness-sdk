@@ -23,8 +23,8 @@ import { DeferredToolLoadingStrategy } from './strategies/deferred-tool-loading.
 import { resolveStrategies } from './presets.js'
 import { Archive } from './archive.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from './retrieval-tool.js'
-import { createLoadTools, LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
-import { createSearchTools, SEARCH_TOOLS_TOOL_NAME } from '../tools/search-tools.js'
+import { createLoadTools } from '../tools/load-tools.js'
+import { checkLoaderNames, createSearchTools } from '../tools/search-tools.js'
 import { ToolUseBlock, type Message } from '../types/messages.js'
 
 /**
@@ -302,14 +302,7 @@ export class ContextManager implements Plugin {
  */
 function loadToolsFor(strategy: DeferredToolLoadingStrategy | undefined, agent: LocalAgent): Tool[] {
   if (!strategy) return []
-  // Both names stay reserved, since model providers recognize either loader by its name.
-  const taken = [LOAD_TOOLS_TOOL_NAME, SEARCH_TOOLS_TOOL_NAME].find((name) => agent.toolRegistry.get(name))
-  if (taken) {
-    throw new Error(
-      `contextManager reserves the tool names '${LOAD_TOOLS_TOOL_NAME}' and '${SEARCH_TOOLS_TOOL_NAME}' for ` +
-        `Offload.defer and the 'deferredToolLoading' preset, and the agent has a tool named '${taken}'; rename it`
-    )
-  }
+  checkLoaderNames(agent)
   const deferredTools = (callingAgent: LocalAgent): string[] => strategy.deferredTools(callingAgent)
   return [strategy.search ? createSearchTools(deferredTools, strategy.searcher) : createLoadTools(deferredTools)]
 }

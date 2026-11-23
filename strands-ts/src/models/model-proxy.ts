@@ -172,10 +172,15 @@ export async function countRequestTokens(agent: LocalAgent, messages: Message[])
   const tools = agent.contextManager?.callTools(agent, registered, agent.model, messages)
   const toolSpecs = tools?.toolSpecs ?? registered
   const deferred = tools?.deferredTools
+  const searched = deferred ? searchedTools(messages, agent.model) : new Set<string>()
   return new ModelProxy(agent.model).countTokens(withToolReferenceSchemas(messages, toolSpecs), {
     ...(agent.systemPrompt !== undefined && { systemPrompt: agent.systemPrompt }),
     toolSpecs: deferred
-      ? toolSpecs.map((spec) => (deferred.has(spec.name) ? unloadedSpec(spec, agent.model, loaderOf(toolSpecs)) : spec))
+      ? toolSpecs.map((spec) =>
+          deferred.has(spec.name) && !searched.has(spec.name)
+            ? unloadedSpec(spec, agent.model, loaderOf(toolSpecs))
+            : spec
+        )
       : toolSpecs,
   })
 }
@@ -194,6 +199,19 @@ export function latestCallTools(
   agent: LocalAgent
 ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'> | undefined {
   return latestTools.get(agent)
+}
+
+/**
+ * The tools the provider's tool search loaded in these messages, which a model that defers tools natively has in full.
+ * No other model gets the search's blocks back.
+ */
+function searchedTools(messages: Message[], model: Model): Set<string> {
+  if (model.modelInfo.capabilities?.deferredToolLoading !== 'native') return new Set()
+  return new Set(
+    messages.flatMap((message) =>
+      message.content.flatMap((block) => (block.type === 'serverToolBlock' ? (block.loadedTools ?? []) : []))
+    )
+  )
 }
 
 /** The loader a call's tools carry: `search_tools` when the model searches, `load_tools` otherwise. */

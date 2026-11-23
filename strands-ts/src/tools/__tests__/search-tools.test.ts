@@ -34,6 +34,15 @@ describe('toolListing', () => {
     expect(toolListing(listed, 200_000)).toBe(`- reader: Reads a file.\n- long: ${'x'.repeat(119)}…\n- bare`)
   })
 
+  it('reads past a period that ends an abbreviation', () => {
+    const listing = toolListing(
+      [spec('query_db', 'Runs a query (e.g. SQL) against the database. Returns rows.')],
+      200_000
+    )
+
+    expect(listing).toBe('- query_db: Runs a query (e.g. SQL) against the database.')
+  })
+
   it('cuts by character, so an emoji at the cut stays whole', () => {
     const listing = toolListing([spec('emoji', `${'a'.repeat(118)}😀 and more words past the limit.`)], 200_000)
 

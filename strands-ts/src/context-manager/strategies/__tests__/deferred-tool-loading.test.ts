@@ -819,6 +819,42 @@ describe('DeferredToolLoadingStrategy', () => {
     }
   )
 
+  it("runs an approved call on a restored agent behind a router whose default takes stubs, when the provider's search loaded the tool in the same response", async () => {
+    const callback = vi.fn(() => 'ok')
+    const build = (): { agent: Agent; model: MockMessageModel } => {
+      const searched = tool({
+        name: 'shell',
+        description: 'Run shell.',
+        inputSchema: z.object({ value: z.string() }),
+        callback,
+      })
+      const built = makeAgent('native', { tools: [searched, read, write], routerDefault: 'stubs' })
+      built.agent.addHook(BeforeToolCallEvent, (event) => {
+        if (event.interrupt<string>({ name: 'approve', reason: 'Run this tool?' }) !== 'yes') event.cancel = 'no'
+      })
+      return built
+    }
+    const { agent, model } = build()
+    model.addTurn([
+      {
+        type: 'serverToolBlock',
+        provider: 'anthropic',
+        data: { type: 'tool_search_tool_result' },
+        loadedTools: ['shell'],
+      },
+      { type: 'toolUseBlock', name: 'shell', toolUseId: 'shell-1', input: { value: 'ls' } },
+    ])
+    const first = await agent.invoke('List the files.')
+    const snapshot = JSON.parse(JSON.stringify(agent.takeSnapshot({ preset: 'session' }))) as Snapshot
+    const { agent: restored, model: restoredModel } = build()
+    restoredModel.addTurn({ type: 'textBlock', text: 'done' })
+    restored.loadSnapshot(snapshot)
+
+    await restored.invoke([new InterruptResponseContent({ interruptId: first.interrupts![0]!.id, response: 'yes' })])
+
+    expect(callback).toHaveBeenCalledTimes(1)
+  })
+
   it('runs a resumed call on a restored agent to a tool its conversation loaded', async () => {
     const { result } = await resumeCall([
       { name: 'load_tools', input: { names: ['shell'] } },
@@ -903,6 +939,36 @@ describe('DeferredToolLoadingStrategy', () => {
     expect(streamSpy.mock.calls[0]![1]!.toolSpecs!.map((spec) => spec.name)).toEqual(sorted)
     expect(countSpy.mock.calls.at(-1)![1]!.toolSpecs!.map((spec) => spec.name)).toEqual(sorted)
   })
+
+  it.each([
+    ['in full on a native model', 'native' as const, shell.toolSpec],
+    [
+      'as its stub on a model that only got the stub',
+      'stubs' as const,
+      expect.objectContaining({ inputSchema: { type: 'object' } }),
+    ],
+  ])(
+    "counts a tool the provider's search loaded %s when the context manager measures the next request",
+    async (_name, deferredToolLoading, counted) => {
+      const { agent, model } = makeAgent(deferredToolLoading)
+      model.addTurn([
+        {
+          type: 'serverToolBlock',
+          provider: 'anthropic',
+          data: { type: 'tool_search_tool_result' },
+          loadedTools: ['shell'],
+        },
+        { type: 'textBlock', text: 'Which directory?' },
+      ])
+      await agent.invoke('List the files.')
+      const countSpy = vi.spyOn(model, 'countTokens')
+
+      await countRequestTokens(agent, agent.messages)
+
+      const [, options] = countSpy.mock.calls[0]!
+      expect(options!.toolSpecs!.find((spec) => spec.name === 'shell')).toEqual(counted)
+    }
+  )
 
   it('counts a loaded tool by its full schema when the context manager measures the next request', async () => {
     const { agent, model } = makeAgent('native')

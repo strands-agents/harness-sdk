@@ -164,6 +164,20 @@ describe('Agent contextManager', () => {
           `'deferredToolLoading' preset, and the agent has a tool named '${name}'; rename it`
       )
     })
+
+    it.each([
+      ['search_tools', 'Offload.defer without search', Offload.defer('toolSpecs')],
+      ['load_tools', 'search', Offload.defer('toolSpecs', { search: 'client' })],
+    ])('rejects an agent tool named %s added after init, with %s', async (name, _strategyName, strategy) => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'hi' })
+      const agent = new Agent({ model, contextManager: { strategies: [strategy] }, printer: false })
+      await agent.initialize()
+      agent.toolRegistry.add(
+        tool({ name, description: 'Load data.', inputSchema: z.object({ id: z.string() }), callback: () => 'done' })
+      )
+
+      await expect(agent.invoke('Hi.')).rejects.toThrow(`the agent has a tool named '${name}'; rename it`)
+    })
   })
 
   describe('when ContextManager instance', () => {
