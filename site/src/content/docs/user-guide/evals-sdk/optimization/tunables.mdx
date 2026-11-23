@@ -57,10 +57,10 @@ tunable_agent = tunable(
 Mistakes fail at declaration, before any rollout: a marker naming no parameter, a
 component whose constructor rejects its own defaults, or two markers on the same file.
 
-Declarations are flat: one tunable factory holds every marker for the agent, and the
-optimizer tunes only the markers on the factory you pass it. Stacking a second `@tunable`
-on the same function fails at declaration. A tunable factory called from inside another
-one is a trap: it builds its baseline every time, and its markers are never tuned.
+Declarations are flat: the optimizer tunes only the markers on the factory you pass it.
+Stacking a second `@tunable` on the same function fails at declaration. A marker declared
+only on a tunable factory called from inside another one is never tuned: it isn't in the
+optimizer's space, so it stays at its baseline with no error.
 
 ## The markers
 
@@ -99,13 +99,14 @@ def create_agent(system_prompt: str, greeting: str):
 
 The file's current text is the baseline. Your files are never written: each candidate gets
 its own copy of the folder around the file. If the agent needs a path rather than the text,
-pass `as_path=True` and the parameter receives the path of the candidate's copy.
+pass `as_path=True` to `FileText` and the parameter receives the path of the candidate's
+copy.
 
 Two settings guard every text marker:
 
 - **`size_cap`**: the longest text a proposal may be, in characters. It defaults to the
-  larger of 2,000 and three times the baseline's length, and stops prompt bloat before it
-  costs a rollout.
+  larger of 2,000 and three times the baseline's length (800 for a tool description), and
+  stops prompt bloat before it costs a rollout.
 - **`edit_instructions`**: guidance shown to the text rewriter next to this value, such as
   "keep the refund policy section unchanged".
 
@@ -192,7 +193,9 @@ whose value is a structure.
 
 Each option is one whole set, not a subset search: the optimizer picks among exactly the
 lists you write, so list the combinations worth comparing. Options are stored as canonical
-JSON text, which is what you'll see in the run's summary and `best.values.json`. A
+JSON text, which is what you'll see in the run's summary and `best.values.json`. List order
+matters: `["lookup_order", "issue_refund"]` and `["issue_refund", "lookup_order"]` are
+different options, so write the baseline's list in the same order as its option. A
 `JsonChoice` can't be an argument of a `component()`; declare it on the factory itself.
 
 ## Choose which skills load
@@ -221,7 +224,9 @@ def create_agent(skills="skills", enabled=("returns", "shipping", "billing")):
 ```
 
 `skills` is the candidate's copy of the folder, so the chosen skills load with the
-candidate's rewrites. The baseline loads all three, as written today.
+candidate's rewrites. The baseline loads all three, as written today. A rewrite to a skill
+the candidate doesn't load has no effect but still costs the rewriter's calls, so when only
+some skills are worth rewriting, name them with `SkillLibrary(..., only=...)`.
 
 ## Swap components
 
@@ -353,9 +358,9 @@ def create_agent(
     )
 ```
 
-Don't make `billing_agent` tunable too. The optimizer would see only the orchestrator's
-marker, and the specialist would run its baseline prompt in every trial with no error to
-tell you.
+Declare `billing_prompt` on `create_agent`, not on `billing_agent`. A marker only the inner
+builder declares never reaches the optimizer, so the specialist would run its baseline
+prompt in every trial with no error to tell you.
 
 If the builders live in production code you'd rather not touch, leave them undecorated and
 mount the outer factory from your eval script, with every marker in one call:
@@ -396,8 +401,11 @@ example above, a custom-pipeline candidate looks like this:
 }
 ```
 
-These keys are the names you'll see in the run's summary, `best.values.json`, and the
-effects table. Keys under an alternative exist only when that alternative is chosen.
+These keys are the names you'll see in the run's summary and `best.values.json`, and for
+numbers and choices in the effects table too. Keys under an alternative exist only when
+that alternative is chosen. Text values are the exception in the effects table: each
+proposer's text values share one row, `rewritten:<block>`, so with the default rewriter
+every prompt in the space is one row.
 
 ## Next steps
 

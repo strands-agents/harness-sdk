@@ -12,7 +12,8 @@ apply it. It also covers resuming a run that was stopped partway.
 ## Start with the summary
 
 `result.summary()` is the overview. From the CLI, `strands-evals optimize run` prints the
-same summary when the run finishes; add `--json` for the whole result as JSON.
+same summary when the run finishes in a terminal. When its output is piped, as in CI, it
+prints the whole result as JSON instead; `--json` asks for that anywhere.
 
 ```python
 result = optimizer.run()
@@ -82,17 +83,24 @@ both sides' means over the same cases, the paired difference with a 90% interval
 ratio for metrics that can't go negative:
 
 ```python
+def show(value):
+    return "n/a" if value is None else f"{value:+.3g}"
+
+
 report = result.test
 if report is None:
     print(result.test_reason)
 else:
     for metric, diff in report.difference.items():
         print(
-            f"{metric}: {diff.reference_mean:.3g} -> {diff.candidate_mean:.3g}, "
-            f"{diff.mean_diff:+.3g} [{diff.ci_low:+.3g}, {diff.ci_high:+.3g}] "
+            f"{metric}: {show(diff.reference_mean)} -> {show(diff.candidate_mean)}, "
+            f"{diff.mean_diff:+.3g} [{show(diff.ci_low)}, {show(diff.ci_high)}] "
             f"over {diff.n_cases} cases"
         )
 ```
+
+The interval is `None` when only one test case was measured by both, and the means are
+`None` in a report saved by an older version.
 
 Read the interval, not the point. An interval that excludes zero is a change the test cases
 support. One that includes zero means the test cases can't tell, often because there are
@@ -105,7 +113,8 @@ validation, the pick rule, each constraint's P(met), and why any finalist was ru
 
 The champion's values include settings that happened to be where the search left them.
 The effects table separates those from the options that actually moved a metric. Each row
-is one option against its reference, per metric, with a 90% interval:
+is one option against its reference, per metric, with a 90% interval. Text values share
+one row per proposer block, `rewritten:<block>`:
 
 ```python
 for row in result.effects["effects"]:

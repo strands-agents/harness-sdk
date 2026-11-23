@@ -46,13 +46,20 @@ objective = WeightedSum(
 )
 ```
 
-`scale` is the size of a meaningful change: here 1,000 tokens count as much as the whole
-Helpfulness range. An evaluator's scale defaults to its range, so you only set it for
-usage metrics, which have no upper bound. `weight` sets each term's share.
+`scale` is the size of a meaningful change, and `weight` is how much that change counts.
+Here Helpfulness has weight 2, so its whole range counts twice as much as 1,000 tokens. An
+evaluator's scale defaults to its range, so you only set it for usage metrics, which have
+no upper bound.
 
 When you can't name an exchange rate between quality and cost, use `Pareto` with the same
 terms. The optimizer still ships one champion, but it validates and tests the whole front
-of trade-offs so you can pick another from `result.front`.
+of trade-offs so you can pick another from `result.front`:
+
+```python
+from strands_evals.optimization import Maximize, Minimize, Pareto
+
+objective = Pareto(Maximize("Helpfulness"), Minimize("tokens", scale=1000))
+```
 
 ## Rule candidates out with constraints
 
@@ -98,21 +105,27 @@ Three costs aren't counted against the budget, and the result reports each one:
   the agent.
 - **Proposers**: the text rewriter's own model calls, which can exceed the agent's and the
   judges' spend together.
-- **Retries**: the agent's spend in attempts that failed on throttling or an outage.
+- **Retries**: the agent's spend in attempts that failed and were tried again.
+
+Retrying itself is free only inside a trial, when the model call is throttled. A trial
+that fails on an outage or expired credentials is run again by the optimizer, and each
+re-run costs a rollout.
 
 ## Other settings that change what ships
 
-| Setting | Default | Change it when |
-|---|---|---|
-| Split | 40% train, 30% validation, 30% test | You need specific cases in a split, or more in the search |
-| Runs per candidate | 1 | Your agent is noisy and each case needs repeats |
-| Proposals per step | 4 | You want wider or narrower steps |
-| Agent failure score | `"worst"` | A crash should count as missing data, not as the worst score |
-| Final pick rule | `Mean()` | You'd rather ship cautiously: `LowerBound(q=0.1)` ranks by the pessimistic end |
+| Setting | `Optimizer` argument | CLI flag | Default | Change it when |
+|---|---|---|---|---|
+| Split | `split=Split(train=0.5, validation=0.25, test=0.25)` | `--split 0.5,0.25,0.25` | 40% train, 30% validation, 30% test | You need specific cases in a split, or more in the search |
+| Runs per candidate | `runs_per_candidate=3` | `--runs-per-candidate 3` | 1 | Your agent is noisy and each case needs repeats |
+| Proposals per step | `proposals_per_iteration=2` | `--proposals-per-iteration 2` | 4 | You want wider or narrower steps |
+| Agent failure score | `agent_failure_score=None` | `--agent-failure-score none` | `"worst"` | A crash should count as missing data, not as the worst score |
+| Final pick rule | `final_pick=FinalPick(rule=LowerBound(q=0.1))` | `--final-pick MODULE:ATTR` | `Mean()` | You'd rather ship cautiously, ranking by the pessimistic end |
+
+`Split`, `FinalPick`, and `LowerBound` import from `strands_evals.optimization`.
 
 A crashed rollout scores each evaluator's worst value by default, so a candidate that
 crashes can't look good by skipping its hard cases. Throttling, outages, and expired
-credentials are never scored: those trials are retried.
+credentials are never scored: those trials are run again.
 
 ## Set them from the command line
 

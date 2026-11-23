@@ -55,9 +55,11 @@ From the CLI, point `--agent` at the factory as `module:attribute` or `path/to/f
 strands-evals optimize run experiment.json --agent agent.py:create_agent
 ```
 
-Two optional hooks work only on this route. A custom **rollout** runs one case with a fresh
-agent, for multi-turn conversations or a simulated user. An **environment** creates
-per-trial resources, such as a sandbox, and passes them to the factory by name.
+Two optional hooks change how each trial runs. A custom **rollout** runs one case with a
+fresh agent, for multi-turn conversations or a simulated user. An **environment** creates
+per-trial resources, such as a sandbox, and passes them to the factory by name. A tunable
+factory takes both. A config file takes a rollout, an exported agent file takes both, and
+your own task function takes neither, because the task is the rollout.
 
 **Limitations:**
 
@@ -120,8 +122,8 @@ strands-evals optimize run experiment.json \
 
 **Limitations:**
 
-- Every marker needs an explicit default, because there's no function parameter to read one
-  from.
+- `Int`, `Float`, and the text markers need an explicit default, because there's no
+  function parameter to read one from. A `OneOf` falls back to its first option.
 - A fresh agent per trial is your job. Nothing checks it, and an agent shared across cases
   leaks conversation state into the scores.
 - Candidates that can't be built aren't caught before scoring. Each of their trials is

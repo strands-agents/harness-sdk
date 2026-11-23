@@ -392,18 +392,20 @@ def create_agent(system_prompt="You are a helpful support assistant.", temperatu
     )
 
 
-optimizer = Optimizer(
-    experiment,
-    create_agent,
-    objective=WeightedSum(Maximize("Triage"), Minimize("output_tokens", scale=100)),
-    budget=Budget(max_rollouts=120),
-)
-result = optimizer.run()
-print(result.summary())
+if __name__ == "__main__":
+    optimizer = Optimizer(
+        experiment,
+        create_agent,
+        objective=WeightedSum(Maximize("Triage"), Minimize("output_tokens", scale=100)),
+        budget=Budget(max_rollouts=120),
+    )
+    result = optimizer.run()
+    print(result.summary())
 ```
 
-The same run from a shell, with the experiment saved by
-`experiment.to_file("experiment.json")` and `create_agent` in `agent.py`:
+The same run from a shell, with this file saved as `agent.py` and the experiment saved by
+`experiment.to_file("experiment.json")`. The `__main__` guard keeps the CLI from starting a
+second run when it imports the file:
 
 ```bash
 strands-evals optimize run experiment.json --agent agent.py:create_agent \
