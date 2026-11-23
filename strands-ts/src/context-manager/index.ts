@@ -6,6 +6,10 @@
  * `contextManager` parameter; the Agent registers it and it owns overflow recovery
  * and proactive compression.
  *
+ * Deferred tool loading is experimental and may change in future versions: `Offload.defer` and the `DeferTarget`,
+ * `DeferConditions`, and `DeferStrategy` types. Its tool search types are at `@strands-agents/sdk/experimental`.
+ * Everything else here is stable, the preset names included.
+ *
  * @example
  * ```typescript
  * import { ContextManager, Offload } from '@strands-agents/sdk/context-manager'
@@ -18,8 +22,18 @@ export { ContextManager } from './context-manager.js'
 export type { ContextManagerStrategy } from './context-manager.js'
 export type { ContextManagerConfig, ContextStrategy, ContextState, ArchiveConfig } from './types.js'
 export { Offload } from './strategies/offload/index.js'
-export type { OffloadTarget, OffloadConditions, OffloadStrategy } from './strategies/offload/index.js'
-// `Offload.defer` is experimental: its types are at '@strands-agents/sdk/experimental'.
+export type {
+  OffloadTarget,
+  OffloadConditions,
+  OffloadStrategy,
+  /** @experimental Deferred tool loading may change in future versions. */
+  DeferTarget,
+  /** @experimental Deferred tool loading may change in future versions. */
+  DeferConditions,
+  /** @experimental Deferred tool loading may change in future versions. */
+  DeferStrategy,
+} from './strategies/offload/index.js'
+// Tool search for `Offload.defer` is experimental; see '@strands-agents/sdk/experimental'.
 export type { TruncateConfig } from './methods/truncate.js'
 export type { SummarizeConfig } from './strategies/offload/summarize.js'
 export type { StrategyPresetName } from './presets.js'

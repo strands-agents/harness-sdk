@@ -21,8 +21,6 @@ export type PromptCaching = 'unsupported' | 'auto' | 'cachePoints'
  * How a model keeps deferred tool schemas out of its context until it loads them: `'native'` sends them with the
  * API's own deferral flag, `'stubs'` sends each as its name and description with an open schema, and `'unsupported'`
  * sends every schema.
- *
- * @experimental
  */
 export type DeferredToolLoading = 'unsupported' | 'native' | 'stubs'
 
@@ -66,8 +64,6 @@ export interface ModelCapabilities {
    * (`BedrockModel` with `strictTools`). A `modelInfo` override that sets `'unsupported'` sends every full spec to a
    * model that handles stubs badly. On a provider without the flag, an override that sets `'native'` sends every full
    * spec and only changes a loader's result: `BedrockModel` names each loaded tool and other providers leave it out.
-   *
-   * @experimental
    */
   readonly deferredToolLoading?: DeferredToolLoading | undefined
 }

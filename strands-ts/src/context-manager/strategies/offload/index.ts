@@ -20,6 +20,14 @@ export { EmergencyTruncateStrategy } from './base.js'
 export type { OffloadStrategy } from './base.js'
 export type { OffloadConditions } from './conditions.js'
 export type { OffloadTarget } from './target.js'
+export type {
+  /** @experimental Deferred tool loading may change in future versions. */
+  DeferConditions,
+  /** @experimental Deferred tool loading may change in future versions. */
+  DeferStrategy,
+  /** @experimental Deferred tool loading may change in future versions. */
+  DeferTarget,
+} from '../deferred-tool-loading.js'
 
 /**
  * Offload strategy namespace. Each method returns a strategy; call `.when()` on it to set when and on what it acts.
@@ -47,7 +55,7 @@ interface OffloadNamespace {
    * `deferredToolLoading` preset included.
    *
    * @throws Error when the target is neither `'toolSpecs'` nor a list of tool names, or the config is invalid
-   * @experimental
+   * @experimental Deferred tool loading may change in future versions.
    */
   defer(target: DeferTarget, config?: DeferConfig): DeferStrategy
 }
@@ -60,8 +68,8 @@ interface OffloadNamespace {
  * conditions from `.when()`; any other target without them acts on each matching block as it arrives, before the model
  * reads it.
  *
- * `Offload.defer` acts on tool specs instead, and either of its conditions is enough; the other strategies apply all of
- * their conditions together.
+ * `Offload.defer` is experimental and may change in future versions. It acts on tool specs instead, and either of its
+ * conditions is enough; the other strategies apply all of their conditions together.
  *
  * @example
  * ```typescript
@@ -82,8 +90,8 @@ interface OffloadNamespace {
  * Offload.drop("*").when({ contextUtilization: "100%", preserveRecent: "70%" })
  * // Messages: at 90% context utilization, summarize messages over 2000 tokens, keeping the newest 4
  * Offload.summarize("*").when({ contextUtilization: "90%", blockThreshold: 2000, preserveRecent: 4 })
- * // Tool specs: from 20 tools, or once their schemas reach 5% of the context window, defer every one but shell's.
- * // Checked on every call, so the same tools give the same tools list
+ * // Tool specs, experimental: from 20 tools, or once their schemas reach 5% of the context window, defer every one
+ * // but shell's. Checked on every call, so the same tools give the same tools list
  * Offload.defer(["!shell"]).when({ toolCount: 20, schemaTokens: "5%" })
  * // Tool specs: the same, and the model searches for them: with the provider's tool search where the model has one
  * // ('server' throws where it doesn't), or with search_tools ('client' on every model)
