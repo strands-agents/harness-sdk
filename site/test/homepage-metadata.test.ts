@@ -4,6 +4,8 @@ import { getCollection } from 'astro:content'
 import { parse } from 'node-html-parser'
 import { describe, expect, it } from 'vitest'
 
+import { DECIDER_DEFAULT_MODEL } from '../src/config/decider-landing'
+
 function configuredPathWithBase(value: string): string {
   const base = (process.env.ASTRO_BASE_PATH ?? '/').replace(/\/$/, '')
   const normalizedValue = value.startsWith('/') ? value : `/${value}`
@@ -323,15 +325,16 @@ describe('homepage machine-readable metadata', () => {
           tag: 'H4',
           text: '/decider',
         },
-        description: 'Route, classify, or score known outcomes with a small decision model that reports confidence.',
+        description: 'Route, classify, and score known outcomes. Get typed answers with confidence.',
         action: {
-          text: 'Explore the models',
-          href: configuredPathWithBase('/docs/labs/strands-decider/overview/'),
-          ariaLabel: 'Explore the Strands Decider models',
+          text: 'Explore Strands Decider',
+          href: configuredPathWithBase('/decider/'),
+          ariaLabel: 'Explore Strands Decider',
         },
       },
     ])
     expect(cards).toHaveLength(3)
+    expect(toolsSection?.querySelector('[data-toolkit-product="decider"]')?.text).toContain(DECIDER_DEFAULT_MODEL)
     expect(toolsSection?.querySelectorAll('[data-install]')).toHaveLength(0)
     expect(toolsSection?.querySelectorAll('.toolkit__card.is-open')).toHaveLength(0)
     expect(

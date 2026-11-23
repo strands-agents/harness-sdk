@@ -78,6 +78,7 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │   ├── HomeFaq.astro         # Five-question homepage FAQ preview
 │   │   ├── SiteHead.astro        # Shared metadata, scripts, and analytics for standalone pages
 │   │   ├── box/                  # Sections of the standalone /box/ product landing page
+│   │   ├── decider/              # Sections of the standalone /decider/ product landing page
 │   │   ├── community/            # Sections of the /community/ hub page (hero, courses, events, blog)
 │   │   ├── overrides/            # Starlight component overrides
 │   │   ├── samples/              # Native Starlight page wrapper for generated sample guides
@@ -109,6 +110,8 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   ├── pages/                    # Astro pages, including generated /examples routes
 │   │   ├── box.astro             # Standalone Box product landing page
 │   │   ├── box/index.md.ts       # Machine-readable Box landing endpoint
+│   │   ├── decider.astro         # Standalone Decider product landing page
+│   │   ├── decider/index.md.ts   # Machine-readable Decider landing endpoint
 │   │   ├── faq.astro             # Standalone FAQ page
 │   │   ├── faq/index.md.ts       # Machine-readable FAQ endpoint
 │   │   └── openapi.json.ts       # OpenAPI description of public website data feeds

@@ -13,6 +13,7 @@ import {
   faqItems,
 } from '../config/faq'
 import { buildBoxLandingMarkdown } from '../config/box-landing'
+import { buildDeciderLandingMarkdown } from '../config/decider-landing'
 
 export const GET: APIRoute = async () => {
   const allDocs = await getCollection('docs', ({ data }) => !data.draft && data.externalDocs?.status !== 'preview')
@@ -30,6 +31,13 @@ export const GET: APIRoute = async () => {
   lines.push(buildBoxLandingMarkdown(2).trim())
   lines.push('')
   lines.push(`Source: ${siteLink('/box/index.md')}`)
+  lines.push('')
+  lines.push('---')
+  lines.push('')
+
+  lines.push(buildDeciderLandingMarkdown(2).trim())
+  lines.push('')
+  lines.push(`Source: ${siteLink('/decider/index.md')}`)
   lines.push('')
   lines.push('---')
   lines.push('')

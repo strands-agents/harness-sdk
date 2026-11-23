@@ -1,0 +1,906 @@
+---
+import arrow from '../../assets/banner/arrow.svg?raw'
+import {
+  DECIDER_DECISION_EXAMPLES,
+  DECIDER_LINKS,
+  DECIDER_OVERVIEW_DESCRIPTION,
+  DECIDER_QUESTION_TYPES,
+} from '../../config/decider-landing'
+import { pathWithBase } from '../../util/links'
+
+const percent = (value: number) => `${(value * 100).toFixed(2)}%`
+
+const examples = DECIDER_QUESTION_TYPES.map((questionType) => {
+  const example = DECIDER_DECISION_EXAMPLES.find((item) => item.id === questionType.id)
+  if (!example) throw new Error(`Missing Decider example for ${questionType.id}`)
+  return { example, questionType }
+})
+if (examples.length !== DECIDER_DECISION_EXAMPLES.length) {
+  throw new Error('Every Decider example must have a matching question type')
+}
+---
+
+<section
+  class="decider-overview"
+  data-decider-main-section
+  aria-labelledby="decider-overview-title"
+>
+  <div class="decider-overview__inner" data-decider-example-selector>
+    <div class="decider-shapes" data-decider-answer-shapes>
+      <div class="decider-shapes__copy">
+        <h2 id="decider-overview-title" aria-label="How Strands Decider works">/decider</h2>
+        <p class="decider-shapes__summary">{DECIDER_OVERVIEW_DESCRIPTION}</p>
+        <a href={pathWithBase(DECIDER_LINKS.quickstart)}>
+          Run Decider
+          <span aria-hidden="true" set:html={arrow} />
+        </a>
+      </div>
+
+      <div class="decider-shapes__panel">
+        <header class="decider-shapes__panel-header">
+          <span class="decider-shapes__terminal-dots" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </span>
+          <span id="decider-answer-shapes-title">Answer shapes</span>
+          <span>Known before the request</span>
+        </header>
+        <ul aria-labelledby="decider-answer-shapes-title">
+          {
+            examples.map(({ questionType }, index) => (
+              <li>
+                <a
+                  id={`decider-shape-${questionType.id}`}
+                  href={`#decider-example-${questionType.id}`}
+                  class="decider-shapes__row"
+                  aria-controls={`decider-example-${questionType.id}`}
+                  data-decider-question-type={questionType.id}
+                  data-decider-shape-link={questionType.id}
+                  data-decider-default={index === 0 ? 'true' : undefined}
+                >
+                  <span class="decider-shapes__identity">
+                    <code>{questionType.apiName}</code>
+                    <strong>{questionType.label}</strong>
+                  </span>
+                  <span class="decider-shapes__title">{questionType.title}</span>
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+    </div>
+
+    <div class="decider-example-connectors" data-decider-example-connectors aria-hidden="true">
+      <span></span>
+      <span></span>
+    </div>
+
+    {
+      examples.map(({ example }) => (
+        <div
+          id={`decider-example-${example.id}`}
+          class="decider-example"
+          data-decider-example
+          data-decider-example-type={example.id}
+          role="region"
+          aria-labelledby={`decider-shape-${example.id}`}
+        >
+          <div class="decider-example__panel">
+            <p id={`decider-request-label-${example.id}`} class="decider-example__panel-label">
+              Request
+              <span class="decider-visually-hidden">{example.answerSpaceLabel}</span>
+            </p>
+            <article
+              class="decider-request"
+              aria-labelledby={`decider-request-label-${example.id}`}
+              data-decider-example-state
+            >
+              <div class="decider-request__body">
+                <div class="decider-request__field">
+                  <blockquote>{example.state}</blockquote>
+                </div>
+                <div class="decider-request__field">
+                  <p>{example.id}</p>
+                  <strong>{example.question}</strong>
+                  <ul aria-label={example.answerSpaceLabel}>
+                    {example.criteria.map((item) => (
+                      <li>
+                        <strong>{item.label}</strong>
+                        <span>{item.detail}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div class="decider-processor" aria-hidden="true">
+            <span class="decider-processor__line"></span>
+            <span class="decider-processor__badge">/decider</span>
+          </div>
+
+          <div class="decider-example__panel">
+            <p id={`decider-response-label-${example.id}`} class="decider-example__panel-label">
+              Response
+              <span class="decider-visually-hidden">{example.responseLabel}</span>
+            </p>
+            <article
+              class="decider-response"
+              aria-labelledby={`decider-response-label-${example.id}`}
+              data-decider-example-answer={example.answer}
+            >
+              <div class="decider-response__body">
+                <div class="decider-response__result">
+                  <div class="decider-response__answer">
+                    <p>{example.answerLabel}</p>
+                    <strong>{example.answer}</strong>
+                  </div>
+                  <div class="decider-response__confidence">
+                    <span>{example.detailLabel}</span>
+                    <strong>{example.detailValue}</strong>
+                  </div>
+                </div>
+                <ul class="decider-response__probabilities" aria-label={example.probabilitiesLabel}>
+                  {example.probabilities.map((item) => (
+                    <li
+                      data-decider-probability={item.id}
+                      aria-label={`${item.label} ${percent(item.value)}`}
+                    >
+                      <span class="decider-response__probability-label">{item.label}</span>
+                      <span class="decider-response__probability-track" aria-hidden="true">
+                        <span
+                          class="decider-response__probability-fill"
+                          style={`--probability: ${item.value * 100}%`}
+                        />
+                      </span>
+                      <span class="decider-response__probability-value">{percent(item.value)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </article>
+          </div>
+        </div>
+      ))
+    }
+  </div>
+</section>
+
+<script>
+  function initDeciderExampleSelectors() {
+    document.querySelectorAll<HTMLElement>('[data-decider-example-selector]').forEach((root) => {
+      if (root.dataset.enhanced === 'true') return
+
+      const links = Array.from(root.querySelectorAll<HTMLAnchorElement>('[data-decider-shape-link]'))
+      const panels = Array.from(root.querySelectorAll<HTMLElement>('[data-decider-example]'))
+      if (links.length === 0 || links.length !== panels.length) return
+
+      const selectExample = (selectedLink: HTMLAnchorElement) => {
+        const panelId = selectedLink.getAttribute('aria-controls')
+        if (!panelId || !panels.some((panel) => panel.id === panelId)) return
+
+        links.forEach((link) => {
+          if (link === selectedLink) {
+            link.setAttribute('aria-current', 'true')
+          } else {
+            link.removeAttribute('aria-current')
+          }
+        })
+        panels.forEach((panel) => {
+          panel.hidden = panel.id !== panelId
+        })
+      }
+
+      const hashPanelId = window.location.hash.slice(1)
+      const initialLink =
+        links.find((link) => link.getAttribute('aria-controls') === hashPanelId) ??
+        links.find((link) => link.dataset.deciderDefault === 'true') ??
+        links[0]
+      selectExample(initialLink)
+
+      links.forEach((link) => {
+        link.addEventListener('click', (event) => {
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+          event.preventDefault()
+          selectExample(link)
+          window.history.replaceState(null, '', link.hash)
+        })
+      })
+
+      root.dataset.enhanced = 'true'
+    })
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initDeciderExampleSelectors)
+  } else {
+    initDeciderExampleSelectors()
+  }
+  document.addEventListener('astro:page-load', initDeciderExampleSelectors)
+</script>
+
+<style>
+  .decider-overview {
+    --decider-red: var(--card-accent-red);
+    --decider-panel-red: var(--decider-red);
+
+    padding: 68px 48px 88px;
+    background: var(--bg);
+    color: var(--fg);
+  }
+
+  :global([data-theme='dark']) .decider-overview {
+    --decider-panel-red: color-mix(in srgb, var(--decider-red) 82%, white);
+  }
+
+  .decider-overview__inner {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .decider-visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    border: 0;
+    margin: -1px;
+    clip: rect(0, 0, 0, 0);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .decider-shapes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+    gap: 40px;
+    overflow: hidden;
+    padding: 34px;
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    background: var(--card-bg);
+  }
+
+  .decider-shapes__copy {
+    min-width: 0;
+  }
+
+  .decider-shapes__copy h2 {
+    margin: 0;
+    color: var(--decider-red);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.15;
+  }
+
+  .decider-shapes__summary {
+    margin: 16px 0 0;
+    color: var(--fg);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  .decider-shapes__copy a {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 22px;
+    color: var(--decider-red);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  .decider-shapes__copy a:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .decider-shapes__copy a span {
+    display: inline-flex;
+    width: 11px;
+    height: 9px;
+    transition: transform 150ms ease;
+  }
+
+  .decider-shapes__copy a:hover span {
+    transform: translateX(3px);
+  }
+
+  .decider-shapes__copy a span :global(svg) {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+  }
+
+  .decider-shapes__panel {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--terminal-bg);
+  }
+
+  .decider-shapes__panel-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--divider);
+    background: var(--terminal-header-bg);
+    color: var(--terminal-fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+
+  .decider-shapes__panel-header > span:nth-child(2) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .decider-shapes__panel-header > span:last-child {
+    color: var(--use-case-muted);
+    text-align: right;
+  }
+
+  .decider-shapes__terminal-dots {
+    display: inline-flex;
+    gap: 5px;
+  }
+
+  .decider-shapes__terminal-dots span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--card-accent-red);
+  }
+
+  .decider-shapes__terminal-dots span:nth-child(2) {
+    background: var(--card-accent-yellow);
+  }
+
+  .decider-shapes__terminal-dots span:nth-child(3) {
+    background: var(--card-accent-green);
+  }
+
+  .decider-shapes__panel ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .decider-shapes__row {
+    width: 100%;
+    appearance: none;
+    display: grid;
+    grid-template-columns: minmax(120px, 0.7fr) minmax(0, 1.3fr);
+    align-items: center;
+    gap: 18px;
+    padding: 18px 16px;
+    border: 0;
+    border-top: 1px solid var(--divider);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    line-height: 1.4;
+    text-decoration: none;
+    text-align: left;
+    transition: background-color 150ms ease;
+  }
+
+  .decider-shapes__panel li:first-child .decider-shapes__row {
+    border-top: 0;
+  }
+
+  .decider-shapes__row:hover {
+    background: var(--terminal-header-bg);
+  }
+
+  .decider-shapes__row[aria-current='true'] {
+    box-shadow: inset 3px 0 0 var(--decider-red);
+  }
+
+  .decider-shapes__row:focus-visible {
+    outline: 2px solid var(--decider-red);
+    outline-offset: -3px;
+  }
+
+  .decider-shapes__identity {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    gap: 9px;
+  }
+
+  .decider-shapes__identity code {
+    color: var(--decider-panel-red);
+    font: inherit;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .decider-shapes__identity strong {
+    color: var(--terminal-fg);
+    font-size: 11px;
+  }
+
+  .decider-shapes__title {
+    min-width: 0;
+    color: var(--use-case-muted);
+    font-size: 11px;
+    text-align: right;
+  }
+
+  .decider-shapes__row:hover .decider-shapes__title,
+  .decider-shapes__row[aria-current='true'] .decider-shapes__title {
+    color: var(--terminal-fg);
+  }
+
+  .decider-example {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 128px minmax(0, 1fr);
+    align-items: stretch;
+    margin-top: 0;
+  }
+
+  .decider-example[hidden] {
+    display: none;
+  }
+
+  .decider-example-connectors {
+    position: relative;
+    display: grid;
+    height: 24px;
+    grid-template-columns: minmax(0, 1fr) 128px minmax(0, 1fr);
+    margin-top: 34px;
+    margin-bottom: 12px;
+  }
+
+  .decider-example-connectors::before,
+  .decider-example-connectors::after,
+  .decider-example-connectors span {
+    opacity: 0.55;
+  }
+
+  .decider-example-connectors::before {
+    position: absolute;
+    top: -34px;
+    left: 50%;
+    height: 34px;
+    border-left: 1.5px dashed var(--fg);
+    transform: translateX(-50%);
+    content: '';
+  }
+
+  .decider-example-connectors::after {
+    position: absolute;
+    top: 0;
+    right: calc(25% - 32px);
+    left: calc(25% - 32px);
+    border-top: 1.5px dashed var(--fg);
+    content: '';
+  }
+
+  .decider-example-connectors span {
+    position: relative;
+    z-index: 1;
+    width: 0;
+    height: 18px;
+    justify-self: center;
+    border-left: 1.5px dashed var(--fg);
+  }
+
+  .decider-example-connectors span:last-child {
+    grid-column: 3;
+  }
+
+  .decider-example-connectors span::after {
+    position: absolute;
+    bottom: -6px;
+    left: -1px;
+    width: 0;
+    height: 0;
+    border-top: 8px solid var(--fg);
+    border-right: 5px solid transparent;
+    border-left: 5px solid transparent;
+    transform: translateX(-50%);
+    content: '';
+  }
+
+  .decider-example__panel {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .decider-example__panel-label {
+    margin: 0;
+    color: var(--decider-red);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    line-height: 1.3;
+    text-align: center;
+    text-transform: uppercase;
+  }
+
+  .decider-request,
+  .decider-response {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    background: var(--card-bg);
+  }
+
+  .decider-request__body,
+  .decider-response__body {
+    flex: 1;
+    padding: 22px;
+  }
+
+  .decider-request__body {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .decider-request__field > p {
+    margin: 0 0 8px;
+    color: var(--decider-red);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    line-height: 1.3;
+    text-transform: uppercase;
+  }
+
+  .decider-request blockquote {
+    margin: 0;
+    padding: 10px 12px;
+    border-left: 3px solid var(--decider-red);
+    background: var(--toggle-bg);
+    color: var(--fg);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.45;
+  }
+
+  .decider-request__field > strong {
+    display: block;
+    color: var(--fg);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.4;
+  }
+
+  .decider-request__field ul {
+    display: grid;
+    gap: 7px;
+    margin: 13px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .decider-example[data-decider-example-type='score'] .decider-request__body {
+    gap: 14px;
+    padding: 18px 20px;
+  }
+
+  .decider-example[data-decider-example-type='score'] .decider-request__field ul {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 8px;
+    margin-top: 10px;
+  }
+
+  .decider-example[data-decider-example-type='score'] .decider-request__field li {
+    padding: 5px 8px;
+  }
+
+  .decider-request__field li {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 9px;
+    border: 1px solid var(--toggle-inactive-border);
+    border-radius: 8px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    line-height: 1.35;
+  }
+
+  .decider-request__field li strong {
+    color: var(--fg);
+  }
+
+  .decider-request__field li span {
+    color: var(--use-case-muted);
+    text-align: right;
+  }
+
+  .decider-processor {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    align-self: stretch;
+    align-items: center;
+    justify-content: center;
+    margin-top: 28px;
+  }
+
+  .decider-processor__line {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    left: 0;
+    border-top: 1.5px dashed var(--decider-red);
+    transform: translateY(-50%);
+  }
+
+  .decider-processor__line::after {
+    position: absolute;
+    top: -5px;
+    right: 3px;
+    width: 8px;
+    height: 8px;
+    border-top: 1.5px solid var(--decider-red);
+    border-right: 1.5px solid var(--decider-red);
+    transform: rotate(45deg);
+    content: '';
+  }
+
+  .decider-processor__badge {
+    position: relative;
+    padding: 7px 9px;
+    border: 1px solid var(--decider-red);
+    border-radius: 999px;
+    background: var(--bg);
+    color: var(--decider-red);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .decider-response__body {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .decider-response__result {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 16px;
+    margin-bottom: 20px;
+    padding: 10px 12px;
+    border-left: 3px solid var(--decider-red);
+    background: var(--toggle-bg);
+  }
+
+  .decider-response__answer {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .decider-response__answer p {
+    margin: 0;
+  }
+
+  .decider-response__answer p,
+  .decider-response__confidence span {
+    color: var(--use-case-muted);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    line-height: 1.3;
+    text-transform: uppercase;
+  }
+
+  .decider-response__answer strong,
+  .decider-response__confidence strong {
+    color: var(--decider-panel-red);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: clamp(14px, 1.4vw, 20px);
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .decider-response__probabilities {
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .decider-response__probabilities li {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr) 55px;
+    align-items: center;
+    gap: 9px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+  }
+
+  .decider-response__probability-label {
+    overflow: hidden;
+    color: var(--terminal-fg);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .decider-response__probability-track {
+    display: block;
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--terminal-header-bg);
+  }
+
+  .decider-response__probability-fill {
+    display: block;
+    width: var(--probability);
+    height: 100%;
+    border-radius: inherit;
+    background: var(--decider-red);
+    animation: decider-probability-in 650ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .decider-response__probability-value {
+    color: var(--fg);
+    font-weight: 700;
+    text-align: right;
+  }
+
+  .decider-response__confidence {
+    display: flex;
+    min-width: 0;
+    align-items: flex-end;
+    flex-direction: column;
+    gap: 4px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    text-align: right;
+  }
+
+  .decider-response__confidence strong {
+    overflow-wrap: anywhere;
+  }
+
+  .decider-example[data-decider-example-type='score'] .decider-response__confidence strong {
+    white-space: nowrap;
+  }
+
+  @keyframes decider-probability-in {
+    from {
+      width: 0;
+    }
+  }
+
+  @media (max-width: 1023px) {
+    .decider-shapes {
+      grid-template-columns: 1fr;
+      gap: 32px;
+    }
+
+    .decider-example {
+      grid-template-columns: 1fr;
+      margin-top: 48px;
+    }
+
+    .decider-example-connectors {
+      display: none;
+    }
+
+    .decider-processor {
+      min-height: 96px;
+      margin-top: 0;
+    }
+
+    .decider-processor__line {
+      top: 0;
+      bottom: 0;
+      right: auto;
+      left: 50%;
+      border-top: 0;
+      border-left: 1.5px dashed var(--decider-red);
+      transform: none;
+    }
+
+    .decider-processor__line::after {
+      top: auto;
+      right: auto;
+      bottom: 4px;
+      left: -5px;
+      transform: rotate(135deg);
+    }
+  }
+
+  @media (max-width: 767px) {
+    .decider-overview {
+      padding: 54px 19px 64px;
+    }
+
+    .decider-shapes {
+      gap: 26px;
+      padding: 22px;
+    }
+
+    .decider-shapes__panel-header {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .decider-shapes__panel-header > span:last-child {
+      display: none;
+    }
+
+    .decider-shapes__row {
+      grid-template-columns: 1fr;
+      gap: 4px;
+      padding: 15px 16px;
+    }
+
+    .decider-shapes__title {
+      padding-left: 0;
+      text-align: left;
+    }
+
+    .decider-request__body,
+    .decider-response__body {
+      padding: 19px;
+    }
+
+    .decider-request__field li {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .decider-request__field li span {
+      text-align: left;
+    }
+
+    .decider-example[data-decider-example-type='score'] .decider-request__field ul {
+      grid-template-columns: 1fr;
+    }
+
+  }
+
+  @media (max-width: 420px) {
+    .decider-response__probabilities li {
+      grid-template-columns: 66px minmax(0, 1fr) 50px;
+      gap: 7px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .decider-response__probability-fill,
+    .decider-shapes__copy a span {
+      animation: none;
+      transition: none;
+    }
+  }
+</style>

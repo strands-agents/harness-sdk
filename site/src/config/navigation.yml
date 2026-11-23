@@ -200,8 +200,9 @@ products:
     accent: red
     name: Strands Decider
     slug: "/decider"
-    href: /docs/labs/strands-decider/overview/
-    description: A small, fast decision model for agentic AI.
+    href: /decider/
+    docsHref: /docs/labs/strands-decider/overview/
+    description: Route, classify, and score known outcomes. Get typed answers with confidence.
     repository: https://github.com/strands-labs/strands-decider
     languages:
       - Python
