@@ -3,10 +3,11 @@ import arrow from '../../assets/banner/arrow.svg?raw'
 import halftone from '../../assets/banner/halftone.svg?url'
 import github from '../../assets/nav/github.svg?raw'
 import {
+  BOX_HERO_DESCRIPTION,
+  BOX_HERO_TITLE,
   BOX_INSTALL_COMMAND,
   BOX_LINKS,
   BOX_PLATFORMS,
-  BOX_RELEASE_STATUS,
   BOX_REPOSITORY_URL,
 } from '../../config/box-landing'
 import { pathWithBase } from '../../util/links'
@@ -25,12 +26,19 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
 
     <div class="box-hero__content">
       <p class="box-hero__product">/box</p>
-      <h1 id="box-hero-title" class="box-hero__title">Put your agent in a box.</h1>
+      <h1 id="box-hero-title" class="box-hero__title">{BOX_HERO_TITLE}</h1>
+      <p class="box-hero__subtitle">{BOX_HERO_DESCRIPTION}</p>
       <div class="box-hero__actions">
+        <CommandPill
+          command={BOX_INSTALL_COMMAND}
+          label="Copy the Box install command"
+          surface="install:box"
+        />
+
         <div class="box-hero__links">
           <a
             href={linkHref(BOX_LINKS.quickstart)}
-            class="box-hero__link box-hero__link--primary"
+            class="box-hero__link"
             target={isExternal(BOX_LINKS.quickstart) ? '_blank' : undefined}
             rel={isExternal(BOX_LINKS.quickstart) ? 'noopener' : undefined}
           >
@@ -49,18 +57,11 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
           </a>
         </div>
 
-        <CommandPill
-          command={BOX_INSTALL_COMMAND}
-          label="Copy the Box install command"
-          surface="install:box"
-        />
-
         <p class="box-hero__meta">
-          <span>{BOX_RELEASE_STATUS}</span>
           {
-            BOX_PLATFORMS.map((platform) => (
+            BOX_PLATFORMS.map((platform, index) => (
               <>
-                <span aria-hidden="true">·</span>
+                {index > 0 && <span aria-hidden="true">·</span>}
                 <span>{platform.label}</span>
               </>
             ))
@@ -165,14 +166,23 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
     line-height: 1.2;
   }
 
+  .box-hero__subtitle {
+    max-width: 680px;
+    margin: 16px 0 0;
+    color: var(--use-case-muted);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: clamp(16px, 1.45vw, 19px);
+    line-height: 1.45;
+  }
+
   .box-hero__actions {
     display: flex;
     flex: none;
     flex-direction: column;
     align-items: center;
     gap: 12px;
-    width: min(405px, 100%);
-    margin-top: 24px;
+    width: min(960px, 100%);
+    margin-top: 28px;
   }
 
   .box-hero__links {
@@ -180,7 +190,7 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    width: 100%;
+    width: min(405px, 100%);
   }
 
   .box-hero__link {
@@ -204,12 +214,6 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
 
   .box-hero__link:hover {
     opacity: 0.75;
-  }
-
-  .box-hero__link--primary {
-    border-color: var(--box-purple);
-    background: var(--box-purple);
-    color: var(--box-purple-button-fg);
   }
 
   .box-hero__link--github {
@@ -245,7 +249,7 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
 
   .box-hero :global(.command-pill) {
     box-sizing: border-box;
-    width: 100%;
+    width: fit-content;
     max-width: 100%;
     background: var(--toggle-bg);
   }
@@ -254,10 +258,22 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
     color: var(--box-purple);
   }
 
-  .box-hero :global(.command-pill__copy.is-copied) {
-    border-color: transparent;
+  .box-hero :global(.command-pill__copy) {
+    border-color: var(--box-purple);
     background: var(--box-purple);
-    color: var(--bg);
+    color: var(--box-purple-button-fg);
+    font-weight: 600;
+  }
+
+  .box-hero :global(.command-pill__copy:hover) {
+    color: var(--box-purple-button-fg);
+    opacity: 0.75;
+  }
+
+  .box-hero :global(.command-pill__copy.is-copied) {
+    border-color: var(--box-purple);
+    background: var(--box-purple);
+    color: var(--box-purple-button-fg);
   }
 
   .box-hero__meta {
@@ -301,8 +317,15 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
       line-height: 1.15;
     }
 
+    .box-hero__subtitle {
+      max-width: 360px;
+      margin-top: 12px;
+      font-size: 15px;
+    }
+
     .box-hero__actions {
-      margin-top: 20px;
+      gap: 10px;
+      margin-top: 22px;
     }
 
     .box-hero__link {

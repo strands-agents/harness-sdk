@@ -112,6 +112,8 @@ def test_lookup_model_resolves_a_dated_snapshot_to_the_undated_model():
     assert lookup_model("anthropic.claude-opus-5-5-20260401-v1:0") is lookup_model("claude-opus-5-5")
     assert lookup_model("claude-haiku-4-5@20251001") is lookup_model("claude-haiku-4-5")
     assert lookup_model("claude-3-5-haiku-20241022").limits.context_window == 200_000
+    assert lookup_model("gpt-5.4-2026-03-05") is lookup_model("gpt-5.4")
+    assert lookup_model("gpt-4o-mini-2024-07-18") is lookup_model("gpt-4o-mini")
 
 
 def test_lookup_model_does_not_read_inherited_object_keys():

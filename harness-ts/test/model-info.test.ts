@@ -21,6 +21,14 @@ describe('lookupModel', () => {
     expect(lookupModel(modelId).capabilities?.defaultEffort).toBe('medium')
   })
 
+  it.each(['gpt-5.4-2026-03-05', 'openai.gpt-5.4-2026-03-05'])(
+    'resolves the dated snapshot %s to its model',
+    (modelId) => {
+      expect(lookupModel(modelId)).toBe(lookupModel('gpt-5.4'))
+      expect(lookupModel(modelId).capabilities?.defaultEffort).toBe('medium')
+    }
+  )
+
   it('has an empty entry for an unknown model', () => {
     expect(lookupModel('unknown-model')).toEqual({})
     expect(lookupModel('toString')).toEqual({})
@@ -41,6 +49,7 @@ describe('lookupModel', () => {
     'us.anthropic.claude-opus-5-5-20260401-v1:0',
     'arn:aws:bedrock:us-west-2:123:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0',
     'claude-haiku-4-5@20251001',
+    'gpt-5.4-2026-03-05',
     'anthropic.claude-3-5-haiku-20241022-v2:0',
     'openai.gpt-6.1-sol',
     'global.openai.gpt-6-astra',
