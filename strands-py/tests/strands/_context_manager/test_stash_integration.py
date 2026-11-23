@@ -185,7 +185,7 @@ class TestDropWithStash:
         second = _text_message("user", "second question", "m2")
         messages = [_text_message("user", "start", "m0"), first, second, _text_message("assistant", "final", "m3")]
         await _stash_all(stash, messages)
-        strategy = Offload.drop("*").when(context_utilization="50%")
+        strategy = Offload.drop("*").when(context_utilization=0.5)
 
         acted = await strategy.apply(make_context(messages, stash=stash, utilization=0.9))
 
@@ -214,7 +214,7 @@ class TestDropWithStash:
             Message(role="assistant", content=[ContentBlock(text="final")]),
         ]
 
-        await Offload.drop("*").when(context_utilization="50%").apply(make_context(messages, utilization=0.9))
+        await Offload.drop("*").when(context_utilization=0.5).apply(make_context(messages, utilization=0.9))
 
         assert messages[-1]["content"] == [
             {"text": "final"},
@@ -241,7 +241,7 @@ def _server_side_model():
 
 class TestServerSideSummaryWithStash:
     def _strategy(self):
-        return Offload.summarize("*").when(context_utilization="50%", preserve_recent=1)
+        return Offload.summarize("*").when(context_utilization=0.5, preserve_recent=1)
 
     @pytest.mark.asyncio
     async def test_leaves_a_placeholder_that_retrieves_every_message_it_stands_for(self, stash):
@@ -324,7 +324,7 @@ class TestOneReferencePerPlaceholder:
         original = list(messages)
         context = make_context(messages, stash=stash, utilization=0.9)
 
-        await strategy.when(context_utilization="50%").apply(context)
+        await strategy.when(context_utilization=0.5).apply(context)
 
         # Copies and merges reuse blocks, so a message none of whose blocks are left was removed.
         kept = {id(block) for message in messages for block in message["content"]}
@@ -344,9 +344,7 @@ class TestOneReferencePerPlaceholder:
         messages = self._conversation()
 
         await (
-            Offload.drop("*")
-            .when(context_utilization="50%")
-            .apply(make_context(messages, stash=stash, utilization=0.9))
+            Offload.drop("*").when(context_utilization=0.5).apply(make_context(messages, stash=stash, utilization=0.9))
         )
 
         assert _marker_of(messages) == offload_placeholder("drop", "[Dropped: earlier messages, ~6 tokens]", None, 6)
@@ -448,7 +446,7 @@ class TestWhatAStrategyWritesToTheStash:
         with pytest.raises(asyncio.CancelledError):
             await (
                 Offload.drop("*")
-                .when(context_utilization="50%")
+                .when(context_utilization=0.5)
                 .apply(make_context(messages, stash=stash, utilization=0.9))
             )
 

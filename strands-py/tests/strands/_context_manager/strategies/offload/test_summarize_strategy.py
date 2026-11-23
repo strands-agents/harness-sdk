@@ -156,7 +156,7 @@ def _agent_context(messages: Messages, agent: Any, utilization: float, request: 
 
 
 def _per_message():
-    return Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+    return Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
 
 def _pinned(text: str) -> Message:
@@ -174,7 +174,7 @@ def _server_side_messages() -> Messages:
 
 
 def _size_filtered():
-    return Offload.summarize("*").when(context_utilization="50%", block_threshold=100, preserve_recent=1)
+    return Offload.summarize("*").when(context_utilization=0.5, block_threshold=100, preserve_recent=1)
 
 
 def _size_filtered_messages() -> Messages:
@@ -373,7 +373,7 @@ class TestSummarizeStrategyPerBlock:
         mock_agent.model.stream = unittest.mock.Mock()
         messages = TestServerSideSummary._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is False
 
@@ -422,7 +422,7 @@ def _replay_messages() -> Messages:
     async def test_offloads_media_it_cannot_summarize(self, caplog, media, kind, summarize):
         messages = [_text("user", "task"), Message(role="user", content=[ContentBlock(**media)]), _text("user", "last")]
         model = heuristic_model(summarize=summarize)
-        strategy = Offload.summarize("media", {"model": model}).when(context_utilization="50%", block_threshold=10)
+        strategy = Offload.summarize("media", {"model": model}).when(context_utilization=0.5, block_threshold=10)
         tokens = heuristic_count_tokens([messages[1]])
 
         with caplog.at_level(logging.WARNING):
@@ -439,7 +439,7 @@ class TestSummarizeStrategyMessageLevel:
 
     @pytest.mark.asyncio
     async def test_summarizes_the_oldest_run(self, mock_agent):
-        strategy = Offload.summarize("*").when(context_utilization="80%")
+        strategy = Offload.summarize("*").when(context_utilization=0.8)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="old1")]),
@@ -455,7 +455,7 @@ class TestSummarizeStrategyMessageLevel:
 
     @pytest.mark.asyncio
     async def test_inserts_summary_and_removes_originals(self, mock_agent):
-        strategy = Offload.summarize("*").when(context_utilization="80%")
+        strategy = Offload.summarize("*").when(context_utilization=0.8)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="old1")]),
@@ -482,7 +482,7 @@ class TestSummarizeStrategyMessageLevel:
 
     @pytest.mark.asyncio
     async def test_preserves_alternation(self, mock_agent):
-        strategy = Offload.summarize("*").when(context_utilization="80%")
+        strategy = Offload.summarize("*").when(context_utilization=0.8)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="a1")]),
@@ -501,7 +501,7 @@ class TestSummarizeStrategyMessageLevel:
     async def test_no_model_returns_false(self):
         agent = unittest.mock.MagicMock()
         agent.model = None
-        strategy = Offload.summarize("*").when(context_utilization="80%")
+        strategy = Offload.summarize("*").when(context_utilization=0.8)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="old")]),
@@ -513,7 +513,7 @@ class TestSummarizeStrategyMessageLevel:
     @pytest.mark.asyncio
     async def test_summary_returns_none_falls_back_to_false(self, mock_agent):
         mock_agent.model.stream = _make_empty_stream()
-        strategy = Offload.summarize("*").when(context_utilization="80%")
+        strategy = Offload.summarize("*").when(context_utilization=0.8)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="pin")]),
             Message(role="assistant", content=[ContentBlock(text="old1")]),
@@ -531,7 +531,7 @@ class TestRepeatedSummarizationKeepsMessageZeroVerbatim:
 
     @pytest.mark.asyncio
     async def test_summaries_stay_out_of_pinned_message_zero(self, mock_agent):
-        strategy = Offload.summarize("*").when(context_utilization="70%", preserve_recent=4)
+        strategy = Offload.summarize("*").when(context_utilization=0.7, preserve_recent=4)
         messages: Messages = [
             Message(role="user", content=[ContentBlock(text="task")], metadata={"custom": {"pinned": True}})
         ]
@@ -561,7 +561,7 @@ class TestSummarizationWithToolCalls:
             return summary_stream(messages, **kwargs)
 
         mock_agent.model.stream = recording_stream
-        strategy = Offload.summarize("*").when(context_utilization="70%", preserve_recent=2)
+        strategy = Offload.summarize("*").when(context_utilization=0.7, preserve_recent=2)
         tool_use = ToolUse(toolUseId="call_1", name="shell", input={"command": "ls"})
         tool_result = ToolResult(toolUseId="call_1", status="success", content=[{"text": "a.ts b.ts"}])
         messages: Messages = [
@@ -611,7 +611,7 @@ class TestRunSummaryReplaysTheAgentRequest:
     async def test_sends_the_history_prefix_with_the_agent_prompt_and_tools(self, mock_agent):
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
@@ -634,7 +634,7 @@ class TestRunSummaryReplaysTheAgentRequest:
             mock_agent.tool_registry.register_tool(strands.tool(lambda a: a, name=name))
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
@@ -686,7 +686,7 @@ class TestRunSummaryReplaysTheAgentRequest:
                 else 10
             )
         )
-        strategy = Offload.summarize("*").when(context_utilization="80%", block_threshold=100)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, block_threshold=100)
 
         assert await strategy.apply(_agent_context(messages, agent, 0.9)) is True
 
@@ -712,7 +712,7 @@ class TestRunSummaryReplaysTheAgentRequest:
             Message(role="user", content=[ContentBlock(text="recent")]),
         ]
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
@@ -749,7 +749,7 @@ class TestRunSummaryReplaysTheAgentRequest:
         mock_agent.model.stream = unittest.mock.MagicMock(side_effect=_make_stream_events("Summary of content."))
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
@@ -770,7 +770,7 @@ class TestRunSummaryReplaysTheAgentRequest:
         mock_agent.model.stream = cancelling_stream
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is False
 
@@ -784,7 +784,7 @@ class TestRunSummaryReplaysTheAgentRequest:
         aux_model.model_info.capabilities.server_side_summary = False
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*", {"model": aux_model}).when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*", {"model": aux_model}).when(context_utilization=0.8, preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
@@ -797,7 +797,7 @@ class TestRunSummaryReplaysTheAgentRequest:
         mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=SummarizeResult())
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         with caplog.at_level(logging.WARNING):
             assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is False
@@ -826,7 +826,7 @@ class TestServerSideSummary:
         mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=SummarizeResult(content=[summary]))
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
@@ -848,7 +848,7 @@ class TestServerSideSummary:
         messages = self._messages()
         mock_agent.messages = messages
         # Without preserve_recent nothing is protected, so only the removal rules keep the last message.
-        strategy = Offload.summarize("*").when(context_utilization="80%")
+        strategy = Offload.summarize("*").when(context_utilization=0.8)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
@@ -866,7 +866,7 @@ class TestServerSideSummary:
         mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=_summary("written client-side"))
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
@@ -920,7 +920,7 @@ class TestServerSideSummary:
         mock_agent.model.model_info.capabilities.server_side_summary = agent_supports
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*", {"model": aux_model}).when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*", {"model": aux_model}).when(context_utilization=0.8, preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
@@ -947,7 +947,7 @@ class TestServerSideSummary:
         mock_agent.model.summarize = unittest.mock.AsyncMock(**summarize_result)
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         with caplog.at_level(logging.WARNING):
             assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is False
@@ -968,7 +968,7 @@ class TestServerSideSummary:
             return _summary("compacted", "anthropic")
 
         mock_agent.model.summarize = unittest.mock.AsyncMock(side_effect=summarize)
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         with caplog.at_level(logging.WARNING):
             assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is False
@@ -988,7 +988,7 @@ class TestServerSideSummary:
         mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=_summary("written client-side"))
         messages = self._messages()
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         with caplog.at_level(logging.WARNING):
             assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
@@ -1013,7 +1013,7 @@ class TestServerSideSummary:
             Message(role="user", content=[ContentBlock(text="recent")]),
         ]
         mock_agent.messages = messages
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
@@ -1113,7 +1113,7 @@ class TestClientSideSummariesUseModelSummarize:
         messages = TestServerSideSummary._messages()
         mock_agent.messages = messages
         strategy = Offload.summarize("*", {"system_prompt": "Be very brief."}).when(
-            context_utilization="80%", preserve_recent=1
+            context_utilization=0.8, preserve_recent=1
         )
 
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
@@ -1155,7 +1155,7 @@ class TestClientSideSummariesUseModelSummarize:
         messages = TestServerSideSummary._messages()
         mock_agent.messages = messages
         request = _create_invocation_context()
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, invocation_context=request)
         assert await strategy.apply(context) is True
@@ -1171,7 +1171,7 @@ class TestClientSideSummariesUseModelSummarize:
         messages = TestServerSideSummary._messages()
         mock_agent.messages = messages
         request = _create_invocation_context()
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, invocation_context=request)
         assert await strategy.apply(context) is bool(content)
@@ -1189,7 +1189,7 @@ class TestClientSideSummariesUseModelSummarize:
         messages = TestServerSideSummary._messages()
         mock_agent.messages = messages
         request = _create_invocation_context()
-        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
 
         context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, invocation_context=request)
         assert await strategy.apply(context) is True
@@ -1244,14 +1244,14 @@ class TestConditionsDecideWhenItFires:
     @pytest.mark.asyncio
     async def test_fires_when_utilization_exceeds_threshold(self):
         messages = [_text("user", "initial question"), make_tool_result_message(LARGE_TEXT), _text("assistant", "last")]
-        strategy = Offload.summarize("tool_results").when(context_utilization="85%")
+        strategy = Offload.summarize("tool_results").when(context_utilization=0.85)
 
         assert await strategy.apply(_context(messages, 0.9)) is True
 
     @pytest.mark.asyncio
     async def test_skips_when_utilization_is_below_threshold(self):
         messages = [make_tool_result_message(LARGE_TEXT)]
-        strategy = Offload.summarize("tool_results").when(context_utilization="85%")
+        strategy = Offload.summarize("tool_results").when(context_utilization=0.85)
 
         assert await strategy.apply(_context(messages, 0.5)) is False
 
@@ -1285,7 +1285,7 @@ class TestSummarizingMessageRuns:
             _text("assistant", "a9"),
             _text("user", "u10"),
         ]
-        strategy = Offload.summarize("*").when(context_utilization="50%", preserve_recent=3)
+        strategy = Offload.summarize("*").when(context_utilization=0.5, preserve_recent=3)
 
         assert await strategy.apply(_context(messages, 0.9, summarize=summarize)) is True
 
@@ -1316,7 +1316,7 @@ class TestSummarizingMessageRuns:
             _text("user", "u6"),
             _text("assistant", "a7"),
         ]
-        strategy = Offload.summarize("*").when(context_utilization="50%", preserve_recent=1)
+        strategy = Offload.summarize("*").when(context_utilization=0.5, preserve_recent=1)
 
         with caplog.at_level(logging.WARNING):
             assert await strategy.apply(_context(messages, 0.9, summarize=summarize)) is True
@@ -1391,7 +1391,7 @@ class TestSummarizerDiagnosticsAndModelChoice:
         image = ContentBlock(image={"format": "png", "source": {"bytes": b"\x00" * 4000}})
         messages = [_text("user", "task"), Message(role="user", content=[image]), _text("user", "last")]
         model = heuristic_model(summarize=unittest.mock.AsyncMock(side_effect=RuntimeError("images unsupported")))
-        strategy = Offload.summarize("media", {"model": model}).when(context_utilization="50%", block_threshold=10)
+        strategy = Offload.summarize("media", {"model": model}).when(context_utilization=0.5, block_threshold=10)
 
         with caplog.at_level(logging.WARNING):
             assert await strategy.apply(_context(messages, 0.9)) is True

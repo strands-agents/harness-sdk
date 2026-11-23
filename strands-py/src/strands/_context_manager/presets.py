@@ -42,11 +42,11 @@ def _resolve_preset(name: str) -> list[ContextStrategy]:
     """
     # Defaults are tuning decisions, not API promises — adjust freely.
     if name == "proactive_summarization":
-        return [Offload.summarize("*").when(context_utilization="70%", preserve_recent="70%")]
+        return [Offload.summarize("*").when(context_utilization=0.7, preserve_recent="70%")]
     if name == "large_tool_offloading":
         return [Offload.truncate("tool_results", {"preview_tokens": 1000}).when(block_threshold=2500)]
     if name == "overflow_protection":
-        return [Offload.drop("*").when(context_utilization="100%", preserve_recent=4)]
+        return [Offload.drop("*").when(context_utilization=1.0, preserve_recent=4)]
     if name == "stale_tool_cleanup":
         return [Offload.drop("tool_results").when(preserve_recent=5)]
     raise ValueError(f'Unknown strategy preset: "{name}". Valid presets: {", ".join(STRATEGY_PRESET_NAMES)}')
