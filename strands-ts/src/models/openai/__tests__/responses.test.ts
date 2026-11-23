@@ -251,6 +251,27 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.previous_response_id).toBe('resp_prev')
     })
 
+    it('emits function_call_output before user text in a tool-result turn', async () => {
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'call_1',
+              status: 'success',
+              content: [new TextBlock('tool output')],
+            }),
+            new TextBlock('<context-status>10%</context-status>'),
+          ],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input).toEqual([
+        { type: 'function_call_output', call_id: 'call_1', output: 'tool output' },
+        { role: 'user', content: [{ type: 'input_text', text: '<context-status>10%</context-status>' }] },
+      ])
+    })
+
     it('omits previous_response_id when stateful is disabled, even with responseId in modelState', async () => {
       const modelState = new StateStore({ responseId: 'resp_prev' })
       const req = await runOnce({}, [mkUserMessage()], { modelState })

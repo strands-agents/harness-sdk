@@ -877,8 +877,8 @@ class OpenAIResponsesModel(Model):
                 if "toolResult" in content
             ]
 
-            if formatted_contents:
-                if role == "assistant":
+            if role == "assistant":
+                if formatted_contents:
                     # Only the string EasyInputMessage form is a valid assistant *input* shape
                     # without the full output-item metadata (id/status/annotations) that has
                     # already been discarded by this point. Replaying verbatim output items is
@@ -895,16 +895,20 @@ class OpenAIResponsesModel(Model):
                     text = "\n".join(part["text"] for part in formatted_contents if part.get("type") == "output_text")
                     if text:
                         formatted_messages.append({"role": "assistant", "content": text})
-                else:
+                formatted_messages.extend(formatted_tool_calls)
+                formatted_messages.extend(formatted_tool_messages)
+            else:
+                # Emit function_call_output before user text/media so tool results stay adjacent
+                # to their preceding function_call and per-call trailing text does not bust caching.
+                formatted_messages.extend(formatted_tool_messages)
+                if formatted_contents:
                     formatted_messages.append(
                         {
                             "role": role,  # "user"
                             "content": formatted_contents,
                         }
                     )
-
-            formatted_messages.extend(formatted_tool_calls)
-            formatted_messages.extend(formatted_tool_messages)
+                formatted_messages.extend(formatted_tool_calls)
 
         if skipped_blocks is None:
             _log_skipped_blocks(logger, skipped)

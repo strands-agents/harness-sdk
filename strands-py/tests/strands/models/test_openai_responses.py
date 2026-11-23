@@ -2628,9 +2628,9 @@ def test_message_cache_tool_result_prefix_survives_replay_with_multiple_tools():
         ]
     )
 
-    assert first["input"][:3] == second["input"][:3]
+    assert first["input"][:2] == second["input"][:2]
+    assert first["input"][2]["content"][:1] == second["input"][2]["content"]
     assert first["input"] == [
-        *_text_input("durable explanation"),
         {
             "type": "function_call_output",
             "call_id": "c1",
@@ -2639,13 +2639,12 @@ def test_message_cache_tool_result_prefix_survives_replay_with_multiple_tools():
         {
             "type": "function_call_output",
             "call_id": "c2",
-            "output": [
-                {"type": "input_text", "text": "second result", "prompt_cache_breakpoint": {"mode": "explicit"}}
-            ],
+            "output": [{"type": "input_text", "text": "second result"}],
         },
         {
             "role": "user",
             "content": [
+                {"type": "input_text", "text": "durable explanation", "prompt_cache_breakpoint": {"mode": "explicit"}},
                 {"type": "input_text", "text": "temporary one"},
                 {"type": "input_text", "text": "temporary two"},
             ],
@@ -2772,6 +2771,31 @@ def test_message_cache_preserves_stateful_response_chaining():
                 {"type": "input_text", "text": "temporary"},
             ],
         }
+    ]
+
+
+def test_format_request_emits_tool_result_before_user_text():
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "call_1",
+                        "status": "success",
+                        "content": [{"text": "tool output"}],
+                    }
+                },
+                {"text": "<context-status>10%</context-status>"},
+            ],
+        }
+    ]
+    request = model._format_request(messages)
+
+    assert request["input"] == [
+        {"type": "function_call_output", "call_id": "call_1", "output": "tool output"},
+        {"role": "user", "content": [{"type": "input_text", "text": "<context-status>10%</context-status>"}]},
     ]
 
 

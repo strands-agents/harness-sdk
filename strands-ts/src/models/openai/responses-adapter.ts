@@ -311,8 +311,8 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
       }
     }
 
-    if (contentItems.length > 0) {
-      if (role === 'assistant') {
+    if (role === 'assistant') {
+      if (contentItems.length > 0) {
         // Only the string EasyInputMessage form is a valid assistant *input* shape
         // without the full ResponseOutputMessage metadata (id/status/annotations),
         // which has already been discarded by this point. Non-text assistant history
@@ -329,7 +329,14 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
           .map((item) => item.text as string)
           .join('\n')
         if (text) input.push({ role: 'assistant', content: text })
-      } else {
+      }
+      input.push(...toolCallItems)
+      input.push(...toolResultItems)
+    } else {
+      // Emit function_call_output before user text/media so tool results stay adjacent
+      // to their preceding function_call and per-call trailing text does not bust caching.
+      input.push(...toolResultItems)
+      if (contentItems.length > 0) {
         // Cast is needed only because `contentItems` is built as a loosely-typed
         // record array; the user-role items themselves (`input_text`/`input_image`/
         // `input_file`) are valid `EasyInputMessage` content.
@@ -338,10 +345,8 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
           content: contentItems,
         } as unknown as ResponseInputItem)
       }
+      input.push(...toolCallItems)
     }
-
-    input.push(...toolCallItems)
-    input.push(...toolResultItems)
   }
 
   return input
