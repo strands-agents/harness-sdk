@@ -8,8 +8,8 @@ Sweep (`python3 strands-rs/docs/parity-sweep.py --write`, strands-ts at the pin)
 | TS spec files | 285 (225 unit, 60 integ) |
 | In-scope spec files | 201 |
 | Out-of-scope spec files | 84 |
-| TS cases in in-scope rows | 5032 (4761 unit, 271 integ) |
-| Ported cases | 4326 (4279 unit, 47 integ) |
+| TS cases in in-scope rows | 5035 (4764 unit, 271 integ) |
+| Ported cases | 4400 (4353 unit, 47 integ) |
 | `it(...)`/`test(...)` call sites in in-scope specs | 5001 |
 
 The last row counts call sites in the TS source; `it.each` tables and `describe.each` blocks count once there, while row totals count the cases they generate where the porter expanded them.
