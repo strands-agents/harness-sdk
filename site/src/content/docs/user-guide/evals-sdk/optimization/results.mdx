@@ -52,7 +52,7 @@ then edit the values into your code or config. To get the same files for another
 candidate, such as a runner-up from the summary, look it up by id and call `write_diff`:
 
 ```python
-runner_up = result.candidate("5bd8c1a0cfcb")
+runner_up = result.candidate("602ddaa1c0cf")
 runner_up.write_diff("runner_up.diff")  # writes runner_up.diff and runner_up.values.json
 ```
 
@@ -96,13 +96,15 @@ for row in result.effects["effects"]:
 
 From the [quickstart](quickstart.md) run:
 
-| Option | Helpfulness | Output tokens |
+| Option | Triage | Output tokens |
 |---|---|---|
-| style `terse` vs `chatty` | -0.000 [-0.012, +0.011] | -112 [-127, -98] |
-| temperature 0.31 or lower vs above 0.58 | +0.001 [-0.026, +0.028] | +0.5 [-19, +20] |
+| system prompt rewritten vs the original | +0.74 [+0.68, +0.81] | -211 [-222, -200] |
+| temperature 0.31 to 0.59 vs above 0.59 | +0.003 [-0.032, +0.038] | +0.7 [-6.5, +7.8] |
+| temperature 0.31 or lower vs above 0.59 | -0.006 [-0.045, +0.032] | +2.4 [-6.0, +11] |
 
-Only the style moved anything. That's worth more than the champion's exact temperature:
-it tells you which knob to keep tuning and which to stop caring about.
+The rewritten prompt did all the work; temperature did nothing measurable. That's worth
+more than the champion's exact values: it tells you to keep the rewrite, leave the
+temperature where it was, and stop spending budget on it.
 
 ## What the run cost
 
@@ -156,7 +158,7 @@ the optimizer or the agent:
 from strands_evals.optimization import OptimizationResult
 
 result = OptimizationResult.from_file(
-    ".strands-evals/optimization/runs/20261117-154343-1a1080/result.json"
+    ".strands-evals/optimization/runs/20261123-150500-a63ce4/result.json"
 )
 print(result.summary())
 ```
@@ -173,7 +175,7 @@ stopped on an error picks up where it left off without paying for finished work 
 from strands_evals.optimization import Optimizer
 
 optimizer = Optimizer.resume(
-    ".strands-evals/optimization/runs/20261117-154343-1a1080",
+    ".strands-evals/optimization/runs/20261123-150500-a63ce4",
     experiment=experiment,
     factory=create_agent,
 )
@@ -183,7 +185,7 @@ result = optimizer.run()
 From the CLI, resume needs only the run folder, because the CLI saved its inputs there:
 
 ```bash
-strands-evals optimize resume .strands-evals/optimization/runs/20261117-154343-1a1080
+strands-evals optimize resume .strands-evals/optimization/runs/20261123-150500-a63ce4
 ```
 
 A killed run may resume with a larger `--max-rollouts`. A finished run only prints its
