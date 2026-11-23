@@ -22,7 +22,7 @@ import type { ContextStrategy } from '../../types.js'
 import type { StrategyPresetName } from '../../presets.js'
 import type { Snapshot } from '../../../types/snapshot.js'
 import { Offload, type DeferConfig, type DeferTarget, type ToolSearch } from '../offload/index.js'
-import type { ToolSearcher, ToolSearchRequest } from '../../../tools/search-tools.js'
+import type { ToolSearchContext, ToolSearcher } from '../../../tools/search-tools.js'
 import { ContextOffloader } from '../../../vended-plugins/context-offloader/plugin.js'
 import { ModelRouter } from '../../../models/routing/router.js'
 
@@ -254,8 +254,16 @@ describe('DeferredToolLoadingStrategy', () => {
         return agent.messages[2]!.content[0] as ToolResultBlock
       }
 
-      it('loads what it picks, without names it may not return or repeats, and at most the limit', async () => {
-        const search = vi.fn(async () => ['nope', 'get_forecast', 'get_forecast', 'get_weather', 'weather'])
+      /** The tools of the search with these names, in this order. */
+      const named = (context: ToolSearchContext, ...names: string[]): Tool[] =>
+        names.map((name) => context.tools.find((candidate) => candidate.name === name)!)
+
+      it('loads what it picks, without tools it may not return or repeats, and at most the limit', async () => {
+        const lookalike = makeTool('get_forecast')
+        const search = vi.fn(async (context: ToolSearchContext) => [
+          lookalike,
+          ...named(context, 'get_forecast', 'get_forecast', 'get_weather', 'weather'),
+        ])
 
         const result = await searchedBy({ search }, { query: 'rain', limit: 2 })
 
@@ -263,19 +271,19 @@ describe('DeferredToolLoadingStrategy', () => {
           new ToolReferenceBlock({ name: 'get_forecast' }),
           new ToolReferenceBlock({ name: 'get_weather' }),
         ])
-        const [request] = search.mock.calls[0] as unknown as [ToolSearchRequest]
-        expect(request).toMatchObject({ query: 'rain', limit: 2 })
-        expect(request.tools.map((candidate) => candidate.name)).toEqual([
+        const [context] = search.mock.calls[0]!
+        expect(context).toMatchObject({ query: 'rain', limit: 2 })
+        expect(context.tools.map((candidate) => candidate.name)).toEqual([
           'get_weather',
           'get_forecast',
           'create_ticket',
           'weather',
         ])
-        expect(request.cancelSignal).toBeInstanceOf(AbortSignal)
+        expect(context.cancelSignal).toBeInstanceOf(AbortSignal)
       })
 
       it('searches only the tools the call does not name', async () => {
-        const search = vi.fn(async () => ['get_forecast'])
+        const search = vi.fn(async (context: ToolSearchContext) => named(context, 'get_forecast'))
 
         const result = await searchedBy({ search }, { names: ['create_ticket'], query: 'rain' })
 
@@ -283,8 +291,16 @@ describe('DeferredToolLoadingStrategy', () => {
           new ToolReferenceBlock({ name: 'create_ticket' }),
           new ToolReferenceBlock({ name: 'get_forecast' }),
         ])
-        const [request] = search.mock.calls[0] as unknown as [ToolSearchRequest]
-        expect(request.tools.map((candidate) => candidate.name)).not.toContain('create_ticket')
+        const [context] = search.mock.calls[0]!
+        expect(context.tools.map((candidate) => candidate.name)).not.toContain('create_ticket')
+      })
+
+      it('leaves the search to the keywords when it declines', async () => {
+        const result = await searchedBy({ search: async () => undefined }, { query: 'weather' })
+
+        expect(result.content).toEqual(
+          ['weather', 'get_weather', 'get_forecast'].map((name) => new ToolReferenceBlock({ name }))
+        )
       })
 
       it('answers the call with its error when it throws', async () => {

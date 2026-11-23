@@ -30,14 +30,14 @@ const SEARCH_TOOLS = new WeakSet<Tool>()
  *
  * @experimental
  */
-export interface ToolSearchRequest {
+export interface ToolSearchContext {
   /** What the model searched for. */
   readonly query: string
   /** The deferred tools the search may return, in tool order. */
   readonly tools: readonly Tool[]
   /** How many tools to return at most. */
   readonly limit: number
-  /** The agent searching, for its messages and its `auxModel`. */
+  /** The agent searching. */
   readonly agent: LocalAgent
   /** The search's cancellation signal. */
   readonly cancelSignal: AbortSignal
@@ -47,38 +47,40 @@ export interface ToolSearchRequest {
 
 /**
  * Picks the deferred tools that match the model's query for `search_tools`, such as with a keyword search or by asking
- * a model. The SDK loads the tools it names: it drops any name that isn't among `request.tools` and keeps at most
- * `request.limit`, then sends each load the way the model's provider takes it.
+ * a model. The SDK loads the tools it picks: it drops any that isn't one of `context.tools` and keeps at most
+ * `context.limit`, then sends each load the way the model's provider takes it.
  *
  * @experimental
  */
 export interface ToolSearcher {
   /**
-   * The names of the tools that match the query, best first.
+   * The tools that match the query, best first, picked from `context.tools`.
    *
-   * @param request - The query and the tools to pick from
-   * @returns Tool names; none when no tool matches
+   * @param context - The query and the tools to pick from
+   * @returns The matching tools, none when no tool matches; or `undefined` to decline, so a
+   *   {@link KeywordToolSearcher} searches instead
    */
-  search(request: ToolSearchRequest): Promise<string[]>
+  search(context: ToolSearchContext): Promise<readonly Tool[] | undefined>
 }
 
 /**
- * The searcher `search_tools` uses unless `Offload.defer` names another: a keyword search. A tool named exactly as the
- * query comes first, then the rest by score, in tool order on a tie. A query word found in a tool's name or MCP server
- * scores twice what it scores in its description, weighted down by how many of the tools it matches, so a word every
- * tool has counts for little. There are no embeddings, so the same query and tools always give the same result.
+ * The searcher `search_tools` uses unless `Offload.defer` names another, and when that one declines: a keyword search.
+ * A tool named exactly as the query comes first, then the rest by score, in tool order on a tie. A query word found in
+ * a tool's name or MCP server scores twice what it scores in its description, weighted down by how many of the tools it
+ * matches, so a word every tool has counts for little. There are no embeddings, so the same query and tools always give
+ * the same result.
  *
  * @experimental
  */
 export class KeywordToolSearcher implements ToolSearcher {
   /**
-   * The names of at most `request.limit` tools that match the query.
+   * At most `context.limit` tools that match the query.
    *
-   * @param request - The query and the tools to pick from
-   * @returns Tool names, best first
+   * @param context - The query and the tools to pick from
+   * @returns The matching tools, best first
    */
-  async search(request: ToolSearchRequest): Promise<string[]> {
-    return keywordSearch(request.query, request.tools, request.limit)
+  async search(context: ToolSearchContext): Promise<Tool[]> {
+    return keywordSearch(context.query, context.tools, context.limit)
   }
 }
 
@@ -141,8 +143,15 @@ export function createSearchTools(
         .filter((name) => !names.includes(name))
         .flatMap((name) => agent.toolRegistry.get(name) ?? [])
       const limit = input.limit ?? DEFAULT_LIMIT
-      const request = { query, tools, limit, agent, cancelSignal, ...(invocationContext && { invocationContext }) }
-      const found = query === '' ? [] : await searched(searcher, request)
+      const searchContext = {
+        query,
+        tools,
+        limit,
+        agent,
+        cancelSignal,
+        ...(invocationContext && { invocationContext }),
+      }
+      const found = query === '' ? [] : await searched(searcher, searchContext)
       if (names.length === 0 && found.length === 0) {
         throw new Error(`Nothing loaded: no tool matches "${query}". Search with other words, or name the tools.`)
       }
@@ -153,15 +162,18 @@ export function createSearchTools(
   return searchTools
 }
 
-/** The tools a searcher picked that the search may return, each once, at most `limit` of them. */
-async function searched(searcher: ToolSearcher, request: ToolSearchRequest): Promise<string[]> {
-  const offered = new Set(request.tools.map((candidate) => candidate.name))
-  const picked = await searcher.search(request)
-  const found = [...new Set(picked)].filter((name) => offered.has(name))
+/**
+ * The names of the tools a searcher picked that the search may return, each once, at most `limit` of them. A searcher
+ * that declines leaves the search to the keywords.
+ */
+async function searched(searcher: ToolSearcher, context: ToolSearchContext): Promise<string[]> {
+  const offered = new Set(context.tools)
+  const picked = (await searcher.search(context)) ?? keywordSearch(context.query, context.tools, context.limit)
+  const found = [...new Set(picked)].filter((candidate) => offered.has(candidate))
   if (found.length < picked.length) {
     warnOnce(logger, 'searcher returned tools that are not deferred, or a tool twice | loading the others')
   }
-  return found.slice(0, request.limit)
+  return found.slice(0, context.limit).map((candidate) => candidate.name)
 }
 
 /**
@@ -232,8 +244,8 @@ interface SearchFields {
   readonly description: readonly string[]
 }
 
-/** The names of at most `limit` tools that match a query, as {@link KeywordToolSearcher} describes. */
-function keywordSearch(query: string, tools: readonly Tool[], limit: number): string[] {
+/** At most `limit` tools that match a query, best first, as {@link KeywordToolSearcher} describes. */
+function keywordSearch(query: string, tools: readonly Tool[], limit: number): Tool[] {
   const fields = tools.map(searchFields)
   const scores = tools.map((candidate) => (candidate.name.toLowerCase() === query.toLowerCase() ? Infinity : 0))
   for (const word of new Set(words(query))) {
@@ -246,11 +258,11 @@ function keywordSearch(query: string, tools: readonly Tool[], limit: number): st
     hits.forEach((hit, index) => (scores[index]! += hit * weight))
   }
   return tools
-    .map((candidate, index) => ({ name: candidate.name, index, score: scores[index]! }))
+    .map((candidate, index) => ({ candidate, index, score: scores[index]! }))
     .filter((entry) => entry.score > 0)
     .sort((left, right) => right.score - left.score || left.index - right.index)
     .slice(0, limit)
-    .map((entry) => entry.name)
+    .map((entry) => entry.candidate)
 }
 
 function searchFields(candidate: Tool): SearchFields {

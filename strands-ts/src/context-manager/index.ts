@@ -41,7 +41,7 @@ export type {
   /** @experimental Deferred tool loading may change in future versions. */
   ToolSearcher,
   /** @experimental Deferred tool loading may change in future versions. */
-  ToolSearchRequest,
+  ToolSearchContext,
 } from '../tools/search-tools.js'
 export type { TruncateConfig } from './methods/truncate.js'
 export type { SummarizeConfig } from './strategies/offload/summarize.js'

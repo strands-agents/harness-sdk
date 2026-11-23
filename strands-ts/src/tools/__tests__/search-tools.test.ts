@@ -45,7 +45,7 @@ describe('KeywordToolSearcher', () => {
       make('create_ticket', 'Create a support ticket.'),
       make('weather', 'Look up weather station data.'),
     ]
-    const request = {
+    const context = {
       query: 'weather',
       tools,
       limit: 2,
@@ -53,7 +53,7 @@ describe('KeywordToolSearcher', () => {
       cancelSignal: new AbortController().signal,
     }
 
-    expect(await new KeywordToolSearcher().search(request)).toEqual(['weather', 'get_weather'])
+    expect(await new KeywordToolSearcher().search(context)).toEqual([tools[3], tools[0]])
   })
 })
 
