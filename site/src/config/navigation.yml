@@ -433,6 +433,7 @@ sidebar:
                   - docs/user-guide/sdk/decision-models/models/llm
                   - docs/user-guide/sdk/decision-models/models/typesafe
                   - docs/user-guide/sdk/decision-models/models/decisions-api
+                  - docs/user-guide/sdk/decision-models/models/sagemaker
           - label: Tools
             items:
               - docs/user-guide/sdk/tools/tool-results
