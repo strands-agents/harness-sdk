@@ -16,7 +16,7 @@ import type { ContentBlock, OffloadedBlock } from '../../../types/messages.js'
 import type { InvocationContext } from '../../../agent/invocation-context.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextStrategy, ContextState } from '../../types.js'
-import type { Stash } from '../../stash.js'
+import type { Archive } from '../../archive.js'
 import { RETRIEVAL_TOOL_NAME } from '../../retrieval-tool.js'
 import { carriedTokens, formatElided, isOffloaded, offloadPlaceholder } from '../../placeholder.js'
 import { collectRemovableWithPair, placeholderFor, removeMessages, repairAlternation } from '../../message-trimming.js'
@@ -29,8 +29,6 @@ import { buildToolNameMap, isMediaBlock, isProtocolBlock, OffloadTargetMatcher, 
  * Strategy returned by `Offload.drop/truncate/summarize`. Without conditions it acts on each matching block as it
  * arrives, including the one the model answers next; targets `'*'` and `'media'` need conditions from `.when()`. A
  * strategy keeps per-agent state, so give each agent its own.
- *
- * @experimental
  */
 export interface OffloadStrategy extends ContextStrategy {
   /** Returns a copy of this strategy with these conditions in place of its current ones. */
@@ -47,7 +45,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   protected readonly _conditions: ResolvedConditions
   /** Whether the eager hook processes each message as it arrives. */
   private readonly _runsEagerly: boolean
-  protected _stash: Stash | undefined
+  protected _archive: Archive | undefined
 
   /**
    * @param method - Offload method; the strategy is named `offload:<method>`
@@ -94,13 +92,13 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
    * Checks the conditions can run on this agent, then registers the eager hook if this runs eagerly.
    *
    * @param agent - The agent this strategy is attached to
-   * @param stash - The stash offloaded content is stored in
+   * @param archive - The archive offloaded content is stored in
    * @throws Error when a whole-message strategy has none of `contextUtilization`, `blockThreshold`, or
    *   `preserveRecent`, a `'media'` strategy has neither `contextUtilization` nor `preserveRecent`, or
    *   `contextUtilization` is a token count larger than the model's context window
    */
-  init(agent: LocalAgent, stash?: Stash): void {
-    this._stash = stash
+  init(agent: LocalAgent, archive?: Archive): void {
+    this._archive = archive
     this._checkRunnable()
     this._conditions.checkFits(agent)
     if (!this._runsEagerly) return
@@ -120,7 +118,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   }
 
   async apply(context: ContextState): Promise<boolean> {
-    if (context.stash) this._stash = context.stash
+    if (context.archive) this._archive = context.archive
     if (!this._conditions.reached(context)) return false
     if (this._target !== '*') return this._applyPerBlock(context)
     const acted = await this._applyPerMessage(context)
@@ -177,15 +175,15 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   }
 
   /** The placeholder this strategy leaves for a block it replaced, recording the tokens it stands for. */
-  protected _placeholder(preview: string, stashRef: string | undefined, tokens: number): OffloadedBlock {
-    return offloadPlaceholder(this._method, preview, stashRef, tokens)
+  protected _placeholder(preview: string, archiveRef: string | undefined, tokens: number): OffloadedBlock {
+    return offloadPlaceholder(this._method, preview, archiveRef, tokens)
   }
 
   /** Whether a block in `message` is content this strategy may replace. */
   private _isOffloadable(block: ContentBlock, message: Message, toolNameMap: Map<string, string>): boolean {
     if (isProtocolBlock(block) || isOffloaded(block) || (block instanceof TextBlock && block.text.trim() === ''))
       return false
-    // Injected text is written after its message was stashed, so a ref to it would point at nothing.
+    // Injected text is written after its message was archived, so a ref to it would point at nothing.
     if (block instanceof InjectedBlock) return false
     if (block instanceof ToolResultBlock && this._isProtectedResult(block, toolNameMap)) return false
     return this._matcher.matchesBlock(block, message, toolNameMap)
@@ -197,7 +195,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
    * content.
    */
   private _isProtectedResult(block: ToolResultBlock, toolNameMap: Map<string, string>): boolean {
-    if (this._stash && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return true
+    if (this._archive && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return true
     // A tool reference is what keeps a loaded tool's schema in the model's context.
     if (holdsToolReference(block)) return true
     const placeholder = block.content.find(isOffloaded)
@@ -222,11 +220,19 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
       // The token heuristic counts media as 0, so unmeasured media is never treated as within the threshold.
       if (threshold !== undefined && measured <= threshold && !(measured === 0 && holdsMedia(block))) continue
 
-      const stashRef = this._stash ? await this._stash.ensureStashed(block, message, blockIndex) : undefined
+      const archiveRef = this._archive ? await this._archive.ensureArchived(block, message, blockIndex) : undefined
       const toolName = block instanceof ToolResultBlock ? toolNameMap.get(block.toolUseId) : undefined
       // The threshold measures what the block occupies now; the replacement stands for what is behind it as well.
       const tokens = measured + carriedTokens([block])
-      const replacement = await this._replaceBlock(block, tokens, message, agent, stashRef, toolName, invocationContext)
+      const replacement = await this._replaceBlock(
+        block,
+        tokens,
+        message,
+        agent,
+        archiveRef,
+        toolName,
+        invocationContext
+      )
       if (replacement && replacement !== block) {
         ;(message.content as unknown[])[blockIndex] = replacement
         acted = true
@@ -239,7 +245,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
    * Transform a block. Return the replacement, or null to skip.
    * `tokens` is the size the replacement stands for: the block's own tokens plus what a placeholder it holds
    * already stood for, so a replacement records it rather than losing it.
-   * `stashRef` is the reference the original is retrievable under, or `undefined` when there is no stash.
+   * `archiveRef` is the reference the original is retrievable under, or `undefined` when there is no archive.
    * `toolName` names the tool that produced a tool result, when its tool use is in the conversation.
    */
   protected abstract _replaceBlock(
@@ -247,7 +253,7 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
     tokens: number,
     message: Message,
     agent: LocalAgent,
-    stashRef: string | undefined,
+    archiveRef: string | undefined,
     toolName: string | undefined,
     invocationContext?: InvocationContext
   ): Promise<ContentBlock | null>
@@ -286,7 +292,7 @@ export class EmergencyTruncateStrategy implements ContextStrategy {
     // Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
     if (removable[removeCount]?.role !== 'assistant') removeCount += 1
     const textFor = placeholderFor(agent.model, formatElided)
-    if (!(await removeMessages(messages, removable.slice(0, removeCount), textFor, 'truncate', context.stash))) {
+    if (!(await removeMessages(messages, removable.slice(0, removeCount), textFor, 'truncate', context.archive))) {
       return false
     }
     repairAlternation(messages)

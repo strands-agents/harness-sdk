@@ -194,7 +194,7 @@ Four tools take a config object, each key an option of the tool's factory: `shel
 (`{ description }`), `web_fetch` (`{ model, transport }`, its summarizer as a `"provider/name"` string or a
 `Model`/`ModelRouter`), `programmatic_tool_caller` (`{ allowedTools, timeout }`, the tools its
 sandboxed code may call and the run's time budget in seconds; `null` lifts each bound) and
-`subagent` (`{ maxDepth }`, how deep delegation may nest). The rest are on/off only. The same shape
+`subagent` (`{ maxDepth }`, how deep delegation may nest; `0` removes the tool). The rest are on/off only. The same shape
 works in a JSON profile, so a configured `builtinTools` mapping ports between the Python and
 TypeScript libraries unchanged (JSON keys are camelCase in both; only Python keyword arguments use
 `allowed_tools` and `max_depth`):
@@ -232,7 +232,8 @@ general-purpose delegate, enabled by default (it is just a name in `builtinTools
 that inherits this agent's configuration (its model, plugins, and interventions, so the gate
 reaches the delegate too), runs it in its own context, and returns a single final report. The
 child's tools are restricted to a subset of this agent's own (it can never gain a capability the
-parent lacks), and delegation depth is bounded so a delegate cannot recurse without limit. Drop
+parent lacks), it keeps every MCP server this agent has, and delegation depth is bounded so a
+delegate cannot recurse without limit. Drop
 `subagent` from `builtinTools` to turn it off:
 
 ```typescript
@@ -241,12 +242,13 @@ await createHarness({ builtinTools: { subagent: false } }) // subagent disabled
 ```
 
 The tool's model-facing parameters are derived from configuration. For a fully configured tool
-(custom roles, model tiers, fixed prompts), build one with `makeSubagent` and pass it via `tools`
-with `subagent` dropped from `builtinTools`. You supply the `builder`, a function that turns a
-resolved `AgentSpec` into the child agent (typically calling `createHarness`); this is the seam
-that makes the child a harness member. Delegation depth is bounded at two levels by default; pass
-`maxDepth` to change it. Each axis (`instructions`, `tools`, `mcpServers`, `model`, `context`) becomes a
-parameter, or not, depending on whether it is `Fixed`, `Inherit`, `Open`, or `Choice`:
+(custom roles, model tiers, fixed prompts), build one with `makeSubagent` (the SDK's, re-exported here
+with its axis types) and pass it via `tools` with `subagent` dropped from `builtinTools`. You supply the
+`builder`, a sync or async function that turns a resolved `AgentSpec` into the child agent (typically
+calling `createHarness`); this is the seam that makes the child a harness member. Delegation depth is
+bounded at two levels by default; pass `maxDepth` (at least 1) to change it. Each axis (`instructions`,
+`tools`, `model`, `context`) becomes a parameter, or not, depending on whether it is `Fixed`, `Inherit`,
+`Open`, or `Choice`; a `Choice` entry is a bare name or `new Option(name, value, description)`:
 
 ```typescript
 import { createHarness, makeSubagent, Fixed, Inherit, Preset, type AgentSpec } from '@strands-agents/harness'
@@ -254,14 +256,21 @@ import { createHarness, makeSubagent, Fixed, Inherit, Preset, type AgentSpec } f
 const NO_SUBAGENT = { subagent: false } // the defaults minus delegation; web_search stays provider-dependent
 
 const reviewer = makeSubagent({
-  builder: (spec: AgentSpec) => createHarness({ instructions: spec.instructions ?? undefined, builtinTools: NO_SUBAGENT }),
+  builder: (spec: AgentSpec) => createHarness({ instructions: spec.instructions, builtinTools: NO_SUBAGENT }),
   presets: { reviewer: new Preset({ instructions: 'You review diffs.', description: 'reviews diffs' }) },
-  instructions: new Fixed(null), // the role owns the prompt; parameter removed
+  instructions: new Fixed(), // the role owns the prompt; parameter removed
   model: new Inherit(),
 })
 
 const agent = await createHarness({ tools: [reviewer], builtinTools: NO_SUBAGENT })
 ```
+
+> **Breaking change:** the harness used to ship its own copy of this tool. Moving to the SDK's drops the
+> `mcpServers` parameter (a delegate always keeps every MCP server), `makeSubagent`'s `inheritedTools` /
+> `inheritedMcpServers` options, and `AgentSpec.task` / `context` / `lastMessages`. `Option` is now
+> `new Option(name, value, description)` (was `new Option(name, { value, description })`), the depth budget
+> lives at `appState` key `strands.subagent_depth` (was `subagentDepth`), child interrupt ids are namespaced as
+> `subagent:<toolUseId>:<id>`, and `maxDepth: 0` removes the tool.
 
 For focused expertise, wrap your own `Agent` instances with `Agent.asTool()` and pass them in
 `tools`; each becomes a tool the main agent can call, named after the agent's `name`. Every call
