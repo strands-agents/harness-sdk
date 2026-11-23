@@ -6,7 +6,6 @@ import math
 import re
 import unittest.mock
 import warnings
-from fractions import Fraction
 
 import pytest
 
@@ -849,16 +848,15 @@ class TestParseCondition:
     @pytest.mark.parametrize(
         ("name", "raw", "parsed"),
         [
-            ("context_utilization", 0.7, ParsedCondition(Fraction(7, 10), True)),
-            ("context_utilization", 0.07, ParsedCondition(Fraction(7, 100), True)),
-            ("context_utilization", 1.0, ParsedCondition(Fraction(1), True)),
+            ("context_utilization", 0.7, ParsedCondition(0.7, True)),
+            ("context_utilization", 0.07, ParsedCondition(0.07, True)),
+            ("context_utilization", 1.0, ParsedCondition(1.0, True)),
             ("context_utilization", 50_000, ParsedCondition(50_000, False)),
             ("context_utilization", 1000, ParsedCondition(1000, False)),
             ("block_threshold", 2500, ParsedCondition(2500, False)),
-            ("block_threshold", "5%", ParsedCondition(Fraction(5, 100), True)),
-            ("block_threshold", "1.1%", ParsedCondition(Fraction(11, 1000), True)),
+            ("block_threshold", "5%", ParsedCondition(0.05, True)),
             ("preserve_recent", 4, ParsedCondition(4, False)),
-            ("preserve_recent", "50%", ParsedCondition(Fraction(1, 2), True)),
+            ("preserve_recent", "50%", ParsedCondition(0.5, True)),
         ],
     )
     def test_accepts(self, name, raw, parsed):

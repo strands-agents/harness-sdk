@@ -7,7 +7,6 @@ import re
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from fractions import Fraction
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from typing_extensions import TypedDict
@@ -45,24 +44,24 @@ class OffloadConditions(TypedDict, total=False):
 
 @dataclass(frozen=True)
 class ParsedCondition:
-    """A condition's value: a count in the condition's unit, or, with ``is_share``, an exact fraction of a whole."""
+    """A condition's value: a count in the condition's unit, or, with ``is_share``, a fraction of a whole."""
 
-    value: int | Fraction
+    value: float
     is_share: bool
 
     def of(self, whole: int) -> int:
         """Return the count this condition stands for out of ``whole``, rounded up."""
         if not self.is_share:
             return int(self.value)
-        # Exact arithmetic: as a binary float, "1.1%" of 200,000 lands just above 2,200 and would round up to 2,201.
-        return math.ceil(self.value * whole)
+        # Rounded first, since a float product like 0.07 * 100 = 7.000000000000001 would otherwise ceil to 8.
+        return math.ceil(round(self.value * whole, 9))
 
 
 @dataclass(frozen=True)
 class _ConditionRule:
     """The accepted range for a share, the smallest whole count, the accepted forms, and the share form."""
 
-    share_in_range: Callable[[Fraction], bool]
+    share_in_range: Callable[[float], bool]
     min_count: int
     expected: str
     fraction_share: bool = False
@@ -116,13 +115,12 @@ def parse_condition(name: str, raw: Any) -> ParsedCondition | None:
     raise ValueError(f"{name}={shown} is invalid: expected {rule.expected}{_share_hint(rule, raw)}")
 
 
-def _share(rule: _ConditionRule, raw: Any) -> Fraction | None:
-    """The exact share a value written in the rule's share form stands for, or None when it is not in that form."""
+def _share(rule: _ConditionRule, raw: Any) -> float | None:
+    """The share a value written in the rule's share form stands for, or None when it is not in that form."""
     if rule.fraction_share:
-        # Via the decimal string, so 0.07 is exactly 7/100 rather than the nearest binary float.
-        return Fraction(str(raw)) if isinstance(raw, float) and math.isfinite(raw) else None
+        return raw if isinstance(raw, float) and math.isfinite(raw) else None
     if isinstance(raw, str) and _PERCENT_PATTERN.fullmatch(raw):
-        return Fraction(raw[:-1]) / 100
+        return float(raw[:-1]) / 100
     return None
 
 
@@ -134,8 +132,8 @@ def _share_hint(rule: _ConditionRule, raw: Any) -> str:
         raw = float(raw[:-1])
     if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not 0 < raw <= 100:
         return ""
-    share = Fraction(str(raw)) if raw <= 1 else Fraction(str(raw)) / 100
-    percent = f"{float(share * 100):g}"
+    share = raw if raw <= 1 else raw / 100
+    percent = f"{share * 100:g}"
     if rule.fraction_share:
         return f"; for {percent}%, write {float(share)!r}"
     return f'; for {percent}%, write "{percent}%"'
@@ -184,8 +182,7 @@ class ResolvedConditions:
         if utilization is None or context.overflow:
             return True
         if utilization.is_share:
-            # As a float, since the measured utilization is one: exact 7/10 sits above the float 0.7.
-            return context.utilization >= float(utilization.value)
+            return context.utilization >= utilization.value
         return context.utilization >= utilization.value / _effective_window_limit(context.agent)
 
     def threshold_tokens(self, agent: Agent) -> int | None:
