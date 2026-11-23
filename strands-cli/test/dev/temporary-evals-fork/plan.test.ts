@@ -10,6 +10,7 @@ import {
   temporaryCaseSplit,
   temporaryOptimizeWarning,
   temporaryRolloutEstimate,
+  temporaryRolloutPhases,
   temporarySplitChoices,
   temporarySplitShares,
   temporaryValidatedFinalists,
@@ -81,6 +82,17 @@ describe('TEMPORARY optimize plan', () => {
   it('shouldTakeAnyWholeBudgetValueFromTheOptimizerMinimum', () => {
     expect([3, 10, 0].map((value) => isTemporaryBudgetValue('iterations', value))).toEqual([true, true, true])
     expect([3, 7, 0, 1.5].map((value) => isTemporaryBudgetValue('width', value))).toEqual([true, true, false, false])
+  })
+
+  it('shouldSplitTheEstimateIntoTheSearchAndTheTwoChecksThatRunAfterIt', () => {
+    const plan = { split: { train: 4, validation: 2, test: 2 }, repetitions: 1, iterations: 1, width: 4, finalists: 2 }
+
+    const phases = temporaryRolloutPhases(plan)
+
+    expect(phases).toEqual({ search: 20, validation: 6, test: 4 })
+    expect(temporaryRolloutEstimate({ ...plan, evaluators: 1 }).rollouts).toBe(
+      phases.search + phases.validation + phases.test
+    )
   })
 
   it.each([

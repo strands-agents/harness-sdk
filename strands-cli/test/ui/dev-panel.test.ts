@@ -131,6 +131,28 @@ const reviewerTask = () =>
     },
   })
 
+const OPTIMIZE_TOOL = 'strands_dev_optimize'
+
+const backgroundTasks = (...labels: string[]) =>
+  idleBackend({
+    watchTasks(listener) {
+      listener(labels.map((label) => ({ id: label, label, status: 'working', source: 'background' })))
+      return () => {}
+    },
+  })
+
+const optimizeWithJobs = () => {
+  const { command, jobs } = experimentWithJobs()
+  return {
+    command: {
+      ...command,
+      spec: { name: 'optimize', usage: '/optimize', description: 'Optimize' },
+      backgroundTools: [OPTIMIZE_TOOL],
+    } satisfies DevChatCommand,
+    jobs,
+  }
+}
+
 describe('dev command panels', () => {
   it('shouldDrawTheDevPanelAboveThePromptWhenADevCommandOpens', async () => {
     const { command } = probe()
@@ -278,6 +300,27 @@ describe('dev jobs row', () => {
     expect(open).toHaveBeenLastCalledWith(expect.anything(), { job: 'a' })
   })
 
+  it.each([
+    ['ShowsItItself', true, undefined],
+    ['LeavesItToThePanel', false, { kind: 'dev', title: '/experiment' }],
+  ])('shouldAskTheCommandFirstWhenAJobIsOpenedAndItThen%s', async (_case, shown, panel) => {
+    const { command, jobs, open } = experimentWithJobs()
+    const openJob = vi.fn(() => shown)
+    const { controller, instance, click } = await mount({ ...command, openJob })
+    jobs.set([{ id: 'a', label: 'refunds', done: 3, total: 20 }])
+    await instance.waitUntilRenderFlush()
+
+    await click('refunds 3/20')
+
+    await vi.waitFor(() => expect(openJob).toHaveBeenCalledWith(expect.anything(), 'a'))
+    await vi.waitFor(() =>
+      panel
+        ? expect(controller.getSnapshot().panel).toMatchObject(panel)
+        : expect(controller.getSnapshot().panel).toBeUndefined()
+    )
+    expect(open).toHaveBeenCalledTimes(shown ? 0 : 1)
+  })
+
   it('shouldOpenTheChosenJobWhenTheUserPressesDownThenRightThenEnter', async () => {
     const { command, jobs, open } = experimentWithJobs()
     const { controller, instance, press, row } = await mount(command)
@@ -324,6 +367,55 @@ describe('dev jobs row', () => {
 
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/experiment' }))
     expect(open).toHaveBeenLastCalledWith(expect.anything(), { job: 'a' })
+  })
+
+  it('shouldNotListTheBackgroundRunOfAToolWhoseCommandShowsItsProgress', async () => {
+    const { command, jobs } = optimizeWithJobs()
+    const { row, screen } = await mount(command, 40, backgroundTasks(OPTIMIZE_TOOL))
+    await vi.waitFor(() => expect(row(`Background · ● ${OPTIMIZE_TOOL}`)).toBeGreaterThan(0))
+
+    jobs.set([{ id: 'run-1', label: '20261122-234850-combined-all', done: 1, total: 17 }])
+
+    await vi.waitFor(() => expect(row('/optimize · ● 20261122-234850-combined-all 1/17')).toBeGreaterThan(0))
+    expect(screen()).not.toContain('Background ·')
+    expect(screen()).not.toContain(OPTIMIZE_TOOL)
+  })
+
+  it('shouldKeepListingOtherBackgroundWorkBesideTheProgressOfACommand', async () => {
+    const { command, jobs } = optimizeWithJobs()
+    const { row, screen } = await mount(command, 40, backgroundTasks(OPTIMIZE_TOOL, 'Reviewer'))
+
+    jobs.set([{ id: 'run-1', label: 'combined-all', done: 1, total: 17 }])
+
+    await vi.waitFor(() => expect(row('/optimize · ● combined-all 1/17')).toBeGreaterThan(0))
+    expect(row('Background · ● Reviewer')).toBeGreaterThan(0)
+    expect(screen()).not.toContain(OPTIMIZE_TOOL)
+    expect(screen()).not.toContain('Background 1/2')
+  })
+
+  it('shouldListTheBackgroundRunOfAToolWhileItsCommandOnlyHasAJobThatWaitsOnTheDeveloper', async () => {
+    const { command, jobs } = optimizeWithJobs()
+    const { row } = await mount(command, 40, backgroundTasks(OPTIMIZE_TOOL))
+
+    jobs.set([{ id: 'run-0', label: 'earlier-run · 1 to review', waiting: true }])
+
+    await vi.waitFor(() => expect(row('/optimize · ● earlier-run · 1 to review')).toBeGreaterThan(0))
+    expect(row(`Background · ● ${OPTIMIZE_TOOL}`)).toBeGreaterThan(0)
+  })
+
+  it('shouldOpenTheJobAndNotAHiddenBackgroundTaskWhenTheUserPressesDownThenEnter', async () => {
+    const { command, jobs } = optimizeWithJobs()
+    const open = vi.fn(command.open)
+    const { controller, press, row } = await mount({ ...command, open }, 40, backgroundTasks(OPTIMIZE_TOOL))
+    jobs.set([{ id: 'run-1', label: 'combined-all', done: 1, total: 17 }])
+    await vi.waitFor(() => expect(row('/optimize · ● combined-all 1/17')).toBeGreaterThan(0))
+
+    await press(DOWN)
+    expect(row('←→ Enter Esc')).toBe(row('/optimize · ● combined-all 1/17'))
+    await press('\r')
+
+    await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/optimize' }))
+    expect(open).toHaveBeenLastCalledWith(expect.anything(), { job: 'run-1' })
   })
 
   it.each([40, 24])('shouldFitTheScreenWithTheRowAndAnOpenPanelAt%iRows', async (rows) => {

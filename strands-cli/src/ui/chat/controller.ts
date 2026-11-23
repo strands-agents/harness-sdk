@@ -1237,6 +1237,19 @@ export class ChatController implements ChatControllerApi {
     return this._applySettings(settings, 'settings')
   }
 
+  /** Settings already saved outside this chat, applied without writing them back. */
+  applyExternalSettings(settings: ChatSettings): void {
+    if (this._closed) return
+    this._settings = globalThis.structuredClone(settings)
+    if (this._panel?.kind === 'settings') {
+      this._panel = {
+        ...this._panel,
+        rows: sanitizeRows(this._settingsCategoryRows(this._panel.settingsCategory ?? DEFAULT_SETTINGS_CATEGORY)),
+      }
+    }
+    this._emit()
+  }
+
   async activatePanelRow(row: ChatPanelRow): Promise<boolean> {
     if (!this._panel || !row.value || this._resourceChanging) {
       return false
@@ -3072,6 +3085,7 @@ export class ChatController implements ChatControllerApi {
   openDevCommand(name: string, opening?: DevPanelOpening): boolean {
     const devCommand = this._devCommand(name)
     if (!devCommand || this._closed || this._panel?.kind === 'permission') return false
+    if (opening?.job !== undefined && devCommand.openJob?.(this._devCommandContext(), opening.job)) return true
     if (devCommand.skill) {
       // A skill command has no panel to restore; a job click asks the chat about that job.
       if (opening?.restore) return false
@@ -3107,17 +3121,31 @@ export class ChatController implements ChatControllerApi {
         if (this._panel?.id === opened.id) this._dismissPanel(false)
       },
       openCommand: (name) => this.openDevCommand(name),
+      ...(devCommand.sticky ? { sticky: true } : {}),
+      ...(devCommand.dock ? { dock: (): boolean => devCommand.dock!() } : {}),
+      ...(devCommand.wideDock ? { wideDock: (): boolean => devCommand.wideDock!() } : {}),
+      ...(devCommand.dropPending ? { dropPending: (): boolean => devCommand.dropPending!() } : {}),
+      ...(devCommand.contentRows
+        ? { contentRows: (width: number): number | undefined => devCommand.contentRows!(width) }
+        : {}),
     }
     const opened = underPermission ? this._makePanel(panel) : this._openPanel(panel)
     if (underPermission) this._panelStack.push(opened)
   }
 
   private _devJobs(): DevChatJobGroup[] {
-    return this._devCommands.flatMap(({ spec, jobs }) => {
-      const running = jobs?.snapshot() ?? []
-      return running.length > 0
-        ? [{ command: spec.name, jobs: running.map((job) => ({ ...job, label: jobLabel(job.label) })) }]
-        : []
+    return this._devCommands.flatMap(({ spec, jobs, backgroundTools = [] }) => {
+      const listed = jobs?.snapshot() ?? []
+      if (listed.length === 0) return []
+      // Only a job that is running stands for its tool: one that waits on the developer says nothing of a new run.
+      const working = listed.some(({ waiting }) => !waiting)
+      return [
+        {
+          command: spec.name,
+          jobs: listed.map((job) => ({ ...job, label: jobLabel(job.label) })),
+          ...(working && backgroundTools.length > 0 ? { covers: backgroundTools } : {}),
+        },
+      ]
     })
   }
 

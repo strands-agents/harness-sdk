@@ -6,15 +6,18 @@ import { CliConfigStore } from '../../src/config/store.js'
 import * as choices from '../../src/dev/agent-choices.js'
 import { AgentOptionConflict, AgentOptionsNotEditable } from '../../src/dev/agent-options.js'
 import {
+  adoptBaseCliWorkspaceLook,
+  BASE_CLI_LOOK,
   editBaseCliProfile,
   isProfileBaseCli,
   profileBaseCliChat,
+  promoteBaseCliLook,
   refreshBaseCliView,
   saveBaseCliChoices,
   savedProjectChoices,
   sessionModelSyncEnabled,
 } from '../../src/dev/base-cli.js'
-import { updateWorkspaceCli } from '../../src/dev/binding.js'
+import { readWorkspaceBinding, updateWorkspaceCli } from '../../src/dev/binding.js'
 import { createDevWorkspace } from '../../src/dev/create.js'
 import * as installer from '../../src/project/archive.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
@@ -227,15 +230,165 @@ describe('profileBaseCliChat', () => {
     expect(await profileBaseCliChat(workspace, path)).toBeUndefined()
   })
 
-  it('shouldWriteTheViewAgainWithoutAChatReloadWhenCliTomlChanges', async () => {
+  it('shouldHotReloadTheChatWhenCliTomlChangesOnDisk', async () => {
     const { path, workspace, view } = await baseCli()
     const chat = await profileBaseCliChat(workspace, path)
     await writeFile(path, profileToml('Answer in full sentences.'))
 
-    expect(await chat!.configWatch.changed()).toBe(false)
+    expect(await chat!.configWatch.changed()).toBe(true)
 
     expect(chat!.configWatch.path).toBe(path)
     expect(await view()).toContain("instructions: 'Answer in full sentences.'")
+  })
+
+  it('shouldNotReloadTheChatAgainWhenTheViewAlreadyMatches', async () => {
+    const { path, workspace } = await baseCli()
+    const chat = await profileBaseCliChat(workspace, path)
+    await writeFile(path, profileToml('Answer in full sentences.'))
+    await chat!.configWatch.changed()
+
+    expect(await chat!.configWatch.changed()).toBe(false)
+  })
+})
+
+describe('the look of the Base CLI', () => {
+  const withSettings = (settings: string): string => `${profileToml('Answer briefly.')}\n[settings]\n${settings}\n`
+
+  const savedSettings = async (path: string) => (await snapshotOf(path)).settings
+
+  const workspaceCli = async (directory: string) => (await readWorkspaceBinding(directory))?.binding.cli
+
+  /** The settings of a dev chat: cli.toml as dev reads it, what dev switches off, and the workspace on top. */
+  const devSettings = async (path: string, directory: string) => {
+    const config = await CliConfigStore.load(path, { persist: false })
+    await config.setSettings({ telemetry: false, updatePrompts: false })
+    await config.useLayer({
+      source: join(directory, '.config'),
+      read: () => workspaceCli(directory),
+      write: (sections) => updateWorkspaceCli(directory, sections),
+    })
+    return config
+  }
+
+  const opened = async (settings = 'frogTheme = "spectre"', held?: Record<string, unknown>) => {
+    const { path, workspace } = await baseCli(withSettings(settings))
+    const directory = workspace.directory!
+    if (held) await updateWorkspaceCli(directory, held)
+    return { path, workspace, directory }
+  }
+
+  it('shouldBeTheAppearanceSettings', () => {
+    expect(BASE_CLI_LOOK).toEqual(['frogTheme', 'transcriptSpacing', 'animations', 'showReasoning', 'toolOutput'])
+  })
+
+  it('shouldSaveAThemePickedInDevToCliTomlAndNotToTheWorkspace', async () => {
+    const { path, workspace, directory } = await opened()
+    const config = await devSettings(path, directory)
+    const chat = await profileBaseCliChat(workspace, path)
+
+    await chat!.saveSettings(config, { frogTheme: 'green' })
+
+    expect((await savedSettings(path)).frogTheme).toBe('green')
+    expect(config.snapshot().settings.frogTheme).toBe('green')
+    expect(await workspaceCli(directory)).toBeUndefined()
+  })
+
+  it('shouldKeepWhatIsNotTheLookInTheWorkspaceAndSaveNothingElseToCliToml', async () => {
+    const { path, workspace, directory } = await opened()
+    const config = await devSettings(path, directory)
+    const chat = await profileBaseCliChat(workspace, path)
+
+    await chat!.saveSettings(config, { uiAutofill: true, toolOutput: 'full' })
+
+    // Dev switched telemetry off for its own session, and that is not a choice to save for plain strands.
+    expect(await savedSettings(path)).toMatchObject({ toolOutput: 'full', uiAutofill: false, telemetry: true })
+    expect(config.snapshot().settings).toMatchObject({ toolOutput: 'full', uiAutofill: true, telemetry: false })
+    expect(await workspaceCli(directory)).toEqual({ settings: { uiAutofill: true } })
+  })
+
+  it('shouldTakeAThemeThatPlainStrandsSavedIntoTheOpenDevChatWithoutReloadingTheAgent', async () => {
+    const { path, workspace, directory } = await opened()
+    const config = await devSettings(path, directory)
+    const chat = await profileBaseCliChat(workspace, path)
+    await writeFile(path, withSettings('frogTheme = "scarlet"\ntelemetry = true'))
+
+    const reload = await chat!.configWatch.changed(config)
+
+    expect(reload).toBe(false)
+    expect(config.snapshot().settings).toMatchObject({ frogTheme: 'scarlet', telemetry: false })
+    expect(await workspaceCli(directory)).toBeUndefined()
+  })
+
+  it('shouldMoveAThemeThatTheWorkspaceStillHoldsIntoCliTomlWhenDevOpensIt', async () => {
+    const { path, directory } = await opened('frogTheme = "spectre"', {
+      settings: { frogTheme: 'green', uiAutofill: true },
+    })
+    const config = await devSettings(path, directory)
+    const shownBefore = config.snapshot().settings.frogTheme
+
+    await promoteBaseCliLook(config, await workspaceCli(directory), path)
+
+    expect(shownBefore).toBe('green')
+    expect((await savedSettings(path)).frogTheme).toBe('green')
+    expect(config.snapshot().settings).toMatchObject({ frogTheme: 'green', uiAutofill: true })
+    expect(await workspaceCli(directory)).toEqual({ settings: { uiAutofill: true } })
+  })
+
+  it('shouldTakeOverAThemeThatTheWorkspaceStillHoldsWhenPlainStrandsStarts', async () => {
+    const permissions = { mode: 'default', allow: ['shell'], deny: [] }
+    const { path, directory } = await opened('frogTheme = "spectre"', {
+      settings: { frogTheme: 'green', uiAutofill: true },
+      permissions,
+    })
+    const config = await CliConfigStore.load(path)
+
+    await adoptBaseCliWorkspaceLook(config, directory)
+
+    expect(config.snapshot().settings.frogTheme).toBe('green')
+    expect((await savedSettings(path)).frogTheme).toBe('green')
+    expect(await workspaceCli(directory)).toEqual({ settings: { uiAutofill: true }, permissions })
+  })
+
+  it('shouldDropTheSettingsOfTheWorkspaceWhenTheLookWasAllItHeld', async () => {
+    const { path, directory } = await opened('frogTheme = "spectre"', { settings: { frogTheme: 'green' } })
+
+    await adoptBaseCliWorkspaceLook(await CliConfigStore.load(path), directory)
+
+    expect(await workspaceCli(directory)).toBeUndefined()
+  })
+
+  it.each([
+    ['holds no look', { settings: { uiAutofill: true } }],
+    ['holds a theme that does not exist', { settings: { frogTheme: 'neon' } }],
+    ['holds no settings', undefined],
+  ])('shouldLeaveBothFilesAloneWhenTheWorkspace%s', async (_case, held) => {
+    const { path, directory } = await opened('frogTheme = "spectre"', held)
+    const before = [await readFile(path, 'utf8'), await readFile(join(directory, '.config'), 'utf8')]
+
+    await adoptBaseCliWorkspaceLook(await CliConfigStore.load(path), directory)
+
+    expect([await readFile(path, 'utf8'), await readFile(join(directory, '.config'), 'utf8')]).toEqual(before)
+  })
+
+  it('shouldNotTakeTheLookOfAWorkspaceThatIsNotTheBaseClis', async () => {
+    const { path, directory } = await opened('frogTheme = "spectre"', { settings: { frogTheme: 'green' } })
+    const binding = JSON.parse(await readFile(join(directory, '.config'), 'utf8')) as { origin: object }
+    await writeFile(join(directory, '.config'), JSON.stringify({ ...binding, origin: { kind: 'discovered' } }))
+
+    await adoptBaseCliWorkspaceLook(await CliConfigStore.load(path), directory)
+
+    expect((await savedSettings(path)).frogTheme).toBe('spectre')
+    expect(await workspaceCli(directory)).toEqual({ settings: { frogTheme: 'green' } })
+  })
+
+  it('shouldNotFailWhenThereIsNoBaseCliWorkspace', async () => {
+    const home = await temporaryDirectory()
+    const path = join(home, 'cli.toml')
+    await writeFile(path, withSettings('frogTheme = "spectre"'))
+
+    await adoptBaseCliWorkspaceLook(await CliConfigStore.load(path), join(home, 'strands-dev'))
+
+    expect((await savedSettings(path)).frogTheme).toBe('spectre')
   })
 })
 

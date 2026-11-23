@@ -8,7 +8,7 @@ import {
   type ChatPanelSlider,
   type ChatSnapshot,
 } from './chat/controller.js'
-import { isActiveTask } from './chat/state.js'
+import { listedBackgroundTasks } from './chat/state.js'
 import { resolveModelTarget } from '../model/selection.js'
 import { COMPOSER_PANEL_HEIGHT, MIN_PROMPT_HEIGHT } from '../terminal/composer.js'
 import { type MouseInput } from '../terminal/mouse-input.js'
@@ -59,6 +59,8 @@ export const FULL_LOCKUP_TOP_PADDING = 6
 export const COMPACT_LOCKUP_TOP_PADDING = 2
 const CONFIG_DOCK_MIN_WIDTH = 34
 const CONFIG_DOCK_MAX_WIDTH = 52
+const WIDE_DOCK_WIDTH_RATIO = 0.62
+const WIDE_DOCK_MAX_WIDTH = 92
 const CONFIG_DOCK_WIDTH_RATIO = 0.42
 const SECTIONED_PANEL_SIDEBAR_DIVISOR = 3
 const DEV_PANEL_MIN_HEIGHT = 8
@@ -122,10 +124,11 @@ export function startupLockupLeft(width: number, lockupWidth: number, offset = 0
   return Math.max(0, Math.min(width - lockupWidth, Math.round((width - lockupWidth) / 2 + offset)))
 }
 
-export function devPanelHeight(terminalHeight: number, commandDeckHeight: number): number {
+/** A dev panel's rows above the chat input: half the terminal, or nearly all of it for a `reading` panel. */
+export function devPanelHeight(terminalHeight: number, commandDeckHeight: number, reading = false): number {
   const room = Math.max(0, terminalHeight - commandDeckHeight)
-  const half = Math.round(terminalHeight / 2)
-  return Math.min(room, Math.max(DEV_PANEL_MIN_HEIGHT, Math.min(half, room - DEV_PANEL_TRANSCRIPT_ROWS)))
+  const share = reading ? room : Math.round(terminalHeight / 2)
+  return Math.min(room, Math.max(DEV_PANEL_MIN_HEIGHT, Math.min(share, room - DEV_PANEL_TRANSCRIPT_ROWS)))
 }
 
 export function composerPanelContentHeight(panel: ChatPanel | undefined, height: number): number {
@@ -176,9 +179,7 @@ export function composerStatusLayout(
   const rows = composerStatusRows(snapshot)
   const height = Math.min(rows, Math.max(2, Math.floor(terminalHeight / 3)))
   const viewportHeight = height - Number(rows > height)
-  const backgroundHeight = Number(
-    snapshot.tasks.some((task) => task.source === 'background' && isActiveTask(task.status))
-  )
+  const backgroundHeight = Number(listedBackgroundTasks(snapshot).length > 0)
   return {
     height:
       height +
@@ -194,11 +195,13 @@ export function sectionedPanelSidebarWidth(panelWidth: number, preferredWidth = 
   return Math.max(1, Math.min(Math.floor(panelWidth / SECTIONED_PANEL_SIDEBAR_DIVISOR), preferredWidth))
 }
 
-export function configurationDockWidth(terminalWidth: number, explicit = false): number {
+/** `wide` is for a dock holding lines to read, such as a file change, which 42% of the width cuts. */
+export function configurationDockWidth(terminalWidth: number, explicit = false, wide = false): number {
   const contentWidth = Math.max(1, terminalWidth - 2)
+  const ratio = wide ? WIDE_DOCK_WIDTH_RATIO : CONFIG_DOCK_WIDTH_RATIO
   const splitWidth = Math.min(
-    CONFIG_DOCK_MAX_WIDTH,
-    Math.max(CONFIG_DOCK_MIN_WIDTH, Math.floor(contentWidth * CONFIG_DOCK_WIDTH_RATIO))
+    wide ? WIDE_DOCK_MAX_WIDTH : CONFIG_DOCK_MAX_WIDTH,
+    Math.max(CONFIG_DOCK_MIN_WIDTH, Math.floor(contentWidth * ratio))
   )
   return explicit && terminalWidth < CONFIG_DOCK_MIN_TERMINAL_WIDTH ? contentWidth : Math.min(contentWidth, splitWidth)
 }

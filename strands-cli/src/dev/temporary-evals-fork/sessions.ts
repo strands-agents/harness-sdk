@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, relative, resolve } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
-import type { DevChatJob } from '../../ui/chat/types.js'
+import type { DevChatJob, DevChatNotice } from '../../ui/chat/types.js'
 import { WizardBroker } from '../../ui/panels/wizard-request.js'
 import { isRecord } from '../../values.js'
 import { editAgentOptions } from '../agent-options.js'
@@ -32,6 +32,7 @@ import {
   type TestState,
 } from '../panels/model.js'
 import { locateTemporaryEdit } from './apply.js'
+import { reviewOptimizeRun } from './review-run.js'
 import {
   clearUnreadableCaseResults,
   dropTemporaryRunRecord,
@@ -90,6 +91,7 @@ import {
   temporaryCaseSplit,
   temporaryOptimizeWarning,
   temporaryRolloutEstimate,
+  temporaryRolloutPhases,
   temporarySplitChoices,
   temporarySplitShares,
   temporaryValidatedFinalists,
@@ -103,6 +105,7 @@ import {
   temporaryStudyReader,
   type TemporaryUsageProfile,
   type TemporaryMeasurement,
+  type TemporaryRolloutPhases,
   type TemporaryStudyOutcome,
   type TemporaryTestDifference,
 } from './study.js'
@@ -118,6 +121,8 @@ export interface TemporaryAppliedChange {
   readonly testCheck?: TestCheck
   readonly edits: readonly ProposedEdit[]
   readonly error?: string
+  /** Auto-optimize wrote these edits as the run ended: the developer did not see them first. */
+  readonly auto?: boolean
 }
 
 export interface TemporaryDevSessions {
@@ -132,6 +137,9 @@ export interface TemporaryDevSessions {
 
 const DEFAULT_ITERATIONS = 4
 const SOURCE_SETTLE_MS = 300
+const RELOAD_WINDOW_MS = 15_000
+// Auto-optimize writes as the agent starts reporting the run, and the reload waits for that turn to end.
+const AUTO_RELOAD_WINDOW_MS = 120_000
 const WIDTH = 4
 const REPETITIONS = 1
 const WORKERS = 4
@@ -178,19 +186,42 @@ export const temporaryTestJobs = ({ runs }: TestState): DevChatJob[] =>
     run.status === 'running' ? [{ id: experiment.path, label: experiment.name, done: run.done, total: run.cases }] : []
   )
 
+/** The writable edits of a finished run that still wait for the developer's yes or no. */
+export const temporaryEditsAwaitingAnswer = ({ reviewed, edits = [] }: OptimizeReview): number =>
+  reviewed ? 0 : edits.filter(({ unavailable, decided }) => unavailable === undefined && !decided).length
+
+const editsToReview = (state: OptimizeRunState): number =>
+  state.step === 'review' ? temporaryEditsAwaitingAnswer(state.review) : 0
+
+/** Whether the run has an edit waiting for the developer's answer. */
+export const temporaryRunAwaitsReview = ({ runs = [] }: OptimizeState, id: string): boolean =>
+  runs.some((run) => run.id === id && editsToReview(run.state) > 0)
+
+/** A finished run stays listed while an edit of it waits for an answer on screen; with nothing waiting, it goes. */
 export const temporaryOptimizeJobs = ({ runs = [] }: OptimizeState): DevChatJob[] =>
-  runs.flatMap(({ id, state }) =>
-    state.step === 'running'
-      ? [
-          {
-            id,
-            label: state.progress.run,
-            done: measuredVersions(state.progress),
-            total: state.progress.planned,
-          },
-        ]
+  runs.flatMap(({ id, state }) => {
+    if (state.step === 'running') {
+      // The whole run in rollouts, so the count is full only when the finalists and the test have run too.
+      const { done, total } = state.progress.rollouts ?? {
+        done: measuredVersions(state.progress),
+        total: state.progress.planned,
+      }
+      return [{ id, label: state.progress.run, done, total }]
+    }
+    const edits = editsToReview(state)
+    return edits > 0 && state.step === 'review'
+      ? [{ id, label: `${state.review.run} · ${edits} to review`, done: 1, total: 1, waiting: true }]
       : []
-  )
+  })
+
+/** Every edit the screen would have offered, answered with apply: what auto-optimize does in the developer's place. */
+const autoAnswered = (review: OptimizeReview): OptimizeReview => ({
+  ...review,
+  auto: true,
+  edits: review.edits.map((edit) =>
+    edit.unavailable === undefined ? { ...edit, accepted: true, decided: true } : edit
+  ),
+})
 
 type EditWriter = (after: string) => Promise<void>
 
@@ -206,19 +237,36 @@ interface RunEntry {
   writers: Map<number, EditWriter>
   changes: readonly TemporaryKnobChange[]
   sources: FSWatcher | undefined
+  /** The notice that a review came back with strands dev, kept so it stops asking once the review is over. */
+  reminder?: DevChatNotice | undefined
 }
 
-const startingProgress = (plan: RunPlan, startedAt: number): OptimizeProgress => ({
-  run: 'starting',
-  record: '',
-  metric: '',
-  iterations: plan.iterations,
-  planned: 1 + plan.iterations * plan.width,
-  trainCases: plan.split.train,
-  candidates: [],
-  startedAt,
-  stopping: false,
-})
+/** The rollouts the plan allows in each part of the run: the same numbers its estimate adds up. */
+const plannedRollouts = (plan: RunPlan): TemporaryRolloutPhases =>
+  temporaryRolloutPhases({
+    split: plan.split,
+    repetitions: plan.repetitions,
+    iterations: plan.iterations,
+    width: plan.width,
+    finalists: plan.decision.finalists,
+    pareto: isTemporaryPareto(plan.objective ?? NO_OBJECTIVE),
+  })
+
+const startingProgress = (plan: RunPlan, startedAt: number): OptimizeProgress => {
+  const { search, validation, test } = plannedRollouts(plan)
+  return {
+    run: 'starting',
+    record: '',
+    metric: '',
+    iterations: plan.iterations,
+    planned: 1 + plan.iterations * plan.width,
+    trainCases: plan.split.train,
+    candidates: [],
+    rollouts: { done: 0, total: search + validation + test },
+    startedAt,
+    stopping: false,
+  }
+}
 
 const firstLine = (text: string): string =>
   text
@@ -551,6 +599,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
   private usageProfile: TemporaryUsageProfile | undefined
   private evaluatorNames: readonly string[] = []
   private resumed: Promise<void> | undefined
+  private carried: { status: 'success' | 'error'; text: string; at: number; lasts: number } | undefined
   private catalog: readonly TemporaryKnob[] = []
   private page: OptimizePage = { step: 'pick' }
   private shown: string | undefined
@@ -677,9 +726,9 @@ export class TemporaryOptimize extends Store<OptimizeState> {
     entry.abort.abort()
   }
 
-  accept(index: number, accepted: boolean): void {
-    const entry = this.shownEntry()
-    if (entry?.state.step !== 'review') return
+  accept(index: number, accepted: boolean, run?: string): void {
+    const entry = this.reviewedEntry(run)
+    if (entry?.state.step !== 'review' || entry.state.review.applied) return
     if (entry.state.review.edits[index]?.unavailable) {
       if (accepted) void this.recheck(entry, true, index)
       return
@@ -690,19 +739,73 @@ export class TemporaryOptimize extends Store<OptimizeState> {
       step: 'review',
       review: {
         ...review,
-        edits: review.edits.map((edit, position) => (position === index ? { ...edit, accepted } : edit)),
+        edits: review.edits.map((edit, position) => (position === index ? { ...edit, accepted, decided: true } : edit)),
       },
     })
   }
 
-  apply(): void {
-    const entry = this.shownEntry()
+  apply(run?: string): void {
+    const entry = this.reviewedEntry(run)
     if (entry) void this.applyAccepted(entry)
+  }
+
+  autoApplies(): boolean {
+    return this.host().autoOptimize?.() ?? false
+  }
+
+  finishReview(id: string): void {
+    const entry = this.entries.get(id)
+    if (entry?.state.step !== 'review') return
+    this.updateRun(entry, { step: 'review', review: { ...entry.state.review, reviewed: true } })
+    this.settleReview(entry)
+  }
+
+  leaveReview(id: string): void {
+    const entry = this.entries.get(id)
+    if (entry?.state.step !== 'review' || entry.state.review.reviewed) return
+    const offered = entry.state.review.edits.filter(({ unavailable }) => unavailable === undefined)
+    const answered = offered.filter(({ decided }) => decided).length
+    // With one edit the status line says it all. With several, say where the answers given so far went.
+    if (answered === 0 || answered === offered.length) return
+    announce(
+      this.host(),
+      'success',
+      `optimize · run ${entry.state.review.run} · ${answered} of ${offered.length} edits answered · nothing is written until all are · ↓ Enter`
+    )
+  }
+
+  /** Called with a run whose review is over, however it ended, so a question still on screen about it can go. */
+  onSettled: ((id: string) => void) | undefined
+
+  /** Nothing of the run waits on the developer any more: its record goes, and so does a question still asking. */
+  private settleReview(entry: RunEntry): void {
+    if (entry.record) void dropTemporaryOptimizeRecord({ record: entry.record }).catch(() => undefined)
+    if (entry.record)
+      entry.reminder?.update('success', `optimize · run ${temporaryOptimizationRunName(entry.record)} · reviewed`)
+    entry.reminder = undefined
+    this.onSettled?.(entry.id)
   }
 
   resume(): Promise<void> {
     this.resumed ??= this.resumeRecords()
     return this.resumed
+  }
+
+  /** Says the last applied notice once to the chat that the write's reload opens, and to no later one. */
+  reannounce(): void {
+    const notice = this.carried
+    this.carried = undefined
+    if (notice && Date.now() - notice.at < notice.lasts) announce(this.host(), notice.status, notice.text)
+  }
+
+  /** Called with a run that has edits to read, so a finished run shows them rather than waiting to be found. */
+  onReview: ((id: string) => void) | undefined
+
+  /** Points accept and apply at one run without moving the panel to it. */
+  focusRun(id: string): boolean {
+    if (this.entries.get(id)?.state.step !== 'review') return false
+    this.shown = id
+    return true
   }
 
   appliedChanges(): readonly TemporaryAppliedChange[] {
@@ -711,6 +814,11 @@ export class TemporaryOptimize extends Store<OptimizeState> {
 
   private shownEntry(): RunEntry | undefined {
     return this.shown === undefined ? undefined : this.entries.get(this.shown)
+  }
+
+  /** Several runs can wait for review at once, and the shown one moves as each finishes, so a walk names its own. */
+  private reviewedEntry(run: string | undefined): RunEntry | undefined {
+    return run === undefined ? this.shownEntry() : this.entries.get(run)
   }
 
   private addRun(experiment: string, startedAt: number, state: OptimizeRunState, listed = true): RunEntry {
@@ -885,7 +993,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
       await temporaryWorkspaceReady(this.workspaceDirectory())
       records = await readTemporaryOptimizeRecords(this.workspaceDirectory())
     } catch (error) {
-      announce(this.host(), 'error', `optimize · /optimize cannot read its unfinished run: ${errorMessage(error)}`)
+      announce(this.host(), 'error', `optimize · an unfinished run cannot be read: ${errorMessage(error)}`)
       return
     }
     const known = new Set([...this.entries.values()].map(({ record }) => record))
@@ -903,10 +1011,11 @@ export class TemporaryOptimize extends Store<OptimizeState> {
       })
       entry.record = saved.record
       this.publish()
+      if (saved.awaitsReview) return await this.restoreReview(entry, saved, knobs)
       if (await isTemporaryOptimizeAlive(saved)) return await this.follow(entry, plan, knobs, saved)
       if (await hasTemporaryRunResult(saved.record)) {
         await this.finish(entry, saved.record, plan, knobs, false)
-        return await dropTemporaryOptimizeRecord(saved)
+        return await this.keepForReview(entry, saved.record, saved)
       }
       announce(
         this.host(),
@@ -965,6 +1074,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
       startedAt: saved.startedAt,
       labels: temporaryKnobLabels(knobs),
       cases: await readTemporaryRunnableCases(saved.experiment).catch(() => []),
+      planned: plannedRollouts(plan),
     })
     const show = (): void =>
       this.updateRun(entry, {
@@ -988,7 +1098,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
       entry.abort = undefined
     }
     await this.finish(entry, saved.record, plan, knobs, abort.signal.aborted)
-    await dropTemporaryOptimizeRecord(saved)
+    await this.keepForReview(entry, saved.record, saved)
   }
 
   private async run(
@@ -1083,6 +1193,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
               startedAt,
               labels,
               cases,
+              planned: plannedRollouts(plan),
             })
             tail = tailTemporaryRun(path, (line) => {
               reader?.push(line)
@@ -1108,9 +1219,9 @@ export class TemporaryOptimize extends Store<OptimizeState> {
       entry.abort = undefined
     }
     await saving
-    if (record) await dropTemporaryOptimizeRecord({ record })
     if (cancelled && !record) return this.reportCancelled(entry, plan)
     await this.finish(entry, record!, plan, knobs, cancelled)
+    await this.keepForReview(entry, record!, saved)
   }
 
   private async writeSpace(plan: RunPlan, now: Date, variables: readonly TemporarySpaceVariable[]): Promise<string> {
@@ -1148,18 +1259,77 @@ export class TemporaryOptimize extends Store<OptimizeState> {
       announce(this.host(), 'error', `optimize · run ${name} failed · ask the chat why`)
       return
     }
+    // Read as the run ends; a stopped run's best version was never validated, so it is never applied unasked.
+    const auto = !cancelled && outcome.ended === 'finished' && this.autoApplies()
+    let ready: number
     try {
-      const { review, writers, changes } = await this.review(outcome, record, knobs)
-      entry.writers = writers
-      entry.changes = changes
-      this.updateRun(entry, { step: 'review', review })
-      this.watchSources(entry)
-      announce(this.host(), 'success', `optimize · run ${review.run} finished · ask the chat to review its edits`)
+      // Only a run that produced an edit worth applying opens the review; the rest just say they finished.
+      ready = await this.enterReview(entry, outcome, record, knobs, auto)
+      const ending =
+        ready === 0
+          ? 'no edits to apply'
+          : auto
+            ? `auto-optimize is on · applying ${plural(ready, 'edit')}`
+            : `showing ${plural(ready, 'edit')}`
+      announce(this.host(), 'success', `optimize · run ${name} finished · ${ending}`)
     } catch (error) {
       if (cancelled) return this.reportCancelled(entry, plan, record)
       this.updateRun(entry, { step: 'failed', message: errorMessage(error), record })
       announce(this.host(), 'error', `optimize · run ${name} could not be read · ask the chat why`)
+      return
     }
+    if (ready === 0) return
+    // With auto-optimize the edits are answered already, so there is nothing to show: they are written here.
+    if (auto) await this.applyAccepted(entry)
+    else this.onReview?.(entry.id)
+  }
+
+  /** Puts a finished run in review and counts its writable edits; `auto` answers each with apply. */
+  private async enterReview(
+    entry: RunEntry,
+    outcome: TemporaryStudyOutcome,
+    record: string,
+    knobs: readonly TemporaryKnob[],
+    auto = false
+  ): Promise<number> {
+    const { review, writers, changes } = await this.review(outcome, record, knobs)
+    entry.writers = writers
+    entry.changes = changes
+    const ready = review.edits.filter(({ unavailable }) => unavailable === undefined).length
+    this.updateRun(entry, { step: 'review', review: auto && ready > 0 ? autoAnswered(review) : review })
+    this.watchSources(entry)
+    return ready
+  }
+
+  /** Keeps the record of a run with an edit still to answer, so its review comes back when strands dev opens again. */
+  private async keepForReview(
+    entry: RunEntry,
+    record: string,
+    saved: TemporaryOptimizeRecord | undefined
+  ): Promise<void> {
+    if (!saved || editsToReview(entry.state) === 0) return dropTemporaryOptimizeRecord({ record })
+    const { pid: _ended, ...finished } = saved
+    // An unmarked record reads as a run that ended while strands dev was closed, which brings its review back too.
+    await saveTemporaryOptimizeRecord({ ...finished, awaitsReview: true }).catch(() => undefined)
+    if (editsToReview(entry.state) === 0) await dropTemporaryOptimizeRecord({ record })
+  }
+
+  /** Brings back a review strands dev closed on, on the status line rather than over the new chat. */
+  private async restoreReview(
+    entry: RunEntry,
+    saved: TemporaryOptimizeRecord,
+    knobs: readonly TemporaryKnob[]
+  ): Promise<void> {
+    const name = temporaryOptimizationRunName(saved.record)
+    const ready = await this.enterReview(entry, await readTemporaryStudy(saved.record), saved.record, knobs)
+    if (ready === 0) {
+      announce(this.host(), 'success', `optimize · run ${name} · its edits no longer fit the agent as it is now`)
+      return dropTemporaryOptimizeRecord(saved)
+    }
+    entry.reminder = this.host().context?.report(
+      'success',
+      `optimize · run ${name} · ${plural(ready, 'edit')} still to review · ↓ Enter`
+    )
   }
 
   private reportCancelled(entry: RunEntry, plan: RunPlan, record?: string): void {
@@ -1232,7 +1402,8 @@ export class TemporaryOptimize extends Store<OptimizeState> {
   }
 
   private async applyAccepted(entry: RunEntry): Promise<void> {
-    if (entry.state.step !== 'review') return
+    // A run's edits are written once: the walk on screen and the agent's apply tool can both reach here for one run.
+    if (entry.state.step !== 'review' || entry.state.review.applied) return
     const { review } = entry.state
     const accepted = review.edits.flatMap((edit, index) => {
       const write = entry.writers.get(index)
@@ -1247,6 +1418,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
       measuredOn: review.measuredOn,
       ...(review.testCheck ? { testCheck: review.testCheck } : {}),
       edits: accepted.map(({ edit }) => edit),
+      ...(review.auto ? { auto: true } : {}),
     }
     const recorded = accepted.length > 0 ? this.changes.push(change) - 1 : undefined
     const applied: string[] = []
@@ -1265,13 +1437,26 @@ export class TemporaryOptimize extends Store<OptimizeState> {
     }
     if (recorded !== undefined)
       this.changes[recorded] = { ...change, edits: written, ...(applyError ? { error: applyError } : {}) }
-    this.updateRun(entry, { step: 'review', review: { ...review, applied, ...(applyError ? { applyError } : {}) } })
-    const changed = applied.length > 0 ? `applied ${applied.join(', ')}` : 'changed nothing'
-    announce(
-      this.host(),
-      applyError ? 'error' : 'success',
-      applyError ? `optimize · ${changed} · ${applyError}` : `optimize · ${changed} · run /evaluate to check your agent`
-    )
+    // The writes are awaited, and the review moves on meanwhile (the walk marks it reviewed), so add to what it is now.
+    const current = entry.state.step === 'review' ? entry.state.review : review
+    // Writing ends the review, whoever asked for it: the walk on screen, or the agent's apply tool.
+    this.updateRun(entry, {
+      step: 'review',
+      review: { ...current, applied, reviewed: true, ...(applyError ? { applyError } : {}) },
+    })
+    this.settleReview(entry)
+    const did = applied.length > 0 ? `applied ${applied.join(', ')}` : 'changed nothing'
+    // Nobody saw these edits before they were written, so the notice says who applied them.
+    const changed = review.auto ? `auto-optimize ${did}` : did
+    const notice = {
+      status: applyError ? ('error' as const) : ('success' as const),
+      text: applyError
+        ? `optimize · ${changed} · ${applyError}`
+        : `optimize · ${changed} · run /evaluate to check your agent`,
+    }
+    if (applied.length > 0)
+      this.carried = { ...notice, at: Date.now(), lasts: review.auto ? AUTO_RELOAD_WINDOW_MS : RELOAD_WINDOW_MS }
+    announce(this.host(), notice.status, notice.text)
   }
 }
 
@@ -1292,13 +1477,15 @@ export const temporaryDevSessions = (host: TemporarySessionHost): TemporaryDevSe
     test: new TemporaryTest(current, experiments),
     optimize: new TemporaryOptimize(current, experiments),
     ui: new TemporaryEvalsUi(current, host.evalsUi),
-    ask: new WizardBroker(),
+    ask: new WizardBroker(host.autofill?.() ?? false),
     openFile: async (path: string): Promise<void> => {
       const open = latest.context?.openFile
       if (!open) throw new Error('This terminal cannot open an editor.')
       await open(resolve(latest.workspace.root, path))
     },
   }
+  sessions.optimize.onReview = (id): void => void reviewOptimizeRun(sessions, id)
+  sessions.optimize.onSettled = (id): void => sessions.ask.withdraw(id)
   registry.set(key, {
     use: (next) => {
       latest = { ...latest, ...next }

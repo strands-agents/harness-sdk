@@ -95,7 +95,29 @@ describe('TEMPORARY dev commands', () => {
     expect(optimize).toContain('what must stay true')
     expect(optimize).toContain('approve the review to start the run')
     expect(optimize).toContain('The run goes on in the background')
+    expect(optimize).toContain('its proposed edits appear on screen as a diff')
+    expect(optimize).toContain('Auto-optimize (apply edits)')
     expect(optimize).not.toMatch(/five tabs|press o|Esc goes back/u)
+  })
+
+  it('shouldNameTheBackgroundToolThatEachJobsLineStandsFor', async () => {
+    const { workspace, project } = await fixture()
+
+    const commands = temporaryDevCommands(workspace, project)
+
+    expect(commands.map(({ backgroundTools }) => backgroundTools)).toEqual([
+      ['strands_dev_run_background'],
+      ['strands_dev_run_background'],
+      ['strands_dev_run_background'],
+      undefined,
+    ])
+  })
+
+  it('shouldLeaveAJobWithNothingToReviewToTheChatWhenItsLineOpens', async () => {
+    const { workspace, project } = await fixture()
+    const optimize = temporaryDevCommands(workspace, project)[2]!
+
+    expect(optimize.openJob?.(context, 'run-1')).toBe(false)
   })
 
   it('shouldNameTheUpstreamCommandsWhenOptimizeHelpShowsTheDetails', async () => {

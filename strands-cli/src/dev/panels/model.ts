@@ -259,6 +259,8 @@ export interface OptimizeProgress {
   readonly baselineCandidate?: CandidateResult
   readonly measure?: ObjectiveMeasure
   readonly step?: OptimizeStep
+  /** The case runs of the whole run, done and in all: the search, the check of the finalists, and the test. */
+  readonly rollouts?: TrialProgress
   readonly startedAt: number
   readonly stopping: boolean
 }
@@ -274,6 +276,8 @@ export interface ProposedEdit {
   readonly before: string
   readonly after: string
   readonly accepted: boolean
+  /** The developer answered this edit, yes or no. Until then it waits, and `accepted` is only its default. */
+  readonly decided?: boolean
   readonly unavailable?: string
   /** What applying writes for an option that the call does not set yet. */
   readonly added?: string
@@ -302,6 +306,10 @@ export interface OptimizeReview {
   readonly testCheck?: TestCheck
   readonly applied?: readonly string[]
   readonly applyError?: string
+  /** Every edit was answered on screen, so nothing is waiting on the developer. */
+  readonly reviewed?: boolean
+  /** Auto-optimize answered every edit with apply when the run ended, so the developer was never asked. */
+  readonly auto?: boolean
 }
 
 export type OptimizeRunState =

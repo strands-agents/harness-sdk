@@ -1,8 +1,10 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, rmdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import type { HarnessAgentConfig } from '@strands-agents/harness'
 
+import { parseSettings, SETTING_DEFINITIONS, type ChatSettings, type SettingKey } from '../config/settings.js'
 import { CliConfigStore, savedAgentProject, userConfigPath, type CliConfigSnapshot } from '../config/store.js'
 import { containsPath, strandsUserPath } from '../paths.js'
 import { writeAgentProject } from '../project/export.js'
@@ -16,7 +18,7 @@ import {
   type AgentOptionEdit,
   type AgentOptions,
 } from './agent-options.js'
-import { readWorkspaceBinding } from './binding.js'
+import { readWorkspaceBinding, updateWorkspaceCli } from './binding.js'
 import { profileProject } from './create.js'
 import { WORKSPACE_FOLDER, type DevWorkspace } from './workspace.js'
 import { isRecord } from '../values.js'
@@ -218,7 +220,69 @@ export const refreshBaseCliFromDisk = async (workspace: DevWorkspace, path = use
 
 export interface ProfileBaseCliChat {
   saveAgentOptions(change: AgentOptions): Promise<boolean>
-  configWatch: { path: string; changed(): Promise<boolean> }
+  /** Saves a settings change of the dev chat, whose settings are `config`. */
+  saveSettings(config: CliConfigStore, change: Partial<ChatSettings>): Promise<void>
+  /** With `config`, the settings of the dev chat, `changed` also takes the look that cli.toml holds now into it. */
+  configWatch: { path: string; changed(config?: CliConfigStore): Promise<boolean> }
+}
+
+/** The look of the CLI itself, which the Base CLI's dev workspace saves to cli.toml so plain strands matches. */
+export const BASE_CLI_LOOK: readonly SettingKey[] = SETTING_DEFINITIONS.filter(
+  ({ section }) => section === 'Appearance'
+).map(({ key }) => key)
+
+/** The look in `saved`, without a value that is not one the setting can take. */
+const lookOf = (saved: unknown): Partial<ChatSettings> => {
+  if (!isRecord(saved)) return {}
+  const valid = parseSettings(saved)
+  return Object.fromEntries(
+    BASE_CLI_LOOK.filter((key) => key in saved && isDeepStrictEqual(valid[key], saved[key])).map((key) => [
+      key,
+      valid[key],
+    ])
+  )
+}
+
+/** Saves a Base CLI dev chat's settings: the look goes to cli.toml, and the workspace keeps the rest. */
+export const saveBaseCliSettings = async (
+  config: CliConfigStore,
+  change: Partial<ChatSettings>,
+  path = userConfigPath()
+): Promise<void> => {
+  const look = lookOf(change)
+  if (Object.keys(look).length > 0) {
+    await (await CliConfigStore.load(path)).setSettings(look)
+    await config.adoptSavedSettings(look)
+  }
+  const rest = Object.fromEntries(Object.entries(change).filter(([key]) => !(key in look)))
+  if (Object.keys(rest).length > 0) await config.setSettings(rest)
+}
+
+/** Takes the look that cli.toml holds now into the settings of the dev chat: plain strands, or a hand, changed it. */
+export const takeSavedBaseCliLook = async (config: CliConfigStore, path = userConfigPath()): Promise<void> =>
+  config.adoptSavedSettings(lookOf((await CliConfigStore.load(path, { persist: false })).snapshot().settings))
+
+/** Moves a look the Base CLI workspace still holds into cli.toml as dev opens, since it is what dev showed. */
+export const promoteBaseCliLook = async (
+  config: CliConfigStore,
+  held: unknown,
+  path = userConfigPath()
+): Promise<void> => saveBaseCliSettings(config, lookOf(isRecord(held) ? held.settings : undefined), path)
+
+/** The same move as plain strands starts; `config` is the saved CLI config, `directory` the Base CLI workspace. */
+export const adoptBaseCliWorkspaceLook = async (
+  config: CliConfigStore,
+  directory = dirname(baseCliWorkspaceConfigPath())
+): Promise<void> => {
+  const bound = await readWorkspaceBinding(directory).catch(() => undefined)
+  const cli = bound?.binding.cli
+  if (bound?.binding.origin.kind !== 'cli' || !isRecord(cli) || !isRecord(cli.settings)) return
+  const look = lookOf(cli.settings)
+  if (Object.keys(look).length === 0) return
+  await config.setSettings(look)
+  const { settings, ...others } = cli
+  const kept = Object.fromEntries(Object.entries(settings as object).filter(([key]) => !(key in look)))
+  await updateWorkspaceCli(directory, { ...others, ...(Object.keys(kept).length > 0 ? { settings: kept } : {}) })
 }
 
 export const profileBaseCliChat = async (
@@ -228,11 +292,13 @@ export const profileBaseCliChat = async (
   if (!(await isProfileBaseCli(workspace, path))) return undefined
   return {
     saveAgentOptions: (change): Promise<boolean> => saveBaseCliChoices(workspace, change, path),
+    saveSettings: (config, change): Promise<void> => saveBaseCliSettings(config, change, path),
     configWatch: {
       path,
-      changed: async (): Promise<boolean> => {
-        await refreshBaseCliFromDisk(workspace, path)
-        return false
+      // True hot-reloads the dev chat; a save from dev itself already synced the view, so it changes nothing.
+      changed: async (config): Promise<boolean> => {
+        if (config) await takeSavedBaseCliLook(config, path)
+        return refreshBaseCliFromDisk(workspace, path)
       },
     },
   }

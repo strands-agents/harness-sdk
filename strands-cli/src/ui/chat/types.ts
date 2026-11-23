@@ -79,6 +79,10 @@ export interface DevChatPanelProps {
   readonly height: number
   readonly close: () => void
   readonly openCommand: (name: string) => boolean
+  /** False while the chat input holds the keyboard, so a sticky panel stays visible but idle. */
+  readonly active?: boolean
+  /** Hands the keyboard to the chat input without closing this panel. */
+  readonly blur?: () => void
 }
 
 export type DevChatPanelView = ComponentType<DevChatPanelProps>
@@ -88,6 +92,8 @@ export interface DevChatJob {
   readonly label: string
   readonly done?: number
   readonly total?: number
+  /** Nothing is running for this job: it waits on the developer, as a finished run waits for its review. */
+  readonly waiting?: boolean
 }
 
 export interface DevChatJobs {
@@ -98,6 +104,8 @@ export interface DevChatJobs {
 export interface DevChatJobGroup {
   readonly command: string
   readonly jobs: readonly DevChatJob[]
+  /** The tools whose background runs this line stands for right now, so they are not listed a second time. */
+  readonly covers?: readonly string[]
 }
 
 export interface DevJobTarget {
@@ -126,6 +134,20 @@ export interface DevChatCommand {
   skill?: DevChatSkillRun
   /** Not typed or listed as a slash command; a tool opens its panel. */
   hidden?: boolean
+  /** Opening one of its jobs from the status line asks this first; true means it showed the job itself. */
+  openJob?(context: DevChatCommandContext, job: string): boolean
+  /** The agent tools whose background runs this command's jobs line already shows, so they are not listed twice. */
+  backgroundTools?: readonly string[]
+  /** Keeps the panel open when the developer clicks away, for a panel something is waiting on. */
+  sticky?: boolean
+  /** Renders beside the transcript at the dock's width, when its content needs that width right now. */
+  dock?(): boolean
+  /** Widens that dock, for a panel holding lines to read rather than rows to pick. */
+  wideDock?(): boolean
+  /** A chat message is sent instead of an answer; says whether it let go of a question a turn was waiting on. */
+  dropPending?(): boolean
+  /** The rows this panel's content needs right now at `width` columns inside its frame, to shrink the frame to it. */
+  contentRows?(width: number): number | undefined
   attach?(context: DevChatCommandContext): void
   /** The developer left this command's panel or cancelled the turn, so anything it waits on is a no. */
   abandon?(context: DevChatCommandContext): void
@@ -255,6 +277,16 @@ export type NewChatPanel =
       view: DevChatPanelView
       close: () => void
       openCommand: (name: string) => boolean
+      /** A click outside moves the keyboard to the chat input instead of closing this panel. */
+      sticky?: boolean
+      /** Renders beside the transcript at the dock's width rather than above the chat input. */
+      dock?: () => boolean
+      /** Widens that dock, for a panel holding lines to read rather than rows to pick. */
+      wideDock?: () => boolean
+      /** Resolves whatever a turn is waiting on here, so a chat message can be sent instead, and says if it did. */
+      dropPending?: () => boolean
+      /** The rows its content needs at `width` columns, when that is fewer than the panel's share of the screen. */
+      contentRows?: (width: number) => number | undefined
     })
 
 export type ChatPanel = NewChatPanel & { id: string }

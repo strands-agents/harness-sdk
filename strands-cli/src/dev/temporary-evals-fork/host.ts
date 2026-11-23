@@ -17,6 +17,10 @@ export type TemporarySessionDependencies = TemporaryExperimentDependencies &
 export interface TemporarySessionHost {
   readonly workspace: DevWorkspace
   readonly agent: () => TemporaryAgentFacts
+  /** Seeds this session's autofill toggle from the saved setting. */
+  readonly autofill?: () => boolean
+  /** Whether a finished optimization's edits are written without a review. Read when a run ends, so a change counts. */
+  readonly autoOptimize?: () => boolean
   readonly context?: DevChatCommandContext
   readonly dependencies?: TemporarySessionDependencies
   readonly evalsUi?: TemporaryUiDependencies

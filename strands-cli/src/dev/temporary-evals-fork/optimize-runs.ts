@@ -11,6 +11,9 @@ import { TEMPORARY_DECISION_CHOICES, type TemporarySplitShares } from './plan.js
 
 const RECORD_VERSION = 1
 const POLL_MS = 1000
+const REPLACE_ATTEMPTS = 6
+const REPLACE_WAIT_MS = 20
+const HELD_OPEN: ReadonlySet<unknown> = new Set(['EPERM', 'EACCES', 'EBUSY'])
 
 export interface TemporaryOptimizeRecord {
   readonly version: typeof RECORD_VERSION
@@ -26,6 +29,8 @@ export interface TemporaryOptimizeRecord {
   readonly decision?: OptimizeDecision
   readonly startedAt: number
   readonly pid?: number
+  /** The run is over and an edit of it waits for the developer's answer, so the record outlives the run. */
+  readonly awaitsReview?: boolean
 }
 
 const missing = (error: unknown): boolean => isRecord(error) && error.code === 'ENOENT'
@@ -67,14 +72,32 @@ const isOptimizeRecord = (value: unknown): value is TemporaryOptimizeRecord =>
   (value.objective === undefined || recordedObjective(value.objective) !== undefined) &&
   (value.decision === undefined || isDecision(value.decision)) &&
   typeof value.startedAt === 'number' &&
-  (value.pid === undefined || Number.isInteger(value.pid))
+  (value.pid === undefined || Number.isInteger(value.pid)) &&
+  (value.awaitsReview === undefined || typeof value.awaitsReview === 'boolean')
+
+/** Windows refuses to rename over a file held open, so the rename waits and tries again before it gives up. */
+const replaceFile = async (staging: string, path: string): Promise<void> => {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await rename(staging, path)
+    } catch (error) {
+      if (attempt >= REPLACE_ATTEMPTS || !isRecord(error) || !HELD_OPEN.has(error.code)) throw error
+      await sleep(REPLACE_WAIT_MS * 2 ** attempt)
+    }
+  }
+}
 
 export const saveTemporaryOptimizeRecord = async (record: TemporaryOptimizeRecord): Promise<void> => {
   const path = recordPath(record)
   await mkdir(dirname(path), { recursive: true })
   const staging = `${path}.${process.pid}.tmp`
   await writeFile(staging, `${JSON.stringify(record, null, 2)}\n`)
-  await rename(staging, path)
+  try {
+    await replaceFile(staging, path)
+  } catch (error) {
+    await rm(staging, { force: true })
+    throw error
+  }
 }
 
 export const dropTemporaryOptimizeRecord = (record: Pick<TemporaryOptimizeRecord, 'record'>): Promise<void> =>

@@ -62,6 +62,28 @@ describe('workspace Settings', () => {
     }
   })
 
+  it('shouldOfferAutoOptimizeInTheWorkspaceSectionAndSaveItWhenTheToggleChanges', async () => {
+    const setSettings = vi.fn(async () => undefined)
+    const dev = new ChatController(idleBackend(), {
+      runtime: { devWorkspace: info },
+      workspaceAction: vi.fn(),
+      setSettings,
+    })
+    try {
+      await dev.submit('/settings')
+      await dev.activatePanelRow({ label: '', description: '', value: 'settings:Workspace' })
+      const toggle = () => dev.getSnapshot().panel?.rows.find(({ value }) => value === 'autoOptimize')
+      expect(toggle()).toMatchObject({ label: 'Auto-optimize (apply edits)', control: { checked: false } })
+
+      await dev.activatePanelRow(toggle()!)
+
+      expect(setSettings).toHaveBeenCalledExactlyOnceWith({ autoOptimize: true })
+      expect(toggle()).toMatchObject({ control: { checked: true } })
+    } finally {
+      await dev.dispose()
+    }
+  })
+
   it('shouldKeepTheWorkspaceRowsWhenTheSessionModelSyncToggleChanges', async () => {
     const setSettings = vi.fn(async () => undefined)
     const dev = new ChatController(idleBackend(), {

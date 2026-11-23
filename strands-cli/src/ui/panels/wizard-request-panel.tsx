@@ -1,5 +1,9 @@
-import { useEffect, useState, type ReactElement } from 'react'
+import { createElement, useEffect, useMemo, useState, type ReactElement } from 'react'
+import { useInput } from 'ink'
 
+import { diffSummaryText, wrappedDiffLines } from '../diff-rows.js'
+import { Box } from '../theme.js'
+import { useDevPanelClicks } from './dev.js'
 import { Line, PanelTitle, useSyncedState } from './kit.js'
 import { useWizardPosition, Wizard, type WizardField, type WizardStep, type WizardToggle } from './wizard.js'
 import {
@@ -7,8 +11,10 @@ import {
   finishedAnswers,
   inputKey,
   numberProblem,
+  wizardDiffTextWidth,
   type WizardAnswer,
   type WizardBroker,
+  type WizardDiffSpec,
   type WizardFieldSpec,
   type WizardOption,
   type WizardRequest,
@@ -21,6 +27,10 @@ export interface WizardRequestPanelProps {
   readonly width: number
   readonly height: number
   readonly close: () => void
+  readonly active?: boolean
+  readonly blur?: () => void
+  /** Reports the autofill state under the chat input, so the component stays about the question. */
+  readonly onAutofill?: (on: boolean) => void
 }
 
 type Answers = Record<string, WizardAnswer>
@@ -82,7 +92,7 @@ const selectFields = (
 }
 
 const toField = (
-  spec: Exclude<WizardFieldSpec, WizardSelectSpec>,
+  spec: Exclude<WizardFieldSpec, WizardSelectSpec | WizardDiffSpec>,
   answers: Answers,
   update: (key: string, value: WizardAnswer) => void
 ): WizardField => {
@@ -121,20 +131,96 @@ const problemOf = (spec: WizardStepSpec, answers: Answers): string | undefined =
     .map((field) => (field.kind === 'number' ? numberProblem(field, answers[field.key]) : undefined))
     .find((problem) => problem !== undefined)
 
+const diffOf = (spec: WizardStepSpec): WizardDiffSpec | undefined =>
+  spec.fields.flatMap((field) => (field.kind === 'diff' ? [field] : []))[0]
+
+const DIFF_INDENT = ' '.repeat(2)
+const DIFF_MARK_COLUMNS = 2
+const WHEEL_ROWS = 3
+const MIN_ROOM_FOR_POSITION = 3
+
+const diffPosition = (above: number, below: number, keys: boolean): string =>
+  [above > 0 ? `↑ ${above} previous` : '', below > 0 ? `↓ ${below} more` : '', keys ? 'PgUp/PgDn scroll' : '']
+    .filter(Boolean)
+    .join(' · ')
+
+// A change to read: the file and its counts, then its wrapped lines; PgUp/PgDn and the wheel scroll a long one.
+const DiffBody = ({
+  spec,
+  room,
+  width,
+  active,
+}: {
+  spec: WizardDiffSpec
+  room: number
+  width: number
+  active: boolean
+}): ReactElement => {
+  const clicks = useDevPanelClicks()
+  const rows = useMemo(() => wrappedDiffLines(spec.diff, wizardDiffTextWidth(width)), [spec.diff, width])
+  const [offset, setOffset] = useState(0)
+  // The header takes a row, and a change that does not fit gives one more to saying where the window is.
+  const fits = rows.length <= room - 1
+  const positioned = !fits && room >= MIN_ROOM_FOR_POSITION
+  const capacity = Math.max(0, room - 1 - (positioned ? 1 : 0))
+  const last = Math.max(0, rows.length - capacity)
+  const start = Math.min(offset, last)
+  const scroll = (by: number): void => setOffset((current) => Math.max(0, Math.min(last, Math.min(current, last) + by)))
+  const page = Math.max(1, capacity - 1)
+  useInput(
+    (_input, key) => {
+      if (key.pageDown) scroll(page)
+      else if (key.pageUp) scroll(-page)
+    },
+    { isActive: active && !fits }
+  )
+  const shown = rows.slice(start, start + capacity)
+  const header = [spec.path, diffSummaryText(spec.diff)].filter(Boolean).join(' · ')
+  return (
+    <Box
+      flexDirection="column"
+      flexShrink={0}
+      {...(clicks && !fits ? { ref: clicks.wheel((direction) => scroll(direction * WHEEL_ROWS)) } : {})}
+    >
+      <Line tone="muted">{`${DIFF_INDENT}${header}`}</Line>
+      {shown.map((row, index) => (
+        <Line key={start + index} verbatim {...(row.tone ? { tone: row.tone } : {})}>
+          {`${DIFF_INDENT}${row.label.padEnd(DIFF_MARK_COLUMNS)}${row.text}`}
+        </Line>
+      ))}
+      {positioned ? (
+        <Line tone="muted">{`${DIFF_INDENT}${diffPosition(start, rows.length - start - shown.length, active)}`}</Line>
+      ) : null}
+    </Box>
+  )
+}
+
 const toStep = (
   spec: WizardStepSpec,
   answers: Answers,
   live: () => Answers,
   update: (key: string, value: WizardAnswer) => void,
-  typed: Typed
+  typed: Typed,
+  { width, active }: { width: number; active: boolean }
 ): WizardStep => {
   const problem = problemOf(spec, answers)
+  const change = diffOf(spec)
   return {
     key: spec.key,
     title: spec.title,
-    fields: spec.fields.flatMap((field) =>
-      field.kind === 'select' ? selectFields(field, answers, live, update, typed) : [toField(field, answers, update)]
-    ),
+    fields: spec.fields.flatMap((field) => {
+      if (field.kind === 'diff') return []
+      return field.kind === 'select'
+        ? selectFields(field, answers, live, update, typed)
+        : [toField(field, answers, update)]
+    }),
+    ...(change
+      ? {
+          bodyFirst: true,
+          bodyRows: 1 + wrappedDiffLines(change.diff, wizardDiffTextWidth(width)).length,
+          body: (room: number) => createElement(DiffBody, { spec: change, room, width, active }),
+        }
+      : {}),
     ...(problem === undefined ? {} : { notice: { tone: 'error' as const, text: problem } }),
   }
 }
@@ -142,11 +228,19 @@ const toStep = (
 const RequestView = ({
   request,
   broker,
+  autofill,
+  onAutofill,
+  active,
+  blur,
   width,
   height,
 }: {
   request: WizardRequest
   broker: WizardBroker
+  autofill: boolean
+  onAutofill?: (on: boolean) => void
+  active: boolean
+  blur?: () => void
   width: number
   height: number
 }): ReactElement => {
@@ -158,27 +252,62 @@ const RequestView = ({
     set: (key, text) => texts.set((current) => ({ ...current, [key]: text })),
   }
   const update = (key: string, value: WizardAnswer): void => answers.set((current) => ({ ...current, [key]: value }))
-  const steps = request.steps.map((step) => toStep(step, answers.value, answers.current, update, typed))
+  const steps = request.steps.map((step) =>
+    toStep(step, answers.value, answers.current, update, typed, { width, active })
+  )
   return (
     <Wizard
       name={request.name}
       {...(request.question === undefined ? {} : { question: request.question })}
+      {...(request.titleParts ? { titleParts: request.titleParts } : {})}
       steps={steps}
       {...(request.finishLabel === undefined ? {} : { finishLabel: request.finishLabel })}
       width={width}
       height={height}
+      active={active}
+      {...(blur ? { onLeave: blur } : {})}
       finishHint={(blocking) => (blocking ? 'fix the problem to finish' : 'Enter finish')}
       onFinish={() => broker.respond(request.id, finishedAnswers(request.steps, answers.current(), texts.current()))}
       onCancel={() => broker.respond(request.id, undefined)}
       {...(request.back ? { onBack: () => broker.respond(request.id, 'back') } : {})}
       position={position}
+      // Closing a standing question answers nothing: whoever asked keeps it waiting, so Esc only closes it.
+      {...(request.standing ? { escapeHint: 'Esc close' } : {})}
+      // Autofill is about the agent's own questions; one that stands for the developer does not offer it.
+      {...(request.standing
+        ? {}
+        : {
+            autofill: {
+              on: autofill,
+              set: (on: boolean): void => {
+                broker.setAutofill(on)
+                onAutofill?.(on)
+              },
+            },
+          })}
     />
   )
 }
 
-export const WizardRequestPanel = ({ broker, width, height, close }: WizardRequestPanelProps): ReactElement => {
+export const WizardRequestPanel = ({
+  broker,
+  width,
+  height,
+  close,
+  active = true,
+  blur,
+  onAutofill,
+}: WizardRequestPanelProps): ReactElement => {
   const [request, setRequest] = useState(() => broker.pending())
-  useEffect(() => broker.subscribe(setRequest), [broker])
+  const [autofill, setAutofill] = useState(() => broker.autofill())
+  useEffect(
+    () =>
+      broker.subscribe((pending) => {
+        setRequest(pending)
+        setAutofill(broker.autofill())
+      }),
+    [broker]
+  )
   useEffect(() => {
     if (!request) close()
   }, [request, close])
@@ -190,5 +319,17 @@ export const WizardRequestPanel = ({ broker, width, height, close }: WizardReque
       </>
     )
   // Remount on a new request so its answers start from that request's own defaults.
-  return <RequestView key={request.id} request={request} broker={broker} width={width} height={height} />
+  return (
+    <RequestView
+      key={request.id}
+      request={request}
+      broker={broker}
+      autofill={autofill}
+      {...(onAutofill ? { onAutofill } : {})}
+      active={active}
+      {...(blur ? { blur } : {})}
+      width={width}
+      height={height}
+    />
+  )
 }

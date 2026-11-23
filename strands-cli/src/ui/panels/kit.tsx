@@ -19,6 +19,8 @@ export interface ListItem {
 }
 
 const PROGRESS_WIDTH = 16
+// The cursor and the mark that a list row draws before its label.
+const LIST_MARK_COLUMNS = 4
 const ELAPSED_TICK_MS = 1000
 const SECONDS_PER_MINUTE = 60
 
@@ -104,12 +106,21 @@ export const PanelTitle = ({
   )
 }
 
-export const Line = ({ children, tone }: { children: string; tone?: Tone }): ReactElement => {
+/** `verbatim` keeps the spacing inside the text, for a line of someone's file rather than a label. */
+export const Line = ({
+  children,
+  tone,
+  verbatim = false,
+}: {
+  children: string
+  tone?: Tone
+  verbatim?: boolean
+}): ReactElement => {
   const toneColor = useToneColor()
   return (
     <Box height={1} flexShrink={0} overflow="hidden">
       <Text wrap="truncate-end" {...toneColor(tone)}>
-        {indented(children)}
+        {verbatim ? sanitizeTerminalText(children).replace(/[\r\n]+/gu, ' ') : indented(children)}
       </Text>
     </Box>
   )
@@ -253,8 +264,12 @@ export const ItemList = ({
   )
 }
 
-export const labelWidthFor = (labels: readonly string[], width: number): number =>
-  Math.min(Math.max(8, ...labels.map((label) => oneLine(label).length)), Math.max(8, Math.floor(width / 3)))
+/** Labels share the row with a detail and keep to a third of it; with no detail beside them they take what they need. */
+export const labelWidthFor = (labels: readonly string[], width: number, detailed = true): number =>
+  Math.min(
+    Math.max(8, ...labels.map((label) => oneLine(label).length)),
+    Math.max(8, detailed ? Math.floor(width / 3) : width - LIST_MARK_COLUMNS)
+  )
 
 export type TextValue = EditorState
 

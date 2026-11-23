@@ -509,6 +509,23 @@ export class CliConfigStore {
     })
   }
 
+  /** Uses settings the saved CLI config holds, saving nothing; a workspace layer drops its own value of them. */
+  adoptSavedSettings(saved: Partial<ChatSettings>): Promise<void> {
+    const adopted = globalThis.structuredClone(saved)
+    return this._enqueueWrite(async () => {
+      this._settings = parseSettings({ ...this._settings, ...adopted })
+      if (!this._layer) return
+      const { target } = this._layer
+      const base = { ...this._layer.base, settings: parseSettings({ ...this._layer.base.settings, ...adopted }) }
+      this._layer = { target, base }
+      const held = await target.read()
+      const overridden = isRecord(held) && isRecord(held.settings) ? held.settings : {}
+      if (Object.keys(adopted).some((key) => key in overridden)) {
+        await target.write(layerSections(this._layeredValues(), base))
+      }
+    })
+  }
+
   useLayer(target: ConfigLayer | undefined): Promise<void> {
     return this._enqueueWrite(async () => {
       const base = this._layer?.base ?? this._layeredValues()

@@ -185,6 +185,7 @@ const fakeSessions = () => {
       ...optimize,
       reset: vi.fn(() => optimize.set({ step: 'pick', runs: optimize.snapshot().runs ?? [] })),
       openRun: vi.fn(),
+      autoApplies: vi.fn((): boolean => false),
       appliedChanges: vi.fn((): readonly TemporaryAppliedChange[] => []),
       stop: vi.fn(),
       plan: vi.fn(() => setTimeout(() => optimize.set({ step: 'setup', plan: plan() }), 0)),
@@ -265,15 +266,17 @@ const setup = (evaluators = vi.fn(async () => CATALOG), changes: readonly Tempor
     pastChats: vi.fn(async (): Promise<number> => 12),
     converter: vi.fn(async (): Promise<string> => 'Follow the session-converter skill below.'),
   }
+  const showReview = vi.fn((_run: string): boolean => true)
   const part = temporaryDevChatPart({
     sessions: () => fake.sessions as unknown as TemporaryDevSessions,
     evaluators,
     history,
+    showReview,
   })
   const tool = (name: string): DevChatTool => part.tools.find((candidate) => candidate.name === name)!
   const call = async (name: string, input: Record<string, JSONValue> = {}): Promise<unknown> =>
     JSON.parse(await tool(name).run(input))
-  return { ...fake, part, tool, call, evaluators, history }
+  return { ...fake, part, tool, call, evaluators, history, showReview }
 }
 
 const APPLIED: TemporaryAppliedChange = {
@@ -335,6 +338,16 @@ describe('TEMPORARY dev chat instructions', () => {
     )
   })
 
+  it('shouldTellTheAgentThatAutoOptimizeMadeAChangeTheDeveloperWasNotShown', () => {
+    const { part } = setup(undefined, [{ ...APPLIED, auto: true }])
+
+    expect(part.instructions).toContain(
+      '- 2026-11-17T14:52:03.000Z: auto-optimize applied 3 edits from run 20261117-144415-diffs of the experiment diffs. ' +
+        'The developer has auto-optimize on, so they were not shown these edits before they were written. ' +
+        'The best candidate scored 0.00 → 1.00 on the test cases.'
+    )
+  })
+
   it('shouldSayWhereApplyStoppedWhenAnEditCouldNotBeWritten', () => {
     const { part } = setup(undefined, [{ ...APPLIED, edits: [], error: 'Could not change agent.ts: it changed.' }])
 
@@ -370,6 +383,7 @@ describe('TEMPORARY dev chat part', () => {
       ['strands_dev_text_input', false],
       ['strands_dev_number_input', false],
       ['strands_dev_confirm', false],
+      ['strands_dev_review_optimization', false],
       ['strands_dev_apply_optimization', false],
     ])
     for (const tool of part.tools) {
@@ -654,8 +668,8 @@ describe('TEMPORARY dev chat part', () => {
     const applied = await call('strands_dev_apply_optimization', { edits: [0] })
 
     expect(sessions.optimize.accept.mock.calls).toEqual([
-      [0, true],
-      [1, false],
+      [0, true, undefined],
+      [1, false, undefined],
     ])
     expect(applied).toEqual({
       applied: ['agent.py'],
@@ -1127,6 +1141,82 @@ describe('dev chat tool errors and states', () => {
     )
 
     await expect(apply()).rejects.toThrow('agent.py changed.')
-    expect(sessions.optimize.openRun).toHaveBeenCalledWith('run-2')
+    expect(sessions.optimize.accept).toHaveBeenCalledWith(0, true, 'run-2')
+    expect(sessions.optimize.apply).toHaveBeenCalledWith('run-2')
+  })
+
+  it('shouldPutTheDiffOfTheWaitingRunBackOnScreenWhenTheDeveloperAsksToSeeItAgain', async () => {
+    const { call, finishRun, showReview, sessions } = setup()
+    finishRun({ step: 'review', review: review() })
+
+    const shown = await call('strands_dev_review_optimization')
+
+    expect(showReview.mock.calls).toEqual([['run-1']])
+    expect(shown).toMatchObject({ run: review().run, shown: true, next: expect.stringContaining('Say so in one line') })
+    expect(sessions.optimize.accept).not.toHaveBeenCalled()
+    expect(sessions.optimize.apply).not.toHaveBeenCalled()
+  })
+
+  it.each<[string, Partial<OptimizeReview>, Record<string, JSONValue>, string]>([
+    ['was answered', { reviewed: true }, {}, 'No finished optimization has an edit waiting for an answer.'],
+    ['was applied', { applied: ['agent.py'] }, {}, 'No finished optimization has an edit waiting for an answer.'],
+    ['is not the one named', {}, { run: 'another-run' }, 'Run another-run has no edit waiting for an answer.'],
+  ])('shouldRefuseToShowADiffWhenTheRun%s', async (_case, change, input, message) => {
+    const { tool, finishRun, showReview } = setup()
+    finishRun({ step: 'review', review: { ...review(), ...change } })
+
+    await expect(tool('strands_dev_review_optimization').run(input)).rejects.toThrow(message)
+    expect(showReview).not.toHaveBeenCalled()
+  })
+
+  it('shouldSayThatAnEditStillWaitsWithoutCallingItOnScreen', async () => {
+    const { call, finishRun } = setup()
+    finishRun({ step: 'review', review: review() })
+
+    const waiting = (await call('strands_dev_status')) as { optimization: Record<string, unknown> }
+    finishRun({ step: 'review', review: { ...review(), reviewed: true } })
+    const answered = (await call('strands_dev_status')) as { optimization: Record<string, unknown> }
+
+    expect(waiting.optimization).toMatchObject({
+      step: 'review',
+      awaitingAnswer: 1,
+      next: expect.stringContaining('The diff may not be showing'),
+    })
+    expect(answered.optimization).not.toHaveProperty('awaitingAnswer')
+  })
+
+  it('shouldSayWhichPartOfTheRunIsGoingAndHowFarTheWholeRunIs', async () => {
+    const { call, finishRun } = setup()
+    finishRun({
+      step: 'running',
+      progress: {
+        ...progress(),
+        step: { kind: 'validating', versions: 3, trials: { done: 1, total: 6 } },
+        rollouts: { done: 21, total: 30 },
+      },
+    })
+
+    expect(await call('strands_dev_status')).toMatchObject({
+      optimization: {
+        step: 'running',
+        phase: 'checking the finalists on the validation cases',
+        rollouts: { done: 21, total: 30 },
+      },
+    })
+  })
+
+  it('shouldSayInThePlanAndTheStatusWhenAutoOptimizeWritesTheEditsWithoutAReview', async () => {
+    const { call, sessions, finishRun } = setup()
+
+    const off = await call('strands_dev_optimization_plan', { experiment: 'refunds' })
+    sessions.optimize.autoApplies.mockReturnValue(true)
+    const on = await call('strands_dev_optimization_plan', { experiment: 'refunds' })
+    finishRun({ step: 'review', review: { ...review(), auto: true, reviewed: true, applied: ['agent.py'] } })
+    const status = (await call('strands_dev_status')) as { optimization: object }
+
+    expect(off).not.toHaveProperty('autoOptimize')
+    expect(on).toMatchObject({ autoOptimize: expect.stringContaining('writes its edits to the agent source') })
+    expect(status.optimization).toMatchObject({ step: 'review', autoApplied: true, applied: ['agent.py'] })
+    expect(status.optimization).not.toHaveProperty('awaitingAnswer')
   })
 })

@@ -12,7 +12,7 @@ import type {
   DevChatJobGroup,
   DevJobTarget,
 } from './controller.js'
-import { isActiveTask, isConfigurationTool } from './state.js'
+import { isConfigurationTool, listedBackgroundTasks } from './state.js'
 import {
   commandAssistance as commandAssistanceForInput,
   type CommandAssistance,
@@ -38,7 +38,7 @@ import {
 } from '../interaction.js'
 import { PromptEditor, promptContentSize, CommandPalette } from './prompt.js'
 import { ResourcePanel } from '../panels/panel.js'
-import { DevPanelFrame, type DevPanelClicks } from '../panels/dev.js'
+import { DEV_PANEL_FRAME_COLUMNS, DevPanelFrame, type DevPanelClicks } from '../panels/dev.js'
 import { AgentsPanel, agentGridLayout, clampAgentGridViewport } from '../panels/agents.js'
 import { FROG_ANIMATION_HEIGHT, FrogEasterEgg, type FrogVariant, VOICE_FROG_HEIGHT, VoiceFrog } from '../frog.js'
 import {
@@ -143,6 +143,8 @@ function ChatViewContent({
   hoveredDevJobs,
   onDevJobsElement,
   devPanelClicks,
+  panelKeyboard = true,
+  onPanelBlur,
   onMetadataElement,
   onPanelElement,
   onDockElement,
@@ -219,6 +221,8 @@ function ChatViewContent({
   hoveredDevJobs?: boolean
   onDevJobsElement?: (element: DOMElement | null) => void
   devPanelClicks?: DevPanelClicks
+  panelKeyboard?: boolean
+  onPanelBlur?: () => void
   onMetadataElement?: (target: MetadataTarget, element: DOMElement | null) => void
   onPanelElement?: (element: DOMElement | null) => void
   onDockElement?: (element: DOMElement | null) => void
@@ -258,7 +262,15 @@ function ChatViewContent({
   const hasActivity =
     snapshot.completedTurns.length > 0 || snapshot.activeTurn !== undefined || snapshot.notices.length > 0
   const composerPanel = isComposerPanel(snapshot.panel?.kind) ? snapshot.panel : undefined
-  const devPanel = snapshot.panel?.kind === 'dev' ? snapshot.panel : undefined
+  const openDevPanel = snapshot.panel?.kind === 'dev' ? snapshot.panel : undefined
+  // A docked dev panel goes back above the chat input on a small terminal, judged by the terminal size alone.
+  const dockedDevPanel =
+    openDevPanel?.dock?.() === true &&
+    terminalWidth >= CONFIG_DOCK_MIN_TERMINAL_WIDTH &&
+    terminalHeight >= CONFIG_DOCK_MIN_HEIGHT + CONFIG_DOCK_CHROME_HEIGHT
+      ? openDevPanel
+      : undefined
+  const devPanel = dockedDevPanel ? undefined : openDevPanel
   const maxEffort = composerPanel?.kind === 'effort' && isMaxEffort(composerPanel.slider)
   const composerPanelOutlined = isOutlinedComposerPanel(composerPanel)
   const showCommandPicker = resolvedCommandAssistance !== undefined && !snapshot.panel
@@ -266,9 +278,7 @@ function ChatViewContent({
   const showVoiceStatus = snapshot.voice !== undefined && snapshot.voice.status !== 'off'
   const showVoiceFrog =
     snapshot.voice !== undefined && snapshot.voice.status !== 'off' && snapshot.voice.status !== 'error' && !frog
-  const activeBackgroundTasks = snapshot.tasks.filter(
-    (task) => task.source === 'background' && isActiveTask(task.status)
-  )
+  const activeBackgroundTasks = listedBackgroundTasks(snapshot)
   const backgroundTaskIndex = Math.max(
     0,
     activeBackgroundTasks.findIndex((task) => task.id === focusedBackgroundTask)
@@ -320,7 +330,13 @@ function ChatViewContent({
   const restingEditorHeight = composerPanel
     ? promptEditorHeight('', 0, editorWidth, editorMaxRows, false, party, editorMaxHeight)
     : editorHeight
-  const devPanelRows = devPanel ? devPanelHeight(terminalHeight, composerStatusRows + restingEditorHeight + 2) : 0
+  // A panel that would dock to be read (a change to review) keeps that claim when the terminal is too narrow to dock.
+  const devPanelShare = devPanel
+    ? devPanelHeight(terminalHeight, composerStatusRows + restingEditorHeight + 2, devPanel.dock?.() === true)
+    : 0
+  const devPanelWanted = devPanel?.contentRows?.(Math.max(1, editorWidth - DEV_PANEL_FRAME_COLUMNS))
+  const devPanelRows =
+    devPanelWanted === undefined ? devPanelShare : Math.max(1, Math.min(devPanelShare, devPanelWanted + 2))
   const commandDeckHeight = composerStatusRows + restingEditorHeight + 2 + devPanelRows
   // A composer panel opens at full size and fades in; its contents carry the only animation.
   const expandedCommandDeckHeight = composerStatusRows + suggestionRows + editorHeight + 2 + devPanelRows
@@ -349,13 +365,23 @@ function ChatViewContent({
           dockLanguage,
           configurationDockWidth(terminalWidth, false)
         )
+  const showDockedDevPanel = dockedDevPanel !== undefined
   const showConfigurationDock =
+    !showDockedDevPanel &&
     liveConfiguration !== undefined &&
     (explicitConfiguration || configurationTurn) &&
     (explicitConfiguration || terminalWidth >= CONFIG_DOCK_MIN_TERMINAL_WIDTH) &&
     topHeight >= (explicitConfiguration ? CONFIG_DOCK_CHROME_HEIGHT : CONFIG_DOCK_MIN_HEIGHT)
-  const wideConfigurationDock = showConfigurationDock && terminalWidth >= CONFIG_DOCK_MIN_TERMINAL_WIDTH
-  const configDockWidth = showConfigurationDock ? configurationDockWidth(terminalWidth, explicitConfiguration) : 0
+  const wideConfigurationDock =
+    (showConfigurationDock || showDockedDevPanel) && terminalWidth >= CONFIG_DOCK_MIN_TERMINAL_WIDTH
+  const configDockWidth =
+    showConfigurationDock || showDockedDevPanel
+      ? configurationDockWidth(
+          terminalWidth,
+          explicitConfiguration && showConfigurationDock,
+          dockedDevPanel?.wideDock?.() === true
+        )
+      : 0
   const configDockLeft = wideConfigurationDock ? Math.max(0, terminalWidth - 2 - configDockWidth) : 0
   const startupReservedRightWidth = wideConfigurationDock ? configDockWidth + CONFIG_DOCK_GAP : 0
   // The transcript reflows into the space left of the dock instead of running underneath it.
@@ -518,6 +544,25 @@ function ChatViewContent({
             )}
           </Box>
         ) : null}
+        {showDockedDevPanel && dockedDevPanel ? (
+          <Box
+            position="absolute"
+            marginLeft={configDockLeft}
+            width={configDockWidth}
+            height={dockAvailableHeight}
+            flexShrink={0}
+          >
+            <DevPanelFrame
+              panel={dockedDevPanel}
+              width={configDockWidth}
+              height={dockAvailableHeight}
+              {...(onPanelElement ? { onElement: onPanelElement } : {})}
+              active={panelKeyboard}
+              {...(onPanelBlur ? { blur: onPanelBlur } : {})}
+              {...(devPanelClicks ? { clicks: devPanelClicks } : {})}
+            />
+          </Box>
+        ) : null}
         {showConfigurationDock && liveConfiguration ? (
           <Box
             position="absolute"
@@ -575,6 +620,8 @@ function ChatViewContent({
                 width={editorWidth}
                 height={devPanelRows}
                 {...(onPanelElement ? { onElement: onPanelElement } : {})}
+                active={panelKeyboard}
+                {...(onPanelBlur ? { blur: onPanelBlur } : {})}
                 {...(devPanelClicks ? { clicks: devPanelClicks } : {})}
               />
             ) : null}
@@ -644,11 +691,17 @@ function ChatViewContent({
               maxRows={editorMaxRows}
               maxHeight={editorMaxHeight}
               {...(snapshot.status === 'running' || snapshot.status === 'interrupting'
-                ? { placeholder: 'Enter to queue • Tab queue actions • Alt+↑ edit queue' }
+                ? {
+                    placeholder: openDevPanel?.sticky
+                      ? 'Enter to send • ↑ back to the question'
+                      : 'Enter to queue • Tab queue actions • Alt+↑ edit queue',
+                  }
                 : {})}
               {...(actionableCommandToken ? { actionableCommandToken } : {})}
               {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
-              {...(snapshot.panel && !composerPanel ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
+              {...(snapshot.panel && !composerPanel && !openDevPanel?.sticky
+                ? { panelStatus: panelEditorStatus(snapshot.panel) }
+                : {})}
               {...(focusedQueuedPrompt ? { panelStatus: 'Queue · Tab/Shift+Tab move · Enter choose · Esc back' } : {})}
               {...(focusedBackgroundTask || focusedDevJob ? { panelStatus: '←→ choose · Enter view · Esc back' } : {})}
               party={party}
@@ -741,7 +794,7 @@ function ChatViewContent({
           </Box>
         </RisingStartupCard>
       ) : null}
-      {snapshot.panel && snapshot.panel.kind !== 'config' && !devPanel && !composerPanel ? (
+      {snapshot.panel && snapshot.panel.kind !== 'config' && !openDevPanel && !composerPanel ? (
         <FadeIn key={snapshot.panel.kind} animate={settings.animations} background={canvas}>
           {panelView}
         </FadeIn>

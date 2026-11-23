@@ -84,3 +84,17 @@ describe('/optimize constraints question', () => {
     expect(temporaryCommandWorkflows.optimize).toContain('no parenthetical of metrics in the question or the rows')
   })
 })
+
+describe('/optimize after the run', () => {
+  it('shouldLeaveTheEditsToTheDiffOnScreenAndAnswerWhatTheFetchedSkillAsks', () => {
+    const { optimize } = temporaryCommandWorkflows
+
+    expect(optimize).toContain("its edits appear on the developer's screen as a diff")
+    expect(optimize).toContain('do not print the edit text or ask which edits to apply')
+    expect(optimize).toContain('strands_dev_review_optimization puts it back on screen')
+    expect(optimize).toContain('When strands_dev_optimization_plan returns autoOptimize')
+    expect(optimize).toContain('best.diff or best.values.json')
+    expect(optimize).toContain('Skip the skill\'s "Resuming a run" section')
+    expect(optimize).toContain("Where the skill says a TypeScript agent's steps are traced, they are not here")
+  })
+})

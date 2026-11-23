@@ -1,4 +1,6 @@
+import type { ChatDiffPreview } from '../../agent/types.js'
 import { sanitizeTerminalText } from '../../terminal/text.js'
+import { wrappedDiffLines } from '../diff-rows.js'
 
 export type WizardAnswer = string | number | boolean | readonly string[]
 
@@ -38,7 +40,16 @@ export interface WizardNumberSpec {
   readonly detail?: string
 }
 
-export type WizardFieldSpec = WizardTextSpec | WizardSelectSpec | WizardNumberSpec
+/** A file change to read, not answer: the panel draws it above the fields, and a sibling field holds the verdict. */
+export interface WizardDiffSpec {
+  readonly kind: 'diff'
+  readonly key: string
+  readonly label: string
+  readonly path: string
+  readonly diff: ChatDiffPreview
+}
+
+export type WizardFieldSpec = WizardTextSpec | WizardSelectSpec | WizardNumberSpec | WizardDiffSpec
 
 export interface WizardStepSpec {
   readonly key: string
@@ -50,10 +61,15 @@ export interface WizardRequest {
   readonly id: string
   readonly name: string
   readonly question?: string
+  readonly titleParts?: readonly string[]
   readonly steps: readonly WizardStepSpec[]
   readonly finishLabel?: string
   /** Offer Back instead of Cancel; picking it resolves the request with 'back'. */
   readonly back?: boolean
+  /** Asked outside a turn, so no turn waits on it: a chat message or a cancelled turn leaves it on screen. */
+  readonly standing?: boolean
+  /** What the question is about, so whoever asked can bring it back in front of the others that wait. */
+  readonly topic?: string
 }
 
 export type WizardRequestSpec = Omit<WizardRequest, 'id'>
@@ -82,6 +98,7 @@ const cleanField = (field: WizardFieldSpec): WizardFieldSpec => {
       })),
     }
   const label = cleanText(field.label)
+  if (field.kind === 'diff') return { ...field, label, path: cleanText(field.path) }
   if (field.kind === 'number')
     return { ...field, label, ...(field.detail === undefined ? {} : { detail: cleanText(field.detail) }) }
   return { ...field, label }
@@ -91,6 +108,7 @@ const cleanRequest = (request: WizardRequest): WizardRequest => ({
   ...request,
   name: cleanText(request.name),
   ...(request.question === undefined ? {} : { question: cleanText(request.question) }),
+  ...(request.titleParts === undefined ? {} : { titleParts: request.titleParts.map(cleanText) }),
   steps: request.steps.map((step) => ({
     ...step,
     title: cleanText(step.title),
@@ -98,10 +116,39 @@ const cleanRequest = (request: WizardRequest): WizardRequest => ({
   })),
 })
 
+const DIFF_INDENT = 2
+const DIFF_MARK_COLUMNS = 2
+// The title, the question, the gap under it, the row under the fields, the buttons, and the key hints.
+const CHROME_ROWS = 5
+// The file and its counts above the lines, and the gap that sets the change apart from the fields.
+const DIFF_FRAME_ROWS = 2
+
+/** The columns the text of a diff line gets in a panel `width` columns wide, after its indent and its +/- mark. */
+export const wizardDiffTextWidth = (width: number): number => Math.max(1, width - DIFF_INDENT - DIFF_MARK_COLUMNS)
+
+const fieldRows = (field: WizardFieldSpec, width: number | undefined): number => {
+  if (field.kind === 'select') return field.options.length
+  if (field.kind !== 'diff') return 1
+  const lines = width === undefined ? field.diff.lines : wrappedDiffLines(field.diff, wizardDiffTextWidth(width))
+  return DIFF_FRAME_ROWS + lines.length
+}
+
+/** A question that carries a change needs the wide dock to be read; everything else fits above the chat input. */
+export const wizardRequestHasDiff = (request: WizardRequest | undefined): boolean =>
+  request?.steps.some((step) => step.fields.some((field) => field.kind === 'diff')) === true
+
+/** The rows one question needs at a panel `width` wide, so its panel is not half the terminal with the rest empty. */
+export const wizardRequestRows = (request: WizardRequest | undefined, width?: number): number | undefined => {
+  if (!request || request.steps.length !== 1) return undefined
+  const fields = request.steps[0]!.fields.reduce((rows, field) => rows + fieldRows(field, width), 0)
+  return CHROME_ROWS - (request.question === undefined ? 1 : 0) + fields
+}
+
 export const defaultAnswers = (steps: readonly WizardStepSpec[]): Record<string, WizardAnswer> => {
   const answers: Record<string, WizardAnswer> = {}
   for (const step of steps)
     for (const field of step.fields) {
+      if (field.kind === 'diff') continue
       if (field.kind === 'select') {
         const open = field.options.filter(({ unavailable }) => unavailable === undefined).map(({ value }) => value)
         const picked = (field.selected ?? []).filter((value) => open.includes(value))
@@ -156,19 +203,37 @@ export class WizardBroker {
   private readonly _queue: PendingWizard[] = []
   private _active: PendingWizard | undefined
   private _open: (() => boolean) | undefined
+  private _autofill: boolean
   private _next = 1
   private _disposed = false
+
+  /** `autofill` starts from the saved setting and lasts for this session only. */
+  constructor(autofill = false) {
+    this._autofill = autofill
+  }
 
   /** The panel command registers this, so asking also brings the panel on screen. */
   attachOpener(open: () => boolean): void {
     this._open = open
   }
 
+  autofill(): boolean {
+    return this._autofill
+  }
+
+  setAutofill(on: boolean): void {
+    this._autofill = on
+    this._notify(this._active?.request)
+  }
+
   ask(spec: WizardRequestSpec): Promise<WizardOutcome> {
     if (this._disposed || spec.steps.length === 0) return Promise.resolve(undefined)
     const request = cleanRequest({ ...spec, id: `strands-wizard-${this._next++}` })
+    // Autofill hands the agent's own questions back to it. A standing question is the developer's to answer.
+    if (this._autofill && !request.standing) return Promise.resolve(defaultAnswers(request.steps))
     return new Promise((resolve) => {
       this._queue.push({ request, resolve })
+      this._yieldToTurn()
       this._activateNext()
     })
   }
@@ -204,15 +269,61 @@ export class WizardBroker {
     if (hadActive) this._notify(undefined)
   }
 
+  /** Puts the waiting question about `topic` on screen, ahead of the one there, and opens the panel. False when none waits. */
+  bringForward(topic: string): boolean {
+    if (this._active?.request.topic !== topic) {
+      const at = this._queue.findIndex(({ request }) => request.topic === topic)
+      if (at < 0) return false
+      const [wanted] = this._queue.splice(at, 1)
+      if (this._active) this._queue.unshift(this._active)
+      this._active = wanted
+      this._notify(wanted?.request)
+    }
+    this._open?.()
+    return true
+  }
+
+  /** Cancels the questions a turn waits on and keeps the standing ones; says whether it cancelled any. */
+  dropForTurn(): boolean {
+    return this._cancelWhere(({ request }) => request.standing !== true)
+  }
+
+  /** Cancels the questions about `topic`, on screen or waiting: whoever asked has its answer from elsewhere. */
+  withdraw(topic: string): void {
+    this._cancelWhere(({ request }) => request.topic === topic)
+  }
+
   dispose(): void {
     this._disposed = true
     this.cancelAll()
     this._listeners.clear()
   }
 
+  private _cancelWhere(matches: (wizard: PendingWizard) => boolean): boolean {
+    const queued = this._queue.filter(matches)
+    const active = this._active && matches(this._active) ? this._active : undefined
+    if (!active && queued.length === 0) return false
+    this._queue.splice(0, this._queue.length, ...this._queue.filter((wizard) => !matches(wizard)))
+    if (active) this._active = undefined
+    for (const wizard of [...(active ? [active] : []), ...queued]) wizard.resolve(undefined)
+    if (!active) return true
+    if (this._queue.length > 0) this._activateNext()
+    else this._notify(undefined)
+    return true
+  }
+
+  // A turn is stopped until its question is answered, so that question shows before a standing one, which returns after.
+  private _yieldToTurn(): void {
+    const active = this._active
+    if (!active?.request.standing || this._queue.every(({ request }) => request.standing)) return
+    this._active = undefined
+    this._queue.unshift(active)
+  }
+
   private _activateNext(): void {
     if (this._active || this._queue.length === 0) return
-    this._active = this._queue.shift()
+    const held = this._queue.findIndex(({ request }) => !request.standing)
+    this._active = this._queue.splice(Math.max(held, 0), 1)[0]
     this._notify(this._active?.request)
     this._open?.()
   }

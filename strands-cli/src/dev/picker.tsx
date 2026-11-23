@@ -5,7 +5,7 @@ import type { StartupScreen } from '../ui/run.js'
 import { emptyEditor, reduceInputSequence } from '../terminal/composer.js'
 import { errorMessage, graphemes, sanitizeTerminalText, wrapLines } from '../terminal/text.js'
 import { EditableText } from '../ui/text-input.js'
-import type { DiscoveredHarness, SkippedHarness } from './search.js'
+import type { DiscoveredHarness } from './search.js'
 import type { LocalHarnessDiscovery } from './selection.js'
 import { useTerminalSize } from '../ui/terminal-size.js'
 import { useCopyableError } from '../ui/clipboard.js'
@@ -14,7 +14,7 @@ import { useSpinner } from '../ui/animation.js'
 import { userConfigPath } from '../config/store.js'
 import { devFailure, WorkspaceFolderInUse } from './errors.js'
 import { WorkspaceReplacementConfirmation } from './settings.js'
-import { basename, dirname, isAbsolute, relative } from 'node:path'
+import { basename, dirname } from 'node:path'
 import { isWorkspaceFolderName, WORKSPACE_FOLDER } from './workspace.js'
 import { editHarnessName, HARNESS_NAME_RULE, harnessNameProblem, type HarnessNameField } from './harness-name.js'
 
@@ -37,7 +37,6 @@ export interface BaseCliOption {
 interface PickerProps {
   cli?: BaseCliOption
   harnesses: readonly DiscoveredHarness[]
-  skipped?: readonly SkippedHarness[]
   discovery?: HarnessDiscoveryState
   warning?: string
   folderFor?: (choice: HarnessChoice) => FolderSuggestion | undefined
@@ -163,39 +162,19 @@ const SearchStatus = ({ count }: { count: number }): ReactElement => {
   )
 }
 
-const shownPath = (path: string): string => {
-  const inLaunchFolder = relative(process.cwd(), path)
-  return inLaunchFolder && !inLaunchFolder.startsWith('..') && !isAbsolute(inLaunchFolder) ? inLaunchFolder : path
-}
-
-const skippedNote = (skipped: readonly SkippedHarness[]): string | undefined => {
-  const [first, ...others] = skipped
-  if (!first) return undefined
-  const more = others.length ? ` and ${others.length} more` : ''
-  return sanitizeTerminalText(`Skipped ${shownPath(first.entrypoint)}${more}. Expected ${first.expected}`)
-}
-
 const DiscoveryStatus = ({
   discovery,
   count,
-  skipped,
   warningColor,
 }: {
   discovery: HarnessDiscoveryState
   count: number
-  skipped: readonly SkippedHarness[]
   warningColor: string
 }): ReactElement =>
   discovery === 'running' ? (
     <SearchStatus count={count} />
   ) : discovery === 'done' ? (
-    skipped.length ? (
-      <Text color={warningColor} wrap="truncate-end">
-        {skippedNote(skipped)}
-      </Text>
-    ) : (
-      <Text dimColor>No local harnesses found.</Text>
-    )
+    <Text dimColor>No local harnesses found.</Text>
   ) : (
     <Text color={warningColor} wrap="truncate-end">
       Search stopped: {sanitizeTerminalText(discovery.failed)}
@@ -205,7 +184,6 @@ const DiscoveryStatus = ({
 export const HarnessPicker = ({
   cli,
   harnesses,
-  skipped = [],
   discovery,
   warning,
   folderFor,
@@ -236,8 +214,7 @@ export const HarnessPicker = ({
   const { columns } = useTerminalSize()
   const availableRows = useStartupContentRows()
   const discoveredGroup = `Discovered Harnesses${harnesses.length ? ` (${harnesses.length})` : ''}`
-  const discoveryNote =
-    harnesses.length === 0 || (discovery !== undefined && discovery !== 'done') || skipped.length > 0
+  const discoveryNote = harnesses.length === 0 || (discovery !== undefined && discovery !== 'done')
   const rows: PickerRow[] = [
     ...(cli
       ? [
@@ -582,7 +559,6 @@ export const HarnessPicker = ({
                     <DiscoveryStatus
                       discovery={discovery ?? 'done'}
                       count={harnesses.length}
-                      skipped={skipped}
                       warningColor={warningColor}
                     />
                   </Box>
@@ -662,7 +638,6 @@ export const chooseHarness = async <Opened,>(
   let settled = false
   let opening = false
   let harnesses = options.harnesses
-  let skipped = options.skipped ?? []
   let discovery: HarnessDiscoveryState | undefined = search ? 'running' : undefined
   const result = new Promise<Opened | undefined>((resolve) => {
     complete = resolve
@@ -703,7 +678,6 @@ export const chooseHarness = async <Opened,>(
     clearTimeout(flush)
     flush = undefined
     harnesses = options.harnesses
-    skipped = options.skipped ?? []
     discovery = 'running'
     void find(
       (harness) => {
@@ -719,7 +693,6 @@ export const chooseHarness = async <Opened,>(
       .then((found) => {
         if (!current()) return
         found.harnesses.forEach(add)
-        skipped = found.skipped
         discovery = 'done'
       })
       .catch((error: unknown) => {
@@ -745,7 +718,6 @@ export const chooseHarness = async <Opened,>(
       createElement(HarnessPicker, {
         ...options,
         harnesses,
-        skipped,
         ...(discovery === undefined ? {} : { discovery }),
         ...(refresh ? { onRefresh: refresh } : {}),
         onSelect,

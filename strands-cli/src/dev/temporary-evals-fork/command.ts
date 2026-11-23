@@ -4,6 +4,7 @@ import type { ImportedAgentProject } from '../../project/import.js'
 import type { AgentExtensionUrlSkill } from '../../agent/extension.js'
 import type { DevChatCommand, DevChatCommandContext, DevChatPanelView, DevChatSkillRun } from '../../ui/chat/types.js'
 import { WizardRequestPanel } from '../../ui/panels/wizard-request-panel.js'
+import { wizardRequestHasDiff, wizardRequestRows } from '../../ui/panels/wizard-request.js'
 import type { DevChatPart } from '../chat-extension.js'
 import { evalsSkillUnavailable, STRANDS_EVALS_OPTIMIZE_SKILL, STRANDS_EVALS_SKILL } from '../evals-skill.js'
 import type { DevWorkspace } from '../workspace.js'
@@ -12,11 +13,13 @@ import { temporaryDevChatPart as temporaryAgentTools } from './agent-tools.js'
 import { readTemporaryEvaluators } from './evaluators.js'
 import { temporaryGenerationJobs } from './experiments-session.js'
 import { temporaryJobsFeed } from './jobs.js'
+import { showOptimizeReview } from './review-run.js'
 import { temporarySessionHistory } from './session-converter.js'
 import { temporaryCommandWorkflows } from './workflow-skills.js'
 import {
   temporaryDevSessions,
   temporaryOptimizeJobs,
+  temporaryRunAwaitsReview,
   temporaryTestJobs,
   type TemporaryDevSessions,
 } from './sessions.js'
@@ -54,7 +57,9 @@ const OPTIMIZE_DETAILS = paragraphs(
   'The optimizer divides the cases into training, validation, and test cases. It tries candidate changes on the training cases. The best candidate on the validation cases wins, and the test cases measure it at the end.',
   'While it runs, a line below the chat input shows the progress. Click the line to ask about it, or ask the agent to stop the run and keep the best candidate so far. You can start other runs at the same time.',
   'The run continues when you cancel the chat turn or close strands dev. When strands dev opens again, the run continues from where it stopped. On Windows, the run stops when strands dev closes, and continues at the next start.',
-  'The run goes on in the background, and a notice says when it finishes. Ask the agent about it then: it shows the proposed edits and asks which ones to apply. The agent source does not change until you accept them. Then use /evaluate on the new version. Ask the agent to open the run in the evals UI for a closer look.',
+  'The run goes on in the background, and a notice says when it finishes. Then its proposed edits appear on screen as a diff, one edit at a time: pick Apply this change or Leave it as it is. The agent source changes once every edit has an answer, and only with the edits you applied. Then use /evaluate on the new version. Ask the agent to open the run in the evals UI for a closer look.',
+  'Esc closes a diff without an answer. The run stays on the line below the chat input, also after strands dev opens again, and clicking that line, or asking the agent, shows the diff again.',
+  'With Auto-optimize (apply edits) on in /settings, a run that finishes writes its edits to the agent source without showing them. A run that you stopped still shows its edits for review.',
   'strands dev saves the records in strands-dev/experiments/<name>/optimizations/. From a shell, strands dev optimize <experiment> runs the optimizer and prints the result, but it does not change the agent source.',
   'Experimental: a fork of strands-evals runs the upstream optimizer for now, with strands-evals optimize run and strands-evals optimize resume.'
 )
@@ -85,6 +90,9 @@ const optimizationName = (sessions: Sessions, id: string): string | undefined =>
     .optimize.snapshot()
     .runs?.find((run) => run.id === id)?.experiment
 
+// The tool that starts each command's work; its jobs line already shows that run, so it is not listed twice.
+const BACKGROUND_TOOLS = ['strands_dev_run_background']
+
 const EVALS_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
   (sessions): DevChatCommand => ({
     spec: {
@@ -99,6 +107,7 @@ const EVALS_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
     ),
     attach: (context): void => void sessions(context).ui.start(),
     jobs: temporaryJobsFeed(sessions().experiments, temporaryGenerationJobs),
+    backgroundTools: BACKGROUND_TOOLS,
   }),
   (sessions): DevChatCommand => ({
     spec: {
@@ -113,6 +122,7 @@ const EVALS_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
     ),
     attach: (context): void => void sessions(context).test.resume(),
     jobs: temporaryJobsFeed(sessions().test, temporaryTestJobs),
+    backgroundTools: BACKGROUND_TOOLS,
   }),
   (sessions): DevChatCommand => ({
     spec: {
@@ -126,8 +136,19 @@ const EVALS_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
       (id) => `how is the optimization of ${optimizationName(sessions, id) ?? 'the experiment'} going?`,
       STRANDS_EVALS_OPTIMIZE_SKILL
     ),
-    attach: (context): void => void sessions(context).optimize.resume(),
+    attach: (context): void => {
+      const { optimize } = sessions(context)
+      optimize.reannounce()
+      void optimize.resume()
+    },
     jobs: temporaryJobsFeed(sessions().optimize, temporaryOptimizeJobs),
+    backgroundTools: BACKGROUND_TOOLS,
+    // A finished run's line is its review: open the diff it waits on instead of asking the chat.
+    openJob: (context, job): boolean => {
+      const opened = sessions(context)
+      if (!temporaryRunAwaitsReview(opened.optimize.snapshot(), job)) return false
+      return showOptimizeReview(opened, job) && context.openPanel('ask')
+    },
   }),
 ]
 
@@ -138,12 +159,30 @@ const askCommand = (sessions: Sessions): DevChatCommand => ({
     description: 'Answer the setup question that the agent is asking',
   },
   hidden: true,
+  // The chat stays usable while a question waits, and a message drops the question a turn waits on.
+  sticky: true,
+  // A change is read line by line beside the chat, so it takes the wide dock.
+  dock: () => wizardRequestHasDiff(sessions().ask.pending()),
+  wideDock: () => wizardRequestHasDiff(sessions().ask.pending()),
+  dropPending: () => sessions().ask.dropForTurn(),
+  contentRows: (width) => wizardRequestRows(sessions().ask.pending(), width),
   open:
     (context): DevChatPanelView =>
     (props) =>
-      createElement(WizardRequestPanel, { ...props, broker: sessions(context).ask }),
+      createElement(WizardRequestPanel, {
+        ...props,
+        broker: sessions(context).ask,
+        onAutofill: (on) =>
+          void context.report(
+            'success',
+            on
+              ? 'Autofill on · the agent answers its own questions with their defaults'
+              : 'Autofill off · the agent asks, and you answer on screen'
+          ),
+      }),
   attach: (context): void => sessions(context).ask.attachOpener(() => context.openPanel('ask')),
-  abandon: (context): void => sessions(context).ask.cancelAll(),
+  // A standing question, such as a finished run's diff, is not the turn's, so it stays.
+  abandon: (context): void => void sessions(context).ask.dropForTurn(),
 })
 
 const targetWorkspace = (workspace: DevWorkspace, project: ImportedAgentProject): DevWorkspace => ({
@@ -169,10 +208,18 @@ export const temporaryDevChatPart = (
 export const temporaryDevCommands = (
   workspace: DevWorkspace,
   project: ImportedAgentProject,
-  agent: () => TemporaryAgentFacts = () => ({})
+  agent: () => TemporaryAgentFacts = () => ({}),
+  autofill?: () => boolean,
+  autoOptimize?: () => boolean
 ): DevChatCommand[] => {
   const target = targetWorkspace(workspace, project)
   const sessions: Sessions = (context) =>
-    temporaryDevSessions({ workspace: target, agent, ...(context ? { context } : {}) })
+    temporaryDevSessions({
+      workspace: target,
+      agent,
+      ...(autofill ? { autofill } : {}),
+      ...(autoOptimize ? { autoOptimize } : {}),
+      ...(context ? { context } : {}),
+    })
   return [...EVALS_COMMANDS.map((make) => make(sessions)), askCommand(sessions)]
 }

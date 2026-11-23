@@ -78,6 +78,10 @@ export interface WizardStep {
   readonly notice?: WizardNotice
   readonly listLabel?: string
   readonly body?: (room: number) => ReactNode
+  /** The rows the body needs to show all of itself, so one question crowds only when they do not fit. */
+  readonly bodyRows?: number
+  /** Draws the body above the fields, for a body the fields are about. */
+  readonly bodyFirst?: boolean
   readonly footnote?: string
   readonly editFootnote?: string
 }
@@ -109,6 +113,12 @@ export interface WizardProps {
   // Read at keypress time, so a view that onFinish opens also swallows the rest of that input burst.
   readonly blocked?: () => boolean
   readonly position?: WizardPosition
+  /** Lets the developer hand the agent's next questions back to it with ctrl+a. */
+  readonly autofill?: { readonly on: boolean; readonly set: (on: boolean) => void }
+  /** Hands the keyboard to the chat input, for a question the developer wants to leave open. */
+  readonly onLeave?: () => void
+  /** What Esc is called in the hints, when leaving the form does not cancel what it asks about. */
+  readonly escapeHint?: string
 }
 
 const LABEL_WIDTH = 12
@@ -152,6 +162,16 @@ const stepRows = (step: WizardStep, at: number, count: number): WizardRow[] => [
   ...step.fields.filter(selectable).map((field): WizardRow => ({ kind: 'field', field })),
   ...stepButtons(at, count).map((button): WizardRow => ({ kind: 'button', button })),
 ]
+
+// The rows one question draws around its body, counted row by row, so the body gets exactly what is left.
+const rowsAroundBody = (step: WizardStep, { question, compact }: { question: boolean; compact: boolean }): number => {
+  const gap = compact ? 0 : 1
+  const label = compact || step.listLabel === undefined ? 0 : 1
+  const footnote = compact || step.footnote === undefined ? 0 : 1
+  // The title, the buttons, and the key hints, then the gaps, and the row that sets a body apart from its fields.
+  const apart = step.bodyFirst ? gap : 0
+  return 3 + (question ? 1 : 0) + gap + apart + label + step.fields.length + footnote + gap
+}
 
 const blockingNotice = (steps: readonly WizardStep[]): WizardNotice | undefined =>
   steps.map(({ notice }) => notice).find((notice) => notice?.tone === 'error')
@@ -355,14 +375,20 @@ const rowHints = (
   row: WizardRow | undefined,
   finishHint: (blocking: WizardNotice | undefined) => string,
   blocking: WizardNotice | undefined,
-  walked: boolean,
-  back = false
+  {
+    walked,
+    back,
+    autofill,
+    leave,
+    escape,
+  }: { walked: boolean; back: boolean; autofill: boolean; leave: boolean; escape: string }
 ): string[] => {
   const tab = walked ? ['Tab next tab'] : []
-  const hints = (action: string, arrows = '↑↓'): string[] => [...tab, arrows, action, 'Esc cancel']
+  const rest = [...(autofill ? ['ctrl+a autofill'] : []), ...(leave && !walked ? ['↓ chat'] : []), escape]
+  const hints = (action: string, arrows = '↑↓'): string[] => [...tab, arrows, action, ...rest]
   if (row?.kind === 'button')
     return hints(back && row.button === 'cancel' ? 'Enter back' : buttonHint(row.button, finishHint, blocking), '←→')
-  if (row?.kind !== 'field') return [...tab, 'Esc cancel']
+  if (row?.kind !== 'field') return [...tab, ...rest]
   if (row.field.kind === 'toggle' && row.field.unavailable !== undefined) return hints('not available')
   return hints(row.field.hint)
 }
@@ -384,6 +410,9 @@ export const Wizard = ({
   active = true,
   blocked,
   position,
+  autofill,
+  onLeave,
+  escapeHint = 'Esc cancel',
 }: WizardProps): ReactElement => {
   const own = useWizardPosition()
   const at = position?.step ?? own.step
@@ -397,8 +426,19 @@ export const Wizard = ({
   const cursor = cursorIn(position?.row ?? own.row, rows.length)
   const blocking = blockingNotice(steps)
   const ready = blocking === undefined
-  const compact = height < FULL_ROWS
-  const focused = rows[cursor.index]
+  const walked = steps.length > 1
+  const hasQuestion = question !== undefined
+  // One question is sized to its content, so it crowds only when its body does not fit; a walked form crowds when short.
+  const compact = walked
+    ? height < FULL_ROWS
+    : step.body !== undefined &&
+      height < rowsAroundBody(step, { question: hasQuestion, compact: false }) + (step.bodyRows ?? 0)
+  const bodyRoom = walked
+    ? height - (compact ? COMPACT_BODY_CHROME_ROWS : BODY_CHROME_ROWS)
+    : Math.max(1, height - rowsAroundBody(step, { question: hasQuestion, compact }))
+  // Without the keyboard there is no cursor: the chat holds it.
+  const cursorRow = active ? cursor.index : -1
+  const focused = active ? rows[cursor.index] : undefined
   const editor = editing.value
   const firstButton = rows.findIndex((row) => row.kind === 'button')
   const toggles = step.fields.filter((field): field is WizardToggle => field.kind === 'toggle')
@@ -451,16 +491,24 @@ export const Wizard = ({
         return
       }
       const row = rows[cursor.current()]
-      if (key.escape) onCancel()
-      else if (key.tab) stepTo(key.shift ? -1 : 1, [])
+      const typed = shortcut(input, key)
+      if (key.ctrl && input === 'a' && autofill) autofill.set(!autofill.on)
+      // A text row takes what is typed on it: the first character opens its editor and lands in it.
+      else if (row?.kind === 'field' && row.field.kind === 'text' && !key.ctrl && typed.trim() !== '') {
+        const opened = { key: row.field.key, edit: row.field.edit, value: textValue(row.field.edit.value) }
+        editing.set(edited(opened, editText(opened.value, input, key)))
+      } else if (key.escape) onCancel()
+      else if (key.tab && walked) stepTo(key.shift ? -1 : 1, [])
       // The buttons sit on one line, so ←→ moves between them and ↑ goes back to the fields.
       else if (row?.kind === 'button' && (key.leftArrow || key.rightArrow)) {
         const at = cursor.current() - firstButton + (key.rightArrow ? 1 : -1)
         cursor.set(firstButton + Math.max(0, Math.min(at, buttons.length - 1)))
       } else if (row?.kind === 'button' && key.upArrow) {
         if (firstButton > 0) cursor.set(firstButton - 1)
-      } else if (row?.kind === 'button' && key.downArrow) return
-      else if (key.upArrow) cursor.move(-1)
+      } else if (row?.kind === 'button' && key.downArrow) {
+        // Below the buttons of one question, down carries on into the chat.
+        if (!walked) onLeave?.()
+      } else if (key.upArrow) cursor.move(-1)
       else if (key.downArrow) cursor.move(1)
       else if (key.leftArrow || key.rightArrow) {
         if (row?.kind === 'field' && row.field.kind === 'choice') row.field.move(key.rightArrow ? 1 : -1)
@@ -481,6 +529,16 @@ export const Wizard = ({
   )
   const rowOf = (key: string): number => rows.findIndex((row) => row.kind === 'field' && row.field.key === key)
   const toggleRows = toggles.map(({ key }) => rowOf(key))
+  const notice = step.body ? undefined : (step.notice ?? blocking)
+  // A single question is sized to its content, so its list chrome is counted, not approximated.
+  const listChrome = walked
+    ? LIST_CHROME_ROWS
+    : 3 +
+      (hasQuestion ? 1 : 0) +
+      (compact ? 0 : 1) +
+      (compact || step.listLabel === undefined ? 0 : 1) +
+      (notice ? 1 : compact ? 0 : 1) +
+      (step.footnote !== undefined && !compact ? 1 : 0)
   // One scrolling list for every toggle of the step, placed where the first one was declared.
   const toggleList = (): ReactNode => (
     <>
@@ -489,14 +547,12 @@ export const Wizard = ({
         items={toggles.map((field) =>
           field.key === editor?.key ? { ...toggleItem(field), detail: withCursor(editor.value) } : toggleItem(field)
         )}
-        selected={toggleRows.indexOf(cursor.index)}
-        capacity={Math.max(
-          MIN_LIST_ROWS,
-          Math.min(toggles.length, height - LIST_CHROME_ROWS + (steps.length > 1 ? 0 : 1))
-        )}
+        selected={active ? toggleRows.indexOf(cursor.index) : -1}
+        capacity={Math.max(MIN_LIST_ROWS, Math.min(toggles.length, height - listChrome))}
         labelWidth={labelWidthFor(
           toggles.map(({ label }) => label),
-          width
+          width,
+          toggles.some(({ detail, unavailable }) => detail !== undefined || unavailable !== undefined)
         )}
         onClick={(item) => choose(toggleRows[item] ?? 0)}
         onHover={(item) => cursor.set(toggleRows[item] ?? 0)}
@@ -506,7 +562,7 @@ export const Wizard = ({
   const fieldView = (field: WizardField): ReactNode => {
     if (field.kind === 'toggle')
       return field.key === toggles[0]?.key ? (
-        <Box key={field.key} flexDirection="column">
+        <Box key={field.key} flexDirection="column" flexShrink={0}>
           {toggleList()}
         </Box>
       ) : null
@@ -523,7 +579,7 @@ export const Wizard = ({
           labelWidth={labelWidth}
           label={field.label}
           value={field.display}
-          active={cursor.index === row}
+          active={cursorRow === row}
           {...(point ? { onPoint: point } : {})}
         />
       )
@@ -533,7 +589,7 @@ export const Wizard = ({
         label={field.label}
         value={field.detail}
         {...(field.count > 1 ? { slider: { count: field.count, position: field.position } } : {})}
-        active={cursor.index === row}
+        active={cursorRow === row}
         {...(point ? { onPoint: point } : {})}
       />
     ) : (
@@ -555,7 +611,6 @@ export const Wizard = ({
       </Box>
     )
   }
-  const notice = step.body ? undefined : (step.notice ?? blocking)
   return (
     <>
       <PanelTitle
@@ -566,8 +621,10 @@ export const Wizard = ({
       {steps.length > 1 ? <StepBar steps={steps} at={index} right={status} onPick={pickStep} /> : null}
       {question === undefined ? null : <Line>{`  ${question}`}</Line>}
       {compact ? null : <Gap />}
+      {step.bodyFirst && step.body ? step.body(bodyRoom) : null}
+      {step.bodyFirst && step.body && !walked && !compact ? <Gap /> : null}
       {step.fields.map(fieldView)}
-      {step.body ? step.body(height - (compact ? COMPACT_BODY_CHROME_ROWS : BODY_CHROME_ROWS)) : null}
+      {!step.bodyFirst && step.body ? step.body(bodyRoom) : null}
       {editor && step.editFootnote ? <Line tone="muted">{`  ${step.editFootnote}`}</Line> : null}
       {step.footnote !== undefined && !compact ? (
         <Line tone="muted">{`${' '.repeat(labelWidth + 2)}${step.footnote}`}</Line>
@@ -586,9 +643,17 @@ export const Wizard = ({
       <Fill />
       <KeyHints
         hints={
-          editor
-            ? ['Enter save', 'Esc cancel']
-            : rowHints(focused, finishHint, blocking, steps.length > 1, onBack !== undefined)
+          !active
+            ? ['↑ answer this']
+            : editor
+              ? ['Enter save', 'Esc cancel']
+              : rowHints(focused, finishHint, blocking, {
+                  walked,
+                  back: onBack !== undefined,
+                  autofill: autofill !== undefined,
+                  leave: onLeave !== undefined,
+                  escape: escapeHint,
+                })
         }
       />
     </>

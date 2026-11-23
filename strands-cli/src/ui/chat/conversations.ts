@@ -51,7 +51,13 @@ export interface ConversationManagerOptions {
   projectPrivatePaths?: readonly string[] | null
   reloadProject?(conversationId: string, paths: readonly string[]): void
   /** `path` names the reload; `alsoWatch` files only re-run `changed`. */
-  configWatch?: { path: string; alsoWatch?: readonly string[]; changed(): Promise<boolean> }
+  configWatch?: {
+    path: string
+    alsoWatch?: readonly string[]
+    changed(): Promise<boolean>
+    /** The saved settings after a change, pushed into every open conversation without a reload. */
+    settings?(): ChatSettings
+  }
 }
 
 export class ConversationManager implements ChatControllerApi {
@@ -689,13 +695,26 @@ export class ConversationManager implements ChatControllerApi {
     }
   }
 
-  private async _configChanged({ path, changed }: { path: string; changed(): Promise<boolean> }): Promise<void> {
+  private async _configChanged({
+    path,
+    changed,
+    settings,
+  }: {
+    path: string
+    changed(): Promise<boolean>
+    settings?(): ChatSettings
+  }): Promise<void> {
+    let reload: boolean
     try {
-      if (!(await changed())) return
+      reload = await changed()
     } catch (error) {
       this._openError('live reload failed', path, errorMessage(error))
       return
     }
+    // UI settings such as the theme need no agent reload, so they apply even when nothing else changed.
+    const saved = settings?.()
+    if (saved) for (const { controller } of this._conversations.values()) controller.applyExternalSettings?.(saved)
+    if (!reload) return
     this._changedPaths.add(basename(path))
     this._projectReloadPending = true
     this._reloadProjectIfReady()

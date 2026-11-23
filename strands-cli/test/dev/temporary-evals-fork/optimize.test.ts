@@ -563,15 +563,15 @@ describe('TEMPORARY dev optimization', () => {
     },
     {
       error: 'run 20261111-150406-abc123 stopped at setup, so there is nothing to resume; start a new run',
-      step: 'Start a new run in /optimize.',
+      step: 'Ask for a new run in the chat.',
     },
     {
       error: "space changed: 'a' -> 'b'; pass the run's space to resume it, or start a new run to change it",
-      step: 'Start a new run in /optimize.',
+      step: 'Ask for a new run in the chat.',
     },
     {
       error: '/work/run has no cli.json: it was not started by `strands-evals optimize run`',
-      step: 'Start a new run in /optimize.',
+      step: 'Ask for a new run in the chat.',
     },
     {
       error: 'every train trial of the baseline failed, so nothing was measured',

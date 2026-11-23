@@ -268,6 +268,11 @@ async function runInteractive(
       suppliedConfig ??
       (args.dev ? await CliConfigStore.load(undefined, { persist: false }) : await CliConfigStore.load())
     config.useEnvironmentFiles(args.envFiles)
+    // A look the Base CLI workspace still holds moves to cli.toml; a start that cannot move it still starts.
+    if (!args.dev && !suppliedConfig) {
+      const { adoptBaseCliWorkspaceLook } = await import('../dev/base-cli.js')
+      await adoptBaseCliWorkspaceLook(config).catch(() => undefined)
+    }
     const savedConfig = config.snapshot()
     let initialWorkspace = process.cwd()
     if (args.dev) await config.setSettings({ updatePrompts: false, telemetry: false })

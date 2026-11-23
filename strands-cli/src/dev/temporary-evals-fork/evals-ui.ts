@@ -6,6 +6,7 @@ import { URL } from 'node:url'
 
 import { containsPath } from '../../paths.js'
 import { errorMessage } from '../../terminal/text.js'
+import { hyperlinkEscapes } from '../../terminal/terminal.js'
 import type { EvalsBrowser, EvalsBrowserNotice, EvalsBrowserPlace, EvalsBrowserState } from '../panels/model.js'
 import { prepareTemporaryOptimizerEnvironment, type TemporaryEnvironmentOptions } from './environment.js'
 import { temporaryEvalsEnvironment, temporaryWorkspaceDirectory } from './evals-process.js'
@@ -265,7 +266,10 @@ export class TemporaryEvalsUi implements EvalsBrowser {
     if (this.announced) return
     this.announced = true
     const link = this.link({ view: 'runs' }) ?? url
-    announce(this.host(), 'success', [`Evals UI: ${link}`, ...(this.forwardLines(port) ?? [])].join('\n'))
+    const escapes = hyperlinkEscapes(link)
+    // A linked label keeps the line short; a terminal without hyperlinks gets the whole address.
+    const shown = escapes ? `${escapes.open}open ${new URL(link).host}${escapes.close}` : link
+    announce(this.host(), 'success', [`Evals UI: ${shown}`, ...(this.forwardLines(port) ?? [])].join('\n'))
   }
 
   private fail(reason: string): void {

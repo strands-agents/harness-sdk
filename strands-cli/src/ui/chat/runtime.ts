@@ -166,14 +166,20 @@ export async function createTypescriptChat(
         mcp: backend.mcp,
         streamPresentation: DEFAULT_STREAM_PRESENTATION,
         setSettings: async (next): Promise<void> => {
-          await config.setSettings(next)
+          await (baseCli ? baseCli.saveSettings(config, next) : config.setSettings(next))
           await backend.syncConfiguration()
         },
         requestSetup,
         ...(devWorkspace
           ? {
               workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
-              devCommands: temporaryDevCommands(devWorkspace, project, () => backend.info?.() ?? {}),
+              devCommands: temporaryDevCommands(
+                devWorkspace,
+                project,
+                () => backend.info?.() ?? {},
+                () => config.snapshot().settings.uiAutofill,
+                () => config.snapshot().settings.autoOptimize
+              ),
               skillsWithoutCommands: extension?.extension.skills.map(({ name }) => name) ?? [],
               saveAgentOptions: (change: AgentOptions): Promise<boolean> =>
                 baseCli ? baseCli.saveAgentOptions(change) : saveAgentChoices(devWorkspace, change),
@@ -321,7 +327,16 @@ export async function createTypescriptChat(
             }),
         reloadProject: (conversationId, paths): void =>
           requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
-        ...(baseCli ? { configWatch: baseCli.configWatch } : {}),
+        ...(baseCli
+          ? {
+              configWatch: {
+                ...baseCli.configWatch,
+                // A dev chat's settings sit under the workspace layer, so the watch takes in what cli.toml shares.
+                changed: (): Promise<boolean> => baseCli.configWatch.changed(config),
+                settings: (): ChatSettings => config.snapshot().settings,
+              },
+            }
+          : {}),
       }
     )
   } catch (error) {
@@ -382,12 +397,18 @@ export async function createPythonChat(
       sessions,
       skills: { list: () => Promise.resolve(backend.skills), activate: (name) => backend.activateSkill(name) },
       skillNames: backend.skills.map((skill) => skill.name),
-      setSettings: (settings) => config.setSettings(settings),
+      setSettings: (settings) => (baseCli ? baseCli.saveSettings(config, settings) : config.setSettings(settings)),
       requestSetup,
       ...(devWorkspace
         ? {
             workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
-            devCommands: temporaryDevCommands(devWorkspace, project, () => backend.info?.() ?? {}),
+            devCommands: temporaryDevCommands(
+              devWorkspace,
+              project,
+              () => backend.info?.() ?? {},
+              () => config.snapshot().settings.uiAutofill,
+              () => config.snapshot().settings.autoOptimize
+            ),
             skillsWithoutCommands: extension?.extension.skills.map(({ name }) => name) ?? [],
             saveAgentOptions: (change: AgentOptions): Promise<boolean> =>
               baseCli ? baseCli.saveAgentOptions(change) : saveAgentChoices(devWorkspace, change),
@@ -486,7 +507,16 @@ export async function createPythonChat(
           privatePaths === null ? null : [...privatePaths, ...nestedWorkspace(project, devWorkspace)],
         reloadProject: (conversationId, paths): void =>
           requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
-        ...(baseCli ? { configWatch: baseCli.configWatch } : {}),
+        ...(baseCli
+          ? {
+              configWatch: {
+                ...baseCli.configWatch,
+                // A dev chat's settings sit under the workspace layer, so the watch takes in what cli.toml shares.
+                changed: (): Promise<boolean> => baseCli.configWatch.changed(config),
+                settings: (): ChatSettings => config.snapshot().settings,
+              },
+            }
+          : {}),
       }
     )
   } catch (error) {
@@ -511,7 +541,12 @@ const profileReload = (
     return true
   }
   return {
-    configWatch: { path, alsoWatch: [baseCliWorkspaceConfigPath()], changed },
+    configWatch: {
+      path,
+      alsoWatch: [baseCliWorkspaceConfigPath()],
+      changed,
+      settings: (): ChatSettings => config.snapshot().settings,
+    },
     reloadProject: (conversationId: string, paths: readonly string[]): void =>
       requestSetup({ profile: config.snapshot().profile, profileSaved: true, conversationId, reloadedFiles: paths }),
   }

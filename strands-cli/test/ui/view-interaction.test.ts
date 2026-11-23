@@ -308,6 +308,13 @@ describe('panel helpers', () => {
   it('truncates tool summaries without splitting graphemes or changing the input', () => {
     const input = { command: `${'a'.repeat(158)}😀x` }
     expect(summarizeToolInput('shell', input)).toBe(`${'a'.repeat(158)}…`)
+
+    expect(
+      summarizeToolInput('strands_dev_single_select', {
+        question: 'Which experiment should the run use?',
+        options: [{ value: 'refunds', label: 'refunds' }],
+      })
+    ).toBe('Which experiment should the run use?')
     expect(input.command).toBe(`${'a'.repeat(158)}😀x`)
     expect(summarizeToolInput('custom', `${'a'.repeat(155)}😀xxx`)).toBe(`"${'a'.repeat(155)}😀x…`)
     expect(summarizeToolInput('shell', { command: 'e\u0301'.repeat(161) })).toBe(`${'e\u0301'.repeat(159)}…`)

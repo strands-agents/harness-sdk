@@ -72,6 +72,30 @@ const readerOf = (lines: readonly string[], labels: Record<string, string> = {},
   return reader
 }
 
+// One step of four candidates on SPLIT: 4 train cases for your agent and each candidate, then 2 finalists and your
+// agent on 2 validation cases, then the winner and your agent on 2 test cases.
+const PLANNED = { search: 20, validation: 6, test: 4 }
+
+const rolloutsAfter = (lines: readonly string[]) => {
+  const reader = temporaryStudyReader({ run: 'r1', record: '/w/r1', startedAt: 7, planned: PLANNED })
+  lines.forEach((line) => reader.push(line))
+  return reader.progress().rollouts
+}
+
+const scoredOnTrain = (id: string, number: number): string[] => [
+  ...proposed(id, number),
+  ...SPLIT.train.map((caseName) => optimizerTrial({ candidate: id, caseName })),
+  ...optimizerCandidate({ id, number, iteration: 1, values: {}, train: 1 }).slice(1),
+]
+
+const searched = (): string[] => [
+  ...measuredBaseline(),
+  ...scoredOnTrain('v1', 1),
+  ...scoredOnTrain('v2', 2),
+  ...scoredOnTrain('v3', 3),
+  ...scoredOnTrain('v4', 4),
+]
+
 const SPLIT = { train: ['a', 'b', 'c', 'd'], validation: ['e', 'f'], test: ['g', 'h'] }
 
 const CASES: readonly EvalCase[] = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((name) => ({
@@ -98,6 +122,68 @@ const proposed = (id: string, number: number): string[] =>
     changed: ['instructions'],
     rationale: `Version ${number} checks the date.`,
   })
+
+describe('TEMPORARY optimization rollouts', () => {
+  it('shouldCountTheWholeRunFromTheStartSoTheTotalIsWhatThePlanAllowed', () => {
+    expect(rolloutsAfter([])).toEqual({ done: 0, total: 30 })
+    expect(rolloutsAfter(measuredBaseline())).toEqual({ done: 4, total: 30 })
+  })
+
+  it('shouldNotBeDoneWhenTheSearchIsBecauseTheFinalistsAndTheTestAreStillToRun', () => {
+    expect(rolloutsAfter(searched())).toEqual({ done: 20, total: 30 })
+  })
+
+  it('shouldCountTheCheckOfTheFinalistsAndThenTheTest', () => {
+    const checking = [
+      ...searched(),
+      optimizerFinalists(['v1', 'v2']),
+      optimizerTrial({ candidate: 'v1', caseName: 'e', split: 'validation' }),
+    ]
+    const testing = [
+      ...checking,
+      ...['v1', 'v2', 'base'].flatMap((candidate) =>
+        SPLIT.validation.map((caseName) => optimizerTrial({ candidate, caseName, split: 'validation' }))
+      ),
+      optimizerPicked('v1'),
+      optimizerTrial({ candidate: 'base', caseName: 'g', split: 'test' }),
+    ]
+
+    expect(rolloutsAfter(checking)).toEqual({ done: 21, total: 30 })
+    expect(rolloutsAfter(testing)).toEqual({ done: 27, total: 30 })
+  })
+
+  it('shouldReachItsTotalOnlyWhenTheTestIsDone', () => {
+    const finished = [
+      ...searched(),
+      optimizerFinalists(['v1', 'v2']),
+      ...['v1', 'v2', 'base'].flatMap((candidate) =>
+        SPLIT.validation.map((caseName) => optimizerTrial({ candidate, caseName, split: 'validation' }))
+      ),
+      optimizerPicked('v1'),
+      ...['v1', 'base'].flatMap((candidate) =>
+        SPLIT.test.map((caseName) => optimizerTrial({ candidate, caseName, split: 'test' }))
+      ),
+    ]
+
+    expect(rolloutsAfter(finished.slice(0, -1))).toEqual({ done: 29, total: 30 })
+    expect(rolloutsAfter(finished)).toEqual({ done: 30, total: 30 })
+    expect(rolloutsAfter([...finished, optimizerTested('v1', 'base', 0.5, 2)])).toEqual({ done: 30, total: 30 })
+  })
+
+  it('shouldLowerTheTotalWhenTheSearchStopsEarlyOrFewerVersionsGoOnThanPlanned', () => {
+    const stoppedEarly = [...measuredBaseline(), ...scoredOnTrain('v1', 1), optimizerStop()]
+    const oneFinalist = [...stoppedEarly, optimizerFinalists(['v1'])]
+    const yourAgentWon = [...oneFinalist, optimizerPicked('base')]
+
+    expect(rolloutsAfter(stoppedEarly)).toEqual({ done: 8, total: 18 })
+    expect(rolloutsAfter(oneFinalist)).toEqual({ done: 8, total: 16 })
+    expect(rolloutsAfter(yourAgentWon)).toEqual({ done: 8, total: 10 })
+  })
+
+  it('shouldLeaveTheRolloutsOutWhenNoPlanWasGiven', () => {
+    expect(readerOf(searched()).progress()).not.toHaveProperty('rollouts')
+  })
+})
 
 describe('TEMPORARY optimization trials', () => {
   it('shouldCountTheBaselineTrialsAndShowThemBeforeItsScoreArrives', () => {
