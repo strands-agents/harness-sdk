@@ -7,7 +7,7 @@ import {
   type UsageEstimate,
   type UsageRange,
 } from '../panels/model.js'
-import type { TemporaryUsageProfile } from './study.js'
+import type { TemporaryRolloutPhases, TemporaryUsageProfile } from './study.js'
 
 export type TemporarySplitShares = readonly [train: number, validation: number, test: number]
 
@@ -140,19 +140,31 @@ const usageEstimate = (rollouts: number, { experiment, runs }: TemporaryUsagePro
   basedOn: { experiment, runs: runs.length },
 })
 
-export const temporaryRolloutEstimate = ({
+/** The rollouts of each part of a run: your agent and every candidate on the train cases, then the two checks. */
+export const temporaryRolloutPhases = ({
   split: { train, validation, test },
   repetitions,
   iterations,
   width,
-  evaluators,
   finalists = TEMPORARY_DECISION_DEFAULTS.finalists,
   pareto = false,
-  profile,
-}: TemporaryRolloutPlan): TemporaryRolloutEstimate => {
+}: Omit<TemporaryRolloutPlan, 'evaluators' | 'profile'>): TemporaryRolloutPhases => {
   const validated = temporaryValidatedFinalists(finalists, pareto) + 1
   const tested = pareto ? validated : TESTED_WITHOUT_PARETO
-  const rollouts = repetitions * (train + iterations * width * train + validated * validation + tested * test)
+  return {
+    search: repetitions * (train + iterations * width * train),
+    validation: repetitions * validated * validation,
+    test: repetitions * tested * test,
+  }
+}
+
+export const temporaryRolloutEstimate = ({
+  evaluators,
+  profile,
+  ...plan
+}: TemporaryRolloutPlan): TemporaryRolloutEstimate => {
+  const { search, validation, test } = temporaryRolloutPhases(plan)
+  const rollouts = search + validation + test
   return {
     rollouts,
     judgeCalls: rollouts * evaluators,

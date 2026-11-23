@@ -42,6 +42,7 @@ import {
   optimizerPicked,
   optimizerStop,
   optimizerTested,
+  optimizerTrial,
   writeOptimizerRun,
 } from '../../fixtures/optimizer-run.js'
 
@@ -2114,6 +2115,43 @@ describe('TEMPORARY dev sessions', () => {
     expect(reloaded.instructions).toContain('Changes that strands dev made to this agent in this session.')
     expect(reloaded.instructions).toContain('an optimization applied 1 edit from run')
     expect(reloaded.instructions).toContain(`now ${JSON.stringify(WINNER)}`)
+  })
+
+  it('shouldCountTheWholeRunInTheJobLineSoItIsNotFullWhenOnlyTheSearchIsDone', async () => {
+    const begin = held()
+    const end = held()
+    const searched = [
+      ...studyLines(0.9),
+      optimizerTrial({ candidate: 'base', caseName: 'c0' }),
+      optimizerTrial({ candidate: 'win', caseName: 'c0' }),
+      optimizerStop(),
+    ]
+    const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+      await begin.promise
+      await writeOptimizerRun(recordOf(args), searched)
+      await end.promise
+      await writeOptimizerRun(recordOf(args), [...searched, optimizerPicked('win')])
+      return exit
+    })
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    sessions.optimize.plan(experiment)
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const plan = setupPlan(sessions)
+    const job = (): object | undefined => temporaryOptimizeJobs(sessions.optimize.snapshot())[0]
+
+    sessions.optimize.start()
+    await vi.waitFor(() => expect(optimizing).toHaveBeenCalledOnce())
+    const starting = job()
+    begin.resolve()
+
+    // The search stopped with both versions measured, which the count of versions would call done.
+    const afterSearch = plan.split.validation * (plan.validatedFinalists + 1) + plan.split.test * 2
+    await vi.waitFor(() => expect(job()).toMatchObject({ done: 2, total: 2 + afterSearch }), { timeout: 5000 })
+    expect(starting).toMatchObject({ done: 0, total: plan.rollouts })
+    expect(afterSearch).toBeGreaterThan(0)
+    end.resolve()
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
   })
 
   it('shouldKeepTheBestSoFarWhenTheUserStopsTheRun', async () => {

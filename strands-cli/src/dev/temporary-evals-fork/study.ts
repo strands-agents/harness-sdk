@@ -51,12 +51,21 @@ export interface TemporaryStudyOutcome {
   readonly test?: TemporaryTestDifference
 }
 
+/** The case runs a plan allows in each part of a run. */
+export interface TemporaryRolloutPhases {
+  readonly search: number
+  readonly validation: number
+  readonly test: number
+}
+
 export interface TemporaryStudyRun {
   readonly run: string
   readonly record: string
   readonly startedAt: number
   readonly labels?: Readonly<Record<string, string>>
   readonly cases?: readonly EvalCase[]
+  /** What the plan allows, to count the run's rollouts against. Without it the progress carries no such count. */
+  readonly planned?: TemporaryRolloutPhases
 }
 
 export interface TemporaryStudyReader {
@@ -296,12 +305,13 @@ class RunState {
     if (!this.test) this.readTest(test)
   }
 
-  progress({ run, record, startedAt }: TemporaryStudyRun): OptimizeProgress {
+  progress({ run, record, startedAt, planned }: TemporaryStudyRun): OptimizeProgress {
     const baseline = this.score(this.baselineId, 'train')
     const leader = this.bestAfter[0]
     const best = this.score(leader, 'train')
     const leading = leader === undefined ? undefined : this.candidates.get(leader)
     const step = this.step()
+    const rollouts = planned ? this.rollouts(step, planned) : undefined
     return {
       run,
       record,
@@ -316,9 +326,31 @@ class RunState {
         .map((candidate) => this.candidateResult(candidate, baseline)),
       ...(this.baselineId === undefined ? {} : { baselineCandidate: this.baselineResult(this.baselineId, baseline) }),
       ...(step ? { step } : {}),
+      ...(rollouts ? { rollouts } : {}),
       startedAt,
       stopping: false,
     }
+  }
+
+  /**
+   * The rollouts done, and those still to come: the rest of the part the run is in, by what that part turned out
+   * to need, and the parts after it, by what the plan allows. The total settles as the run goes: a search that
+   * stops early, fewer finalists, or your own agent as the winner each leave less to run than was planned.
+   */
+  private rollouts(step: OptimizeStep | undefined, planned: TemporaryRolloutPhases): TrialProgress {
+    const everyone = [...this.trials.keys()]
+    const train = this.finishedIn(everyone, 'train')
+    const done = train + this.finishedIn(everyone, 'validation') + this.finishedIn(everyone, 'test')
+    return { done, total: done + this.rolloutsLeft(step, train, planned) }
+  }
+
+  private rolloutsLeft(step: OptimizeStep | undefined, train: number, planned: TemporaryRolloutPhases): number {
+    if (!step) return 0
+    const rest = ({ done, total }: TrialProgress): number => Math.max(0, total - done)
+    if (step.kind === 'testing') return rest(step.trials)
+    // The search can be over before the finalists are named; until then the plan says what their check takes.
+    if (step.kind === 'validating') return (step.versions > 0 ? rest(step.trials) : planned.validation) + planned.test
+    return Math.max(0, planned.search - train) + planned.validation + planned.test
   }
 
   private trialsOf(id: string | undefined): CaseResult[] {

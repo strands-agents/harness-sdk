@@ -15,6 +15,7 @@ import type {
   OptimizeReview,
   OptimizeRunState,
   OptimizeState,
+  OptimizeStep,
   ProposedEdit,
   TestCheck,
   TestResults,
@@ -386,6 +387,14 @@ const optimizationStatus = async (state: OptimizeState, ui: EvalsBrowser): Promi
   })
 }
 
+const RUN_PHASES: Readonly<Record<OptimizeStep['kind'], string>> = {
+  baseline: 'measuring your agent as it is',
+  proposing: 'proposing new versions',
+  scoring: 'measuring the new versions',
+  validating: 'checking the finalists on the validation cases',
+  testing: 'checking the winner on the test cases',
+}
+
 const pageStatus = (state: OptimizeState): object => {
   switch (state.step) {
     case 'pick':
@@ -400,6 +409,9 @@ const pageStatus = (state: OptimizeState): object => {
         best: state.progress.best?.score,
         tried: state.progress.candidates.filter(({ scoring }) => scoring === undefined).length,
         planned: state.progress.planned,
+        // Every version tried is not the end of the run: the finalists and the test are checked after the search.
+        phase: state.progress.step ? RUN_PHASES[state.progress.step.kind] : undefined,
+        rollouts: state.progress.rollouts,
       })
     case 'review':
       return { step: 'review', ...reviewReport(state.review), ...waitingReport(state.review) }

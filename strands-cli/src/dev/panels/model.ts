@@ -340,6 +340,11 @@ export interface OptimizeProgress {
   readonly baselineCandidate?: CandidateResult
   readonly measure?: ObjectiveMeasure
   readonly step?: OptimizeStep
+  /**
+   * The case runs of the whole run, done and in all: the search, then the check of the finalists, then the test.
+   * The versions measured in the search are only its first part, so they are all measured well before the run ends.
+   */
+  readonly rollouts?: TrialProgress
   readonly startedAt: number
   readonly stopping: boolean
 }

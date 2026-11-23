@@ -106,6 +106,7 @@ import {
   temporaryNearestSplit,
   temporaryOptimizeWarning,
   temporaryRolloutEstimate,
+  temporaryRolloutPhases,
   temporarySplitChoices,
   temporarySplitShares,
   temporaryValidatedFinalists,
@@ -119,6 +120,7 @@ import {
   temporaryStudyReader,
   type TemporaryUsageProfile,
   type TemporaryMeasurement,
+  type TemporaryRolloutPhases,
   type TemporaryStudyOutcome,
   type TemporaryStudyParams,
   type TemporaryTestDifference,
@@ -212,8 +214,13 @@ export const temporaryRunAwaitsReview = ({ runs = [] }: OptimizeState, id: strin
 export const temporaryOptimizeJobs = ({ runs = [] }: OptimizeState): DevChatJob[] =>
   runs.flatMap(({ id, state }) => {
     if (state.step === 'running') {
-      const done = measuredVersions(state.progress)
-      return [{ id, label: state.progress.run, done, total: state.progress.planned }]
+      // The whole run in rollouts, so the count is full only when the run is over. The versions measured in the
+      // search are all in well before that: the finalists and the test are still to run then.
+      const { done, total } = state.progress.rollouts ?? {
+        done: measuredVersions(state.progress),
+        total: state.progress.planned,
+      }
+      return [{ id, label: state.progress.run, done, total }]
     }
     const edits = editsToReview(state)
     return edits > 0 && state.step === 'review'
@@ -239,17 +246,32 @@ interface RunEntry {
   reminder?: DevChatNotice | undefined
 }
 
-const startingProgress = (plan: RunPlan, startedAt: number): OptimizeProgress => ({
-  run: 'starting',
-  record: '',
-  metric: '',
-  iterations: plan.iterations,
-  planned: 1 + plan.iterations * plan.width,
-  trainCases: plan.split.train,
-  candidates: [],
-  startedAt,
-  stopping: false,
-})
+/** The rollouts the plan allows in each part of the run: the same numbers its estimate adds up. */
+const plannedRollouts = (plan: RunPlan): TemporaryRolloutPhases =>
+  temporaryRolloutPhases({
+    split: plan.split,
+    repetitions: plan.repetitions,
+    iterations: plan.iterations,
+    width: plan.width,
+    finalists: plan.decision.finalists,
+    pareto: isTemporaryPareto(plan.objective ?? NO_OBJECTIVE),
+  })
+
+const startingProgress = (plan: RunPlan, startedAt: number): OptimizeProgress => {
+  const { search, validation, test } = plannedRollouts(plan)
+  return {
+    run: 'starting',
+    record: '',
+    metric: '',
+    iterations: plan.iterations,
+    planned: 1 + plan.iterations * plan.width,
+    trainCases: plan.split.train,
+    candidates: [],
+    rollouts: { done: 0, total: search + validation + test },
+    startedAt,
+    stopping: false,
+  }
+}
 
 const sentence = (text: string): string => (/[.!?]$/u.test(text.trim()) ? text.trim() : `${text.trim()}.`)
 
@@ -1239,6 +1261,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       startedAt: saved.startedAt,
       labels: temporaryKnobLabels(knobs),
       cases: await readTemporaryRunnableCases(saved.experiment).catch(() => []),
+      planned: plannedRollouts(plan),
     })
     const show = (): void =>
       this.updateRun(entry, {
@@ -1357,6 +1380,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
               startedAt,
               labels,
               cases,
+              planned: plannedRollouts(plan),
             })
             tail = tailTemporaryRun(path, (line) => {
               reader?.push(line)

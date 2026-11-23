@@ -683,6 +683,26 @@ describe('TEMPORARY dev chat part', () => {
     expect(answered.optimization).not.toHaveProperty('next')
   })
 
+  it('shouldSayWhichPartOfTheRunIsGoingAndHowFarTheWholeRunIs', async () => {
+    const { call, finishRun } = setup()
+    finishRun({
+      step: 'running',
+      progress: {
+        ...progress(),
+        step: { kind: 'validating', versions: 3, trials: { done: 1, total: 6 } },
+        rollouts: { done: 21, total: 30 },
+      },
+    })
+
+    expect(await call('strands_dev_status')).toMatchObject({
+      optimization: {
+        step: 'running',
+        phase: 'checking the finalists on the validation cases',
+        rollouts: { done: 21, total: 30 },
+      },
+    })
+  })
+
   it('shouldNotTreatANoChangeOptimizationAsPendingEdits', async () => {
     const { call, optimize, sessions, finishRun } = setup()
     optimize.set({ step: 'review', review: { ...review(), edits: [] } })

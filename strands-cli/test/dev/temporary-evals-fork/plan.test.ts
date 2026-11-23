@@ -11,6 +11,7 @@ import {
   temporaryNearestSplit,
   temporaryOptimizeWarning,
   temporaryRolloutEstimate,
+  temporaryRolloutPhases,
   temporarySplitChoices,
   temporarySplitShares,
   temporaryValidatedFinalists,
@@ -83,6 +84,17 @@ describe('TEMPORARY optimize plan', () => {
   it('shouldOfferTheDefaultIterationsWhenTheIterationChoicesAreShown', () => {
     expect(TEMPORARY_ITERATION_CHOICES).toEqual([1, 2, 4, 6, 8])
     expect(TEMPORARY_ITERATION_CHOICES).toContain(TEMPORARY_OPTIMIZE_DEFAULTS.iterations)
+  })
+
+  it('shouldSplitTheEstimateIntoTheSearchAndTheTwoChecksThatRunAfterIt', () => {
+    const plan = { split: { train: 4, validation: 2, test: 2 }, repetitions: 1, iterations: 1, width: 4, finalists: 2 }
+
+    const phases = temporaryRolloutPhases(plan)
+
+    expect(phases).toEqual({ search: 20, validation: 6, test: 4 })
+    expect(temporaryRolloutEstimate({ ...plan, evaluators: 1 }).rollouts).toBe(
+      phases.search + phases.validation + phases.test
+    )
   })
 
   it.each([
