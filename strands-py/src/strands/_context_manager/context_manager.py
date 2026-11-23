@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 _AUTO_TRUNCATE_THRESHOLD = 1_500
 _AGENTIC_TRUNCATE_THRESHOLD = 8_000
 _TRUNCATE_PREVIEW_TOKENS = 750
-_AUTO_SUMMARIZE_UTILIZATION = 0.85
+_AUTO_SUMMARIZE_UTILIZATION = "85%"
 
 CONTEXT_MANAGER_PRESETS: tuple[str, ...] = ("auto", "agentic")
 
@@ -145,7 +145,7 @@ class ContextManager(Plugin):
                 Offload.truncate("tool_results", {"preview_tokens": _TRUNCATE_PREVIEW_TOKENS}).when(
                     block_threshold=_AGENTIC_TRUNCATE_THRESHOLD,
                 ),
-                Offload.summarize("*").when(context_utilization=1.0, preserve_recent=4),
+                Offload.summarize("*").when(context_utilization="100%", preserve_recent=4),
             ]
             return ContextManager(strategies=agentic_strategies)
         if isinstance(strategy, str):

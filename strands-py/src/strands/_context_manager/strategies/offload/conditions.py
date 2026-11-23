@@ -28,8 +28,8 @@ class OffloadConditions(TypedDict, total=False):
     when the target isn't ``"*"`` and ``preserve_recent`` is unset or 0.
 
     Attributes:
-        context_utilization: Context usage at or above which the strategy fires: ``0.8`` of the context window, or a
-            whole number of 1,000 or more input tokens, at most the model's context window.
+        context_utilization: Context usage at or above which the strategy fires: ``0.8`` or ``"80%"`` of the context
+            window, or a whole number of 1,000 or more input tokens, at most the model's context window.
         block_threshold: Size above which a message (target ``"*"``) or block is offloaded: a whole number of tokens
             above 0, or ``"5%"`` of the context window. Unset, there is no size check. Media the token count measures
             as 0 always passes, except in a strategy acting on arrival, which leaves it alone.
@@ -37,7 +37,7 @@ class OffloadConditions(TypedDict, total=False):
             share above 0 keeps at least one.
     """
 
-    context_utilization: int | float
+    context_utilization: int | float | str
     block_threshold: int | str
     preserve_recent: int | str
 
@@ -64,8 +64,8 @@ class _ConditionRule:
     share_in_range: Callable[[float], bool]
     min_count: int
     expected: str
-    fraction_share: bool = False
-    """Whether a share is a float fraction like ``0.8`` rather than a ``"N%"`` string."""
+    float_share: bool = False
+    """Whether a float fraction like ``0.8`` is a share, as well as a ``"N%"`` string."""
 
 
 # ``[0-9]`` keeps the digits ASCII, so what matches is what ``float`` below parses.
@@ -78,8 +78,9 @@ CONDITION_RULES: dict[str, _ConditionRule] = {
     "context_utilization": _ConditionRule(
         lambda share: 0 < share <= 1,
         MIN_UTILIZATION_TOKENS,
-        f"a float above 0 up to 1.0 or a whole token count of at least {MIN_UTILIZATION_TOKENS}",
-        fraction_share=True,
+        f'a float above 0 up to 1.0, a "N%" string up to "100%", or a whole token count of at least'
+        f" {MIN_UTILIZATION_TOKENS}",
+        float_share=True,
     ),
     "block_threshold": _ConditionRule(
         lambda share: 0 < share < 1, 1, 'a "N%" string below "100%" or a whole token count above 0'
@@ -98,7 +99,7 @@ def build_conditions(**supplied: int | float | str | None) -> OffloadConditions:
 
 
 def parse_condition(name: str, raw: Any) -> ParsedCondition | None:
-    """Parse one condition value: a ``"N%"`` string (or float fraction) is a share, a whole number a count, None unset.
+    """Parse one condition value: a ``"N%"`` string or allowed float is a share, a whole number a count, None unset.
 
     Raises:
         ValueError: When the value is not accepted for the condition.
@@ -117,10 +118,10 @@ def parse_condition(name: str, raw: Any) -> ParsedCondition | None:
 
 def _share(rule: _ConditionRule, raw: Any) -> float | None:
     """The share a value written in the rule's share form stands for, or None when it is not in that form."""
-    if rule.fraction_share:
-        return raw if isinstance(raw, float) and math.isfinite(raw) else None
     if isinstance(raw, str) and _PERCENT_PATTERN.fullmatch(raw):
         return float(raw[:-1]) / 100
+    if rule.float_share and isinstance(raw, float) and math.isfinite(raw):
+        return raw
     return None
 
 
@@ -128,14 +129,12 @@ def _share_hint(rule: _ConditionRule, raw: Any) -> str:
     """Suggest the right spelling for a rejected value that reads as a share, a percent, or a float count."""
     if isinstance(raw, float) and raw.is_integer() and raw > 100 and raw >= rule.min_count:
         return f"; for a count, write {int(raw)}"
-    if rule.fraction_share and isinstance(raw, str) and _PERCENT_PATTERN.fullmatch(raw):
-        raw = float(raw[:-1])
     if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not 0 < raw <= 100:
         return ""
     share = raw if raw <= 1 else raw / 100
     percent = f"{share * 100:g}"
-    if rule.fraction_share:
-        return f"; for {percent}%, write {float(share)!r}"
+    if rule.float_share:
+        return f'; for {percent}%, write {float(share)!r} or "{percent}%"'
     return f'; for {percent}%, write "{percent}%"'
 
 
@@ -218,5 +217,5 @@ class ResolvedConditions:
             return
         raise ValueError(
             f"context_utilization ({int(utilization.value)}) is larger than the model's context window"
-            f" ({limit} tokens); use a smaller token count or a share like 0.8"
+            f' ({limit} tokens); use a smaller token count or a share like 0.8 or "80%"'
         )

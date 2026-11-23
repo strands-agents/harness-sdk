@@ -252,7 +252,7 @@ class TestMessageLevelWithRoleAlternation:
     async def test_replaces_the_text_of_every_message_of_the_role_between_the_first_and_the_last(self, target, role):
         messages = _conversation(4)
 
-        assert await Offload.drop(target).when(context_utilization=0.5).apply(_context(messages, 0.9)) is True
+        assert await Offload.drop(target).when(context_utilization="50%").apply(_context(messages, 0.9)) is True
 
         assert len(messages) == 8
         for index, message in enumerate(messages):
@@ -263,7 +263,7 @@ class TestMessageLevelWithRoleAlternation:
     async def test_repairs_alternation_after_removing_messages(self):
         messages = _conversation(4)
 
-        await Offload.drop("*").when(context_utilization=0.5).apply(_context(messages, 0.9))
+        await Offload.drop("*").when(context_utilization="50%").apply(_context(messages, 0.9))
 
         assert all(left["role"] != right["role"] for left, right in zip(messages, messages[1:], strict=False))
 
@@ -271,7 +271,7 @@ class TestMessageLevelWithRoleAlternation:
     async def test_leaves_no_tool_result_without_the_tool_use_that_asked_for_it(self):
         messages = [_text("user", "q1"), *_tool_call("bash", "tu-1", "result"), *_conversation(3)[1:]]
 
-        await Offload.drop("*").when(context_utilization=0.5, preserve_recent=4).apply(_context(messages, 0.9))
+        await Offload.drop("*").when(context_utilization="50%", preserve_recent=4).apply(_context(messages, 0.9))
 
         assert all(left["role"] != right["role"] for left, right in zip(messages, messages[1:], strict=False))
         tool_use_ids = {
@@ -303,7 +303,7 @@ class TestMessageLevelWithRoleAlternation:
     async def test_acts_when_only_message_0_precedes_the_candidates(self):
         messages = _conversation(2)
 
-        assert await Offload.drop("*").when(context_utilization=0.5).apply(_context(messages, 0.9)) is True
+        assert await Offload.drop("*").when(context_utilization="50%").apply(_context(messages, 0.9)) is True
 
         assert _texts_of(messages) == [["q1"], ["a2", "[Dropped: earlier messages, ~2 tokens]"]]
 
@@ -311,14 +311,14 @@ class TestMessageLevelWithRoleAlternation:
     async def test_leaves_a_history_that_still_starts_with_a_user_message(self):
         messages = _conversation(3)
 
-        await Offload.drop("*").when(context_utilization=0.5).apply(_context(messages, 0.9))
+        await Offload.drop("*").when(context_utilization="50%").apply(_context(messages, 0.9))
 
         assert messages[0]["role"] == "user"
 
     @pytest.mark.asyncio
     async def test_repairs_alternation_when_the_pass_fails_after_editing_the_history(self):
         messages = _conversation(2)
-        strategy = Offload.drop("*").when(context_utilization=0.5)
+        strategy = Offload.drop("*").when(context_utilization="50%")
 
         async def remove_then_fail(context):
             del context.messages[1]
@@ -334,7 +334,7 @@ class TestMessageLevelWithRoleAlternation:
     @pytest.mark.asyncio
     async def test_leaves_consecutive_messages_it_did_not_remove_unmerged(self):
         messages = [_text("user", "q1"), _text("user", "q2"), _text("assistant", "a1")]
-        strategy = Offload.drop("*").when(context_utilization=0.5)
+        strategy = Offload.drop("*").when(context_utilization="50%")
 
         async def fail(context):
             raise RuntimeError("pass failed")
@@ -425,7 +425,7 @@ class TestMediaTarget:
     async def test_drops_the_media_and_leaves_text_and_tool_results_alone(self):
         message = _with_image()
         messages = [_text("user", "task"), message, _text("assistant", "answer")]
-        strategy = Offload.drop("media").when(context_utilization=0.5, block_threshold=10)
+        strategy = Offload.drop("media").when(context_utilization="50%", block_threshold=10)
 
         assert await strategy.apply(_context(messages)) is True
 
@@ -466,7 +466,7 @@ class TestMediaThatCountsAsNoTokens:
     """Tests for media a model's count sizes at 0, which a block threshold would otherwise keep forever."""
 
     @pytest.mark.parametrize(
-        "conditions", [{"context_utilization": 0.5}, {"context_utilization": 0.5, "block_threshold": 1000}]
+        "conditions", [{"context_utilization": "50%"}, {"context_utilization": "50%", "block_threshold": 1000}]
     )
     @pytest.mark.asyncio
     async def test_drops_the_media(self, conditions):
@@ -486,7 +486,7 @@ class TestMediaThatCountsAsNoTokens:
         tool_result = ToolResult(toolUseId="tu-1", status="success", content=[_IMAGE])
         held = Message(role="user", content=[ContentBlock(toolResult=tool_result)])
         messages = [_text("assistant", "task"), held, _text("assistant", "answer")]
-        strategy = Offload.drop("tool_results").when(context_utilization=0.5, block_threshold=1000)
+        strategy = Offload.drop("tool_results").when(context_utilization="50%", block_threshold=1000)
 
         assert await strategy.apply(_media_blind_context(messages)) is True
 
@@ -508,7 +508,7 @@ class TestMediaThatCountsAsNoTokens:
         message = _with_image()
         messages = [_text("user", "task"), message, _text("assistant", "answer")]
 
-        acted = await Offload.truncate("media").when(context_utilization=0.5).apply(_media_blind_context(messages))
+        acted = await Offload.truncate("media").when(context_utilization="50%").apply(_media_blind_context(messages))
 
         assert acted is True
         assert message["content"][1] == offload_placeholder(
@@ -546,7 +546,7 @@ class TestPinnedMessageProtection:
             _text("assistant", "a3"),
         ]
 
-        await Offload.drop("*").when(context_utilization=0.5).apply(_context(messages, 0.9))
+        await Offload.drop("*").when(context_utilization="50%").apply(_context(messages, 0.9))
 
         assert "pinned-msg" in _all_text(messages)
 
@@ -563,7 +563,7 @@ class TestPinnedMessageProtection:
             _text("assistant", "a3"),
         ]
 
-        await Offload.drop("*").when(context_utilization=0.5).apply(_context(messages, 0.9))
+        await Offload.drop("*").when(context_utilization="50%").apply(_context(messages, 0.9))
 
         assert tool_result in messages
 
@@ -583,7 +583,7 @@ class TestPinnedMessageProtection:
             _text("assistant", "a9"),
             _text("user", "q10"),
         ]
-        strategy = Offload.drop("*").when(context_utilization=0.5, preserve_recent=4)
+        strategy = Offload.drop("*").when(context_utilization="50%", preserve_recent=4)
 
         await strategy.apply(_context(messages, 0.9))
         await strategy.apply(_context(messages, 0.9))
@@ -624,7 +624,7 @@ class TestOverflowBypass:
     @pytest.mark.asyncio
     async def test_fires_below_the_utilization_only_when_the_request_overflowed(self, overflow, acted):
         messages = _conversation(2)
-        strategy = Offload.drop("*").when(context_utilization=0.85)
+        strategy = Offload.drop("*").when(context_utilization="85%")
 
         assert await strategy.apply(_context(messages, 0.5, overflow)) is acted
 
@@ -801,12 +801,12 @@ class TestRepeatedMessageLevelReduction:
     """Message 0 stays verbatim however many times a strategy reduces the history (#4685)."""
 
     _STRATEGIES = {
-        "drop": lambda: Offload.drop("*").when(context_utilization=0.7, preserve_recent=3),
-        "drop_all": lambda: Offload.drop("*").when(context_utilization=0.7),
+        "drop": lambda: Offload.drop("*").when(context_utilization="70%", preserve_recent=3),
+        "drop_all": lambda: Offload.drop("*").when(context_utilization="70%"),
         "truncate": lambda: Offload.truncate("*", {"preview_tokens": 4}).when(
-            context_utilization=0.7, preserve_recent=3
+            context_utilization="70%", preserve_recent=3
         ),
-        "truncate_all": lambda: Offload.truncate("*", {"preview_tokens": 4}).when(context_utilization=0.7),
+        "truncate_all": lambda: Offload.truncate("*", {"preview_tokens": 4}).when(context_utilization="70%"),
         "emergency": EmergencyTruncateStrategy,
     }
 
@@ -841,15 +841,17 @@ class TestRepeatedMessageLevelReduction:
 
 class TestParseCondition:
     _EXPECTED = {
-        "context_utilization": "a float above 0 up to 1.0 or a whole token count of at least 1000",
+        "context_utilization": (
+            'a float above 0 up to 1.0, a "N%" string up to "100%", or a whole token count of at least 1000'
+        ),
         "preserve_recent": 'a "N%" string below "100%" or a whole message count',
     }
 
     @pytest.mark.parametrize(
         ("name", "raw", "parsed"),
         [
+            ("context_utilization", "70%", ParsedCondition(0.7, True)),
             ("context_utilization", 0.7, ParsedCondition(0.7, True)),
-            ("context_utilization", 0.07, ParsedCondition(0.07, True)),
             ("context_utilization", 1.0, ParsedCondition(1.0, True)),
             ("context_utilization", 50_000, ParsedCondition(50_000, False)),
             ("context_utilization", 1000, ParsedCondition(1000, False)),
@@ -867,12 +869,12 @@ class TestParseCondition:
         [
             ("context_utilization", 0, "0"),
             ("context_utilization", 0.0, "0.0"),
-            ("context_utilization", 1, "1"),
-            ("context_utilization", 1.5, "1.5"),
             ("context_utilization", float("nan"), "nan"),
             ("context_utilization", float("inf"), "inf"),
-            ("context_utilization", "70%", '"70%"'),
-            ("context_utilization", "0.7", '"0.7"'),
+            ("context_utilization", 1, "1"),
+            ("context_utilization", 1.5, "1.5"),
+            ("context_utilization", "101%", '"101%"'),
+            ("context_utilization", "70", '"70"'),
             ("block_threshold", -1, "-1"),
             ("block_threshold", 0, "0"),
             ("block_threshold", 0.5, "0.5"),
@@ -880,8 +882,8 @@ class TestParseCondition:
             ("preserve_recent", 0.5, "0.5"),
             ("preserve_recent", 1.5, "1.5"),
             ("preserve_recent", "100%", '"100%"'),
-            ("block_threshold", "5%\n", '"5%\n"'),
-            ("block_threshold", "٥%", '"٥%"'),
+            ("context_utilization", "70%\n", '"70%\n"'),
+            ("context_utilization", "٧٠%", '"٧٠%"'),
         ],
     )
     def test_rejects(self, name, raw, shown):
@@ -891,18 +893,15 @@ class TestParseCondition:
     @pytest.mark.parametrize(
         ("name", "raw", "hint"),
         [
-            ("context_utilization", 80, "; for 80%, write 0.8"),
-            ("context_utilization", 7, "; for 7%, write 0.07"),
-            ("context_utilization", 1, "; for 100%, write 1.0"),
-            ("context_utilization", "80%", "; for 80%, write 0.8"),
+            ("context_utilization", 80, '; for 80%, write 0.8 or "80%"'),
+            ("context_utilization", 1, '; for 100%, write 1.0 or "100%"'),
             ("context_utilization", 999, ""),
             ("context_utilization", 50_000.0, "; for a count, write 50000"),
             ("preserve_recent", 0.07, '; for 7%, write "7%"'),
         ],
     )
-    def test_suggests_a_share_for_a_number_that_reads_as_one(self, name, raw, hint):
-        shown = f'"{raw}"' if isinstance(raw, str) else raw
-        message = f"{name}={shown} is invalid: expected {self._EXPECTED[name]}{hint}"
+    def test_suggests_a_percent_for_a_number_that_reads_as_one(self, name, raw, hint):
+        message = f"{name}={raw} is invalid: expected {self._EXPECTED[name]}{hint}"
 
         with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
             parse_condition(name, raw)
@@ -918,6 +917,8 @@ class TestConditionResolution:
     @pytest.mark.parametrize(
         ("conditions", "context_window_limit", "utilization", "fires"),
         [
+            ({"context_utilization": "70%"}, DEFAULT_CONTEXT_WINDOW_LIMIT, 0.7, True),
+            ({"context_utilization": "70%"}, DEFAULT_CONTEXT_WINDOW_LIMIT, 0.69, False),
             ({"context_utilization": 0.7}, DEFAULT_CONTEXT_WINDOW_LIMIT, 0.7, True),
             ({"context_utilization": 0.7}, DEFAULT_CONTEXT_WINDOW_LIMIT, 0.69, False),
             ({"context_utilization": 50_000}, 100_000, 0.5, True),
@@ -944,7 +945,8 @@ class TestConditionResolution:
             strategy.init(_context([], context_window_limit=None).agent)
 
     @pytest.mark.parametrize(
-        ("context_window_limit", "context_utilization"), [(100_000, 100_000), (100_000, 1.0), (None, 0.8)]
+        ("context_window_limit", "context_utilization"),
+        [(100_000, 100_000), (100_000, "100%"), (100_000, 1.0), (None, 0.8)],
     )
     def test_accepts_on_init_a_utilization_within_the_context_window(self, context_window_limit, context_utilization):
         strategy = Offload.drop("*").when(context_utilization=context_utilization)
@@ -989,7 +991,7 @@ class TestToolResultsThatAlreadyHoldAPlaceholder:
     @pytest.mark.asyncio
     async def test_leaves_them_alone_on_a_second_pass(self, method, build):
         messages = self._history()
-        strategy = build().when(context_utilization=0.5)
+        strategy = build().when(context_utilization="50%")
         assert await strategy.apply(_context(messages, 0.9)) is True
         offloaded = _result_texts(messages)
         _SUMMARIZE.reset_mock()
@@ -1004,9 +1006,9 @@ class TestToolResultsThatAlreadyHoldAPlaceholder:
     @pytest.mark.asyncio
     async def test_leaves_a_dropped_result_alone(self, method):
         messages = self._history()
-        await Offload.drop("tool_results").when(context_utilization=0.5).apply(_context(messages, 0.9))
+        await Offload.drop("tool_results").when(context_utilization="50%").apply(_context(messages, 0.9))
         _SUMMARIZE.reset_mock()
-        strategy = _BLOCK_METHODS[method]().when(context_utilization=0.5)
+        strategy = _BLOCK_METHODS[method]().when(context_utilization="50%")
 
         assert await strategy.apply(_context(messages, 0.9)) is False
 
@@ -1068,11 +1070,11 @@ class TestPlaceholdersLeftByAnotherMethod:
 _BIG = "x" * 4000
 
 _GRANULARITY_CASES = [
-    ("*", {"context_utilization": 0.5}, 0.9, "messages"),
+    ("*", {"context_utilization": "50%"}, 0.9, "messages"),
     ("*", {"preserve_recent": 1}, 0, "messages"),
-    ("*", {"block_threshold": 200, "context_utilization": 0.5}, 0.9, "large_messages"),
-    ("assistant_text", {"context_utilization": 0.5}, 0.9, [1, 3]),
-    ("assistant_text", {"context_utilization": 0.5}, 0.1, "nothing"),
+    ("*", {"block_threshold": 200, "context_utilization": "50%"}, 0.9, "large_messages"),
+    ("assistant_text", {"context_utilization": "50%"}, 0.9, [1, 3]),
+    ("assistant_text", {"context_utilization": "50%"}, 0.1, "nothing"),
 ]
 
 _TARGET_METHODS = {
@@ -1135,7 +1137,7 @@ class TestGranularity:
     @pytest.mark.asyncio
     async def test_leaves_the_newest_message_alone(self, method):
         messages = [*self._history()[:-1], _text("user", _BIG)]
-        strategy = _TARGET_METHODS[method]("user_text").when(context_utilization=0.5)
+        strategy = _TARGET_METHODS[method]("user_text").when(context_utilization="50%")
 
         assert await strategy.apply(_context(messages, 0.9)) is True
 
@@ -1146,7 +1148,7 @@ class TestGranularity:
     @pytest.mark.asyncio
     async def test_leaves_the_first_message_alone(self, method):
         messages = [_text("user", _BIG), *self._history()[1:]]
-        strategy = _TARGET_METHODS[method]("user_text").when(context_utilization=0.5)
+        strategy = _TARGET_METHODS[method]("user_text").when(context_utilization="50%")
 
         assert await strategy.apply(_context(messages, 0.9)) is True
 
@@ -1156,7 +1158,7 @@ class TestGranularity:
 
 class TestUnconditionedStrategyWarning:
     @pytest.mark.parametrize(
-        "conditions", [{"block_threshold": 1}, {"context_utilization": 0.5}, {"preserve_recent": 1}]
+        "conditions", [{"block_threshold": 1}, {"context_utilization": "50%"}, {"preserve_recent": 1}]
     )
     def test_does_not_warn_for_a_strategy_with_conditions(self, conditions):
         strategy = Offload.drop("assistant_text").when(**conditions)
@@ -1193,7 +1195,7 @@ class TestWholeMessageConditions:
 
     @pytest.mark.parametrize("method", ["drop", "truncate", "summarize"])
     @pytest.mark.parametrize(
-        "conditions", [{"context_utilization": 0.5}, {"preserve_recent": 1}, {"block_threshold": 2500}]
+        "conditions", [{"context_utilization": "50%"}, {"preserve_recent": 1}, {"block_threshold": 2500}]
     )
     def test_accepts_conditions_that_hold_it_back(self, method, conditions):
         if method == "truncate" and "block_threshold" in conditions:
@@ -1218,7 +1220,7 @@ class TestMediaConditions:
             getattr(Offload, method)("media").when(**conditions)
 
     @pytest.mark.parametrize("method", ["drop", "truncate", "summarize"])
-    @pytest.mark.parametrize("conditions", [{"context_utilization": 0.8}, {"preserve_recent": 1}])
+    @pytest.mark.parametrize("conditions", [{"context_utilization": "80%"}, {"preserve_recent": 1}])
     def test_accepts_conditions_that_wait_for_the_model_to_read_it(self, method, conditions):
         getattr(Offload, method)("media").when(**conditions)
 
@@ -1286,7 +1288,7 @@ class TestTruncateWholeMessages:
     async def test_elides_the_middle_of_the_history(self, preview, preview_tokens, expected):
         messages = self._history()
         config = {"preview": preview, "preview_tokens": preview_tokens}
-        strategy = Offload.truncate("*", config).when(context_utilization=0.5)
+        strategy = Offload.truncate("*", config).when(context_utilization="50%")
 
         assert await strategy.apply(_context(messages, 0.9)) is True
 
@@ -1296,7 +1298,7 @@ class TestTruncateWholeMessages:
     async def test_elides_the_marker_another_strategy_left(self):
         messages = self._history()
         messages[3] = Message(role="assistant", content=[offload_placeholder("summarize", _pad("summary"), None)])
-        strategy = Offload.truncate("*", {"preview_tokens": 40}).when(context_utilization=0.5)
+        strategy = Offload.truncate("*", {"preview_tokens": 40}).when(context_utilization="50%")
 
         assert await strategy.apply(_context(messages, 0.9)) is True
 
@@ -1313,7 +1315,7 @@ class TestTruncateWholeMessages:
         messages = self._history()
         marker = offload_placeholder("truncate", format_elided(20), None)
         messages[3] = Message(role="assistant", content=[ContentBlock(text=_pad("m3")), marker])
-        strategy = Offload.truncate("*", {"preview_tokens": 40}).when(context_utilization=0.5)
+        strategy = Offload.truncate("*", {"preview_tokens": 40}).when(context_utilization="50%")
 
         assert await strategy.apply(_context(messages, 0.9)) is True
 
@@ -1330,7 +1332,7 @@ class TestTruncateWholeMessages:
         messages = self._history()
         marker = offload_placeholder("truncate", format_elided(1000), None, 1000)
         messages[3] = Message(role="assistant", content=[ContentBlock(text=_pad("m3")), marker])
-        strategy = Offload.truncate("*", {"preview_tokens": 40}).when(context_utilization=0.5)
+        strategy = Offload.truncate("*", {"preview_tokens": 40}).when(context_utilization="50%")
         context = _context(messages, 0.9)
         elided = await context.agent.model.count_tokens(messages[3:10])
 
@@ -1362,7 +1364,7 @@ class TestTruncateWholeMessages:
         assert placeholders_in(messages) == [{"method": "truncate", "tokens": original}]
         left = await context.agent.model.count_tokens(messages[1:4])
 
-        assert await Offload.drop("*").when(context_utilization=0.5).apply(context) is True
+        assert await Offload.drop("*").when(context_utilization="50%").apply(context) is True
 
         # A block placeholder sits inside the tool result, so the marker reports the result's size, not its preview.
         assert placeholders_in(messages) == [{"method": "drop", "tokens": left + original}]
@@ -1372,7 +1374,7 @@ class TestTruncateWholeMessages:
     async def test_stops_once_only_its_own_marker_is_left_to_elide(self):
         messages = self._history()
         config = {"preview": "head", "preview_tokens": 40}
-        strategy = Offload.truncate("*", config).when(context_utilization=0.5)
+        strategy = Offload.truncate("*", config).when(context_utilization="50%")
         assert await strategy.apply(_context(messages, 0.9)) is True
         after_first_pass = _texts_of(messages)
 
@@ -1398,8 +1400,8 @@ class TestEagerHook:
     @pytest.mark.parametrize(
         "strategy",
         [
-            Offload.drop("*").when(context_utilization=0.5),
-            Offload.drop("tool_results").when(context_utilization=0.5),
+            Offload.drop("*").when(context_utilization="50%"),
+            Offload.drop("tool_results").when(context_utilization="50%"),
             Offload.drop("tool_results").when(preserve_recent=1),
         ],
     )

@@ -116,7 +116,7 @@ async def test_custom_provider_with_a_listed_id_stores_its_summary_as_text():
     ]
     tokens = await model.count_tokens(messages[1:4])
     agent = Agent(model=model, messages=messages, callback_handler=None)
-    strategy = Offload.summarize("*").when(context_utilization=0.8, preserve_recent=1)
+    strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
 
     assert await strategy.apply(ContextState(messages=agent.messages, agent=agent, utilization=0.9)) is True
     await agent.invoke_async("next")

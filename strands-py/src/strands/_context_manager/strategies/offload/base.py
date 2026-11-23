@@ -46,7 +46,7 @@ class OffloadStrategy(ContextStrategy, Protocol):
     def when(
         self,
         *,
-        context_utilization: int | float | None = None,
+        context_utilization: int | float | str | None = None,
         block_threshold: int | str | None = None,
         preserve_recent: int | str | None = None,
     ) -> OffloadStrategy:
@@ -84,7 +84,7 @@ class BaseOffloadStrategy(ABC):
     def when(
         self,
         *,
-        context_utilization: int | float | None = None,
+        context_utilization: int | float | str | None = None,
         block_threshold: int | str | None = None,
         preserve_recent: int | str | None = None,
     ) -> BaseOffloadStrategy:

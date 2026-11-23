@@ -38,18 +38,18 @@ class _OffloadNamespace:
         # Per-block, eager: truncate specific tools' results over 5% of the context window
         Offload.truncate(["tool::bash", "tool::read_file"]).when(block_threshold="5%")
         # Messages: summarize the oldest messages at 70% context utilization, keeping the newest 4
-        Offload.summarize("*").when(context_utilization=0.7, preserve_recent=4)
+        Offload.summarize("*").when(context_utilization="70%", preserve_recent=4)
         # Per-block, eager: with no conditions, drop each failed tool result as it arrives. Warns on init, since a
         # strategy without conditions acts on content the model has not read yet
         Offload.drop("tool_result_errors")
         # Per-block, gated: at 80% context utilization, drop tool results outside the newest 5 messages that hold one
-        Offload.drop("tool_results").when(context_utilization=0.8, preserve_recent=5)
+        Offload.drop("tool_results").when(context_utilization="80%", preserve_recent=5)
         # Per-block, gated: at 80% context utilization, drop media outside the newest message that holds any
-        Offload.drop("media").when(context_utilization=0.8, preserve_recent=1)
+        Offload.drop("media").when(context_utilization="80%", preserve_recent=1)
         # Messages: once the window is full, drop the oldest messages, keeping the newest 70%
-        Offload.drop("*").when(context_utilization=1.0, preserve_recent="70%")
+        Offload.drop("*").when(context_utilization="100%", preserve_recent="70%")
         # Messages: at 90% context utilization, summarize messages over 2000 tokens, keeping the newest 4
-        Offload.summarize("*").when(context_utilization=0.9, block_threshold=2000, preserve_recent=4)
+        Offload.summarize("*").when(context_utilization="90%", block_threshold=2000, preserve_recent=4)
         ```
     """
 
