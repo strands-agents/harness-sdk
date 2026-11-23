@@ -1,0 +1,567 @@
+name: "Rust: Release"
+
+# Manual release of the Rust crates `strands-macros`, `strands` and
+# `strands-harness` to crates.io. The crates share the workspace version in the
+# repo-root Cargo.toml and release together under one `rust/v<version>` tag.
+#
+# Shape: scan -> test-lint / harness test-lint / audit / package -> inspect ->
+#        notes -> approve -> tag + release -> publish -> verify.
+#
+# Publish is the last step. Everything before it runs on a fork too -- only the
+# crates.io token exchange fails there, because the fork is not the registered
+# trusted publisher.
+#
+# One-time setup before the first non-dry run:
+#   - GitHub environments `release-gate` (required reviewers, deployment branch
+#     `main`; shared with the other releases) and `crates-io`.
+#   - On crates.io, for each of `strands-macros`, `strands` and `strands-harness`:
+#     Settings -> Trusted Publishing -> add a GitHub publisher with owner
+#     `strands-agents`, repository `harness-sdk`, workflow `release-rust.yml`
+#     and environment `crates-io`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Explicit version, e.g. 0.2.0 (no leading v, no prefix). Must equal the workspace version in Cargo.toml.'
+        required: true
+        type: string
+      sha:
+        description: 'Optional commit SHA to release (must be an ancestor of origin/main). Defaults to current origin/main.'
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        description: 'Skip approval + tag + publish. Build/inspect/notes still run so you can review the crates on the run page.'
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: release-rust
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # Publish order: each crate depends on the ones before it.
+  RELEASE_CRATES: strands-macros strands strands-harness
+  # Paths whose commits belong to the Rust release notes.
+  RELEASE_PATHS: strands-rs harness-rs Cargo.toml Cargo.lock rust-toolchain.toml shared/model-info.json
+  # crates.io rejects API requests without a User-Agent.
+  CRATES_IO_USER_AGENT: strands-agents/harness-sdk release-rust workflow (https://github.com/strands-agents/harness-sdk)
+
+jobs:
+  scan-commits:
+    name: Resolve SHA and validate version
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    outputs:
+      release_sha: ${{ steps.scan.outputs.release_sha }}
+      prev_tag: ${{ steps.scan.outputs.prev_tag }}
+      notes_base: ${{ steps.scan.outputs.notes_base }}
+      new_tag: ${{ steps.scan.outputs.new_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Resolve SHA, find previous tag, validate version
+        id: scan
+        env:
+          NEW_VERSION: ${{ inputs.version }}
+          SHA_INPUT: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+
+          # 1. Validate the typed version (bare semver, no prefix).
+          if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version '$NEW_VERSION' is not bare semver (expected MAJOR.MINOR.PATCH, no 'v')."
+            exit 1
+          fi
+
+          # 2. Resolve the SHA. Default to origin/main; a typed sha is accepted
+          #    only if it is an ancestor of origin/main.
+          if [ -n "$SHA_INPUT" ]; then
+            RELEASE_SHA=$(git rev-parse --verify "$SHA_INPUT^{commit}" 2>/dev/null) || {
+              echo "::error::sha '$SHA_INPUT' is not a valid commit."
+              exit 1
+            }
+            if ! git merge-base --is-ancestor "$RELEASE_SHA" origin/main; then
+              echo "::error::sha $RELEASE_SHA is not an ancestor of origin/main -- release only from main history."
+              exit 1
+            fi
+          else
+            RELEASE_SHA=$(git rev-parse origin/main)
+          fi
+
+          # 3. The typed version must be the one cargo will publish.
+          WORKSPACE_VERSION=$(git show "$RELEASE_SHA:Cargo.toml" \
+            | python3 -c 'import sys, tomllib; print(tomllib.load(sys.stdin.buffer)["workspace"]["package"]["version"])')
+          if [ "$NEW_VERSION" != "$WORKSPACE_VERSION" ]; then
+            echo "::error::version $NEW_VERSION does not match the workspace version $WORKSPACE_VERSION in Cargo.toml at $RELEASE_SHA. Bump [workspace.package] version (and the strands / strands-macros entries in [workspace.dependencies]) first."
+            exit 1
+          fi
+
+          # 4. Pick tag prefix and resolve previous tag. Without one, only the
+          #    initial version may release, with notes drawn from the first
+          #    commit that added the Rust SDK.
+          TAG_PREFIX="rust/v"
+          INITIAL_VERSION="0.1.0"
+          NEW_TAG="${TAG_PREFIX}${NEW_VERSION}"
+          PREV_TAG=$(git tag --list "${TAG_PREFIX}*" --sort=-v:refname | head -n1)
+          if git rev-parse --verify "refs/tags/$NEW_TAG" >/dev/null 2>&1; then
+            echo "::error::tag $NEW_TAG already exists."
+            exit 1
+          fi
+          if [ -z "$PREV_TAG" ]; then
+            if [ "$NEW_VERSION" != "$INITIAL_VERSION" ]; then
+              echo "::error::No prior tag matching ${TAG_PREFIX}* and version $NEW_VERSION is not the initial $INITIAL_VERSION -- refusing to release without a baseline. (Fork-testing? Run \`git fetch upstream --tags && git push origin --tags\` first.)"
+              exit 1
+            fi
+            # sed reads all of rev-list's output; head would SIGPIPE it under pipefail.
+            FIRST_COMMIT=$(git rev-list --reverse "$RELEASE_SHA" -- strands-rs | sed -n 1p)
+            NOTES_BASE=$(git rev-parse --short "${FIRST_COMMIT}^")
+            PREV_LABEL="none (first release)"
+          else
+            PREV_VERSION="${PREV_TAG#"${TAG_PREFIX}"}"
+            NOTES_BASE="$PREV_TAG"
+            PREV_LABEL="\`$PREV_TAG\` (v$PREV_VERSION)"
+
+            # 5. Reject duplicate / non-monotonic versions, and require a
+            #    single-step increment (major, minor, or patch).
+            if [ "$NEW_VERSION" = "$PREV_VERSION" ]; then
+              echo "::error::version $NEW_VERSION matches existing tag $PREV_TAG."
+              exit 1
+            fi
+            HIGHER=$(printf '%s\n%s\n' "$PREV_VERSION" "$NEW_VERSION" | sort -V | tail -n1)
+            if [ "$HIGHER" != "$NEW_VERSION" ]; then
+              echo "::error::version $NEW_VERSION is not greater than previous $PREV_VERSION."
+              exit 1
+            fi
+            if ! [[ "$PREV_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::previous tag version '$PREV_VERSION' is not bare semver -- cannot compute the increment baseline."
+              exit 1
+            fi
+            IFS=. read -r P_MAJ P_MIN P_PAT <<< "$PREV_VERSION"
+            VALID="$((P_MAJ+1)).0.0 ${P_MAJ}.$((P_MIN+1)).0 ${P_MAJ}.${P_MIN}.$((P_PAT+1))"
+            case " $VALID " in
+              *" $NEW_VERSION "*) ;;
+              *)
+                echo "::error::version $NEW_VERSION is not a single increment of $PREV_VERSION (expected one of: $VALID)."
+                exit 1;;
+            esac
+          fi
+
+          # 6. Sanity-check: at least one Rust commit since the baseline.
+          read -ra paths <<< "$RELEASE_PATHS"
+          COUNT=$(git rev-list --count "$NOTES_BASE..$RELEASE_SHA" -- "${paths[@]}")
+          if [ "$COUNT" = "0" ]; then
+            echo "::error::no Rust commits between $NOTES_BASE and $RELEASE_SHA -- nothing to release."
+            exit 1
+          fi
+
+          {
+            echo "release_sha=$RELEASE_SHA"
+            echo "prev_tag=$PREV_TAG"
+            echo "notes_base=$NOTES_BASE"
+            echo "new_tag=$NEW_TAG"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Release scan"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Crates | \`${RELEASE_CRATES// /\`, \`}\` (crates.io) |"
+            echo "| Previous tag | $PREV_LABEL |"
+            echo "| Proposed tag | \`$NEW_TAG\` (v$NEW_VERSION) |"
+            echo "| Pinned SHA | \`$RELEASE_SHA\` |"
+            echo "| Rust commits since \`$NOTES_BASE\` | **$COUNT** |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Lint + unit-test gates ─────────────────────────────────────────────
+  test-lint:
+    name: Rust test + lint
+    needs: scan-commits
+    uses: ./.github/workflows/strands-rs-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ needs.scan-commits.outputs.release_sha }}
+
+  harness-test-lint:
+    name: Harness Rust test + lint
+    needs: scan-commits
+    uses: ./.github/workflows/harness-rs-test-lint.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ needs.scan-commits.outputs.release_sha }}
+
+  # ── Security audit (informational) ─────────────────────────────────────
+  security-audit:
+    name: Rust security audit
+    needs: scan-commits
+    uses: ./.github/workflows/rust-security-audit.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ needs.scan-commits.outputs.release_sha }}
+
+  # ── Package + verify (uploads rust-crates artifact) ────────────────────
+  # `cargo package --workspace` resolves the unpublished workspace crates
+  # through a local registry overlay and builds each packaged crate, so a
+  # missing file or a dependency that only resolves in-repo fails here.
+  package:
+    name: Package crates
+    needs: scan-commits
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scan-commits.outputs.release_sha }}
+          persist-credentials: false
+
+      - name: Install toolchain
+        run: rustup toolchain install  # from rust-toolchain.toml
+
+      - name: Copy the shared model info into the crates
+        run: |
+          set -euo pipefail
+          # --allow-dirty below would hide any other change; the pinned checkout
+          # must be clean before the git-ignored copies go in.
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            echo "::error::checkout is not clean."
+            exit 1
+          fi
+          cp shared/model-info.json strands-rs/strands/model-info.json
+          cp shared/model-info.json harness-rs/strands-harness/model-info.json
+
+      - name: Package
+        # The model-info copies are git-ignored, so cargo reports them as
+        # uncommitted; --allow-dirty lets them into the packages.
+        run: cargo package --workspace --allow-dirty
+
+      - name: Upload crates
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: rust-crates
+          path: target/package/*.crate
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── Inspect the packaged crates ────────────────────────────────────────
+  # Lists each .crate and checks names, versions and the embedded model info.
+  # publish-crates re-packages the same SHA with the same toolchain, since
+  # cargo cannot upload a prebuilt .crate.
+  inspect:
+    name: Inspect crates
+    needs: package
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    steps:
+      - name: Download crates
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: rust-crates
+          path: dist-crates
+
+      - name: List crate contents + Cargo.toml
+        run: |
+          set -euo pipefail
+          for crate in dist-crates/*.crate; do
+            base=$(basename "$crate" .crate)
+            echo "::group::$crate contents"; tar tzf "$crate"; echo "::endgroup::"
+            echo "::group::$crate Cargo.toml"; tar -xOzf "$crate" "$base/Cargo.toml"; echo "::endgroup::"
+          done
+
+      - name: Assert the release crates are stamped with the typed version
+        env:
+          EXPECTED: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          crates=(dist-crates/*.crate)
+          read -ra expected <<< "$RELEASE_CRATES"
+          if [ "${#crates[@]}" -ne "${#expected[@]}" ]; then
+            echo "::error::Expected ${#expected[@]} crates under dist-crates/, found ${#crates[@]}."
+            ls -la dist-crates/ || true
+            exit 1
+          fi
+          errors=0
+          for name in "${expected[@]}"; do
+            base="$name-$EXPECTED"
+            crate="dist-crates/$base.crate"
+            if [ ! -f "$crate" ]; then
+              echo "::error::$crate not found."
+              errors=$((errors + 1))
+              continue
+            fi
+            manifest=$(tar -xOzf "$crate" "$base/Cargo.toml")
+            version=$(awk -F'"' '/^version = /{print $2; exit}' <<< "$manifest")
+            if [ "$version" != "$EXPECTED" ]; then
+              echo "::error::$crate: Cargo.toml version is '$version', expected '$EXPECTED'."
+              errors=$((errors + 1))
+            fi
+          done
+          if [ "$errors" -gt 0 ]; then
+            exit 1
+          fi
+          echo "All ${#expected[@]} crates stamped with version $EXPECTED"
+
+      - name: Assert the crates that embed model info ship it
+        env:
+          EXPECTED: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          errors=0
+          for name in strands strands-harness; do
+            crate="dist-crates/$name-$EXPECTED.crate"
+            listing=$(tar tzf "$crate")
+            if ! grep -qx "$name-$EXPECTED/model-info.json" <<< "$listing"; then
+              echo "::error::$crate has no model-info.json; its build script cannot reach shared/ once published."
+              errors=$((errors + 1))
+            fi
+          done
+          if [ "$errors" -gt 0 ]; then
+            exit 1
+          fi
+
+  # ── Draft notes grouped by commit type ─────────────────────────────────
+  draft-notes:
+    name: Draft release notes (grouped by commit type)
+    needs: [scan-commits, test-lint, harness-test-lint, security-audit, package, inspect]
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scan-commits.outputs.release_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Render notes
+        env:
+          NOTES_BASE: ${{ needs.scan-commits.outputs.notes_base }}
+          NEW_REF: ${{ needs.scan-commits.outputs.release_sha }}
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+        run: |
+          set -euo pipefail
+          read -ra paths <<< "$RELEASE_PATHS"
+          git log --no-merges --pretty=format:'%h%x09%s' "$NOTES_BASE..$NEW_REF" -- "${paths[@]}" \
+            | NEW_TAG="$NEW_TAG" PREV_TAG="$NOTES_BASE" \
+              node .github/scripts/group-release-notes.mjs > release-notes.md
+
+      - name: Render release summary
+        env:
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+          RELEASE_SHA: ${{ needs.scan-commits.outputs.release_sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          IS_FORK: ${{ github.event.repository.fork }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Release proposal"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Crates | \`${RELEASE_CRATES// /\`, \`}\` (crates.io) |"
+            echo "| Proposed tag | \`$NEW_TAG\` |"
+            echo "| Pinned SHA | \`$RELEASE_SHA\` |"
+            echo "| Dry run | \`$DRY_RUN\` |"
+            echo "| Running on fork | \`$IS_FORK\` |"
+            echo ""
+            echo "> Reviewers: the packaged crates are uploaded as \`rust-crates\` on this run's page. Unpack them (\`tar xzf <name>.crate\`) to sanity-check before approving."
+            echo ""
+            echo "### Drafted notes"
+            echo ""
+            cat release-notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release notes artifact
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release-notes
+          path: release-notes.md
+          retention-days: 30
+
+  # ── Reviewer approval (skipped on dry runs) ────────────────────────────
+  approve-release:
+    name: Wait for reviewer approvals
+    needs: [scan-commits, draft-notes]
+    if: inputs.dry_run != true
+    runs-on: strands-agents_ubuntu-latest_4-core
+    environment:
+      # Shared with the other releases. On forks the environment has no reviewer
+      # config, so this just passes -- the publish step is the one that fails there.
+      name: release-gate
+    permissions: {}
+    steps:
+      - name: Acknowledge approval
+        env:
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+          RELEASE_SHA: ${{ needs.scan-commits.outputs.release_sha }}
+        run: |
+          echo "Approved to release $NEW_TAG at $RELEASE_SHA."
+
+  # ── Tag + GitHub release (before publish) ──────────────────────────────
+  # Runs before publish so the tag is the source of truth. If publish fails,
+  # the tag stays -- just re-run publish.
+  create-gh-release:
+    name: Create GitHub release
+    needs: [scan-commits, draft-notes, approve-release]
+    if: inputs.dry_run != true
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions:
+      contents: write
+      # Lets this job dispatch the changelog-sync workflow below.
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scan-commits.outputs.release_sha }}
+          # This job creates the tag, so keep the GITHUB_TOKEN in git config
+          # for the push below. Other jobs use persist-credentials: false.
+          persist-credentials: true
+
+      - name: Download release notes artifact
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: release-notes
+
+      - name: Tag the pinned SHA and create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+          RELEASE_SHA: ${{ needs.scan-commits.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          # Push the tag over git rather than through the releases API: that path
+          # returns 403 for the GITHUB_TOKEN (cli/cli#9514); a ref push works.
+          # Both steps are guarded so re-running after a partial failure is safe.
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$NEW_TAG" >/dev/null 2>&1; then
+            git tag "$NEW_TAG" "$RELEASE_SHA"
+            git push origin "refs/tags/$NEW_TAG"
+          fi
+
+          if ! gh release view "$NEW_TAG" >/dev/null 2>&1; then
+            gh release create "$NEW_TAG" \
+              --title "$NEW_TAG" \
+              --notes-file release-notes.md
+          fi
+
+      # A GITHUB_TOKEN-created release emits no `release` event, so dispatch the
+      # changelog sync explicitly. The sync renders only tags mapped to a stream
+      # in site/scripts/changelog/tag-meta.ts. Non-fatal: the cron backstops a
+      # failed dispatch.
+      - name: Trigger changelog sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_TAG: ${{ needs.scan-commits.outputs.new_tag }}
+        run: |
+          gh workflow run changelog-sync.yml \
+            || echo "::warning::Failed to dispatch changelog sync for $NEW_TAG; the cron will backstop."
+
+  # ── Publish to crates.io ───────────────────────────────────────────────
+  # Last step. Uses crates.io trusted publishing (OIDC); on a fork the token
+  # exchange fails, by design.
+  publish-crates:
+    name: Publish to crates.io
+    needs: [scan-commits, inspect, approve-release, create-gh-release]
+    if: inputs.dry_run != true
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 30
+    environment:
+      name: crates-io
+      url: https://crates.io/crates/strands
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.scan-commits.outputs.release_sha }}
+          persist-credentials: false
+
+      - name: Install toolchain
+        run: rustup toolchain install  # from rust-toolchain.toml
+
+      - name: Copy the shared model info into the crates
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            echo "::error::checkout is not clean."
+            exit 1
+          fi
+          cp shared/model-info.json strands-rs/strands/model-info.json
+          cp shared/model-info.json harness-rs/strands-harness/model-info.json
+
+      - name: Exchange the OIDC token for a crates.io token
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
+      - name: Publish in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          read -ra crates <<< "$RELEASE_CRATES"
+          for name in "${crates[@]}"; do
+            # Skip crates a partial earlier run already published, so re-running
+            # this job finishes the set.
+            if curl -sf -A "$CRATES_IO_USER_AGENT" "https://crates.io/api/v1/crates/$name/$VERSION" >/dev/null; then
+              echo "$name $VERSION is already on crates.io; skipping."
+              continue
+            fi
+            # The package job verified these exact sources; --no-verify keeps the
+            # three uploads inside the short-lived token's validity. cargo waits
+            # for each crate to reach the index before the next one resolves it.
+            cargo publish -p "$name" --allow-dirty --no-verify
+          done
+
+  # ── Post-publish smoke check ───────────────────────────────────────────
+  verify-published:
+    name: Verify versions on crates.io
+    needs: [publish-crates]
+    if: inputs.dry_run != true
+    runs-on: strands-agents_ubuntu-latest_4-core
+    permissions: {}
+    steps:
+      - name: Poll crates.io for the new versions
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          read -ra crates <<< "$RELEASE_CRATES"
+          for name in "${crates[@]}"; do
+            live=false
+            for i in $(seq 1 30); do
+              if curl -sf -A "$CRATES_IO_USER_AGENT" "https://crates.io/api/v1/crates/$name/$VERSION?t=$(date +%s)" >/dev/null; then
+                live=true
+                break
+              fi
+              echo "$name attempt $i/30: not visible yet, retrying in 10s..."
+              sleep 10
+            done
+            if [ "$live" != true ]; then
+              echo "::error::$name $VERSION not visible on crates.io after 5 minutes."
+              exit 1
+            fi
+            echo "$name $VERSION is live on crates.io."
+          done

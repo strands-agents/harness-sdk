@@ -73,12 +73,22 @@ Redirect long output to a file and read the tail. Run the gates one after anothe
 
 ## Model info
 
-`strands/build.rs` embeds `shared/model-info.json`, the model data every Strands SDK reads; edit that file, never a copy. A packaged crate cannot reach `shared/`, so copy it in before packaging or publishing (the copy is git-ignored, and packaging fails without it):
+`strands/build.rs` embeds `shared/model-info.json`, the model data every Strands SDK reads; edit that file, never a copy. A packaged crate cannot reach `shared/`, so copy it in before packaging or publishing (packaging fails without it). The copy is git-ignored, which cargo counts as uncommitted, hence `--allow-dirty`:
 
 ```bash
 cp shared/model-info.json strands-rs/strands/model-info.json
-cargo package -p strands-macros -p strands
+cargo package -p strands-macros -p strands --allow-dirty
 ```
+
+## Releasing
+
+`strands-macros`, `strands` and `strands-harness` share the workspace version and release together through the **Rust: Release** workflow (`.github/workflows/release-rust.yml`), under one `rust/v<version>` tag:
+
+1. Bump `[workspace.package] version` in the root `Cargo.toml`, the `strands` and `strands-macros` versions in `[workspace.dependencies]` and `Cargo.lock`, and merge to `main`.
+2. Run the workflow with that version and `dry_run` checked. It runs the Rust gates, packages the crates with the model info copied in, uploads them as `rust-crates` and drafts the release notes on the run page.
+3. Run it again with `dry_run` unchecked. After approval on the `release-gate` environment it tags the commit, creates the GitHub release and publishes the crates to crates.io in dependency order through trusted publishing. If publishing fails after tagging, re-run the failed jobs; crates already on crates.io are skipped.
+
+The first release (`0.1.0`) needs no earlier `rust/v*` tag. Every later version is one major, minor or patch step above the latest tag.
 
 ## Wire compatibility
 
