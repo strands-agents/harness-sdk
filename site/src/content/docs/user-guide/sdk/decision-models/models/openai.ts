@@ -1,6 +1,6 @@
 import { OpenAIDecisionModel } from '@strands-agents/sdk'
 
-async function configurationExample() {
+export async function configurationExample() {
   // --8<-- [start:configuration]
   // Reads OPENAI_API_KEY; defaults to gpt-6-luna
   const decisions = new OpenAIDecisionModel()
