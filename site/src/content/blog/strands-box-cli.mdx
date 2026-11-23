@@ -35,7 +35,7 @@ box run claude
 
 The first time you run it, `box` asks a few questions and writes a profile that runs your agent. After that, the same command starts the agent in a box.
 
-It's still Claude Code but inside of the box, and you use it the way you always have. Box sits underneath and stays out of the way until the agent reaches for something it shouldn't. Codex, Kiro CLI, and pi work the same way.
+It's still Claude Code but inside of the box, and you use it the way you always have. Box sits underneath and stays out of the way until the agent reaches for something it shouldn't. Codex and Kiro CLI work the same way.
 
 ## How Box works
 
@@ -57,20 +57,20 @@ Marc Brooker's post, [Strands Box: The Big Picture](/blog/strands-box-the-big-pi
 
 Several things have to come together to run an agent in a Strands Box. To run Claude Code inside a sandbox, Box needs to configure the process and its settings, and set up a route to its model with your key attached. Box CLI has two built-in layers that do that work for you: profiles and packs.
 
-A **pack** holds what one program needs in a box: the agent itself, a model provider, or a tool. It says how to start the program and what that program needs to run. For example, the `box/bedrock` pack sends the agent's model requests to Amazon Bedrock and adds your API key on the way out. The CLI ships packs for agents (Claude Code, Codex, Kiro CLI, pi), for model providers (Amazon Bedrock, Anthropic), and for everyday tools (git, gh, npm, uv, cargo).
+A **pack** holds what one program needs in a box: the agent itself, a model provider, or a tool. It says how to start the program and what that program needs to run. For example, the `@box/bedrock` pack sends the agent's model requests to Amazon Bedrock and adds your API key on the way out. The CLI ships packs for agents (Claude Code, Codex, Kiro CLI), for model providers (Amazon Bedrock, Anthropic), and for everyday tools (git, gh, npm, uv, cargo).
 
 A **profile** puts packs together into one agent persona. It names the packs, the policy files, and your own settings:
 
 ```toml
-packs = ["box/claude", "box/bedrock", "box/git", "box/npm"]
+packs = ["@box/claude", "@box/bedrock", "@box/git", "@box/npm"]
 policies = ["policy.dw"]
 ```
 
 ## Credentials stay outside the box
 
-An agent needs keys to do work: an API key for its model, a token to push to GitHub, or AWS credentials to look at an account. Strands Box keeps credentials outside the box so that the agent never sees them; instead the agent sees a placeholder, and Box's egress gateway swaps in the real key as the request leaves. Since the agent never holds the key, it can't leak it.
+An agent needs keys to do work: an API key for its model, a token to push to GitHub, or AWS credentials to look at an account. When you give Box a key through a route, Box keeps it outside the box: the agent sees a placeholder, and Box's egress gateway swaps in the real key as the request leaves. Since the agent never holds that key, it can't leak it. This protects only the keys you route. A key the agent can already read, such as one in a project file or written into an MCP server's settings, is still visible to it, so move those keys to routes.
 
-The `box/bedrock` pack already does this for your model key. For anything else, you add a route to the profile. The coding agent below pushes to GitHub with this one:
+The `@box/bedrock` pack already does this for your model key. For anything else, you add a route to the profile. The coding agent below pushes to GitHub with this one:
 
 ```toml
 [egress.github]
@@ -137,7 +137,7 @@ Now let's look at a profile that helps an on-call engineer at 3 AM. This agent d
 It can make requests to the model and the AWS MCP Server but nothing else on the network. Its route to the AWS MCP Server uses `aws://`, so it never has direct access to AWS keys. The parts of its `profile.toml` that matter here:
 
 ```toml
-packs = ["box/claude", "box/bedrock"]
+packs = ["@box/claude", "@box/bedrock"]
 policies = ["policy.dw", "oncall.dw"]
 
 # The box signs each request to the AWS MCP Server with the oncall-readonly AWS profile.
