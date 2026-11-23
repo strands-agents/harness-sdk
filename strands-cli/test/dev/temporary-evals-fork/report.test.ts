@@ -269,14 +269,19 @@ describe('TEMPORARY last evaluation run', () => {
   })
 
   it.each([
-    { label: 'AllNotApplicableAndPassed', outputs: [{ not_applicable: true, test_pass: true }], overall: 1 },
-    { label: 'NotApplicableButFailed', outputs: [{ not_applicable: true, test_pass: false }], overall: 0.5 },
+    { label: 'AllNotApplicableAndPassed', outputs: [{ label: 'not_applicable', test_pass: true }], overall: 1 },
+    { label: 'NotApplicableButFailed', outputs: [{ label: 'not_applicable', test_pass: false }], overall: 0.5 },
+    {
+      label: 'NotEvaluated',
+      outputs: [{ label: 'not_applicable', test_pass: false, metadata: { could_not_evaluate: true } }],
+      overall: 1,
+    },
     { label: 'Empty', outputs: [], overall: 0.5 },
     {
       label: 'PartlyNotApplicable',
       outputs: [
-        { not_applicable: true, test_pass: true },
-        { not_applicable: false, test_pass: true },
+        { label: 'not_applicable', test_pass: true },
+        { label: null, test_pass: true },
       ],
       overall: 0.5,
     },

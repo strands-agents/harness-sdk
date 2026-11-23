@@ -173,10 +173,19 @@ const rowKeys = (rows: readonly ReportRowFields[]): string[] => {
 
 const caseOfKey = (key: string): string => (JSON.parse(key) as [string, string])[1]
 
-const isApplicable = (outputs: unknown): boolean =>
-  !Array.isArray(outputs) ||
-  outputs.length === 0 ||
-  outputs.some((output) => !isRecord(output) || output.not_applicable !== true || output.test_pass !== true)
+const NOT_APPLICABLE = 'not_applicable'
+
+const isNotApplicable = (output: unknown): output is Record<string, unknown> =>
+  isRecord(output) && output.label === NOT_APPLICABLE
+
+const couldNotEvaluate = (output: unknown): boolean =>
+  isNotApplicable(output) && isRecord(output.metadata) && Boolean(output.metadata.could_not_evaluate)
+
+const isApplicable = (outputs: unknown): boolean => {
+  if (!Array.isArray(outputs) || outputs.length === 0) return true
+  if (outputs.every(couldNotEvaluate)) return false
+  return outputs.some((output) => !isNotApplicable(output) || output.test_pass !== true)
+}
 
 const overallScore = (rows: readonly ReportRowFields[]): number => {
   const applicable = rows
