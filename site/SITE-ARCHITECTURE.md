@@ -47,12 +47,11 @@ available in the repository but do not generate website routes.
 - Set `SAMPLES_SOURCE_DIR` to a checkout of the samples repository.
 - Set `SAMPLES_REQUIRE_SOURCE=1` to fail when the source checkout is missing or has no samples. Without it, the build clears generated guides and renders the local setup message at `/examples/`.
 
-At the start of a manual production deploy, the workflow checks out
-`strands-agents/samples@main` once and records the resulting commit SHA. If the dispatcher selects
-`locked`, it instead checks out the same Samples revision used by docs CI. `samples:sync` reads
-only that immutable checkout for the rest of the build. The workflow summary and resulting
-`gh-pages` commit record the samples revision alongside the external documentation snapshot.
-Samples commits and merges do not trigger site rebuilds.
+Docs CI, pull request previews, and manual production deploys check out
+`strands-agents/samples@main` once. `samples:sync` reads only that checkout for the rest of the
+build. Production records the resolved Samples revision alongside the external documentation
+revisions in the workflow summary and resulting `gh-pages` commit. Samples commits and merges do
+not trigger site rebuilds, but the next website build picks them up.
 
 The importer warns when a guide links to a missing file and fails when a guide references a missing image.
 
@@ -145,8 +144,8 @@ Strands Decider under `/docs/labs/strands-decider/`.
 
 **Why:** Product documentation changes with its implementation. Keeping the source Markdown
 in the product repository lets one commit update behavior and documentation together. The
-site owns the route prefix, publication status, navigation placement, presentation, tracked ref,
-and committed baseline; the upstream manifest owns each page's route suffix.
+site owns the route prefix, publication status, navigation placement, presentation, and tracked
+ref; the upstream manifest owns each page's route suffix.
 
 #### Upstream contract
 
@@ -191,32 +190,25 @@ is the publication authority: its `publicationStatus` determines whether importe
 preview or stable on this site. Preview pages render a documentation-preview caution and remain
 out of search and machine-readable publication surfaces. Stable imported pages are automatically
 included in `llms.txt`, `llms-full.txt`, search, and the sitemap; there is no separate
-machine-readable indexing switch. A lock-only update cannot promote pages.
+machine-readable indexing switch. Changing publication status does not require a coordinated
+source-repository change.
 
-#### Site registry and lock
+#### Site registry and source resolution
 
 `external-docs.config.json` owns the GitHub repository, tracked ref, manifest path, route
-prefix, sidebar label, and publication status. `external-docs.lock.json` maps product IDs to
-immutable baseline SHAs used by CI, local builds, and the production fallback.
-Ordinary CI and local site builds read the committed SHA, never the moving ref. At the start of a
-manual production deploy, `docs-deploy-github-pages.yml` defaults to resolving each tracked ref
-once and writes the result to the job's temporary lock file. The `content_snapshot` input applies
-the same choice to every upstream source: `latest` uses the tracked external documentation refs
-and Samples `main`, while `locked` uses the committed external documentation baseline and the
-Samples revision used by docs CI. The rest of the deploy generates and publishes from those
-immutable revisions, and any resulting `gh-pages` commit records them as one content snapshot.
-Upstream product commits do not trigger site rebuilds.
+prefix, sidebar label, and publication status. Box and Decider both track `main`; every other ref
+is rejected by the config schema.
 
-The manually dispatched `docs-external-sync.yml` workflow remains available to validate a newer
-snapshot with the same `npm run cms:build` path as docs CI and open or update a draft lock-only PR.
-This refreshes the committed baseline used by CI; it is not required for production deployment.
-Automatic refreshes are intentionally disabled so upstream activity does not create recurring
-lock PRs. There is no fixed refresh cadence: maintainers run the workflow on demand before site
-changes that affect federation compatibility, or when they intentionally want CI and local builds
-to adopt a newer upstream baseline.
-The deprecated upstream status does not gate publication. This lets the site promote or preview a
-pinned snapshot without requiring a coordinated source-repository change. The workflow summary and
-PR body link to each upstream old-to-new commit comparison.
+Every `external-docs:generate` invocation creates a fresh shallow checkout for each product,
+fetches its configured `main` branch, and resolves `FETCH_HEAD` once. The manifest, Markdown pages,
+and linked assets all come from that checkout. Local builds, CI, pull request previews, and
+production deploys therefore use the latest `main` commit available when the build starts. A
+failed fetch fails the build instead of falling back to stale content.
+
+The resolved commit SHA is recorded in generated page provenance, generated navigation, and the
+production deployment summary. It is a per-build record, not a committed input. It also keeps
+source and asset links internally consistent if the branch advances while a build is running.
+Upstream product commits do not trigger site rebuilds, but the next website build picks them up.
 
 #### Generated layout
 
@@ -242,7 +234,7 @@ The generator:
 - rewrites links to other published manifest pages as page-relative site routes so they work
   under production and preview base paths;
 - rewrites other relative links and same-repository `blob`, `tree`, and raw `main` URLs to the
-  pinned commit while keeping GitHub edit URLs on the configured editable ref;
+  resolved build commit while keeping GitHub edit URLs on the configured editable ref;
 - treats unsupported `dw` and `cedar` code fences as plain text;
 - passes JSX elements through to the `.mdx` output so Astro resolves them via
   auto-import, subject to the MDX safety rules above (no `import`/`export`, no
@@ -255,9 +247,7 @@ The generator:
 The importer core is reusable, but each product still requires explicit site wiring:
 
 1. Add the repository, tracked ref, manifest, route prefix, navigation label, and publication
-   status to
-   `external-docs.config.json`, plus its initial immutable revision to
-   `external-docs.lock.json`.
+   status to `external-docs.config.json`.
 2. Keep source files under `docs/`. The manifest page list explicitly selects which files the
    site publishes.
 3. Add a content symlink for the generated product directory and include its Markdown path in
@@ -272,7 +262,8 @@ machine-readable documentation endpoints also omit them until the site's publica
 changes to `stable`. Once stable, every page is included automatically.
 
 Build and development scripts generate external docs before Astro starts. To preview changes
-from a local product checkout instead of the lock, set its source environment variable:
+from a local product checkout instead of the configured remote ref, set its source environment
+variable:
 
 ```bash
 EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box npm run dev
@@ -336,7 +327,7 @@ The documentation extends Starlight's default schema with custom fields that aut
 
 ### `externalDocs`
 
-Generated external pages record their product, repository, tracked ref, immutable revision,
+Generated external pages record their product, repository, tracked ref, resolved revision,
 and source file. Authors do not set this field by hand. The verified site publication status is
 recorded in the generated frontmatter: `preview` renders the upstream caution, while `stable`
 keeps the provenance without the caution.

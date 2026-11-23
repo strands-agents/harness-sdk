@@ -149,6 +149,25 @@ describe('external docs schema', () => {
     ).toThrow(/without \.git/)
   })
 
+  it('rejects refs other than main', () => {
+    const config = {
+      schemaVersion: 1,
+      products: [
+        {
+          id: 'strands-box',
+          repository: 'https://github.com/strands-agents/box',
+          ref: 'a'.repeat(40),
+          manifest: 'docs/site-manifest.json',
+          routePrefix: 'docs/user-guide/box/source',
+          navLabel: 'Upstream docs preview',
+          publicationStatus: 'preview',
+        },
+      ],
+    }
+
+    expect(() => parseExternalDocsConfig(config)).toThrow(/must be "main"/)
+  })
+
   it('rejects an unsupported site publication status', () => {
     expect(() =>
       parseExternalDocsConfig({

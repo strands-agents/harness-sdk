@@ -7,13 +7,6 @@ on:
         description: 'Deploy even if a published release has no changelog entry yet'
         type: boolean
         default: false
-      content_snapshot:
-        description: 'Upstream content: latest refs or CI-pinned baselines'
-        type: choice
-        options:
-          - latest
-          - locked
-        default: latest
 
 permissions:
   contents: write
@@ -32,12 +25,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Checkout samples snapshot
+      - name: Checkout samples
         uses: actions/checkout@v7
         with:
-          # Locked mode uses a reviewed Samples baseline; latest mode follows main.
           repository: strands-agents/samples
-          ref: ${{ inputs.content_snapshot == 'locked' && '6226307ed8f6de1face333d3daec638593aeedf3' || 'main' }}
+          ref: main
           path: samples-source
           persist-credentials: false
 
@@ -70,31 +62,11 @@ jobs:
           fi
           [ "$missing" = 0 ] && [ "$unverified" = 0 ]
 
-      - name: Resolve latest external documentation
-        if: ${{ inputs.content_snapshot != 'locked' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: npm run external-docs:update-lock
-
       - name: Resolve samples revision
         id: samples_snapshot
         run: |
           samples_revision="$(git -C "$GITHUB_WORKSPACE/samples-source" rev-parse HEAD)"
           echo "revision=$samples_revision" >> "$GITHUB_OUTPUT"
-
-      - name: Record documentation inputs snapshot
-        id: content_snapshot
-        env:
-          SAMPLES_REVISION: ${{ steps.samples_snapshot.outputs.revision }}
-        run: |
-          content_snapshot="$(node -e '
-            const { products } = require("./external-docs.lock.json")
-            const revisions = products.map(({ id, revision }) => `${id}@${revision}`)
-            revisions.push(`samples@${process.env.SAMPLES_REVISION}`)
-            process.stdout.write(revisions.join(", "))
-          ')"
-          echo "snapshot=$content_snapshot" >> "$GITHUB_OUTPUT"
-          printf 'Documentation snapshot: `%s`\n' "$content_snapshot" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build CMS
         run: npm run cms:build
@@ -102,6 +74,26 @@ jobs:
           SAMPLES_SOURCE_DIR: ${{ github.workspace }}/samples-source
           SAMPLES_REQUIRE_SOURCE: '1'
           SITE_DOMAIN: https://strandsagents.com
+
+      - name: Record documentation inputs snapshot
+        id: content_snapshot
+        env:
+          SAMPLES_REVISION: ${{ steps.samples_snapshot.outputs.revision }}
+        run: |
+          content_snapshot="$(node -e '
+            const fs = require("node:fs")
+            const { products } = require("./external-docs.config.json")
+            const revisions = products.map(({ id }) => {
+              const navigation = JSON.parse(
+                fs.readFileSync(`.build/external-docs/${id}/navigation.json`, "utf8")
+              )
+              return `${id}@${navigation.revision}`
+            })
+            revisions.push(`samples@${process.env.SAMPLES_REVISION}`)
+            process.stdout.write(revisions.join(", "))
+          ')"
+          echo "snapshot=$content_snapshot" >> "$GITHUB_OUTPUT"
+          printf 'Documentation snapshot: `%s`\n' "$content_snapshot" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create latest/ symlinks for llms.txt files
         run: |

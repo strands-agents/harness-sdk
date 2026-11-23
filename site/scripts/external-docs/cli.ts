@@ -3,43 +3,36 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildExternalDocsProduct, loadExternalDocsManifest, writeExternalDocsProduct } from './generate'
-import {
-  parseExternalDocsConfig,
-  parseExternalDocsLock,
-  validateConfigAndLock,
-  type ExternalDocsProductConfig,
-  type ExternalDocsProductLock,
-} from './schema'
+import { parseExternalDocsConfig, type ExternalDocsProductConfig } from './schema'
 
 const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const configPath = path.join(siteRoot, 'external-docs.config.json')
-const lockPath = path.join(siteRoot, 'external-docs.lock.json')
 const outputRoot = path.join(siteRoot, '.build/external-docs')
 const checkoutRoot = path.join(siteRoot, '.build/external-docs-sources')
 
-const config = parseExternalDocsConfig(readJson(configPath), configPath)
-const lock = parseExternalDocsLock(readJson(lockPath), lockPath)
-validateConfigAndLock(config, lock)
-
-const sourceOverrides = parseSourceOverrides(process.argv.slice(2))
-for (const product of config.products) {
-  const productLock = lock.products.find((entry) => entry.id === product.id)!
-  const localSource = sourceOverrides.get(product.id) ?? process.env[sourceEnvironmentVariable(product.id)]
-  const source = localSource ? resolveLocalSource(localSource) : resolvePinnedSource(product, productLock)
-  const effectiveConfig = source.local ? { ...product, ref: source.revision } : product
-  const manifest = loadExternalDocsManifest(source.root, effectiveConfig)
-  const built = buildExternalDocsProduct({
-    sourceRoot: source.root,
-    config: effectiveConfig,
-    manifest,
-    revision: source.revision,
-    editRef: source.local ? null : product.ref,
-  })
-  writeExternalDocsProduct(outputRoot, built)
-  console.log(`product=${product.id}, pages=${built.files.size}, revision=${source.revision} | generated external docs`)
+function main(): void {
+  const config = parseExternalDocsConfig(readJson(configPath), configPath)
+  const sourceOverrides = parseSourceOverrides(process.argv.slice(2))
+  for (const product of config.products) {
+    const localSource = sourceOverrides.get(product.id) ?? process.env[sourceEnvironmentVariable(product.id)]
+    const source = localSource ? resolveLocalSource(localSource) : resolveTrackedSource(product)
+    const effectiveConfig = source.local ? { ...product, ref: source.revision } : product
+    const manifest = loadExternalDocsManifest(source.root, effectiveConfig)
+    const built = buildExternalDocsProduct({
+      sourceRoot: source.root,
+      config: effectiveConfig,
+      manifest,
+      revision: source.revision,
+      editRef: source.local ? null : product.ref,
+    })
+    writeExternalDocsProduct(outputRoot, built)
+    console.log(
+      `product=${product.id}, pages=${built.files.size}, revision=${source.revision} | generated external docs`
+    )
+  }
 }
 
-interface ResolvedSource {
+export interface ResolvedSource {
   root: string
   revision: string
   local: boolean
@@ -52,31 +45,22 @@ function resolveLocalSource(sourcePath: string): ResolvedSource {
   return { root, revision, local: true }
 }
 
-function resolvePinnedSource(config: ExternalDocsProductConfig, lock: ExternalDocsProductLock): ResolvedSource {
-  const root = path.join(checkoutRoot, lock.id, lock.revision)
-  if (fs.existsSync(root)) {
-    try {
-      const revision = git(['-C', root, 'rev-parse', 'HEAD'])
-      if (revision === lock.revision) return { root, revision, local: false }
-    } catch {
-      // Recreate interrupted or invalid cached checkouts below.
-    }
-    fs.rmSync(root, { recursive: true, force: true })
-  }
-
+export function resolveTrackedSource(config: ExternalDocsProductConfig, sourcesRoot = checkoutRoot): ResolvedSource {
+  const root = path.join(sourcesRoot, config.id)
+  fs.rmSync(root, { recursive: true, force: true })
   fs.mkdirSync(path.dirname(root), { recursive: true })
   try {
     git(['init', root])
     git(['-C', root, 'remote', 'add', 'origin', `${config.repository}.git`])
-    git(['-C', root, 'fetch', '--depth=1', 'origin', lock.revision])
+    git(['-C', root, 'fetch', '--depth=1', 'origin', `refs/heads/${config.ref}`])
 
-    const fetchedRevision = git(['-C', root, 'rev-parse', 'FETCH_HEAD^{commit}'])
-    if (fetchedRevision !== lock.revision) {
-      throw new Error(`${lock.id}: fetched ${fetchedRevision}, but the lock requires ${lock.revision}`)
+    const revision = git(['-C', root, 'rev-parse', 'FETCH_HEAD^{commit}'])
+    if (!/^[0-9a-f]{40}$/.test(revision)) {
+      throw new Error(`${config.id}: ref "${config.ref}" did not resolve to a full commit SHA`)
     }
 
     git(['-C', root, 'checkout', '--detach', 'FETCH_HEAD'])
-    return { root, revision: fetchedRevision, local: false }
+    return { root, revision, local: false }
   } catch (error) {
     fs.rmSync(root, { recursive: true, force: true })
     throw error
@@ -111,3 +95,6 @@ function readJson(filePath: string): unknown {
 function git(args: string[]): string {
   return execFileSync('git', args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'inherit'] }).trim()
 }
+
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : ''
+if (invokedPath === fileURLToPath(import.meta.url)) main()
