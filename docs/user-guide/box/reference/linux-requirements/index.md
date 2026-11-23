@@ -4,7 +4,7 @@ Box needs executables that can load on your Linux system and permission to creat
 
 Linux release executables are built on Amazon Linux 2023. Other distributions must provide the libraries and permissions below. Check them on the distribution you intend to use. Box does not specify a minimum kernel version. Check the required operations and your actual workload.
 
-Use an ARM64 (64-bit Arm) or x86-64 build that matches your system. Neither architecture requires an environment opt-in. A release may omit an architecture. Check its archive and checksum before downloading, or [build from source](/docs/user-guide/box/quickstart/index.md#build-from-source). The [tested configurations](#tested-configurations) below record specific checks, not a promise about every distribution or container runtime.
+Use an ARM64 (64-bit Arm) or x86-64 build that matches your system. Neither architecture requires an environment opt-in. A release may omit an architecture. Check its archive and checksum before downloading, or [build from source](/docs/user-guide/box/core/quickstart/index.md#build-from-source). The [tested configurations](#tested-configurations) below record specific checks, not a promise about every distribution or container runtime.
 
 ## Requirements
 
@@ -29,7 +29,7 @@ The kernel must implement these operations, and the surrounding operating system
 
 ## Check the installed binaries
 
-First [download Box and verify its release checksum](/docs/user-guide/box/quickstart/index.md#step-1-download-box). The commands here use the guide’s `./box-core` directory. By default, a source build names the main executable `strands-box`.
+First [download Box and verify its release checksum](/docs/user-guide/box/core/quickstart/index.md#step-1-download-box). The commands here use the guide’s `./box-core` directory. By default, a source build names the main executable `strands-box`.
 
 Record the architecture, kernel, and C library separately:
 
@@ -55,7 +55,7 @@ Finally, run `./box-core/box --version`. It should print `strands-box` and the r
 
 ## Check sandbox startup
 
-Run Box with the configuration and Linux user account you intend to use. Use `box run --config` with your configuration file, as shown in the [Linux installation instructions](/docs/user-guide/box/quickstart/index.md#linux) and [configuration reference](/docs/user-guide/box/reference/configuration/index.md).
+Run Box with the configuration and Linux user account you intend to use. Use `box run --config` with your configuration file, as shown in the [Linux installation instructions](/docs/user-guide/box/core/quickstart/index.md#linux) and [configuration reference](/docs/user-guide/box/reference/configuration/index.md).
 
 After the configured program starts inside Box, use that program to check its access. Use disposable files for these checks.
 
@@ -69,7 +69,7 @@ A version check or a separate test of user namespace creation does not test Box�
 
 Use this example to check startup and file access without a coding agent or model credentials. It runs the host OS’s Bash to count input lines and write a report.
 
-First [download Box](/docs/user-guide/box/quickstart/index.md#step-1-download-box) and complete the binary checks above. Run the block below from the directory that contains `box-core`, using your normal account without `sudo`. You need Bash on `PATH` and the standard Linux utilities `cat`, `cmp`, `cp`, `id`, `mkdir`, and `mktemp`.
+First [download Box](/docs/user-guide/box/core/quickstart/index.md#step-1-download-box) and complete the binary checks above. Run the block below from the directory that contains `box-core`, using your normal account without `sudo`. You need Bash on `PATH` and the standard Linux utilities `cat`, `cmp`, `cp`, `id`, `mkdir`, and `mktemp`.
 
 Each run creates a fresh directory under `/tmp` and prints its location. The fixed directory template keeps paths safe to insert into TOML, regardless of your account name or installation path. The example leaves its files in place for inspection and does not overwrite an earlier run.
 
@@ -179,8 +179,8 @@ Use the failed setup operation to identify what needs configuration:
 
 These examples record settings and results for specific Box revisions and environments:
 
--   [Amazon Linux 2023 ARM64 on Amazon EKS](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/examples/cloud-deployments/eks/README.md#tested-configuration).
--   [Debian 12 ARM64 on Google Compute Engine](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/examples/cloud-deployments/gcp/README.md#tested-configuration).
+-   [Amazon Linux 2023 ARM64 on Amazon EKS](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/examples/cloud-deployments/eks/README.md#tested-configuration).
+-   [Debian 12 ARM64 on Google Compute Engine](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/examples/cloud-deployments/gcp/README.md#tested-configuration).
 
 Each record identifies the configuration and checks that passed. Repeat the checks for your Box build and deployment.
 

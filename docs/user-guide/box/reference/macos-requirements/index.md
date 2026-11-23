@@ -11,11 +11,11 @@ The release package contains `Box.app`, the `box` launcher, and two helper links
 | Private state | In `box.toml`, `box_dir` names an absolute path for Box’s private state. Keep the state outside the workspace and paths the workload can write. | Follow the [state-directory requirements](/docs/user-guide/box/reference/configuration/index.md#keys) for creating or reusing the directory. | Box does not start the workload if it cannot create the directory or accept its path, owner, or permissions. |
 | Workload dependencies and access | Supply the program, its interpreters, libraries, certificates, and tools. Configure their access in `box.toml`, including writes the workload needs in its workspace. | Run the workload and its tools inside Box. | The program can fail to load, or an operation can fail after Box starts. |
 
-The [Strands command-line walkthrough prerequisites](/docs/user-guide/box/quickstart/index.md#before-you-start) apply to that example. Check the requirements of the workload you intend to run.
+The [Strands command-line walkthrough prerequisites](/docs/user-guide/box/core/quickstart/index.md#before-you-start) apply to that example. Check the requirements of the workload you intend to run.
 
 ## Check the installed package
 
-First [download Box and verify its release checksum](/docs/user-guide/box/quickstart/index.md#step-1-download-box). These commands use the guide’s `./box-core` directory.
+First [download Box and verify its release checksum](/docs/user-guide/box/core/quickstart/index.md#step-1-download-box). These commands use the guide’s `./box-core` directory.
 
 Record the architecture and macOS version:
 
@@ -34,7 +34,7 @@ Run the installed launcher directly:
 
 The command must exit successfully and print `strands-box` followed by its version. This checks that the main executable loads. It does not test helper execution, sandbox startup, or the workload. Check this command’s output and exit status even if the downloader completed.
 
-The release’s signed and notarized `Box.app` contains its executables. Keep the complete downloaded directory intact. Do not move individual executables out of `Box.app`. For a source build, follow [Build from source](/docs/user-guide/box/quickstart/index.md#build-from-source).
+The release’s signed and notarized `Box.app` contains its executables. Keep the complete downloaded directory intact. Do not move individual executables out of `Box.app`. For a source build, follow [Build from source](/docs/user-guide/box/core/quickstart/index.md#build-from-source).
 
 ## Check sandbox startup and the workload
 

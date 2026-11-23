@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:806](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L806)
+Defined in: [src/types/messages.ts:869](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L869)
 
 Data for a summary block.
 
@@ -10,7 +10,7 @@ Data for a summary block.
 provider?: string;
 ```
 
-Defined in: [src/types/messages.ts:810](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L810)
+Defined in: [src/types/messages.ts:873](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L873)
 
 Name of the provider that wrote the summary server-side, for example `'anthropic'`.
 
@@ -22,7 +22,7 @@ Name of the provider that wrote the summary server-side, for example `'anthropic
 signature?: string;
 ```
 
-Defined in: [src/types/messages.ts:815](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L815)
+Defined in: [src/types/messages.ts:878](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L878)
 
 Signature the provider returned with the summary, sent back unchanged.
 
@@ -34,6 +34,6 @@ Signature the provider returned with the summary, sent back unchanged.
 text: string;
 ```
 
-Defined in: [src/types/messages.ts:820](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L820)
+Defined in: [src/types/messages.ts:883](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L883)
 
 The summary text.

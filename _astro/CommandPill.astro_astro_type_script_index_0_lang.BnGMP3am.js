@@ -1,0 +1,1 @@
+import{t as e}from"./clipboard.CMp31kUv.js";document.querySelectorAll(`[data-command-pill]`).forEach(t=>{if(t.dataset.copyReady===`true`)return;t.dataset.copyReady=`true`;let n=t.querySelector(`[data-command-copy]`);n&&e(n,{label:t.querySelector(`[data-command-copy-label]`),getText:()=>t.dataset.command??``,track:{surface:t.dataset.surface??`command`}})});

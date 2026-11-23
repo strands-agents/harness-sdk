@@ -111,6 +111,8 @@ The agent checks for cancellation at four checkpoints:
 
 The agent returns a result with `stop_reason="cancelled"`. `cancel()` is thread-safe and idempotent. Calling it multiple times or from different threads is safe.
 
+[Background tasks](/docs/user-guide/harness/configure/background-tasks/index.md) keep running after `cancel()`. Pass `cancel_background_tasks=True` to cancel this agent’s queued, working, and input-required background tasks immediately as well. On an idle agent, `cancel(cancel_background_tasks=True)` cancels only the background tasks, while plain `cancel()` also cancels the next invocation. If the invocation had already finished its turn and was only waiting for background tasks, it returns with its natural stop reason, and the cancelled results are delivered on the next invocation.
+
 ```python
 import threading
 import time
@@ -161,7 +163,7 @@ The signal is also forwarded to the model provider so it can abort the in-flight
 
 #### Cancellation within tool execution
 
-The SDK automatically checks for cancellation before and between tool calls (see checkpoints above). Once a tool is running, cancellation is **cooperative**: only the tool itself can respond mid-execution. Tools can participate by polling `tool_context.cancel_signal.is_set()` between steps, or by forwarding `tool_context.cancel_signal` to APIs that accept one (e.g. `MCPClient.call_tool_async`). If a tool does neither, it runs to completion, and the agent resumes cancellation handling after the tool returns. An agent used as a tool via `as_tool()` receives the parent’s signal automatically, so cancelling the parent also cancels the delegated agent.
+The SDK automatically checks for cancellation before and between tool calls (see checkpoints above). Once a tool is running, cancellation is **cooperative**: only the tool itself can respond mid-execution. Tools can participate by polling `tool_context.cancel_signal.is_set()` between steps, or by forwarding `tool_context.cancel_signal` to APIs that accept one (e.g. `MCPClient.call_tool_async`, `Sandbox.execute`). If a tool does neither, it runs to completion, and the agent resumes cancellation handling after the tool returns. An agent used as a tool via `as_tool()` receives the parent’s signal automatically, so cancelling the parent also cancels the delegated agent.
 
 ```python
 from strands import tool
@@ -193,6 +195,8 @@ The agent checks for cancellation at five checkpoints:
 | After tool execution | The agent stops before the next model call | Sibling tools in the current batch finish before cancellation is observed; this is the checkpoint the `stop` vended tool uses via `cancel({ afterCurrentTools: true })` |
 
 The agent returns a result with `stopReason: 'cancelled'`. `cancel()` is idempotent: calling it multiple times is safe.
+
+[Background tasks](/docs/user-guide/harness/configure/background-tasks/index.md) keep running after `cancel()`. Pass `cancel({ cancelBackgroundTasks: true })` to cancel this agent’s queued, working, and input-required background tasks too, whether or not an invocation is running. If the invocation had already finished its turn and was only waiting for background tasks, it returns with its natural stop reason, and the cancelled results are delivered on the next invocation.
 
 ```typescript
 const agent = new Agent()

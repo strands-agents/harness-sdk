@@ -110,7 +110,7 @@ Defined in: [src/types/messages.ts:334](https://github.com/strands-agents/harnes
 
 **`Experimental`**
 
-Stash reference under which the original is retrievable; absent when it was not stashed.
+Archive reference under which the original is retrievable; absent when it was not archived.
 
 #### Implementation of
 

@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:894](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L894)
+Defined in: [src/types/messages.ts:957](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L957)
 
 JSON content block within a message. Used for structured data returned from tools or model responses.
 
@@ -15,7 +15,7 @@ JSON content block within a message. Used for structured data returned from tool
 new JsonBlock(data): JsonBlock;
 ```
 
-Defined in: [src/types/messages.ts:905](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L905)
+Defined in: [src/types/messages.ts:968](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L968)
 
 #### Parameters
 
@@ -35,7 +35,7 @@ Defined in: [src/types/messages.ts:905](https://github.com/strands-agents/harnes
 readonly type: "jsonBlock";
 ```
 
-Defined in: [src/types/messages.ts:898](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L898)
+Defined in: [src/types/messages.ts:961](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L961)
 
 Discriminator for JSON content.
 
@@ -47,7 +47,7 @@ Discriminator for JSON content.
 readonly json: JSONValue;
 ```
 
-Defined in: [src/types/messages.ts:903](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L903)
+Defined in: [src/types/messages.ts:966](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L966)
 
 Structured JSON data.
 
@@ -63,7 +63,7 @@ Structured JSON data.
 toJSON(): JsonBlockData;
 ```
 
-Defined in: [src/types/messages.ts:913](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L913)
+Defined in: [src/types/messages.ts:976](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L976)
 
 Serializes the JsonBlock to a JSON-compatible JsonBlockData object. Called automatically by JSON.stringify().
 
@@ -83,7 +83,7 @@ Serializes the JsonBlock to a JSON-compatible JsonBlockData object. Called autom
 static fromJSON(data): JsonBlock;
 ```
 
-Defined in: [src/types/messages.ts:923](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L923)
+Defined in: [src/types/messages.ts:986](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L986)
 
 Creates a JsonBlock instance from JsonBlockData.
 

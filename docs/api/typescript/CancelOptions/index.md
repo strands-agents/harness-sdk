@@ -25,3 +25,15 @@ afterCurrentTools?: boolean;
 Defined in: [src/types/agent.ts:277](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L277)
 
 Defer cancellation until the running tool batch finishes, letting sibling tools complete normally instead of receiving cancellation errors. A deferred cancel that never gets to apply — the model answers with plain text and no tools in the same turn — is a no-op, and the invocation returns its natural `stopReason`.
+
+---
+
+### cancelBackgroundTasks?
+
+```ts
+cancelBackgroundTasks?: boolean;
+```
+
+Defined in: [src/types/agent.ts:288](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L288)
+
+Also cancel every queued, working, or input-required background task of this agent immediately, even with `afterCurrentTools` and whether or not an invocation is running. Background tasks keep running by default, and a `cancelSignal` passed into an invocation never cancels them. Their cancelled results are delivered like a cancel requested by the model. If the invocation was only waiting for its background tasks, it resolves with its natural `stopReason` and the results are delivered on the next invocation.

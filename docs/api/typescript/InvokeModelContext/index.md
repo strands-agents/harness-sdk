@@ -132,6 +132,6 @@ Schema this call must produce, set on the structured output retry and passed to 
 readonly invocationContext?: InvocationContext;
 ```
 
-Defined in: [src/middleware/stages.ts:108](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/middleware/stages.ts#L108)
+Defined in: [src/middleware/stages.ts:116](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/middleware/stages.ts#L116)
 
 The request this model call belongs to, if any. See [InvokeOptions.invocationContext](/docs/api/typescript/InvokeOptions/index.md#invocationcontext).

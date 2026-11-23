@@ -379,7 +379,7 @@ Passing a fully-constructed handler instance (rather than an options bag) bypass
 
 ### Streaming vs Non-Streaming Mode
 
-Some Bedrock models only support non-streaming tool use. Set the streaming configuration to false to use those models. Both modes give your agent the same event structure and behavior, since Strands converts non-streaming responses to the streaming format internally.
+Set the streaming configuration to false to get each model response in one piece instead of as a stream. Some older Bedrock models also need it for tool use, which they only support without streaming. Both modes give your agent the same event structure and behavior, since Strands converts non-streaming responses to the streaming format internally.
 
 (( tab "Python" ))
 ```python
@@ -391,7 +391,7 @@ streaming_model = BedrockModel(
 
 # Non-streaming model
 non_streaming_model = BedrockModel(
-    model_id="us.meta.llama3-2-90b-instruct-v1:0",
+    model_id="global.anthropic.claude-sonnet-5-5",
     streaming=False,  # Disable streaming
 )
 ```
@@ -407,7 +407,7 @@ const streamingModel = new BedrockModel({
 
 // Non-streaming model
 const nonStreamingModel = new BedrockModel({
-  modelId: 'us.meta.llama3-2-90b-instruct-v1:0',
+  modelId: 'global.anthropic.claude-sonnet-5-5',
   stream: false, // Disable streaming
 })
 ```

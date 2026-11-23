@@ -10,7 +10,7 @@ A box with no `[telemetry]` table writes one file inside its own box directory:
 <box_dir>/private/telemetry/records.jsonl
 ```
 
-That target receives every record: each effective denial, each effective permit, the box’s own control-plane records and MCP routing diagnostics, and the workload’s relayed spans, log records, and metrics. The workload cannot reach the file.
+That target receives every record except tool calls: each effective denial, each effective permit, the box’s own control-plane records and MCP routing diagnostics, and the workload’s relayed spans, log records, and metrics. The workload cannot reach the file.
 
 The file grows for as long as the box is used. Rotate or remove it as the operator’s own task.
 
@@ -26,7 +26,7 @@ A declared target replaces this default rather than adding to it, so a box that 
 [telemetry.decisions]                  # every decision this box takes, recorded
 kind        = "file"
 destination = "~/boxes/codex/records.jsonl"
-include     = ["deny", "permit", "trace", "logs"]
+include     = ["deny", "permit", "trace", "logs", "metrics"]
 ```
 
 A `file` table takes three keys. An unknown key is refused.
@@ -35,7 +35,7 @@ A `file` table takes three keys. An unknown key is refused.
 | --- | --- | --- | --- |
 | `kind` | string | none, required | `file`. [Endpoints](#endpoints) lists the other kinds. |
 | `destination` | string | none, required | The file the records go to, as stated below. |
-| `include` | array of strings | every record | Which records reach this target: `deny`, `permit`, `trace`, `logs`, or `metrics`. |
+| `include` | array of strings | every record except tool calls | Which records reach this target: `deny`, `permit`, `trace`, `logs`, `metrics`, or `mcp_tool_calls`. |
 
 ## `kind = "file"`
 
@@ -55,7 +55,7 @@ Declare one target per file. Two boxes that append to one file can tear a line.
 
 ## `include`
 
-Omit `include` and the target receives every record. Write `include` and the target receives only the records the words in the list name:
+Omit `include` and the target receives every record except tool calls. Write `include` and the target receives only the records the words in the list name:
 
 | Word | The target then receives |
 | --- | --- |
@@ -64,6 +64,9 @@ Omit `include` and the target receives every record. Write `include` and the tar
 | `trace` | The workload’s own spans, and this box’s control-plane records. |
 | `logs` | Box’s unmatched MCP routing diagnostics and the workload’s log records. |
 | `metrics` | The workload’s metrics. |
+| `mcp_tool_calls` | Each MCP tool call’s arguments and output in clear text, and how it ended. A target receives these only when it names `mcp_tool_calls`. |
+
+A tool-call record is a log record, so Box refuses `mcp_tool_calls` at startup on a target that accepts no logs, such as a `langfuse`, `langsmith`, or `cloudwatch_traces` target.
 
 So `include = ["deny"]` writes a file of refusals, and leaves out the permits, control-plane records, and MCP routing diagnostics.
 
@@ -193,6 +196,42 @@ When an MCP alias invocation matches no declared command, Box writes an informat
 
 The diagnostic carries no policy verdict, action, or rule. Box writes it before replying to the alias, so it does not say whether ordinary execution starts or succeeds. It produces no span. Targets receive it when `include` is omitted or contains `logs`.
 
+### A tool call
+
+Each MCP tool call produces up to two log records in the `strands-box.mcp` scope, over a stdio or an http server alike:
+
+| Event name | Written when | Keys |
+| --- | --- | --- |
+| `strands.box.mcp.tool.call` | the call is decided, whether it is allowed or refused | `strands.box.mcp.tool.server`, `.name`, and `.arguments` |
+| `strands.box.mcp.tool.completion` | the call ends | `strands.box.mcp.tool.server`, `.name`, `.reply`, and `.output` when the reply carried `structuredContent` |
+
+`strands.box.mcp.tool.reply` holds one of `result`, `tool_error`, `protocol_error`, `cancelled`, or `indeterminate`, as [`output.reply`](/docs/user-guide/box/reference/policy-actions/index.md) defines them. A refused call has no completion. Both records carry `jsonrpc.request.id`, which joins them to each other and to the call’s decision.
+
+`.arguments` and `.output` are maps of the call’s fields, flattened into the paths a rule writes after `context.input.` or `output.structured.`: an object’s member is `parent.member`, and an array’s element is `parent.N`. So `{"profile": {"email": "a@b"}}` becomes the field `profile.email`.
+
+**Tool-call values are in clear text, so a target receives them only when it names `mcp_tool_calls`.** A target with no `include`, and the box’s own default file, receives none. An argument or an output can hold anything a tool takes or returns, including a password, a token, or a customer’s data, and Box can’t tell which field does. So name `mcp_tool_calls` only on a target whose readers may see all of it, such as a file on your own machine, and not on a vendor’s endpoint you wouldn’t trust with those values:
+
+```toml
+[telemetry.local]
+kind        = "file"
+destination = "~/boxes/helpdesk/records.jsonl"
+include     = ["deny", "permit", "trace", "logs", "metrics", "mcp_tool_calls"]
+```
+
+A declared target replaces the default file, and a written `include` names everything the target receives, so list the other signals you still want beside `mcp_tool_calls`. At startup, Box prints one line on stderr for each target that receives tool calls, naming where they go.
+
+A tool-call record is a log record, so a target that accepts no logs can’t name `mcp_tool_calls`: Box refuses it with a message that says `tool-call records are logs and it accepts no logs`. That covers `langfuse`, `langsmith`, `cloudwatch_traces`, and an `otlp` target whose `accepts` leaves out `logs`.
+
+Keys arrive as the tool wrote them. When two keys flatten to one path, such as `"a.b"` and `{"a": {"b": …}}`, the first is kept and the second is counted as left out. At most 64 fields are reported per record, each value at most 4 KiB; when a call has more, the record also carries `strands.box.mcp.tool.arguments_omitted` or `strands.box.mcp.tool.output_omitted` with the count left out.
+
+A value keeps its JSON type: a string, `true` or `false`, or a number, so `true` and `"true"` stay apart. An integer too large for 64 bits arrives as its digits in a string, and a JSON `null` arrives as an empty array, which no flattened value can otherwise be.
+
+A call refused before it reaches the server, by the coarse `mcp:call` check or because the tool isn’t listed, is recorded too, because it shows what the agent tried.
+
+A tool-call record produces no span.
+
+**Over http, a target that takes tool calls makes Box read every tool reply.** Reading a reply copies it through the gateway’s budget, which every reply being read at once shares (64 MiB). The policy already reads the reply of every tool in the server’s tool list once Box has read that list, so the extra copies are for replies the policy doesn’t read.
+
 ### A control-plane record
 
 A control-plane record states one change to the authority this box holds. The scope is `strands-box.control`, and each operation also produces a span named `control <operation>`.
@@ -295,5 +334,5 @@ Set `STRANDS_BOX_TELEMETRY_DEBUG` to also print each failed export as it happens
 
 ## See also
 
--   [Getting started](/docs/user-guide/box/quickstart/index.md): install Box, then run Claude Code or Codex in a box.
--   [How telemetry works](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [Getting started](/docs/user-guide/box/core/quickstart/index.md): install Box, then run Claude Code or Codex in a box.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.

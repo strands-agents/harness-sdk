@@ -1,6 +1,6 @@
 Policy decides each command the agent runs in Strands Shell, and each file operation the command makes. This page builds a policy for an agent that works in `~/src/project`, runs `git` and the programs it builds, and stays out of the project’s `.env` file.
 
-Audience: an operator with a working box from [getting started](/docs/user-guide/box/quickstart/index.md). For every field a rule can read, see the [Strands Shell reference](/docs/user-guide/box/reference/shell/index.md).
+Audience: an operator with a working box from [getting started](/docs/user-guide/box/core/quickstart/index.md). For every field a rule can read, see the [Strands Shell reference](/docs/user-guide/box/reference/shell/index.md).
 
 ## Before you start
 
@@ -162,7 +162,7 @@ when temporal {
 
 ## Result
 
-Restart the box with the command from step 4. The decision log has one line for each command and each file operation; [read the decision log](/docs/user-guide/box/quickstart/index.md#step-7-read-the-decision-log) prints it. For `grep -n TODO src/main.rs > todo.txt && git add todo.txt`:
+Restart the box with the command from step 4. The decision log has one line for each command and each file operation; [read the decision log](/docs/user-guide/box/core/quickstart/index.md#step-7-read-the-decision-log) prints it. For `grep -n TODO src/main.rs > todo.txt && git add todo.txt`:
 
 ```text
 permit  shell:exec   grep -n TODO src/main.rs
@@ -188,5 +188,5 @@ permit  shell:spawn  /Library/Developer/CommandLineTools/usr/bin/git add todo.tx
 ## See also
 
 -   [Strands Shell reference](/docs/user-guide/box/reference/shell/index.md): every field, action, and exit status.
--   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/shell.md): the order of the checks.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/policy.md): how the engine decides, and what refuses to load.
+-   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/shell.md): the order of the checks.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/policy.md): how the engine decides, and what refuses to load.

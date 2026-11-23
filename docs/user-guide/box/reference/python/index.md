@@ -1,6 +1,6 @@
 A box runs the agent’s Python scripts in [Monty](https://github.com/pydantic/monty), an interpreter for a subset of Python. Policy decides each file operation a script makes, and the egress gateway decides each request a script sends with `fetch()`.
 
-Audience: an operator with a working box from [getting started](/docs/user-guide/box/quickstart/index.md) whose agent runs Python. For how Box runs a script and why a script cannot act on its own, read [how Box runs Python scripts](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/monty.md).
+Audience: an operator with a working box from [getting started](/docs/user-guide/box/core/quickstart/index.md) whose agent runs Python. For how Box runs a script and why a script cannot act on its own, read [how Box runs Python scripts](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/monty.md).
 
 ## Example
 
@@ -151,6 +151,7 @@ Example output:
 | `OSError: access denied: <host>` | The URL’s scheme is not `http` or `https`, or its host is `localhost`, a literal loopback, private, link-local, `0.0.0.0/8`, or one of two cloud metadata addresses outside `169.254.0.0/16`, or an IPv4-mapped, IPv4-compatible, IPv4-translated, 6to4, Teredo, or `64:ff9b::/96` NAT64 address that carries one of these, or any `64:ff9b:1::/48` address. A NAT64 address under a network’s own prefix is not covered. Nothing is sent. |
 | `OSError` | The response body is larger than 1 MiB. |
 | Status `403`, with header `x-strands-box-egress: refused` | The gateway refused the request, and the body says why. The script receives it as a response, and must check `status`. A `403` without the header comes from the server. |
+| Status `502`, with header `x-strands-box-egress: failed` | The gateway didn’t refuse the request but couldn’t complete it, and the body says why. The script receives it as a response, and must check `status`. A `502` without the header comes from the server, or answers a plain `http://` request the gateway couldn’t resolve or connect to. |
 
 ## Limits and exit statuses
 
@@ -211,9 +212,9 @@ The egress gateway decides each `fetch()` with `net:connect` and `http:request`,
 | `strands-box-sock-alias: read the working directory: ...; set PWD to it`, exit status `125` | The alias could not read which directory it was run from. | Set `PWD` to that directory before running `python3`. |
 | `python3: -m is not supported by Monty, Box's built-in Python subset. ...`, or `ModuleNotFoundError` for a package | The script needs real Python, such as `-m pytest` or a package from a venv. | Have the operator set [`monty = false`](/docs/user-guide/box/reference/configuration/index.md#monty), declare a `[tool]` whose command file is named `python3`, grant it `read` on the venv and Python’s install, and permit `shell:spawn` on its file. The `monty` section has a working setup. |
 
-The decision log records each decision with the rule’s `@id` ([getting started](/docs/user-guide/box/quickstart/index.md#step-7-read-the-decision-log)).
+The decision log records each decision with the rule’s `@id` ([getting started](/docs/user-guide/box/core/quickstart/index.md#step-7-read-the-decision-log)).
 
 ## See also
 
--   [How Box runs Python scripts](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/monty.md): the routes, the steps for each file operation, and the residual risk.
+-   [How Box runs Python scripts](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/monty.md): the routes, the steps for each file operation, and the residual risk.
 -   [The `[egress.<name>]` table](/docs/user-guide/box/guides/network-and-credentials/index.md): the rules for a host, and a credential that the gateway adds to a request.

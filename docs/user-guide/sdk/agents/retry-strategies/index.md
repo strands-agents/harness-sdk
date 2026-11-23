@@ -242,8 +242,8 @@ See [Hooks](/docs/user-guide/sdk/agents/hooks/index.md#model-call-retry) for mor
 - [Tool Executors](/docs/user-guide/sdk/tools/executors/index.md) (1 shared tag)
 - [Build a custom plugin](/docs/user-guide/sdk/plugins/custom-plugins/index.md) (1 shared tag)
 - [Plugins](/docs/user-guide/sdk/plugins/index.md) (1 shared tag)
-- [Chaos testing](/docs/user-guide/evals-sdk/chaos_testing/index.md) (1 shared tag)
 - [Model Routing](/docs/user-guide/sdk/model-providers/model-routing/index.md) (1 shared tag)
+- [Chaos testing](/docs/user-guide/evals-sdk/chaos_testing/index.md) (1 shared tag)
 - [Structured output](/docs/user-guide/sdk/agents/structured-output-behavior/index.md) (1 shared tag)
 
 

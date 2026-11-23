@@ -112,7 +112,7 @@ strands-shell: tee: policy denied this operation on '~/project/notes.md' [policy
 -   In the Shell, a redirect, `tee`, or `cp` records `descriptor_issued` when it opens the file, not `completed`, so this rule doesn’t count it. Only a time change from `touch` records `completed`.
 -   A `touch` changes a file’s times as a `write_content` write, so it counts toward the budget. Only a plain `touch` that creates a file doesn’t count; with `-d`, `-t`, or `-r` it then sets the new file’s times, and that counts.
 -   The `when` clause limits the `forbid` to content writes. A `mkdir` is `fs:write` with operation `create_dir`, so the budget leaves it alone. A rename is `fs:move`, and a delete is `fs:delete`; each needs its own rule.
--   The count persists across a restart of the box and across an edit to another rule.
+-   The persisted count survives a restart of the box and an edit to another rule. A process crash can lose recent events; see [history persistence](#history-persistence-and-process-crashes).
 
 For an exact count of attempts, including refused ones, replace the predicate inside `formerly within 1h ( … )` with:
 
@@ -318,6 +318,47 @@ policy denied this operation on 'example.com:443' [default-deny]: No permit poli
 ```
 
 A `[egress.<name>]` table with no matching permit leaves the host unreachable. A permit with no binding sends the request with a placeholder in place of the secret, which the provider rejects.
+
+### Reach a service on your machine
+
+The agent reaches `http://host.box.internal:4259`, a service on your machine’s loopback, and no other port there ([a service on your machine](/docs/user-guide/box/guides/network-and-credentials/index.md#a-service-on-your-machine)):
+
+```text
+@id("local_llm_connect")
+permit (principal, action == Box::Action::"net:connect", resource)
+when { context.input.host == "host.box.internal" && context.input.port == 4259 };
+
+@id("local_llm_request")
+permit (principal, action == Box::Action::"http:request", resource)
+when { context.input.host == "host.box.internal" && context.input.port == 4259 };
+```
+
+The gateway decides `net:connect` on the name, then on the address it dials, `ip4 = "127.0.0.1"`. So a forbid on loopback addresses also refuses the name. To keep it, exclude the name:
+
+```text
+@id("no_loopback")
+forbid (principal, action == Box::Action::"net:connect", resource)
+when {
+  context.input has ip4 && context.input.ip4 like "127.*" &&
+  context.input.host != "host.box.internal"
+};
+```
+
+A permit on the name doesn’t admit `127.0.0.1:4259`, and a wildcard host permit includes the name.
+
+## History persistence and process crashes
+
+Box batches policy-history writes by default. Accepted events affect decisions during the run before those events necessarily reach disk. The engine checks persistence thresholds of 1,000 events or one second when an event arrives. A separate one-second timer also persists pending history while Box is idle. This interval is a polling target, not a maximum persistence delay.
+
+If the box’s trusted process crashes or is killed before a completed flush, recent requests and outcomes can be lost. After restart, a count-based limit can admit additional requests because those events no longer count. A normal shutdown stops and joins event producers before the final history flush. A recorded timer failure stops the workload, and a final-flush failure makes the run fail. Shutdown has no fixed completion deadline; an [active upstream exchange](/docs/user-guide/box/guides/network-and-credentials/index.md#errors-and-exit-codes) can delay it.
+
+To use per-event persistence, build Box and its helpers from the repository root with the default `experimental-idle-flush` Cargo feature disabled:
+
+```sh
+cargo build --release --locked -p strands-box -p strands-box-containment --no-default-features
+```
+
+The resulting build waits for persistence when submitting each event. An operation can still finish before its outcome is recorded. To retain the native filesystem policy build feature, also pass `--features native-filesystem-policy`; [its runtime selection](/docs/user-guide/box/security/native-filesystem-policy/index.md) remains separate. `--all-features` or `--features experimental-idle-flush` enables batching again. This selection happens when Box is built; there is no `box.toml` setting for it. See [getting started](/docs/user-guide/box/core/quickstart/index.md#step-1-download-box) for the source checkout and helper installation.
 
 ## Start with fresh history after a Dogwood upgrade
 
@@ -537,7 +578,7 @@ That is longer than one clause over both families would be. What you get for it 
 
 **`ip4` matches an IPv4 address however it arrives, when Box recognises the wrapping.** A destination that reaches the box as an IPv6 encoding of an IPv4 address carries the IPv4 address on `ip4` as well. So one `ip4 like "169.254.*"` covers the dotted quad and every encoding in the table below, and you need no clause per encoding.
 
-**`ip6` matches the wire form** — the address the gateway actually dials. A destination that arrives wrapped carries both fields, so `ip6 like "64:ff9b::*"` refuses every address routed through the well-known NAT64 translator, whatever IPv4 address each one carries. Use `ip6` when the route is what you care about and `ip4` when the endpoint is.
+**`ip6` matches the wire form**: the address the gateway dials. A destination that arrives wrapped carries both fields, so `ip6 like "64:ff9b::*"` refuses every address routed through the well-known NAT64 translator, whatever IPv4 address each one carries. Use `ip6` when the route is what you care about and `ip4` when the endpoint is.
 
 **A dual-stack destination needs a clause per family.** A host that resolves to both an IPv4 and an IPv6 address raises one `net:connect` per pinned address, and each carries only the fields its own address has. A rule that names `ip4` alone leaves the IPv6 address to whatever else the policy says.
 
@@ -576,7 +617,7 @@ Each piece of the pattern between the wildcards is still held to the characters 
 -   **A pattern of the other family**, such as `ip4 like "fd00:ec2:*"`. The refusal names `ip6`.
 -   **An `ip6` pattern with a dotted quad anywhere but in `::ffff:` and the quad**, such as `ip6 like "64:ff9b::169.254.*"`, `ip6 like "::169.254.*"`, or `ip6 like "::ffff:0:169.254.*"`. The IPv4-mapped form is the one wire form written with a dotted quad, and it is exactly `::ffff:` and the quad. So each of those could never fire. RFC 6052 writes a NAT64 address that way and RFC 6145 writes a translated one as `::ffff:0:` and a quad, which is why this mistake is easy to reach for. Write the hexadecimal groups, as `64:ff9b::a9fe:*`, or compare `ip4` to name the address it carries. A pattern whose wildcard could cover the rest of `::ffff:` is not refused, such as `ip6 like "::*169.254.*"`, because what that wildcard admits cannot be listed.
 
-What this does not catch is a wildcard pattern whose pieces are all plausible but whose prefix no address takes, such as `ip6 like "::ffff:a9fe:*"`. A mapped address is written with a dotted quad, so that pattern misses the mapped addresses it looks aimed at — but `::ffff:a9fe:a9fe:0` is a real address it does match, so the load cannot prove it inert. Check an `ip6` pattern against the table above.
+What this does not catch is a wildcard pattern whose pieces are all plausible but whose prefix no address takes, such as `ip6 like "::ffff:a9fe:*"`. A mapped address is written with a dotted quad, so that pattern misses the mapped addresses it looks aimed at. But `::ffff:a9fe:a9fe:0` is a real address it does match, so the load cannot prove it inert. Check an `ip6` pattern against the table above.
 
 A `when temporal` clause is not judged either. History keeps the spelling each event was recorded with, so a temporal clause can still need an older one. Earlier shell events can carry an absolute `cwd` below the operator’s home. A predicate on `~/project` does not match those events, and Box does not translate their stored values.
 
@@ -744,7 +785,7 @@ strands-box: error: policy staging failed: the box record is committed, but the 
 
 A first run that stops after Box stores the record and before it opens the history leaves the box in this state too.
 
-The text varies: the record `is committed` or `is not committed`, and the history `is absent`, `is empty`, or `holds <n> bytes`. The run also refuses when the engine cannot read the history file, with `policy staging failed:` and the engine’s own reason, and the file is left as found. Remove the box directory to start again, as [getting started](/docs/user-guide/box/quickstart/index.md#clean-up) describes.
+The text varies: the record `is committed` or `is not committed`, and the history `is absent`, `is empty`, or `holds <n> bytes`. The run also refuses when the engine cannot read the history file, with `policy staging failed:` and the engine’s own reason, and the file is left as found. Remove the box directory to start again, as [getting started](/docs/user-guide/box/core/quickstart/index.md#clean-up) describes.
 
 The run also refuses history stamped more than five minutes ahead of the system clock. This happens when the clock moved back after the box last ran, or when someone edited the history file:
 
@@ -752,11 +793,15 @@ The run also refuses history stamped more than five minutes ahead of the system 
 strands-box: error: policy staging failed: policy staging history failure: durable timestamp <t> is <n> ns ahead of the current clock <now>, exceeding the maximum allowed future skew of 300000000000 ns; refusing the operation rather than issuing future-dated timestamps
 ```
 
-If the clock moves back more than five minutes during a run, the box denies each request and prints `policy: warn: durable timestamp ...; denying` on stderr. Requests are decided again once the clock is within five minutes of the newest history timestamp. If an action finished while the clock was that far back, the box keeps its record and prints `policy: warn: an earlier outcome is not recorded yet: ...; denying` for each request until the record is saved. Once the clock is within five minutes again, the box saves it at the next request, or when the run shuts down, and then requests are decided normally. If the run ends while the clock is still more than five minutes behind, or the process is killed, that action doesn’t count toward any limit after a restart. A time-zone change does not move this clock. Correct the system clock, or remove the box directory to start again, as [getting started](/docs/user-guide/box/quickstart/index.md#clean-up) describes.
+If the clock moves back more than five minutes during a run, the box denies each request and prints `policy: warn: durable timestamp ...; denying` on stderr. Requests are decided again once the clock is within five minutes of the newest history timestamp. If an action finished while the clock was that far back, the box keeps its record and prints `policy: warn: an earlier outcome is not recorded yet: ...; denying` for each request until the record is saved. Once the clock is within five minutes again, the box retries it when another request or completed outcome arrives, or when the run shuts down. Requests are decided normally after the record is saved. If the run ends while the clock is still more than five minutes behind, or the process is killed, that action doesn’t count toward any limit after a restart. A time-zone change does not move this clock.
+
+In the default build, the background history timer also retries the kept record after the clock recovers. With batching disabled, retry occurs on a later request, another completed outcome, or shutdown. The timer does not stop the run for this clock delay. Each timer call still persists events the engine already accepted while it waits to record the completed action. Storage failures still stop the run. Shutdown reports an error if a completed action remains unrecorded after its final attempt.
+
+Correct the system clock, or remove the box directory to start again, as [getting started](/docs/user-guide/box/core/quickstart/index.md#clean-up) describes.
 
 ## See also
 
 -   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): a first policy, a denial, and the decision log.
 -   [The action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md): every action, its fields, and which part of the box raises it.
 -   [Security](/docs/user-guide/box/security/index.md): what `box.toml` governs, what `policy.dw` governs, and what a policy cannot do today.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/policy.md): how one engine per box decides, and why.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/policy.md): how one engine per box decides, and why.

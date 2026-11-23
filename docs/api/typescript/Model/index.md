@@ -1,4 +1,4 @@
-Defined in: [src/models/model.ts:379](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L379)
+Defined in: [src/models/model.ts:395](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L395)
 
 Base abstract class for model providers. Defines the contract that all model provider implementations must follow.
 
@@ -36,7 +36,7 @@ new Model<T>(): Model<T>;
 get modelId(): string;
 ```
 
-Defined in: [src/models/model.ts:398](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L398)
+Defined in: [src/models/model.ts:414](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L414)
 
 The model ID from the current configuration, if configured.
 
@@ -54,7 +54,7 @@ The model ID from the current configuration, if configured.
 get stateful(): boolean;
 ```
 
-Defined in: [src/models/model.ts:414](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L414)
+Defined in: [src/models/model.ts:430](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L430)
 
 Whether this model manages conversation state server-side.
 
@@ -78,9 +78,9 @@ Reads `modelInfo.capabilities.stateful`, so a provider that keeps state server-s
 get modelInfo(): ModelInfo;
 ```
 
-Defined in: [src/models/model.ts:428](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L428)
+Defined in: [src/models/model.ts:446](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L446)
 
-Everything the SDK knows about the configured model, resolved on each read. Layers, later ones winning: the shared model info for `modelId`, `temporaryMessages` off (a provider that supports them turns them back on), the `contextWindowLimit` config value, and the `modelInfo` config override. Each read returns a new record, so do not compare reads by reference.
+Everything the SDK knows about the configured model, resolved on each read. Layers, later ones winning: the shared model info for `modelId`, `temporaryMessages` off (a provider that sends them turns them back on), `deferredToolLoading` as `'stubs'` unless the shared info says `'unsupported'` (a provider that defers natively says `'native'`), the `contextWindowLimit` config value, and the `modelInfo` config override. Each read returns a new record, so do not compare reads by reference.
 
 A provider that knows better than the shared model info overrides this getter: put its facts over `super.modelInfo`, then the user’s `getConfig().modelInfo` over those so the override still wins: `ModelInfo.merge(super.modelInfo, { capabilities: { promptCaching: 'auto' } }, this.getConfig().modelInfo)`. Do not read [stateful](#stateful) inside the override; it reads this getter.
 
@@ -96,7 +96,7 @@ A provider that knows better than the shared model info overrides this getter: p
 abstract updateConfig(modelConfig): void;
 ```
 
-Defined in: [src/models/model.ts:386](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L386)
+Defined in: [src/models/model.ts:402](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L402)
 
 Updates the model configuration. Merges the provided configuration with existing settings.
 
@@ -118,7 +118,7 @@ Updates the model configuration. Merges the provided configuration with existing
 abstract getConfig(): T;
 ```
 
-Defined in: [src/models/model.ts:393](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L393)
+Defined in: [src/models/model.ts:409](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L409)
 
 Retrieves the current model configuration.
 
@@ -136,7 +136,7 @@ The current configuration object
 abstract stream(messages, options?): AsyncIterable<ModelStreamEvent>;
 ```
 
-Defined in: [src/models/model.ts:448](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L448)
+Defined in: [src/models/model.ts:468](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L468)
 
 Streams a conversation with the model. Returns an async iterable that yields streaming events as they occur.
 
@@ -161,7 +161,7 @@ Async iterable of streaming events
 countTokens(messages, options?): Promise<number>;
 ```
 
-Defined in: [src/models/model.ts:465](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L465)
+Defined in: [src/models/model.ts:485](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L485)
 
 Count tokens for the given input before sending to the model.
 
@@ -190,7 +190,7 @@ Total input token count
 summarize(messages, options?): Promise<SummarizeResult>;
 ```
 
-Defined in: [src/models/model.ts:490](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L490)
+Defined in: [src/models/model.ts:510](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L510)
 
 Summarizes `messages`.
 
@@ -219,7 +219,7 @@ The summary and the token usage of the calls made for it
 estimateUtilization(inputTokens): number;
 ```
 
-Defined in: [src/models/model.ts:503](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L503)
+Defined in: [src/models/model.ts:523](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L523)
 
 Estimate the fraction of the model’s context window consumed by the given input token count.
 
@@ -247,7 +247,7 @@ streamAggregated(messages, options?): AsyncGenerator<
 | ModelStreamEvent, StreamAggregatedResult, undefined>;
 ```
 
-Defined in: [src/models/model.ts:570](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L570)
+Defined in: [src/models/model.ts:590](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L590)
 
 Streams a conversation with aggregated content blocks and messages. Returns an async generator that yields streaming events and content blocks, and returns the final message with stop reason and optional metadata.
 

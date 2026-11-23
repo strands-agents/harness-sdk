@@ -26,6 +26,13 @@ The minimum confidence, `{"min_confidence": 0.8}``{ minConfidence: 0.8 }`, appli
 
 `Uncertain` carries an optional reason. Check for it before you use an answer, with `isinstance(answer, Uncertain)``answer instanceof Uncertain`.
 
+### Confidence
+
+[TypeSafe Jev](/docs/user-guide/sdk/decision-models/models/typesafe/index.md), [Decisions API](/docs/user-guide/sdk/decision-models/models/decisions-api/index.md), and [Amazon SageMaker AI](/docs/user-guide/sdk/decision-models/models/sagemaker/index.md) report a confidence in `[0.0, 1.0]` for each answer in `metadata.confidence`, and each choice’s probability in `metadata.probabilities`. Their default minimum confidence is 0.5. An answer below the minimum comes back as `Uncertain`, and the metadata still shows what the model leaned toward.
+
+-   **Yes/no**: the model returns the probability of yes, and the answer is yes at 0.5 or above. The confidence measures how far that probability sits from 0.5, from 0 at 0.5 to 1 at 0.0 or 1.0. At the default minimum, a yes/no answer needs a probability of at least 0.75 or at most 0.25.
+-   **Multiple choice**: the model returns each label’s probability and its own confidence in the label it picked.
+
 ## Input
 
 The input is what the questions are about. It can be a string, a list of content blocks for a single message, or a full conversation as a list of messages. A conversation lets the decision model answer about the whole exchange, not only the latest message:
@@ -113,12 +120,21 @@ console.log(result.answers.sentiment)
 -   A label is `"uncertain"`, which is reserved for the `Uncertain` answer.
 -   A minimum confidence is outside `[0.0, 1.0]`.
 
+TypeSafe Jev, Decisions API, and Amazon SageMaker AI also raise an error, before they call the provider, for:
+
+-   A multiple-choice question with more than 255 labels.
+-   Input with binary content, such as an image or document passed as bytes. Send text instead.
+-   Input that can’t be serialized to JSON. NaN and infinity count as input that can't be serialized.NaN and infinity aren't rejected: they're sent as null.
+
 ## Related pages
 
 - [Decision models](/docs/user-guide/sdk/decision-models/index.md) (1 shared tag)
+- [Decisions API](/docs/user-guide/sdk/decision-models/models/decisions-api/index.md) (1 shared tag)
 - [Decisions in an agent](/docs/user-guide/sdk/decision-models/agents/index.md) (1 shared tag)
 - [LLM decision model](/docs/user-guide/sdk/decision-models/models/llm/index.md) (1 shared tag)
 - [Supported decision models](/docs/user-guide/sdk/decision-models/models/index.md) (1 shared tag)
+- [TypeSafe Jev](/docs/user-guide/sdk/decision-models/models/typesafe/index.md) (1 shared tag)
+- [Amazon SageMaker AI](/docs/user-guide/sdk/decision-models/models/sagemaker/index.md) (1 shared tag)
 - [Model Routing](/docs/user-guide/sdk/model-providers/model-routing/index.md) (1 shared tag)
 - [Decision model observability](/docs/user-guide/sdk/decision-models/observability/index.md) (1 shared tag)
 - [Decision models quickstart](/docs/user-guide/sdk/decision-models/quickstart/index.md) (1 shared tag)
@@ -130,8 +146,10 @@ console.log(result.answers.sentiment)
 
 - [harness-sdk/strands-py/src/strands/decisions/types.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/types.py)
 - [harness-sdk/strands-py/src/strands/decisions/decision_model.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/decision_model.py)
+- [harness-sdk/strands-py/src/strands/decisions/_system_one_http_adapter.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/_system_one_http_adapter.py)
 
 ### TypeScript
 
 - [harness-sdk/strands-ts/src/decisions/types.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/types.ts)
 - [harness-sdk/strands-ts/src/decisions/decision-model.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/decision-model.ts)
+- [harness-sdk/strands-ts/src/decisions/system-one-http-adapter.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/system-one-http-adapter.ts)

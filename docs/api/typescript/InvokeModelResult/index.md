@@ -1,4 +1,4 @@
-Defined in: [src/middleware/stages.ts:115](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/middleware/stages.ts#L115)
+Defined in: [src/middleware/stages.ts:123](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/middleware/stages.ts#L123)
 
 Result from model-stage middleware. The return value of the async generator.
 
@@ -10,6 +10,6 @@ Result from model-stage middleware. The return value of the async generator.
 readonly result: StreamAggregatedResult;
 ```
 
-Defined in: [src/middleware/stages.ts:117](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/middleware/stages.ts#L117)
+Defined in: [src/middleware/stages.ts:125](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/middleware/stages.ts#L125)
 
 The aggregated result from the model stream.

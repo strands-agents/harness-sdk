@@ -1,380 +1,158 @@
-Box runs an agent on Linux or macOS under a policy. The agent can reach only the files, programs, and network destinations you allow. You describe a box in two files: `box.toml` says what to run and what it can reach, and `policy.dw` decides each request it makes.
+On this page, you install Box and run Claude Code in a box in one of your own projects. The agent can change files in your project, talk to its model, and look things up on the internet, but the rest of your machine is out of its reach: your other files, your keys, and the services that listen only on localhost.
 
-In this guide you’ll put the [Strands CLI](https://github.com/strands-agents/harness-sdk/tree/main/strands-cli) in a box on macOS. You’ll give it one tool, a shell, so your policy decides every command it runs and every file its shell reads or writes, and you’ll watch the box refuse a write, then change the policy to allow it. The finished files are in [`examples/strands-cli`](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/examples/strands-cli/).
+## Requirements
 
-## Set up with your coding agent
+-   An Apple Silicon Mac with macOS 15 or later, or Linux on ARM64 or x86\_64. [Install Box](/docs/user-guide/box/install/index.md#requirements) lists what Linux needs.
+    
+-   The [AWS CLI](https://aws.amazon.com/cli/), to look up a model ID and check your sign-in.
+    
+-   Claude Code from its native installer. The box starts the native executable, and the `npm` package is a Node script, so if you installed Claude Code with `npm`, reinstall it:
+    
+    ```sh
+    curl -fsSL https://claude.ai/install.sh | bash
+    ```
+    
+-   An AWS account that can call Claude models on Amazon Bedrock, and an AWS profile for it on this machine. If the model refuses you, [Every model request fails with 403](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/resources/packs/bedrock/README.md#every-model-request-fails-with-403) lists what an account needs. With a claude.ai Pro or Max plan instead, you need neither AWS nor the AWS CLI: in step 2, make the profile as [`@box/claude-subscription`](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/resources/packs/claude-subscription/README.md) shows, then skip step 3.
+    
 
-Paste this prompt into your coding agent to follow this page:
+## 1\. Install Box
 
-Show the prompt
+Download the installer and run it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/strands-agents/box/91e56bddc102a0ebb44333b50ca5f8a2325092fa/install.sh | sh
+```
+
+It installs the latest stable release, puts `box` on your `PATH`, and ends with example next steps. Usage telemetry is on by default, and the installer says how to turn it off ([Usage telemetry](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/CLI_TELEMETRY.md)).
+
+Open a new terminal, and do every step from here on in it, because later steps use variables that earlier ones set. Check that `box` runs:
+
+```console
+$ box --version
+box 0.3.0
+```
+
+If the installer stops instead, it says why. [Install Box](/docs/user-guide/box/install/index.md) covers what it adds, upgrading, and uninstalling.
+
+## 2\. Create a Claude Code profile
+
+A [profile](/docs/user-guide/box/profiles/index.md) tells `box` how to run one agent: which program to start, which tools to give it, and which model service it may reach. Make one for Claude Code on Amazon Bedrock:
+
+```sh
+box profile create claude --with bedrock
+```
+
+`box` asks for the region, how the box signs in to Bedrock, whether to bring in your MCP servers and hooks, and the policy. Press Enter to accept each default: `us-west-2`, your AWS credentials (`aws`), no MCP servers or hooks, and the Open policy, which lets the agent search the web and read docs. If your Claude Code settings or your shell (`AWS_REGION` or `AWS_DEFAULT_REGION`) already name a region, `box` doesn’t ask, and the Review tab lists it under **DETECTED OPTIONS**. To pick another policy later, see [Pick the agent’s policy](/docs/user-guide/box/starters/index.md#pick-the-agents-policy).
+
+On Review, choose **Save profile**. `box` then shows what it saved and what to do before the first run:
 
 ```text
-Help me put the Strands CLI in a Strands Box on this Mac. Fetch this guide and follow it step by
-step, and prefer it over what you remember about Box:
-https://raw.githubusercontent.com/strands-agents/box/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/user/getting-started.md
+  BEFORE RUNNING
 
-Rules:
-- First, check the guide's "Before you start" list. Tell me what's missing, and stop if something
-  blocks the guide.
-- Ask me before each step that installs software or writes files. Use ~/box-tutorial, as the
-  guide does.
-- Don't create, read, or store my Bedrock API key. Tell me how to make one, and give me the export
-  command to run in my own terminal. Don't ask me to paste the key to you.
-- Don't run `box run` yourself, because it starts an interactive agent. Give me the exact command
-  to run in the terminal where I exported the key.
-- If the box fails, ask me for the error, and use the guide's "If something goes wrong" table and
-  its decision log command to find the cause.
-- When the box works, offer to help me change what it allows in my-box/policy.dw. The
-  policy-authoring skill at
-  https://raw.githubusercontent.com/strands-agents/box/85c811d4e2cedb4913decf4b4b00e07c7e923743/.agents/skills/authoring-box-policy/SKILL.md
-  teaches the Dogwood policy language and the box's action vocabulary; fetch it and follow it.
+  • Skipped tools: pnpm (@box/pnpm), yarn (@box/yarn).
+  • The bedrock route signs with your default AWS identity. Box Core warns about it.
 ```
 
-## Before you start
+Your list may differ. A skipped tool is one that `box` didn’t find on your machine. Install it whenever you like, and the next run picks it up. The second line says how the box signs in to Bedrock (step 3). Choose **Exit**, not **Run**, because Claude Code still needs a model.
 
-Box supports macOS on Apple silicon and Linux ARM64 (64-bit Arm). Linux x86-64 builds require no environment opt-in. Check the [macOS requirements](/docs/user-guide/box/reference/macos-requirements/index.md) for the release package, workload dependencies, and startup checks. Linux release executables are built on Amazon Linux 2023. Check the [Linux requirements](/docs/user-guide/box/reference/linux-requirements/index.md) for required libraries, permissions to create the sandbox, and tested configurations. [Step 1](#step-1-download-box) installs Box on either platform. The Strands CLI walkthrough in steps 2–8 uses macOS. For that walkthrough, you need:
-
--   A Mac with Apple silicon and macOS 15 or later.
--   Node.js 22.21 or later from Homebrew: `brew install node`.
--   An AWS account with access to Claude Opus 5 on Amazon Bedrock in `us-west-2`.
-
-The files in this guide use the directory `~/box-tutorial`. Make it, and run every command from there:
-
-```sh
-mkdir ~/box-tutorial
-cd ~/box-tutorial
-```
-
-## Step 1. Download Box
-
-Download Box on macOS or Linux:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/strands-agents/box/refs/heads/main/download.sh | sh
-./box-core/box --version
-```
-
-The script selects the latest release and downloads the archive for your operating system and CPU architecture. It verifies the checksum and checks the extracted files in temporary storage. It then unpacks the archive into `./box-core`. Run `box` by its path, and keep the entire directory together. The version command prints `strands-box` followed by the release version.
-
-Set `BOX_VERSION` to select a release tag and `BOX_DOWNLOAD_DIR` to select a destination. Use a fresh destination to keep a previous installation if the final extraction fails.
-
-### macOS
-
-The signed macOS package contains `Box.app`, with a `box` launcher and helper links into that bundle. Moving only an executable out of the bundle loses its provisioning profile. The package is also notarized, so macOS runs a copy that you download in a browser. Check the [macOS requirements](/docs/user-guide/box/reference/macos-requirements/index.md) before running a workload; a successful `box --version` does not test sandbox startup.
-
-### Linux
-
-Select a release that includes the archive for your CPU: `box-<tag>-linux-arm64.tar.gz` or `box-<tag>-linux-x86_64.tar.gz`. The release must also include its checksum in `SHA256SUMS.txt`. Set `BOX_VERSION` to that release tag when running the downloader. A release can omit Linux or x86-64 assets. If the x86-64 archive or its checksum is missing, the download stops without substituting an ARM64 archive.
-
-Box has no runtime environment opt-in for ARM64 or x86-64.
-
-After installation, run the [native Linux example](/docs/user-guide/box/reference/linux-requirements/index.md#run-a-native-linux-example) to check sandbox startup and file access without model credentials. For a cloud workload, continue with the [Amazon EKS coding example](/docs/user-guide/box/guides/deploy-to-eks/index.md) or the [AgentCore Runtime shipment example](/docs/user-guide/box/guides/deploy-to-agentcore-runtime/index.md). Steps 2–8 below follow the macOS Strands CLI example.
-
-Check the [Linux requirements](/docs/user-guide/box/reference/linux-requirements/index.md) before running a workload; a successful `box --version` does not test sandbox startup. Use the [platform comparison](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/platform-differences.md) when adapting a macOS configuration.
-
-Build from source (optional)
-
-To build Box yourself, install [rustup](https://rustup.rs/). Build it and copy the binaries into `./box-core`:
-
-```sh
-git clone https://github.com/strands-agents/box.git box-src
-cargo build --release --manifest-path box-src/Cargo.toml -p strands-box -p strands-box-containment
-mkdir box-core
-cp box-src/target/release/strands-box box-core/box
-cp box-src/target/release/strands-box-sock-alias box-src/target/release/strands-box-contain-trampoline box-core/
-```
-
-## Step 2. Install the Strands CLI
-
-Install the CLI with Homebrew’s `npm`, so it lands where `box.toml` expects it, and make a small project for it to work on:
-
-```sh
-/opt/homebrew/bin/npm install -g @strands-agents/cli
-mkdir my-project
-echo "# My project" > my-project/README.md
-```
-
-### Send the AWS SDK through the egress gateway
-
-> **Note.** Not every agent runs in a box unchanged. The box sends all of the agent’s network traffic through its egress gateway, and sets `HTTPS_PROXY` to the gateway’s address. The AWS SDK for JavaScript opens its own connections and ignores `HTTPS_PROXY`, and its Bedrock calls use HTTP/2, which no proxy setting reaches. That’s a general Node.js problem: any Node program that calls AWS from behind a proxy has it. The Strands CLI needs a few more changes in the steps below. Without each one, the box fails at startup or refuses a request, and stderr or the decision log says why.
-
-Node can load a file before the CLI starts, and that file can send the SDK’s requests through the gateway. Save this file as `proxy-preload.mjs`:
-
-```js
-// Send the AWS SDK's requests through the box's egress gateway. Load with `node --import`.
-import { createRequire } from "node:module";
-
-// Find modules the way the CLI does, from the CLI's own script.
-const require = createRequire(process.argv[1]);
-
-if (process.env.HTTPS_PROXY) {
-  // Make every Node connection use the proxy settings from the environment.
-  const http = require("node:http");
-  const https = require("node:https");
-  const proxyEnv = process.env;
-  const HttpAgent = http.Agent;
-  const HttpsAgent = https.Agent;
-  http.Agent = class extends HttpAgent {
-    constructor(options) {
-      super({ proxyEnv, ...options });
-    }
-  };
-  https.Agent = class extends HttpsAgent {
-    constructor(options) {
-      super({ proxyEnv, ...options });
-    }
-  };
-
-  // Bedrock calls use HTTP/2, which ignores these proxy settings. Use HTTP/1.1.
-  const handlers = require("@smithy/node-http-handler");
-  handlers.NodeHttp2Handler = handlers.NodeHttpHandler;
-}
-```
-
-## Step 3. Configure the Strands CLI
-
-The CLI reads its settings from `~/.strands/cli/config.json`; the next step will set the CLI’s `HOME` to `./strands-home`, so it reads them from there, but first we need to create a box-specific settings file.
-
-Make the directory:
-
-```sh
-mkdir -p strands-home/.strands/cli
-```
-
-Then save this file as `strands-home/.strands/cli/config.json`:
-
-```json
-{
-  "onboarding": { "version": 1 },
-  "providers": { "enabled": ["bedrock"] },
-  "profile": { "model": "bedrock/global.anthropic.claude-opus-5" },
-  "permissions": { "mode": "bypassPermissions" },
-  "settings": { "setupOnLaunch": false }
-}
-```
-
-With these settings the CLI uses Claude Opus 5 on Bedrock, opens straight into a chat, and skips its setup screens. It also no longer asks you to approve each tool call, so the box’s policy decides each command.
-
-## Step 4. Write the box
-
-Make a directory for the box:
-
-```sh
-mkdir my-box
-```
-
-Save this file as `my-box/box.toml`:
+The profile is in `~/.strands/box/profiles/claude/profile.toml`, and its first lines look like this:
 
 ```toml
-# To author or change the policy next to this file, point your coding agent at the skill:
-#   https://raw.githubusercontent.com/strands-agents/box/85c811d4e2cedb4913decf4b4b00e07c7e923743/.agents/skills/authoring-box-policy/SKILL.md
-
-# The box's name, and where it keeps its own state. The agent can't reach box_dir.
-name = "strands"
-box_dir = "<HOME>/box-tutorial/my-box/state"
-# The policy file, next to this one.
-policy = "policy.dw"
-
-[agent]
-# The program the box starts. Node loads the preload file first, then runs the CLI.
-command = [
-  "/opt/homebrew/bin/node",
-  "--import=<HOME>/box-tutorial/proxy-preload.mjs",
-  "/opt/homebrew/lib/node_modules/@strands-agents/cli/bin/strands.js",
-  # Give the agent its shell and web fetch, and no file tools, so the policy decides each file it works on.
-  "--set", 'builtinTools={"*":false,"shell":true,"web_fetch":{"transport":"direct"}}',
-  # Keep sessions and memory out of the project.
-  "--set", 'session.dir="<HOME>/box-tutorial/strands-home/sessions"',
-  "--set", 'memory.dir="<HOME>/box-tutorial/strands-home/memory"',
-]
-# The directory the agent starts in. This alone grants nothing.
-workspace = "<HOME>/box-tutorial/my-project"
-# The agent gets these variables, plus the ones the box adds. Nothing comes from your shell.
-env = { AWS_REGION = "us-west-2", HOME = "<HOME>/box-tutorial/strands-home", PATH = "/usr/bin:/bin", TERM = "xterm-256color" }
-
-# What the agent's own process can touch without asking the policy.
-[agent.filesystem]
-# Node loads the CLI, and the CLI reads its settings.
-read = ["/opt/homebrew/lib/node_modules/@strands-agents/cli", "~/box-tutorial/strands-home"]
-# Node loads the preload file, and reads Homebrew's OpenSSL settings when it starts.
-read_file = ["~/box-tutorial/proxy-preload.mjs", "/opt/homebrew/etc/openssl@3/openssl.cnf"]
-# The CLI writes its sessions and memory.
-write = ["~/box-tutorial/strands-home"]
-# The CLI lists the names in its working directory. It can't open the files itself.
-list = ["~/box-tutorial/my-project"]
-
-# The box adds your Bedrock API key to each request to Bedrock. The agent, and every tool or MCP
-# server in the box, gets a stand-in value.
-# "model" is a name you choose.
-[egress.model]
-destinations = ["bedrock-runtime.us-west-2.amazonaws.com"]
-secret.ref = "env://AWS_BEARER_TOKEN_BEDROCK"
+# Written by `box profile create`. Your values go here, and the packs hold the rest.
+# `box profile show claude` prints what a run gets.
+# For help from a coding agent, tell it: Run box help agent and follow it.
+packs = ["@box/claude", "@box/bedrock", "@box/cargo", "@box/git", "@box/node", "@box/npm", "@box/pnpm", "@box/yarn"]
+policies = ["policy.dw"]
 ```
 
-The paths in `box_dir`, `command`, `workspace`, and `env` must be absolute. The filesystem lists can start with `~`, which the box expands, so only the `<HOME>` paths need your home directory:
+The `@box/` names are packs that come with Box. They hold the details of running Claude Code, reaching Amazon Bedrock, and using each tool, so your own file stays short. `policy.dw`, beside it, is your copy of the policy you picked. [Profiles](/docs/user-guide/box/profiles/index.md) shows how to change either file.
+
+## 3\. Connect to Bedrock
+
+The box signs each request to Bedrock with your AWS credentials, outside the box, so the agent never sees them. It uses the AWS identity that the AWS CLI uses in the terminal where you run `box run`. Point this terminal at your AWS profile and check it:
 
 ```sh
-sed -i '' "s|<HOME>|$HOME|g" my-box/box.toml
+export AWS_PROFILE=your-profile
+aws sts get-caller-identity
 ```
 
-Then save this file as `my-box/policy.dw`. It allows calls to Bedrock, any shell command, reads in the project, and `/dev/null`:
+`your-profile` is a profile in `~/.aws/config` or `~/.aws/credentials`, not the Box profile from step 2.
 
-```text
-// Connect to Bedrock, and send it requests.
-@id("model_connect")
-permit (principal, action == Box::Action::"net:connect", resource)
-when { context.input.host == "bedrock-runtime.us-west-2.amazonaws.com" && context.input.port == 443 };
-
-@id("model_request")
-permit (principal, action == Box::Action::"http:request", resource)
-when { context.input.host == "bedrock-runtime.us-west-2.amazonaws.com" };
-
-// Run any command in the box's shell. Each file a command touches is still its own decision.
-@id("shell_commands")
-permit (principal, action == Box::Action::"shell:exec", resource);
-
-// Read anything in the project. A path under your home starts with "~" here.
-@id("project_read")
-permit (principal, action == Box::Action::"fs:read", resource)
-when {
-  context.input.path == "~/box-tutorial/my-project" ||
-  context.input.path like "~/box-tutorial/my-project/*"
-};
-
-// Use /dev/null, which agents redirect output to all the time.
-@id("dev_null")
-permit (principal, action in [Box::Action::"fs:read", Box::Action::"fs:write"], resource)
-when { context.input.path == "/dev/null" };
-```
-
-The box refuses any request that no `permit` matches.
-
-## Step 5. Get a Bedrock API key
-
-In the [Amazon Bedrock console](https://console.aws.amazon.com/bedrock), pick the `us-west-2` region, open **API keys**, and on the **Short-term API keys** tab choose **Generate short-term API keys**. Put the key in your shell:
+If that AWS profile signs in with AWS IAM Identity Center (SSO) or `aws login`, the box can’t read it yet. Sign in, and export its temporary keys in this terminal:
 
 ```sh
-export AWS_BEARER_TOKEN_BEDROCK="your-key"
+aws sso login   # or: aws login
+eval "$(aws configure export-credentials --format env)"
 ```
 
-To make a key from your AWS credentials instead, run this. Replace `your-profile` with your AWS profile:
+The keys end with the sign-in session, so run this again in each new terminal and after you sign in again. [Which AWS profiles work](/docs/user-guide/box/reference/profiles/index.md#aws-credentials) is in the reference. To sign in with a Bedrock API key instead, see [Sign in with a Bedrock API key](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/resources/packs/bedrock/README.md#sign-in-with-a-bedrock-api-key).
+
+A run that has already started keeps its old sign-in, so start a new run after you change it.
+
+### Choose the model
+
+If Claude Code on your machine already uses a Bedrock model ID that your account can call in this region (`model` or `ANTHROPIC_MODEL` in `~/.claude/settings.json`, or `ANTHROPIC_MODEL` in your shell), the box uses it, so skip to step 4. Otherwise Claude Code uses its default model, and if your account can’t call that one, Claude Code keeps retrying and the run looks stuck.
+
+List the Claude models on Bedrock in the profile’s region (`us-west-2` unless you picked another):
 
 ```sh
-/opt/homebrew/bin/npm install --prefix ./bedrock-key @aws/bedrock-token-generator
-export AWS_BEARER_TOKEN_BEDROCK="$(AWS_PROFILE=your-profile AWS_REGION=us-west-2 /opt/homebrew/bin/node -e 'require("./bedrock-key/node_modules/@aws/bedrock-token-generator").getTokenProvider()().then(console.log)')"
+aws bedrock list-inference-profiles --region us-west-2 \
+  --query "inferenceProfileSummaries[?contains(inferenceProfileId, 'anthropic')].inferenceProfileId" \
+  --output text
 ```
 
-A key lasts up to 12 hours, and works only in the region you made it in. Run the box from the same shell.
+Pick one your account is allowed to call (if you don’t know, ask whoever runs the account) and copy its full ID as the command prints it, such as `global.anthropic.claude-opus-5-5`. A short name such as `opus` won’t work. Then add it to the end of `~/.strands/box/profiles/claude/profile.toml`:
 
-## Step 6. Run the box
+```toml
+[agent.env]
+ANTHROPIC_MODEL = "global.anthropic.claude-opus-5-5"
+```
+
+## 4\. Run Claude Code in a project
+
+The agent can read and change the files in the directory where you start it, and nothing outside it unless the profile adds it. Start it in the project you want it to work on, not in a folder that holds keys or credentials:
 
 ```sh
-./box-core/box run --config my-box/box.toml
+cd ~/src/my-app
+box run claude
 ```
 
-The box prints what the agent can touch, then the CLI opens a chat. The start of that output looks like this:
+`box` shows a loading display until Claude Code is ready, and then Claude Code starts with an [activity banner](/docs/user-guide/box/reference/cli/index.md#the-activity-banner) below it. Press **Ctrl+\]** to expand the banner.
 
-```text
-strands-box: box box-4a4cdb2b114ab6ce created · config my-box/box.toml
-strands-box: starting workload
-strands-box: [agent] runs /opt/homebrew/Cellar/node/26.5.0/bin/node with no policy decision over these paths:
-  read        /opt/homebrew/lib/node_modules/@strands-agents/cli
-  read        /Users/you/box-tutorial/strands-home
-  write       /Users/you/box-tutorial/strands-home
-  read_file   /Users/you/box-tutorial/proxy-preload.mjs
-  read_file   /opt/homebrew/etc/openssl@3/openssl.cnf
-  list        /Users/you/box-tutorial/my-project
-```
+If you already use Claude Code in this project, it goes straight to the prompt, because `box` brings in your finished onboarding and your answer to the folder trust question. Otherwise Claude Code asks its first-time questions: a color theme, some security notes, and whether you trust the folder. That last one defaults to **No, exit**, so press the down arrow to pick **Yes, I trust this folder** before you press Enter. It won’t ask you to log in, since the profile points it at Bedrock.
 
-Ask the agent:
+Claude Code starts with the permission settings from your machine, so it may ask before it edits a file or runs a command, and the box checks each action either way. [How Claude Code asks before it acts](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/resources/packs/claude/README.md#how-claude-code-asks-before-it-acts) shows how to change that.
 
-```text
-Read README.md, then add a line to it that says hello.
-```
+Now watch the box work. Ask Claude Code to create `hello.txt` with the word hi in it, and say yes if it asks. The file shows up in `~/src/my-app`. Then ask Claude Code to run `echo hi > ~/outside.txt` in its shell, and say yes if it asks. The box stops that command, and Claude Code tells you it couldn’t write the file. Press **Ctrl+\]** to see the denial in the banner. If Claude Code uses its own Write tool instead, the box stops that too, but the banner doesn’t show it ([The box](/docs/user-guide/box/how-box-works/index.md#the-box) says why).
 
-The agent reads `README.md`, and the box refuses the write, because the policy allows only reads. The agent tells you the write was denied. Type `/exit` to leave the chat, which stops the box.
-
-## Step 7. Read the decision log
-
-The box writes every decision to `my-box/state/private/telemetry/records.jsonl`. This prints one line per decision:
+Quit Claude Code with `/exit` to end the run. `box` then shows any messages saved during the run, and [`box runs history`](/docs/user-guide/box/reference/cli/index.md#box-runs-history) lists every decision the box made. To pick up where you left off next time, pass Claude Code’s own flag after `--`:
 
 ```sh
-jq -r '.resourceLogs[]?.scopeLogs[].logRecords[]
-  | (.attributes | map({(.key): .value}) | add) as $a
-  | select($a["strands.box.policy.verdict"])
-  | [$a["strands.box.policy.verdict"].stringValue, $a["strands.box.policy.action"].stringValue,
-     ($a["file.path"].stringValue // $a["server.address"].stringValue
-      // ($a["process.command_args"].arrayValue.values | map(.stringValue) | join(" ")))]
-  | @tsv' my-box/state/private/telemetry/records.jsonl
+box run claude -- --continue
 ```
 
-Example output:
+### If the run doesn’t start
 
-```text
-deny    net:connect   telemetry.strandsagents.com
-deny    shell:spawn   /usr/bin/uname -s
-permit  shell:exec    pwd
-permit  net:connect   bedrock-runtime.us-west-2.amazonaws.com
-permit  http:request  bedrock-runtime.us-west-2.amazonaws.com
-permit  shell:exec    cat /Users/you/box-tutorial/my-project/README.md
-permit  fs:read       ~/box-tutorial/my-project/README.md
-permit  net:connect   bedrock-runtime.us-west-2.amazonaws.com
-permit  http:request  bedrock-runtime.us-west-2.amazonaws.com
-permit  shell:exec    cd /Users/you/box-tutorial/my-project
-permit  fs:read       ~/box-tutorial/my-project
-permit  shell:exec    printf hello\\n
-deny    fs:write      ~/box-tutorial/my-project/README.md
-```
-
-Notice that each model call results in a `net:connect` and an `http:request`, and each command results in a `shell:exec`, plus an `fs:` decision for every file it touches.
-
-The box’s shell has `cat`, `printf`, `ls`, and about thirty other commands built in. Running any other program is a `shell:spawn`, and this policy allows none, so the box refused the `uname` that the CLI runs when it starts. The box also refused the CLI’s own version ping, because the policy names no host but Bedrock. Nothing you typed asked for either one, which is the point: the log holds what the agent did on its own as well as what you asked for.
-
-## Step 8. Allow the write
-
-Now you can allow writes in the project by adding this `permit` to the end of `my-box/policy.dw`:
-
-```text
-// Write anything in the project.
-@id("project_write")
-permit (principal, action == Box::Action::"fs:write", resource)
-when { context.input.path like "~/box-tutorial/my-project/*" };
-```
-
-Run the box again and ask the same thing. The box reads `policy.dw` each time it starts, so the new `permit` applies and the write goes through this time. The decision log shows it:
-
-```text
-permit  fs:write      ~/box-tutorial/my-project/README.md
-```
-
-That’s the loop with any agent: run it, read what the box refused, and allow only what it needs.
-
-## If something goes wrong
-
-The box writes its own errors to stderr. To keep them, add `2> my-box/box-run.log` to the `box run` command. These are the errors you’re most likely to see, and what fixes each one:
-
-| Error | Fix |
+| What you see | What to do |
 | --- | --- |
-| `getaddrinfo ENOTFOUND bedrock-runtime.us-west-2.amazonaws.com` | Node didn’t load the preload file. Check the `--import` path in `command`. |
-| `Authentication failed: Please make sure your API Key is valid.` | Your key has expired, or you made it in another region. Make a new one in `us-west-2`. |
-| `OpenSSL configuration error` … `openssl.cnf` | Add `openssl.cnf` to `read_file`. |
-| `EMFILE` from a directory watcher on macOS | Use the application’s polling mode, or explicitly enable [file watching](/docs/user-guide/box/reference/configuration/index.md#file-watching) after accepting its limitations. |
-| `EPERM: process.cwd failed with error operation not permitted, uv_cwd` | Add the project to `list`. |
-| `Unexpected token 'b', "blocked by"... is not valid JSON` | The box refused a model request. Find its `deny` in the decision log, and read the reason. |
-| `unsafe box directory ...: it is not empty and contains no valid private record` | You removed part of `my-box/state`. Remove all of it; `run` recreates it. Never remove `state/private` alone. |
+| `AWS default credential chain resolved no credentials` | Set `AWS_PROFILE`, or export the SSO keys, in this terminal (step 3). |
+| `credential variable AWS_BEARER_TOKEN_BEDROCK is not set` | The profile signs in with a key. Make the key in this terminal ([Sign in with a Bedrock API key](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/resources/packs/bedrock/README.md#sign-in-with-a-bedrock-api-key)). |
+| Claude Code starts, but after you give it a task it says `API error` and keeps retrying | Check the model ID from step 3. |
+| A `403` error from the model | Check the sign-in from step 3. With a key, make a new one for the profile’s region. If that doesn’t help, work through [Every model request fails with 403](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/resources/packs/bedrock/README.md#every-model-request-fails-with-403). |
+
+## What’s set up
+
+You have a `claude` profile, and `box run claude` uses it in any project. Every new terminal finds `box`. `AWS_PROFILE`, exported keys, and a Bedrock API key last only in the terminal that set them, so run step 3 again in each new one. To get a newer release, see [Upgrade or choose a version](/docs/user-guide/box/install/index.md#upgrade-or-choose-a-version).
+
+`box` keeps the profile, Claude Code’s settings and history, and a record of each run in `~/.strands/box`. [Where Box keeps its files](/docs/user-guide/box/reference/files/index.md) says what each folder holds, and which files the tools write into your project.
 
 ## Clean up
 
-Stop the box, then delete the directory:
+Each run leaves a folder in `~/.strands/box/r`, and they pile up. `box profile clean --all` asks, then removes them. It keeps the profile, and Claude Code’s settings and history. If one of the boxes is still running, it removes nothing and names that box, so exit it first. To start over, run `box profile delete --all`, which also asks first, and redo steps 2 and 3.
 
-```sh
-rm -rf ~/box-tutorial
-```
+## Where to go next
 
-## See also
-
--   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): the next step. Write the rules by hand, deny one file, and read the decision log with `jq`.
--   [Collect the Strands CLI’s traces and metrics](/docs/user-guide/box/guides/strands-cli-telemetry/index.md): put the agent’s own spans and metrics in the same records file as the box’s decisions.
--   [The `[mcp.<name>]` table](/docs/user-guide/box/guides/add-an-mcp-server/index.md): add an MCP server to the box you wrote.
--   [Policy](/docs/user-guide/box/reference/policy/index.md): what a policy is, the actions, the common rules, and what to do when a policy fails to load.
--   [The design guide](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/): how Box works, why it’s safe, and the decisions behind it.
+-   [How Box works](/docs/user-guide/box/how-box-works/index.md): what the box, profiles, packs, and policies are, and how they fit together.
+-   [Profiles](/docs/user-guide/box/profiles/index.md): give the agent another host, folder, or tool, change its region, or set up another agent.
+-   [Starters](/docs/user-guide/box/starters/index.md): switch the policy, or answer the questions from a script.
+-   [Limitations](/docs/user-guide/box/limitations/index.md): what a box doesn’t protect you from. Read it before you trust a run with work that matters.

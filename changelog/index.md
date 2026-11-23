@@ -1,5 +1,116 @@
 # Strands Agents Changelog
 
+## Box v0.3.0 — 2026-11-23
+Release: https://github.com/strands-agents/box/releases/tag/v0.3.0 · Package: https://github.com/strands-agents/box/releases/tag/v0.3.0
+
+### Features
+- name what a file needs of box in one \[requires\] table (https://github.com/strands-agents/box/pull/557)
+- remove box clean, now that box profile clean removes boxes (https://github.com/strands-agents/box/pull/574)
+- show the welcome on updates too (https://github.com/strands-agents/box/pull/596)
+- add an @box/rg tool pack for Codex (https://github.com/strands-agents/box/pull/612)
+- run Claude Code on a claude.ai subscription (https://github.com/strands-agents/box/pull/611)
+- bring the host's Kiro CLI settings into the box (https://github.com/strands-agents/box/pull/565)
+
+### Fixes
+- use one ownership rule for box runs list \<name\> and box profile clean \<name\> (https://github.com/strands-agents/box/pull/575)
+- save run logs and preview errors on exit (https://github.com/strands-agents/box/pull/576)
+- fix the first-run nits from the pre-release check (https://github.com/strands-agents/box/pull/608)
+- end a terminal run with a short summary, and warn once about a bare aws:// (https://github.com/strands-agents/box/pull/610)
+- warn once at startup for each bare aws:// destination (https://github.com/strands-agents/box/pull/613)
+- grant launcher shebang interpreters and accept RFC 7230 MCP header names (https://github.com/strands-agents/box/pull/614)
+- permit no-op setresuid and setresgid on Linux so make runs (https://github.com/strands-agents/box/pull/554)
+
+### Other
+- make the box CLI the entry point on the docs site and in the README (https://github.com/strands-agents/box/pull/568)
+
+## Box v0.3.0-preview.1 — 2026-11-21
+Release: https://github.com/strands-agents/box/releases/tag/v0.3.0-preview.1 · Package: https://github.com/strands-agents/box/releases/tag/v0.3.0-preview.1
+
+### Features
+- give a library caller each policy decision as it is made (https://github.com/strands-agents/box/pull/528)
+- batch history writes by default (https://github.com/strands-agents/box/pull/400)
+- write each grammar action input inline in the schema (https://github.com/strands-agents/box/pull/432)
+- allow \`\_\`, uppercase letters, and a leading \`+\` in grammar command words (https://github.com/strands-agents/box/pull/423)
+- record MCP tool calls for a target that names mcp\_tool\_calls (https://github.com/strands-agents/box/pull/463)
+- load a declared secret source on Linux (https://github.com/strands-agents/box/pull/531)
+- bump Strands Shell to 674212e and report the host's uname (https://github.com/strands-agents/box/pull/534)
+- trust the host's root certificates for upstream TLS (https://github.com/strands-agents/box/pull/522)
+- add host.box.internal that points to the host OS's loopback (https://github.com/strands-agents/box/pull/530)
+- let the toolchain word of a grammar action carry effects (https://github.com/strands-agents/box/pull/427)
+- add the box command-line tool (https://github.com/strands-agents/box/pull/555)
+- let a grammar action take over an anywhere global option (https://github.com/strands-agents/box/pull/433)
+- publish the box CLI with Box Core in one release (https://github.com/strands-agents/box/pull/566)
+
+### Fixes
+- allow executable memory on Linux so JIT runtimes run (https://github.com/strands-agents/box/pull/488)
+- let policy alone decide the removal or replacement of a mount point (https://github.com/strands-agents/box/pull/503)
+- keep the gateway's reason on a refused HTTPS tunnel (https://github.com/strands-agents/box/pull/526)
+- let a contained process read kern.argmax (https://github.com/strands-agents/box/pull/532)
+- make a file target's append uncancellable (https://github.com/strands-agents/box/pull/473)
+- refuse an empty path, with Strands Shell 754a534 (https://github.com/strands-agents/box/pull/547)
+- keep MCP argument names that are not Cedar identifiers (https://github.com/strands-agents/box/pull/505)
+- answer a failed upstream exchange with a 502 that says why (https://github.com/strands-agents/box/pull/545)
+- do not sign the headers that botocore does not sign (https://github.com/strands-agents/box/pull/537)
+- keep box's forbids while policy is off, and gate Ctrl+\\ on a shown banner (https://github.com/strands-agents/box/pull/558)
+- accept a pre-release box version in an engine floor (https://github.com/strands-agents/box/pull/561)
+- refuse a link in any folder a box can write, and move copies by directory handle (https://github.com/strands-agents/box/pull/571)
+- refuse a detected MCP server whose env points where the box can write (https://github.com/strands-agents/box/pull/572)
+- sign the CLI with Box Core's macOS identity (https://github.com/strands-agents/box/pull/577)
+
+### Other
+- improve the reviewer bot (https://github.com/strands-agents/box/pull/535)
+- cover native filesystem effects and policy history (https://github.com/strands-agents/box/pull/536)
+- write prose in plain English, and take dashes out of the user and design pages (https://github.com/strands-agents/box/pull/540)
+- test and publish Linux x86-64 packages by default (https://github.com/strands-agents/box/pull/541)
+- restore blocking mode for shutdown fixture connections (https://github.com/strands-agents/box/pull/542)
+- split Core unit tests in two halves and give macOS containment its own runner (https://github.com/strands-agents/box/pull/567)
+- run the CLI's Linux tests for a Box Core change (https://github.com/strands-agents/box/pull/559)
+
+## Box v0.2.4 — 2026-11-19
+Release: https://github.com/strands-agents/box/releases/tag/v0.2.4 · Package: https://github.com/strands-agents/box/releases/tag/v0.2.4
+
+### Features
+- send box telemetry to Langfuse, LangSmith and CloudWatch (https://github.com/strands-agents/box/pull/314)
+- add monty = false, so a bare python3 resolves like any other program (https://github.com/strands-agents/box/pull/444)
+- upgrade Dogwood to 1.1.2 with fresh history (https://github.com/strands-agents/box/pull/422)
+- raise the default Shell stdin and output limits to 1 MiB (https://github.com/strands-agents/box/pull/498)
+- activate Linux native filesystem policy (https://github.com/strands-agents/box/pull/188)
+- leave out a tool whose program is not installed (https://github.com/strands-agents/box/pull/490)
+- deny writes to a directory inside a write grant, in every process (https://github.com/strands-agents/box/pull/429)
+- read a secret from a declared host program (https://github.com/strands-agents/box/pull/489)
+- load, check, and store a secret source declaration (https://github.com/strands-agents/box/pull/499)
+- read each declared secret at startup and deliver it (https://github.com/strands-agents/box/pull/500)
+- keep the vault of a secret source from each workload (https://github.com/strands-agents/box/pull/501)
+- remove the Linux x86-64 startup opt-in (https://github.com/strands-agents/box/pull/523)
+
+### Fixes
+- permit fchdir in the Linux workload filter (https://github.com/strands-agents/box/pull/483)
+- state the full FSEvents reach in the file-watching warning (https://github.com/strands-agents/box/pull/484)
+- pick up upstream touch and decide its time change by policy (https://github.com/strands-agents/box/pull/471)
+- verify approved directories during Linux sandbox launch (https://github.com/strands-agents/box/pull/264)
+- keep a mixed-namespace rule from being dropped when a catalog fails to stage (https://github.com/strands-agents/box/pull/469)
+- close inherited descriptors in one syscall, not an RLIMIT\_NOFILE loop (https://github.com/strands-agents/box/pull/37)
+- permit fork on Linux x86-64 (https://github.com/strands-agents/box/pull/510)
+- say that a program installed during the run is not a tool (https://github.com/strands-agents/box/pull/492)
+- grant a link from the lookup the run approved and its linked folders (https://github.com/strands-agents/box/pull/487)
+- permit renameat2 with no flags or RENAME\_NOREPLACE on Linux (https://github.com/strands-agents/box/pull/511)
+- let a box stat the macOS /tmp link (https://github.com/strands-agents/box/pull/519)
+- copy the host's top-level links into /usr into the Linux view (https://github.com/strands-agents/box/pull/512)
+
+### Other
+- pin the transport of a plain-HTTP response through the real proxy (https://github.com/strands-agents/box/pull/478)
+- bump Strands Shell to 39daa83 (https://github.com/strands-agents/box/pull/494)
+- cover monty = false through ShellSpec and the python3 alias (https://github.com/strands-agents/box/pull/496)
+- fix stale agent guidance and fragile checks ahead of a feature merge (https://github.com/strands-agents/box/pull/480)
+- make a secret provider a plugin (https://github.com/strands-agents/box/pull/467)
+- retry copied executable host controls (https://github.com/strands-agents/box/pull/509)
+- state that max\_output bounds curl response bodies (https://github.com/strands-agents/box/pull/507)
+- always publish Linux ARM64 and shorten input labels (https://github.com/strands-agents/box/pull/514)
+- prove fchdir keeps folder permission and inherited-handle cleanup (https://github.com/strands-agents/box/pull/513)
+- narrow decision-entry findings and add a test critic (https://github.com/strands-agents/box/pull/515)
+- run the macOS deterministic suite in the unit-test job (https://github.com/strands-agents/box/pull/517)
+- split the critics into a shared method and a Core area file (https://github.com/strands-agents/box/pull/521)
+
 ## Box v0.2.3 — 2026-11-17
 Release: https://github.com/strands-agents/box/releases/tag/v0.2.3 · Package: https://github.com/strands-agents/box/releases/tag/v0.2.3
 

@@ -234,11 +234,11 @@ false
 strictTools?: boolean;
 ```
 
-Defined in: [src/models/bedrock.ts:374](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L374)
+Defined in: [src/models/bedrock.ts:376](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L376)
 
 Constrain the model to emit tool names and inputs that conform to each tool’s schema.
 
-When `true`, every tool is sent with `strict: true` and a copy of its `inputSchema` with `additionalProperties: false` added to each object type, so a free-form `{ type: 'object' }` parameter becomes one the model can only fill with `{}`. Bedrock rejects schemas that use features outside its strict subset (recursive or external `$ref`, `minimum`/`maximum`/ `multipleOf`, `minLength`/`maxLength`, `additionalProperties` other than `false`) with a 400 at request time, and compiles each new schema on first use, which can take minutes. Incompatible with citations for Anthropic models.
+When `true`, every tool is sent with `strict: true` and a copy of its `inputSchema` with `additionalProperties: false` added to each object type, so a free-form `{ type: 'object' }` parameter becomes one the model can only fill with `{}`. Bedrock rejects schemas that use features outside its strict subset (recursive or external `$ref`, `minimum`/`maximum`/ `multipleOf`, `minLength`/`maxLength`, `additionalProperties` other than `false`) with a 400 at request time, and compiles each new schema on first use, which can take minutes. Incompatible with citations for Anthropic models. Turns deferred tool loading off, so `Offload.defer` and the `deferredToolLoading` preset send every full spec: strict mode needs each tool’s full input schema. A `modelInfo` override of `deferredToolLoading` still wins.
 
 #### See
 

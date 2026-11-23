@@ -120,7 +120,8 @@ The cancellation signal for the current invocation.
 ```python
 def cancel(*,
            message: str | None = None,
-           after_current_tools: bool = False) -> None
+           after_current_tools: bool = False,
+           cancel_background_tasks: bool = False) -> None
 ```
 
 Defined in: [src/strands/types/agent.py:107](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/agent.py#L107)
@@ -131,6 +132,7 @@ Request cancellation at the agent’s next supported checkpoint.
 
 -   `message` - Optional terminal assistant message appended to history on exit.
 -   `after_current_tools` - If True, defer cancellation until the current tool batch finishes; the loop exits before the next model call.
+-   `cancel_background_tasks` - If True, also cancel the agent’s outstanding background tasks (on an idle agent, only those).
 
 #### add\_hook
 
@@ -141,7 +143,7 @@ def add_hook(callback: HookCallback[_TEvent],
              order: float = ...) -> None
 ```
 
-Defined in: [src/strands/types/agent.py:117](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/agent.py#L117)
+Defined in: [src/strands/types/agent.py:121](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/agent.py#L121)
 
 Register a hook callback.
 
@@ -155,7 +157,7 @@ def take_snapshot(*,
                   app_data: dict[str, Any] | None = None) -> Snapshot
 ```
 
-Defined in: [src/strands/types/agent.py:127](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/agent.py#L127)
+Defined in: [src/strands/types/agent.py:131](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/agent.py#L131)
 
 Capture current agent state as an in-memory snapshot.
 
@@ -167,7 +169,7 @@ The fields a preset captures, and the fields accepted by include and exclude, ar
 def load_snapshot(snapshot: Snapshot) -> None
 ```
 
-Defined in: [src/strands/types/agent.py:142](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/agent.py#L142)
+Defined in: [src/strands/types/agent.py:146](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/agent.py#L146)
 
 Restore agent state from a previously captured snapshot.
 
@@ -179,7 +181,7 @@ Only fields present in snapshot.data are restored; absent fields are left unchan
 class Limits(TypedDict)
 ```
 
-Defined in: [src/strands/types/agent.py:150](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/agent.py#L150)
+Defined in: [src/strands/types/agent.py:154](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/agent.py#L154)
 
 Limits for the request a top-level `invoke_async` / `stream_async` call starts.
 
@@ -204,7 +206,7 @@ Priority when several are reached at once (highest first): `turns`, `total_token
 class ConcurrentInvocationMode(str, Enum)
 ```
 
-Defined in: [src/strands/types/agent.py:205](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/agent.py#L205)
+Defined in: [src/strands/types/agent.py:209](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/types/agent.py#L209)
 
 Mode controlling concurrent invocation behavior.
 

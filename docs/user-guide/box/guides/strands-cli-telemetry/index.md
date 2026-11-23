@@ -2,11 +2,11 @@ The box from getting started writes its decisions to one records file. The agent
 
 The box side is already done. A box relays the agent’s spans and metrics, listens for them on a loopback address, and tells the agent where. A box with no `[telemetry.*]` table writes everything it receives to the records file. On this page you configure the agent’s half.
 
-Audience: an operator who has run [getting started](/docs/user-guide/box/quickstart/index.md) on a Mac. [Telemetry](/docs/user-guide/box/guides/record-telemetry/index.md) covers record targets, what each record carries, and how to read a records file.
+Audience: an operator who has run [getting started](/docs/user-guide/box/core/quickstart/index.md) on a Mac. [Telemetry](/docs/user-guide/box/guides/record-telemetry/index.md) covers record targets, what each record carries, and how to read a records file.
 
 ## Before you start
 
--   The box from [getting started](/docs/user-guide/box/quickstart/index.md) under `~/box-tutorial`, with your Bedrock key in `AWS_BEARER_TOKEN_BEDROCK`. Run every command on this page from `~/box-tutorial`.
+-   The box from [getting started](/docs/user-guide/box/core/quickstart/index.md) under `~/box-tutorial`, with your Bedrock key in `AWS_BEARER_TOKEN_BEDROCK`. Run every command on this page from `~/box-tutorial`.
 -   `jq`, for the records file.
 
 ## Step 1. Turn the exporters on
@@ -161,7 +161,7 @@ jq -r '.resourceSpans[]?.scopeSpans[]
 
 ```text
 box    deny  net:connect  telemetry.strandsagents.com
-box    deny  shell:spawn  /usr/bin/uname -s
+box    permit  shell:exec  uname -s
 box    permit  shell:exec  pwd
 agent  memory.search
 agent  memory.inject
@@ -172,7 +172,7 @@ agent  execute_agent_loop_cycle
 agent  invoke_agent Strands harness
 ```
 
-That is one turn: the box refuses two probes nobody asked for, runs `pwd`, reaches Bedrock twice, and the agent files the spans for the same work. Change `box-tutorial` to whatever you set `OTEL_SERVICE_NAME` to.
+That is one turn: the box refuses a version ping nobody asked for, runs the CLI’s `uname` and `pwd`, reaches Bedrock twice, and the agent files the spans for the same work. Change `box-tutorial` to whatever you set `OTEL_SERVICE_NAME` to.
 
 ## What you have
 
@@ -191,10 +191,10 @@ One records file that holds the box’s decisions and the agent’s own spans an
 | No spans under your service name | Add `OTEL_TRACES_EXPORTER` to `[agent.env]`. Tracing stays off while that name is unset. |
 | Spans but no `resourceMetrics` | Either the metric block is missing from the end of `proxy-preload.mjs`, or the run was shorter than `OTEL_METRIC_EXPORT_INTERVAL`. The reader sends on that interval and once more at exit, and the exit send can be lost. Lower the interval, or hold the chat open longer. |
 
-For errors from the box itself, see [If something goes wrong](/docs/user-guide/box/quickstart/index.md#if-something-goes-wrong) in getting started.
+For errors from the box itself, see [If something goes wrong](/docs/user-guide/box/core/quickstart/index.md#if-something-goes-wrong) in getting started.
 
 ## See also
 
 -   [Telemetry](/docs/user-guide/box/guides/record-telemetry/index.md): send records to a file of your own, and what each record carries.
 -   [The `[telemetry.<label>]` table](/docs/user-guide/box/reference/configuration/index.md#telemetrylabel): every key, and the exporter variables a box owns.
--   [How telemetry works](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.

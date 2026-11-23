@@ -1,6 +1,6 @@
-Experimental
+Experimental in Python
 
-The Context Manager strategy API is experimental and may change in future versions.
+In Python, the `ContextManager` strategy API is still exported from `strands.experimental.context_manager` and may change in future versions. The TypeScript API is stable.
 
 When the [built-in modes](/docs/user-guide/sdk/context-management/built-in-modes/index.md) don’t fit, build a custom strategy pipeline. Define which content to reduce, how to reduce it, and when each strategy fires.
 
@@ -34,7 +34,7 @@ agent = Agent(
 (( tab "TypeScript" ))
 ```typescript
 import { Agent } from '@strands-agents/sdk'
-import { Offload } from '@strands-agents/sdk/experimental'
+import { Offload } from '@strands-agents/sdk/context-manager'
 
 const agent = new Agent({
   contextManager: {
@@ -62,7 +62,7 @@ The `Offload` namespace exposes three methods. Each returns a strategy builder t
 
 ### Truncate
 
-Replaces oversized content with a head/tail preview. The original content is stored in the stash for later retrieval.
+Replaces oversized content with a head/tail preview. The original content is stored in the `stash``archive` for later retrieval.
 
 (( tab "Python" ))
 ```python
@@ -77,7 +77,7 @@ Offload.truncate(
 
 (( tab "TypeScript" ))
 ```typescript
-import { Offload } from '@strands-agents/sdk/experimental'
+import { Offload } from '@strands-agents/sdk/context-manager'
 
 Offload.truncate('toolResults', {
   previewTokens: 750,
@@ -105,7 +105,7 @@ Preview modes: `"head"`, `"tail"`, `"head_tail"``"headTail"`.
 
 ### Summarize
 
-Replaces content with an LLM-generated summary. Uses `agent.aux_model``agent.auxModel` by default.
+Replaces content with an LLM-generated summary. Uses the agent’s own model by default.
 
 Note
 
@@ -124,7 +124,7 @@ Offload.summarize("*").when(
 
 (( tab "TypeScript" ))
 ```typescript
-import { Offload } from '@strands-agents/sdk/experimental'
+import { Offload } from '@strands-agents/sdk/context-manager'
 
 Offload.summarize('*').when({
   contextUtilization: '85%',
@@ -138,7 +138,7 @@ Offload.summarize('*').when({
 (( tab "Python" ))
 | Parameter | Key | Default |
 | --- | --- | --- |
-| Model | `model` | `agent.aux_model` |
+| Model | `model` | `agent.model` |
 | Summarization instructions | `system_prompt` | Built-in |
 
 A batched summary resends the conversation with the agent’s system prompt and tools, followed by the summarization instructions. When it runs on the agent’s model, it can reuse the agent’s prompt cache. If the summary leaves out messages it keeps, such as a pinned message or one under the `threshold`, it sends only the first message and the messages it replaces. Custom instructions replace the default guidance, but the client-side request always tells the model not to act on the conversation or call tools.
@@ -147,7 +147,7 @@ A batched summary resends the conversation with the agent’s system prompt and 
 (( tab "TypeScript" ))
 | Parameter | Key | Default |
 | --- | --- | --- |
-| Model | `model` | `agent.auxModel` |
+| Model | `model` | `agent.model` |
 | Summarization instructions | `systemPrompt` | Built-in |
 
 A batched summary resends the conversation with the agent’s system prompt and tools, followed by the summarization instructions. When it runs on the agent’s model, it can reuse the agent’s prompt cache. If the summary leaves out messages it keeps, such as a pinned message or one under the `threshold`, it sends only the first message and the messages it replaces. Custom instructions replace the default guidance, but the client-side request always tells the model not to act on the conversation or call tools.
@@ -155,7 +155,7 @@ A batched summary resends the conversation with the agent’s system prompt and 
 
 ### Drop
 
-Removes matching content entirely. No preview, no stash entry.
+Removes matching content entirely. No preview, no `stash``archive` entry.
 
 (( tab "Python" ))
 ```python
@@ -167,7 +167,7 @@ Offload.drop("tool_results").when(preserve_recent=5)
 
 (( tab "TypeScript" ))
 ```typescript
-import { Offload } from '@strands-agents/sdk/experimental'
+import { Offload } from '@strands-agents/sdk/context-manager'
 
 Offload.drop('toolResults').when({
   preserveRecent: 5,
@@ -213,7 +213,7 @@ Offload.truncate("tool_results").when(threshold=2000)
 
 (( tab "TypeScript" ))
 ```typescript
-import { Offload } from '@strands-agents/sdk/experimental'
+import { Offload } from '@strands-agents/sdk/context-manager'
 
 Offload.truncate('toolResults').when({
   blockThreshold: 2000,
@@ -238,7 +238,7 @@ Offload.summarize("*").when(
 
 (( tab "TypeScript" ))
 ```typescript
-import { Offload } from '@strands-agents/sdk/experimental'
+import { Offload } from '@strands-agents/sdk/context-manager'
 
 Offload.summarize('*').when({
   contextUtilization: '85%',
@@ -264,7 +264,7 @@ Offload.truncate("tool_results").when(
 
 (( tab "TypeScript" ))
 ```typescript
-import { Offload } from '@strands-agents/sdk/experimental'
+import { Offload } from '@strands-agents/sdk/context-manager'
 
 Offload.truncate('toolResults').when({
   blockThreshold: 1500,
@@ -303,15 +303,19 @@ Targets specify which content a strategy applies to.
 
 Tool name lists use the `tool::` prefix. Prefix a name with `!` to exclude it (apply to all tools *except* the listed ones).
 
-## Stash
+## Storing originals
 
-The stash stores all message content on arrival as JSON, before any strategy runs. Truncated or summarized content can be retrieved on demand through the `retrieve_context` tool, which the SDK registers by default.
+The `stash``archive` stores all message content on arrival as JSON, before any strategy runs. Truncated or summarized content can be retrieved on demand through the `retrieve_context` tool, which the SDK registers by default.
 
-Stash uses in-memory storage by default. Configure it through the `stash``stash` key:
+Note
+
+Configure the `stash``archive` through the key below, but treat the object itself as internal. The `Offload` builders read and write it for you, and its methods are not a stable contract for code outside the SDK.
+
+The `stash``archive` uses in-memory storage by default. Configure it through the `stash``archive` key:
 
 -   Omit or pass `true` for defaults (in-memory storage)
 -   Pass a config with a custom storage backend
--   Pass `false` to disable stash entirely
+-   Pass `false` to disable the `stash``archive` entirely
 
 (( tab "Python" ))
 ```python
@@ -332,7 +336,7 @@ import { Agent } from '@strands-agents/sdk'
 
 const agent = new Agent({
   contextManager: {
-    stash: false,
+    archive: false,
   },
 })
 ```
@@ -350,7 +354,7 @@ Claude models that preserve thinking bind each thinking block to the prefix that
 
 Whether a strategy keeps thinking valid depends on its granularity:
 
--   **Message-level summaries keep thinking when they run server-side.** When the summarizing model (`agent.aux_model``agent.auxModel` by default) and the agent’s model both support `server_side_summary``serverSideSummary`, a message-level summary goes through the model provider’s summarization API instead of a client-side summarization request. The provider returns the summary as a single block that stands in for the start of the conversation, so the thinking after it stays valid. The [Anthropic model provider](/docs/user-guide/sdk/model-providers/anthropic/index.md#server-side-summarization) supports server-side summary. The [Amazon Bedrock model provider](/docs/user-guide/sdk/model-providers/amazon-bedrock/index.md) (`BedrockModel`) does not, so its message-level summaries are always client-side.
+-   **Message-level summaries keep thinking when they run server-side.** When the summarizing model (the agent’s own model by default) and the agent’s model both support `server_side_summary``serverSideSummary`, a message-level summary goes through the model provider’s summarization API instead of a client-side summarization request. The provider returns the summary as a single block that stands in for the start of the conversation, so the thinking after it stays valid. The [Anthropic model provider](/docs/user-guide/sdk/model-providers/anthropic/index.md#server-side-summarization) supports server-side summary. The [Amazon Bedrock model provider](/docs/user-guide/sdk/model-providers/amazon-bedrock/index.md) (`BedrockModel`) does not, so its message-level summaries are always client-side.
 -   **Eager per-block strategies keep thinking.** A per-block strategy with only a `threshold``blockThreshold` acts on each message as it is added, for any per-block [target](#targets). It rewrites a tool result or user message before the model sees it, and an assistant message before any later thinking exists, so no thinking block’s prefix changes.
 -   **Other strategies drop thinking.** A per-block strategy with `preserve_recent``preserveRecent`, or a message-level truncate or drop strategy, rewrites older content that later thinking blocks are bound to. Claude skips those thinking blocks, and the prompt cache restarts at the rewrite.
 -   **Emergency truncation drops thinking.** It removes the oldest messages when the context still overflows, so the thinking after them goes stale.

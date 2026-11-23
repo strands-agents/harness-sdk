@@ -1,6 +1,4 @@
-Defined in: [src/context-manager/strategies/offload/conditions.ts:41](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/conditions.ts#L41)
-
-**`Experimental`**
+Defined in: [src/context-manager/strategies/offload/conditions.ts:39](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/conditions.ts#L39)
 
 Conditions that determine when and how an offload strategy fires.
 
@@ -22,9 +20,7 @@ Strategies run as an ordered pipeline, so once an earlier strategy shrinks a blo
 contextUtilization?: number | `${number}%`;
 ```
 
-Defined in: [src/context-manager/strategies/offload/conditions.ts:46](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/conditions.ts#L46)
-
-**`Experimental`**
+Defined in: [src/context-manager/strategies/offload/conditions.ts:44](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/conditions.ts#L44)
 
 Context usage at or above which the strategy fires: `'80%'` of the context window, or a whole number of 1,000 or more for conversation tokens, at most the model’s context window.
 
@@ -36,9 +32,7 @@ Context usage at or above which the strategy fires: `'80%'` of the context windo
 blockThreshold?: number | `${number}%`;
 ```
 
-Defined in: [src/context-manager/strategies/offload/conditions.ts:53](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/conditions.ts#L53)
-
-**`Experimental`**
+Defined in: [src/context-manager/strategies/offload/conditions.ts:51](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/conditions.ts#L51)
 
 Size above which a message (target `'*'`) or block is offloaded: a whole number of tokens above 0, or `'5%'` of the context window. Unset, there is no size check. Media the token count measures as 0, alone or in a tool result, always passes.
 
@@ -50,8 +44,6 @@ Size above which a message (target `'*'`) or block is offloaded: a whole number 
 preserveRecent?: number | `${number}%`;
 ```
 
-Defined in: [src/context-manager/strategies/offload/conditions.ts:59](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/conditions.ts#L59)
-
-**`Experimental`**
+Defined in: [src/context-manager/strategies/offload/conditions.ts:57](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/conditions.ts#L57)
 
 Newest matching messages never touched: a count, or `'70%'` of the matches, rounded up so a share above 0 keeps at least one.

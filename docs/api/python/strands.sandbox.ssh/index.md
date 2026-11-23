@@ -8,7 +8,7 @@ Mirrors `strands-ts/src/sandbox/ssh.ts`.
 class SshSandbox(PosixShellSandbox)
 ```
 
-Defined in: [src/strands/sandbox/ssh.py:68](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/ssh.py#L68)
+Defined in: [src/strands/sandbox/ssh.py:69](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/ssh.py#L69)
 
 Execute commands on a remote host via SSH.
 
@@ -29,7 +29,7 @@ def __init__(host: str,
              allow_unsafe_ssh_options: bool = False) -> None
 ```
 
-Defined in: [src/strands/sandbox/ssh.py:80](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/ssh.py#L80)
+Defined in: [src/strands/sandbox/ssh.py:81](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/ssh.py#L81)
 
 Initialize the SSH sandbox.
 
@@ -56,10 +56,11 @@ async def execute_streaming(
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any) -> AsyncGenerator[StreamChunk | ExecutionResult, None]
 ```
 
-Defined in: [src/strands/sandbox/ssh.py:127](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/ssh.py#L127)
+Defined in: [src/strands/sandbox/ssh.py:128](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/ssh.py#L128)
 
 Execute a command on the remote host, streaming output.
 
@@ -69,6 +70,7 @@ Execute a command on the remote host, streaming output.
 -   `timeout` - Maximum execution time in seconds. `None` means no timeout.
 -   `cwd` - Working directory for this command, overriding `working_dir`.
 -   `env` - Environment variables to set, applied via a shell `export` prefix.
+-   `cancel_signal` - Aborts the call when set by killing the local `ssh` client. As with `timeout`, the command may keep running on the remote host.
 -   `**kwargs` - Additional keyword arguments for forward compatibility.
 
 **Yields**:
@@ -79,6 +81,7 @@ Execute a command on the remote host, streaming output.
 
 -   `ValueError` - If an environment variable name is invalid.
 -   `SandboxTimeoutError` - If execution exceeds `timeout` seconds.
+-   `SandboxAbortError` - If `cancel_signal` is set before the command exits.
 
 #### get\_tools
 
@@ -86,7 +89,7 @@ Execute a command on the remote host, streaming output.
 def get_tools() -> list[AgentTool]
 ```
 
-Defined in: [src/strands/sandbox/ssh.py:189](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/ssh.py#L189)
+Defined in: [src/strands/sandbox/ssh.py:198](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/ssh.py#L198)
 
 Default sandbox-compatible tools auto-registered with this sandbox.
 

@@ -5,9 +5,9 @@ To change what answers your questions, you change the decision model class. Ever
 | Decision model | Class | Answers with | Reports |
 | --- | --- | --- | --- |
 | [LLM decision model](/docs/user-guide/sdk/decision-models/models/llm/index.md) | `LLMDecisionModel` | Any model provider | Latency, token usage |
-| TypeSafe Jev | `TypeSafeDecisionModel` | TypeSafe’s hosted Jev model | Latency, token usage when the provider returns it |
-| Decisions API | `DecisionsAPIDecisionModel` | A decision model hosted on decisionapi.net | Latency, token usage when the provider returns it |
-| Amazon SageMaker AI | `SageMakerDecisionModel` | A decision model deployed to your SageMaker AI real-time endpoint | Latency, token usage when the endpoint returns it |
+| [TypeSafe Jev](/docs/user-guide/sdk/decision-models/models/typesafe/index.md) | `TypeSafeDecisionModel` | TypeSafe’s hosted Jev model | Latency, per-answer confidence, token usage when the provider returns it |
+| [Decisions API](/docs/user-guide/sdk/decision-models/models/decisions-api/index.md) | `DecisionsAPIDecisionModel` | A decision model hosted on decisionapi.net | Latency, per-answer confidence, token usage when the provider returns it |
+| [Amazon SageMaker AI](/docs/user-guide/sdk/decision-models/models/sagemaker/index.md) | `SageMakerDecisionModel` | A decision model deployed to your SageMaker AI real-time endpoint | Latency, per-answer confidence, token usage when the endpoint returns it |
 
 ## Custom decision models
 
@@ -105,9 +105,12 @@ This example only handles yes/no questions. A decision model that also handles m
 ## Related pages
 
 - [Decision models](/docs/user-guide/sdk/decision-models/index.md) (1 shared tag)
+- [Decisions API](/docs/user-guide/sdk/decision-models/models/decisions-api/index.md) (1 shared tag)
 - [Decisions in an agent](/docs/user-guide/sdk/decision-models/agents/index.md) (1 shared tag)
 - [LLM decision model](/docs/user-guide/sdk/decision-models/models/llm/index.md) (1 shared tag)
 - [Questions and answers](/docs/user-guide/sdk/decision-models/questions/index.md) (1 shared tag)
+- [TypeSafe Jev](/docs/user-guide/sdk/decision-models/models/typesafe/index.md) (1 shared tag)
+- [Amazon SageMaker AI](/docs/user-guide/sdk/decision-models/models/sagemaker/index.md) (1 shared tag)
 - [Model Routing](/docs/user-guide/sdk/model-providers/model-routing/index.md) (1 shared tag)
 - [Decision model observability](/docs/user-guide/sdk/decision-models/observability/index.md) (1 shared tag)
 - [Decision models quickstart](/docs/user-guide/sdk/decision-models/quickstart/index.md) (1 shared tag)

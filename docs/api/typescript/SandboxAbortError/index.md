@@ -1,6 +1,8 @@
-Defined in: [src/sandbox/errors.ts:26](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L26)
+Defined in: [src/sandbox/errors.ts:28](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L28)
 
 Thrown by sandbox execution when the abort signal fires.
+
+`stdout` and `stderr` hold whatever the process wrote before it was killed.
 
 ## Extends
 
@@ -11,10 +13,17 @@ Thrown by sandbox execution when the abort signal fires.
 ### Constructor
 
 ```ts
-new SandboxAbortError(): SandboxAbortError;
+new SandboxAbortError(stdout?, stderr?): SandboxAbortError;
 ```
 
-Defined in: [src/sandbox/errors.ts:27](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L27)
+Defined in: [src/sandbox/errors.ts:29](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L29)
+
+#### Parameters
+
+| Parameter | Type | Default value |
+| --- | --- | --- |
+| `stdout?` | `string` | `''` |
+| `stderr?` | `string` | `''` |
 
 #### Returns
 
@@ -23,3 +32,23 @@ Defined in: [src/sandbox/errors.ts:27](https://github.com/strands-agents/harness
 #### Overrides
 
 `Error.constructor`
+
+## Properties
+
+### stdout
+
+```ts
+readonly stdout: string = '';
+```
+
+Defined in: [src/sandbox/errors.ts:30](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L30)
+
+---
+
+### stderr
+
+```ts
+readonly stderr: string = '';
+```
+
+Defined in: [src/sandbox/errors.ts:31](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L31)

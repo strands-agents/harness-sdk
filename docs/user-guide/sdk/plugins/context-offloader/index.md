@@ -42,7 +42,7 @@ For non-text content, the plugin replaces the result with a descriptive placehol
 
 Quick setup
 
-The [ContextManager](/docs/user-guide/sdk/context-management/index.md) includes built-in offloading strategies with stash and retrieval. For most agents, pass `context_manager="auto"``contextManager: "auto"` instead of configuring `ContextOffloader` separately.
+The [ContextManager](/docs/user-guide/sdk/context-management/index.md) includes built-in offloading strategies with `stash``archive` and retrieval. For most agents, pass `context_manager="auto"``contextManager: "auto"` instead of configuring `ContextOffloader` separately.
 
 Note
 

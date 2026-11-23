@@ -1,6 +1,6 @@
-Experimental
+Experimental in Python
 
-The Context Manager strategy API is experimental and may change in future versions.
+In Python, the `ContextManager` strategy API is still exported from `strands.experimental.context_manager` and may change in future versions. The TypeScript API is stable.
 
 The SDK ships two built-in context management modes that work out of the box. Both create a `ContextManager` with tuned `Offload` strategies internally, so you don’t have to assemble strategies, thresholds, and storage by hand.
 
@@ -32,16 +32,16 @@ const agent = new Agent({
 
 Two strategies whose defaults scored highest across [ContextBench](https://arxiv.org/abs/2602.05892) evaluations:
 
--   **Truncate tool results** (threshold: 1,500 tokens, preview: 750 tokens): intercepts large tool results at execution time, stores them in the stash, and keeps a truncated preview in context. Registers a retrieval tool so the agent can fetch full content on demand.
+-   **Truncate tool results** (threshold: 1,500 tokens, preview: 750 tokens): intercepts large tool results at execution time, stores them in the `stash``archive`, and keeps a truncated preview in context. Registers a retrieval tool so the agent can fetch full content on demand.
 -   **Summarize on pressure** (utilization: 85%): when the context window reaches 85% capacity, summarizes the oldest messages to free space, preserving the 4 most recent messages verbatim.
 
-On Claude models that preserve thinking, the truncation keeps thinking blocks valid, and so does the summary when both the agent’s model and `agent.aux_model``agent.auxModel` support server-side summary. See [Models that preserve thinking](/docs/user-guide/sdk/context-management/custom-strategies/index.md#models-that-preserve-thinking).
+On Claude models that preserve thinking, the truncation keeps thinking blocks valid, and so does the summary when the agent’s model supports server-side summary. See [Models that preserve thinking](/docs/user-guide/sdk/context-management/custom-strategies/index.md#models-that-preserve-thinking).
 
 ## Agentic context management
 
 Experimental
 
-Agentic context management is experimental and may change in future versions.
+Agentic context management is experimental in both SDKs and may change in future versions.
 
 Auto mode compresses on a fixed threshold the SDK controls. Agentic mode hands that control to the model. Pass `context_manager="agentic"``contextManager: "agentic"` and the model manages its own working memory: it sees how full the context window is and chooses when to compress, what to compress, and what to protect.
 

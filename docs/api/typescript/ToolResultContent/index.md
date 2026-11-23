@@ -5,7 +5,8 @@ type ToolResultContent =
   | ImageBlock
   | VideoBlock
   | DocumentBlock
+  | ToolReferenceBlock
   | UnknownBlock;
 ```
 
-Defined in: [src/types/messages.ts:489](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L489)
+Defined in: [src/types/messages.ts:490](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L490)

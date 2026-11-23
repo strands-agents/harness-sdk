@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:494](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L494)
+Defined in: [src/types/messages.ts:556](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L556)
 
 Data for a tool result block.
 
@@ -10,7 +10,7 @@ Data for a tool result block.
 toolUseId: string;
 ```
 
-Defined in: [src/types/messages.ts:498](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L498)
+Defined in: [src/types/messages.ts:560](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L560)
 
 The ID of the tool use that this result corresponds to.
 
@@ -22,7 +22,7 @@ The ID of the tool use that this result corresponds to.
 status: "success" | "error";
 ```
 
-Defined in: [src/types/messages.ts:503](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L503)
+Defined in: [src/types/messages.ts:565](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L565)
 
 Status of the tool execution.
 
@@ -34,7 +34,7 @@ Status of the tool execution.
 content: ToolResultContentData[];
 ```
 
-Defined in: [src/types/messages.ts:508](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L508)
+Defined in: [src/types/messages.ts:570](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L570)
 
 The content returned by the tool.
 
@@ -46,6 +46,6 @@ The content returned by the tool.
 error?: Error;
 ```
 
-Defined in: [src/types/messages.ts:515](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L515)
+Defined in: [src/types/messages.ts:577](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L577)
 
 The original error object when status is ‘error’. Available for inspection by hooks, error handlers, and agent loop. Tools must wrap non-Error thrown values into Error objects.

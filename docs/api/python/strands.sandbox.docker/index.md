@@ -8,7 +8,7 @@ Mirrors `strands-ts/src/sandbox/docker.ts`.
 class DockerSandbox(PosixShellSandbox)
 ```
 
-Defined in: [src/strands/sandbox/docker.py:20](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L20)
+Defined in: [src/strands/sandbox/docker.py:21](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L21)
 
 Execute commands in a Docker container via `docker exec`.
 
@@ -23,7 +23,7 @@ def __init__(container: str,
              user: str | None = None) -> None
 ```
 
-Defined in: [src/strands/sandbox/docker.py:28](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L28)
+Defined in: [src/strands/sandbox/docker.py:29](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L29)
 
 Initialize the Docker sandbox.
 
@@ -42,10 +42,11 @@ async def execute_streaming(
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any) -> AsyncGenerator[StreamChunk | ExecutionResult, None]
 ```
 
-Defined in: [src/strands/sandbox/docker.py:45](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L45)
+Defined in: [src/strands/sandbox/docker.py:46](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L46)
 
 Execute a command in the container, streaming output.
 
@@ -55,6 +56,7 @@ Execute a command in the container, streaming output.
 -   `timeout` - Maximum execution time in seconds. `None` means no timeout.
 -   `cwd` - Working directory for this command, overriding `working_dir`.
 -   `env` - Environment variables to set, passed as `docker exec -e` flags.
+-   `cancel_signal` - Aborts the call when set by killing the local `docker exec` client. As with `timeout`, the command may keep running in the container.
 -   `**kwargs` - Additional keyword arguments for forward compatibility.
 
 **Yields**:
@@ -65,6 +67,7 @@ Execute a command in the container, streaming output.
 
 -   `ValueError` - If an environment variable name is invalid.
 -   `SandboxTimeoutError` - If execution exceeds `timeout` seconds.
+-   `SandboxAbortError` - If `cancel_signal` is set before the command exits.
 
 #### get\_tools
 
@@ -72,7 +75,7 @@ Execute a command in the container, streaming output.
 def get_tools() -> list[AgentTool]
 ```
 
-Defined in: [src/strands/sandbox/docker.py:100](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L100)
+Defined in: [src/strands/sandbox/docker.py:109](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/docker.py#L109)
 
 Default sandbox-compatible tools auto-registered with this sandbox.
 

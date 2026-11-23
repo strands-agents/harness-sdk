@@ -9,9 +9,7 @@ type OffloadTarget =
   | string[];
 ```
 
-Defined in: [src/context-manager/strategies/offload/target.ts:31](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/target.ts#L31)
-
-**`Experimental`**
+Defined in: [src/context-manager/strategies/offload/target.ts:29](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/strategies/offload/target.ts#L29)
 
 Target for offload operations. This union is intentionally extensible — new string-literal members can be added freely as new content categories emerge.
 

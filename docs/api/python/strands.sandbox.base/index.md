@@ -6,8 +6,8 @@ Mirrors `strands-ts/src/sandbox/base.ts`. The streaming methods (:meth:`Sandbox.
 
 Idiomatic divergences from the TypeScript oracle (see PR description):
 
--   TS’s `ExecuteOptions` *options object* (`timeout`, `cwd`, `signal`, `env`) becomes Python keyword arguments (`timeout`, `cwd`, `env`), matching how the rest of `strands-py` models call options.
--   TS’s `AbortSignal` cancellation maps to asyncio task cancellation — the Pythonic way to cancel an in-flight coroutine/generator — rather than an explicit signal parameter.
+-   TS’s `ExecuteOptions` *options object* (`timeout`, `cwd`, `signal`, `env`) becomes Python keyword arguments (`timeout`, `cwd`, `cancel_signal`, `env`), matching how the rest of `strands-py` models call options.
+-   TS’s `AbortSignal` becomes `cancel_signal`, a :class:`threading.Event` like `ToolContext.cancel_signal`. Cancelling the consuming task also stops the built-in sandboxes.
 -   TS’s discriminated union (`type: 'streamChunk' | 'executionResult'`) is discriminated in Python with `isinstance` checks on the dataclasses.
 
 ## Sandbox
@@ -16,7 +16,7 @@ Idiomatic divergences from the TypeScript oracle (see PR description):
 class Sandbox(ABC)
 ```
 
-Defined in: [src/strands/sandbox/base.py:36](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L36)
+Defined in: [src/strands/sandbox/base.py:38](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L38)
 
 Abstract execution environment.
 
@@ -46,10 +46,11 @@ async def execute_streaming(
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any) -> AsyncGenerator[StreamChunk | ExecutionResult, None]
 ```
 
-Defined in: [src/strands/sandbox/base.py:70](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L70)
+Defined in: [src/strands/sandbox/base.py:72](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L72)
 
 Execute a shell command, streaming output.
 
@@ -61,6 +62,7 @@ Yields :class:`StreamChunk` objects for stdout and stderr as output arrives. The
 -   `timeout` - Maximum execution time in seconds. `None` means no timeout.
 -   `cwd` - Working directory for execution. `None` means use the sandbox default.
 -   `env` - Environment variables to set for this command. Built-in sandboxes always apply these, though the mechanism differs; custom implementations must handle `env` explicitly or it has no effect.
+-   `cancel_signal` - Aborts the execution when set, raising :class:`~strands.sandbox.errors.SandboxAbortError`. A signal that is already set aborts before the command starts. Custom implementations must handle it explicitly or it has no effect.
 -   `**kwargs` - Additional keyword arguments for forward compatibility.
 
 **Yields**:
@@ -78,10 +80,11 @@ async def execute_code_streaming(
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any) -> AsyncGenerator[StreamChunk | ExecutionResult, None]
 ```
 
-Defined in: [src/strands/sandbox/base.py:106](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L106)
+Defined in: [src/strands/sandbox/base.py:113](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L113)
 
 Execute source code via a language interpreter, streaming output.
 
@@ -92,6 +95,7 @@ Execute source code via a language interpreter, streaming output.
 -   `timeout` - Maximum execution time in seconds. `None` means no timeout.
 -   `cwd` - Working directory for execution. `None` means use the sandbox default.
 -   `env` - Environment variables to set for this execution.
+-   `cancel_signal` - Aborts the execution when set, raising :class:`~strands.sandbox.errors.SandboxAbortError`. A signal that is already set aborts before the command starts. Custom implementations must handle it explicitly or it has no effect.
 -   `**kwargs` - Additional keyword arguments for forward compatibility.
 
 **Yields**:
@@ -105,7 +109,7 @@ Execute source code via a language interpreter, streaming output.
 async def read_file(path: str, **kwargs: Any) -> bytes
 ```
 
-Defined in: [src/strands/sandbox/base.py:135](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L135)
+Defined in: [src/strands/sandbox/base.py:147](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L147)
 
 Read a file from the sandbox filesystem as raw bytes.
 
@@ -134,7 +138,7 @@ The file contents as raw bytes.
 async def write_file(path: str, content: bytes, **kwargs: Any) -> None
 ```
 
-Defined in: [src/strands/sandbox/base.py:157](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L157)
+Defined in: [src/strands/sandbox/base.py:169](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L169)
 
 Write raw bytes to a file in the sandbox filesystem.
 
@@ -157,7 +161,7 @@ Implementations should create parent directories if they do not exist. Use :meth
 async def remove_file(path: str, **kwargs: Any) -> None
 ```
 
-Defined in: [src/strands/sandbox/base.py:174](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L174)
+Defined in: [src/strands/sandbox/base.py:186](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L186)
 
 Remove a file from the sandbox filesystem.
 
@@ -177,7 +181,7 @@ Remove a file from the sandbox filesystem.
 async def list_files(path: str, **kwargs: Any) -> list[FileInfo]
 ```
 
-Defined in: [src/strands/sandbox/base.py:187](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L187)
+Defined in: [src/strands/sandbox/base.py:199](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L199)
 
 List files in a sandbox directory.
 
@@ -202,7 +206,7 @@ A list of :class:`FileInfo` entries for the directory contents.
 def get_tools() -> list[AgentTool]
 ```
 
-Defined in: [src/strands/sandbox/base.py:208](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L208)
+Defined in: [src/strands/sandbox/base.py:220](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L220)
 
 Tools this sandbox vends to an agent.
 
@@ -220,10 +224,11 @@ async def execute(command: str,
                   timeout: float | None = None,
                   cwd: str | None = None,
                   env: dict[str, str] | None = None,
+                  cancel_signal: threading.Event | None = None,
                   **kwargs: Any) -> ExecutionResult
 ```
 
-Defined in: [src/strands/sandbox/base.py:222](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L222)
+Defined in: [src/strands/sandbox/base.py:234](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L234)
 
 Execute a shell command and return the result.
 
@@ -235,6 +240,7 @@ Consumes :meth:`execute_streaming` and returns the final :class:`ExecutionResult
 -   `timeout` - Maximum execution time in seconds. `None` means no timeout.
 -   `cwd` - Working directory for execution. `None` means use the sandbox default.
 -   `env` - Environment variables to set for this command.
+-   `cancel_signal` - Aborts the execution when set, raising :class:`~strands.sandbox.errors.SandboxAbortError`. A signal that is already set aborts before the command starts. Custom implementations must handle it explicitly or it has no effect.
 -   `**kwargs` - Additional keyword arguments for forward compatibility.
 
 **Returns**:
@@ -254,10 +260,11 @@ async def execute_code(code: str,
                        timeout: float | None = None,
                        cwd: str | None = None,
                        env: dict[str, str] | None = None,
+                       cancel_signal: threading.Event | None = None,
                        **kwargs: Any) -> ExecutionResult
 ```
 
-Defined in: [src/strands/sandbox/base.py:257](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L257)
+Defined in: [src/strands/sandbox/base.py:277](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L277)
 
 Execute source code and return the result.
 
@@ -270,6 +277,7 @@ Consumes :meth:`execute_code_streaming` and returns the final :class:`ExecutionR
 -   `timeout` - Maximum execution time in seconds. `None` means no timeout.
 -   `cwd` - Working directory for execution. `None` means use the sandbox default.
 -   `env` - Environment variables to set for this execution.
+-   `cancel_signal` - Aborts the execution when set, raising :class:`~strands.sandbox.errors.SandboxAbortError`. A signal that is already set aborts before the command starts. Custom implementations must handle it explicitly or it has no effect.
 -   `**kwargs` - Additional keyword arguments for forward compatibility.
 
 **Returns**:
@@ -286,7 +294,7 @@ The execution result with exit code and output.
 async def read_text(path: str, encoding: str = "utf-8", **kwargs: Any) -> str
 ```
 
-Defined in: [src/strands/sandbox/base.py:296](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L296)
+Defined in: [src/strands/sandbox/base.py:323](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L323)
 
 Read a text file from the sandbox filesystem.
 
@@ -311,7 +319,7 @@ async def write_text(path: str,
                      **kwargs: Any) -> None
 ```
 
-Defined in: [src/strands/sandbox/base.py:313](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L313)
+Defined in: [src/strands/sandbox/base.py:340](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/base.py#L340)
 
 Write a text file to the sandbox filesystem.
 

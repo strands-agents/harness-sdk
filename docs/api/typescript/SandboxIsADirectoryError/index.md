@@ -1,4 +1,4 @@
-Defined in: [src/sandbox/errors.ts:54](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L54)
+Defined in: [src/sandbox/errors.ts:59](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L59)
 
 Thrown by [Sandbox.readFile](/docs/api/typescript/Sandbox/index.md#readfile) when the path is a directory.
 
@@ -16,7 +16,7 @@ Thrown by [Sandbox.readFile](/docs/api/typescript/Sandbox/index.md#readfile) whe
 new SandboxIsADirectoryError(path, options?): SandboxIsADirectoryError;
 ```
 
-Defined in: [src/sandbox/errors.ts:57](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L57)
+Defined in: [src/sandbox/errors.ts:62](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L62)
 
 #### Parameters
 
@@ -41,4 +41,4 @@ Defined in: [src/sandbox/errors.ts:57](https://github.com/strands-agents/harness
 readonly code: "EISDIR" = 'EISDIR';
 ```
 
-Defined in: [src/sandbox/errors.ts:55](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L55)
+Defined in: [src/sandbox/errors.ts:60](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L60)

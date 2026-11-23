@@ -21,7 +21,7 @@ All Sandbox implementations share the same abstract interface:
 | `remove_file``removeFile` | Delete a file |
 | `list_files``listFiles` | List directory contents |
 
-The execution methods accept optional parameters: `timeout` (seconds, throws `SandboxTimeoutError` when exceeded), `cwd` (working directory override), `env` (environment variables), and in TypeScript, `signal` (AbortSignal, throws `SandboxAbortError`).
+The execution methods accept optional parameters: `timeout` (seconds, throws `SandboxTimeoutError` when exceeded), `cwd` (working directory override), `env` (environment variables), and `cancel_signal``signal` (a `threading.Event``AbortSignal`, throws `SandboxAbortError` when it fires).
 
 ## Getting started
 
@@ -193,4 +193,4 @@ The following vended plugins route their file I/O through the agent’s sandbox 
 - [Approve before your agent acts](/docs/user-guide/sdk/agents/approve-before-acting/index.md) (1 shared tag)
 - [Human in the loop](/docs/user-guide/sdk/agents/interventions/human-in-the-loop/index.md) (1 shared tag)
 - [Agents as tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/index.md) (1 shared tag)
-- [Agent Loop](/docs/user-guide/sdk/agents/agent-loop/index.md) (1 shared tag)
+- [Cedar Authorization](/docs/user-guide/sdk/agents/interventions/cedar-authorization/index.md) (1 shared tag)

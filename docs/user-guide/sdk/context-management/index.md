@@ -1,8 +1,12 @@
+Experimental in Python
+
+In Python, the `ContextManager` strategy API is still exported from `strands.experimental.context_manager` and may change in future versions. The TypeScript API is stable.
+
 As conversations grow, your agent’s context window fills with messages, tool results, and system prompts. Without management, this leads to token limit errors, degraded performance, and loss of relevant information.
 
 The SDK ships context management that works out of the box. Pick a mode and the SDK wires up an ordered strategy pipeline with tuned defaults.
 
-You can continue using [conversation managers](/docs/user-guide/sdk/agents/conversation-management/index.md) and [ContextOffloader](/docs/user-guide/sdk/plugins/context-offloader/index.md) while evaluating the experimental `ContextManager` strategy API. See [Migrating to the strategy API](#migrating-to-the-strategy-api) for optional migration examples.
+You can continue using [conversation managers](/docs/user-guide/sdk/agents/conversation-management/index.md) and [ContextOffloader](/docs/user-guide/sdk/plugins/context-offloader/index.md) while evaluating the `ContextManager` strategy API. See [Migrating to the strategy API](#migrating-to-the-strategy-api) for optional migration examples.
 
 ## Quickstart
 
@@ -32,7 +36,7 @@ The `context_manager``contextManager` parameter is a first-class agent parameter
 
 The ContextManager runs strategies as an ordered pipeline. Each strategy sees the output of the previous one. The SDK always appends an emergency truncation strategy as the final step, which only fires when the window is still overflowing after all other strategies have run.
 
-A stash stores all message content on arrival as JSON, before any strategy acts. Truncated or summarized content is preserved and retrievable on demand through the `retrieve_context` tool, registered by default.
+A `stash``archive` stores all message content on arrival as JSON, before any strategy acts. Truncated or summarized content is preserved and retrievable on demand through the `retrieve_context` tool, registered by default.
 
 When `context_manager``contextManager` is set, any co-provided `conversation_manager``conversationManager` is ignored. The ContextManager owns overflow recovery and proactive compression internally.
 
@@ -49,7 +53,7 @@ See [Built-in Modes](/docs/user-guide/sdk/context-management/built-in-modes/inde
 
 ## Storage backends
 
-The `ContextManager` uses in-memory stash storage by default. Content does not persist across process restarts. Provide a durable storage backend when the stash needs to survive restarts:
+The `ContextManager` uses in-memory `stash``archive` storage by default. Content does not persist across process restarts. Provide a durable storage backend when the `stash``archive` needs to survive restarts:
 
 (( tab "Python" ))
 ```python
@@ -72,14 +76,14 @@ stash = {
 import { LocalFileStorage, S3Storage } from '@strands-agents/sdk/storage'
 
 // Local filesystem
-const stashLocal = { storage: new LocalFileStorage('./artifacts/') }
+const archiveLocal = { storage: new LocalFileStorage('./artifacts/') }
 
 // S3, using ambient AWS credentials
-const stashS3 = { storage: new S3Storage('my-bucket', { prefix: 'agent-stash/' }) }
+const archiveS3 = { storage: new S3Storage('my-bucket', { prefix: 'agent-archive/' }) }
 ```
 (( /tab "TypeScript" ))
 
-Pass one of these `stash``stash` values in your context manager configuration. See [Storage](/docs/user-guide/sdk/storage/index.md) for the full storage backend reference.
+Pass one of these `stash``archive` values in your context manager configuration. See [Storage](/docs/user-guide/sdk/storage/index.md) for the full storage backend reference.
 
 ## Limitations
 
@@ -105,6 +109,30 @@ If you currently use `SummarizingConversationManager`, `ContextOffloader`, or `c
 | `new ContextOffloader({ maxResultTokens: 2500, previewTokens: 500 })` | `Offload.truncate("toolResults", { previewTokens: 500 }).when({ blockThreshold: 2500 })` |
 | `new SlidingWindowConversationManager(...)` | No exact equivalent. Use `Offload.drop` or `Offload.truncate` with utilization and preservation conditions. |
 | `contextManager: "auto"` | Unchanged |
+(( /tab "TypeScript" ))
+
+### Migrating from the experimental module
+
+(( tab "Python" ))
+No changes. The Python API is still `strands.experimental.context_manager`, and the names below are unchanged.
+(( /tab "Python" ))
+
+(( tab "TypeScript" ))
+The TypeScript API moved out of `@strands-agents/sdk/experimental`, and the stash was renamed to the archive.
+
+| Before | After |
+| --- | --- |
+| `from '@strands-agents/sdk/experimental'` | `from '@strands-agents/sdk/context-manager'` |
+| `from '@strands-agents/sdk'` (`Offload`, `OffloadTarget`, …) | `from '@strands-agents/sdk/context-manager'` |
+| `StashConfig` | `ArchiveConfig` |
+| `{ stash: … }` | `{ archive: … }` |
+| `contextManager.stash` | `contextManager.archive` |
+| `contextManager.stashIsDurable` | `contextManager.archiveIsDurable` |
+| `ContextState.stash` | `ContextState.archive` |
+
+The old names still work this release, deprecated, and are removed in the next minor. Root-package imports are the exception — they are gone now, so move those first. `contextManager: "auto"` and `contextManager: "agentic"` are unchanged.
+
+Sessions saved before the rename still resume, but the compatibility read goes away with the deprecated names — resume each one once on this release to migrate it forward.
 (( /tab "TypeScript" ))
 
 ## Related pages

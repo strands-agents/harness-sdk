@@ -2,7 +2,7 @@ Use these profiles to prepare Box for AgentCore Runtime managed code, customer c
 
 ## Install and configure Box
 
-The service profiles below describe ARM64 deployments. Select an ARM64 runtime, container, or MicroVM and check that `uname -m` reports `aarch64`. [Install Box](/docs/user-guide/box/quickstart/index.md#step-1-download-box), keeping the main executable and both helpers from the same build together. Check the [Linux requirements](/docs/user-guide/box/reference/linux-requirements/index.md) for required libraries, permissions to create the sandbox, and architecture selection.
+The service profiles below describe ARM64 deployments. Select an ARM64 runtime, container, or MicroVM and check that `uname -m` reports `aarch64`. [Download Box Core](/docs/user-guide/box/core/quickstart/index.md#step-1-download-box), keeping the main executable and both helpers from the same build together. Check the [Linux requirements](/docs/user-guide/box/reference/linux-requirements/index.md) for required libraries, permissions to create the sandbox, and architecture selection.
 
 Use the [configuration reference](/docs/user-guide/box/reference/configuration/index.md) to configure Box.
 

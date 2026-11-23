@@ -305,8 +305,8 @@ The limit covers the whole request, like the other [invocation limits](/docs/use
 - [Anthropic](/docs/user-guide/sdk/model-providers/anthropic/index.md) (1 shared tag)
 - [Production Lifecycle Controls](/docs/user-guide/sdk/agents/lifecycle-controls/index.md) (1 shared tag)
 - [Retry Strategies](/docs/user-guide/sdk/agents/retry-strategies/index.md) (1 shared tag)
-- [Chaos testing](/docs/user-guide/evals-sdk/chaos_testing/index.md) (1 shared tag)
 - [Model Routing](/docs/user-guide/sdk/model-providers/model-routing/index.md) (1 shared tag)
+- [Chaos testing](/docs/user-guide/evals-sdk/chaos_testing/index.md) (1 shared tag)
 
 
 ## Implementation

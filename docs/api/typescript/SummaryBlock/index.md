@@ -1,4 +1,4 @@
-Defined in: [src/types/messages.ts:828](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L828)
+Defined in: [src/types/messages.ts:891](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L891)
 
 A summary of earlier conversation history that takes the summarized messages’ place.
 
@@ -17,7 +17,7 @@ Through an agent, a model without `serverSideSummary`, or one that did not write
 new SummaryBlock(data): SummaryBlock;
 ```
 
-Defined in: [src/types/messages.ts:849](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L849)
+Defined in: [src/types/messages.ts:912](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L912)
 
 #### Parameters
 
@@ -37,7 +37,7 @@ Defined in: [src/types/messages.ts:849](https://github.com/strands-agents/harnes
 readonly type: "summaryBlock";
 ```
 
-Defined in: [src/types/messages.ts:832](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L832)
+Defined in: [src/types/messages.ts:895](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L895)
 
 Discriminator for summary content.
 
@@ -49,7 +49,7 @@ Discriminator for summary content.
 readonly provider?: string;
 ```
 
-Defined in: [src/types/messages.ts:837](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L837)
+Defined in: [src/types/messages.ts:900](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L900)
 
 Name of the provider that wrote the summary server-side, for example `'anthropic'`.
 
@@ -65,7 +65,7 @@ Name of the provider that wrote the summary server-side, for example `'anthropic
 readonly signature?: string;
 ```
 
-Defined in: [src/types/messages.ts:842](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L842)
+Defined in: [src/types/messages.ts:905](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L905)
 
 Signature the provider returned with the summary, sent back unchanged.
 
@@ -81,7 +81,7 @@ Signature the provider returned with the summary, sent back unchanged.
 readonly text: string;
 ```
 
-Defined in: [src/types/messages.ts:847](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L847)
+Defined in: [src/types/messages.ts:910](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L910)
 
 The summary text.
 
@@ -99,7 +99,7 @@ toJSON(): {
 };
 ```
 
-Defined in: [src/types/messages.ts:859](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L859)
+Defined in: [src/types/messages.ts:922](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L922)
 
 Serializes the SummaryBlock to a JSON-compatible ContentBlockData object. Called automatically by JSON.stringify().
 
@@ -113,7 +113,7 @@ Serializes the SummaryBlock to a JSON-compatible ContentBlockData object. Called
 
 | Name | Type | Defined in |
 | --- | --- | --- |
-| `summary` | [`SummaryBlockData`](/docs/api/typescript/SummaryBlockData/index.md) | [src/types/messages.ts:859](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L859) |
+| `summary` | [`SummaryBlockData`](/docs/api/typescript/SummaryBlockData/index.md) | [src/types/messages.ts:922](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L922) |
 
 #### Implementation of
 
@@ -127,7 +127,7 @@ Serializes the SummaryBlock to a JSON-compatible ContentBlockData object. Called
 static fromJSON(data): SummaryBlock;
 ```
 
-Defined in: [src/types/messages.ts:875](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L875)
+Defined in: [src/types/messages.ts:938](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L938)
 
 Creates a SummaryBlock instance from its wrapped data format.
 

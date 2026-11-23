@@ -1,6 +1,6 @@
 An `[mcp.<name>]` table in `box.toml` identifies an MCP server for Box’s tool restrictions. MCP means Model Context Protocol. A stdio server is a program that the box starts in its own sandbox. An http server runs somewhere else, and the agent reaches it through the box’s egress gateway.
 
-Audience: an operator with a working box from [getting started](/docs/user-guide/box/quickstart/index.md) who adds an MCP server to it. To let the agent use the server, write its rules as in [write policy for an MCP server](/docs/user-guide/box/guides/write-mcp-policy/index.md).
+Audience: an operator with a working box from [getting started](/docs/user-guide/box/core/quickstart/index.md) who adds an MCP server to it. To let the agent use the server, write its rules as in [write policy for an MCP server](/docs/user-guide/box/guides/write-mcp-policy/index.md).
 
 ## Example
 
@@ -228,7 +228,7 @@ auth.aws.service = "bedrock-agentcore"
 auth.aws.region  = "us-east-1"
 ```
 
-A remote MCP backend is the egress backend applied to a remote MCP server: the same `url` and `auth` keys, the same validation, and the same re-route on the wire. See [Backends in the egress guide](/docs/user-guide/box/guides/network-and-credentials/index.md#backends) for the full rules — the backend `url` shape, the backend `auth`, the backend address check, and how a phantom-only `env://` `secret` rides beside a backend. The one difference is scope: a backend here re-routes a remote MCP server, and a `backends` key is refused on a `type = "stdio"` server, which is a local child with no remote endpoint.
+A remote MCP backend is the egress backend applied to a remote MCP server: the same `url` and `auth` keys, the same validation, and the same re-route on the wire. See [Backends in the egress guide](/docs/user-guide/box/guides/network-and-credentials/index.md#backends) for the full rules: the backend `url` shape, the backend `auth`, the backend address check, and how a phantom-only `env://` `secret` rides beside a backend. The one difference is scope: a backend here re-routes a remote MCP server, and a `backends` key is refused on a `type = "stdio"` server, which is a local child with no remote endpoint.
 
 `policy generate-schema` cannot discover a re-routed server: the re-route and its backend `auth` apply only at `box run` time, in the egress gateway, and the offline command has no gateway. It refuses a `[mcp.<name>]` with a backend by name, which stops the whole run. Generate a schema from a `box.toml` without that server to get the rest, then write its `mcp:call` rules by hand.
 
@@ -275,6 +275,6 @@ For a request the policy refuses, see [troubleshooting](/docs/user-guide/box/gui
 ## See also
 
 -   [Write policy for an MCP server](/docs/user-guide/box/guides/write-mcp-policy/index.md): the rules that let the agent start, list, and call a server, and how to connect the harness.
--   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/mcp.md): how the box starts a server and decides each call.
--   [Local MCP servers in the design guide](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/containment.md#local-mcp-servers): what a stdio server’s sandbox reaches.
--   [macOS network restrictions](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/macos-enforcement.md#network-connections-and-local-services): how the sandbox limits a server’s connections.
+-   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/mcp.md): how the box starts a server and decides each call.
+-   [Local MCP servers in the design guide](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/containment.md#local-mcp-servers): what a stdio server’s sandbox reaches.
+-   [macOS network restrictions](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/macos-enforcement.md#network-connections-and-local-services): how the sandbox limits a server’s connections.

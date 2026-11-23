@@ -10,7 +10,7 @@ Mirrors `strands-ts/src/sandbox/posix-shell.ts`.
 def validate_env_keys(env: dict[str, str]) -> None
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:28](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L28)
+Defined in: [src/strands/sandbox/posix\_shell.py:29](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L29)
 
 Validate environment variable names against :data:`ENV_KEY_PATTERN`.
 
@@ -28,7 +28,7 @@ Validate environment variable names against :data:`ENV_KEY_PATTERN`.
 def build_shell_env_prefix(env: dict[str, str] | None = None) -> str
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:42](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L42)
+Defined in: [src/strands/sandbox/posix\_shell.py:43](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L43)
 
 Build a shell `export KEY=VALUE && ...` prefix, or `""` when empty.
 
@@ -54,7 +54,7 @@ The shell `export ... &&` prefix, or an empty string when `env` is `None` or emp
 class PosixShellSandbox(Sandbox, ABC)
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:78](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L78)
+Defined in: [src/strands/sandbox/posix\_shell.py:79](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L79)
 
 Abstract sandbox that provides shell-based defaults for file and code operations.
 
@@ -69,6 +69,7 @@ Subclasses are responsible for honoring the execution options in :meth:`execute_
 -   `env` — backends that build a shell-command string prepend :func:`build_shell_env_prefix`; backends that set env via process flags (e.g. Docker’s `-e`) call :func:`validate_env_keys` and pass the values directly. An implementation that ignores `env` will silently drop the caller’s variables.
 -   `timeout` — the base class does not enforce a timeout; a subclass that does not wire `timeout` into its process supervision will silently run without any time limit.
 -   `cwd` — similarly must be applied by the subclass.
+-   `cancel_signal` — a subclass that does not watch it keeps running after the caller cancels.
 
 #### execute\_code\_streaming
 
@@ -80,10 +81,11 @@ async def execute_code_streaming(
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any) -> AsyncGenerator[StreamChunk | ExecutionResult, None]
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:106](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L106)
+Defined in: [src/strands/sandbox/posix\_shell.py:109](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L109)
 
 Execute code by piping it to a language interpreter over the shell.
 
@@ -96,6 +98,7 @@ The code is base64-encoded and decoded inside a quoted heredoc on the target, th
 -   `timeout` - Maximum execution time in seconds. `None` means no timeout.
 -   `cwd` - Working directory for execution.
 -   `env` - Environment variables to set for this execution.
+-   `cancel_signal` - Aborts the execution when set.
 -   `**kwargs` - Additional keyword arguments for forward compatibility.
 
 **Yields**:
@@ -112,7 +115,7 @@ The code is base64-encoded and decoded inside a quoted heredoc on the target, th
 async def read_file(path: str, **kwargs: Any) -> bytes
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:147](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L147)
+Defined in: [src/strands/sandbox/posix\_shell.py:154](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L154)
 
 Read a file as raw bytes via base64 over the shell.
 
@@ -138,7 +141,7 @@ The file contents as raw bytes.
 async def write_file(path: str, content: bytes, **kwargs: Any) -> None
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:188](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L188)
+Defined in: [src/strands/sandbox/posix\_shell.py:195](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L195)
 
 Write raw bytes to a file via base64 over the shell.
 
@@ -160,7 +163,7 @@ Parent directories are created via `mkdir -p`. The base64-encoded content is dec
 async def remove_file(path: str, **kwargs: Any) -> None
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:211](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L211)
+Defined in: [src/strands/sandbox/posix\_shell.py:218](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L218)
 
 Remove a file via `rm` over the shell.
 
@@ -179,7 +182,7 @@ Remove a file via `rm` over the shell.
 async def list_files(path: str, **kwargs: Any) -> list[FileInfo]
 ```
 
-Defined in: [src/strands/sandbox/posix\_shell.py:225](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L225)
+Defined in: [src/strands/sandbox/posix\_shell.py:232](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/sandbox/posix_shell.py#L232)
 
 List directory contents via `ls -1ap` parsing.
 

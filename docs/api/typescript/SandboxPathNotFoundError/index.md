@@ -1,4 +1,4 @@
-Defined in: [src/sandbox/errors.ts:40](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L40)
+Defined in: [src/sandbox/errors.ts:45](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L45)
 
 Thrown by [Sandbox.listFiles](/docs/api/typescript/Sandbox/index.md#listfiles) and [Sandbox.readFile](/docs/api/typescript/Sandbox/index.md#readfile) when the path does not exist, distinguishing genuine absence from permission failures ([SandboxPermissionError](/docs/api/typescript/SandboxPermissionError/index.md) from `readFile`) and transport failures (plain errors).
 
@@ -16,7 +16,7 @@ Thrown by [Sandbox.listFiles](/docs/api/typescript/Sandbox/index.md#listfiles) a
 new SandboxPathNotFoundError(path, options?): SandboxPathNotFoundError;
 ```
 
-Defined in: [src/sandbox/errors.ts:43](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L43)
+Defined in: [src/sandbox/errors.ts:48](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L48)
 
 #### Parameters
 
@@ -41,4 +41,4 @@ Defined in: [src/sandbox/errors.ts:43](https://github.com/strands-agents/harness
 readonly code: "ENOENT" = 'ENOENT';
 ```
 
-Defined in: [src/sandbox/errors.ts:41](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L41)
+Defined in: [src/sandbox/errors.ts:46](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/sandbox/errors.ts#L46)

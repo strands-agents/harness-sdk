@@ -1124,6 +1124,36 @@ Supported forms:
 
 A list forms one user message and preserves block order. Send audio deltas individually, outside these lists.
 
+Media input types for bidirectional streaming.
+
+## AudioDelta
+
+```python
+@dataclass
+class AudioDelta()
+```
+
+Defined in: [src/strands/bidi/types/media.py:15](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/types/media.py#L15)
+
+Audio samples to append to the live input stream.
+
+Sending a delta does not explicitly end the user’s turn.
+
+**Attributes**:
+
+-   `format` - Audio format.
+-   `source` - Source containing the audio samples.
+
+#### to\_dict
+
+```python
+def to_dict() -> _AudioDeltaData
+```
+
+Defined in: [src/strands/bidi/types/media.py:28](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/types/media.py#L28)
+
+Return the dictionary form of this delta.
+
 Protocols for bidirectional input and output streams.
 
 The protocols separate input and output concerns into independent callables with lifecycle methods managed by `BidiAgent.run()`.
@@ -1279,33 +1309,3 @@ Streamed content metadata stored under a message’s metadata.custom.bidi.
 
 -   `kind` - Identifies the message as text, reasoning, or a transcript.
 -   `status` - Whether the content is pending, complete, or incomplete.
-
-Media input types for bidirectional streaming.
-
-## AudioDelta
-
-```python
-@dataclass
-class AudioDelta()
-```
-
-Defined in: [src/strands/bidi/types/media.py:15](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/types/media.py#L15)
-
-Audio samples to append to the live input stream.
-
-Sending a delta does not explicitly end the user’s turn.
-
-**Attributes**:
-
--   `format` - Audio format.
--   `source` - Source containing the audio samples.
-
-#### to\_dict
-
-```python
-def to_dict() -> _AudioDeltaData
-```
-
-Defined in: [src/strands/bidi/types/media.py:28](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/bidi/types/media.py#L28)
-
-Return the dictionary form of this delta.

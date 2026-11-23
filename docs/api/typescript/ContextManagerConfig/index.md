@@ -1,6 +1,4 @@
-Defined in: [src/context-manager/types.ts:111](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/types.ts#L111)
-
-**`Experimental`**
+Defined in: [src/context-manager/types.ts:116](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/types.ts#L116)
 
 Full configuration for a ContextManager instance.
 
@@ -14,12 +12,11 @@ strategies?: (
   | "proactiveSummarization"
   | "largeToolOffloading"
   | "overflowProtection"
-  | "staleToolCleanup")[];
+  | "staleToolCleanup"
+  | "deferredToolLoading")[];
 ```
 
-Defined in: [src/context-manager/types.ts:121](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/types.ts#L121)
-
-**`Experimental`**
+Defined in: [src/context-manager/types.ts:126](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/types.ts#L126)
 
 Strategies for context reduction. Applied as an ordered pipeline: each strategy sees the output of the previous. Order determines priority — if two strategies target the same content, the first one to shrink it below the next strategy’s threshold wins. When omitted, uses the default pipeline.
 
@@ -27,18 +24,30 @@ Accepts raw `ContextStrategy` objects, preset name strings (e.g. `'largeToolOffl
 
 ---
 
-### stash?
+### archive?
 
 ```ts
-stash?: boolean | StashConfig;
+archive?: boolean | ArchiveConfig;
 ```
 
-Defined in: [src/context-manager/types.ts:131](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/types.ts#L131)
+Defined in: [src/context-manager/types.ts:136](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/types.ts#L136)
 
-**`Experimental`**
+L1 archive configuration. The archive persists offloaded content so the agent can retrieve it on demand via the `retrieve_context` tool.
 
-L1 stash configuration. The stash persists offloaded content so the agent can retrieve it on demand via the `retrieve_context` tool.
+-   Omit or `true` → archive enabled with InMemoryStorage (default)
+-   `{ storage }` → archive enabled with the given backend
+-   `false` → archive disabled (no persistence, no retrieval tool)
 
--   Omit or `true` → stash enabled with InMemoryStorage (default)
--   `{ storage }` → stash enabled with the given backend
--   `false` → stash disabled (no persistence, no retrieval tool)
+---
+
+### ~stash?~
+
+```ts
+stash?: boolean | ArchiveConfig;
+```
+
+Defined in: [src/context-manager/types.ts:142](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/context-manager/types.ts#L142)
+
+#### Deprecated
+
+Renamed to `archive`. Honored when `archive` is omitted, with a warning. Removed in the next minor.

@@ -1,4 +1,16 @@
-<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Strands Agents Changelog</title><description>Releases across Strands Agents products.</description><link>https://strandsagents.com/</link><language>en-us</language><item><title>Box v0.2.3</title><link>https://strandsagents.com/changelog/box/v0.2.3/</link><guid isPermaLink="true">https://strandsagents.com/changelog/box/v0.2.3/</guid><description>• support absolute executable commands
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Strands Agents Changelog</title><description>Releases across Strands Agents products.</description><link>https://strandsagents.com/</link><language>en-us</language><item><title>Box v0.3.0</title><link>https://strandsagents.com/changelog/box/v0.3.0/</link><guid isPermaLink="true">https://strandsagents.com/changelog/box/v0.3.0/</guid><description>• name what a file needs of box in one [requires] table
+• use one ownership rule for box runs list &lt;name&gt; and box profile clean &lt;name&gt;
+• remove box clean, now that box profile clean removes boxes
+• show the welcome on updates too
+• save run logs and preview errors on exit</description><pubDate>Mon, 23 Nov 2026 00:00:00 GMT</pubDate></item><item><title>Box v0.3.0-preview.1</title><link>https://strandsagents.com/changelog/box/v0.3.0-preview.1/</link><guid isPermaLink="true">https://strandsagents.com/changelog/box/v0.3.0-preview.1/</guid><description>• give a library caller each policy decision as it is made
+• allow executable memory on Linux so JIT runtimes run
+• batch history writes by default
+• let policy alone decide the removal or replacement of a mount point
+• write each grammar action input inline in the schema</description><pubDate>Sat, 21 Nov 2026 00:00:00 GMT</pubDate></item><item><title>Box v0.2.4</title><link>https://strandsagents.com/changelog/box/v0.2.4/</link><guid isPermaLink="true">https://strandsagents.com/changelog/box/v0.2.4/</guid><description>• permit fchdir in the Linux workload filter
+• pin the transport of a plain-HTTP response through the real proxy
+• state the full FSEvents reach in the file-watching warning
+• pick up upstream touch and decide its time change by policy
+• send box telemetry to Langfuse, LangSmith and CloudWatch</description><pubDate>Thu, 19 Nov 2026 00:00:00 GMT</pubDate></item><item><title>Box v0.2.3</title><link>https://strandsagents.com/changelog/box/v0.2.3/</link><guid isPermaLink="true">https://strandsagents.com/changelog/box/v0.2.3/</guid><description>• support absolute executable commands
 • run a tool&apos;s own file for the bare name the agent types
 • ingress relay for agent tcp communication
 • preserve ordinary program execution beside MCP aliases

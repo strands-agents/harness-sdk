@@ -70,12 +70,12 @@ The keys:
 | `name` | The name in the policy namespace, so `name = "git"` gives `Tool::git::Action::"push"`. |
 | `program` | The program name the grammar reads, which is the name the agent types. When it isn’t the last part of `command[0]` in its own `[tool]`, `program` on `PATH` must reach the same file as `command[0]`. |
 | `effects` | Each effect a command can have, with a one-line description. |
-| `global.options` | Options that come before the action’s words. Only an action whose `usage` has `[global options]` accepts them. |
+| `global.options` | Options that come before the action’s words. Only an action whose `usage` has `[global options]` accepts them. An option with `anywhere = true` can also come between and after the words. An action can give such an option its own effects: declare an option with the same name, `flag`, `value`, and `repeated` in `shell.<action>.options`, and set `overrides = true` on it. It then takes the place of the global one for that action, wherever the line gives it. |
 | `shell.<action>` | One action, such as `shell.push`. |
-| `shell.<action>.usage` | The action’s command line. Each `<name>` is an operand, and `<name>...` takes more than one word. |
+| `shell.<action>.usage` | The action’s command line. Each `<name>` is an operand, and `<name>...` takes more than one word. A command word, such as `push`, `payment_intents`, `emptyTrash`, or `+send`, holds ASCII letters, digits, `-`, and `_`, starts with a letter or a digit, has a lowercase letter if it has any letter, and can have one `+` in front. An all-uppercase word such as `FILE` is refused, because help text spells an operand that way: write it as `<file>`. It matches only that exact spelling, so `emptytrash` doesn’t match `emptyTrash`. A `usage` or an alias whose first command word starts with `+` is refused when any `usage` in the grammar has `[+<toolchain>]`, a selector such as cargo’s `+stable`, because the parser reads that word as the selector. `[+<name>]` directly after the program reads a word such as `+beta`, as in `cargo +beta build`, into the field `name` without its `+`. |
 | `shell.<action>.adds` | The effects that every spelling of the action has. |
 | `shell.<action>.options` | The options the action accepts, each with its `flag` spellings. An option with no `value` is a flag. |
-| `shell.<action>.operands` | Effects for an operand that `usage` names. `like` is a pattern: `like = "+*"` matches a refspec that starts with `+`. |
+| `shell.<action>.operands` | Effects for an operand that `usage` names, and for its `[+<name>]` word. `like` is a pattern: `like = "+*"` matches a refspec that starts with `+`. A pattern for a `[+<name>]` word leaves out the `+`, so `like = "nightly*"` matches `+nightly-2026-01-01`, and a pattern that starts with `+` is refused. |
 
 An option or an operand adds effects with `adds`, and takes them away with `removes`.
 
@@ -167,7 +167,7 @@ The rule proves that a command read as `cargo test` exited `0` in that directory
 
 Pin the arguments through the grammar. `args` is a set, and a temporal predicate can’t compare a field to a set, so `input.args: ["test"]` is refused at startup. Here the `test` action’s `usage` is `cargo test` and nothing more. A command such as `cargo test --manifest-path ~/scratch/Cargo.toml` has an option the action doesn’t declare, so it reads as `unmodeled` and records no `test` response. Add an option to the `test` action only when the option can’t point the tests at another crate.
 
-History is durable for each box. A test that passed before you restart the box still allows a push after the restart, within the hour.
+Persisted history survives a box restart. A recorded passing test still allows a push within the hour after restart if that outcome was saved. A process crash before a completed flush can lose the outcome; see [history persistence and process crashes](/docs/user-guide/box/reference/policy/index.md#history-persistence-and-process-crashes).
 
 A temporal predicate names one action, and never a group. A predicate such as `Tool::git::Action::"*"::response{}` is refused at startup, because history records each action and never the group. Name the action, such as `Tool::cargo::Action::"test"`. A rule whose scope is the group, such as `forbid (principal, action in Tool::git::Action::"*", resource)`, can still have a temporal predicate over one action.
 
@@ -249,6 +249,7 @@ A grammar reads the command line, and nothing else. It doesn’t see:
 -   **Environment variables.** A variable in the tool’s own `env`, such as `GIT_SSH_COMMAND`, changes what `git` does, and the grammar reads the same action and effects.
 -   **Configuration files.** `.git/config` can set `core.sshCommand` or `core.hooksPath`, and an `[alias]` entry in `.cargo/config.toml` can make `cargo t` run another cargo command.
 -   **Child processes**, as in [What a grammar governs](#what-a-grammar-governs), and **another name or a copy of the program**, as in [Which program files a grammar binds](#which-program-files-a-grammar-binds).
+-   **Another spelling of a command word.** A command word matches only its exact case. If a program also accepts `EMPTYTRASH` for `emptyTrash`, that line is `unmodeled`, and a forbid on the `emptyTrash` action doesn’t apply to it.
 
 The effects are what the command line states, not what the program does. Write rules that stay safe when a command does more than its words say.
 

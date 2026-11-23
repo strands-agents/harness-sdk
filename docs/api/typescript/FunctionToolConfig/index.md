@@ -1,4 +1,4 @@
-Defined in: [src/tools/function-tool.ts:60](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/function-tool.ts#L60)
+Defined in: [src/tools/function-tool.ts:61](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/function-tool.ts#L61)
 
 Configuration options for creating a FunctionTool.
 
@@ -10,7 +10,7 @@ Configuration options for creating a FunctionTool.
 name: string;
 ```
 
-Defined in: [src/tools/function-tool.ts:62](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/function-tool.ts#L62)
+Defined in: [src/tools/function-tool.ts:63](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/function-tool.ts#L63)
 
 The unique name of the tool
 
@@ -22,7 +22,7 @@ The unique name of the tool
 description: string;
 ```
 
-Defined in: [src/tools/function-tool.ts:64](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/function-tool.ts#L64)
+Defined in: [src/tools/function-tool.ts:65](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/function-tool.ts#L65)
 
 Human-readable description of the tool’s purpose
 
@@ -34,7 +34,7 @@ Human-readable description of the tool’s purpose
 inputSchema?: JSONSchema7;
 ```
 
-Defined in: [src/tools/function-tool.ts:66](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/function-tool.ts#L66)
+Defined in: [src/tools/function-tool.ts:67](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/function-tool.ts#L67)
 
 JSON Schema defining the expected input structure. If omitted, defaults to an empty object schema.
 
@@ -46,6 +46,6 @@ JSON Schema defining the expected input structure. If omitted, defaults to an em
 callback: FunctionToolCallback;
 ```
 
-Defined in: [src/tools/function-tool.ts:68](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/function-tool.ts#L68)
+Defined in: [src/tools/function-tool.ts:69](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/tools/function-tool.ts#L69)
 
 Function that implements the tool logic

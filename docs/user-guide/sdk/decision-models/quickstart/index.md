@@ -139,16 +139,16 @@ Every question allows `Uncertain` unless you turn it off, which [Questions and a
 
 ## Related pages
 
-- [Decision models](/docs/user-guide/sdk/decision-models/index.md) (1 shared tag)
-- [Decisions in an agent](/docs/user-guide/sdk/decision-models/agents/index.md) (1 shared tag)
-- [LLM decision model](/docs/user-guide/sdk/decision-models/models/llm/index.md) (1 shared tag)
-- [Questions and answers](/docs/user-guide/sdk/decision-models/questions/index.md) (1 shared tag)
-- [Supported decision models](/docs/user-guide/sdk/decision-models/models/index.md) (1 shared tag)
 - [Choosing an Agent Foundation](/docs/user-guide/migrate/choosing-an-agent-foundation/index.md) (1 shared tag)
 - [Get started](/docs/user-guide/sdk/quickstart/overview/index.md) (1 shared tag)
 - [Python Quickstart](/docs/user-guide/sdk/quickstart/python/index.md) (1 shared tag)
 - [Strands evaluation quickstart](/docs/user-guide/evals-sdk/quickstart/index.md) (1 shared tag)
 - [Strands Shell quickstart](/docs/user-guide/shell/quickstart/index.md) (1 shared tag)
+- [TypeScript Quickstart](/docs/user-guide/sdk/quickstart/typescript/index.md) (1 shared tag)
+- [Use Strands with AI coding agents](/docs/user-guide/build-with-ai/index.md) (1 shared tag)
+- [Decision models](/docs/user-guide/sdk/decision-models/index.md) (1 shared tag)
+- [Decisions API](/docs/user-guide/sdk/decision-models/models/decisions-api/index.md) (1 shared tag)
+- [Decisions in an agent](/docs/user-guide/sdk/decision-models/agents/index.md) (1 shared tag)
 
 
 ## Implementation

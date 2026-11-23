@@ -170,7 +170,7 @@ deleteSession(): Promise<void>;
 
 Defined in: [src/session/session-manager.ts:234](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/session/session-manager.ts#L234)
 
-Deletes all snapshots, manifests, and stash data for this session from storage.
+Deletes all snapshots, manifests, and archive data for this session from storage.
 
 #### Returns
 
@@ -258,7 +258,7 @@ Loads a snapshot from storage and restores it into the target. Returns false if 
 initMultiAgent(orchestrator): void;
 ```
 
-Defined in: [src/session/session-manager.ts:399](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/session/session-manager.ts#L399)
+Defined in: [src/session/session-manager.ts:402](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/session/session-manager.ts#L402)
 
 Initializes the multi-agent plugin by registering orchestrator lifecycle hooks.
 

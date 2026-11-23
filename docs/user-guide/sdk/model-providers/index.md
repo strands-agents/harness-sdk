@@ -152,7 +152,7 @@ response = await agent.invoke('What can you help me with?')
 
 ### Auxiliary model
 
-Besides the main loop, the SDK makes side calls on your behalf: context summarization, memory extraction, the human-in-the-loop risk classifier, LLM steering, the goal-loop judge, and the `web_fetch` analyst. By default they all run on the agent’s main model. Set `aux_model``auxModel` to route every one of them to a smaller, cheaper model at once:
+Besides the main loop, the SDK makes side calls on your behalf: conversation-manager summarization, memory extraction, the human-in-the-loop risk classifier, LLM steering, the goal-loop judge, and the `web_fetch` analyst. By default they all run on the agent’s main model. Set `aux_model``auxModel` to route every one of them to a smaller, cheaper model at once:
 
 (( tab "Python" ))
 ```python
@@ -189,6 +189,8 @@ agent.auxModel = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
 (( /tab "TypeScript" ))
 
 Each side call resolves its model in this order: the component’s own `model` option (for example the summarizer’s or the classifier’s) > `agent.aux_model``agent.auxModel` > `agent.model`. Leaving `aux_model``auxModel` unset changes nothing. A `ModelRouter` is not accepted here: side calls run outside the agent loop the router attaches to.
+
+The context manager’s [summarize strategy](/docs/user-guide/sdk/context-management/custom-strategies/index.md#summarize) is the exception: its summaries replay the agent’s conversation, so it runs on `agent.model` unless you pass it its own `model`.
 
 ### Model info
 

@@ -1,10 +1,10 @@
 A policy is a `policy.dw` file of `permit` and `forbid` rules. The box reads it when it starts, and asks it about each command, file operation, network request, and MCP call that goes through the box. By the end of this page you have a policy that permits the project and the model, one `forbid` on a file, and a decision log you can read with `jq`.
 
-Audience: an operator who has run [getting started](/docs/user-guide/box/quickstart/index.md) and wants to write a policy by hand. [Policy](/docs/user-guide/box/reference/policy/index.md) names each part of a rule and the ten actions, and [the action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md) lists every field a rule can read.
+Audience: an operator who has run [getting started](/docs/user-guide/box/core/quickstart/index.md) and wants to write a policy by hand. [Policy](/docs/user-guide/box/reference/policy/index.md) names each part of a rule and the ten actions, and [the action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md) lists every field a rule can read.
 
 ## Before you start
 
--   The box from [getting started](/docs/user-guide/box/quickstart/index.md): `my-box/box.toml` and `my-box/policy.dw` under `~/box-tutorial`, with your Bedrock key in `AWS_BEARER_TOKEN_BEDROCK`. Run every command in this guide from `~/box-tutorial`.
+-   The box from [getting started](/docs/user-guide/box/core/quickstart/index.md): `my-box/box.toml` and `my-box/policy.dw` under `~/box-tutorial`, with your Bedrock key in `AWS_BEARER_TOKEN_BEDROCK`. Run every command in this guide from `~/box-tutorial`.
 -   `jq`, for the decision log.
 -   A harmless sample file to deny: from your own terminal, `printf 'SECRET=placeholder\n' > ~/box-tutorial/my-project/.env`.
 -   The agent’s shell tool, which the getting-started box turns on with `"shell":true` in `builtinTools`. Every exercise below runs a command through it.

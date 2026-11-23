@@ -1,4 +1,4 @@
-Defined in: [src/models/bedrock.ts:380](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L380)
+Defined in: [src/models/bedrock.ts:382](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L382)
 
 Options for creating a BedrockModel instance.
 
@@ -253,11 +253,11 @@ false
 strictTools?: boolean;
 ```
 
-Defined in: [src/models/bedrock.ts:374](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L374)
+Defined in: [src/models/bedrock.ts:376](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L376)
 
 Constrain the model to emit tool names and inputs that conform to each tool’s schema.
 
-When `true`, every tool is sent with `strict: true` and a copy of its `inputSchema` with `additionalProperties: false` added to each object type, so a free-form `{ type: 'object' }` parameter becomes one the model can only fill with `{}`. Bedrock rejects schemas that use features outside its strict subset (recursive or external `$ref`, `minimum`/`maximum`/ `multipleOf`, `minLength`/`maxLength`, `additionalProperties` other than `false`) with a 400 at request time, and compiles each new schema on first use, which can take minutes. Incompatible with citations for Anthropic models.
+When `true`, every tool is sent with `strict: true` and a copy of its `inputSchema` with `additionalProperties: false` added to each object type, so a free-form `{ type: 'object' }` parameter becomes one the model can only fill with `{}`. Bedrock rejects schemas that use features outside its strict subset (recursive or external `$ref`, `minimum`/`maximum`/ `multipleOf`, `minLength`/`maxLength`, `additionalProperties` other than `false`) with a 400 at request time, and compiles each new schema on first use, which can take minutes. Incompatible with citations for Anthropic models. Turns deferred tool loading off, so `Offload.defer` and the `deferredToolLoading` preset send every full spec: strict mode needs each tool’s full input schema. A `modelInfo` override of `deferredToolLoading` still wins.
 
 #### See
 
@@ -282,7 +282,7 @@ false
 region?: string;
 ```
 
-Defined in: [src/models/bedrock.ts:384](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L384)
+Defined in: [src/models/bedrock.ts:386](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L386)
 
 AWS region to use for the Bedrock service.
 
@@ -294,7 +294,7 @@ AWS region to use for the Bedrock service.
 clientConfig?: BedrockRuntimeClientConfig;
 ```
 
-Defined in: [src/models/bedrock.ts:389](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L389)
+Defined in: [src/models/bedrock.ts:391](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L391)
 
 Configuration for the Bedrock Runtime client.
 
@@ -306,7 +306,7 @@ Configuration for the Bedrock Runtime client.
 requestTimeout?: number;
 ```
 
-Defined in: [src/models/bedrock.ts:400](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L400)
+Defined in: [src/models/bedrock.ts:402](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L402)
 
 Milliseconds of stream inactivity before a Bedrock request is aborted.
 
@@ -326,7 +326,7 @@ Applies to the default request handler and takes precedence over `clientConfig.r
 apiKey?: string;
 ```
 
-Defined in: [src/models/bedrock.ts:407](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L407)
+Defined in: [src/models/bedrock.ts:409](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L409)
 
 Amazon Bedrock API key for bearer token authentication. When provided, requests use the API key instead of SigV4 signing.
 

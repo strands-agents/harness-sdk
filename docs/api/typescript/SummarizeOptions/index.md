@@ -1,4 +1,4 @@
-Defined in: [src/models/model.ts:314](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L314)
+Defined in: [src/models/model.ts:323](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L323)
 
 Options for [Model.summarize](/docs/api/typescript/Model/index.md#summarize).
 
@@ -10,7 +10,7 @@ Options for [Model.summarize](/docs/api/typescript/Model/index.md#summarize).
 systemPrompt?: SystemPrompt;
 ```
 
-Defined in: [src/models/model.ts:318](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L318)
+Defined in: [src/models/model.ts:327](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L327)
 
 The request’s system prompt.
 
@@ -22,7 +22,7 @@ The request’s system prompt.
 toolSpecs?: ToolSpec[];
 ```
 
-Defined in: [src/models/model.ts:323](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L323)
+Defined in: [src/models/model.ts:332](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L332)
 
 The request’s tool specifications.
 
@@ -34,7 +34,7 @@ The request’s tool specifications.
 instructions?: string;
 ```
 
-Defined in: [src/models/model.ts:329](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L329)
+Defined in: [src/models/model.ts:338](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L338)
 
 Summarization instructions replacing the default ones, which `undefined` or `''` keeps. The base implementation’s instruction not to act on the request or call tools is always sent.
 
@@ -46,7 +46,7 @@ Summarization instructions replacing the default ones, which `undefined` or `''`
 cancelSignal?: AbortSignal;
 ```
 
-Defined in: [src/models/model.ts:334](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L334)
+Defined in: [src/models/model.ts:343](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L343)
 
 Signal that aborts the call.
 
@@ -58,6 +58,6 @@ Signal that aborts the call.
 agentMetadata?: AgentMetadata;
 ```
 
-Defined in: [src/models/model.ts:340](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L340)
+Defined in: [src/models/model.ts:349](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/model.ts#L349)
 
 Metadata of the invoking agent, as passed to `stream()`. A provider may consult it to derive a prompt-cache routing key, so a replay can share the agent’s cache.

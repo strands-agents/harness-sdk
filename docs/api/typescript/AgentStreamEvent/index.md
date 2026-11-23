@@ -18,7 +18,7 @@ type AgentStreamEvent =
   | AgentResultEvent;
 ```
 
-Defined in: [src/types/agent.ts:699](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L699)
+Defined in: [src/types/agent.ts:710](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/agent.ts#L710)
 
 Union type representing all possible streaming events from an agent. This includes model events, tool events, and agent-specific lifecycle events.
 

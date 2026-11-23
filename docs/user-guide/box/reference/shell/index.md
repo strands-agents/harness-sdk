@@ -1,6 +1,6 @@
 Strands Shell is the shell that runs each command the agent sends to `zsh`, `bash`, or `sh` in a box. Policy decides each command, and each file operation the command makes. A program outside the Shell runs in its own sandbox, separate from the agent’s.
 
-Audience: an operator with a working box from [getting started](/docs/user-guide/box/quickstart/index.md). For the steps, read [write policy for shell commands](/docs/user-guide/box/guides/write-shell-policy/index.md).
+Audience: an operator with a working box from [getting started](/docs/user-guide/box/core/quickstart/index.md). For the steps, read [write policy for shell commands](/docs/user-guide/box/guides/write-shell-policy/index.md).
 
 ## Invocation
 
@@ -48,7 +48,8 @@ The Shell implements these, each in place of a program of the same name on the `
 -   Builtins: `cd`, `export`, `set`, `alias`, `trap`, `test`, `printf`, `echo`, `read`, `find`, `xargs`, and others.
 -   Text: `cat`, `grep`, `sed`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `tee`.
 -   Files: `ls`, `cp`, `mv`, `rm`, `mkdir`, `rmdir`, `ln`, `chmod`, `touch`, `mktemp`, `readlink`.
--   Data and network: `jq`, `curl`.
+-   Data and network: `jq`, `base64`, `curl`.
+-   System: `uname`, which prints the host’s values, except that `-p` and `-i` print `unknown`; `whoami`, which prints `$USER`; and `id`, which prints `$USER` with the Shell’s own IDs. A program path such as `/usr/bin/uname -p` runs the host program instead, as a `shell:spawn`.
 -   Interpreters: `sh` and `lash`, which run a script in the Shell; `lua`; and `python` and `python3`, which run in Monty, Box’s Python interpreter. With [`monty = false`](/docs/user-guide/box/reference/configuration/index.md#monty), `python` and `python3` are external programs instead. Policy sees `sh` and `lash` as two programs. `sh FILE` and `/bin/sh FILE` are both decided as `program == "sh"`, and `lash FILE` and `/bin/lash FILE` as `program == "lash"`, so a rule meant for the Shell’s script interpreter must name both. `.` and `source` also run a file.
 
 Paths outside the operator’s home, the agent’s home, and the workspace, such as `/tmp`, exist only in the Shell’s memory, for one command. A file written to `/tmp` is gone when the command ends.
@@ -230,7 +231,7 @@ A name changes only which file runs. The spawn still needs a `shell:spawn` permi
 
 ## `curl`
 
-`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/egress.md)). A request the gateway refuses makes `curl` exit non-zero.
+`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/egress.md)). A request the gateway refuses makes `curl` exit `1` and print the reason, even with `-s`. A request the gateway doesn’t refuse but can’t complete makes `curl` exit `6` and print `curl: (6)` and the reason, unless `-s` hides errors.
 
 A response body is at most [`limits.shell.max_output`](/docs/user-guide/box/reference/configuration/index.md#limits) bytes, 1 MiB by default. Past it, `curl` exits with status `6`, writes none of the body, and prints `curl: (6) response body too large` unless `-s` hides errors. The request was already sent, so its effect at the server stays.
 
@@ -262,6 +263,6 @@ A response body is at most [`limits.shell.max_output`](/docs/user-guide/box/refe
 ## See also
 
 -   [Write policy for shell commands](/docs/user-guide/box/guides/write-shell-policy/index.md): rules for commands, programs, and paths.
--   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
--   [A tool’s sandbox](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
+-   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
+-   [A tool’s sandbox](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
 -   [The `[egress.<name>]` table](/docs/user-guide/box/guides/network-and-credentials/index.md): credentials for the requests `curl` sends.

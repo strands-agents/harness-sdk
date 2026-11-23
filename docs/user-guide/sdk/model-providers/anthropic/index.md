@@ -448,7 +448,7 @@ agent = Agent(
 (( tab "TypeScript" ))
 ```typescript
 import { Agent } from '@strands-agents/sdk'
-import { Offload } from '@strands-agents/sdk/experimental'
+import { Offload } from '@strands-agents/sdk/context-manager'
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 
 const model = new AnthropicModel({
@@ -469,7 +469,7 @@ const agent = new Agent({
 ```
 (( /tab "TypeScript" ))
 
-The summarizing model, `agent.aux_model``agent.auxModel` by default, must also support server-side summary. Otherwise the summary runs client-side and drops thinking. A pinned message inside the summarized range also sends the summary client-side. See [Models that preserve thinking](/docs/user-guide/sdk/context-management/custom-strategies/index.md#models-that-preserve-thinking) for which strategies keep thinking.
+The summarizing model, the agent’s own model by default, must also support server-side summary. Otherwise the summary runs client-side and drops thinking. A pinned message inside the summarized range also sends the summary client-side. See [Models that preserve thinking](/docs/user-guide/sdk/context-management/custom-strategies/index.md#models-that-preserve-thinking) for which strategies keep thinking.
 
 ### Token Counting
 

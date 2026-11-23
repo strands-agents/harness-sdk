@@ -4,7 +4,7 @@ Audience: an operator who has declared a server in [the `[mcp.<name>]` table](/d
 
 ## Before you start
 
--   A box from [getting started](/docs/user-guide/box/quickstart/index.md).
+-   A box from [getting started](/docs/user-guide/box/core/quickstart/index.md).
 -   An `[mcp.<name>]` table for the server in its `box.toml`.
 
 ### Scope of remote-server rules
@@ -104,6 +104,15 @@ For an `http` server, use a URL whose hostname or IP address appears in that ser
 
 A per-tool rule names a tool as `<server>::Action::"<tool>"`, and reads that tool’s arguments as `context.input.<argument>`. The namespace is the server name with each character other than a letter, a digit, or `_` changed to `_`, so `my-server` becomes `my_server`.
 
+An argument keeps its exact name, even when it isn’t a plain name such as `zone-id`, `x-api-key`, or `if`. Quote that name, with `has` and with brackets:
+
+```text
+forbid (principal, action == dns::Action::"list_records", resource)
+when { context.input has "zone-id" && context.input["zone-id"] == "private-zone" };
+```
+
+A `when temporal` or `unless temporal` clause can’t name an argument like this: it reads only arguments with plain names.
+
 `policy generate-schema` starts each declared server, reads its `tools/list`, and writes the per-tool actions and their argument types:
 
 ```sh
@@ -197,11 +206,13 @@ Key it on `::response`, and require `output.reply` to be `result`:
 -   Box records no `output.structured` when the tool declares no `outputSchema`, when the reply isn’t a `result`, or when a required field doesn’t match its declared type. An optional field that doesn’t match is left out, like an undeclared one. A JSON `number` field is read as a whole number, so a fractional value such as `22.5` doesn’t match. A rule that reads a field Box left out isn’t met; a rule on another field still is.
 -   Box reads the reply on stdio and http servers alike, including a streamed (Server-Sent Events) http reply. Box asks an http server for an uncompressed reply. An http reply over the gateway’s 16 MiB response limit, compressed anyway, or cut off records `indeterminate`, and so does a reply Box can’t copy because many tool calls’ replies are being read at once. A server that always compresses its replies therefore never meets a precondition, so every call that needs one is refused.
 -   The agent can make its own reply unreadable, for example by asking for an output over 16 MiB. So write a rule on a tool’s output as a precondition (`unless temporal`, as above), which an unreadable reply fails. A `forbid` that fires when an earlier output said something can be avoided that way.
--   Tool outputs are stored in local history in `box_dir`, next to the inputs Box already stores. They never go to telemetry.
+-   Tool outputs are stored in local history in `box_dir`, next to the inputs Box already stores. They reach telemetry, in clear text, only on a target that names `mcp_tool_calls`. See [a tool call](/docs/user-guide/box/guides/record-telemetry/index.md#a-tool-call).
 
 Box doesn’t record `::error` for an MCP call, and the load refuses a rule that reads one, or that compares `output.reply` with a value other than the five above.
 
-The count carries over when the box restarts. That’s also true of a rule written on a tool’s own action, such as `github::Action::"create_issue"`, as long as the rule only decides tool calls and you didn’t edit it. Box keeps that rule while the server lists its tools again. It starts with an empty count if you edit it, if the server’s new tool list no longer fits it, or if the server doesn’t list its tools in that run. A rule that decides a Box action, such as `http:request`, and counts a tool’s calls in `when temporal` starts with an empty count at each run. Write that rule over `mcp:call` and its `tool` field, as above, to keep its count.
+The persisted count carries over when the box restarts. That’s also true of a rule written on a tool’s own action, such as `github::Action::"create_issue"`, as long as the rule only decides tool calls and you didn’t edit it. Box keeps that rule while the server lists its tools again. It starts with an empty count if you edit it, if the server’s new tool list no longer fits it, or if the server doesn’t list its tools in that run. A rule that decides a Box action, such as `http:request`, and counts a tool’s calls in `when temporal` starts with an empty count at each run. Write that rule over `mcp:call` and its `tool` field, as above, to keep its count.
+
+A process crash can lose recent events; see [history persistence](/docs/user-guide/box/reference/policy/index.md#history-persistence-and-process-crashes).
 
 ## Result
 
@@ -280,5 +291,5 @@ Read the startup warning as the signal that a rule went inert, then check it aga
 ## See also
 
 -   [The `[mcp.<name>]` table](/docs/user-guide/box/guides/add-an-mcp-server/index.md): the keys for a `stdio` and an `http` server.
--   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/mcp.md): how the box starts a server and decides each call.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/85c811d4e2cedb4913decf4b4b00e07c7e923743/docs/design/policy.md): how the engine decides, and what refuses to load.
+-   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/mcp.md): how the box starts a server and decides each call.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/policy.md): how the engine decides, and what refuses to load.

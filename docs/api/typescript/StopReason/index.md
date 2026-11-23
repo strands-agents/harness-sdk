@@ -20,7 +20,7 @@ type StopReason =
 };
 ```
 
-Defined in: [src/types/messages.ts:948](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L948)
+Defined in: [src/types/messages.ts:1011](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/types/messages.ts#L1011)
 
 Reason why the model stopped generating content.
 
