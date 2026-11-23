@@ -401,6 +401,8 @@ export interface ToolUseStart {
   /**
    * Namespace the model called the tool in, which the OpenAI Responses API reports for a tool it loaded with tool
    * search.
+   *
+   * @experimental
    */
   namespace?: string
 }
@@ -494,6 +496,8 @@ export interface CitationsDelta {
 
 /**
  * A whole server tool block: a call to a tool the provider's API runs itself, or its result.
+ *
+ * @experimental
  */
 export interface ServerToolDelta {
   /**

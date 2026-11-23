@@ -392,7 +392,7 @@ function formatResponsesMessages(messages: Message[], deferral?: DeferredToolsRe
           break
 
         case 'serverToolBlock':
-          serverItems.push(...formatServerTool(block))
+          serverItems.push(...formatServerTool(block, deferral))
           break
 
         case 'reasoningBlock': {
@@ -479,9 +479,12 @@ function formatToolCallOutput(block: ToolResultBlock, deferral: DeferredToolsReq
   }
 }
 
-/** A server tool block this API wrote, as the item it came as; another provider's is left out. */
-function formatServerTool(block: ServerToolBlock): ResponseInputItem[] {
-  return block.provider === PROVIDER ? [block.data as unknown as ResponseInputItem] : []
+/**
+ * A server tool block this API wrote, as the item it came as; another provider's is left out. Only a model that defers
+ * tools natively gets one back, since the API rejects a tool search item for a model without tool search.
+ */
+function formatServerTool(block: ServerToolBlock, deferral: DeferredToolsRequest | undefined): ResponseInputItem[] {
+  return deferral && block.provider === PROVIDER ? [block.data as unknown as ResponseInputItem] : []
 }
 
 /** A loader result as the client tool search output that loads its tools, each the request still has. */

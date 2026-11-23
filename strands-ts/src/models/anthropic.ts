@@ -232,9 +232,14 @@ function listedToolSearchResult(block: ServerToolBlock, listed: ReadonlySet<stri
   })
 }
 
-/** A server tool block as this API sent it, or undefined for another provider's. */
-function formatServerTool(block: ServerToolBlock): Anthropic.ContentBlockParam | undefined {
-  return isAnthropicServerTool(block) ? (block.data as unknown as Anthropic.ContentBlockParam) : undefined
+/**
+ * A server tool block as this API sent it, or undefined for another provider's. Only a model that defers tools natively
+ * gets one back, since only such a model has the provider's tool search.
+ */
+function formatServerTool(block: ServerToolBlock, nativeDeferral: boolean): Anthropic.ContentBlockParam | undefined {
+  return nativeDeferral && isAnthropicServerTool(block)
+    ? (block.data as unknown as Anthropic.ContentBlockParam)
+    : undefined
 }
 
 /** Whether a block is a server tool block this API wrote. */
@@ -1398,7 +1403,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         return this._formatSummary(block)
 
       case 'serverToolBlock':
-        return formatServerTool(block)
+        return formatServerTool(block, this.modelInfo.capabilities?.deferredToolLoading === 'native')
 
       case 'imageBlock': {
         const imgBlock = block as ImageBlock

@@ -411,6 +411,8 @@ export interface ToolUseBlockData {
   /**
    * Namespace the model called the tool in, which the OpenAI Responses API reports for a tool it loaded with tool
    * search and needs back with the call.
+   *
+   * @experimental
    */
   namespace?: string
 }
@@ -449,6 +451,8 @@ export class ToolUseBlock implements ToolUseBlockData, JSONSerializable<{ toolUs
   /**
    * Namespace the model called the tool in, which the OpenAI Responses API reports for a tool it loaded with tool
    * search and needs back with the call.
+   *
+   * @experimental
    */
   readonly namespace?: string
 
@@ -961,6 +965,8 @@ export class SummaryBlock implements SummaryBlockData, JSONSerializable<{ summar
 
 /**
  * Data for a server tool block.
+ *
+ * @experimental
  */
 export interface ServerToolBlockData {
   /**
@@ -983,6 +989,8 @@ export interface ServerToolBlockData {
  * A call to a tool the provider runs itself, or its result, such as the provider's tool search. The agent never runs
  * it. It sits in the assistant message as the provider wrote it, unlike a {@link ToolReferenceBlock}, which an SDK tool
  * returns in a tool result. The provider that wrote it gets it back, and every other provider leaves it out.
+ *
+ * @experimental
  */
 export class ServerToolBlock implements ServerToolBlockData, JSONSerializable<{ serverTool: ServerToolBlockData }> {
   /**

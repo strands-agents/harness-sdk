@@ -242,6 +242,13 @@ describe('DeferredToolLoadingStrategy', () => {
       expect((await searchResult(input)).content).toEqual(expected.map((name) => new ToolReferenceBlock({ name })))
     })
 
+    it('rejects a query asking for more than 20 tools', async () => {
+      const result = await searchResult({ query: 'weather', limit: 21 })
+
+      expect(result.status).toBe('error')
+      expect(JSON.stringify(result.content)).toContain('limit')
+    })
+
     describe('searcher', () => {
       /** The model's one search_tools call with this input, searched by this searcher. */
       async function searchedBy(searcher: ToolSearcher, input: JSONValue): Promise<ToolResultBlock> {

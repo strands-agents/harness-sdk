@@ -4268,4 +4268,55 @@ describe('AnthropicModel tool search', () => {
       { type: 'text', text: 'Done.' },
     ])
   })
+
+  describe('with its tool search in the history', () => {
+    const call = {
+      type: 'server_tool_use',
+      id: 'srvtoolu_1',
+      name: 'tool_search_tool_bm25',
+      input: { query: 'weather' },
+    }
+    const result = {
+      type: 'tool_search_tool_result',
+      tool_use_id: 'srvtoolu_1',
+      content: {
+        type: 'tool_search_tool_search_result',
+        tool_references: [{ type: 'tool_reference', tool_name: 'get_weather' }],
+      },
+    }
+    const history = [
+      userMessage('Hi'),
+      new Message({
+        role: 'assistant',
+        content: [
+          new ServerToolBlock({ provider: 'anthropic', data: call }),
+          new ServerToolBlock({ provider: 'anthropic', data: result, loadedTools: ['get_weather'] }),
+          new TextBlock('Found it.'),
+        ],
+      }),
+      userMessage('Answer now.'),
+    ]
+
+    it('replays it on a forced turn, which sends no tool search', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+
+      await collectIterator(provider.stream(history, serverOptions({ toolChoice: { any: {} } })))
+
+      expect(captured.request.tools.map((tool: { name: string }) => tool.name)).toEqual(['get_weather', 'get_forecast'])
+      expect(captured.request.messages[1].content).toEqual([call, result, { type: 'text', text: 'Found it.' }])
+    })
+
+    it('leaves it out for a model without tool search', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({
+        client: mockClient,
+        modelInfo: { capabilities: { deferredToolLoading: 'stubs' } },
+      })
+
+      await collectIterator(provider.stream(history, { toolSpecs }))
+
+      expect(captured.request.messages[1].content).toEqual([{ type: 'text', text: 'Found it.' }])
+    })
+  })
 })

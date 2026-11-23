@@ -20,6 +20,9 @@ export const SEARCH_TOOLS_TOOL_NAME = 'search_tools'
 /** How many tools a query loads when the call sets no `limit`. */
 const DEFAULT_LIMIT = 5
 
+/** The most tools one query may load, so a single search can't load the whole catalog. */
+const MAX_LIMIT = 20
+
 /** Length past which a tool's first sentence is cut in the listing. */
 const SENTENCE_LIMIT = 120
 
@@ -133,7 +136,13 @@ export function createSearchTools(
     inputSchema: z.object({
       query: z.string().optional().describe('Words to search the tools for.'),
       names: z.array(z.string()).optional().describe('Exact names of tools to load.'),
-      limit: z.number().int().min(1).optional().describe(`Most tools a query loads; ${DEFAULT_LIMIT} by default.`),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_LIMIT)
+        .optional()
+        .describe(`Most tools a query loads; ${DEFAULT_LIMIT} by default, ${MAX_LIMIT} at most.`),
     }),
     callback: async (input, context) => {
       const { agent, cancelSignal, invocationContext } = context!

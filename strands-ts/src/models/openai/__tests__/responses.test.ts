@@ -1515,6 +1515,48 @@ describe("OpenAIModel (api: 'responses') tool search", () => {
     ])
   })
 
+  it('leaves its tool search items out for a model without tool search, and keeps the call', async () => {
+    const searchCall = {
+      type: 'tool_search_call',
+      call_id: null,
+      execution: 'server',
+      arguments: { paths: ['get_weather'] },
+      status: 'completed',
+    }
+    const messages = [
+      userMessage('Hi'),
+      new Message({
+        role: 'assistant',
+        content: [
+          new ServerToolBlock({ provider: 'openai', data: searchCall }),
+          new ToolUseBlock({
+            name: 'get_weather',
+            toolUseId: 'call_1',
+            input: { city: 'Paris' },
+            namespace: 'get_weather',
+          }),
+        ],
+      }),
+      new Message({
+        role: 'user',
+        content: [new ToolResultBlock({ toolUseId: 'call_1', status: 'success', content: [new TextBlock('Sunny.')] })],
+      }),
+    ]
+
+    const { request } = await run({ toolSpecs }, { modelId: 'gpt-4.1', messages })
+
+    expect(request.input.slice(1)).toEqual([
+      {
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'get_weather',
+        arguments: '{"city":"Paris"}',
+        namespace: 'get_weather',
+      },
+      { type: 'function_call_output', call_id: 'call_1', output: 'Sunny.' },
+    ])
+  })
+
   it('sends a search_tools call that loaded tools as a client tool search, its output loading the tools the request still has', async () => {
     const messages = [
       userMessage('Hi'),
