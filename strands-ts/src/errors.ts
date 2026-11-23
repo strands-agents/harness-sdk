@@ -41,9 +41,10 @@ export class ContextWindowOverflowError extends ModelError {
    * Creates a new ContextWindowOverflowError.
    *
    * @param message - Error message describing the context overflow
+   * @param options - Optional error options including the cause
    */
-  constructor(message: string) {
-    super(message)
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options)
     this.name = 'ContextWindowOverflowError'
   }
 }
@@ -298,16 +299,6 @@ export class DefaultNotConfiguredError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'DefaultNotConfiguredError'
-  }
-}
-
-/**
- * Thrown when a model does not implement an optional operation, such as a server-side summary.
- */
-export class NotImplementedError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'NotImplementedError'
   }
 }
 

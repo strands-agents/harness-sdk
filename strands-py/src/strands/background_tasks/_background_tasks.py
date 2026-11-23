@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
 import dataclasses
 import logging
 import threading
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
@@ -36,11 +37,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _BACKGROUND_TASKS_STATE_KEY = "strands.background_tasks"
+# Distinct from the session layer's bytes marker, which session restore decodes back into (non-JSON) bytes.
+_BYTES_KEY = "__strands_background_task_bytes__"
 _BACKGROUND_PROPERTY = "_background_execution"
 _MANAGE_TOOL_NAME = "strands_manage_background_task"
 _COMPOSITE_SCHEMA_KEYS = {"$ref", "allOf", "anyOf", "oneOf", "not", "if", "then", "else"}
 _FOREGROUND_TOOL_NAMES = {
-    _MANAGE_TOOL_NAME,
     "summarize_context",
     "truncate_context",
     "pin_context",
@@ -78,14 +80,25 @@ class _BackgroundTasks(Plugin):
         self._tasks: dict[str, BackgroundTask] = {}
         self._tasks_lock = threading.Lock()
         super().__init__()
+        self._manage_tool = tool(
+            name=config.get("manage_tool_name", _MANAGE_TOOL_NAME),
+            description=(
+                "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. "
+                "Do not poll for results."
+            ),
+        )(self._manage_background_task)
+        self._tools.append(self._manage_tool)
 
     def init_agent(self, agent: Agent) -> None:
         """Validate exact policies, then attach the task manager, middleware, and lifecycle hooks.
 
         Raises:
+            ValueError: If the management tool name matches another registered tool.
             TypeError: If a tool declares the reserved ``_background_execution`` parameter or an explicitly
                 configured tool cannot honor its execution mode. Every violation is reported in the one message.
         """
+        if self._manage_tool.tool_name in agent.tool_registry.registry:
+            raise ValueError(f"manage_tool_name=<{self._manage_tool.tool_name}> | tool already registered")
         self._agent = agent
         errors: list[str] = []
         for tool_instance in agent.tool_registry.registry.values():
@@ -122,13 +135,6 @@ class _BackgroundTasks(Plugin):
         agent.add_hook(self._after_invocation, AfterInvocationEvent)
         agent.add_hook(lambda event: self.load_state(), AgentInitializedEvent, order=HookOrder.SDK_LAST)
 
-    @tool(
-        name=_MANAGE_TOOL_NAME,
-        description=(
-            "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. "
-            "Do not poll for results."
-        ),
-    )
     async def _manage_background_task(
         self, mode: Literal["list", "get", "cancel"], task_id: str | None = None
     ) -> dict[str, Any]:
@@ -229,6 +235,17 @@ class _BackgroundTasks(Plugin):
         )
         return {"toolUseId": tool_use["toolUseId"], "status": "success", "content": [{"text": acknowledgement}]}
 
+    def cancel_all(self) -> None:
+        """Cancel every non-terminal task and drop the agent interrupts they raised. Safe from any thread."""
+        interrupt_ids = [
+            interrupt["id"]
+            for task in self._task_snapshots()
+            if not is_task_status_terminal(task["status"])
+            for interrupt in task.get("interrupts", [])
+        ]
+        self._manager.cancel_all()
+        self._drop_interrupts(interrupt_ids)
+
     def assert_tool_can_run(self, tool_instance: AgentTool | None) -> None:
         """Reject a middleware-substituted tool that cannot run in the background.
 
@@ -253,7 +270,7 @@ class _BackgroundTasks(Plugin):
         Persisted work cannot resume in a new process, so non-terminal tasks are recorded as
         failed and their interrupts are dropped from the agent's interrupt state.
         """
-        stored: list[BackgroundTask] = self._agent.state.get(_BACKGROUND_TASKS_STATE_KEY) or []
+        stored: list[BackgroundTask] = _decode_bytes(self._agent.state.get(_BACKGROUND_TASKS_STATE_KEY) or [])
         recovered_interrupt_ids: set[str] = set()
         tasks: dict[str, BackgroundTask] = {}
         for task in stored:
@@ -268,12 +285,15 @@ class _BackgroundTasks(Plugin):
             tasks[task["task_id"]] = task
         with self._tasks_lock:
             self._tasks = tasks
+        self._drop_interrupts(recovered_interrupt_ids)
+        self._persist_tasks()
+
+    def _drop_interrupts(self, interrupt_ids: Iterable[str]) -> None:
         interrupt_state = self._agent._interrupt_state
-        for interrupt_id in recovered_interrupt_ids:
+        for interrupt_id in interrupt_ids:
             interrupt_state.interrupts.pop(interrupt_id, None)
         if interrupt_state.activated and not interrupt_state.interrupts:
             interrupt_state.deactivate()
-        self._persist_tasks()
 
     async def _transform_tool_specs(self, context: InvokeModelContext) -> InvokeModelContext:
         transformed: list[ToolSpec] = []
@@ -334,7 +354,9 @@ class _BackgroundTasks(Plugin):
             interrupt_state.deactivate()
 
     async def _after_invocation(self, event: AfterInvocationEvent) -> None:
-        if self._agent._interrupt_state.activated:
+        # A cancel can drop the interrupt this invocation already returns, so the interrupt state is not enough.
+        interrupted = event.result is not None and event.result.stop_reason == "interrupt"
+        if interrupted or self._agent._interrupt_state.activated:
             return
         tasks = self._task_snapshots()
         while (
@@ -348,6 +370,9 @@ class _BackgroundTasks(Plugin):
         if any(task["status"] == "input_required" for task in tasks):
             if event.resume is None:
                 event.resume = []
+            return
+        # Delivering would start another pass; after a cancel the results wait for the next invocation instead.
+        if self._agent.cancel_signal.is_set() or self._agent._deferred_cancel:
             return
         self._deliver_ready(event, tasks)
 
@@ -388,7 +413,7 @@ class _BackgroundTasks(Plugin):
                     "content": [
                         {
                             "toolUse": {
-                                "name": _MANAGE_TOOL_NAME,
+                                "name": self._manage_tool.tool_name,
                                 "toolUseId": task["task_id"],
                                 "input": {"mode": "get", "task_id": task["task_id"]},
                             }
@@ -445,6 +470,7 @@ class _BackgroundTasks(Plugin):
             tool_instance is not None
             and policy is not None
             and policy.mode != "never"
+            and tool_instance.tool_name != self._manage_tool.tool_name
             and tool_instance.tool_name not in _FOREGROUND_TOOL_NAMES
             and tool_instance.tool_type != "structured_output"
             and not (isinstance(tool_instance, _AgentAsTool) and tool_instance.delegate)
@@ -464,7 +490,7 @@ class _BackgroundTasks(Plugin):
         with self._tasks_lock:
             tasks = list(self._tasks.values())
             if tasks:
-                self._agent.state.set(_BACKGROUND_TASKS_STATE_KEY, tasks)
+                self._agent.state.set(_BACKGROUND_TASKS_STATE_KEY, _encode_bytes(tasks))
             else:
                 self._agent.state.delete(_BACKGROUND_TASKS_STATE_KEY)
 
@@ -517,6 +543,26 @@ def _add_background_selection(tool_spec: ToolSpec) -> ToolSpec | None:
         },
     }
     return selectable
+
+
+def _encode_bytes(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return {_BYTES_KEY: base64.b64encode(value).decode()}
+    if isinstance(value, dict):
+        return {key: _encode_bytes(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_encode_bytes(item) for item in value]
+    return value
+
+
+def _decode_bytes(value: Any) -> Any:
+    if isinstance(value, dict):
+        if value.keys() == {_BYTES_KEY}:
+            return base64.b64decode(value[_BYTES_KEY])
+        return {key: _decode_bytes(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_decode_bytes(item) for item in value]
+    return value
 
 
 def _tool_error(tool_use: ToolUse, message: str) -> ToolResult:

@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 import strands.vended_tools as vended_tools
-from strands.sandbox.errors import SandboxTimeoutError
+from strands.sandbox.errors import SandboxAbortError, SandboxTimeoutError
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from strands.sandbox.types import ExecutionResult
 from strands.types.tools import ToolContext
@@ -41,16 +41,20 @@ class TestShim:
     @pytest.mark.asyncio
     async def test_default_tool_uses_agent_sandbox_and_defaults(self):
         sandbox = _mock_sandbox(stdout="hi\n")
-        result = await python_repl(code="print('hi')", tool_context=_tool_context(sandbox))
-        sandbox.execute_code.assert_awaited_once_with("print('hi')", "python3", timeout=120)
+        ctx = _tool_context(sandbox)
+        result = await python_repl(code="print('hi')", tool_context=ctx)
+        sandbox.execute_code.assert_awaited_once_with(
+            "print('hi')", "python3", timeout=120, cancel_signal=ctx.cancel_signal
+        )
         assert result == {"output": "hi\n", "error": "", "exit_code": 0}
 
     @pytest.mark.asyncio
     async def test_bound_sandbox_language_and_timeout(self):
         bound, agent_sandbox = _mock_sandbox(), _mock_sandbox()
         tool = make_python_repl(sandbox=bound, language="python3.12")
-        await tool(code="pass", tool_context=_tool_context(agent_sandbox), timeout=7)
-        bound.execute_code.assert_awaited_once_with("pass", "python3.12", timeout=7)
+        ctx = _tool_context(agent_sandbox)
+        await tool(code="pass", tool_context=ctx, timeout=7)
+        bound.execute_code.assert_awaited_once_with("pass", "python3.12", timeout=7, cancel_signal=ctx.cancel_signal)
         agent_sandbox.execute_code.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -68,6 +72,15 @@ class TestShim:
             await python_repl(code="pass", tool_context=_tool_context(_mock_sandbox(side_effect=boom)))
         assert exc_info.value.__cause__ is boom
         assert isinstance(exc_info.value, RuntimeError)
+
+    @pytest.mark.asyncio
+    async def test_abort_propagates_unwrapped_with_the_partial_output(self):
+        # SandboxAbortError, not PythonReplError: cancellation is not a sandbox failure.
+        sandbox = _mock_sandbox(side_effect=SandboxAbortError("out\n", "warn\n"))
+        with pytest.raises(SandboxAbortError) as exc_info:
+            await python_repl(code="pass", tool_context=_tool_context(sandbox))
+        partial = {"output": "out\n", "error": "warn\n", "exit_code": 130}
+        assert str(exc_info.value) == f"Execution aborted\n{json.dumps(partial)}"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell required")

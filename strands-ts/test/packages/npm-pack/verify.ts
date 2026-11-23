@@ -43,9 +43,11 @@ import {
 
 import { BedrockModel as BedrockFromSubpath } from '@strands-agents/sdk/models/bedrock'
 import { Graph, Swarm, MultiAgentState } from '@strands-agents/sdk/multiagent'
+import { ContextManager, Offload } from '@strands-agents/sdk/context-manager'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 import { ContextOffloader, InMemoryStorage } from '@strands-agents/sdk/vended-plugins/context-offloader'
 import { GoalLoop } from '@strands-agents/sdk/vended-plugins/goal'
+import { SageMakerDecisionModel } from '@strands-agents/sdk/decisions/sagemaker'
 
 import { z } from 'zod'
 
@@ -120,12 +122,24 @@ const goalLoop = new GoalLoop({ goal: () => true, maxAttempts: 1 })
 if (!(goalLoop instanceof GoalLoop)) {
   throw new Error('GoalLoop construction failed')
 }
+const contextManager = new ContextManager({ strategies: [Offload.drop('toolResults')] })
+if (!(contextManager instanceof ContextManager)) {
+  throw new Error('ContextManager construction failed')
+}
 for (const [name, ctor] of Object.entries({ Graph, Swarm })) {
   if (typeof ctor !== 'function') {
     throw new Error(`${name} subpath export is not a constructor`)
   }
 }
-console.log('[pack-test] multiagent + vended-plugin subpaths constructible')
+console.log('[pack-test] multiagent + vended-plugin + context-manager subpaths constructible')
+
+// decisions/sagemaker loads its optional peer (@aws-sdk/client-sagemaker-runtime) only on the
+// first ask(), so importing and constructing it must work without the peer installed.
+const sageMaker = new SageMakerDecisionModel({ endpointName: 'pack-test-endpoint' })
+if (!(sageMaker instanceof SageMakerDecisionModel)) {
+  throw new Error('SageMakerDecisionModel construction failed')
+}
+console.log('[pack-test] decisions/sagemaker constructible without its optional peer')
 
 const ctxErr = new ContextWindowOverflowError('test')
 if (!(ctxErr instanceof Error)) {

@@ -3,12 +3,13 @@ import { describe, expect, it } from 'vitest'
 import { Agent } from '../../../agent/agent.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
-import { AfterToolCallEvent } from '../../../hooks/events.js'
+import { AfterToolCallEvent, BeforeToolCallEvent } from '../../../hooks/events.js'
 import { ExecuteToolStage } from '../../../middleware/stages.js'
 import { MiddlewareRegistry } from '../../../middleware/registry.js'
 import { Meter } from '../../../telemetry/meter.js'
 import { Tracer } from '../../../telemetry/tracer.js'
 import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
+import { ConcurrentToolExecutor } from '../concurrent.js'
 import { SequentialToolExecutor } from '../sequential.js'
 
 import type { ToolExecutorOptions } from '../executor.js'
@@ -29,7 +30,7 @@ function createOptions(
 }
 
 async function runExecutor(
-  executor: SequentialToolExecutor,
+  executor: SequentialToolExecutor | ConcurrentToolExecutor,
   options: ToolExecutorOptions,
   toolUseBlocks: ToolUseBlock[],
   onEvent?: (event: AgentStreamEvent) => void
@@ -152,5 +153,66 @@ describe('ToolExecutor cancellation signal', () => {
     expect(agent.cancelSignal.aborted).toBe(false)
     expect(toolCallCount).toBe(1)
     expect(afterToolCallCount).toBe(1)
+  })
+
+  for (const [label, createExecutor] of [
+    ['sequential', () => new SequentialToolExecutor()],
+    ['concurrent', () => new ConcurrentToolExecutor()],
+  ] as const) {
+    it(`skips the tool when cancel arrives during BeforeToolCallEvent (${label}) (#5665)`, async () => {
+      const executionController = new AbortController()
+      let toolCallCount = 0
+      const tool = createMockTool('marker', () => {
+        toolCallCount += 1
+        return 'wrote'
+      })
+      const agent = new Agent({ model: new MockMessageModel(), tools: [tool], printer: false })
+
+      const results = await runExecutor(
+        createExecutor(),
+        createOptions(agent, executionController.signal),
+        [new ToolUseBlock({ name: 'marker', toolUseId: 'marker-1', input: {} })],
+        (event) => {
+          if (event instanceof BeforeToolCallEvent) {
+            executionController.abort()
+          }
+        }
+      )
+
+      expect(toolCallCount).toBe(0)
+      expect(results).toEqual([
+        new ToolResultBlock({
+          toolUseId: 'marker-1',
+          status: 'error',
+          content: [new TextBlock('Tool execution cancelled')],
+        }),
+      ])
+    })
+  }
+
+  it('keeps the hook cancel message when the signal is also aborted', async () => {
+    const executionController = new AbortController()
+    const tool = createMockTool('marker', () => 'wrote')
+    const agent = new Agent({ model: new MockMessageModel(), tools: [tool], printer: false })
+
+    const results = await runExecutor(
+      new SequentialToolExecutor(),
+      createOptions(agent, executionController.signal),
+      [new ToolUseBlock({ name: 'marker', toolUseId: 'marker-1', input: {} })],
+      (event) => {
+        if (event instanceof BeforeToolCallEvent) {
+          event.cancel = 'hook cancel message'
+          executionController.abort()
+        }
+      }
+    )
+
+    expect(results).toEqual([
+      new ToolResultBlock({
+        toolUseId: 'marker-1',
+        status: 'error',
+        content: [new TextBlock('hook cancel message')],
+      }),
+    ])
   })
 })

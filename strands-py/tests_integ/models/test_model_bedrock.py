@@ -821,6 +821,28 @@ def test_a_cache_boundary_keeps_per_call_content_out_of_the_cached_prefix(quiet_
     )
 
 
+def test_nova_reads_the_cache_on_a_later_user_turn():
+    """Automatic caching on Nova reads on each follow-up user turn what the earlier turns wrote.
+
+    An in-region model id keeps this deterministic: a cross-region profile only finds an entry in the
+    region that wrote it. Not streamed, because Nova's stream now and then reports no usage at all.
+    """
+    model = BedrockModel(
+        model_id="amazon.nova-pro-v1:0",
+        region_name="us-east-1",
+        streaming=False,
+        cache_config=CacheConfig(strategy="auto"),
+    )
+    agent = Agent(model=model, load_tools_from_directory=False, callback_handler=None)
+
+    first = agent(f"{_durable_prefix()} Reply ALPHA.")
+    assert first.metrics.latest_agent_invocation.usage.get("cacheWriteInputTokens", 0) > 0
+
+    for prompt in ("Reply BETA.", "Reply GAMMA."):
+        usage = agent(prompt).metrics.latest_agent_invocation.usage
+        assert usage.get("cacheReadInputTokens", 0) > 0, f"'{prompt}' rewrote the conversation instead of reading it"
+
+
 def test_a_leading_cache_point_is_accepted(quiet_strands_logging):
     """A cache point with nothing ahead of it is replaced by automatic placement.
 

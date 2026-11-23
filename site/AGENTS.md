@@ -72,12 +72,17 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   └── samples/pages/            # Generated sample guides (not committed)
 ├── src/                          # Astro source files
 │   ├── components/               # Custom Astro components
+│   │   ├── CommandPill.astro     # Copyable command block for standalone product pages
 │   │   ├── CourseNotice.astro    # Course recording and example update notices
+│   │   ├── FaqAnswer.astro       # Shared renderer for structured FAQ answers
+│   │   ├── HomeFaq.astro         # Five-question homepage FAQ preview
+│   │   ├── SiteHead.astro        # Shared metadata, scripts, and analytics for standalone pages
+│   │   ├── box/                  # Sections of the standalone /box/ product landing page
 │   │   ├── community/            # Sections of the /community/ hub page (hero, courses, events, blog)
 │   │   ├── overrides/            # Starlight component overrides
 │   │   ├── samples/              # Native Starlight page wrapper for generated sample guides
 │   │   └── ...
-│   ├── config/                   # Site configuration
+│   ├── config/                   # Site, product landing, and standalone-page configuration
 │   ├── content/                  # Content collections
 │   │   ├── announcements/        # Homepage announcement banner entries (one YAML each, auto-expire after 14 days)
 │   │   ├── catalog/              # Community catalog entries (one YAML per integration, zod-validated)
@@ -100,8 +105,13 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │       └── user-guide/
 │   │           └── box           # Symlink to .build/external-docs/strands-box/content
 │   ├── data/                     # Workflow-maintained catalog-stats.json (do not hand-edit)
-│   ├── layouts/                  # Custom layouts
+│   ├── layouts/                  # Custom layouts, including the shared standalone product shell
 │   ├── pages/                    # Astro pages, including generated /examples routes
+│   │   ├── box.astro             # Standalone Box product landing page
+│   │   ├── box/index.md.ts       # Machine-readable Box landing endpoint
+│   │   ├── faq.astro             # Standalone FAQ page
+│   │   ├── faq/index.md.ts       # Machine-readable FAQ endpoint
+│   │   └── openapi.json.ts       # OpenAPI description of public website data feeds
 │   ├── plugins/                  # Remark/Rehype plugins
 │   ├── styles/                   # Global styles
 │   └── util/                     # Utility functions

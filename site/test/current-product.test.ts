@@ -37,6 +37,7 @@ describe('product identity wiring', () => {
       Shell: 'shell',
       Box: 'box',
       Evals: 'evals',
+      Decider: null,
     })
   })
 
@@ -50,6 +51,7 @@ describe('product identity wiring', () => {
       Shell: 'shell',
       Box: 'box',
       Evals: 'evals',
+      Decider: 'strands-labs/strands-decider',
     })
   })
 
@@ -60,13 +62,20 @@ describe('product identity wiring', () => {
     }
   })
 
-  it('every product resolves from its own hub href', async () => {
+  it('every product resolves from its docs hub href', async () => {
     const { currentProduct } = await import('../src/util/current-product')
     for (const p of products) {
-      const resolved = currentProduct(p.href)
-      expect(resolved?.label, `currentProduct("${p.href}")`).toBe(p.label)
+      const docsHref = p.docsHref ?? p.href
+      const resolved = currentProduct(docsHref)
+      expect(resolved?.label, `currentProduct("${docsHref}")`).toBe(p.label)
     }
     expect(currentProduct('/docs/learning/how-agents-really-work/')).toBeUndefined()
+  })
+
+  it('keeps the Box landing page separate from its docs hub', () => {
+    const box = products.find((product) => product.label === 'Box')
+    expect(box?.href).toBe('/box/')
+    expect(box?.docsHref).toBe('/docs/user-guide/box/')
   })
 })
 
@@ -91,6 +100,13 @@ describe('docs footer links', () => {
     expect(url.pathname).toBe('/strands-agents/box/issues/new')
     expect(url.searchParams.get('template')).toBeNull()
     expect(url.searchParams.get('title')).toBe('Documentation issue')
+    expect(url.searchParams.get('body')).toContain(pageUrl)
+  })
+
+  it('routes Decider issues to the strands-labs repository', () => {
+    const pageUrl = 'https://strandsagents.com/docs/labs/strands-decider/overview/'
+    const url = new URL(documentationIssueHref(issueRepositoryForProduct('Decider'), pageUrl))
+    expect(url.pathname).toBe('/strands-labs/strands-decider/issues/new')
     expect(url.searchParams.get('body')).toContain(pageUrl)
   })
 })

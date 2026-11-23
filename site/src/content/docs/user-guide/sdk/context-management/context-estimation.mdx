@@ -1,7 +1,6 @@
 ---
 title: Context Estimation
 description: "How the SDK estimates token counts, context window utilization, and context window limits."
-experimental: true
 tags: [conversation-management, token-management]
 sourceLinks:
   - path: strands-py/src/strands/models/model.py
@@ -9,8 +8,10 @@ sourceLinks:
 addedDate: 2026-09-14
 ---
 
-:::caution[Experimental]
-The Context Manager strategy API is experimental and may change in future versions.
+:::caution[Experimental in Python]
+In Python, the `ContextManager` strategy API is still exported from
+`strands.experimental.context_manager` and may change in future versions. The
+TypeScript API is stable.
 :::
 
 The SDK estimates how much of the model's context window is in use so it can trigger compression before overflow. Three pieces work together: the context window limit, token counting, and utilization estimation.
@@ -46,6 +47,8 @@ Override it manually for models not in the [shared model info](https://github.co
 :::caution[Inaccurate compression with default fallback]
 If <Syntax py="context_window_limit" ts="contextWindowLimit" /> is not set and the model ID is not in the shared model info, the SDK falls back to a default of 200,000 tokens. When the actual context window is significantly different, compression thresholds will not behave correctly.
 :::
+
+See [Model info](../model-providers/index.mdx#model-info) for how the SDK resolves this and other facts about the model.
 
 ## Token estimation
 

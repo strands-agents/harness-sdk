@@ -60,7 +60,12 @@ agent = create_harness(
     model=${model}, effort="off", caching=False, builtin_tools=[], builtin_plugins=[],
     session=False, memory=False, skills=False, context_manager=False,
 )
-agent.name = agent.model.client.meta.region_name if isinstance(agent.model, BedrockModel) else type(agent.model).__name__
+client = getattr(agent.model, "client", None)
+if isinstance(agent.model, BedrockModel):
+    agent.name = client.meta.region_name
+else:
+    # Claude on Bedrock runs on Anthropic's Bedrock client, which holds the region as aws_region.
+    agent.name = getattr(client, "aws_region", type(agent.model).__name__)
 `
     )
     const backend = await PythonBackend.open(

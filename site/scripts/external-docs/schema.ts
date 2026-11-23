@@ -20,7 +20,8 @@ export interface ExternalDocsManifestPage {
   title: string
   description: string
   nav: {
-    group: string
+    /** Path of nested sidebar groups, outermost first. A string manifest value is a one-segment path. */
+    group: string[]
     order: number
   }
 }
@@ -68,7 +69,11 @@ export function parseExternalDocsManifest(input: unknown, label = 'external docs
   assertUnique(pages, (page) => page.id, `${label} page id`)
   assertUnique(pages, (page) => page.source, `${label} page source`)
   assertUnique(pages, (page) => page.slug, `${label} page slug`)
-  assertUnique(pages, (page) => `${page.nav.group}\0${page.nav.order}`, `${label} navigation group/order`)
+  assertUnique(
+    pages,
+    (page) => `${page.nav.group.join('\u001f')}\u0000${page.nav.order}`,
+    `${label} navigation group/order`
+  )
 
   return { schemaVersion: 1, product, pages }
 }
@@ -140,10 +145,18 @@ function parsePage(input: unknown, label: string): ExternalDocsManifestPage {
     title: nonEmptyString(page.title, `${label}.title`),
     description: nonEmptyString(page.description, `${label}.description`),
     nav: {
-      group: nonEmptyString(nav.group, `${label}.nav.group`),
+      group: parseNavGroup(nav.group, `${label}.nav.group`),
       order: order as number,
     },
   }
+}
+
+function parseNavGroup(input: unknown, label: string): string[] {
+  if (typeof input === 'string') return [nonEmptyString(input, label)]
+  if (!Array.isArray(input) || input.length === 0) {
+    fail(`${label} must be a non-empty string or array of strings`)
+  }
+  return (input as unknown[]).map((segment, index) => nonEmptyString(segment, `${label}[${index}]`))
 }
 
 function parseConfigProduct(input: unknown, label: string): ExternalDocsProductConfig {

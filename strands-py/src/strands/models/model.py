@@ -17,8 +17,10 @@ from ..plugins.plugin import Plugin
 from ..types.content import ContentBlock, Messages, SystemContentBlock
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
+from ._cache_points import section_ttl
 from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
-from ._model_info import ModelInfo, ModelLimits, lookup_model_info
+from ._model_info import ModelCapabilities, ModelInfo, ModelLimits, lookup_model_info
+from ._model_proxy import _latest_user_index
 from ._summarize import SummarizeResult, _summarize_with_stream
 
 if TYPE_CHECKING:
@@ -60,6 +62,9 @@ def _count_content_block_tokens(
 
     if "summary" in block:
         total += count_text(block["summary"].get("text", ""))
+
+    if "injected" in block:
+        total += count_text(block["injected"]["text"])
 
     if "toolUse" in block:
         tool_use = block["toolUse"]
@@ -116,8 +121,11 @@ def _estimate_tokens_with_heuristic(
     elif system_prompt:
         total += _heuristic_estimate_text(system_prompt)
 
-    for message in messages:
+    latest_user = _latest_user_index(messages)
+    for index, message in enumerate(messages):
         for block in message["content"]:
+            if "injected" in block and index != latest_user:
+                continue
             total += _count_content_block_tokens(block, _heuristic_estimate_text, _heuristic_estimate_json)
 
     if tool_specs:
@@ -157,7 +165,9 @@ class CacheConfig:
     Attributes:
         strategy: Caching strategy to use.
             - "auto": Automatically detect model support and inject cachePoint to maximize cache coverage
-            - "anthropic": Inject cachePoint in Anthropic-compatible format without model support check
+            - "anthropic": Inject cachePoint in Anthropic-compatible format without model support check.
+              ``LiteLLMModel`` places them only where the backend can be Claude-style: a Claude model on any
+              provider, ``anthropic/``, or a gateway id that doesn't name its backend.
         ttl: Optional TTL duration for cache entries (e.g. "5m", "1h").
             When specified, auto-injected cache points will include this TTL value. Bedrock requires
             checkpoint TTLs to be non-increasing across toolConfig, system and messages, and rejects a
@@ -170,13 +180,14 @@ class CacheConfig:
         messages_ttl: Cache the conversation prefix, placing a cache point on durable user content. A TTL
             string sets this section's own duration; True or None derives it from ``ttl``; False disables
             the message cache point. Mirrors the TypeScript ``messagesTTL``. Read by ``BedrockModel``,
-            ``AnthropicModel`` and, on models that take cache points, ``OpenAIResponsesModel``, which
-            accepts only the OpenAI lifetimes ``"30m"`` and ``"12h"``.
+            ``AnthropicModel`` and, on models that take cache points, ``LiteLLMModel`` and
+            ``OpenAIResponsesModel``, which accepts only the OpenAI lifetimes ``"30m"`` and ``"12h"``.
         cache_key: Stable identity a prompt-cache-routing provider (OpenAI, LiteLLM, Mistral) uses as its
             cache key. Left unset, it is derived per request as ``strands-<session_id>`` if the agent has
             a session manager, so repeat runs of a session share a cache prefix with no key management.
             Set it to a string to pin your own key, or ``False`` to opt out of routing entirely. The
             resolved key (whether set or derived from the session id) is transmitted to the provider.
+            ``LiteLLMModel`` sends it only to models LiteLLM accepts ``prompt_cache_key`` for.
         tools_ttl: Cache the tool definitions, auto-injecting a cache point on the tool block so repeated calls
             with the same tools hit the cache. A TTL string (e.g. "1h") sets this section's own
             duration and is honored as written; True derives the duration from ``ttl``; False disables it.
@@ -196,7 +207,7 @@ def _messages_cache_ttl(cache_config: CacheConfig | None) -> str | None:
     """TTL for the message cache point: a ``messages_ttl`` string, else ``cache_config.ttl``."""
     if cache_config is None:
         return None
-    return cache_config.messages_ttl if isinstance(cache_config.messages_ttl, str) else cache_config.ttl
+    return section_ttl(cache_config.messages_ttl, cache_config.ttl)
 
 
 @dataclass
@@ -239,7 +250,8 @@ class Model(abc.ABC):
     def model_info(self) -> ModelInfo:
         """Everything the SDK knows about the configured model, resolved on each read.
 
-        Layers, later ones winning: the shared model info for the configured model id, the
+        Layers, later ones winning: the shared model info for the configured model id,
+        ``temporary_messages`` off (a provider that can send them turns it back on), the
         ``context_window_limit`` config value, and the ``model_info`` config override. Each read
         returns a new record, so do not compare reads by identity.
 
@@ -272,7 +284,10 @@ class Model(abc.ABC):
 
         return ModelInfo.merge(
             lookup_model_info(model_id),
-            ModelInfo(limits=ModelLimits(context_window=context_window_limit)),
+            ModelInfo(
+                capabilities=ModelCapabilities(temporary_messages=False),
+                limits=ModelLimits(context_window=context_window_limit),
+            ),
             override,
         )
 
@@ -384,8 +399,9 @@ class Model(abc.ABC):
 
         Used for proactive context management (e.g., triggering compression at a threshold).
         Uses tiktoken's cl100k_base encoding when available, otherwise falls back to a
-        heuristic (characters / 4 for text, characters / 2 for JSON). Accuracy varies by
-        model provider. Not intended for billing or precise quota calculations.
+        heuristic (characters / 4 for text, characters / 2 for JSON). It counts only the latest user
+        message's injected blocks, the ones a model reads. Accuracy varies by model provider. Not
+        intended for billing or precise quota calculations.
 
         Subclasses may override this method to provide model-specific token counting
         using native APIs for improved accuracy.

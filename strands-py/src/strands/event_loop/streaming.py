@@ -254,6 +254,11 @@ def handle_content_block_delta(
         typed_event = CitationStreamEvent(delta=delta_content, citation=delta_content["citation"])
 
     elif "reasoningContent" in delta_content:
+        reasoning_delta = delta_content["reasoningContent"]
+        # A new reasoning payload after a signature starts a block, even under the same index.
+        if "signature" in state and ("text" in reasoning_delta or "redactedContent" in reasoning_delta):
+            _finalize_reasoning_text(state)
+
         if "text" in delta_content["reasoningContent"]:
             if "reasoningText" not in state:
                 state["reasoningText"] = ""
@@ -281,6 +286,25 @@ def handle_content_block_delta(
     return state, typed_event
 
 
+def _finalize_reasoning_text(state: dict[str, Any]) -> None:
+    """Append only the pending reasoning text and consume its signature."""
+    if state["reasoningText"] or "signature" in state:
+        content_block: ContentBlock = {
+            "reasoningContent": {
+                "reasoningText": {
+                    "text": state["reasoningText"],
+                }
+            }
+        }
+
+        # Consume the signature so it belongs to exactly this block and does not leak into the next one.
+        if (signature := state.pop("signature", None)) is not None:
+            content_block["reasoningContent"]["reasoningText"]["signature"] = signature
+
+        state["content"].append(content_block)
+        state["reasoningText"] = ""
+
+
 def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
     """Handles the end of a content block by finalizing tool usage, text content, or reasoning content.
 
@@ -294,7 +318,6 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
 
     current_tool_use = state["current_tool_use"]
     text = state["text"]
-    reasoning_text = state["reasoningText"]
     citations_content = state["citationsContent"]
     redacted_content = state.get("redactedContent")
 
@@ -321,7 +344,7 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
         tool_use_name = current_tool_use.get("name", "")
 
         if not tool_use_id or not tool_use_name:
-            # Skip, don't raise: an empty tool_uses list still appends a valid toolResult, so the loop continues.
+            # Skip, don't raise: the event loop re-asks, then fails, a tool_use stop with no complete tool use block.
             logger.warning(
                 "tool_use_id=<%s>, tool_name=<%s> | incomplete tool use block, skipping content block "
                 "(model may be using a non-standard streaming format)",
@@ -351,21 +374,7 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
             content.append({"text": text})
         state["text"] = ""
 
-    if reasoning_text or "signature" in state:
-        content_block: ContentBlock = {
-            "reasoningContent": {
-                "reasoningText": {
-                    "text": state["reasoningText"],
-                }
-            }
-        }
-
-        # Consume the signature so it belongs to exactly this block and does not leak into the next one.
-        if (signature := state.pop("signature", None)) is not None:
-            content_block["reasoningContent"]["reasoningText"]["signature"] = signature
-
-        content.append(content_block)
-        state["reasoningText"] = ""
+    _finalize_reasoning_text(state)
     if redacted_content:
         content.append({"reasoningContent": {"redactedContent": redacted_content}})
         state["redactedContent"] = b""
@@ -437,6 +446,7 @@ async def process_stream(
     start_time: float | None = None,
     cancel_signal: threading.Event | None = None,
     invocation_context: InvocationContext | None = None,
+    model_key: tuple[str | None, str | None] = (None, None),
 ) -> AsyncGenerator[TypedEvent, None]:
     """Processes the response stream from the API, constructing the final message and extracting usage metrics.
 
@@ -446,6 +456,7 @@ async def process_stream(
         cancel_signal: Optional threading.Event to check for cancellation during streaming.
         invocation_context: The request the call's usage adds to once the stream ends. A cancelled stream adds the
             usage reported before it stopped; a stream that raises adds nothing.
+        model_key: The provider name and model id the usage is recorded under; ``None`` for what is not known.
 
     Yields:
         The reason for stopping, the constructed message, and the usage metrics.
@@ -470,7 +481,7 @@ async def process_stream(
         # Check for cancellation during stream processing
         if cancel_signal and cancel_signal.is_set():
             logger.debug("cancellation detected during stream processing")
-            _record_usage(invocation_context, usage)
+            _record_usage(invocation_context, usage, model_key)
             # Return cancelled stop reason with cancellation message
             # The incomplete message in state["message"] is discarded and never added to agent.messages
             yield ModelStopReason(
@@ -509,7 +520,7 @@ async def process_stream(
     # A provider that aborts in flight ends the stream without messageStop; the in-loop check
     # above cannot see it, so report the cancellation here rather than a truncated end_turn.
     if not saw_message_stop and cancel_signal and cancel_signal.is_set():
-        _record_usage(invocation_context, usage)
+        _record_usage(invocation_context, usage, model_key)
         yield ModelStopReason(
             stop_reason="cancelled",
             message={"role": "assistant", "content": [{"text": "Cancelled by user"}]},
@@ -518,14 +529,16 @@ async def process_stream(
         )
         return
 
-    _record_usage(invocation_context, usage)
+    _record_usage(invocation_context, usage, model_key)
     yield ModelStopReason(stop_reason=stop_reason, message=state["message"], usage=usage, metrics=metrics)
 
 
-def _record_usage(invocation_context: InvocationContext | None, usage: Usage) -> None:
-    """Add a finished model call's usage to the request it ran in, if any."""
+def _record_usage(
+    invocation_context: InvocationContext | None, usage: Usage, model_key: tuple[str | None, str | None]
+) -> None:
+    """Add a finished model call's usage to the request it ran in, if any, under the model that made the call."""
     if invocation_context is not None:
-        invocation_context._record_usage(usage)
+        invocation_context._record_usage(usage, *model_key)
 
 
 async def stream_messages(
@@ -545,7 +558,7 @@ async def stream_messages(
     invocation_context: InvocationContext | None = None,
     **kwargs: Any,
 ) -> AsyncGenerator[TypedEvent, None]:
-    """Streams messages to the model and processes the response.
+    """Streams messages to the model and processes the response, through the SDK-internal ``ModelProxy``.
 
     Args:
         model: Model provider.
@@ -570,41 +583,21 @@ async def stream_messages(
     Yields:
         The reason for stopping, the final message, and the usage metrics
     """
-    logger.debug("model=<%s> | streaming messages", model)
+    # Lazy: _model_proxy imports this module at load time.
+    from ..models._model_proxy import ModelProxy
 
-    messages = _normalize_messages(messages)
-    # Whitelist only role and content before sending to the model provider.
-    # This ensures metadata (and any future non-model fields) never leak to providers.
-    messages = [Message(role=msg["role"], content=msg["content"]) for msg in messages]
-    has_summary = any("summary" in block for message in messages for block in message["content"])
-    if has_summary and model.model_info.capabilities.server_side_summary is not True:
-        # Only a provider with server-side summaries reads a summary block; others get its text.
-        for message in messages:
-            message["content"] = [
-                ContentBlock(text=block["summary"]["text"]) if "summary" in block else block
-                for block in message["content"]
-            ]
-    start_time = time.time()
-
-    # Omitted when unset, so an ordinary call's arguments are unchanged.
-    optional_kwargs: dict[str, Any] = {}
-    if dynamic_trailing_blocks:
-        optional_kwargs["dynamic_trailing_blocks"] = dynamic_trailing_blocks
-    if structured_output_model:
-        optional_kwargs["structured_output_model"] = structured_output_model
-
-    chunks = model.stream(
+    async for event in ModelProxy(model).stream(
         messages,
-        tool_specs if tool_specs else None,
+        tool_specs,
         system_prompt,
         tool_choice=tool_choice,
         system_prompt_content=system_prompt_content,
         invocation_state=invocation_state,
         model_state=model_state,
+        dynamic_trailing_blocks=dynamic_trailing_blocks,
         cancel_signal=cancel_signal,
         agent_metadata=agent_metadata,
-        **optional_kwargs,
-    )
-
-    async for event in process_stream(chunks, start_time, cancel_signal, invocation_context):
+        structured_output_model=structured_output_model,
+        invocation_context=invocation_context,
+    ):
         yield event

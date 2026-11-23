@@ -3,6 +3,7 @@ import { getCollection } from 'astro:content'
 import {
   activeAnnouncement,
   announcementExpires,
+  bannerHrefs,
   ANNOUNCEMENT_DAYS,
   homepageBanner,
   homepageCommunityPost,
@@ -93,15 +94,19 @@ describe('homepageCommunityPost', () => {
   const posts = [makePost('2026-10-16', 'Newest post'), makePost('2026-10-15', 'Older post')]
 
   it('skips the post already promoted by the banner', () => {
-    expect(homepageCommunityPost(posts, '/blog/newest-post/')).toEqual(posts[1])
+    expect(homepageCommunityPost(posts, ['/blog/newest-post/'])).toEqual(posts[1])
   })
 
   it('keeps the newest post when a manual announcement owns the banner', () => {
-    expect(homepageCommunityPost(posts, '/campaign/')).toEqual(posts[0])
+    expect(homepageCommunityPost(posts, ['/campaign/'])).toEqual(posts[0])
   })
 
   it('returns undefined when the banner uses the only post', () => {
-    expect(homepageCommunityPost([posts[0]], '/blog/newest-post/')).toBeUndefined()
+    expect(homepageCommunityPost([posts[0]], ['/blog/newest-post/'])).toBeUndefined()
+  })
+
+  it('skips every post the banner links to', () => {
+    expect(homepageCommunityPost(posts, ['/blog/newest-post/', '/blog/older-post/'])).toBeUndefined()
   })
 })
 
@@ -164,6 +169,17 @@ describe('homepageBanner', () => {
     })
   })
 
+  it('passes links through from a manual announcement', () => {
+    const links = [
+      { title: 'First', href: '/blog/first/' },
+      { title: 'Second', href: '/blog/second/' },
+    ]
+    const manual = { ...makeAnnouncement('2026-10-15', 'Two launches'), links }
+    const banner = homepageBanner([manual], [makePost('2026-10-15', 'Second')], day('2026-10-15'))
+    expect(banner?.links).toEqual(links)
+    expect(bannerHrefs(banner)).toEqual(['/blog/first/', '/blog/second/'])
+  })
+
   it('returns undefined when there are no announcements or posts', () => {
     expect(homepageBanner([], [], day('2026-10-15'))).toBeUndefined()
   })
@@ -184,6 +200,26 @@ describe('announcementSchema', () => {
     const result = announcementSchema.safeParse({ title: 't', href: '/x/', date: '2026-10-05', expires: '2026-10-04' })
     expect(result.success).toBe(false)
     expect(result.error?.issues[0]?.path).toEqual(['expires'])
+  })
+
+  it('requires href unless links is set', () => {
+    const links = [
+      { title: 'a', href: '/a/' },
+      { title: 'b', href: 'https://example.com/b' },
+    ]
+    expect(announcementSchema.safeParse({ title: 't', links, date: '2026-10-01' }).success).toBe(true)
+    const missing = announcementSchema.safeParse({ title: 't', date: '2026-10-01' })
+    expect(missing.success).toBe(false)
+    expect(missing.error?.issues[0]?.path).toEqual(['href'])
+  })
+
+  it('uses the first link as href when only links is set', () => {
+    const links = [
+      { title: 'First', href: '/blog/first/' },
+      { title: 'Second', href: '/blog/second/' },
+    ]
+    const manual = announcementSchema.parse({ title: 'Two launches', links, date: '2026-10-15' })
+    expect(homepageBanner([manual], [], day('2026-10-15'))?.href).toBe('/blog/first/')
   })
 
   it('validates every announcement in the collection', async () => {

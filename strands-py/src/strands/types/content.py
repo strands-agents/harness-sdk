@@ -15,6 +15,7 @@ from typing_extensions import NotRequired, TypedDict
 from .citations import CitationsContentBlock
 from .event_loop import Metrics, Usage
 from .media import AudioContent, DocumentContent, ImageContent, VideoContent
+from .offload import OffloadedBlock
 from .tools import ToolResult, ToolUse
 
 
@@ -91,6 +92,26 @@ class SummaryBlock(TypedDict, total=False):
     text: str
 
 
+class InjectedBlock(TypedDict):
+    """Text the app adds to a user turn, such as a reminder, kept apart from the user's own words.
+
+    Readers of ``agent.messages`` can skip it (``"injected" in block``). ``ContextInjector`` writes its text as injected
+    blocks. It belongs in a user message, after the existing content; in any other message it is left out.
+
+    When the model takes temporary messages (``model_info.capabilities.temporary_messages``), the provider sends it as
+    a system message the model reads only until the next user message, which the model ranks above the user. Every
+    other model receives only the latest user message's injected text, as plain text. Keep content from outside the
+    conversation, such as tool output or retrieved documents, out of it.
+
+    Attributes:
+        text: Text the app adds to the user turn.
+        source: Name of the component that added the text, such as a ``ContextInjector``'s name.
+    """
+
+    text: str
+    source: str
+
+
 class ContentBlock(TypedDict, total=False):
     """A block of content for a message that you pass to, or receive from, a model.
 
@@ -100,6 +121,8 @@ class ContentBlock(TypedDict, total=False):
         document: A document to include in the message.
         guardContent: Contains the content to assess with the guardrail.
         image: Image to include in the message.
+        injected: Text the app adds to a user turn, kept apart from the user's own words.
+        offloaded: Where a placeholder's text came from, when a context manager's strategy offloaded the content.
         reasoningContent: Contains content regarding the reasoning that is carried out by the model.
         summary: A summary of earlier conversation history.
         text: Text to include in the message.
@@ -114,6 +137,8 @@ class ContentBlock(TypedDict, total=False):
     document: DocumentContent
     guardContent: GuardContent
     image: ImageContent
+    injected: InjectedBlock
+    offloaded: OffloadedBlock
     reasoningContent: ReasoningContentBlock
     summary: SummaryBlock
     text: str

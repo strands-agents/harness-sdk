@@ -298,6 +298,30 @@ async def test_stream_structured_output(tool, mock_agent, tool_use):
     assert result_events[0]["tool_result"]["content"][0]["json"] == {"answer": "42"}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["content_filtered", "refusal"])
+async def test_stream_reports_a_child_that_produced_no_answer_as_an_error(fake_agent, stop_reason):
+    fake_agent.stream_async = lambda prompt, **kw: _mock_stream_async(
+        AgentResult(
+            stop_reason=stop_reason,
+            message={"role": "assistant", "content": [{"text": "partial"}]},
+            metrics=EventLoopMetrics(),
+            state={},
+        )
+    )
+    tool = _AgentAsTool(fake_agent, name="fake_agent", description="desc")
+    tool_use = {"toolUseId": "tool-123", "name": "fake_agent", "input": {"input": "hello"}}
+
+    events = [event async for event in tool.stream(tool_use, {})]
+
+    message = f"Agent 'fake_agent' stopped before finishing (stop_reason={stop_reason}).\n\nPartial output:\npartial"
+    assert events[-1]["tool_result"] == {
+        "toolUseId": "tool-123",
+        "status": "error",
+        "content": [{"text": message}],
+    }
+
+
 # --- preserve_context ---
 
 

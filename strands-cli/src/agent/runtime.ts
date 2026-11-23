@@ -1,6 +1,8 @@
 import { createHarness, type HarnessAgentConfig, type HarnessAgentOptions } from '@strands-agents/harness'
 import { resolveInterventions } from '@strands-agents/harness/internal'
 import { Agent, type Message, type Tool } from '@strands-agents/sdk'
+// The CLI resolves the SDK from npm, so this stays on the deprecated re-export until a release
+// carrying the './context-manager' subpath ships.
 import { Offload } from '@strands-agents/sdk/experimental'
 import { ContextInjector } from '@strands-agents/sdk/vended-plugins'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'

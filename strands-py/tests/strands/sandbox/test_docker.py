@@ -5,6 +5,7 @@ assert the ``docker exec`` argv the sandbox builds; the process pump
 (``_stream_process``) is mocked, so no Docker daemon is required.
 """
 
+import threading
 import unittest.mock
 
 import pytest
@@ -85,11 +86,13 @@ async def test_passes_env_as_e_flags_before_container(mock_stream_process):
 
 
 @pytest.mark.asyncio
-async def test_forwards_timeout_and_enoent_message(mock_stream_process):
-    await DockerSandbox("my-container").execute("sleep 10", timeout=5)
+async def test_forwards_timeout_cancel_signal_and_enoent_message(mock_stream_process):
+    cancel_signal = threading.Event()
+    await DockerSandbox("my-container").execute("sleep 10", timeout=5, cancel_signal=cancel_signal)
     assert mock_stream_process.call_args.kwargs == {
         "timeout": 5,
         "enoent_message": "docker is not installed or not on PATH",
+        "cancel_signal": cancel_signal,
     }
 
 

@@ -149,6 +149,7 @@ export const catalogEntrySchema = z
     // import from components without tangling content config into the UI).
     integrationType: z.enum([
       'model-provider',
+      'decision-model',
       'tool',
       'session-manager',
       'memory-store',
@@ -278,8 +279,15 @@ export type LearnEvent = z.infer<typeof eventSchema>
 export const announcementSchema = z
   .object({
     title: z.string(),
-    href: z.string(),
+    // Required unless `links` is set.
+    href: z.string().optional(),
     linkText: z.string().default('Learn more'),
+    // Several links side by side (e.g. two launches on one day). Shown instead of title and
+    // linkText; title becomes the accessible label for the group.
+    links: z
+      .array(z.object({ title: z.string(), href: z.string() }))
+      .min(2)
+      .optional(),
     // Shown for ANNOUNCEMENT_DAYS from this date; bump it when the content is updated.
     date: eventDate,
     // Last day shown, overriding the ANNOUNCEMENT_DAYS window.
@@ -288,6 +296,10 @@ export const announcementSchema = z
   .refine((a) => a.expires === undefined || a.expires >= a.date, {
     message: 'expires must not be before date',
     path: ['expires'],
+  })
+  .refine((a) => a.href !== undefined || a.links !== undefined, {
+    message: 'href is required unless links is set',
+    path: ['href'],
   })
 export type Announcement = z.infer<typeof announcementSchema>
 
@@ -433,6 +445,7 @@ export const collections = {
         integrationType: z
           .enum([
             'model-provider',
+            'decision-model',
             'tool',
             'session-manager',
             'memory-store',

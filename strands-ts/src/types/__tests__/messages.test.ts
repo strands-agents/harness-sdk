@@ -11,18 +11,22 @@ import {
   InjectedBlock,
   SummaryBlock,
   type SummaryBlockData,
+  ToolReferenceBlock,
   UnknownBlock,
   contentBlockFromData,
+  toolResultContentFromData,
   contentBlockFromSavedData,
   generateTrackingId,
   type MessageData,
   type SystemPromptData,
   systemPromptFromData,
   systemPromptToData,
+  OffloadedBlock,
 } from '../messages.js'
 import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, encodeBase64 } from '../media.js'
 import { CitationsBlock } from '../citations.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
+import { isOffloaded } from '../../context-manager/placeholder.js'
 import { logger } from '../../logging/logger.js'
 
 describe('Message', () => {
@@ -187,6 +191,116 @@ describe('TextBlock', () => {
   })
 })
 
+describe('OffloadedBlock', () => {
+  test('is a text block that carries what it stands in for and serializes it beside the text', () => {
+    const block = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+
+    expect(block).toEqual({ type: 'textBlock', text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+    expect(block).toBeInstanceOf(TextBlock)
+    expect(block.toJSON()).toEqual({
+      text: '[Dropped] [ref: tu-1]',
+      offloaded: { method: 'drop', ref: 'tu-1' },
+    })
+    expect(contentBlockFromData(block.toJSON())).toStrictEqual(block)
+  })
+
+  test('omits a ref and token count it was not given', () => {
+    const block = new OffloadedBlock({ text: '[Dropped]', method: 'drop' })
+
+    expect(block).toEqual({ type: 'textBlock', text: '[Dropped]', method: 'drop' })
+    expect(block.toJSON()).toEqual({ text: '[Dropped]', offloaded: { method: 'drop' } })
+  })
+
+  test('a plain text block carries and serializes no offloaded field', () => {
+    const block = new TextBlock('hello')
+
+    expect(block).toEqual({ type: 'textBlock', text: 'hello' })
+    expect(block.toJSON()).toEqual({ text: 'hello' })
+    expect(isOffloaded(block)).toBe(false)
+    expect(contentBlockFromData(block.toJSON())).not.toBeInstanceOf(OffloadedBlock)
+  })
+
+  test('passes a live instance through unchanged, at top level and inside a tool result', () => {
+    const block = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1', tokens: 42 })
+
+    expect(contentBlockFromData(block)).toBe(block)
+    expect(toolResultContentFromData(block)).toBe(block)
+  })
+
+  test('round-trips through message data at top level and inside a tool result', () => {
+    const message = new Message({
+      role: 'user',
+      content: [
+        new OffloadedBlock({ text: '[Dropped] [ref: msg-1_0]', method: 'drop', ref: 'msg-1_0' }),
+        new ToolResultBlock({
+          toolUseId: 'tu-1',
+          status: 'success',
+          content: [new OffloadedBlock({ text: 'row-1 [ref: tu-1]', method: 'truncate', ref: 'tu-1' })],
+        }),
+      ],
+      trackingId: 'msg-1',
+    })
+
+    const data = JSON.parse(JSON.stringify(message)) as MessageData
+
+    expect(data.content).toEqual([
+      { text: '[Dropped] [ref: msg-1_0]', offloaded: { method: 'drop', ref: 'msg-1_0' } },
+      {
+        toolResult: {
+          toolUseId: 'tu-1',
+          status: 'success',
+          content: [{ text: 'row-1 [ref: tu-1]', offloaded: { method: 'truncate', ref: 'tu-1' } }],
+        },
+      },
+    ])
+    expect(Message.fromMessageData(data)).toStrictEqual(message)
+  })
+})
+
+describe('copies with other content', () => {
+  test('Message.with replaces content, keeping role, tracking id, and metadata', () => {
+    const metadata = { custom: { pinned: true } }
+    const message = new Message({ role: 'user', content: [new TextBlock('a')], trackingId: 'm1', metadata })
+
+    const copy = message.with({ content: [new TextBlock('b')] })
+
+    expect(copy).toEqual(new Message({ role: 'user', content: [new TextBlock('b')], trackingId: 'm1', metadata }))
+    expect(message.content).toEqual([new TextBlock('a')])
+  })
+
+  test('Message.with replaces metadata, keeping role, content, and tracking id', () => {
+    const message = new Message({ role: 'user', content: [new TextBlock('a')], trackingId: 'm1' })
+
+    const copy = message.with({ metadata: { custom: { pinned: true } } })
+
+    expect(copy).toEqual(
+      new Message({
+        role: 'user',
+        content: [new TextBlock('a')],
+        trackingId: 'm1',
+        metadata: { custom: { pinned: true } },
+      })
+    )
+    expect(message.metadata).toBeUndefined()
+  })
+
+  test('Message.with keeps a field set to undefined', () => {
+    const metadata = { custom: { pinned: true } }
+    const message = new Message({ role: 'user', content: [new TextBlock('a')], trackingId: 'm1', metadata })
+
+    expect(message.with({ content: undefined, metadata: undefined } as never)).toEqual(message)
+  })
+
+  test('ToolResultBlock.with replaces content, keeping tool use id, status, and error', () => {
+    const error = new Error('boom')
+    const block = new ToolResultBlock({ toolUseId: 't', status: 'error', content: [new TextBlock('a')], error })
+
+    expect(block.with({ content: [new TextBlock('b')] })).toEqual(
+      new ToolResultBlock({ toolUseId: 't', status: 'error', content: [new TextBlock('b')], error })
+    )
+  })
+})
+
 describe('ToolUseBlock', () => {
   test('creates tool use block', () => {
     const block = new ToolUseBlock({
@@ -320,6 +434,38 @@ describe('InjectedBlock', () => {
       type: 'injectedBlock',
       injected: { text: 'reminder', source: 'test' },
     })
+  })
+})
+
+describe('ToolReferenceBlock', () => {
+  test('roundtrips inside a tool result through toJSON and Message.fromJSON', () => {
+    const message = new Message({
+      role: 'user',
+      content: [
+        new ToolResultBlock({
+          toolUseId: 'tool-1',
+          status: 'success',
+          content: [new ToolReferenceBlock({ name: 'shell' })],
+        }),
+      ],
+    })
+
+    const restored = Message.fromJSON(JSON.parse(JSON.stringify(message)))
+
+    expect(message.toJSON().content[0]).toEqual({
+      toolResult: {
+        toolUseId: 'tool-1',
+        status: 'success',
+        content: [{ toolReference: { name: 'shell' } }],
+      },
+    })
+    expect(restored).toEqual(message)
+  })
+
+  test('is converted by toolResultContentFromData', () => {
+    expect(toolResultContentFromData({ toolReference: { name: 'shell' } })).toEqual(
+      new ToolReferenceBlock({ name: 'shell' })
+    )
   })
 })
 
@@ -630,7 +776,7 @@ describe('restoring saved data with an unknown content block type', () => {
       toolResult: {
         toolUseId: 'tool-1',
         status: 'success',
-        content: [{ text: 'loaded' }, { toolReference: { name: 'shell' } }],
+        content: [{ text: 'loaded' }, { futureBlock: { name: 'shell' } }],
       },
     }
 
@@ -640,23 +786,23 @@ describe('restoring saved data with an unknown content block type', () => {
       new ToolResultBlock({
         toolUseId: 'tool-1',
         status: 'success',
-        content: [new TextBlock('loaded'), new UnknownBlock({ toolReference: { name: 'shell' } })],
+        content: [new TextBlock('loaded'), new UnknownBlock({ futureBlock: { name: 'shell' } })],
       })
     )
     expect(block.toJSON()).toStrictEqual(saved)
   })
 
   it('contentBlockFromData still throws on unknown content inside a tool result', () => {
-    const data = { toolResult: { toolUseId: 'tool-1', status: 'success', content: [{ toolReference: {} }] } }
+    const data = { toolResult: { toolUseId: 'tool-1', status: 'success', content: [{ futureBlock: {} }] } }
 
     expect(() => contentBlockFromData(data as never)).toThrow('Unknown ToolResultContentData type')
   })
 
   it('ToolResultBlock.fromJSON keeps unknown content', () => {
     using _warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const data = { toolResult: { toolUseId: 'tool-1', status: 'success', content: [{ toolReference: {} }] } }
+    const data = { toolResult: { toolUseId: 'tool-1', status: 'success', content: [{ futureBlock: {} }] } }
 
-    expect(ToolResultBlock.fromJSON(data as never).content).toEqual([new UnknownBlock({ toolReference: {} })])
+    expect(ToolResultBlock.fromJSON(data as never).content).toEqual([new UnknownBlock({ futureBlock: {} })])
   })
 
   it('contentBlockFromSavedData converts known types as usual, without a warning', () => {

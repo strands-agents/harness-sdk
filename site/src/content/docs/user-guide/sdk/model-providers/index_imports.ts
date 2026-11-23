@@ -10,3 +10,7 @@ import { OpenAIModel } from '@strands-agents/sdk/models/openai'
 import { Agent } from '@strands-agents/sdk'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
 // --8<-- [end:aux_model_imports]
+
+// --8<-- [start:model_info_imports]
+import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
+// --8<-- [end:model_info_imports]

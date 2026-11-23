@@ -2,14 +2,17 @@ import json
 import logging
 import re
 import textwrap
+from importlib.metadata import version
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import boto3
 import pytest
+from packaging.version import Version
 from strands import Agent, BackgroundTasksConfig, tool
 from strands.agent.conversation_manager import NullConversationManager
 from strands.experimental.context_manager import ContextManager
-from strands.hooks import BeforeModelCallEvent
+from strands.hooks import BeforeModelCallEvent, BeforeToolCallEvent, HookProvider, HookRegistry
 from strands.memory import MemoryManager
 from strands.models import BedrockModel, CacheConfig, Model, ModelRouter
 from strands.sandbox.docker import DockerSandbox
@@ -200,7 +203,14 @@ def test_subagent_offers_the_generalist_preset():
     agent = create_harness()
     schema = agent.tool_registry.registry["subagent"].tool_spec["inputSchema"]["json"]
     assert schema["properties"]["agent_type"]["enum"] == ["generalist"]
-    assert "generalist" in agent.tool_registry.registry["subagent"].tool_spec["description"]
+    assert "Do not poll for progress" in agent.tool_registry.registry["subagent"].tool_spec["description"]
+
+
+def test_subagent_max_depth_zero_leaves_the_tool_out():
+    # Normalized to False, like TS, so children inherit the same mapping.
+    assert _normalize_builtin_tools({"subagent": {"max_depth": 0}})["subagent"] is False
+    agent = create_harness(builtin_tools={"subagent": {"max_depth": 0}})
+    assert "subagent" not in agent.tool_names
 
 
 def test_subagent_selectable_set_keeps_subagent_and_drops_web_search():
@@ -232,7 +242,7 @@ async def test_subagent_refuses_once_the_parents_depth_budget_is_exhausted():
 
     agent = create_harness()
     tool = agent.tool_registry.registry["subagent"]
-    exhausted_parent = SimpleNamespace(state=AgentState({"subagent_depth": 0}), messages=[])
+    exhausted_parent = SimpleNamespace(state=AgentState({"strands.subagent_depth": 0}), messages=[])
     tool_use = {"toolUseId": "t1", "name": "subagent", "input": {"task": "do it"}}
     events = [e async for e in tool.stream(tool_use, {"agent": exhausted_parent})]
     result = events[-1].tool_result
@@ -395,7 +405,7 @@ class TestBuiltinToolsUnion:
             ("programmatic_tool_caller", {"allowed_tools": [], "timeout": None}),
             ("programmatic_tool_caller", {"timeout": 2.5}),
             ("programmatic_tool_caller", {"timeout": 1}),
-            ("subagent", {"max_depth": 0}),
+            ("subagent", {"max_depth": 1}),
         ],
     )
     def test_well_formed_tool_config_values_pass_through(self, name, config):
@@ -504,7 +514,7 @@ def test_root_exports_match_the_spec_table():
     for name in expected:
         assert getattr(strands_harness, name) is not None
     assert strands_harness.supports_web_search("openai/gpt-5.6-sol") is True
-    assert strands_harness.supports_web_search(BedrockModel(model_id="x")) is False
+    assert strands_harness.supports_web_search(BedrockModel(model_id="x")) is True
 
 
 def test_web_search_is_not_a_tool():
@@ -517,11 +527,76 @@ def test_web_search_enabled_on_supported_provider_from_default():
     assert agent.model.config["params"]["tools"] == [{"type": "web_search"}]
 
 
-def test_web_search_default_on_bedrock_logs_info_not_warning_and_builds(caplog):
+@pytest.fixture
+def agentcore_factory_calls(monkeypatch):
+    """The keyword arguments ``create_harness`` builds each AgentCore ``web_search`` tool with."""
+    calls = []
+    real = agent_module.make_agentcore_web_search
+    monkeypatch.setattr(agent_module, "make_agentcore_web_search", lambda **kw: calls.append(kw) or real(**kw))
+    return calls
+
+
+def test_web_search_on_bedrock_is_the_agentcore_tool(agentcore_factory_calls):
+    # The default Claude model runs on Anthropic's Bedrock client; other families run on BedrockModel.
+    assert "web_search" in create_harness().tool_names
+    explicit = create_harness(model="bedrock/us.amazon.nova-2-lite-v1:0", builtin_tools=["read", "web_search"])
+    assert "web_search" in explicit.tool_names
+    mantle = create_harness(model="bedrock-mantle/qwen.qwen3-32b-v1:0")
+    assert "web_search" in mantle.tool_names
+    assert "tools" not in mantle.model.config.get("params", {})
+    assert agentcore_factory_calls == [{}, {}, {}]
+
+
+def test_web_search_on_bedrock_model_instances_takes_nothing_from_the_model(agentcore_factory_calls):
+    from anthropic import AsyncAnthropicBedrock
+    from strands.models.anthropic import AnthropicModel
+
+    # Search resolves its own region and credentials, so a model's region or session is not copied.
+    session = boto3.Session(region_name="ap-south-1")
+    anthropic_model = AnthropicModel(client=AsyncAnthropicBedrock(aws_region="eu-west-1"), model_id="c", max_tokens=10)
+    models = [
+        BedrockModel(model_id="x", region_name="eu-west-1"),
+        BedrockModel(model_id="x", boto_session=session),
+        anthropic_model,
+        ModelRouter([BedrockModel(model_id="fast", region_name="eu-west-1"), BedrockModel(model_id="deep")]),
+    ]
+    for model in models:
+        assert "web_search" in create_harness(model=model).tool_names
+    assert agentcore_factory_calls == [{}] * len(models)
+
+
+def test_web_search_on_a_mixed_router_is_off_and_names_the_router(caplog):
     import logging
 
     with caplog.at_level(logging.INFO, logger="strands_harness.agent"):
-        agent = create_harness()
+        mixed = create_harness(model=ModelRouter([BedrockModel(model_id="fast"), _RetrievingModel()]))
+    assert "web_search" not in mixed.tool_names
+    assert any("A pre-built ModelRouter has no built-in web search" in r.getMessage() for r in caplog.records)
+
+
+def test_web_search_on_bedrock_collides_with_a_passed_web_search_tool_like_any_built_in():
+    @tool(name="web_search")
+    def my_search(query: str) -> str:
+        """Search."""
+        return query
+
+    with pytest.raises(ValueError, match=r"Tool name 'web_search' is registered more than once"):
+        create_harness(tools=[my_search])
+    agent = create_harness(tools=[my_search], builtin_tools={"web_search": False})
+    assert agent.tool_registry.registry["web_search"] is my_search
+    # Delegates follow the parent: the caller's tool when inherited, none when narrowed away.
+    from strands_harness.tools import AgentSpec
+
+    builder = agent.tool_registry.registry["subagent"]._builder
+    assert builder(AgentSpec(name="subagent")).tool_registry.registry["web_search"] is my_search
+    assert "web_search" not in builder(AgentSpec(name="subagent", tools=["read"])).tool_names
+
+
+def test_web_search_default_without_a_backend_logs_info_not_warning_and_builds(caplog):
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="strands_harness.agent"):
+        agent = create_harness(model="ollama/llama3")
     assert "web_search" not in agent.tool_names
     notes = [r for r in caplog.records if "has no built-in web search" in r.getMessage()]
     assert notes and all(r.levelno == logging.INFO for r in notes)
@@ -530,9 +605,9 @@ def test_web_search_default_on_bedrock_logs_info_not_warning_and_builds(caplog):
 
 def test_web_search_explicit_on_unsupported_provider_raises():
     with pytest.raises(ValueError, match="has no built-in web search"):
-        create_harness(builtin_tools=["read", "web_search"])
+        create_harness(model="ollama/llama3", builtin_tools=["read", "web_search"])
     with pytest.raises(ValueError, match="has no built-in web search"):
-        create_harness(builtin_tools={"web_search": True})
+        create_harness(model=_RetrievingModel(), builtin_tools={"web_search": True})
 
 
 def test_web_search_exa_fallback_builds_the_tool_and_warns_about_the_third_party(caplog):
@@ -571,9 +646,9 @@ def test_web_search_native_on_anthropic_and_mantle_gpt():
     agent = create_harness(model="bedrock-mantle/openai.gpt-5.6-luna")
     assert "web_search" not in agent.tool_names
     assert agent.model.config["params"]["tools"] == [{"type": "web_search", "external_web_access": True}]
-    # Other Mantle families have no native search: the default warns and drops it.
+    # Other Mantle families have no native search, so they get the AgentCore tool instead.
     agent = create_harness(model="bedrock-mantle/openai.gpt-oss-120b-1:0")
-    assert "web_search" not in agent.tool_names
+    assert "web_search" in agent.tool_names
     assert "tools" not in agent.model.config["params"]
 
 
@@ -668,12 +743,12 @@ def test_context_manager_config_builds_an_sdk_context_manager():
 
 def test_effort_auto_uses_recommended_level():
     agent = create_harness(effort="auto")
-    assert agent.model.config["additional_request_fields"]["output_config"]["effort"] == "high"
+    assert agent.model.config["params"]["output_config"]["effort"] == "medium"
 
 
 def test_effort_off_drops_reasoning():
     agent = create_harness(effort="off")
-    assert "additional_request_fields" not in agent.model.config
+    assert "params" not in agent.model.config
 
 
 def test_effort_level_is_validated_against_the_model():
@@ -854,8 +929,12 @@ def test_offloaded_tool_result_returned_in_full_on_retrieval(tmp_path):
 
     assert len(model.seen_tool_results) == 2
     assert model.seen_tool_results[0].startswith("[Truncated:")
-    # The Python SDK returns a full retrieval as the stashed block serialized to JSON.
-    assert json.loads(model.seen_tool_results[1]) == {"text": _LARGE_RESULT}
+    retrieved = model.seen_tool_results[1]
+    # strands-agents 1.65.0 and earlier return the stashed block serialized to JSON; since #6101 the SDK returns text.
+    # TODO: drop the JSON case once harness-py requires a strands-agents release that includes #6101.
+    if Version(version("strands-agents")) <= Version("1.65.0"):
+        retrieved = json.loads(retrieved)["text"]
+    assert retrieved == _LARGE_RESULT
     assert agent.context_manager.stash_is_durable is True
     agent_scope = Path("scopes", "agent", agent.agent_id)
     snapshot_path = tmp_path / "session" / "retrieval" / agent_scope / "snapshots" / "snapshot_latest.json"
@@ -1166,7 +1245,7 @@ def _build_subagent_child(**parent_kwargs):
     from strands_harness.tools.subagent import GENERALIST
 
     parent = create_harness(**parent_kwargs)
-    spec = AgentSpec(task="x", agent_type="generalist", instructions=GENERALIST.instructions)
+    spec = AgentSpec(name="subagent", agent_type="generalist", instructions=GENERALIST.instructions)
     return parent.tool_registry.registry["subagent"]._builder(spec)
 
 
@@ -1241,7 +1320,7 @@ def test_subagent_child_narrowed_to_a_consumer_tool_gets_only_that_tool():
 
     parent = create_harness(builtin_tools=["read", "shell", "subagent"], tools=[sample_tool])
     # Model narrows to one built-in and the consumer tool, dropping shell.
-    spec = AgentSpec(task="x", tools=["read", "sample_tool"])
+    spec = AgentSpec(name="subagent", tools=["read", "sample_tool"])
     child = parent.tool_registry.registry["subagent"]._builder(spec)
     assert "sample_tool" in child.tool_names
     assert "read" in child.tool_names
@@ -1254,7 +1333,7 @@ def test_subagent_child_inherits_explicit_web_search():
     # web_search is never in the tools enum; a narrowed selection populates spec.tools without it,
     # but the builder still carries it onto a delegate of a web_search parent.
     parent = create_harness(model="openai/gpt-5.6-sol", builtin_tools=["read", "web_search", "subagent"])
-    spec = AgentSpec(task="x", tools=["read"])
+    spec = AgentSpec(name="subagent", tools=["read"])
     child = parent.tool_registry.registry["subagent"]._builder(spec)
     assert child.model.config["params"]["tools"] == [{"type": "web_search"}]
 
@@ -1285,152 +1364,188 @@ def test_no_mcp_servers_is_a_noop(monkeypatch):
 _MCP_SERVER = str(Path(__file__).parent / "tools" / "echo_mcp_server.py")
 
 
-def test_subagent_delegate_inherits_parent_mcp_tools():
-    # A delegate shares the parent's connected MCP clients, so it keeps the parent's MCP tools; the
-    # mcp_servers axis is keyed by server name, and an omitted selection grants every server.
-    from strands_harness.tools import AgentSpec
-    from strands_harness.tools.subagent import GENERALIST
+def _generalist_spec(**kwargs):
+    from strands.vended_tools.subagent.types import GENERALIST
 
+    from strands_harness.tools import AgentSpec
+
+    return AgentSpec(name="subagent", agent_type="generalist", instructions=GENERALIST.instructions, **kwargs)
+
+
+def _stop_providers(agent):
+    for provider in agent.tool_registry._tool_providers:
+        provider.stop(None, None, None)
+
+
+def test_subagent_delegate_inherits_parent_mcp_tools():
+    # A delegate shares the parent's connected MCP clients, so it keeps the parent's MCP tools even when the
+    # model narrows its tools; servers are not a model-facing parameter.
     parent = create_harness(mcp_servers={"srv": {"command": "python", "args": [_MCP_SERVER]}})
     try:
         assert "srv_echo" in parent.tool_names
+        schema = parent.tool_registry.registry["subagent"].tool_spec["inputSchema"]["json"]["properties"]
+        assert "mcp_servers" not in schema
         builder = parent.tool_registry.registry["subagent"]._builder
-        inherit_all = AgentSpec(task="x", agent_type="generalist", instructions=GENERALIST.instructions)
-        assert "srv_echo" in builder(inherit_all).tool_names
-        # Narrowing to no servers drops the parent's MCP tools from the delegate.
-        none = AgentSpec(task="x", agent_type="generalist", instructions=GENERALIST.instructions, mcp_servers=[])
-        assert "srv_echo" not in builder(none).tool_names
-        # Selecting the server by name grants exactly its tools.
-        # A repeated name (the axis is an array-of-enum) must not forward a client twice.
-        one = AgentSpec(
-            task="x", agent_type="generalist", instructions=GENERALIST.instructions, mcp_servers=["srv", "srv"]
-        )
-        assert "srv_echo" in builder(one).tool_names
+        assert "srv_echo" in builder(_generalist_spec()).tool_names
+        assert {"read", "srv_echo"} <= set(builder(_generalist_spec(tools=["read"])).tool_names)
     finally:
-        for provider in parent.tool_registry._tool_providers:
-            provider.stop(None, None, None)
+        _stop_providers(parent)
 
 
-def test_subagent_exposes_mcp_servers_axis_from_parent():
-    # The parent's connected servers become the mcp_servers enum on the delegation tool's schema.
-    parent = create_harness(mcp_servers={"srv": {"command": "python", "args": [_MCP_SERVER]}})
-    try:
-        schema = parent.tool_registry.registry["subagent"].tool_spec["inputSchema"]["json"]["properties"]
-        assert schema["mcp_servers"]["items"]["enum"] == ["srv"]
-    finally:
-        for provider in parent.tool_registry._tool_providers:
-            provider.stop(None, None, None)
-
-
-def _generalist_spec(**kwargs):
-    from strands_harness.tools import AgentSpec
-    from strands_harness.tools.subagent import GENERALIST
-
-    return AgentSpec(task="x", agent_type="generalist", instructions=GENERALIST.instructions, **kwargs)
-
-
-def test_mcp_clients_passed_in_tools_join_the_subagent_axis():
-    # Connected clients handed in via `tools` (how the CLI passes servers) are offered to delegates too,
-    # each under its own client_name.
-    servers = {
-        "alpha": {"command": "python", "args": [_MCP_SERVER]},
-        "beta": {"command": "python", "args": [_MCP_SERVER]},
-    }
-    alpha, beta = agent_module.MCPClient.load_servers(servers, prefix_with_server_name=True)
-    parent = create_harness(tools=[alpha, beta])
-    try:
-        assert {"alpha_echo", "beta_echo"} <= set(parent.tool_names)
-        schema = parent.tool_registry.registry["subagent"].tool_spec["inputSchema"]["json"]["properties"]
-        assert schema["mcp_servers"]["items"]["enum"] == ["alpha", "beta"]
-        assert not {"alpha", "beta"} & set(schema["tools"]["items"]["enum"])  # servers never pose as tools
-        # Narrowing both axes at once: the tools split must not drop the selected servers.
-        spec = _generalist_spec(tools=["read"], mcp_servers=["beta"])
-        child = parent.tool_registry.registry["subagent"]._builder(spec)
-        assert {"read", "beta_echo"} <= set(child.tool_names)
-        assert "alpha_echo" not in child.tool_names
-    finally:
-        for provider in parent.tool_registry._tool_providers:
-            provider.stop(None, None, None)
-
-
-def test_mcp_clients_sharing_a_name_warn_and_first_wins(caplog):
-    # Two clients answering to the same client_name can't both sit behind one enum value: the first is
-    # offered, the second is dropped from delegation, and the collapse is warned about.
-    servers = {
-        "alpha": {"command": "python", "args": [_MCP_SERVER], "application_name": "shared"},
-        "beta": {"command": "python", "args": [_MCP_SERVER], "application_name": "shared"},
-    }
-    alpha, beta = agent_module.MCPClient.load_servers(servers, prefix_with_server_name=True)
-    with caplog.at_level(logging.WARNING, logger="strands_harness.tools.subagent"):
-        parent = create_harness(tools=[alpha, beta])
-    try:
-        assert any("share the name 'shared'" in r.message for r in caplog.records)
-        assert {"alpha_echo", "beta_echo"} <= set(parent.tool_names)  # the parent itself keeps both
-        schema = parent.tool_registry.registry["subagent"].tool_spec["inputSchema"]["json"]["properties"]
-        assert schema["mcp_servers"]["items"]["enum"] == ["shared"]
-        child = parent.tool_registry.registry["subagent"]._builder(_generalist_spec(mcp_servers=["shared"]))
-        assert "alpha_echo" in child.tool_names
-        assert "beta_echo" not in child.tool_names
-    finally:
-        for provider in parent.tool_registry._tool_providers:
-            provider.stop(None, None, None)
-
-
-def test_unnamed_mcp_client_warns_and_is_not_offered_to_subagents(caplog):
-    # A hand-built client without application_name has no name the model could pick, so it stays
-    # out of the mcp_servers axis (and out of delegates) with a warning telling the caller how to fix it.
+def test_mcp_clients_passed_in_tools_reach_delegates_named_or_not():
+    # Connected clients handed in via `tools` (how the CLI passes servers) go to every delegate, including
+    # a hand-built client without application_name; they never pose as selectable tools.
     from mcp import StdioServerParameters, stdio_client
 
+    (alpha,) = agent_module.MCPClient.load_servers(
+        {"alpha": {"command": "python", "args": [_MCP_SERVER]}}, prefix_with_server_name=True
+    )
     bare = agent_module.MCPClient(
         lambda: stdio_client(StdioServerParameters(command="python", args=[_MCP_SERVER])), prefix="bare"
     )
-    with caplog.at_level(logging.WARNING, logger="strands_harness.tools.subagent"):
-        parent = create_harness(tools=[bare])
+    parent = create_harness(tools=[alpha, bare])
     try:
-        assert any("has no application_name" in r.message for r in caplog.records)
-        assert "bare_echo" in parent.tool_names
         schema = parent.tool_registry.registry["subagent"].tool_spec["inputSchema"]["json"]["properties"]
-        assert "mcp_servers" not in schema  # no offerable server, so no axis at all
-        child = parent.tool_registry.registry["subagent"]._builder(_generalist_spec())
-        assert "bare_echo" not in child.tool_names
+        assert not {"alpha", "bare"} & set(schema["tools"]["items"]["enum"])
+        child = parent.tool_registry.registry["subagent"]._builder(_generalist_spec(tools=["read"]))
+        assert {"read", "alpha_echo", "bare_echo"} <= set(child.tool_names)
     finally:
-        for provider in parent.tool_registry._tool_providers:
-            provider.stop(None, None, None)
+        _stop_providers(parent)
 
 
 def test_subagent_grandchild_inherits_parent_mcp_tools():
     # A delegate of a delegate keeps the parent's MCP tools: the child forwards its shared clients on.
     parent = create_harness(mcp_servers={"srv": {"command": "python", "args": [_MCP_SERVER]}})
     try:
-        child = parent.tool_registry.registry["subagent"]._builder(_generalist_spec())
-        assert "srv_echo" in child.tool_names
+        child = parent.tool_registry.registry["subagent"]._builder(_generalist_spec(tools=["read", "subagent"]))
         grandchild = child.tool_registry.registry["subagent"]._builder(_generalist_spec())
         assert "srv_echo" in grandchild.tool_names
     finally:
-        for provider in parent.tool_registry._tool_providers:
-            provider.stop(None, None, None)
-
-
-def test_subagent_grandchild_narrowing_propagates():
-    # A child restricted to no MCP servers can't pass any to a grandchild; a granted server carries on.
-    parent = create_harness(mcp_servers={"srv": {"command": "python", "args": [_MCP_SERVER]}})
-    try:
-        starved = parent.tool_registry.registry["subagent"]._builder(_generalist_spec(mcp_servers=[]))
-        assert "srv_echo" not in starved.tool_names
-        starved_grandchild = starved.tool_registry.registry["subagent"]._builder(_generalist_spec())
-        assert "srv_echo" not in starved_grandchild.tool_names
-
-        granted = parent.tool_registry.registry["subagent"]._builder(_generalist_spec(mcp_servers=["srv"]))
-        granted_grandchild = granted.tool_registry.registry["subagent"]._builder(_generalist_spec())
-        assert "srv_echo" in granted_grandchild.tool_names
-    finally:
-        for provider in parent.tool_registry._tool_providers:
-            provider.stop(None, None, None)
+        _stop_providers(parent)
 
 
 def test_subagent_child_inherits_exa_fallback():
     from strands_harness.tools import AgentSpec
 
     parent = create_harness(builtin_tools={"web_search": "exa"})
-    child = parent.tool_registry.registry["subagent"]._builder(AgentSpec(task="x", tools=["read"]))
+    child = parent.tool_registry.registry["subagent"]._builder(AgentSpec(name="subagent", tools=["read"]))
     assert "web_search" in child.tool_names
+
+
+def test_exa_wins_over_agentcore_on_bedrock():
+    from strands_harness.tools import exa_web_search
+
+    agent = create_harness(builtin_tools={"web_search": "exa"})
+    assert agent.tool_registry.registry["web_search"] is exa_web_search
+
+
+def test_subagent_child_on_bedrock_gets_agentcore_web_search():
+    from strands_harness.tools import AgentSpec, exa_web_search
+
+    builder = create_harness().tool_registry.registry["subagent"]._builder
+    for child in (builder(AgentSpec(name="subagent", tools=["read"])), builder(AgentSpec(name="subagent"))):
+        assert "web_search" in child.tool_names
+        assert child.tool_registry.registry["web_search"] is not exa_web_search
+
+
+class _ScriptedModel(Model):
+    """Replays canned assistant turns in order; parent and delegate share it, so the script interleaves them."""
+
+    def __init__(self, turns: list[dict]) -> None:
+        self.turns = list(turns)
+        self._config = {"model_id": "scripted-model", "context_window_limit": 1_000_000}
+
+    def update_config(self, **model_config):
+        self._config.update(model_config)
+
+    def get_config(self):
+        return self._config
+
+    async def structured_output(self, output_model, prompt, system_prompt=None, **kwargs):
+        raise NotImplementedError
+        yield
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        turn = self.turns.pop(0)
+        yield {"messageStart": {"role": "assistant"}}
+        if "tool" in turn:
+            name, tool_use_id, tool_input = turn["tool"]
+            yield {"contentBlockStart": {"start": {"toolUse": {"name": name, "toolUseId": tool_use_id}}}}
+            yield {"contentBlockDelta": {"delta": {"toolUse": {"input": json.dumps(tool_input)}}}}
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "tool_use"}}
+            return
+        yield {"contentBlockStart": {"start": {}}}
+        yield {"contentBlockDelta": {"delta": {"text": turn["text"]}}}
+        yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": turn.get("stop", "end_turn")}}
+
+
+class _ConfirmDangerousAction(HookProvider):
+    def register_hooks(self, registry: HookRegistry, **kwargs) -> None:
+        registry.add_callback(BeforeToolCallEvent, self._confirm)
+
+    def _confirm(self, event: BeforeToolCallEvent) -> None:
+        if event.tool_use["name"] == "dangerous_action" and event.interrupt("confirm", reason="ok?") != "APPROVE":
+            event.cancel_tool = "not approved"
+
+
+def _delegating_harness(child_turns: list[dict]) -> tuple[Agent, list[str]]:
+    executions: list[str] = []
+
+    @tool
+    def dangerous_action(target: str) -> str:
+        """Perform an action that requires confirmation."""
+        executions.append(target)
+        return f"done: {target}"
+
+    model = _ScriptedModel(
+        [{"tool": ("subagent", "t1", {"task": "do it", "tools": ["dangerous_action"]})}]
+        + child_turns
+        + [{"text": "parent done"}]
+    )
+    parent = create_harness(
+        model=model,
+        tools=[dangerous_action],
+        hooks=[_ConfirmDangerousAction()],
+        background_tasks=False,
+        session=False,
+        memory=False,
+    )
+    return parent, executions
+
+
+def _subagent_result(status: str, text: str) -> list[dict]:
+    return [{"toolResult": {"toolUseId": "t1", "status": status, "content": [{"text": text}]}}]
+
+
+def test_subagent_delegates_end_to_end_through_create_harness():
+    parent, _ = _delegating_harness([{"text": "child done"}])
+    result = parent("go")
+    assert str(result).strip() == "parent done"
+    assert parent.messages[-2]["content"] == _subagent_result("success", "child done\n")
+
+
+def test_subagent_child_interrupt_surfaces_on_the_parent_and_resumes():
+    parent, executions = _delegating_harness(
+        [{"tool": ("dangerous_action", "c1", {"target": "prod"})}, {"text": "child done"}]
+    )
+    result = parent("go")
+    assert result.stop_reason == "interrupt"
+    (interrupt,) = result.interrupts
+    assert interrupt.id.startswith("v1:subagent:t1:")
+    assert executions == []
+
+    result = parent([{"interruptResponse": {"interruptId": interrupt.id, "response": "APPROVE"}}])
+    assert str(result).strip() == "parent done"
+    assert executions == ["prod"]
+    assert parent.messages[-2]["content"] == _subagent_result("success", "child done\n")
+
+
+def test_subagent_content_filtered_child_is_a_tool_error():
+    # Pins the strands-agents>=1.65.0 floor: older SDKs report a filtered child as success.
+    parent, _ = _delegating_harness([{"text": "partial", "stop": "content_filtered"}])
+    parent("go")
+    assert parent.messages[-2]["content"] == _subagent_result(
+        "error", "Subagent stopped before finishing (stop_reason=content_filtered).\n\nPartial output:\npartial"
+    )

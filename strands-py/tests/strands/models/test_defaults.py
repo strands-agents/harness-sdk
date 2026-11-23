@@ -78,6 +78,8 @@ class TestGetContextWindowLimit:
         assert get_context_window_limit("us.openai.gpt-5.5") == 1_050_000
         assert get_context_window_limit("global.openai.gpt-6.1-sol") == 1_000_000
         assert get_context_window_limit("us.openai.gpt-6.1-terra") == 1_050_000
+        assert get_context_window_limit("us.openai.gpt-6.2-astra") == 1_050_000
+        assert get_context_window_limit("global.openai.gpt-6.2-sol") == 1_050_000
         assert get_context_window_limit("in.openai.gpt-5.6-luna") == 1_050_000
 
     def test_known_bedrock_mistral(self):
@@ -109,6 +111,8 @@ class TestGetContextWindowLimit:
 
     def test_known_openai(self):
         assert get_context_window_limit("chat-latest") == 272_000
+        assert get_context_window_limit("gpt-6.2-astra") == 1_050_000
+        assert get_context_window_limit("gpt-6.2-sol") == 1_050_000
         assert get_context_window_limit("gpt-6-astra") == 1_050_000
         assert get_context_window_limit("gpt-6.1-sol") == 1_050_000
         assert get_context_window_limit("gpt-6.1-terra") == 1_050_000
@@ -123,6 +127,8 @@ class TestGetContextWindowLimit:
         assert get_context_window_limit("gpt-oss-20b") == 131_072
 
     def test_known_gemini(self):
+        assert get_context_window_limit("gemini-4-neon") == 1_048_576
+        assert get_context_window_limit("gemini-4-hydrogen") == 1_048_576
         assert get_context_window_limit("gemini-4-argon") == 1_048_576
         assert get_context_window_limit("gemini-3.8-flash") == 1_048_576
         assert get_context_window_limit("gemini-3.7-flash") == 1_048_576

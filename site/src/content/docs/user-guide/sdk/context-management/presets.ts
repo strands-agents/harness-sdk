@@ -1,5 +1,5 @@
 import { Agent } from '@strands-agents/sdk'
-import { Offload } from '@strands-agents/sdk/experimental'
+import { Offload } from '@strands-agents/sdk/context-manager'
 
 async function usingPresets() {
   // --8<-- [start:using_presets]
@@ -18,7 +18,7 @@ async function mixing() {
       strategies: [
         'largeToolOffloading',
         Offload.summarize('*').when({
-          utilization: 0.9,
+          contextUtilization: '90%',
           preserveRecent: 2,
         }),
       ],

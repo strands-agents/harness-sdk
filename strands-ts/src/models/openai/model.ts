@@ -12,7 +12,8 @@ import OpenAI, { APIUserAbortError } from 'openai'
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses'
 import { Model, resolveConfigMetadata } from '../model.js'
 import type { StreamOptions } from '../model.js'
-import { mergeModelInfo, type ModelInfo } from '../model-info.js'
+import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from '../model-info.js'
+import type { ChatCompletionsTools } from '../model-info.js'
 import type { Message } from '../../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../streaming.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
@@ -21,7 +22,13 @@ import { warnOnce } from '../../logging/warn-once.js'
 import { MODEL_DEFAULTS, defaultModelWarningMessage } from '../defaults.js'
 import { bedrockMantleBaseUrl, createMantleApiKeySetter, resolveMantleRegion } from './mantle.js'
 import { classifyOpenAIError } from './errors.js'
-import { formatChatRequest, mapChatChunkToEvents, warnManagedParams as warnChatManagedParams } from './chat-adapter.js'
+import {
+  applyChatCompletionsTools,
+  formatChatRequest,
+  mapChatChunkToEvents,
+  warnManagedParams as warnChatManagedParams,
+  withResponsesHint,
+} from './chat-adapter.js'
 import {
   createResponsesStreamState,
   finalizeResponsesStream,
@@ -150,11 +157,16 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   /**
    * Adds whether this model manages conversation state server-side: `true` only for
    * `api: 'responses'` with `stateful === true`. Chat Completions is always stateless, and
-   * Responses defaults to stateless.
+   * Responses defaults to stateless. Turns `serverSideSummary` off.
    */
   override get modelInfo(): ModelInfo {
     const stateful = this._api === 'responses' && this._config.stateful === true
-    return mergeModelInfo(super.modelInfo, { capabilities: { stateful } }, this._config.modelInfo)
+    return ModelInfo.merge(
+      super.modelInfo,
+      SERVER_SIDE_SUMMARY_OFF,
+      { capabilities: { stateful } },
+      this._config.modelInfo
+    )
   }
 
   /**
@@ -230,8 +242,10 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   }
 
   private async *_streamChat(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
+    let toolLimit: ChatCompletionsTools | undefined
     try {
       const request = formatChatRequest(this._config as OpenAIChatConfig, messages, options)
+      toolLimit = applyChatCompletionsTools(request, this._client.baseURL)
       const stream = await this._client.chat.completions.create(request, { signal: options?.cancelSignal })
 
       const streamState: ChatStreamState = {
@@ -293,7 +307,7 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
         yield bufferedUsage
       }
     } catch (error) {
-      throw this._rewrapError(error)
+      throw withResponsesHint(this._rewrapError(error), toolLimit, this.modelId)
     }
   }
 

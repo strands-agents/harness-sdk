@@ -1,4 +1,5 @@
 import type { Sandbox } from '../sandbox/base.js'
+import type { AgentMetadata } from '../agent/agent-metadata.js'
 import type { Storage } from '../storage/storage.js'
 import type { ContextManager } from '../context-manager/context-manager.js'
 import type { StateStore } from '../state-store.js'
@@ -274,6 +275,17 @@ export interface CancelOptions {
    * returns its natural `stopReason`.
    */
   afterCurrentTools?: boolean
+
+  /**
+   * Also cancel every queued, working, or input-required background task of
+   * this agent immediately, even with `afterCurrentTools` and whether or not an
+   * invocation is running. Background tasks keep running by default, and a
+   * `cancelSignal` passed into an invocation never cancels them. Their cancelled
+   * results are delivered like a cancel requested by the model. If the invocation
+   * was only waiting for its background tasks, it resolves with its natural
+   * `stopReason` and the results are delivered on the next invocation.
+   */
+  cancelBackgroundTasks?: boolean
 }
 
 /**
@@ -363,6 +375,13 @@ export interface LocalAgent {
 
   /** Model used for auxiliary side calls; defaults to `model`. See {@link Agent.auxModel}. */
   readonly auxModel: Model
+
+  /**
+   * Metadata the agent passes to its model on `stream()`.
+   *
+   * @internal
+   */
+  readonly agentMetadata?: AgentMetadata | undefined
 
   /**
    * The system prompt to pass to the model provider.

@@ -49,7 +49,6 @@ export {
   StructuredOutputError,
   ToolNotFoundError,
   DefaultNotConfiguredError,
-  NotImplementedError,
   StorageError,
 } from './errors.js'
 
@@ -69,6 +68,7 @@ export type {
   Role,
   StopReason,
   TextBlockData,
+  OffloadedBlockData,
   ToolUseBlockData,
   ToolResultBlockData,
   ReasoningBlockData,
@@ -81,6 +81,7 @@ export type {
   GuardImageFormat,
   GuardImageSource,
   InjectedBlockData,
+  ToolReferenceBlockData,
   ContentBlock,
   ContentBlockData,
   MessageData,
@@ -93,6 +94,7 @@ export type {
 // Message classes
 export {
   TextBlock,
+  OffloadedBlock,
   ToolUseBlock,
   ToolResultBlock,
   ReasoningBlock,
@@ -100,6 +102,7 @@ export {
   GuardContentBlock,
   InjectedBlock,
   SummaryBlock,
+  ToolReferenceBlock,
   UnknownBlock,
   Message,
   JsonBlock,
@@ -212,7 +215,9 @@ export type {
   SummarizeOptions,
   CacheConfig,
 } from './models/model.js'
-export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
+export type { SummarizeResult } from './models/summarize.js'
+export type { ModelCapabilities, ModelLimits, PromptCaching, DeferredToolLoading } from './models/model-info.js'
+export { ModelInfo } from './models/model-info.js'
 
 export { Model } from './models/model.js'
 
@@ -321,18 +326,10 @@ export {
   type RetryDecision,
 } from './retry/index.js'
 
-// Context Manager (experimental)
-export type { ContextManagerStrategy } from './context-manager/context-manager.js'
-export type { ContextManagerConfig, ContextStrategy, ContextState, StashConfig } from './context-manager/types.js'
-export { Offload } from './context-manager/strategies/offload/index.js'
-export type {
-  OffloadTarget,
-  OffloadConditions,
-  OffloadStrategyBuilder,
-} from './context-manager/strategies/offload/index.js'
-export type { TruncateConfig } from './context-manager/methods/truncate.js'
-export type { SummarizeConfig } from './context-manager/methods/summarize.js'
-export type { StrategyPresetName } from './context-manager/presets.js'
+// Context Manager
+// Note: the context manager is intentionally not exported here — its surface lives at
+// '@strands-agents/sdk/context-manager'. Python keeps it in a submodule too, currently
+// `strands.experimental.context_manager`.
 
 // Conversation Manager
 export {

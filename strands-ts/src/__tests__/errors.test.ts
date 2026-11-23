@@ -44,6 +44,16 @@ describe('ModelError', () => {
 })
 
 describe('ContextWindowOverflowError', () => {
+  describe('when instantiated with a cause', () => {
+    it('preserves the original failure', () => {
+      const cause = new Error('provider context limit')
+      const error = new ContextWindowOverflowError('context overflow', { cause })
+
+      expect(error.cause).toBe(cause)
+      expect(error).toBeInstanceOf(ModelError)
+    })
+  })
+
   describe('when instantiated with a message', () => {
     it('creates an error with the correct message', () => {
       const message = 'Context window overflow occurred'

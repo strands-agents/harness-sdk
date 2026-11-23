@@ -17,8 +17,9 @@ Concrete sandboxes:
 
 - :class:`DockerSandbox` — run commands in a Docker container via ``docker exec``.
 - :class:`SshSandbox` — run commands on a remote host via OpenSSH.
-The sandbox error types (:class:`SandboxTimeoutError`, :class:`SandboxPathNotFoundError`)
-are re-exported from the top-level ``strands`` package, as in the TS oracle.
+The sandbox error types (:class:`SandboxTimeoutError`, :class:`SandboxAbortError`,
+:class:`SandboxPathNotFoundError`) are re-exported from the top-level ``strands``
+package, as in the TS oracle.
 
 Example:
     A minimal shell-backed sandbox needs only ``execute_streaming``::

@@ -62,7 +62,12 @@ class SessionManager(HookProvider, ABC, Generic[_SessionAgentT]):
 
     @abstractmethod
     def redact_latest_message(self, redact_message: Message, agent: _SessionAgentT, **kwargs: Any) -> None:
-        """Redact the message most recently appended to the agent in the session.
+        """Redact the agent's last user message in the session.
+
+        The message is not necessarily the one most recently appended to the session, so implementations
+        should locate the stored record by ``redact_message``'s identity or ``tracking_id``. When no stored
+        record matches, they should not overwrite a record with a different role: ``RepositorySessionManager``
+        falls back to the newest record only if its role matches, and otherwise stores nothing.
 
         Args:
             redact_message: New message to use that contains the redact content
