@@ -199,10 +199,23 @@ def test_format_request_keeps_cache_key_allowed_in_client_args(litellm_supported
 
 
 @pytest.mark.parametrize("model_id", ["openai/gpt-4o", "azure/gpt-4o", "litellm_proxy/claude"])
-def test_format_request_keeps_cache_key_for_openai_family(model_id, messages):
+def test_format_request_keeps_cache_key_for_openai_family(litellm_supported_params, model_id, messages):
+    litellm_supported_params.return_value = ["prompt_cache_key"]
     model = LiteLLMModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
 
     assert model.format_request(messages)["prompt_cache_key"] == "tenant-42"
+
+
+@pytest.mark.parametrize("model_id", ["openai/gpt-4o", "azure/gpt-4o", "litellm_proxy/claude"])
+def test_format_request_drops_cache_key_for_openai_family_litellm_does_not_list(
+    litellm_supported_params, model_id, messages
+):
+    model = LiteLLMModel(model_id=model_id, cache_config=CacheConfig(cache_key="tenant-42"))
+
+    with pytest.warns(UserWarning, match="cache_key has no effect"):
+        request = model.format_request(messages)
+
+    assert "prompt_cache_key" not in request
 
 
 @pytest.mark.skipif(
@@ -1341,8 +1354,12 @@ def test_format_request_messages_keeps_tool_messages_together_around_a_cache_poi
 @pytest.mark.parametrize(
     ("prompt_caching", "sends_key"), [("cache_points", False), (None, True)], ids=["declared_claude", "undeclared"]
 )
-def test_format_request_resolves_a_proxy_alias_session_key_from_model_info(prompt_caching, sends_key):
+def test_format_request_resolves_a_proxy_alias_session_key_from_model_info(
+    litellm_supported_params, prompt_caching, sends_key
+):
     from strands.models import ModelCapabilities, ModelInfo
+
+    litellm_supported_params.return_value = ["prompt_cache_key"]
 
     model = LiteLLMModel(
         model_id="litellm_proxy/claude-alias",
@@ -1752,7 +1769,10 @@ def test_format_request_drops_a_bedrock_message_point_with_only_documents_ahead_
 
 
 @pytest.mark.parametrize("model_id", ["openai/gpt-4o", "azure/gpt-4o"])
-def test_format_request_anthropic_strategy_keeps_the_openai_routing_key(model_id, captured_warnings):
+def test_format_request_anthropic_strategy_keeps_the_openai_routing_key(
+    litellm_supported_params, model_id, captured_warnings
+):
+    litellm_supported_params.return_value = ["prompt_cache_key"]
     model = LiteLLMModel(model_id=model_id, cache_config=CacheConfig(strategy="anthropic", cache_key="k"))
 
     request = model.format_request([{"role": "user", "content": [{"text": "hi"}]}])
@@ -1794,8 +1814,9 @@ def test_format_request_keeps_the_callers_message_ttl_without_cache_config():
     ids=["gateway_claude", "proxy_flag_claude", "azure_ai_claude", "proxy_flag_nova", "gateway_gpt", "unknown_alias"],
 )
 def test_format_request_anthropic_strategy_on_gateways_follows_the_named_model(
-    model_id, client_args, exp_points, exp_key
+    litellm_supported_params, model_id, client_args, exp_points, exp_key
 ):
+    litellm_supported_params.return_value = ["prompt_cache_key"]
     model = LiteLLMModel(
         model_id=model_id, client_args=client_args, cache_config=CacheConfig(strategy="anthropic", cache_key="k")
     )
