@@ -3,7 +3,7 @@ import { ModelProxy } from '../model-proxy.js'
 import type { StreamAggregatedResult, StreamOptions } from '../model.js'
 import type { DeferredToolLoading } from '../model-info.js'
 import type { ToolSpec } from '../../tools/types.js'
-import { type ModelStreamEvent } from '../streaming.js'
+import { createEmptyUsage, type ModelStreamEvent } from '../streaming.js'
 import { InvocationContextImpl } from '../../agent/invocation-context.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
@@ -48,8 +48,8 @@ describe('ModelProxy', () => {
       await drain(new ModelProxy(model).streamAggregated([userMessage('go')], undefined, invocationContext))
 
       expect(invocationContext.usage).toEqual({ turnsTaken: 0, inputTokens: 10, outputTokens: 5, totalTokens: 15 })
-      expect(invocationContext.usageByModel).toEqual([
-        { providerName: null, modelId: 'model-a', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+      expect(invocationContext.usageByModel).toStrictEqual([
+        { modelId: 'model-a', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
       ])
     })
 
@@ -81,14 +81,14 @@ describe('ModelProxy', () => {
       expect(invocationContext.usage).toEqual(new InvocationContextImpl().usage)
     })
 
-    it('records nothing when the model reports no usage', async () => {
+    it('records an empty usage under the model when the model reports no usage', async () => {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'hi' })
       const invocationContext = new InvocationContextImpl()
 
       await drain(new ModelProxy(model).streamAggregated([userMessage('go')], undefined, invocationContext))
 
       expect(invocationContext.usage).toEqual(new InvocationContextImpl().usage)
-      expect(invocationContext.usageByModel).toEqual([])
+      expect(invocationContext.usageByModel).toStrictEqual([{ modelId: 'test-model', usage: createEmptyUsage() }])
     })
 
     it('is a no-op when called without an invocation context', async () => {

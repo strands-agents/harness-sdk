@@ -7,7 +7,7 @@ import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { collectGenerator } from '../../../__fixtures__/model-test-helpers.js'
 import { logger } from '../../../logging/logger.js'
-import { InvokeModelStage } from '../../../middleware/index.js'
+import { InvokeModelStage, type InvokeModelResult } from '../../../middleware/index.js'
 import { BedrockModel } from '../../../models/bedrock.js'
 import { MultiAgentResult } from '../../../multiagent/state.js'
 import { tool } from '../../../tools/tool-factory.js'
@@ -57,28 +57,31 @@ function price(modelId: string, inputPerMillion: number, providerName?: string):
   return { modelId, inputPerMillion, outputPerMillion: 1.0, ...(providerName !== undefined && { providerName }) }
 }
 
+/** The estimate of one model; unpriced when `costUsd` and `modelPrice` are left out. */
 function modelEstimate(
-  providerName: string | null,
-  modelId: string | null,
+  providerName: string | undefined,
+  modelId: string | undefined,
   modelUsage: Usage,
-  costUsd: number | null,
-  modelPrice: ModelPrice | null
+  costUsd?: number,
+  modelPrice?: ModelPrice
 ): ModelCostEstimate {
   return {
-    providerName,
-    modelId,
+    ...(providerName !== undefined && { providerName }),
+    ...(modelId !== undefined && { modelId }),
     usage: modelUsage,
-    costUsd,
-    price: modelPrice,
-    priceSource: modelPrice === null ? null : 'user',
+    ...(costUsd !== undefined && { costUsd }),
+    ...(modelPrice !== undefined && { price: modelPrice, priceSource: 'user' }),
   }
 }
 
 /** A request with one recorded model call per `[usage, providerName, modelId]`. */
-function request(...calls: [Usage, string | null, string | null][]): InvocationContextImpl {
+function request(...calls: [Usage, string | undefined, string | undefined][]): InvocationContextImpl {
   const invocationContext = new InvocationContextImpl()
   for (const [callUsage, providerName, modelId] of calls) {
-    invocationContext.recordUsage(callUsage, { providerName, modelId })
+    invocationContext.recordUsage(callUsage, {
+      ...(providerName !== undefined && { providerName }),
+      ...(modelId !== undefined && { modelId }),
+    })
   }
   return invocationContext
 }
@@ -181,6 +184,16 @@ describe('GenAIPricesEstimator', () => {
 
       expect(() => new GenAIPricesEstimator({ prices })).toThrow('finite, non-negative number')
     })
+
+    it('keeps the prices it was built with when the config object changes later', () => {
+      const smallPrice = { ...SMALL_PRICE }
+      const cost = new GenAIPricesEstimator({ prices: [smallPrice] })
+
+      smallPrice.inputPerMillion = -1.0
+
+      const estimate = cost.estimate(request([usage(1_000, 100), undefined, 'small']))
+      expect(estimate.totalUsd).toBe((1_000 * 1.0 + 100 * 5.0) / 1_000_000)
+    })
   })
 
   describe('estimate', () => {
@@ -212,16 +225,18 @@ describe('GenAIPricesEstimator', () => {
     it('charges cached tokens at the input rate when the price has no cache rate', () => {
       const callUsage = usage(1_000, 100, { read: 6_000, write: 2_000 })
 
-      const estimate = new GenAIPricesEstimator({ prices: [SMALL_PRICE] }).estimate(request([callUsage, null, 'small']))
+      const estimate = new GenAIPricesEstimator({ prices: [SMALL_PRICE] }).estimate(
+        request([callUsage, undefined, 'small'])
+      )
 
       expect(estimate.totalUsd).toBe((9_000 * 1.0 + 100 * 5.0) / 1_000_000)
     })
 
     it('adds the models of a request together', () => {
       const invocationContext = request(
-        [usage(1_000, 100), null, 'main'],
-        [usage(2_000, 200), null, 'small'],
-        [usage(1_000, 100), null, 'main']
+        [usage(1_000, 100), undefined, 'main'],
+        [usage(2_000, 200), undefined, 'small'],
+        [usage(1_000, 100), undefined, 'main']
       )
 
       const estimate = new GenAIPricesEstimator({ prices: [MAIN_PRICE, SMALL_PRICE] }).estimate(invocationContext)
@@ -235,8 +250,8 @@ describe('GenAIPricesEstimator', () => {
     it.each([
       ['provider entry wins', 'bedrock', 'priced-model', 7.0],
       ['any-provider entry', 'openai', 'priced-model', 5.0],
-      ['model without provider', null, 'priced-model', 5.0],
-      ['id with slash', 'openai', 'openai/priced-model', 9.0],
+      ['model without provider', undefined, 'priced-model', 5.0],
+      ['id with slash', 'litellm', 'openai/priced-model', 9.0],
       ['arn', 'bedrock', 'arn:aws:bedrock:us-west-2:1:application-inference-profile/abc', 11.0],
     ])(
       'prefers your price and compares the model id as a whole: %s',
@@ -271,19 +286,19 @@ describe('GenAIPricesEstimator', () => {
     it('leaves the total empty when a model has no price', () => {
       listPricedModel()
       const invocationContext = request(
-        [usage(1_000, 100), null, 'main'],
+        [usage(1_000, 100), undefined, 'main'],
         [usage(1, 1), 'bedrock', 'unlisted'],
-        [usage(1, 1), null, 'no-provider'],
-        [usage(1, 1), null, null]
+        [usage(1, 1), undefined, 'no-provider'],
+        [usage(1, 1), undefined, undefined]
       )
 
       const estimate = new GenAIPricesEstimator({ prices: [MAIN_PRICE] }).estimate(invocationContext)
 
-      expect(estimate.totalUsd).toBeNull()
+      expect(estimate).not.toHaveProperty('totalUsd')
       expect(estimate.unpriced).toStrictEqual([
-        modelEstimate('bedrock', 'unlisted', usage(1, 1), null, null),
-        modelEstimate(null, 'no-provider', usage(1, 1), null, null),
-        modelEstimate(null, null, usage(1, 1), null, null),
+        modelEstimate('bedrock', 'unlisted', usage(1, 1)),
+        modelEstimate(undefined, 'no-provider', usage(1, 1)),
+        modelEstimate(undefined, undefined, usage(1, 1)),
       ])
       expect(estimate.models[0]!.costUsd).toBe((1_000 * 3.0 + 100 * 15.0) / 1_000_000)
     })
@@ -306,25 +321,26 @@ describe('GenAIPricesEstimator', () => {
     })
 
     it.each([
-      ['bedrock', 'aws'],
-      ['anthropic', 'anthropic'],
-      ['openai', 'openai'],
-      ['google', 'google'],
-      ['mistral', 'mistral'],
-    ])('looks a %s model up under the genai-prices provider %s', (providerName, providerId) => {
+      ['bedrock', 'priced-model', ['aws', 'priced-model']],
+      ['anthropic', 'priced-model', ['anthropic', 'priced-model']],
+      ['openai', 'priced-model', ['openai', 'priced-model']],
+      ['google', 'priced-model', ['google', 'priced-model']],
+      ['mistral', 'priced-model', ['mistral', 'priced-model']],
+      ['litellm', 'groq/meta/priced-model', ['groq', 'meta/priced-model']],
+    ])('looks a %s model up under the genai-prices provider: %s', (providerName, modelId, lookup) => {
       listPricedModel()
 
-      const model = new GenAIPricesEstimator().estimate(request([usage(1, 1), providerName, 'priced-model'])).models[0]!
+      const model = new GenAIPricesEstimator().estimate(request([usage(1, 1), providerName, modelId])).models[0]!
 
-      expect(lookups()).toStrictEqual([[providerId, 'priced-model']])
+      expect(lookups()).toStrictEqual([lookup])
       expect(model).toMatchObject({
         providerName,
-        modelId: 'priced-model',
-        priceSource: `genai-prices:${providerId}/matched-model`,
+        modelId,
+        priceSource: `genai-prices:${lookup[0]}/matched-model`,
       })
     })
 
-    it.each(['ollama', 'sagemaker', 'constructor', null])(
+    it.each(['ollama', 'sagemaker', 'constructor', undefined])(
       'does not look up a provider genai-prices does not list: %s',
       (providerName) => {
         listPricedModel()
@@ -332,14 +348,14 @@ describe('GenAIPricesEstimator', () => {
         const estimate = new GenAIPricesEstimator().estimate(request([usage(1, 1), providerName, 'priced-model']))
 
         expect(lookups()).toStrictEqual([])
-        expect(estimate.totalUsd).toBeNull()
+        expect(estimate.totalUsd).toBeUndefined()
       }
     )
 
     it('leaves a genai price without token rates unpriced', () => {
-      vi.mocked(calcPrice).mockReturnValue({ model_price: { requests_kcount: 1 } } as unknown as PriceCalculation)
+      vi.mocked(calcPrice).mockReturnValue({ model_price: { input_mtok: 1 } } as unknown as PriceCalculation)
 
-      const estimate = new GenAIPricesEstimator().estimate(request([usage(1, 1), 'openai', 'per-request-model']))
+      const estimate = new GenAIPricesEstimator().estimate(request([usage(1, 1), 'openai', 'input-only-model']))
 
       expect(estimate.unpriced).toStrictEqual(estimate.models)
     })
@@ -365,25 +381,31 @@ describe('GenAIPricesEstimator', () => {
       expect(model.costUsd).toBeGreaterThan(0)
     })
 
-    it('leaves a bundled price with a fee per request unpriced', async () => {
-      const actual = await vi.importActual<typeof import('@pydantic/genai-prices')>('@pydantic/genai-prices')
-      // No Strands provider name maps to Perplexity, so the lookup is pointed at its bundled entry.
-      vi.mocked(calcPrice).mockImplementation((callUsage, modelId) =>
-        actual.calcPrice(callUsage, modelId, { providerId: 'perplexity' })
-      )
-      const bundled = calcPrice({ input_tokens: 1_000, output_tokens: 100 }, 'sonar')!.model_price
+    it('prices a LiteLLM model id without a provider prefix from the bundled data', () => {
+      const estimate = new GenAIPricesEstimator().estimate(request([usage(1_000, 100), 'litellm', 'gpt-4o']))
+
+      expect(estimate.models[0]!.priceSource).toBe('genai-prices:openai/gpt-4o')
+    })
+
+    it('leaves a bundled price with a fee per request unpriced', () => {
+      const bundled = calcPrice({ input_tokens: 1_000, output_tokens: 100 }, 'sonar', {
+        providerId: 'perplexity',
+      })!.model_price
       expect([bundled.input_mtok, bundled.output_mtok, bundled.requests_kcount]).not.toContain(undefined)
 
-      const estimate = new GenAIPricesEstimator().estimate(request([usage(1_000, 100), 'openai', 'sonar']))
+      const estimate = new GenAIPricesEstimator().estimate(request([usage(1_000, 100), 'litellm', 'perplexity/sonar']))
 
-      expect(estimate.totalUsd).toBeNull()
+      expect(estimate.totalUsd).toBeUndefined()
       expect(estimate.unpriced).toStrictEqual(estimate.models)
     })
 
-    it('leaves a model id the bundled data does not match unpriced', () => {
-      expect(calcPrice({ input_tokens: 1, output_tokens: 1 }, 'no-such-model', { providerId: 'aws' })).toBeNull()
+    it.each([
+      ['bedrock', { providerId: 'aws' }],
+      ['litellm', {}],
+    ])('leaves a model id the bundled data does not match unpriced: %s', (providerName, options) => {
+      expect(calcPrice({ input_tokens: 1, output_tokens: 1 }, 'no-such-model', options)).toBeNull()
 
-      const estimate = new GenAIPricesEstimator().estimate(request([usage(1, 1), 'bedrock', 'no-such-model']))
+      const estimate = new GenAIPricesEstimator().estimate(request([usage(1, 1), providerName, 'no-such-model']))
 
       expect(estimate.unpriced).toStrictEqual(estimate.models)
     })
@@ -408,7 +430,7 @@ describe('GenAIPricesEstimator', () => {
     it('accepts usage records', () => {
       const cost = new GenAIPricesEstimator({ prices: [MAIN_PRICE, SMALL_PRICE] })
       function* usageByModel(): Generator<ModelUsage> {
-        for (const modelId of ['main', 'small']) yield { providerName: null, modelId, usage: usage(1_000, 100) }
+        for (const modelId of ['main', 'small']) yield { modelId, usage: usage(1_000, 100) }
       }
 
       const estimate = cost.estimate(usageByModel())
@@ -418,12 +440,29 @@ describe('GenAIPricesEstimator', () => {
       expect(estimate.totalUsd).toBe(expectedCosts[0]! + expectedCosts[1]!)
     })
 
+    it('accepts usage records revived from JSON, whose unknown names are absent', () => {
+      const invocationContext = request([usage(1_000, 100), undefined, 'main'], [usage(1, 1), 'openai', undefined])
+      const saved = JSON.stringify(invocationContext.usageByModel)
+      const mainCost = (1_000 * 3.0 + 100 * 15.0) / 1_000_000
+
+      const estimate = new GenAIPricesEstimator({ prices: [MAIN_PRICE] }).estimate(JSON.parse(saved))
+
+      const unpriced = [modelEstimate('openai', undefined, usage(1, 1))]
+      expect(estimate).toStrictEqual({
+        models: [modelEstimate(undefined, 'main', usage(1_000, 100), mainCost, MAIN_PRICE), ...unpriced],
+        unpriced,
+      })
+    })
+
     it.each<[string, () => unknown, string]>([
       ['undefined', () => undefined, 'undefined'],
       ['null', () => null, 'null'],
       ['agent', () => new Agent({ model: namedModel('main'), printer: false }), 'Agent'],
       ['object', () => ({}), 'Object'],
       ['usage objects', () => [usage(1, 1)], 'Array'],
+      ['usage without token counts', () => [{ modelId: 'a', usage: {} }], 'Array'],
+      ['null provider name', () => [{ providerName: null, modelId: 'a', usage: usage(1, 1) }], 'Array'],
+      ['null model id', () => [{ providerName: 'openai', modelId: null, usage: usage(1, 1) }], 'Array'],
       ['string', () => '', 'String'],
       ['map', () => new Map(), 'Map'],
     ])('rejects what is not a request or usage records: %s', (_name, createRequest, typeName) => {
@@ -440,7 +479,7 @@ describe('GenAIPricesEstimator', () => {
     it('has no total for a result without an invocation context', () => {
       const result = new MultiAgentResult({ results: [], duration: 0 })
 
-      expect(new GenAIPricesEstimator().estimate(result)).toStrictEqual({ totalUsd: null, models: [], unpriced: [] })
+      expect(new GenAIPricesEstimator().estimate(result)).toStrictEqual({ models: [], unpriced: [] })
     })
 
     it('is zero for a request without model calls', () => {
@@ -463,8 +502,8 @@ describe('GenAIPricesEstimator', () => {
 
       const events = costEvents(items)
       expect(events.map((event) => event.modelCall)).toStrictEqual([
-        modelEstimate(null, 'main', usage(2_000, 300, { write: 18_000 }), MAIN_FIRST_CALL_COST, MAIN_PRICE),
-        modelEstimate(null, 'main', usage(2_500, 900, { read: 18_000 }), MAIN_SECOND_CALL_COST, MAIN_PRICE),
+        modelEstimate(undefined, 'main', usage(2_000, 300, { write: 18_000 }), MAIN_FIRST_CALL_COST, MAIN_PRICE),
+        modelEstimate(undefined, 'main', usage(2_500, 900, { read: 18_000 }), MAIN_SECOND_CALL_COST, MAIN_PRICE),
       ])
       expect(events.map((event) => event.costEstimate.totalUsd)).toStrictEqual([
         expect.closeTo(MAIN_FIRST_CALL_COST),
@@ -502,8 +541,60 @@ describe('GenAIPricesEstimator', () => {
       const { items } = await collectGenerator(agent.stream('go'))
 
       expect(costEvents(items).map((event) => event.modelCall)).toStrictEqual([
-        modelEstimate(null, 'unlisted', usage(1_000, 100), null, null),
+        modelEstimate(undefined, 'unlisted', usage(1_000, 100)),
       ])
+    })
+
+    it('leaves the total empty when a model without a price reports no usage', async () => {
+      const cost = new GenAIPricesEstimator()
+      const model = namedModel('unlisted').addTurn({ type: 'textBlock', text: 'done' })
+      const agent = new Agent({ model, plugins: [cost], printer: false })
+
+      const { items, result } = await collectGenerator(agent.stream('go'))
+
+      const unpriced = [modelEstimate(undefined, 'unlisted', usage(0, 0))]
+      expect(cost.estimate(result)).toStrictEqual({ models: unpriced, unpriced })
+      expect(costEvents(items).map((event) => event.costEstimate)).toStrictEqual([{ models: unpriced, unpriced }])
+    })
+
+    it('lets an error of the model stage through without emitting an estimate', async () => {
+      const agent = new Agent({
+        model: namedModel('main'),
+        plugins: [new GenAIPricesEstimator({ prices: [MAIN_PRICE] })],
+        printer: false,
+      })
+      agent.addMiddleware(InvokeModelStage, () => {
+        throw new Error('stage failed')
+      })
+      const items: AgentStreamEvent[] = []
+
+      await expect(async () => {
+        for await (const event of agent.stream('go')) items.push(event)
+      }).rejects.toThrow('stage failed')
+
+      expect(costEvents(items)).toStrictEqual([])
+    })
+
+    it('returns the result of the model stage unchanged', async () => {
+      const model = namedModel('main').addTurn({ type: 'textBlock', text: 'done' }, { usage: usage(1_000, 100) })
+      const agent = new Agent({ model, printer: false })
+      const stageResults: InvokeModelResult[] = []
+      const recordStageResult = (): void => {
+        agent.addMiddleware(InvokeModelStage, async function* (context, next) {
+          const stageResult = yield* next(context)
+          stageResults.push(stageResult)
+          return stageResult
+        })
+      }
+      // The first handler registered is the outermost: one records what the estimator returns, one what it got.
+      recordStageResult()
+      new GenAIPricesEstimator({ prices: [MAIN_PRICE] }).initAgent(agent)
+      recordStageResult()
+
+      await agent.invoke('go')
+
+      expect(stageResults).toHaveLength(2)
+      expect(stageResults[1]).toBe(stageResults[0])
     })
 
     it('prices a vended model class from the bundled data', async () => {
@@ -569,7 +660,7 @@ describe('GenAIPricesEstimator', () => {
 
 describe('CostEstimateEvent', () => {
   it('carries the request and the model call estimates, and serializes without the agent', () => {
-    const modelCall = modelEstimate(null, 'main', usage(1_000, 100), 0.0045, MAIN_PRICE)
+    const modelCall = modelEstimate(undefined, 'main', usage(1_000, 100), 0.0045, MAIN_PRICE)
     const costEstimate: CostEstimate = { totalUsd: 0.0045, models: [modelCall], unpriced: [] }
     const agent = new Agent({ model: namedModel('main'), printer: false })
 

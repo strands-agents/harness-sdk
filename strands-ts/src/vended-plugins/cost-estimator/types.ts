@@ -7,43 +7,43 @@ import type { InvocationState, LocalAgent } from '../../types/agent.js'
  */
 export interface ModelPrice {
   /** The model the price is for, compared as a whole string. */
-  modelId: string
+  readonly modelId: string
   /** Price of uncached input tokens. */
-  inputPerMillion: number
+  readonly inputPerMillion: number
   /** Price of output tokens. */
-  outputPerMillion: number
+  readonly outputPerMillion: number
   /** Price of input tokens read from cache; the input price when unset. */
-  cacheReadPerMillion?: number
+  readonly cacheReadPerMillion?: number
   /** Price of input tokens written to cache; the input price when unset. */
-  cacheWritePerMillion?: number
+  readonly cacheWritePerMillion?: number
   /** The provider the price is for, compared as a whole string with the usage's `providerName`; any provider when unset. */
-  providerName?: string
+  readonly providerName?: string
 }
 
 /**
  * Estimated cost of one model's share of a request, or of one model call.
  */
 export interface ModelCostEstimate {
-  /** Name of the model's provider; `null` when not known. */
-  readonly providerName: string | null
-  /** The model id; `null` when not known. */
-  readonly modelId: string | null
+  /** Name of the model's provider; `undefined` when not known. */
+  readonly providerName?: string
+  /** The model id; `undefined` when not known. */
+  readonly modelId?: string
   /** The token usage the estimate is for. */
   readonly usage: Usage
-  /** The estimate in USD; `null` when no price was found. */
-  readonly costUsd: number | null
-  /** The price used; `null` when no price was found. */
-  readonly price: ModelPrice | null
-  /** `'user'` for a price you passed, or the genai-prices entry the price came from, such as `'genai-prices:aws/amazon.nova-lite-v1:0'`; `null` when no price was found. */
-  readonly priceSource: string | null
+  /** The estimate in USD; `undefined` when no price was found. */
+  readonly costUsd?: number
+  /** The price used; `undefined` when no price was found. */
+  readonly price?: ModelPrice
+  /** `'user'` for a price you passed, or the genai-prices entry the price came from, such as `'genai-prices:aws/amazon.nova-lite-v1:0'`; `undefined` when no price was found. */
+  readonly priceSource?: string
 }
 
 /**
  * Estimated cost of a request so far.
  */
 export interface CostEstimate {
-  /** The estimate in USD; `null` when any model in the request has no price. */
-  readonly totalUsd: number | null
+  /** The estimate in USD; `undefined` when any model in the request has no price. */
+  readonly totalUsd?: number
   /** The estimate for each model the request used. */
   readonly models: readonly ModelCostEstimate[]
   /** The models no price was found for. */

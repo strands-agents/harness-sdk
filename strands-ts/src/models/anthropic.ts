@@ -23,6 +23,7 @@ import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
 import type { ToolSpec } from '../tools/types.js'
 import { lookupModelInfo, ModelInfo } from './model-info.js'
+import { BEDROCK_HOSTS } from './provider-name.js'
 import { withToolReferenceText } from './tool-references.js'
 import { Message, SummaryBlock } from '../types/messages.js'
 import type { ContentBlock, SystemPrompt, ToolResultContent } from '../types/messages.js'
@@ -430,13 +431,18 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   }
 
   /**
-   * Names the provider by the client's class; a client the SDK does not recognise may call any vendor.
+   * Names the provider by the client's class, or by a Bedrock host when a bundler renamed the class; a client the
+   * SDK does not recognise may call any vendor.
    *
    * @internal
    */
   override get _providerName(): string | undefined {
     if (this._client instanceof Anthropic) return 'anthropic'
-    const onBedrock = isBedrockRuntimeClient(this._client) || hasClassName(this._client, 'AnthropicBedrockMantle')
+    const { baseURL } = this._client as { baseURL?: unknown }
+    const onBedrock =
+      hasClassName(this._client, 'AnthropicBedrock') ||
+      hasClassName(this._client, 'AnthropicBedrockMantle') ||
+      (typeof baseURL === 'string' && BEDROCK_HOSTS.test(new URL(baseURL).hostname))
     return onBedrock ? 'bedrock' : undefined
   }
 

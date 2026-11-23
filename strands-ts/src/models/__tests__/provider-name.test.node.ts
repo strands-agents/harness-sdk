@@ -46,7 +46,7 @@ describe('modelKey', () => {
     ])
   })
 
-  it.each<[string, () => Model, string | null, string | null]>([
+  it.each<[string, () => Model, string | undefined, string | undefined]>([
     ['openai', () => new OpenAIModel({ modelId: 'gpt-a' }), 'openai', 'gpt-a'],
     ['openai chat', () => new OpenAIModel({ api: 'chat', modelId: 'gpt-a' }), 'openai', 'gpt-a'],
     [
@@ -59,22 +59,22 @@ describe('modelKey', () => {
     [
       'openai custom base URL',
       () => new OpenAIModel({ clientConfig: { baseURL: 'https://llm.example.com/v1' }, modelId: 'm' }),
-      null,
+      undefined,
       'm',
     ],
     [
       'openai chat custom base URL',
       () => new OpenAIModel({ api: 'chat', clientConfig: { baseURL: 'http://localhost:8000' }, modelId: 'm' }),
-      null,
+      undefined,
       'm',
     ],
     [
       'openai client with custom base URL',
       () => new OpenAIModel({ client: new OpenAI({ baseURL: 'https://llm.example.com/v1' }), modelId: 'm' }),
-      null,
+      undefined,
       'm',
     ],
-    ['openai client without base URL', () => new OpenAIModel({ client: {} as OpenAI, modelId: 'm' }), null, 'm'],
+    ['openai client without base URL', () => new OpenAIModel({ client: {} as OpenAI, modelId: 'm' }), undefined, 'm'],
     [
       'openai on mantle',
       () => new OpenAIModel({ modelId: 'openai.gpt-a', bedrockMantleConfig: { region: 'us-east-1' } }),
@@ -114,7 +114,17 @@ describe('modelKey', () => {
     [
       'openai with a bedrock lookalike base URL',
       () => new OpenAIModel({ clientConfig: { baseURL: 'https://bedrock-mantle.example.com/v1' }, modelId: 'm' }),
-      null,
+      undefined,
+      'm',
+    ],
+    [
+      'openai with a bedrock host as the prefix of another host',
+      () =>
+        new OpenAIModel({
+          clientConfig: { baseURL: 'https://bedrock-runtime.us-east-1.amazonaws.com.evil.io' },
+          modelId: 'm',
+        }),
+      undefined,
       'm',
     ],
     [
@@ -125,23 +135,44 @@ describe('modelKey', () => {
     ],
     ['anthropic on bedrock client', () => anthropicOn(new AnthropicBedrock()), 'bedrock', 'anthropic.claude-a'],
     ['anthropic on mantle client', () => anthropicOn(new AnthropicBedrockMantle()), 'bedrock', 'anthropic.claude-a'],
-    ['anthropic on unknown client', () => anthropicOn({}), null, 'anthropic.claude-a'],
+    ['anthropic on unknown client', () => anthropicOn({}), undefined, 'anthropic.claude-a'],
+    [
+      'anthropic on a client with a bedrock-runtime base URL',
+      () => anthropicOn({ baseURL: 'https://bedrock-runtime.us-east-1.amazonaws.com' }),
+      'bedrock',
+      'anthropic.claude-a',
+    ],
+    [
+      'anthropic on a client with a bedrock lookalike in the query',
+      () => anthropicOn({ baseURL: 'https://evil.example/x?bedrock-runtime.y' }),
+      undefined,
+      'anthropic.claude-a',
+    ],
+    [
+      'anthropic on a client with a bedrock host as the prefix of another host',
+      () => anthropicOn({ baseURL: 'https://bedrock-runtime.us-east-1.amazonaws.com.evil.io' }),
+      undefined,
+      'anthropic.claude-a',
+    ],
     [
       'vercel',
       () => new VercelModel({ provider: { modelId: 'gpt-a', provider: 'openai.chat' } as LanguageModelV3 }),
-      null,
+      undefined,
       'gpt-a',
     ],
-    ['custom model', () => new MockMessageModel(), null, 'test-model'],
-    ['no model', () => undefined as unknown as Model, null, null],
+    ['custom model', () => new MockMessageModel(), undefined, 'test-model'],
+    ['no model', () => undefined as unknown as Model, undefined, undefined],
   ])('names a model by the endpoint it calls: %s', (_name, createModel, providerName, modelId) => {
-    expect(modelKey(createModel())).toStrictEqual({ providerName, modelId })
+    expect(modelKey(createModel())).toStrictEqual({
+      ...(providerName !== undefined && { providerName }),
+      ...(modelId !== undefined && { modelId }),
+    })
   })
 
   it('names no provider for an OpenAI base URL set in the environment', () => {
     vi.stubEnv('OPENAI_BASE_URL', 'https://llm.example.com/v1')
 
-    expect(modelKey(new OpenAIModel({ modelId: 'm' }))).toStrictEqual({ providerName: null, modelId: 'm' })
+    expect(modelKey(new OpenAIModel({ modelId: 'm' }))).toStrictEqual({ modelId: 'm' })
   })
 
   it.each<[string, () => unknown]>([
@@ -158,7 +189,7 @@ describe('modelKey', () => {
     const model = new OpenAIModel({ modelId: 'gpt-a' })
     vi.spyOn(model, 'modelId', 'get').mockImplementation(readModelId as () => string)
 
-    expect(modelKey(model)).toStrictEqual({ providerName: 'openai', modelId: null })
+    expect(modelKey(model)).toStrictEqual({ providerName: 'openai' })
   })
 
   it('names no provider when naming it throws', () => {
@@ -167,6 +198,6 @@ describe('modelKey', () => {
       throw new Error('no name')
     })
 
-    expect(modelKey(model)).toStrictEqual({ providerName: null, modelId: 'gpt-a' })
+    expect(modelKey(model)).toStrictEqual({ modelId: 'gpt-a' })
   })
 })

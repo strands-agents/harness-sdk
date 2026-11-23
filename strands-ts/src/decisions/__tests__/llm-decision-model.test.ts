@@ -344,7 +344,7 @@ describe('LLMDecisionModel', () => {
         { invocationContext }
       )
 
-      expect(invocationContext.usageByModel).toEqual([{ providerName: null, modelId: 'model-a', usage: DEFAULT_USAGE }])
+      expect(invocationContext.usageByModel).toStrictEqual([{ modelId: 'model-a', usage: DEFAULT_USAGE }])
       expect(result.metadata).toEqual({ latencyMs: expect.any(Number) })
     })
 

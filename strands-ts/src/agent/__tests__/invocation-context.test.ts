@@ -51,12 +51,12 @@ describe('InvocationContextImpl', () => {
       const request = new InvocationContextImpl()
 
       request.recordUsage(call)
-      request.recordUsage(call, { providerName: 'bedrock', modelId: null })
+      request.recordUsage(call, { providerName: 'bedrock' })
       request.recordUsage(call, { providerName: 'bedrock', modelId: 'model-a' })
 
       expect(request.usageByModel).toStrictEqual([
-        { providerName: null, modelId: null, usage: call },
-        { providerName: 'bedrock', modelId: null, usage: call },
+        { usage: call },
+        { providerName: 'bedrock', usage: call },
         { providerName: 'bedrock', modelId: 'model-a', usage: call },
       ])
     })

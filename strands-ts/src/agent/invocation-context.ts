@@ -25,7 +25,7 @@ export interface InvocationContext {
    * The token usage in {@link usage}, split by the model that produced it: one record per distinct
    * `providerName` and `modelId`, in the order they first recorded usage. Each read returns a new
    * snapshot. The token counts add up to {@link usage}. Usage whose model is not known is under a
-   * record whose `providerName` and `modelId` are `null`.
+   * record without a `providerName` and `modelId`.
    */
   readonly usageByModel: readonly ModelUsage[]
 }
@@ -44,20 +44,20 @@ export interface InvocationContextUsage extends Usage {
  *
  * For the SDK's own model classes `providerName` is one of `anthropic`, `bedrock`, `google`, or
  * `openai`. A decision model reports the provider name from its own metadata, or its wrapped
- * model's name when it has one. Existing names do not change, more may be added, and a `null` may
- * later get a name. It is not the OpenTelemetry provider value.
+ * model's name when it has one. Existing names do not change, more may be added, and a model
+ * without a name may later get one. It is not the OpenTelemetry provider value.
  */
 export interface ModelUsage {
-  /** Name of the model's provider; `null` when the SDK cannot tell. */
-  readonly providerName: string | null
-  /** The model id the calls were made with; `null` when not known. */
-  readonly modelId: string | null
+  /** Name of the model's provider; `undefined` when the SDK cannot tell. */
+  readonly providerName?: string
+  /** The model id the calls were made with; `undefined` when not known. */
+  readonly modelId?: string
   /** The summed usage of every call to this model. */
   readonly usage: Usage
 }
 
 /**
- * The provider name and model id a model call's usage is recorded under; `null` for what is not known.
+ * The provider name and model id a model call's usage is recorded under; `undefined` for what is not known.
  *
  * @internal
  */
@@ -115,13 +115,17 @@ export class InvocationContextImpl implements InvocationContext {
    * @param usage - The usage the model call reported
    * @param modelKey - The provider name and model id of the model that made the call
    */
-  recordUsage(usage: Usage, modelKey: ModelKey = { providerName: null, modelId: null }): void {
+  recordUsage(usage: Usage, modelKey: ModelKey = {}): void {
     accumulateUsage(this.usage, usage)
     const { providerName, modelId } = modelKey
     const key = JSON.stringify([providerName, modelId])
     let record = this._usageByModel.get(key)
     if (record === undefined) {
-      record = { providerName, modelId, usage: createEmptyUsage() }
+      record = {
+        ...(providerName !== undefined && { providerName }),
+        ...(modelId !== undefined && { modelId }),
+        usage: createEmptyUsage(),
+      }
       this._usageByModel.set(key, record)
     }
     accumulateUsage(record.usage, usage)

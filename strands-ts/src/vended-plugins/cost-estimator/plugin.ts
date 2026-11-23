@@ -14,10 +14,10 @@ import { modelKey } from '../../models/provider-name.js'
 import { createEmptyUsage, type Usage } from '../../models/streaming.js'
 import { MultiAgentResult } from '../../multiagent/state.js'
 import { AgentResult } from '../../types/agent.js'
+import { CostEstimateEvent, type CostEstimate, type ModelCostEstimate, type ModelPrice } from './types.js'
 import type { InvokeModelContext, InvokeModelResult, MiddlewareNextOf } from '../../middleware/index.js'
 import type { Plugin } from '../../plugins/plugin.js'
 import type { AgentStreamEvent, LocalAgent } from '../../types/agent.js'
-import { CostEstimateEvent, type CostEstimate, type ModelCostEstimate, type ModelPrice } from './types.js'
 
 // Strands provider name -> genai-prices provider id. A provider that is not listed has no prices there.
 const PROVIDER_IDS = new Map([
@@ -81,7 +81,7 @@ export class GenAIPricesEstimator implements Plugin {
           `providerName=<${price.providerName}>, modelId=<${price.modelId}> | prices has two entries for one model`
         )
       }
-      this._prices.set(key, price)
+      this._prices.set(key, { ...price })
     }
   }
 
@@ -102,14 +102,14 @@ export class GenAIPricesEstimator implements Plugin {
    *
    * @param request - An agent or multi-agent result, an `InvocationContext`, or usage records such as a saved
    *   `usageByModel`
-   * @returns The estimate. A model without a price has `costUsd: null` and makes `totalUsd` `null`, as does a
-   *   result that carries no `invocationContext`.
+   * @returns The estimate. A model without a price has no `costUsd` and leaves `totalUsd` `undefined`, as does
+   *   a result that carries no `invocationContext`.
    * @throws TypeError if `request` is none of the accepted types
    */
   estimate(request: AgentResult | MultiAgentResult | InvocationContext | Iterable<ModelUsage>): CostEstimate {
     let source: unknown = request
     if (source instanceof AgentResult || source instanceof MultiAgentResult) {
-      if (source.invocationContext === undefined) return { totalUsd: null, models: [], unpriced: [] }
+      if (source.invocationContext === undefined) return { models: [], unpriced: [] }
       source = source.invocationContext
     }
     if (source instanceof InvocationContextImpl) return this._estimate(source.usageByModel)
@@ -156,34 +156,36 @@ export class GenAIPricesEstimator implements Plugin {
 
   private _estimate(usageByModel: readonly ModelUsage[]): CostEstimate {
     const models = usageByModel.map((modelUsage) => this._estimateModel(modelUsage))
-    const totalUsd = models.reduce<number | null>(
-      (total, { costUsd }) => (total === null || costUsd === null ? null : total + costUsd),
+    const totalUsd = models.reduce<number | undefined>(
+      (total, { costUsd }) => (total === undefined || costUsd === undefined ? undefined : total + costUsd),
       0
     )
-    return { totalUsd, models, unpriced: models.filter((model) => model.costUsd === null) }
+    return {
+      ...(totalUsd !== undefined && { totalUsd }),
+      models,
+      unpriced: models.filter((model) => model.costUsd === undefined),
+    }
   }
 
   private _estimateModel(modelUsage: ModelUsage): ModelCostEstimate {
     const { providerName, modelId, usage } = modelUsage
     const found = this._findPrice(providerName, modelId)
     return {
-      providerName,
-      modelId,
+      ...(providerName !== undefined && { providerName }),
+      ...(modelId !== undefined && { modelId }),
       usage,
-      costUsd: found ? cost(usage, found.price) : null,
-      price: found?.price ?? null,
-      priceSource: found?.priceSource ?? null,
+      ...(found && { costUsd: cost(usage, found.price), ...found }),
     }
   }
 
-  private _findPrice(providerName: string | null, modelId: string | null): FoundPrice | undefined {
-    if (modelId === null) return undefined
-    const price = this._prices.get(priceKey(providerName, modelId)) ?? this._prices.get(priceKey(null, modelId))
+  private _findPrice(providerName: string | undefined, modelId: string | undefined): FoundPrice | undefined {
+    if (modelId === undefined) return undefined
+    const price = this._prices.get(priceKey(providerName, modelId)) ?? this._prices.get(priceKey(undefined, modelId))
     return price ? { price, priceSource: 'user' } : genaiPrice(providerName, modelId)
   }
 }
 
-function priceKey(providerName: string | null | undefined, modelId: string): string {
+function priceKey(providerName: string | undefined, modelId: string): string {
   return JSON.stringify([providerName ?? null, modelId])
 }
 
@@ -205,15 +207,27 @@ function isRecords(value: unknown): value is Iterable<unknown> {
 }
 
 function isModelUsage(value: unknown): value is ModelUsage {
-  const usage = (value as Partial<ModelUsage> | null | undefined)?.usage
-  return typeof usage === 'object' && usage !== null
+  const { providerName, modelId, usage } = (value ?? {}) as Record<string, unknown>
+  const { inputTokens, outputTokens, totalTokens } = (usage ?? {}) as Record<string, unknown>
+  return (
+    [providerName, modelId].every((name) => name === undefined || typeof name === 'string') &&
+    [inputTokens, outputTokens, totalTokens].every((count) => typeof count === 'number')
+  )
 }
 
 /** Looks a model up in genai-prices, returning its base rates and the entry that matched, if any. */
-function genaiPrice(providerName: string | null, modelId: string): FoundPrice | undefined {
-  const providerId = PROVIDER_IDS.get(providerName ?? '')
-  if (providerName === null || providerId === undefined) return undefined
-  const matched = calcPrice({ input_tokens: 0, output_tokens: 0 }, modelId, { providerId })
+function genaiPrice(providerName: string | undefined, modelId: string): FoundPrice | undefined {
+  let providerId = PROVIDER_IDS.get(providerName ?? '')
+  let pricedModelId = modelId
+  const slash = modelId.indexOf('/')
+  if (providerName === 'litellm' && slash !== -1) {
+    providerId = modelId.slice(0, slash)
+    pricedModelId = modelId.slice(slash + 1)
+  }
+  // A bare LiteLLM id has no provider; genai-prices then infers one from the model name, as LiteLLM does.
+  if (providerName === undefined || (providerId === undefined && providerName !== 'litellm')) return undefined
+  const options = providerId === undefined ? {} : { providerId }
+  const matched = calcPrice({ input_tokens: 0, output_tokens: 0 }, pricedModelId, options)
   if (matched === null) return undefined
   const [inputRate, outputRate, cacheReadRate, cacheWriteRate] = GENAI_RATE_FIELDS.map((field) =>
     baseRate(matched.model_price[field])

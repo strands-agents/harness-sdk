@@ -80,12 +80,13 @@ export abstract class DecisionModel {
   }
 
   /**
-   * The provider name and model id `result`'s usage is recorded under; `null` for what is not known.
+   * The provider name and model id `result`'s usage is recorded under; `undefined` for what is not known.
    *
    * @internal
    */
   protected _usageModelKey(result: DecisionResult): ModelKey {
-    return { providerName: result.metadata.providerName ?? null, modelId: result.metadata.modelId ?? null }
+    const { providerName, modelId } = result.metadata
+    return { ...(providerName !== undefined && { providerName }), ...(modelId !== undefined && { modelId }) }
   }
 
   /**

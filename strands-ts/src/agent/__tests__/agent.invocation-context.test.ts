@@ -392,14 +392,12 @@ describe('Agent request-wide limits', () => {
     contexts.request = (await parent.invoke('start')).invocationContext!
 
     expect(contexts.request.usageByModel).toStrictEqual([
-      { providerName: null, modelId: 'main', usage: usage(300, 11) },
-      { providerName: null, modelId: 'small', usage: usage(30, 3) },
-      { providerName: null, modelId: null, usage: usage(40, 4) },
+      { modelId: 'main', usage: usage(300, 11) },
+      { modelId: 'small', usage: usage(30, 3) },
+      { usage: usage(40, 4) },
     ])
-    expect(contexts.limited!.usageByModel).toStrictEqual([
-      { providerName: null, modelId: 'small', usage: usage(20, 2) },
-    ])
-    expect(contexts.auxiliary!.usageByModel).toStrictEqual([{ providerName: null, modelId: null, usage: usage(40, 4) }])
+    expect(contexts.limited!.usageByModel).toStrictEqual([{ modelId: 'small', usage: usage(20, 2) }])
+    expect(contexts.auxiliary!.usageByModel).toStrictEqual([{ usage: usage(40, 4) }])
     for (const context of Object.values(contexts)) {
       const total = createEmptyUsage()
       for (const record of context.usageByModel) accumulateUsage(total, record.usage)

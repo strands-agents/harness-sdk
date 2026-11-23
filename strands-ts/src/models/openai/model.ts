@@ -13,6 +13,7 @@ import type { ResponseStreamEvent } from 'openai/resources/responses/responses'
 import { Model, resolveConfigMetadata } from '../model.js'
 import type { StreamOptions } from '../model.js'
 import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from '../model-info.js'
+import { BEDROCK_HOSTS } from '../provider-name.js'
 import type { ChatCompletionsTools } from '../model-info.js'
 import type { Message } from '../../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../streaming.js'
@@ -44,8 +45,6 @@ import type {
   OpenAIModelOptions,
   OpenAIResponsesConfig,
 } from './types.js'
-
-const BEDROCK_HOSTS = /^(?:bedrock-mantle\.[a-z0-9-]+\.api\.aws|bedrock-runtime(-fips)?\.[a-z0-9-]+\.amazonaws\.com)$/
 
 /**
  * OpenAI model provider.

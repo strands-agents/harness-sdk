@@ -238,7 +238,7 @@ For the SDK's model classes, the provider name is one of the following:
 A model that reaches Bedrock through another class, such as `OpenAIModel` with
 <Syntax py="bedrock_mantle_config" ts="bedrockMantleConfig" /> or a Bedrock base URL, is
 `bedrock` too. A decision model reports the provider name from its own metadata. The name
-is <Syntax py="None" ts="null" /> when the SDK cannot tell, as for a custom model or an
+is <Syntax py="None" ts="undefined" /> when the SDK cannot tell, as for a custom model or an
 OpenAI-compatible endpoint with its own base URL.
 
 ## Use Your Own Prices
@@ -297,8 +297,8 @@ parse it.
 ## When a Model Has No Price
 
 A model with no price has a <Syntax py="cost_usd" ts="costUsd" /> of
-<Syntax py="None" ts="null" />, and then <Syntax py="total_usd" ts="totalUsd" /> is
-<Syntax py="None" ts="null" /> too. A missing price never counts as zero, so you never
+<Syntax py="None" ts="undefined" />, and then <Syntax py="total_usd" ts="totalUsd" /> is
+<Syntax py="None" ts="undefined" /> too. A missing price never counts as zero, so you never
 read a partial sum as the whole:
 
 <Tabs>
@@ -322,11 +322,10 @@ if estimate.total_usd is None:
 </Tabs>
 
 The plugin looks a model up in genai-prices only when its provider name is `anthropic`,
-`bedrock`, `google`, `mistral`, or `openai`, or, in Python, `litellm`. For a LiteLLM
-model, the provider is the part of the model ID before the first `/`; for an ID without
-one, such as `gpt-4o`, genai-prices infers the provider from the model name. Every other
-model, such as a custom model, a SageMaker endpoint, or a local model, is priced only by
-the prices you pass.
+`bedrock`, `google`, `mistral`, `openai`, or `litellm`. For a LiteLLM model, the provider
+is the part of the model ID before the first `/`; for an ID without one, such as `gpt-4o`,
+genai-prices infers the provider from the model name. Every other model, such as a custom
+model, a SageMaker endpoint, or a local model, is priced only by the prices you pass.
 
 genai-prices matches model IDs by rule, so an ID it does not list exactly can match a
 neighbouring entry. For example, `claude-sonnet-4-5-custom` gets the price of
@@ -350,7 +349,7 @@ Each of these makes your bill differ from the estimate:
 | Amazon Nova cache writes | Priced at the input rate, so overpriced; pass your own price with <Syntax py="cache_write_per_million=0" ts="cacheWritePerMillion: 0" /> |
 | Negotiated discounts | Overpriced; pass your own prices |
 | Application inference profile ARNs | Unpriced; pass your own price |
-| A model call that fails or is cancelled mid-stream | A failed call is not counted; a cancelled call counts only the usage reported before the cancel |
+| A model call that fails or is cancelled mid-stream | A failed call is not counted. In Python, a cancelled call counts only the usage reported before the cancel; in TypeScript, a cancelled call is not counted and emits no event |
 | Background tasks that finish after the result | Counted only in an estimate you take after they finish |
 | `Agent.structured_output()` in Python | Runs outside any request, so not counted |
 | Agents your own tools start without passing <Syntax py="invocation_context" ts="invocationContext" /> | Not counted |

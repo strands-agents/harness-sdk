@@ -7,7 +7,7 @@ import { modelKey } from './provider-name.js'
 import { hasToolReferences, withToolReferenceSchemas, withToolReferenceText } from './tool-references.js'
 import type { ToolSpec } from '../tools/types.js'
 import type { CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
-import type { ModelStreamEvent } from './streaming.js'
+import { createEmptyUsage, type ModelStreamEvent } from './streaming.js'
 import { wellFormedRequest } from './well-formed-request.js'
 
 /**
@@ -135,13 +135,10 @@ export class ModelProxy {
     return withToolReferenceText(messages, toolSpecs)
   }
 
-  /** Adds a completed call's reported usage to the request, under the model that made the call. */
+  /** Adds a completed call's usage to the request, under the model that made the call; zeros when none was reported. */
   private _record(result: StreamAggregatedResult, invocationContext?: InvocationContext): void {
-    const usage = result?.metadata?.usage
-    const context = unwrapInvocationContext(invocationContext)
-    if (usage !== undefined && context !== undefined) {
-      context.recordUsage(usage, modelKey(this._model))
-    }
+    const usage = result?.metadata?.usage ?? createEmptyUsage()
+    unwrapInvocationContext(invocationContext)?.recordUsage(usage, modelKey(this._model))
   }
 }
 

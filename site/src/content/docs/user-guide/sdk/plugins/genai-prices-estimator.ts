@@ -115,7 +115,7 @@ function unpricedExample(cost: GenAIPricesEstimator, result: AgentResult) {
   // --8<-- [start:unpriced]
   const estimate = cost.estimate(result)
 
-  if (estimate.totalUsd === null) {
+  if (estimate.totalUsd === undefined) {
     console.log(
       'No price for:',
       estimate.unpriced.map((model) => model.modelId)

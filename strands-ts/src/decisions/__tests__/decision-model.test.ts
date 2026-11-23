@@ -65,7 +65,7 @@ describe('DecisionModel', () => {
           metadata: { providerName: 'typesafe', modelId: 'jev-1' },
           expected: { providerName: 'typesafe', modelId: 'jev-1' },
         },
-        { metadata: {}, expected: { providerName: null, modelId: null } },
+        { metadata: {}, expected: {} },
       ])(
         'adds the reported usage under the model named in the result metadata: $expected.providerName',
         async (testCase) => {
@@ -75,7 +75,7 @@ describe('DecisionModel', () => {
 
           await decision.ask('ls', QUESTIONS, { invocationContext })
 
-          expect(invocationContext.usageByModel).toEqual([{ ...testCase.expected, usage: DECISION_USAGE }])
+          expect(invocationContext.usageByModel).toStrictEqual([{ ...testCase.expected, usage: DECISION_USAGE }])
         }
       )
 

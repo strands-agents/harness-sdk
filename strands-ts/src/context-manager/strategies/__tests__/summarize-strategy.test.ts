@@ -1290,7 +1290,7 @@ describe('client-side summaries use Model.summarize', () => {
     expect(await perMessage().apply({ messages, agent, utilization: 0.9, invocationContext })).toBe(true)
 
     expect(invocationContext.usage).toEqual({ turnsTaken: 0, ...STREAM_USAGE })
-    expect(invocationContext.usageByModel).toEqual([{ providerName: null, modelId: 'test-model', usage: STREAM_USAGE }])
+    expect(invocationContext.usageByModel).toStrictEqual([{ modelId: 'test-model', usage: STREAM_USAGE }])
   })
 
   it.each([
@@ -1307,7 +1307,7 @@ describe('client-side summaries use Model.summarize', () => {
     expect(await perMessage().apply({ messages, agent, utilization: 0.9, invocationContext })).toBe(content.length > 0)
 
     expect(invocationContext.usage).toEqual({ turnsTaken: 0, ...usage })
-    expect(invocationContext.usageByModel).toEqual([{ providerName: null, modelId: 'test-model', usage }])
+    expect(invocationContext.usageByModel).toStrictEqual([{ modelId: 'test-model', usage }])
     warnSpy.mockRestore()
   })
 
