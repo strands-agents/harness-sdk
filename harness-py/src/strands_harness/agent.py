@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from strands import Agent, BackgroundTasksConfig
 from strands.experimental.context_manager import ContextManager
+from strands.hooks import BeforeInvocationEvent, HookProvider, HookRegistry
 from strands.memory import MemoryManager
 from strands.models import Model, ModelRouter
 from strands.plugins import Plugin
@@ -75,6 +76,39 @@ _ALWAYS_BACKGROUND_TOOL_NAMES = frozenset({"subagent"})
 # provider) from an explicit value like ``caching=None`` (off) or ``caching=True`` (which raises on
 # an unsupported provider string, and only warns when the model is a ``Model`` instance).
 _UNSET: Any = object()
+
+
+class RejectCallerToolUseHook(HookProvider):
+    """Reject caller-supplied ``toolUse`` blocks before event-loop execution.
+
+    Strands' event loop directly dispatches a trailing ``toolUse`` block without invoking the
+    model, so unvalidated caller payloads could bypass model mediation. Attaching this hook on
+    ``BeforeInvocationEvent`` blocks any incoming ``"user"`` message or trailing incoming message
+    carrying a ``toolUse`` block while leaving empty resume inputs untouched.
+    """
+
+    def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
+        registry.add_callback(BeforeInvocationEvent, self._validate_messages)
+
+    def _validate_messages(self, event: BeforeInvocationEvent) -> None:
+        messages = getattr(event, "messages", None)
+        if not isinstance(messages, list) or not messages:
+            return
+        has_user_tool_use = any(
+            isinstance(block, dict) and "toolUse" in block
+            for msg in messages
+            if isinstance(msg, dict) and msg.get("role") == "user"
+            for block in (msg.get("content") or [])
+        )
+        last = messages[-1]
+        has_trailing_tool_use = isinstance(last, dict) and any(
+            isinstance(block, dict) and "toolUse" in block for block in (last.get("content") or [])
+        )
+        if has_user_tool_use or has_trailing_tool_use:
+            raise ValueError(
+                "Caller-supplied toolUse blocks are rejected by create_harness() to prevent "
+                "unmediated tool execution (pass reject_caller_tool_use=False to opt out)."
+            )
 
 
 def _builtin_tools(parent_config: dict[str, Any], web_search: str | None) -> dict[str, Any]:
@@ -257,6 +291,7 @@ def create_harness(
     memory: bool | MemoryConfig | MemoryManager | None = True,
     builtin_plugins: list[BuiltinPluginName] | None = None,
     interventions: InterventionsOption = None,
+    reject_caller_tool_use: bool = True,
     **agent_kwargs: Any,
 ) -> Agent:
     """Build a preconfigured Strands agent with the harness's defaults enabled.
@@ -388,6 +423,10 @@ def create_harness(
             ``HumanInTheLoop``/``CedarAuthorization`` instance for full control, or a list layering a
             Cedar policy with one human gate. Sugar over the SDK's handlers; a ``subagent`` child
             inherits the policy so a delegate cannot bypass it.
+        reject_caller_tool_use: When ``True`` (the default), attaches :class:`RejectCallerToolUseHook`
+            on ``BeforeInvocationEvent`` so caller-supplied ``toolUse`` blocks cannot bypass model
+            mediation. Pass ``False`` to opt out for trusted replay flows; inherited by ``subagent``
+            children.
     """
     setup_telemetry()
 
@@ -423,8 +462,7 @@ def create_harness(
         agent_kwargs["system_prompt"] = build_system_prompt(instructions)
 
     consumer_plugins = list(plugins or [])
-    # Hooks and the sandbox stay in agent_kwargs (the harness adds none) but are forwarded so subagent children
-    # run under them too.
+    # Caller hooks and the sandbox are forwarded so subagent children run under them too.
     consumer_hooks = list(agent_kwargs.get("hooks") or [])
     consumer = list(tools or [])
     # MCP clients are tool providers the SDK connects at load time; loaded ones join `tools` as consumer tools.
@@ -457,6 +495,7 @@ def create_harness(
         "interventions": interventions,
         "plugins": consumer_plugins,
         "hooks": consumer_hooks,
+        "reject_caller_tool_use": reject_caller_tool_use,
         "tools": consumer,
         "sandbox": agent_kwargs.get("sandbox"),
     }
@@ -529,6 +568,11 @@ def create_harness(
             if isinstance(candidate, AgentTool) and candidate.tool_name in _ALWAYS_BACKGROUND_TOOL_NAMES
         ],
     )
+
+    if reject_caller_tool_use and not any(isinstance(h, RejectCallerToolUseHook) for h in consumer_hooks):
+        agent_kwargs["hooks"] = [*consumer_hooks, RejectCallerToolUseHook()]
+    elif "hooks" in agent_kwargs:
+        agent_kwargs["hooks"] = consumer_hooks
 
     agent = Agent(
         model=resolved_model,
