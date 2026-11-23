@@ -85,6 +85,30 @@ describe('KeywordToolSearcher', () => {
     expect(await new KeywordToolSearcher().search(context)).toEqual([tools[3], tools[0]])
   })
 
+  it.each([
+    [
+      'a match in a shorter description first',
+      [
+        'Create, update, archive or export an invoice, with its customer, lines, taxes and currency.',
+        'Pay an invoice.',
+      ],
+    ],
+    ['a tool that has the word more often first', ['Send the invoice.', 'Void an invoice or a credit invoice.']],
+  ])('ranks by BM25: %s', async (_name, descriptions) => {
+    const tools = descriptions.map((description, index) =>
+      tool({ name: `tool_${index}`, description, inputSchema: z.object({ id: z.string() }), callback: () => 'ok' })
+    )
+    const result = await new KeywordToolSearcher().search({
+      query: 'invoice',
+      tools,
+      limit: 2,
+      agent: {} as LocalAgent,
+      cancelSignal: new AbortController().signal,
+    })
+
+    expect(result).toEqual([tools[1], tools[0]])
+  })
+
   it('leaves common words out of the query', async () => {
     const make = (name: string, description: string): Tool =>
       tool({ name, description, inputSchema: z.object({ city: z.string() }), callback: () => 'ok' })

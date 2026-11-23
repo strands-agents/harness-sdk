@@ -27,6 +27,11 @@ const MAX_LIMIT = 20
 /** Length past which a tool's first sentence is cut in the listing. */
 const SENTENCE_LIMIT = 120
 
+/** BM25's term-frequency saturation and length normalization, at their usual values. */
+const BM25_K1 = 1.2
+const BM25_B = 0.75
+/** How many times a word in a tool's name or MCP server counts, against once in its description. */
+const NAME_WEIGHT = 2
 /** Share of the context window a listing of the deferred tools may take, in characters at 4 per token. */
 const LISTING_SHARE = 0.01
 
@@ -73,9 +78,9 @@ export interface ToolSearcher {
 
 /**
  * The searcher `search_tools` uses unless `Offload.defer` names another, and when that one declines: a keyword search.
- * A tool named exactly as the query comes first, then the rest by score, in tool order on a tie. A query word found in
- * a tool's name or MCP server scores twice what it scores in its description, weighted down by how many of the tools it
- * matches, so a word every tool has counts for little. Common words such as `the` and `in` don't count. There are no
+ * A tool named exactly as the query comes first, then the rest by BM25 score over the tool's name, MCP server and
+ * description, in tool order on a tie. A word in the name or server counts twice, a word few tools have counts for
+ * more, and a long description dilutes each match. Common words such as `the` and `in` don't count. There are no
  * embeddings, so the same query and tools always give the same result.
  *
  * @experimental
@@ -253,15 +258,20 @@ export function withToolListing(description: string, listing: string): string {
 /** At most `limit` tools that match a query, best first, as {@link KeywordToolSearcher} describes. */
 function keywordSearch(query: string, tools: readonly Tool[], limit: number): Tool[] {
   const fields = tools.map(searchFields)
+  const lengths = fields.map((field) => NAME_WEIGHT * field.names.length + field.description.length)
+  const averageLength = lengths.reduce((total, length) => total + length, 0) / Math.max(tools.length, 1) || 1
   const scores = tools.map((candidate) => (candidate.name.toLowerCase() === query.toLowerCase() ? Infinity : 0))
   for (const word of new Set(words(query).filter((word) => !STOP_WORDS.has(word)))) {
-    const hits = fields.map(
-      (field) => 2 * Number(hasWord(field.names, word)) + Number(hasWord(field.description, word))
+    const frequencies = fields.map(
+      (field) => NAME_WEIGHT * occurrences(field.names, word) + occurrences(field.description, word)
     )
-    const matching = hits.filter((hit) => hit > 0).length
+    const matching = frequencies.filter((frequency) => frequency > 0).length
     if (matching === 0) continue
-    const weight = Math.log(1 + tools.length / matching)
-    hits.forEach((hit, index) => (scores[index]! += hit * weight))
+    const idf = Math.log((tools.length - matching + 0.5) / (matching + 0.5) + 1)
+    frequencies.forEach((frequency, index) => {
+      const norm = BM25_K1 * (1 - BM25_B + (BM25_B * lengths[index]!) / averageLength)
+      scores[index]! += (idf * frequency * (BM25_K1 + 1)) / (frequency + norm)
+    })
   }
   return tools
     .map((candidate, index) => ({ candidate, index, score: scores[index]! }))
@@ -287,14 +297,14 @@ function words(text: string): string[] {
 }
 
 /**
- * Whether the words hold this one, a plural `s` aside, or one it begins when it has at least 3 letters, so `ticket`
+ * How many of the words are this one, a plural `s` aside, or begin with it when it has at least 3 letters, so `ticket`
  * finds `tickets` and `weath` finds `weather`, but `forecast` doesn't find `for`.
  */
-function hasWord(fieldWords: readonly string[], word: string): boolean {
+function occurrences(fieldWords: readonly string[], word: string): number {
   const stem = singular(word)
-  return fieldWords.some(
+  return fieldWords.filter(
     (fieldWord) => singular(fieldWord) === stem || (word.length >= 3 && fieldWord.startsWith(word))
-  )
+  ).length
 }
 
 function singular(word: string): string {
