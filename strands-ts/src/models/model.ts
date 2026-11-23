@@ -319,20 +319,6 @@ export interface StreamOptions {
 export type CallTools = Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'>
 
 /**
- * The deferral fields of a model call's options: none when the call defers no tool.
- *
- * @param options - Options that may defer tools
- * @returns The `deferredTools` and `serverToolSearch` to pass on
- * @internal
- */
-export function deferralOptions(
-  options: Pick<StreamOptions, 'deferredTools' | 'serverToolSearch'> | undefined
-): Pick<StreamOptions, 'deferredTools' | 'serverToolSearch'> {
-  if (!options?.deferredTools?.size) return {}
-  return { deferredTools: options.deferredTools, ...(options.serverToolSearch && { serverToolSearch: true }) }
-}
-
-/**
  * Options for counting tokens in a set of messages.
  */
 export interface CountTokensOptions {

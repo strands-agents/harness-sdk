@@ -3,7 +3,7 @@ import type { LocalAgent } from '../types/agent.js'
 import { Message, TextBlock, ToolResultBlock, type ContentBlock } from '../types/messages.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
 import { SEARCH_TOOLS_TOOL_NAME } from '../tools/search-tools.js'
-import { deferralOptions, latestUserIndex } from './model.js'
+import { latestUserIndex } from './model.js'
 import { hasToolReferences, withToolReferenceSchemas, withToolReferenceText } from './tool-references.js'
 import type { ToolSpec } from '../tools/types.js'
 import type { CallTools, CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
@@ -106,7 +106,8 @@ export class ModelProxy {
     if (!this._agent) return
     latestTools.set(this._agent, {
       toolSpecs: [...(options?.toolSpecs ?? [])],
-      ...deferralOptions(options),
+      ...(options?.deferredTools && { deferredTools: options.deferredTools }),
+      ...(options?.serverToolSearch && { serverToolSearch: true }),
     })
   }
 

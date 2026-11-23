@@ -2,7 +2,6 @@ import Anthropic, { type ClientOptions } from '@anthropic-ai/sdk'
 import { VERSION as ANTHROPIC_SDK_VERSION } from '@anthropic-ai/sdk/version'
 import {
   Model,
-  deferralOptions,
   type BaseModelConfig,
   type CountTokensOptions,
   type StreamOptions,
@@ -936,7 +935,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     const request = this._formatRequest(messages, {
       ...(options?.systemPrompt !== undefined && { systemPrompt: options.systemPrompt }),
       ...(options?.toolSpecs !== undefined && { toolSpecs: options.toolSpecs }),
-      ...deferralOptions(options),
+      ...(options?.deferredTools !== undefined && { deferredTools: options.deferredTools }),
+      ...(options?.serverToolSearch && { serverToolSearch: true }),
     })
     // The API rejects these on a compaction request.
     const {
