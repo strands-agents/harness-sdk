@@ -9,7 +9,7 @@ import { runTemporaryDevCommand } from '../../../src/dev/temporary-evals-fork/cl
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { PreparedDevRun } from '../../../src/dev/prepare.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
-import { writeOptimizerRun } from '../../fixtures/optimizer-run.js'
+import { optimizerProposerError, writeOptimizerRun } from '../../fixtures/optimizer-run.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const writeFileAt = async (path: string, text = '{}'): Promise<void> => {
@@ -83,17 +83,19 @@ describe('TEMPORARY strands dev optimize command', () => {
     expect(prepareProject).toHaveBeenCalledWith(workspace)
   })
 
-  it('shouldPrintTheSummaryAndExitWithOneWhenTheSearchStoppedOnAProposerError', async () => {
+  it('shouldPrintTheProposerFailureAndExitWithOneWhenTheSearchStoppedOnAProposerError', async () => {
     const workspace = await workspaceFixture()
-    const stdout = captured()
+    const stderr = captured()
     const spawnOptimizer = vi.fn(async ({ args }: { args: string[] }) => {
-      await writeOptimizerRun(args[args.indexOf('--base-dir') + 1]!, [], { baseline_id: 'base' })
-      return { code: 3, stdout: 'ships the baseline\n', stderrTail: [] }
+      await writeOptimizerRun(args[args.indexOf('--base-dir') + 1]!, [
+        optimizerProposerError('RuntimeError', 'model down'),
+      ])
+      return { code: 3, stdout: '', stderrTail: [] }
     })
 
     const code = await runTemporaryDevCommand(
       parseArgs(['dev', 'optimize', 'support']),
-      { stdout: stdout.stream, stderr: captured().stream },
+      { stdout: captured().stream, stderr: stderr.stream },
       {
         openWorkspace: async () => opened(workspace),
         prepareProject: vi.fn(async () => {}),
@@ -103,7 +105,7 @@ describe('TEMPORARY strands dev optimize command', () => {
     )
 
     expect(code).toBe(1)
-    expect(stdout.text()).toBe('ships the baseline\n')
+    expect(stderr.text()).toContain('error: The proposer failed with RuntimeError: model down.\n')
   })
 
   it('shouldFailBeforePreparingTheProjectWhenTheExperimentIsMissing', async () => {

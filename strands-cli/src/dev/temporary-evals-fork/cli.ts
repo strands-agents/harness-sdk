@@ -58,8 +58,9 @@ const optimize = async (
   shared: Shared,
   dependencies: TemporaryDevCommandDependencies
 ): Promise<{ lines: string[]; code: number }> => {
-  const { summary, proposerFailed } = await runTemporaryOptimization(shared, dependencies)
-  return { lines: summary, code: proposerFailed ? 1 : 0 }
+  const { summary, proposerFailure } = await runTemporaryOptimization(shared, dependencies)
+  if (proposerFailure) shared.onProgress(`error: ${proposerFailure}`)
+  return { lines: summary, code: proposerFailure ? 1 : 0 }
 }
 
 const rememberTest = async (

@@ -7,7 +7,7 @@ import { writeEvalsOptimizeEntry, type EvalsFinalPick, type EvalsOptimizeEntry }
 import type { OptimizeDecision, OptimizeObjective } from '../panels/model.js'
 import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryHarnessDefaultsReader } from './knobs.js'
-import { hasTemporaryRunResult, temporaryRunFolder } from './study.js'
+import { readTemporaryProposerFailure, temporaryRunFolder } from './study.js'
 import { resolveTemporaryExperiment, temporaryRunnableExperiment } from './experiment-files.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment } from './environment.js'
 import type { TemporaryCommandRunner } from './environment.js'
@@ -61,7 +61,7 @@ export interface TemporaryOptimizationOutcome {
   experiment: string
   record: string
   summary: string[]
-  proposerFailed: boolean
+  proposerFailure?: string
 }
 
 export interface TemporaryOptimizationDependencies {
@@ -238,9 +238,6 @@ const failureNextStep = (exit: TemporaryEvalsExit, log: string): string => {
   return [advice, `The full optimizer output is in ${log}.`].filter(Boolean).join(' ')
 }
 
-const hasFinished = async ({ code }: TemporaryEvalsExit, record: string): Promise<boolean> =>
-  code === 0 || (code === SEARCH_STOPPED_EXIT && (await hasTemporaryRunResult(record)))
-
 const spawnOptimizer = (
   request: TemporaryOptimizationRequest,
   dependencies: TemporaryOptimizationDependencies,
@@ -290,12 +287,14 @@ export const runTemporaryOptimization = async (
   onProgress(runFolder ? CONTINUING : STARTING)
   request.onStart?.(record)
   const exit = await spawnOptimizer(request, dependencies, { python, args, log })
-  if (!(await hasFinished(exit, record)))
+  const proposerFailure =
+    exit.code === SEARCH_STOPPED_EXIT ? await readTemporaryProposerFailure(record).catch(() => undefined) : undefined
+  if (exit.code !== 0 && proposerFailure === undefined)
     throw temporaryEvalsFailure(
       `strands-evals optimize ${runFolder ? 'resume' : 'run'}`,
       exit,
       environment,
       failureNextStep(exit, log)
     )
-  return { experiment, record, summary: summaryLines(exit), proposerFailed: exit.code === SEARCH_STOPPED_EXIT }
+  return { experiment, record, summary: summaryLines(exit), ...(proposerFailure ? { proposerFailure } : {}) }
 }

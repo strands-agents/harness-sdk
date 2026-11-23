@@ -154,6 +154,12 @@ export const optimizerCandidate = (candidate: OptimizerCandidate): string[] => [
 export const optimizerIterationEnd = (bestAfter: readonly string[]): string =>
   JSON.stringify({ event: 'iteration_end', iteration: 1, best_after: bestAfter, best_objective: 1 })
 
+export const optimizerProposerError = (type: string, error: string): string =>
+  JSON.stringify({ event: 'proposer_error', iteration: 1, block: 'instructions', redraw: 0, error_type: type, error })
+
+export const optimizerResume = (): string =>
+  JSON.stringify({ event: 'resume', iteration: 1, spent: 4, budget: { max_rollouts: 100, max_iterations: 4 } })
+
 export const optimizerStop = (reason = 'iterations', message = 'used the iterations'): string =>
   JSON.stringify({ event: 'stop', iteration: 1, reason, message })
 

@@ -9,7 +9,7 @@ import { runTemporaryOptimization } from '../../../src/dev/temporary-evals-fork/
 import { TEMPORARY_DECISION_DEFAULTS } from '../../../src/dev/temporary-evals-fork/plan.js'
 import type { OptimizeDecision } from '../../../src/dev/panels/model.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
-import { writeOptimizerRun } from '../../fixtures/optimizer-run.js'
+import { optimizerProposerError, writeOptimizerRun } from '../../fixtures/optimizer-run.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const NOW = new Date('2026-11-11T15:04:05Z')
@@ -126,7 +126,6 @@ describe('TEMPORARY dev optimization', () => {
       experiment,
       record,
       summary: ['ships candidate 3', 'record: somewhere'],
-      proposerFailed: false,
     })
     expect(progress).toContain('candidate  0 baseline complete n=4 Contains 0.5')
   })
@@ -589,14 +588,19 @@ describe('TEMPORARY dev optimization', () => {
     await expect(running).rejects.toThrow(`: ${error}\n${step}`)
   })
 
-  it('shouldReturnTheResultAndFlagTheProposerFailureWhenTheSearchStoppedOnAProposerError', async () => {
+  it('shouldReturnTheProposerFailureWhenTheOptimizerExitsWithThreeAfterAProposerError', async () => {
     const workspace = await workspaceFixture()
     const spawnOptimizer = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-      await writeOptimizerRun(args[args.indexOf('--base-dir') + 1]!, [], { baseline_id: 'base' })
+      await writeOptimizerRun(args[args.indexOf('--base-dir') + 1]!, [
+        optimizerProposerError('RuntimeError', 'model down'),
+      ])
       return {
         code: 3,
-        stdout: 'ships the baseline\n',
-        stderrTail: ["strands-evals: error: the search stopped: a proposer (block 'instructions') raised KeyError: x"],
+        stdout: '',
+        stderrTail: [
+          "strands-evals: error: the proposer of block 'instructions' raised RuntimeError: model down. The search stopped",
+          'strands-evals optimize: continue with `strands-evals optimize resume /w/run`',
+        ],
       }
     })
 
@@ -605,7 +609,10 @@ describe('TEMPORARY dev optimization', () => {
       { run: environmentRunner(), spawnOptimizer }
     )
 
-    expect(outcome).toMatchObject({ summary: ['ships the baseline'], proposerFailed: true })
+    expect(outcome).toMatchObject({
+      summary: [],
+      proposerFailure: 'The proposer failed with RuntimeError: model down.',
+    })
   })
 
   it('shouldReportTheErrorWhenTheOptimizerExitsWithThreeAndTheRunHasNoResult', async () => {

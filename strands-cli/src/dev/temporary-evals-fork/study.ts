@@ -289,6 +289,7 @@ class RunState {
     ['iteration_end', (event): void => this.readIterationEnd(event)],
     ['finalists', ({ candidate_ids }): void => void (this.finalists = texts(candidate_ids))],
     ['proposer_error', (event): void => this.readProposerError(event)],
+    ['resume', (): void => this.readResume()],
     ['stop', (event): void => this.readStop(event)],
     ['picked', ({ report }): void => this.readPicked(report)],
     ['test', ({ report }): void => this.readTest(report)],
@@ -549,6 +550,17 @@ class RunState {
 
   private readProposerError({ error_type: type, error }: Event): void {
     this.proposerError = [text(type), text(error)].filter(Boolean).join(': ') || undefined
+    this.stopReason = PROPOSER_STOP
+  }
+
+  private readResume(): void {
+    if (this.stopReason !== PROPOSER_STOP) return
+    this.stopReason = undefined
+    this.proposerError = undefined
+  }
+
+  proposerFailure(): string | undefined {
+    return this.stopReason === PROPOSER_STOP ? this.stopError() : undefined
   }
 
   private stopError(): string | undefined {
@@ -671,7 +683,7 @@ const readJson = async (path: string): Promise<unknown> => {
   }
 }
 
-export const readTemporaryStudy = async (record: string): Promise<TemporaryStudyOutcome> => {
+const readRunState = async (record: string): Promise<RunState> => {
   const folder = await temporaryRunFolder(record)
   if (!folder)
     throw new Error(
@@ -683,8 +695,14 @@ export const readTemporaryStudy = async (record: string): Promise<TemporaryStudy
   events.split('\n').forEach((line) => state.push(line))
   const result = await readJson(join(folder, RESULT))
   if (isRecord(result)) state.absorbResult(result)
-  return state.outcome()
+  return state
 }
+
+export const readTemporaryStudy = async (record: string): Promise<TemporaryStudyOutcome> =>
+  (await readRunState(record)).outcome()
+
+export const readTemporaryProposerFailure = async (record: string): Promise<string | undefined> =>
+  (await readRunState(record)).proposerFailure()
 
 export interface TemporaryRunUsage {
   readonly rollouts: number

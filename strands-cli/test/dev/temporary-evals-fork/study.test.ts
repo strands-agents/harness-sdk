@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { measuredVersions, type EvalCase } from '../../../src/dev/panels/model.js'
 import {
   hasTemporaryRunResult,
+  readTemporaryProposerFailure,
   readTemporaryStudy,
   readTemporaryUsageProfile,
   tailTemporaryRun,
@@ -18,6 +19,8 @@ import {
   optimizerFinalists,
   optimizerIterationEnd,
   optimizerPicked,
+  optimizerProposerError,
+  optimizerResume,
   optimizerStop,
   optimizerTested,
   optimizerTrial,
@@ -588,6 +591,51 @@ describe('TEMPORARY optimization run', () => {
     ]).outcome()
 
     expect(outcome).toMatchObject({ ended: 'stopped', error: PROPOSER_STOP_MESSAGE })
+  })
+
+  it('shouldStopWithTheProposerErrorWhenTheSearchEndsOnAProposerErrorWithoutAStopEvent', () => {
+    const outcome = readerOf([
+      optimizerConfig(),
+      ...optimizerCandidate(baseline),
+      optimizerProposerError('RuntimeError', 'model down'),
+    ]).outcome()
+
+    expect(outcome).toMatchObject({ ended: 'stopped', error: 'The proposer failed with RuntimeError: model down.' })
+  })
+
+  it('shouldReportRunningAgainWhenTheRunResumesAfterAProposerError', () => {
+    const outcome = readerOf([
+      optimizerConfig(),
+      ...optimizerCandidate(baseline),
+      optimizerProposerError('RuntimeError', 'model down'),
+      optimizerResume(),
+    ]).outcome()
+
+    expect(outcome.ended).toBe('running')
+    expect(outcome.error).toBeUndefined()
+  })
+
+  it('shouldNameTheProposerFailureOfARecordWhenItsRunStoppedOnAProposerError', async () => {
+    const record = await temporaryDirectory()
+    await writeOptimizerRun(record, [
+      optimizerConfig(),
+      ...optimizerCandidate(baseline),
+      optimizerProposerError('RuntimeError', 'model down'),
+    ])
+
+    await expect(readTemporaryProposerFailure(record)).resolves.toBe(
+      'The proposer failed with RuntimeError: model down.'
+    )
+  })
+
+  it.each([
+    ['ASetupStop', [optimizerStop('setup', 'the baseline is unmeasured')]],
+    ['NoStop', []],
+  ])('shouldGiveNoProposerFailureWhenTheRunHas%s', async (_case, lines) => {
+    const record = await temporaryDirectory()
+    await writeOptimizerRun(record, [optimizerConfig(), ...optimizerCandidate(baseline), ...lines])
+
+    await expect(readTemporaryProposerFailure(record)).resolves.toBeUndefined()
   })
 
   it('shouldReportRunningAndTheLeaderWhenNoChampionIsPickedYet', () => {
