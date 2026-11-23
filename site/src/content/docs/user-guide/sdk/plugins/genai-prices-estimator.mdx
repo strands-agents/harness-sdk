@@ -325,7 +325,9 @@ The plugin looks a model up in genai-prices only when its provider name is `anth
 `bedrock`, `google`, `mistral`, `openai`, or `litellm`. For a LiteLLM model, the provider
 is the part of the model ID before the first `/`; for an ID without one, such as `gpt-4o`,
 genai-prices infers the provider from the model name. Every other model, such as a custom
-model, a SageMaker endpoint, or a local model, is priced only by the prices you pass.
+model, a SageMaker endpoint, or a local model, is priced only by the prices you pass. In
+TypeScript, no model class reports `mistral` or `litellm`; those names apply to usage
+records you pass to `estimate()` yourself.
 
 genai-prices matches model IDs by rule, so an ID it does not list exactly can match a
 neighbouring entry. For example, `claude-sonnet-4-5-custom` gets the price of

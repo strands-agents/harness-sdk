@@ -193,6 +193,7 @@ describe('GenAIPricesEstimator', () => {
 
       const estimate = cost.estimate(request([usage(1_000, 100), undefined, 'small']))
       expect(estimate.totalUsd).toBe((1_000 * 1.0 + 100 * 5.0) / 1_000_000)
+      expect(Object.isFrozen(estimate.models[0]!.price)).toBe(true)
     })
   })
 
@@ -387,6 +388,12 @@ describe('GenAIPricesEstimator', () => {
       expect(estimate.models[0]!.priceSource).toBe('genai-prices:openai/gpt-4o')
     })
 
+    it('leaves a LiteLLM model id with an empty provider prefix unpriced', () => {
+      const estimate = new GenAIPricesEstimator().estimate(request([usage(1_000, 100), 'litellm', '/gpt-4o']))
+
+      expect(estimate.unpriced).toStrictEqual(estimate.models)
+    })
+
     it('leaves a bundled price with a fee per request unpriced', () => {
       const bundled = calcPrice({ input_tokens: 1_000, output_tokens: 100 }, 'sonar', {
         providerId: 'perplexity',
@@ -461,6 +468,13 @@ describe('GenAIPricesEstimator', () => {
       ['object', () => ({}), 'Object'],
       ['usage objects', () => [usage(1, 1)], 'Array'],
       ['usage without token counts', () => [{ modelId: 'a', usage: {} }], 'Array'],
+      ['usage with a string count', () => [{ modelId: 'a', usage: { ...usage(1, 1), outputTokens: '1' } }], 'Array'],
+      ['usage with a NaN count', () => [{ modelId: 'a', usage: { ...usage(1, 1), totalTokens: NaN } }], 'Array'],
+      [
+        'usage with a NaN cache count',
+        () => [{ modelId: 'a', usage: { ...usage(1, 1), cacheReadInputTokens: NaN } }],
+        'Array',
+      ],
       ['null provider name', () => [{ providerName: null, modelId: 'a', usage: usage(1, 1) }], 'Array'],
       ['null model id', () => [{ providerName: 'openai', modelId: null, usage: usage(1, 1) }], 'Array'],
       ['string', () => '', 'String'],
@@ -558,11 +572,8 @@ describe('GenAIPricesEstimator', () => {
     })
 
     it('lets an error of the model stage through without emitting an estimate', async () => {
-      const agent = new Agent({
-        model: namedModel('main'),
-        plugins: [new GenAIPricesEstimator({ prices: [MAIN_PRICE] })],
-        printer: false,
-      })
+      const agent = new Agent({ model: namedModel('main'), printer: false })
+      new GenAIPricesEstimator({ prices: [MAIN_PRICE] }).initAgent(agent)
       agent.addMiddleware(InvokeModelStage, () => {
         throw new Error('stage failed')
       })

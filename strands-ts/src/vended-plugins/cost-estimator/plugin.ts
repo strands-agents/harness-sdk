@@ -81,7 +81,7 @@ export class GenAIPricesEstimator implements Plugin {
           `providerName=<${price.providerName}>, modelId=<${price.modelId}> | prices has two entries for one model`
         )
       }
-      this._prices.set(key, { ...price })
+      this._prices.set(key, Object.freeze({ ...price }))
     }
   }
 
@@ -208,10 +208,12 @@ function isRecords(value: unknown): value is Iterable<unknown> {
 
 function isModelUsage(value: unknown): value is ModelUsage {
   const { providerName, modelId, usage } = (value ?? {}) as Record<string, unknown>
-  const { inputTokens, outputTokens, totalTokens } = (usage ?? {}) as Record<string, unknown>
+  const { inputTokens, outputTokens, totalTokens, cacheReadInputTokens, cacheWriteInputTokens } = (usage ??
+    {}) as Record<string, unknown>
   return (
     [providerName, modelId].every((name) => name === undefined || typeof name === 'string') &&
-    [inputTokens, outputTokens, totalTokens].every((count) => typeof count === 'number')
+    [inputTokens, outputTokens, totalTokens].every(Number.isFinite) &&
+    [cacheReadInputTokens, cacheWriteInputTokens].every((count) => count === undefined || Number.isFinite(count))
   )
 }
 
@@ -226,6 +228,8 @@ function genaiPrice(providerName: string | undefined, modelId: string): FoundPri
   }
   // A bare LiteLLM id has no provider; genai-prices then infers one from the model name, as LiteLLM does.
   if (providerName === undefined || (providerId === undefined && providerName !== 'litellm')) return undefined
+  // genai-prices reads an empty provider id as none and would infer one.
+  if (providerId === '') return undefined
   const options = providerId === undefined ? {} : { providerId }
   const matched = calcPrice({ input_tokens: 0, output_tokens: 0 }, pricedModelId, options)
   if (matched === null) return undefined

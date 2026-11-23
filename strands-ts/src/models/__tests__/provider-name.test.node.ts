@@ -149,6 +149,18 @@ describe('modelKey', () => {
       'anthropic.claude-a',
     ],
     [
+      'anthropic on a client with a bedrock host as the suffix of another host',
+      () => anthropicOn({ baseURL: 'https://xbedrock-runtime.us-east-1.amazonaws.com' }),
+      undefined,
+      'anthropic.claude-a',
+    ],
+    [
+      'anthropic on a client with a bedrock host as the userinfo',
+      () => anthropicOn({ baseURL: 'https://bedrock-runtime.us-east-1.amazonaws.com@evil.io/' }),
+      undefined,
+      'anthropic.claude-a',
+    ],
+    [
       'anthropic on a client with a bedrock host as the prefix of another host',
       () => anthropicOn({ baseURL: 'https://bedrock-runtime.us-east-1.amazonaws.com.evil.io' }),
       undefined,
