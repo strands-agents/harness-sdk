@@ -6,6 +6,7 @@ import { sortSampleGuides } from '@util/sample-guides'
 import { languageLabel } from '@util/source-links'
 import { getReleases, releaseSlug, type ChangelogRelease } from '@util/changelog'
 import { streamLabel } from '../config/changelog'
+import { BOX_LANDING_DESCRIPTION } from '../config/box-landing'
 import { FAQ_DESCRIPTION } from '../config/faq'
 import { loadSidebarFromConfig, type StarlightSidebarItem } from '../sidebar'
 import path from 'node:path'
@@ -87,6 +88,10 @@ export function buildLlmsTxt(
   lines.push('## Frequently asked questions')
   lines.push('')
   lines.push(linkLine('Frequently asked questions', siteLink('/faq/index.md'), FAQ_DESCRIPTION))
+  lines.push('')
+  lines.push('## Product landing pages')
+  lines.push('')
+  lines.push(linkLine('Strands Box', siteLink('/box/index.md'), BOX_LANDING_DESCRIPTION))
   lines.push('')
 
   // Process every top-level sidebar group in its curated order. Each product

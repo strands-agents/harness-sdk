@@ -103,8 +103,9 @@ navbar:
 
 # Products — the single source of truth for the "Products" dropdown, in display
 # order. The docs nav is organized around products so the dropdown and the docs
-# stay aligned. Add a product here to surface it in the dropdown; the `href` is
-# its landing/hub page and `pages` are the key links shown on mobile.
+# stay aligned. Add a product here to surface it in the dropdown; `href` is its
+# landing page, `docsHref` is its docs hub when those differ, and `pages` are
+# the key links shown on mobile. `navDescription` can provide tighter menu copy.
 products:
   - label: Harness
     accent: orange
@@ -148,8 +149,10 @@ products:
     accent: purple
     name: Strands Box
     slug: "/box"
-    href: /docs/user-guide/box/
-    description: An agent sandbox that pairs OS containment with Dogwood policy.
+    href: /box/
+    docsHref: /docs/user-guide/box/
+    navDescription: Run AI agents in a sandbox with controlled access.
+    description: Run AI agents in a sandbox that limits the files, programs, websites, and credentials they can access locally or in supported cloud deployments.
     repository: https://github.com/strands-agents/box
     languages:
       - Rust

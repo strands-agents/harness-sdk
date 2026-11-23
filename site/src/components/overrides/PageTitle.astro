@@ -14,14 +14,15 @@ const currentPath = Astro.url.pathname
 const titleParts = /\s/.test(title) ? [title] : title.split(/(?<=[._])/)
 
 const product = currentProduct(currentPath)
-const onHub = !!product && currentPath === product.href
+const productDocsHref = product?.docsHref ?? product?.href
+const onHub = !!product && currentPath === productDocsHref
 
 // Primary CTA for the hub hero: the product's Quickstart page if it has one,
 // else its first page that isn't the hub itself.
 const ctaHref =
   product?.pages?.find((p) => /quickstart/i.test(p.label))?.href ??
-  product?.pages?.find((p) => p.href !== product.href)?.href ??
-  product?.href
+  product?.pages?.find((p) => p.href !== productDocsHref)?.href ??
+  productDocsHref
 ---
 
 {
