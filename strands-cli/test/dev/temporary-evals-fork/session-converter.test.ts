@@ -127,7 +127,7 @@ describe('TEMPORARY session-converter skill', () => {
     expect(guide).toContain('call strands_dev_evaluators before you write "evaluators"')
     expect(guide).toContain("ask the skill's questions one at a time")
     expect(guide).toContain('wait for a yes')
-    expect(guide).toContain('point to /experiment to review the cases and to /evaluate to run them')
+    expect(guide).toContain('point to /experiment to review the cases and to run them')
     expect(guide.endsWith('Follow [assets/segmenter.md](assets/segmenter.md).')).toBe(true)
   })
 

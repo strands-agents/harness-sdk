@@ -146,3 +146,22 @@ export const watchTemporaryFileCount = (folder: string, onCount: (count: number)
   void count()
   return () => clearInterval(timer)
 }
+
+/** One jobs line for several feeds; the snapshot keeps its identity while no part changes. */
+export const mergedJobsFeed = (...feeds: readonly DevChatJobs[]): DevChatJobs => {
+  let parts = feeds.map((feed) => feed.snapshot())
+  let jobs: readonly DevChatJob[] = parts.flat()
+  return {
+    snapshot: (): readonly DevChatJob[] => {
+      const next = feeds.map((feed) => feed.snapshot())
+      if (next.every((part, index) => part === parts[index])) return jobs
+      parts = next
+      jobs = next.flat()
+      return jobs
+    },
+    subscribe: (listener: () => void): (() => void) => {
+      const stops = feeds.map((feed) => feed.subscribe(listener))
+      return () => stops.forEach((stop) => stop())
+    },
+  }
+}

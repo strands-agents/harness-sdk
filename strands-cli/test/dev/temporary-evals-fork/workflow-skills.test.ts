@@ -46,9 +46,8 @@ describe('skill command workflows', () => {
   })
 
   it('shouldPrintTheReviewInTheSkillsFormatAndWaitForTheReplyWhenOptimizeRuns', () => {
-    const { evaluate, optimize } = temporaryCommandWorkflows
+    const { optimize } = temporaryCommandWorkflows
 
-    expect(evaluate).toContain('the strands-evals skill is active')
     expect(optimize).toContain('the optimize skill is active')
     expect(optimize).toContain("Print the review in chat in the skill's own format and end the turn")
     expect(optimize).toContain('strands_dev_optimization_plan')
@@ -60,13 +59,37 @@ describe('skill command workflows', () => {
   })
 })
 
-describe('/evaluate approval', () => {
-  it('shouldStartThePickedExperimentsWithoutAskingAgainInChat', () => {
-    const { evaluate } = temporaryCommandWorkflows
+describe('/experiment runs and reports', () => {
+  it('shouldHaveNoEvaluateWorkflowNowThatExperimentRunsThem', () => {
+    expect(Object.keys(temporaryCommandWorkflows)).toEqual(['experiment', 'optimize'])
+  })
 
-    expect(evaluate).toContain('Picking them is the approval')
-    expect(evaluate).toContain('without asking again in chat')
-    expect(evaluate).toContain('A cancelled question starts nothing.')
+  it('shouldOfferTheReportFirstOnceAnExperimentHasRunThenRunAndEdit', () => {
+    const { experiment } = temporaryCommandWorkflows
+
+    expect(experiment).toContain('"What do you want to do with <name>?"')
+    expect(experiment).toContain('"View its last report" (value report) as the first row when its lastTest is done')
+    expect(experiment).toContain('"Run it again" (value run) when its lastTest is done, otherwise "Run it"')
+    expect(experiment).toContain('Leave it out while its lastTest is running')
+    expect(experiment).toContain('"Edit its cases" (value edit)')
+    expect(experiment).toContain('read it with strands_dev_evaluation_results')
+    expect(experiment).toContain('strands_dev_open_evals_ui with the report view')
+  })
+
+  it('shouldStartAPickedRunWithoutAskingAgainInChat', () => {
+    const { experiment } = temporaryCommandWorkflows
+
+    expect(experiment).toContain('Picking Run is the approval')
+    expect(experiment).toContain('without asking again in chat')
+  })
+
+  it('shouldStillRunSeveralExperimentsAtOnce', () => {
+    const { experiment } = temporaryCommandWorkflows
+
+    expect(experiment).toContain('"Run several experiments" with the value several when two or more are saved')
+    expect(experiment).toContain('strands_dev_multi_select')
+    expect(experiment).toContain('Picking them is the approval')
+    expect(experiment).toContain('A cancelled question starts nothing.')
   })
 })
 

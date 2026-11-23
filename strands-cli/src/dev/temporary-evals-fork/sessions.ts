@@ -1439,7 +1439,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
         applied.push(target)
         written.push(edit)
       } catch (error) {
-        applyError = `Could not change ${target}: ${errorMessage(error)} Change it by hand, then run /evaluate.`
+        applyError = `Could not change ${target}: ${errorMessage(error)} Change it by hand, then run the experiment again from /experiment.`
         break
       }
     }
@@ -1461,7 +1461,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
       status: applyError ? ('error' as const) : ('success' as const),
       text: applyError
         ? `optimize · ${changed} · ${applyError}`
-        : `optimize · ${changed} · run /evaluate to check your agent`,
+        : `optimize · ${changed} · run the experiment again from /experiment to check your agent`,
     }
     if (applied.length > 0)
       this.carried = { ...notice, at: Date.now(), lasts: review.auto ? AUTO_RELOAD_WINDOW_MS : RELOAD_WINDOW_MS }

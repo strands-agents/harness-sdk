@@ -2134,7 +2134,7 @@ describe('TEMPORARY dev sessions', () => {
 
     const applied = {
       status: 'success',
-      text: 'optimize · applied instructions.md · run /evaluate to check your agent',
+      text: 'optimize · applied instructions.md · run the experiment again from /experiment to check your agent',
     }
     expect(reloaded.notices).toContainEqual(applied)
     expect(later.notices).not.toContainEqual(applied)
@@ -2331,7 +2331,7 @@ describe('TEMPORARY dev sessions', () => {
       const record = recordOf(optimizing.mock.calls[0]![0].args)
       expect(notices.map(({ text }) => text).filter((text) => text.startsWith('optimize · '))).toEqual([
         `optimize · run ${optimizationName(record)} finished · auto-optimize is on · applying 1 edit`,
-        'optimize · auto-optimize applied instructions.md · run /evaluate to check your agent',
+        'optimize · auto-optimize applied instructions.md · run the experiment again from /experiment to check your agent',
       ])
       expect(sessions.optimize.appliedChanges()).toEqual([
         expect.objectContaining({ auto: true, edits: [expect.objectContaining({ after: WINNER })] }),
@@ -2341,7 +2341,7 @@ describe('TEMPORARY dev sessions', () => {
 
     const APPLIED = {
       status: 'success',
-      text: 'optimize · auto-optimize applied instructions.md · run /evaluate to check your agent',
+      text: 'optimize · auto-optimize applied instructions.md · run the experiment again from /experiment to check your agent',
     }
 
     /** The chat that opens `after` milliseconds past the write of a run's edits, and what it was told. */
@@ -2473,7 +2473,7 @@ describe('TEMPORARY dev sessions', () => {
       expect(optimize.onReview).not.toHaveBeenCalled()
       expect(again).not.toHaveBeenCalled()
       expect(notices.map(({ text }) => text)).toContainEqual(
-        'optimize · auto-optimize applied instructions.md · run /evaluate to check your agent'
+        'optimize · auto-optimize applied instructions.md · run the experiment again from /experiment to check your agent'
       )
     })
   })

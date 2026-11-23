@@ -81,9 +81,9 @@ interface ReviewAnswer {
 const TEXT_LIMIT = 600
 const EDIT_LIMIT = 4000
 
-const INSTRUCTIONS = `For experiments, evaluations, and test cases, activate the strands-evals skill; to tune this agent against an experiment, activate the optimize skill; to run any strands-evals command, follow the background-evals skill. The developer can also type /experiment, /evaluate, or /optimize.
+const INSTRUCTIONS = `For experiments, evaluations, and test cases, activate the strands-evals skill; to tune this agent against an experiment, activate the optimize skill; to run any strands-evals command, follow the background-evals skill. The developer can also type /experiment or /optimize.
 
-Runs cost money. Name the scope in chat and end the turn; start a run only after the developer approves it in a later turn. Being asked to run, test, or improve something is not that approval. In /evaluate, picking the experiments on screen is the approval.
+Runs cost money. Name the scope in chat and end the turn; start a run only after the developer approves it in a later turn. Being asked to run, test, or improve something is not that approval. In /experiment, picking Run, or the experiments to run, on screen is the approval.
 
 When an optimization run finishes, its edits appear on the developer's screen as a diff, and they apply or leave each edit there, unless auto-optimize applies them. Do not print the edits or ask in chat which ones to apply; strands_dev_review_optimization puts a closed diff back on screen. A message that comes with a <strands_dev_screen> block was written while that diff was on their screen: when it answers the diff, such as "approve this" or "leave it", pick for them with strands_dev_answer_review as the block says, and do not ask them to confirm. Call strands_dev_apply_optimization only for edits the developer names in chat when no diff of them is on screen. strands_dev_status gives each edit's answer: one they left as it is has been answered, so a bare "yes" never applies it.
 

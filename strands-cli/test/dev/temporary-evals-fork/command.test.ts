@@ -37,16 +37,16 @@ const context: DevChatCommandContext = {
   openPanel: vi.fn(() => true),
 }
 
-const evaluateChat = async (
+const experimentChat = async (
   stream: (tool: (name: string) => DevChatTool) => Parameters<typeof idleBackend>[0]
 ): Promise<{ controller: ChatController; broker: ReturnType<typeof temporaryDevSessions>['ask'] }> => {
   const { workspace, project } = await fixture()
-  const [, evaluate, , ask] = temporaryDevCommands(workspace, project)
+  const [experiment, , ask] = temporaryDevCommands(workspace, project)
   const broker = temporaryDevSessions({ workspace, agent: () => ({}) }).ask
   const tools = uiTools(() => broker)
   const tool = (name: string): DevChatTool => tools.find((candidate) => candidate.name === name)!
   const controller = new ChatController(idleBackend(stream(tool)), {
-    devCommands: [evaluate!, ask!],
+    devCommands: [experiment!, ask!],
     skills: {
       list: async () => [],
       activate: async (name) => ({ skill: { name, description: '', instructions: '', active: true }, content: '' }),
@@ -56,16 +56,15 @@ const evaluateChat = async (
 }
 
 describe('TEMPORARY dev commands', () => {
-  it('shouldOfferExperimentTestOptimizeAndAskWithoutArgumentsWhenTheChatStarts', async () => {
+  it('shouldOfferExperimentOptimizeAndAskButNoEvaluateWhenTheChatStarts', async () => {
     const { workspace, project } = await fixture()
 
     const commands = temporaryDevCommands(workspace, project)
 
-    expect(commands.map(({ spec }) => spec.usage)).toEqual(['/experiment', '/evaluate', '/optimize', '/ask'])
+    expect(commands.map(({ spec }) => spec.usage)).toEqual(['/experiment', '/optimize', '/ask'])
     expect(commands.every(({ spec }) => spec.replacement === undefined)).toBe(true)
     expect(commands.map(({ spec }) => spec.description)).toEqual([
-      'Make, review, and edit the test cases of this agent with the strands-evals skill',
-      'Run this agent on an experiment with the strands-evals skill and show what failed',
+      'Make, run, and review the test cases of this agent with the strands-evals skill',
       'Tune this agent against an experiment with the optimize skill and review the changes',
       'Answer the setup question that the agent is asking',
     ])
@@ -78,19 +77,19 @@ describe('TEMPORARY dev commands', () => {
 
     expect(details.map((text) => text.match(/strands-dev\/experiments\/[\w<>/.]*[\w>/]/u)?.[0])).toEqual([
       'strands-dev/experiments/<name>/<name>.json',
-      'strands-dev/experiments/<name>/runs/',
       'strands-dev/experiments/<name>/optimizations/',
       undefined,
     ])
-    expect(details[1]).toContain('the latest one as <name>.report.json')
-    expect(details.slice(0, 3).every((text) => text.includes('Experimental: a fork of strands-evals'))).toBe(true)
+    expect(details[0]).toContain('strands-dev/experiments/<name>/runs/')
+    expect(details[0]).toContain('the latest as <name>.report.json')
+    expect(details.slice(0, 2).every((text) => text.includes('Experimental: a fork of strands-evals'))).toBe(true)
     expect(details.some((text) => text.includes('TEMPORARY'))).toBe(false)
   })
 
   it('shouldDescribeTheOnScreenSetupWhenOptimizeHelpShowsTheDetails', async () => {
     const { workspace, project } = await fixture()
 
-    const [, , optimize] = temporaryDevCommands(workspace, project).map(({ spec }) => spec.details ?? '')
+    const [, optimize] = temporaryDevCommands(workspace, project).map(({ spec }) => spec.details ?? '')
 
     expect(optimize).toContain('what must stay true')
     expect(optimize).toContain('approve the review to start the run')
@@ -108,14 +107,13 @@ describe('TEMPORARY dev commands', () => {
     expect(commands.map(({ backgroundTools }) => backgroundTools)).toEqual([
       ['strands_dev_run_background'],
       ['strands_dev_run_background'],
-      ['strands_dev_run_background'],
       undefined,
     ])
   })
 
   it('shouldLeaveAJobWithNothingToReviewToTheChatWhenItsLineOpens', async () => {
     const { workspace, project } = await fixture()
-    const optimize = temporaryDevCommands(workspace, project)[2]!
+    const optimize = temporaryDevCommands(workspace, project)[1]!
 
     expect(optimize.openJob?.(context, 'run-1')).toBe(false)
   })
@@ -123,7 +121,7 @@ describe('TEMPORARY dev commands', () => {
   it('shouldNameTheUpstreamCommandsWhenOptimizeHelpShowsTheDetails', async () => {
     const { workspace, project } = await fixture()
 
-    const [, , optimize] = temporaryDevCommands(workspace, project).map(({ spec }) => spec.details ?? '')
+    const [, optimize] = temporaryDevCommands(workspace, project).map(({ spec }) => spec.details ?? '')
 
     expect(optimize).toContain('with strands-evals optimize run and strands-evals optimize resume')
   })
@@ -133,7 +131,7 @@ describe('TEMPORARY dev commands', () => {
 
     const commands = temporaryDevCommands(workspace, project)
 
-    expect(commands.map(({ jobs }) => jobs?.snapshot())).toEqual([[], [], [], undefined])
+    expect(commands.map(({ jobs }) => jobs?.snapshot())).toEqual([[], [], undefined])
   })
 
   it('shouldShowATestThatFinishedWhileStrandsDevWasClosedWhenTheChatAttaches', async () => {
@@ -173,7 +171,7 @@ describe('TEMPORARY dev commands', () => {
     })
     const announced = vi.fn(() => ({ update: vi.fn() }))
 
-    temporaryDevCommands(workspace, project)[1]!.attach?.({ ...context, report: announced })
+    temporaryDevCommands(workspace, project)[0]!.attach?.({ ...context, report: announced })
 
     await vi.waitFor(() =>
       expect(announced).toHaveBeenCalledWith(
@@ -198,27 +196,26 @@ describe('TEMPORARY dev commands', () => {
   it('shouldRunEachEvalsCommandAsItsSkillWithoutAPanel', async () => {
     const { workspace, project } = await fixture()
 
-    const commands = temporaryDevCommands(workspace, project).slice(0, 3)
+    const commands = temporaryDevCommands(workspace, project).slice(0, 2)
 
-    expect(commands.map(({ open }) => open)).toEqual([undefined, undefined, undefined])
-    expect(commands.map(({ skill }) => skill?.skill)).toEqual(['strands-evals', 'strands-evals', 'optimize'])
+    expect(commands.map(({ open }) => open)).toEqual([undefined, undefined])
+    expect(commands.map(({ skill }) => skill?.skill)).toEqual(['strands-evals', 'optimize'])
     expect(commands.map(({ skill }) => skill?.workflow)).toEqual(Object.values(temporaryCommandWorkflows))
-    expect(commands[2]!.skill?.unavailable).toContain('could not load the optimize skill from https://')
+    expect(commands[1]!.skill?.unavailable).toContain('could not load the optimize skill from https://')
     expect(commands.map(({ skill }) => skill?.job?.('missing'))).toEqual([
-      'how is the generation of the experiment going?',
       'how is the evaluation of the experiment going?',
       'how is the optimization of the experiment going?',
     ])
   })
 
-  it('shouldPutEachQuestionOnScreenWhenAnEvaluateTurnAsksAfterAndWithoutAPermissionPrompt', async () => {
+  it('shouldPutEachQuestionOnScreenWhenAnExperimentTurnAsksAfterAndWithoutAPermissionPrompt', async () => {
     let allow!: () => void
     const allowed = new Promise<void>((resolve) => {
       allow = resolve
     })
     const answers: string[] = []
     const prompts: unknown[] = []
-    const { controller, broker } = await evaluateChat((tool) => ({
+    const { controller, broker } = await experimentChat((tool) => ({
       async *stream(prompt) {
         prompts.push(prompt)
         yield {
@@ -254,14 +251,14 @@ describe('TEMPORARY dev commands', () => {
       if (panel?.kind === 'dev') panel.close()
     }
 
-    void controller.submit('/evaluate')
+    void controller.submit('/experiment')
     await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('permission'))
     await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
     await answer()
     await answer()
     await vi.waitFor(() => expect(answers).toHaveLength(2))
 
-    expect(String(prompts[0])).toContain('<strands_dev_command name="evaluate">')
+    expect(String(prompts[0])).toContain('<strands_dev_command name="experiment">')
     expect(answers.map((reply) => JSON.parse(reply) as unknown)).toEqual([
       { status: 'answered', answer: 'a' },
       { status: 'answered', answer: 'a' },
@@ -271,7 +268,7 @@ describe('TEMPORARY dev commands', () => {
 
   it('shouldCancelTheQuestionAndRunTheNextCommandWhenTheDeveloperClicksOutOfItAndPressesEscape', async () => {
     const answers: string[] = []
-    const { controller, broker } = await evaluateChat((tool) => ({
+    const { controller, broker } = await experimentChat((tool) => ({
       async *stream() {
         yield* []
         answers.push(await tool('strands_dev_confirm').run({ question: 'Run it?' }))
@@ -280,13 +277,13 @@ describe('TEMPORARY dev commands', () => {
     }))
     await controller.start()
 
-    void controller.submit('/evaluate')
+    void controller.submit('/experiment')
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'ask' }))
     // A click outside the panel dismisses it, and Esc in the chat input cancels the turn.
     controller.dismissPanel()
     controller.cancel()
     await vi.waitFor(() => expect(answers).toHaveLength(1))
-    void controller.submit('/evaluate')
+    void controller.submit('/experiment')
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'ask' }))
     broker.respond(broker.pending()!.id, { answer: 'yes' })
     await vi.waitFor(() => expect(answers).toHaveLength(2))
