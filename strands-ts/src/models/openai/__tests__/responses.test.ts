@@ -1306,11 +1306,10 @@ describe("OpenAIModel (api: 'responses') tool search", () => {
     return { request: capture.request, content: result.message.content }
   }
 
-  const deferring = (serverToolSearch?: boolean): Parameters<OpenAIModel['stream']>[1] => ({
+  const deferring = (onServer?: boolean): Parameters<OpenAIModel['stream']>[1] => ({
     toolSpecs,
     deferredTools: new Set(['get_weather', 'get_forecast']),
-    loader: 'search_tools',
-    ...(serverToolSearch !== undefined && { serverToolSearch }),
+    toolSearch: onServer ? 'auto' : 'client',
   })
 
   it.each([
@@ -1331,15 +1330,15 @@ describe("OpenAIModel (api: 'responses') tool search", () => {
   })
 
   it.each([
-    ['with serverToolSearch', true],
+    ["with toolSearch 'auto'", true],
     ['in place of the client loader, since a request takes one tool search', undefined],
-  ])('keeps a tool search the caller put in params, and adds no other, %s', async (_name, serverToolSearch) => {
-    const { request } = await run(deferring(serverToolSearch), { params: { tools: [{ type: 'tool_search' }] } })
+  ])('keeps a tool search the caller put in params, and adds no other, %s', async (_name, onServer) => {
+    const { request } = await run(deferring(onServer), { params: { tools: [{ type: 'tool_search' }] } })
 
     expect(request.tools).toEqual([{ type: 'tool_search' }, functionTool(weather, true), functionTool(forecast, true)])
   })
 
-  it('sends search_tools as a client tool search that lists the deferred tools, without serverToolSearch', async () => {
+  it('sends search_tools as a client tool search that lists the deferred tools, with toolSearch client', async () => {
     const { request } = await run(deferring())
 
     expect(request.tools).toEqual([
@@ -1378,7 +1377,6 @@ describe("OpenAIModel (api: 'responses') tool search", () => {
       {
         toolSpecs: [loadTools, weather, forecast],
         deferredTools: new Set(['get_weather', 'get_forecast']),
-        loader: 'load_tools',
       },
       { messages: loaded }
     )

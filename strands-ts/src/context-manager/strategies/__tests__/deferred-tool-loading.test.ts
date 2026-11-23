@@ -352,23 +352,20 @@ describe('DeferredToolLoadingStrategy', () => {
     })
 
     it.each([
-      ['auto', 'native', true],
-      ['server', 'native', true],
-      ['client', 'native', undefined],
-      ['auto', 'stubs', undefined],
-      ['client', 'stubs', undefined],
-    ] as const)(
-      "with search '%s' on a %s model, asks the provider to search: %s",
-      async (search, delivery, serverToolSearch) => {
-        const { agent, model } = makeAgent(delivery, { strategy: searching(search) })
-        model.addTurn({ type: 'textBlock', text: 'ok' })
+      ['auto', 'native'],
+      ['server', 'native'],
+      ['client', 'native'],
+      ['auto', 'stubs'],
+      ['client', 'stubs'],
+    ] as const)("with search '%s' on a %s model, passes it on as the call's toolSearch", async (search, delivery) => {
+      const { agent, model } = makeAgent(delivery, { strategy: searching(search) })
+      model.addTurn({ type: 'textBlock', text: 'ok' })
 
-        await agent.invoke('Hi.')
+      await agent.invoke('Hi.')
 
-        expect(vi.mocked(model.stream).mock.calls[0]![1]!.serverToolSearch).toBe(serverToolSearch)
-        expect(deferredNames(model)).toEqual(['shell', 'read', 'write'])
-      }
-    )
+      expect(vi.mocked(model.stream).mock.calls[0]![1]!.toolSearch).toBe(search)
+      expect(deferredNames(model)).toEqual(['shell', 'read', 'write'])
+    })
 
     it('points each stub at search_tools', async () => {
       const { agent, model } = makeAgent('stubs', { strategy: searching('auto') })

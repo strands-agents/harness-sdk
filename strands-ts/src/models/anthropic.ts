@@ -20,8 +20,7 @@ import {
   type StructuredOutputMechanism,
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
-import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
-import { loaderListing, withToolListing } from '../tools/search-tools.js'
+import { loaderFor, loaderListing, SEARCH_TOOLS_TOOL_NAME, withToolListing } from '../tools/search-tools.js'
 import type { ToolSpec } from '../tools/types.js'
 import { lookupModelInfo, ModelInfo } from './model-info.js'
 import { withToolReferenceText } from './tool-references.js'
@@ -937,8 +936,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       ...(options?.systemPrompt !== undefined && { systemPrompt: options.systemPrompt }),
       ...(options?.toolSpecs !== undefined && { toolSpecs: options.toolSpecs }),
       ...(options?.deferredTools !== undefined && { deferredTools: options.deferredTools }),
-      ...(options?.serverToolSearch && { serverToolSearch: true }),
-      ...(options?.loader && { loader: options.loader }),
+      ...(options?.toolSearch && { toolSearch: options.toolSearch }),
     })
     // The API rejects these on a compaction request.
     const {
@@ -1200,12 +1198,12 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     const deferred = allSpecs.filter((spec) => deferredTools.has(spec.name))
     if (deferred.length === 0) return { toolSpecs: allSpecs, deferredTools, serverTools: [] }
     const contextWindow = this.modelInfo.limits?.contextWindow || DEFAULT_CONTEXT_WINDOW_LIMIT
-    const listing = loaderListing(options?.loader, deferred, contextWindow)
-    if (!options?.serverToolSearch || options.loader === LOAD_TOOLS_TOOL_NAME) {
+    const listing = loaderListing(options?.toolSearch, deferred, contextWindow)
+    if (options?.toolSearch !== 'auto' && options?.toolSearch !== 'server') {
       return { toolSpecs: allSpecs, deferredTools, loaderListing: listing, serverTools: [] }
     }
     return {
-      toolSpecs: allSpecs.filter((spec) => spec.name !== options.loader),
+      toolSpecs: allSpecs.filter((spec) => spec.name !== SEARCH_TOOLS_TOOL_NAME),
       deferredTools,
       systemListing: listing,
       serverTools: [TOOL_SEARCH_TOOL],
@@ -1249,7 +1247,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     const tools: Anthropic.ToolUnion[] = formatFunctionTools(
       toolSpecs,
       deferredTools,
-      options?.loader,
+      loaderFor(options?.toolSearch),
       deferral.loaderListing
     )
     const serverTools = [

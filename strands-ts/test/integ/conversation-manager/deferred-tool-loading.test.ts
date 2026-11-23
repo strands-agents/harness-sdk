@@ -33,7 +33,7 @@ describe.each<{
     provider: bedrock,
     createModel: (): Model => bedrock.createModel({ modelId: 'us.amazon.nova-pro-v1:0', maxTokens: 1024 }),
     delivery: 'unsupported',
-    searches: ['auto'],
+    searches: ['auto', 'client'],
   },
   {
     name: 'Bedrock Converse with Qwen',
@@ -113,8 +113,8 @@ describe.each<{
       const sent = streamSpy.mock.calls.map(([, options]) => options)
       const names = sent[0]?.toolSpecs?.map((spec) => spec.name)
       const sentWeather = sent[0]?.toolSpecs?.find((spec) => spec.name === 'get_weather')
-      if (delivery === 'unsupported' && !search) {
-        // A model that can't take stubs and doesn't search gets every spec in full and no loader.
+      if (delivery === 'unsupported' && search !== 'client') {
+        // A model that can't take stubs gets every spec in full and no loader, unless search is 'client'.
         expect(sentWeather).toEqual(getWeather.toolSpec)
         expect(names).not.toContain('load_tools')
         return
@@ -129,8 +129,8 @@ describe.each<{
         if (delivery === 'native') expect(sent[0]?.deferredTools?.has('get_weather')).toBe(true)
         else expect(sentWeather?.inputSchema).toEqual({ type: 'object' })
       }
-      const searchesOnServer = delivery === 'native' && search === 'auto'
-      expect(sent[0]?.serverToolSearch).toBe(searchesOnServer ? true : undefined)
+      // A model that can't take stubs gets the tools it searched for in full, so its call defers none.
+      expect(sent[0]?.toolSearch).toBe(delivery === 'unsupported' ? undefined : search)
       // A load is a reference in a tool result, or the provider's own search naming the tool it loaded.
       const loaded = agent.messages
         .flatMap((message) => message.content)

@@ -303,19 +303,14 @@ export interface StreamOptions {
   deferredTools?: ReadonlySet<string>
 
   /**
-   * Whether a provider whose model defers tools natively may search the call's `deferredTools` with the provider's tool
-   * search, in place of the `search_tools` spec in `toolSpecs`; every other provider sends `search_tools`.
+   * The `Offload.defer` config's `search`, on a call that defers tools. Unset, the call's loader in `toolSpecs` is
+   * `load_tools`; set, it is `search_tools`, and a provider whose model defers tools natively searches with its own tool
+   * search in its place under `'auto'` or `'server'`. A provider treats only the call's loader as the loader, so a tool
+   * with the other name is an ordinary tool.
    *
    * @internal
    */
-  serverToolSearch?: boolean
-  /**
-   * Name of the spec in `toolSpecs` that loads the call's `deferredTools`: `load_tools`, or `search_tools` when the
-   * model searches. A provider treats only this tool as the loader, so a tool with the other name is an ordinary tool.
-   *
-   * @internal
-   */
-  loader?: string
+  toolSearch?: 'auto' | 'client' | 'server'
 }
 
 /**
@@ -373,17 +368,11 @@ export interface SummarizeOptions {
   deferredTools?: ReadonlySet<string>
 
   /**
-   * Whether the provider may search the deferred tools itself, as in {@link StreamOptions.serverToolSearch}.
+   * How the request's deferred tools are searched, as in {@link StreamOptions.toolSearch}.
    *
    * @internal
    */
-  serverToolSearch?: boolean
-  /**
-   * Name of the request's loader, as in {@link StreamOptions.loader}.
-   *
-   * @internal
-   */
-  loader?: string
+  toolSearch?: 'auto' | 'client' | 'server'
 }
 
 /**

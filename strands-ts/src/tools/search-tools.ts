@@ -3,7 +3,7 @@ import { logger } from '../logging/logger.js'
 import { STOP_WORDS } from '../storage/search/keyword.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { ToolReferenceBlock } from '../types/messages.js'
-import { loadableNames } from './load-tools.js'
+import { LOAD_TOOLS_TOOL_NAME, loadableNames } from './load-tools.js'
 import { McpTool } from './mcp-tool.js'
 import { tool } from './tool-factory.js'
 import type { InvocationContext } from '../agent/invocation-context.js'
@@ -209,21 +209,32 @@ export function toolListing(tools: readonly ToolSpec[], contextWindow: number): 
 }
 
 /**
+ * The loader a call carries: `search_tools` when it searches, `load_tools` otherwise.
+ *
+ * @param toolSearch - The call's `StreamOptions.toolSearch`
+ * @returns The loader's name
+ * @internal
+ */
+export function loaderFor(toolSearch: string | undefined): string {
+  return toolSearch ? SEARCH_TOOLS_TOOL_NAME : LOAD_TOOLS_TOOL_NAME
+}
+
+/**
  * The listing a call's loader shows of the deferred tools, for a model whose API hides them. `load_tools` takes only
  * names, so it lists every deferred tool with its description; `search_tools` lists them as {@link toolListing} does.
  *
- * @param loader - The call's loader, `load_tools` unless set
+ * @param toolSearch - The call's `StreamOptions.toolSearch`, set when its loader is `search_tools`
  * @param deferred - The specs of the tools the call defers
  * @param contextWindow - The model's context window, in tokens
  * @returns The listing
  * @internal
  */
 export function loaderListing(
-  loader: string | undefined,
+  toolSearch: string | undefined,
   deferred: readonly ToolSpec[],
   contextWindow: number
 ): string {
-  if (loader === SEARCH_TOOLS_TOOL_NAME) return toolListing(deferred, contextWindow)
+  if (toolSearch) return toolListing(deferred, contextWindow)
   return deferred.map((spec) => `- ${spec.name}: ${spec.description}`).join('\n')
 }
 

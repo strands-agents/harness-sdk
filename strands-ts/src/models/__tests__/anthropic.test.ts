@@ -2076,7 +2076,6 @@ describe('AnthropicModel', () => {
         provider.stream([userMessage('Hi')], {
           toolSpecs: [loader, ...toolSpecs],
           deferredTools: new Set(['t1']),
-          loader: 'load_tools',
         })
       )
       expect(captured.request.tools[0].description).toBe('Load tools.\n\nTools you can load:\n- t1: tool one')
@@ -4064,8 +4063,7 @@ describe('AnthropicModel tool search', () => {
   const serverOptions = (extra: Partial<StreamOptions> = {}): StreamOptions => ({
     toolSpecs,
     deferredTools: new Set(['get_weather', 'get_forecast']),
-    serverToolSearch: true,
-    loader: 'search_tools',
+    toolSearch: 'auto',
     ...extra,
   })
 
@@ -4145,13 +4143,13 @@ describe('AnthropicModel tool search', () => {
     const { captured, mockClient } = setupCapture()
     const provider = new AnthropicModel({ client: mockClient, modelInfo: { limits: { contextWindow: 1_000 } } })
 
-    await collectIterator(provider.stream([userMessage('Hi')], serverOptions({ serverToolSearch: false })))
+    await collectIterator(provider.stream([userMessage('Hi')], serverOptions({ toolSearch: 'client' })))
 
     expect(captured.request.tools[0].description).toBe('Load tools.\n\nTools you can load:\nget_weather, get_forecast')
   })
 
   it.each([
-    ['without serverToolSearch', { serverToolSearch: false }],
+    ["with toolSearch 'client'", { toolSearch: 'client' as const }],
     ['on a call that defers nothing', { deferredTools: new Set<string>() }],
   ])("sends search_tools and no provider's tool search %s", async (_name, extra) => {
     const { captured, mockClient } = setupCapture()

@@ -64,8 +64,7 @@ export async function summarizeWithStream(
     ...(options?.systemPrompt !== undefined && { systemPrompt: options.systemPrompt }),
     ...(options?.toolSpecs?.length ? { toolSpecs: options.toolSpecs } : {}),
     ...(options?.deferredTools?.size ? { deferredTools: options.deferredTools } : {}),
-    ...(options?.serverToolSearch && { serverToolSearch: true }),
-    ...(options?.loader && { loader: options.loader }),
+    ...(options?.toolSearch && { toolSearch: options.toolSearch }),
     ...(cancelSignal && { cancelSignal }),
     ...(options?.agentMetadata && { agentMetadata: options.agentMetadata }),
   }

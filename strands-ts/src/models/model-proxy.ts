@@ -1,7 +1,7 @@
 import { unwrapInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import type { LocalAgent } from '../types/agent.js'
 import { Message, TextBlock, ToolResultBlock, type ContentBlock } from '../types/messages.js'
-import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
+import { loaderFor } from '../tools/search-tools.js'
 import { latestUserIndex } from './model.js'
 import { hasToolReferences, stub, withToolReferenceSchemas, withToolReferenceText } from './tool-references.js'
 import type { ToolSpec } from '../tools/types.js'
@@ -93,7 +93,7 @@ export class ModelProxy {
     const deferred = options?.deferredTools
     if (!deferred?.size || !options?.toolSpecs) return options
     if (this._model.modelInfo.capabilities?.deferredToolLoading !== 'stubs') return options
-    const loader = options.loader ?? LOAD_TOOLS_TOOL_NAME
+    const loader = loaderFor(options.toolSearch)
     return {
       ...options,
       toolSpecs: options.toolSpecs.map((spec) => (deferred.has(spec.name) ? stub(spec, loader) : spec)),
@@ -106,8 +106,7 @@ export class ModelProxy {
     latestTools.set(this._agent, {
       toolSpecs: [...(options?.toolSpecs ?? [])],
       ...(options?.deferredTools && { deferredTools: options.deferredTools }),
-      ...(options?.serverToolSearch && { serverToolSearch: true }),
-      ...(options?.loader && { loader: options.loader }),
+      ...(options?.toolSearch && { toolSearch: options.toolSearch }),
     })
   }
 
@@ -178,7 +177,7 @@ export async function countRequestTokens(agent: LocalAgent, messages: Message[])
     toolSpecs: deferred
       ? toolSpecs.map((spec) =>
           deferred.has(spec.name) && !searched.has(spec.name)
-            ? unloadedSpec(spec, agent.model, tools?.loader ?? LOAD_TOOLS_TOOL_NAME)
+            ? unloadedSpec(spec, agent.model, loaderFor(tools?.toolSearch))
             : spec
         )
       : toolSpecs,
@@ -186,10 +185,7 @@ export async function countRequestTokens(agent: LocalAgent, messages: Message[])
 }
 
 /** Each agent's latest model call tools, as the call passed them, before any stubs. */
-const latestTools = new WeakMap<
-  LocalAgent,
-  Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch' | 'loader'>
->()
+const latestTools = new WeakMap<LocalAgent, Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'toolSearch'>>()
 
 /**
  * The tools the agent's latest model call sent.
@@ -200,7 +196,7 @@ const latestTools = new WeakMap<
  */
 export function latestCallTools(
   agent: LocalAgent
-): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch' | 'loader'> | undefined {
+): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'toolSearch'> | undefined {
   return latestTools.get(agent)
 }
 

@@ -330,7 +330,7 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
       )
       const stream = await this._client.responses.create(request, { signal: options?.cancelSignal })
 
-      const state = createResponsesStreamState(options)
+      const state = createResponsesStreamState()
 
       for await (const event of stream as AsyncIterable<ResponseStreamEvent>) {
         for (const sdkEvent of mapResponsesEventToSDK(event, state, stateful, options?.modelState)) {

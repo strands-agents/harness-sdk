@@ -46,8 +46,7 @@ import type { OpenAIResponsesConfig } from './types.js'
 import { lookupSystemPromptPlacement } from '../model-info.js'
 import type { ModelInfo } from '../model-info.js'
 import { referenceText, stub, withToolReferenceText } from '../tool-references.js'
-import { LOAD_TOOLS_TOOL_NAME } from '../../tools/load-tools.js'
-import { loaderListing, SEARCH_TOOLS_TOOL_NAME, withToolListing } from '../../tools/search-tools.js'
+import { loaderFor, loaderListing, SEARCH_TOOLS_TOOL_NAME, withToolListing } from '../../tools/search-tools.js'
 import type { ToolSpec } from '../../tools/types.js'
 import type { JSONValue } from '../../types/json.js'
 
@@ -68,8 +67,6 @@ const MANAGED_PARAMS: ReadonlySet<string> = new Set(['model', 'input', 'stream',
 interface DeferredToolsRequest {
   /** The tools the request defers. */
   readonly deferred: ReadonlySet<string>
-  /** The request's loader, which goes as a client tool search. */
-  readonly loader: string | undefined
   /** Whether the API searches the deferred tools itself, in place of the loader. */
   readonly onServer: boolean
   /** The request's tool specs by name, which a client tool search output loads. */
@@ -175,8 +172,8 @@ export function formatResponsesRequest(
 
 /**
  * The request's tools: a function per spec, each deferred one with `defer_loading`. When the request defers tools,
- * the loader becomes a client tool search, or the provider's tool search takes its place under `serverToolSearch`
- * or when the caller configured one, since a request takes one tool search.
+ * `search_tools` becomes a client tool search, or the provider's tool search takes its place under `toolSearch` 'auto'
+ * or 'server' or when the caller configured one, since a request takes one tool search.
  */
 function formatTools(
   toolSpecs: ToolSpec[],
@@ -186,7 +183,7 @@ function formatTools(
   const deferred = deferral?.deferred ?? new Set<string>()
   const configured = existingTools.some((tool) => tool.type === 'tool_search')
   const tools = toolSpecs.flatMap((spec): Tool[] => {
-    if (!deferral || deferred.size === 0 || spec.name !== deferral.loader) {
+    if (!deferral || deferred.size === 0 || spec.name !== SEARCH_TOOLS_TOOL_NAME) {
       return [functionTool(spec, deferred.has(spec.name))]
     }
     return deferral.onServer || configured ? [] : [clientToolSearch(spec, deferral.listing)]
@@ -232,21 +229,20 @@ function deferredToolsRequest(
   const contextWindow = modelInfo.limits?.contextWindow || DEFAULT_CONTEXT_WINDOW_LIMIT
   return {
     deferred,
-    onServer: deferred.size > 0 && options?.serverToolSearch === true,
+    onServer: deferred.size > 0 && options?.toolSearch !== 'client',
     toolSpecs: new Map(toolSpecs.map((spec) => [spec.name, spec])),
-    loader: options?.loader,
     listing: loaderListing(
-      options?.loader,
+      options?.toolSearch,
       toolSpecs.filter((spec) => deferred.has(spec.name)),
       contextWindow
     ),
-    searchCalls: loadingSearchCalls(messages, options?.loader),
+    searchCalls: loadingSearchCalls(messages),
   }
 }
 
-/** Whether the call defers natively: on a model that defers tools natively, with `search_tools` as its loader. */
+/** Whether the call defers natively: on a model that defers tools natively, when it searches. */
 function searchesNatively(options: StreamOptions | undefined, modelInfo: ModelInfo): boolean {
-  return modelInfo.capabilities?.deferredToolLoading === 'native' && options?.loader === SEARCH_TOOLS_TOOL_NAME
+  return modelInfo.capabilities?.deferredToolLoading === 'native' && options?.toolSearch !== undefined
 }
 
 /**
@@ -257,7 +253,7 @@ function withStubs(options: StreamOptions, modelInfo: ModelInfo): ToolSpec[] {
   const deferred = options.deferredTools
   const toolSpecs = options.toolSpecs ?? []
   if (!deferred?.size || modelInfo.capabilities?.deferredToolLoading !== 'native') return toolSpecs
-  const loader = options.loader ?? LOAD_TOOLS_TOOL_NAME
+  const loader = loaderFor(options.toolSearch)
   return toolSpecs.map((spec) => (deferred.has(spec.name) ? stub(spec, loader) : spec))
 }
 
@@ -265,11 +261,11 @@ function withStubs(options: StreamOptions, modelInfo: ModelInfo): ToolSpec[] {
  * IDs of the loader calls whose result loaded tools: it holds only tool references. Any other, such as a failed load,
  * goes as a function call with its text.
  */
-function loadingSearchCalls(messages: Message[], loader: string | undefined): Set<string> {
+function loadingSearchCalls(messages: Message[]): Set<string> {
   const searches = new Set<string>()
   const ids = new Set<string>()
   for (const block of messages.flatMap((message) => message.content)) {
-    if (block.type === 'toolUseBlock' && block.name === loader) searches.add(block.toolUseId)
+    if (block.type === 'toolUseBlock' && block.name === SEARCH_TOOLS_TOOL_NAME) searches.add(block.toolUseId)
     if (block.type === 'toolResultBlock' && searches.has(block.toolUseId) && onlyReferences(block)) {
       ids.add(block.toolUseId)
     }
@@ -646,24 +642,19 @@ export interface ResponsesStreamState {
     cacheWriteInputTokens?: number
   } | null
   stopReason: StopReason
-  /** The loader a client tool search call runs: the one the request sent as its client tool search. */
-  loader: string
 }
 
 /**
  * Creates fresh stream state for a new Responses API stream.
  *
- * @param options - The request's options, whose tool specs name the loader a client tool search call runs
- * @returns The stream state
  * @internal
  */
-export function createResponsesStreamState(options?: StreamOptions): ResponsesStreamState {
+export function createResponsesStreamState(): ResponsesStreamState {
   return {
     dataType: null,
     toolCalls: new Map(),
     finalUsage: null,
     stopReason: 'endTurn',
-    loader: options?.loader ?? SEARCH_TOOLS_TOOL_NAME,
   }
 }
 
@@ -917,7 +908,7 @@ function toolSearchItemEvents(item: ResponseOutputItem, state: ResponsesStreamSt
   if (item.type === 'tool_search_call' && item.execution === 'client') {
     const callId = item.call_id ?? item.id
     const args = JSON.stringify(item.arguments ?? {})
-    state.toolCalls.set(item.id, { name: state.loader, arguments: args, callId, itemId: item.id })
+    state.toolCalls.set(item.id, { name: SEARCH_TOOLS_TOOL_NAME, arguments: args, callId, itemId: item.id })
     return []
   }
   const events: ModelStreamEvent[] = state.dataType !== null ? [{ type: 'modelContentBlockStopEvent' }] : []

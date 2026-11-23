@@ -142,8 +142,8 @@ export interface DeferStrategy extends ContextStrategy {
  * passes their names on the call as its `deferredTools`. The call's model decides how a deferred tool reaches it
  * (`modelInfo.capabilities.deferredToolLoading`); a model that can't defer tools gets every spec, or with `search`
  * `'client'`, only the tools it searched for. The model loads a schema with the loader the context manager registers,
- * `load_tools` or with `search` set `search_tools`, or with the provider's tool search, which the call asks for
- * with `serverToolSearch`. A call to a deferred tool before its load gets the schema back instead of running. SDK
+ * `load_tools` or with `search` set `search_tools`, or with the provider's tool search; the call passes `search` on as
+ * its `toolSearch`. A call to a deferred tool before its load gets the schema back instead of running. SDK
  * tools such as the loaders and `retrieve_context` are never deferred, nor is a tool that takes no parameters, since
  * its stub would leave nothing out.
  *
@@ -257,7 +257,7 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     toolSpecs: readonly ToolSpec[],
     model: Model,
     messages: readonly Message[] = agent.messages
-  ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch' | 'loader'> {
+  ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'toolSearch'> {
     return this._plan(agent, toolSpecs, model, messages).tools
   }
 
@@ -268,7 +268,7 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     model: Model,
     messages: readonly Message[]
   ): {
-    tools: Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch' | 'loader'>
+    tools: Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'toolSearch'>
     deferred: ReadonlySet<string>
   } {
     const deferred = this._toDefer(agent, toolSpecs, model)
@@ -278,14 +278,11 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
       return { tools: withoutLoader, deferred: new Set<string>() }
     }
     if (delivery === 'unsupported') return searchedOnly(toolSpecs, deferred, messages, model)
-    const serverToolSearch =
-      delivery === 'native' && (this._config.search === 'auto' || this._config.search === 'server')
     return {
       tools: {
         toolSpecs: [...toolSpecs],
         deferredTools: deferred,
-        ...(serverToolSearch && { serverToolSearch }),
-        loader: this._loader,
+        ...(this.search && { toolSearch: this.search }),
       },
       deferred,
     }
@@ -474,7 +471,7 @@ function searchedOnly(
   messages: readonly Message[],
   model: Model
 ): {
-  tools: Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch' | 'loader'>
+  tools: Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'toolSearch'>
   deferred: ReadonlySet<string>
 } {
   const loaded = loadOrder(messages).filter((name) => deferred.has(name))

@@ -152,7 +152,7 @@ export class ContextManager implements Plugin {
     toolSpecs: readonly ToolSpec[],
     model: Model,
     messages?: readonly Message[]
-  ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch' | 'loader'> {
+  ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'toolSearch'> {
     const strategy = toolLoadingStrategy(this._strategies)
     return strategy?.callTools(agent, toolSpecs, model, messages) ?? { toolSpecs: [...toolSpecs] }
   }
