@@ -1,0 +1,250 @@
+---
+title: Amazon SageMaker AI
+description: "Answer decision model questions with a model on your own SageMaker AI real-time endpoint: set up credentials and the client, read confidence, and handle errors."
+tags: [decision-models, aws]
+sourceLinks:
+  - path: strands-py/src/strands/decisions/sagemaker_decision_model.py
+  - path: strands-py/src/strands/decisions/_system_one_http_adapter.py
+  - path: strands-ts/src/decisions/sagemaker.ts
+  - path: strands-ts/src/decisions/system-one-http-adapter.ts
+---
+
+`SageMakerDecisionModel` answers questions with a decision model you deploy to an
+[Amazon SageMaker AI][sagemaker] real-time endpoint in your own AWS account, such as
+[Strands Decider][decider]. It returns the same result as every other
+[decision model](index.mdx), plus a probability for each label and a confidence for
+each answer.
+
+Choose it when the input must stay in your AWS account, or when you want to pick the
+model version and the instance it runs on. If you'd rather not run an endpoint,
+[TypeSafe Jev](typesafe.mdx) answers the same questions as a hosted API.
+
+You need a deployed endpoint first. The [Strands Decider SageMaker guide][decider-deploy]
+deploys one from SageMaker JumpStart or with a CDK stack. The endpoint must accept the
+System One request that Strands Decider serves.
+
+## Installation
+
+<Tabs>
+<Tab label="Python">
+
+`SageMakerDecisionModel` ships with the SDK and uses boto3, which the SDK already
+depends on:
+
+```bash
+pip install strands-agents
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+`SageMakerDecisionModel` loads the AWS SDK's SageMaker Runtime client, an optional peer
+dependency. Install it alongside the SDK:
+
+```bash
+npm install @strands-agents/sdk @aws-sdk/client-sagemaker-runtime
+```
+
+Import the class from `@strands-agents/sdk/decisions/sagemaker`, not the package root.
+The client loads on the first `ask`, so a missing package raises an error then, not
+when you construct the decision model.
+
+</Tab>
+</Tabs>
+
+## Credentials
+
+`SageMakerDecisionModel` signs each request with the standard AWS credential chain:
+environment variables, shared config and credentials files, and IAM roles. The
+credentials need `sagemaker:InvokeEndpoint` on the endpoint. The container behind the
+endpoint has no authentication of its own, so this IAM permission is the only access
+control. See [Setting up AWS credentials][credentials-setup] for shared setup.
+
+<Tabs>
+<Tab label="Python">
+
+To use a named profile or assumed-role credentials, pass a boto3 session. The decision
+model calls the endpoint in the session's region:
+
+```python
+import boto3
+
+from strands.decisions import SageMakerDecisionModel
+
+decisions = SageMakerDecisionModel(
+    "strands-decider-2b-qwen3-5-v1-2610",
+    boto_session=boto3.Session(profile_name="decisions", region_name="us-east-1"),
+)
+```
+
+Without a session, pass `region_name`. If you set no region, the decision model uses
+the region from `boto_client_config`, then the session's configured region, then
+`AWS_REGION`. With no region from any source, the constructor raises botocore's
+`NoRegionError`.
+
+</Tab>
+<Tab label="TypeScript">
+
+To use a named profile, set `AWS_PROFILE` in the environment. For other credentials,
+pass them in `clientConfig`, or pass a `SageMakerRuntimeClient` you've built as
+`client`. If you don't set `region`, the AWS SDK resolves the region from its usual
+sources, such as `AWS_REGION`.
+
+</Tab>
+</Tabs>
+
+## Configuration
+
+| Option | Description |
+| --- | --- |
+| <Syntax py="endpoint_name" ts="endpointName" /> | Name of the SageMaker AI real-time endpoint. Required. |
+| <Syntax py="region_name" ts="region" /> | AWS region of the endpoint. |
+| <Syntax py="boto_client_config" ts="clientConfig" /> | Configuration for the SageMaker Runtime client, such as timeouts and retries. |
+| `client` | A SageMaker Runtime client you've built, used as is. |
+| <Syntax py="default_min_confidence" ts="defaultMinConfidence" /> | Confidence below which an answer comes back `Uncertain`, in `[0.0, 1.0]`. Defaults to `0.5`. See [Confidence and uncertainty](#confidence-and-uncertainty). |
+
+A prebuilt `client` can't be combined with the region, session, or client
+configuration, and a session can't be combined with a region. The constructor raises an
+error for those combinations and for an empty endpoint name.
+
+See the [`SageMakerDecisionModel` API reference][model-api] for all constructor
+options.
+
+## Ask questions
+
+This example asks two questions about a support message and prints each answer with
+its confidence:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import asyncio
+
+from strands.decisions import SageMakerDecisionModel
+
+message = "I was charged twice for order 1182. Please refund one charge today."
+
+
+async def main():
+    decisions = SageMakerDecisionModel(
+        "strands-decider-2b-qwen3-5-v1-2610", region_name="us-east-1"
+    )
+    result = await decisions.ask(
+        message,
+        {
+            "urgent": {
+                "question": "Does the customer need help today?",
+                "choices": "boolean",
+            },
+            "team": {
+                "question": "Which team should handle this message?",
+                "choices": ["billing", "shipping", "technical"],
+            },
+        },
+    )
+    confidence = result.metadata.confidence
+    print(result.answers["urgent"], f"{confidence['urgent']:.2f}")
+    print(result.answers["team"], f"{confidence['team']:.2f}")
+
+
+asyncio.run(main())
+
+# Typical output:
+# True 0.90
+# billing 1.00
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/decision-models/models/sagemaker_imports.ts:configuration_imports"
+
+--8<-- "user-guide/sdk/decision-models/models/sagemaker.ts:configuration"
+```
+
+</Tab>
+</Tabs>
+
+The request doesn't name a model. The endpoint runs one, and
+<Syntax py="metadata.model_id" ts="metadata.modelId" /> reports the name the endpoint
+returns. The decision model doesn't cap the number of questions per call.
+
+## Confidence and uncertainty
+
+The model reports a confidence for every answer. An answer below the minimum comes back
+as `Uncertain`, and `metadata.confidence` and `metadata.probabilities` still show what
+the model leaned toward. [Confidence](../questions.mdx#confidence) explains how it's
+measured.
+
+The default minimum of 0.5 suits most routing and triage questions. For a question
+where a wrong answer costs more than asking a person, raise the minimum on that
+question alone: set its `uncertainty` to
+<Syntax py='{"min_confidence": 0.8}' ts="{ minConfidence: 0.8 }" />.
+
+## Timeouts and retries
+
+<Tabs>
+<Tab label="Python">
+
+The call runs on botocore's default timeouts and retries. Set your own with
+`boto_client_config`:
+
+```python
+from botocore.config import Config
+
+from strands.decisions import SageMakerDecisionModel
+
+decisions = SageMakerDecisionModel(
+    "strands-decider-2b-qwen3-5-v1-2610",
+    region_name="us-east-1",
+    # Fail a slow read after five seconds and try the call at most twice
+    boto_client_config=Config(read_timeout=5, retries={"total_max_attempts": 2}),
+)
+```
+
+boto3 is synchronous, so the call runs on a worker thread. Cancelling the task that
+awaits `ask` stops the wait, not the call already sent to the endpoint.
+
+</Tab>
+<Tab label="TypeScript">
+
+Pass a `cancelSignal` to `ask` to bound how long a decision can take. The signal aborts
+the request to the endpoint:
+
+```typescript
+--8<-- "user-guide/sdk/decision-models/models/sagemaker_imports.ts:timeout_imports"
+
+--8<-- "user-guide/sdk/decision-models/models/sagemaker.ts:timeout"
+```
+
+To change retries or the request handler, pass them in `clientConfig`.
+
+</Tab>
+</Tabs>
+
+## Errors
+
+Beyond the [validation errors](../questions.mdx#validation), `ask` raises:
+
+| Error | When |
+| --- | --- |
+| <Syntax py="ModelThrottledException" ts="ModelThrottledError" /> | SageMaker is throttling or the endpoint isn't ready (`ThrottlingException`, `ModelNotReadyException`, or `ServiceUnavailable`), or the container returned HTTP 429, 503, or 529. Retry with backoff. |
+| <Syntax py="ContextWindowOverflowException" ts="ContextWindowOverflowError" /> | The container returned HTTP 413, or HTTP 422 with a message about the context window, as Strands Decider does when deployed with `--strict-window`. Shorten the input, such as by sending only the latest messages of a conversation. |
+| <Syntax py="botocore.exceptions.ClientError" ts="ModelError" /> | Any other SageMaker error, such as `AccessDeniedException` for missing IAM permission or `ValidationError` for an endpoint that doesn't exist. |
+| <Syntax py="botocore.exceptions.BotoCoreError" ts="ModelError" /> | The call didn't complete, such as a read timeout, a network failure, or missing credentials. |
+| <Syntax py="StructuredOutputException" ts="ModelError" /> | The endpoint returned a response the decision model can't read, such as an answer outside the question's choices. |
+
+The throttling errors keep the SageMaker error as their cause.
+<Syntax
+  plain
+  py="So do the context window errors. Read the error code from the cause's response."
+  ts="So does the generic ModelError. Check for the two specific errors first."
+/>
+
+[sagemaker]: https://docs.aws.amazon.com/sagemaker/latest/dg/realtime-endpoints.html
+[decider]: https://github.com/strands-labs/strands-decider
+[decider-deploy]: ../../../../labs/strands-decider/deployment/sagemaker.mdx
+[credentials-setup]: ../../model-providers/amazon-bedrock.mdx#setting-up-aws-credentials
+[model-api]: @api/python/strands.decisions.sagemaker_decision_model#strands.decisions.sagemaker_decision_model.SageMakerDecisionModel.__init__
