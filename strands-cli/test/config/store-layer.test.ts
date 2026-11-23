@@ -117,6 +117,62 @@ describe('CliConfigStore layer', () => {
     expect(config.snapshot().settings.frogTheme).toBe('green')
   })
 
+  describe('settings that the saved CLI config holds', () => {
+    it('shouldTakeThemAsTheValuesInUseAndDropTheLayersOwnValueOfThem', async () => {
+      const { path, toml, config } = await devStore()
+      const target = layer({ settings: { frogTheme: 'merlin', toolOutput: 'full' } })
+      await config.useLayer(target)
+
+      await config.adoptSavedSettings({ frogTheme: 'spectre' })
+
+      expect(config.snapshot().settings).toMatchObject({ frogTheme: 'spectre', toolOutput: 'full' })
+      expect(target.writes).toEqual([{ settings: { toolOutput: 'full' } }])
+      expect(await readFile(path, 'utf8')).toBe(toml)
+    })
+
+    it('shouldLeaveTheLayerAloneWhenItHeldNoValueOfThem', async () => {
+      const { config } = await devStore()
+      const target = layer({ settings: { toolOutput: 'full' } })
+      await config.useLayer(target)
+
+      await config.adoptSavedSettings({ frogTheme: 'spectre' })
+
+      expect(config.snapshot().settings).toMatchObject({ frogTheme: 'spectre', toolOutput: 'full' })
+      expect(target.writes).toEqual([])
+    })
+
+    it('shouldNotSaveThemInTheLayerWithALaterChange', async () => {
+      const { config } = await devStore()
+      const target = layer()
+      await config.useLayer(target)
+      await config.adoptSavedSettings({ frogTheme: 'spectre' })
+
+      await config.setSettings({ toolOutput: 'full' })
+
+      expect(target.writes).toEqual([{ settings: { toolOutput: 'full' } }])
+      expect(config.snapshot().settings.frogTheme).toBe('spectre')
+    })
+
+    it('shouldKeepThemWhenAnotherWorkspaceIsOpened', async () => {
+      const { config } = await devStore()
+      await config.useLayer(layer({ settings: { frogTheme: 'merlin' } }))
+      await config.adoptSavedSettings({ frogTheme: 'spectre' })
+
+      await config.useLayer(layer())
+
+      expect(config.snapshot().settings.frogTheme).toBe('spectre')
+    })
+
+    it('shouldTakeThemWithoutALayerToo', async () => {
+      const { path, toml, config } = await devStore()
+
+      await config.adoptSavedSettings({ frogTheme: 'spectre' })
+
+      expect(config.snapshot().settings.frogTheme).toBe('spectre')
+      expect(await readFile(path, 'utf8')).toBe(toml)
+    })
+  })
+
   it('shouldRejectALayerThatIsNotValid', async () => {
     const { config } = await devStore()
 

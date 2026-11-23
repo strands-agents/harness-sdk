@@ -268,6 +268,12 @@ async function runInteractive(
       suppliedConfig ??
       (args.dev ? await CliConfigStore.load(undefined, { persist: false }) : await CliConfigStore.load())
     config.useEnvironmentFiles(args.envFiles)
+    // A theme picked in strands dev for the Base CLI is the theme of the CLI. Its workspace may still hold one from
+    // before that was so; a start that cannot take it over is still a start.
+    if (!args.dev && !suppliedConfig) {
+      const { adoptBaseCliWorkspaceLook } = await import('../dev/base-cli.js')
+      await adoptBaseCliWorkspaceLook(config).catch(() => undefined)
+    }
     const savedConfig = config.snapshot()
     let initialWorkspace = process.cwd()
     if (args.dev) await config.setSettings({ updatePrompts: false, telemetry: false })

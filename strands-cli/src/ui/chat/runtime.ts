@@ -166,7 +166,7 @@ export async function createTypescriptChat(
         mcp: backend.mcp,
         streamPresentation: DEFAULT_STREAM_PRESENTATION,
         setSettings: async (next): Promise<void> => {
-          await config.setSettings(next)
+          await (baseCli ? baseCli.saveSettings(config, next) : config.setSettings(next))
           await backend.syncConfiguration()
         },
         requestSetup,
@@ -331,10 +331,9 @@ export async function createTypescriptChat(
           ? {
               configWatch: {
                 ...baseCli.configWatch,
-                changed: async (): Promise<boolean> => {
-                  await config.reload()
-                  return baseCli.configWatch.changed()
-                },
+                // The settings of a dev chat sit under the workspace layer, so they cannot be read again as a whole:
+                // the watch takes in what cli.toml shares with this workspace.
+                changed: (): Promise<boolean> => baseCli.configWatch.changed(config),
                 settings: (): ChatSettings => config.snapshot().settings,
               },
             }
@@ -399,7 +398,7 @@ export async function createPythonChat(
       sessions,
       skills: { list: () => Promise.resolve(backend.skills), activate: (name) => backend.activateSkill(name) },
       skillNames: backend.skills.map((skill) => skill.name),
-      setSettings: (settings) => config.setSettings(settings),
+      setSettings: (settings) => (baseCli ? baseCli.saveSettings(config, settings) : config.setSettings(settings)),
       requestSetup,
       ...(devWorkspace
         ? {
@@ -513,10 +512,9 @@ export async function createPythonChat(
           ? {
               configWatch: {
                 ...baseCli.configWatch,
-                changed: async (): Promise<boolean> => {
-                  await config.reload()
-                  return baseCli.configWatch.changed()
-                },
+                // The settings of a dev chat sit under the workspace layer, so they cannot be read again as a whole:
+                // the watch takes in what cli.toml shares with this workspace.
+                changed: (): Promise<boolean> => baseCli.configWatch.changed(config),
                 settings: (): ChatSettings => config.snapshot().settings,
               },
             }

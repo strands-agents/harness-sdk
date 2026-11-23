@@ -3,7 +3,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import { type ParsedArgs } from '../cli/arguments.js'
 import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
 import { CliConfigStore, type CliConfigSnapshot, type ConfigLayer } from '../config/store.js'
-import { isProfileBaseCli, refreshBaseCliView } from './base-cli.js'
+import { isProfileBaseCli, promoteBaseCliLook, refreshBaseCliView } from './base-cli.js'
 import { containsPath, expandHome, strandsUserPath } from '../paths.js'
 import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
 import { prepareWorkspaceDependencies } from '../project/archive.js'
@@ -530,7 +530,15 @@ export const prepareDevRun = async (
     await config.useLayer(undefined)
     await config.setSettings({ mcpDiscovery: false, skillDiscovery: false, telemetry: false, updatePrompts: false })
     await config.useAgentProject(workspace.entrypoint)
-    if (workspace.directory) await config.useLayer(workspaceSettings(workspace.directory))
+    if (workspace.directory) {
+      const layer = workspaceSettings(workspace.directory)
+      await config.useLayer(layer)
+      // The look of the Base CLI lives in cli.toml. One that its workspace still holds moves there now; when that
+      // fails the workspace keeps it, and dev opens as it did before.
+      const saved = config.snapshot().path
+      if (saved !== 'in-memory' && (await isProfileBaseCli(workspace, saved)))
+        await promoteBaseCliLook(config, await layer.read(), saved).catch(() => undefined)
+    }
     const label = sanitizeTerminalText(workspace.config.name)
     const entrypoint = sanitizeTerminalText(workspace.entrypoint)
     if (!screen) {

@@ -300,6 +300,7 @@ Dev saves each change that you make in the CLI during a dev session.
 - When plain `strands` runs the saved agent project of the Base CLI, it writes `/model` and `/effort` into that agent file, as dev does.
 - The harness ignores `effort` when the agent passes a model object, for example `new BedrockModel({...})`. For a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object, `/effort` writes the reasoning fields into the object instead. These are the same fields that the harness sends for that model id at that effort, in `additionalRequestFields` or `params`. Fields for other purposes do not change.
 - `/settings`, `/permissions`, `/mcp`, and the AWS profile go into the `cli` section of `strands-dev/.config`. This section has the same shape as `cli.toml`, and dev loads it at each start.
+- For a Base CLI that is a saved profile, the **Appearance** settings (theme, transcript spacing, animations, reasoning, and tool output) go into `[settings]` of `~/.strands/cli.toml` instead, so dev and plain `strands` look the same. An open session of either takes a change at once, without a reload. An Appearance value that the Base CLI workspace still holds from an earlier save moves to `cli.toml` the next time dev or plain `strands` starts.
 - Dev never saves provider credentials.
 
 If the agent file sets an option in code, for example from a variable, dev does not change the file.
