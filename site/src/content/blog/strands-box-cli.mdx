@@ -41,7 +41,7 @@ It's still Claude Code but inside of the box, and you use it the way you always 
 
 Box runs the agent inside an operating system sandbox, so the agent can only reach the files its profile allows. Everything else the agent does goes through Box: every shell command and the files it touches, every network request, and every MCP call.
 
-Box checks each of those requests against your policy. It understands what a request means, so a rule can name a file, a command, a host, or a tool. The check happens outside the model, so nothing the agent reads or decides can change the answer. The agent can't change its own policy or write code to get around it.
+Box checks each of those requests against your policy. It understands what a request means, so a rule can name a file, a command, a host, or a tool. The check happens outside the model, so nothing the agent reads or decides can change the answer, and the agent can't change its own policy.
 
 ![The agent in a box, with the policy layer as the only exit](./resources/strands-box-cli/picture-1-how-box-works.png)
 
@@ -134,11 +134,14 @@ When a rule denies a request, Box returns the rule's description to the agent as
 
 Now let's look at a profile that helps an on-call engineer at 3 AM. This agent doesn't need to write code. It looks at what's happening in an AWS account and reports what it finds.
 
-It can make requests to the model and the AWS MCP Server but nothing else on the network. Its route to the AWS MCP Server uses `aws://`, so it never has direct access to AWS keys. The parts of its `profile.toml` that matter here:
+It starts from the `locked` policy and makes requests to the model and the AWS MCP Server, but nothing else on the network. Its route to the AWS MCP Server uses `aws://`, so it never has direct access to AWS keys. The parts of its `profile.toml` that matter here:
 
 ```toml
 packs = ["@box/claude", "@box/bedrock"]
 policies = ["policy.dw", "oncall.dw"]
+
+# Tell Claude Code where the AWS MCP Server is.
+agent-args = ["--mcp-config", '{"mcpServers": {"aws": {"type": "http", "url": "https://aws-mcp.us-east-1.api.aws/mcp"}}}']
 
 # The box signs each request to the AWS MCP Server with the oncall-readonly AWS profile.
 [mcp.aws]
@@ -167,7 +170,7 @@ when temporal {
 };
 ```
 
-Both profiles run Claude Code, but they let the agent do very different things. Each one also keeps its own storage, so the on-call agent's sessions and memory never show up in the coding agent's box, and the other way around. We run both in YOLO mode, the on-call one included, because the boundaries are set ahead of time and the agent can't get around them.
+Both profiles run Claude Code, but they let the agent do very different things. Each one also keeps its own storage, so the on-call agent's sessions and memory never show up in the coding agent's box, and the other way around. We run both in YOLO mode, the on-call one included, because the boundaries are set ahead of time and the agent can't change them.
 
 A profile that only reads data and makes no changing API calls works well for an operations agent, but for everyday work you'll often want a looser profile and policy as your daily driver. The Box CLI lets you choose, whichever agent you're using.
 
