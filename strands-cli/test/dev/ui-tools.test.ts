@@ -109,8 +109,8 @@ describe('strands dev UI tools', () => {
 
     expect(broker.interruptForTurn()).toBe(true)
 
-    expect(JSON.parse(await asked)).toMatchObject({ status: 'interrupted', question: 'Which?', entered: ['b'] })
-    expect(JSON.parse(await untouched)).not.toHaveProperty('entered')
+    expect(JSON.parse(await asked)).toMatchObject({ status: 'interrupted', question: 'Which?', unsubmitted: ['b'] })
+    expect(JSON.parse(await untouched)).not.toHaveProperty('unsubmitted')
   })
 
   it.each([

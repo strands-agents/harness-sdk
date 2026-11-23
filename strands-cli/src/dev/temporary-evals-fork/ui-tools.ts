@@ -148,10 +148,12 @@ const interrupted = (input: Input, { entered }: WizardInterruption): string =>
   reply({
     status: 'interrupted',
     question: input.question,
-    ...(Object.keys(entered).length === 0 ? {} : { entered: entered[ANSWER] ?? entered }),
+    ...(Object.keys(entered).length === 0 ? {} : { unsubmitted: entered[ANSWER] ?? entered }),
     detail:
-      'The developer sent a chat message instead of finishing this question; read it next. Treat entered as what ' +
-      'they had on screen, not a final answer, and ask again only if the message does not settle it.',
+      'Not answered: the developer sent a chat message instead of submitting this question, and the message comes ' +
+      'next. unsubmitted is a draft they left on screen, never an answer. Reply to the message in chat and end your ' +
+      'turn: call no other tool, start nothing, and do not move on to the next question. If the message or the ' +
+      'draft suggests an answer, say how you read it and ask the developer to confirm it.',
   })
 
 const BACK = reply({
@@ -272,7 +274,7 @@ const UI_TOOLS: readonly UiTool[] = [
 export const uiTools = (broker: () => UiToolsBroker): DevChatTool[] =>
   UI_TOOLS.map((tool): DevChatTool => ({
     name: tool.name,
-    description: `${tool.description} A cancelled question is a no: do not ask it again or act as if they agreed. Back means ask the previous question again.`,
+    description: `${tool.description} A cancelled question is a no: do not ask it again or act as if they agreed. Back means ask the previous question again. Interrupted means not answered: reply to the developer's chat message and end the turn.`,
     inputSchema: {
       type: 'object',
       properties: { ...COMMON, ...tool.properties },
