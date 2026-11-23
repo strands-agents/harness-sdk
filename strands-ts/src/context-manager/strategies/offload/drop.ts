@@ -27,7 +27,7 @@ export class DropStrategy extends BaseOffloadStrategy {
   protected async _applyPerMessage(context: ContextState): Promise<boolean> {
     const { messages, agent } = context
     const text = placeholderFor(agent.model, formatDroppedMessages)
-    return removeMessages(messages, await this._removableMessages(context), text, 'drop', this._stash)
+    return removeMessages(messages, await this._removableMessages(context), text, 'drop', this._archive)
   }
 
   protected async _replaceBlock(
@@ -35,10 +35,10 @@ export class DropStrategy extends BaseOffloadStrategy {
     tokens: number,
     message: Message,
     _agent: LocalAgent,
-    stashRef: string | undefined
+    archiveRef: string | undefined
   ): Promise<ContentBlock | null> {
     logger.debug(`trackingId=<${message.trackingId}>, block=<${block.type}> | dropped block from context window`)
-    const placeholder = this._placeholder(formatDropped(tokens, mediaKind(block)), stashRef, tokens)
+    const placeholder = this._placeholder(formatDropped(tokens, mediaKind(block)), archiveRef, tokens)
     return block instanceof ToolResultBlock ? block.with({ content: [placeholder] }) : placeholder
   }
 }

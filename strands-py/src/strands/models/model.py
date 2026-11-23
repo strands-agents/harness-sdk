@@ -17,6 +17,7 @@ from ..plugins.plugin import Plugin
 from ..types.content import ContentBlock, Messages, SystemContentBlock
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
+from ._cache_points import section_ttl
 from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 from ._model_info import ModelCapabilities, ModelInfo, ModelLimits, lookup_model_info
 from ._model_proxy import _latest_user_index
@@ -164,7 +165,9 @@ class CacheConfig:
     Attributes:
         strategy: Caching strategy to use.
             - "auto": Automatically detect model support and inject cachePoint to maximize cache coverage
-            - "anthropic": Inject cachePoint in Anthropic-compatible format without model support check
+            - "anthropic": Inject cachePoint in Anthropic-compatible format without model support check.
+              ``LiteLLMModel`` places them only where the backend can be Claude-style: a Claude model on any
+              provider, ``anthropic/``, or a gateway id that doesn't name its backend.
         ttl: Optional TTL duration for cache entries (e.g. "5m", "1h").
             When specified, auto-injected cache points will include this TTL value. Bedrock requires
             checkpoint TTLs to be non-increasing across toolConfig, system and messages, and rejects a
@@ -177,13 +180,14 @@ class CacheConfig:
         messages_ttl: Cache the conversation prefix, placing a cache point on durable user content. A TTL
             string sets this section's own duration; True or None derives it from ``ttl``; False disables
             the message cache point. Mirrors the TypeScript ``messagesTTL``. Read by ``BedrockModel``,
-            ``AnthropicModel`` and, on models that take cache points, ``OpenAIResponsesModel``, which
-            accepts only the OpenAI lifetimes ``"30m"`` and ``"12h"``.
+            ``AnthropicModel`` and, on models that take cache points, ``LiteLLMModel`` and
+            ``OpenAIResponsesModel``, which accepts only the OpenAI lifetimes ``"30m"`` and ``"12h"``.
         cache_key: Stable identity a prompt-cache-routing provider (OpenAI, LiteLLM, Mistral) uses as its
             cache key. Left unset, it is derived per request as ``strands-<session_id>`` if the agent has
             a session manager, so repeat runs of a session share a cache prefix with no key management.
             Set it to a string to pin your own key, or ``False`` to opt out of routing entirely. The
             resolved key (whether set or derived from the session id) is transmitted to the provider.
+            ``LiteLLMModel`` sends it only to models LiteLLM accepts ``prompt_cache_key`` for.
         tools_ttl: Cache the tool definitions, auto-injecting a cache point on the tool block so repeated calls
             with the same tools hit the cache. A TTL string (e.g. "1h") sets this section's own
             duration and is honored as written; True derives the duration from ``ttl``; False disables it.
@@ -203,7 +207,7 @@ def _messages_cache_ttl(cache_config: CacheConfig | None) -> str | None:
     """TTL for the message cache point: a ``messages_ttl`` string, else ``cache_config.ttl``."""
     if cache_config is None:
         return None
-    return cache_config.messages_ttl if isinstance(cache_config.messages_ttl, str) else cache_config.ttl
+    return section_ttl(cache_config.messages_ttl, cache_config.ttl)
 
 
 @dataclass

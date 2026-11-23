@@ -1,5 +1,5 @@
 import { Agent } from '@strands-agents/sdk'
-import { Offload } from '@strands-agents/sdk/experimental'
+import { Offload } from '@strands-agents/sdk/context-manager'
 
 async function usingPresets() {
   // --8<-- [start:using_presets]

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { Agent, Message, Offload, TextBlock, tool } from '@strands-agents/sdk'
+import { Agent, Message, TextBlock, tool } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/context-manager'
 import { z } from 'zod'
 import { bedrock } from '../__fixtures__/model-providers.js'
 

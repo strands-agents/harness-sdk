@@ -5,8 +5,6 @@
  * change between releases as we tune based on real-world usage data. Treat the preset
  * name as the stable contract, not its expansion. Use raw `Offload.*` strategies when
  * you need a specific, pinned configuration.
- *
- * @experimental
  */
 
 import type { ContextStrategy } from './types.js'

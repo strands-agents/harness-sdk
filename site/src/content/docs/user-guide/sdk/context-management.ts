@@ -1,4 +1,5 @@
-import { Agent, BedrockModel, Offload } from '@strands-agents/sdk'
+import { Agent, BedrockModel } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/context-manager'
 import { LocalFileStorage, S3Storage } from '@strands-agents/sdk/storage'
 
 async function basic() {
@@ -29,9 +30,9 @@ async function explicit() {
         // Summarize older messages when the window reaches 85% utilization
         Offload.summarize('*').when({ contextUtilization: '85%', preserveRecent: 2 }),
       ],
-      // Stash keeps originals and registers a retrieve_context tool.
+      // The archive keeps originals and registers a retrieve_context tool.
       // Omit for in-memory storage, or provide durable storage.
-      stash: { storage: new LocalFileStorage('./artifacts/') },
+      archive: { storage: new LocalFileStorage('./artifacts/') },
     },
   })
   // --8<-- [end:explicit]
@@ -57,7 +58,7 @@ async function customSummarizationModel() {
           systemPrompt: 'Summarize preserving tool outputs, errors, and IDs.',
         }).when({ contextUtilization: '85%', preserveRecent: 2 }),
       ],
-      stash: false,
+      archive: false,
     },
   })
   // --8<-- [end:custom_summary_model]
@@ -66,9 +67,9 @@ async function customSummarizationModel() {
 async function storageBackends() {
   // --8<-- [start:storage_backends]
   // Local filesystem
-  const stashLocal = { storage: new LocalFileStorage('./artifacts/') }
+  const archiveLocal = { storage: new LocalFileStorage('./artifacts/') }
 
   // S3, using ambient AWS credentials
-  const stashS3 = { storage: new S3Storage('my-bucket', { prefix: 'agent-stash/' }) }
+  const archiveS3 = { storage: new S3Storage('my-bucket', { prefix: 'agent-archive/' }) }
   // --8<-- [end:storage_backends]
 }

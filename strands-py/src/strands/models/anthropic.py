@@ -35,6 +35,7 @@ from ..types.event_loop import Usage
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceToolDict, ToolSpec
+from ._cache_points import cache_control, section_ttl
 from ._defaults import resolve_config_metadata, resolve_max_tokens
 from ._model_info import ModelCapabilities, ModelInfo, lookup_model_info
 from ._native_output import (
@@ -169,9 +170,6 @@ _TEXT_FILE_FORMATS = frozenset({"csv", "html", "md", "txt"})
 # Anthropic accepts ``cache_control`` on these block types only; any other block is rejected.
 # https://docs.claude.com/en/docs/build-with-claude/prompt-caching
 _CACHEABLE_BLOCK_TYPES = frozenset({"document", "image", "text", "tool_result", "tool_use"})
-
-# ``ephemeral`` is the only cache type the Anthropic API supports
-_ANTHROPIC_CACHE_TYPE = "ephemeral"
 
 # The anthropic SDK added the output_config request parameter in 0.77.0, after transform_schema (0.75.0).
 _SDK_SUPPORTS_NATIVE_OUTPUT = tuple(int(part) for part in re.findall(r"\d+", anthropic.__version__)[:2]) >= (0, 77)
@@ -606,7 +604,7 @@ class AnthropicModel(Model):
         durable = formatted_contents[: len(formatted_contents) - skip_trailing]
         for block in reversed(durable):
             if block.get("type") in _CACHEABLE_BLOCK_TYPES:
-                block["cache_control"] = cls._format_cache_control(ttl)
+                block["cache_control"] = cache_control(ttl)
                 return True
 
         return False
@@ -648,9 +646,7 @@ class AnthropicModel(Model):
         if self._auto_caching_unsupported():
             return None
 
-        tools_ttl = cache_config.tools_ttl
-        ttl = tools_ttl if isinstance(tools_ttl, str) else cache_config.ttl
-        return self._format_cache_control(ttl)
+        return cache_control(section_ttl(cache_config.tools_ttl, cache_config.ttl))
 
     def _resolve_deprecated_cache_tools(self) -> dict[str, Any] | None:
         """Resolve tool caching from the deprecated model-level ``cache_tools`` option.
@@ -666,22 +662,7 @@ class AnthropicModel(Model):
             cache_config = self.config.get("cache_config")
             if cache_config and cache_config.ttl and cache_config.strategy in ("auto", "anthropic"):
                 ttl = cache_config.ttl
-        return self._format_cache_control(ttl)
-
-    @staticmethod
-    def _format_cache_control(ttl: str | None) -> dict[str, Any]:
-        """Build an Anthropic ``cache_control`` value.
-
-        Args:
-            ttl: TTL duration (e.g. "5m", "1h"). A falsy value is omitted, leaving the API default.
-
-        Returns:
-            An Anthropic cache_control dict.
-        """
-        cache_control: dict[str, Any] = {"type": _ANTHROPIC_CACHE_TYPE}
-        if ttl:
-            cache_control["ttl"] = ttl
-        return cache_control
+        return cache_control(ttl)
 
     def _manage_cache_points(self, messages: Messages) -> tuple[Messages, int | None]:
         """Return a copy of messages carrying at most one cache point, and the message that owns it.
@@ -805,8 +786,8 @@ class AnthropicModel(Model):
             )
 
         # A cache_control on the final tool caches all of them, so one cache point suffices.
-        if tools and (cache_control := self._resolve_tools_cache()):
-            tools[-1]["cache_control"] = cache_control
+        if tools and (tools_cache_control := self._resolve_tools_cache()):
+            tools[-1]["cache_control"] = tools_cache_control
 
         system = self._format_system_prompt(system_prompt, system_prompt_content)
 
@@ -928,7 +909,7 @@ class AnthropicModel(Model):
             auto_inject = False
         else:
             system_prompt_ttl = cache_config.system_prompt_ttl
-            managed_ttl = system_prompt_ttl if isinstance(system_prompt_ttl, str) else cache_config.ttl
+            managed_ttl = section_ttl(system_prompt_ttl, cache_config.ttl)
             auto_inject = system_prompt_ttl is not False
 
         if system_prompt_content is None:
@@ -936,7 +917,7 @@ class AnthropicModel(Model):
                 return None
             if not auto_inject:
                 return system_prompt
-            return [{"type": "text", "text": system_prompt, "cache_control": self._format_cache_control(managed_ttl)}]
+            return [{"type": "text", "text": system_prompt, "cache_control": cache_control(managed_ttl)}]
 
         formatted: list[dict[str, Any]] = []
         placed = False
@@ -953,7 +934,7 @@ class AnthropicModel(Model):
         if not formatted:
             return None
         if auto_inject and not placed:
-            formatted[-1]["cache_control"] = self._format_cache_control(managed_ttl)
+            formatted[-1]["cache_control"] = cache_control(managed_ttl)
         return formatted
 
     @staticmethod
