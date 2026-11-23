@@ -1,3 +1,4 @@
+import copy
 import threading
 import unittest.mock
 from typing import cast
@@ -1762,7 +1763,7 @@ async def test_stream_messages_keeps_the_cache_point_ahead_of_the_latest_injecte
         ([], None, []),
         (None, None, None),
     ],
-    ids=["with_system_prompt_content", "single_text_block_backwards_compatibility", "empty", "none"],
+    ids=["text-and-cache-point", "single-text-block-with-system-prompt", "empty", "none"],
 )
 @pytest.mark.asyncio
 async def test_stream_messages_system_prompt_content(
@@ -1775,6 +1776,7 @@ async def test_stream_messages_system_prompt_content(
             {"contentBlockStop": {}},
         ]
     )
+    exp_system_prompt_content = copy.deepcopy(system_prompt_content)
 
     stream = strands.event_loop.streaming.stream_messages(
         mock_model,
@@ -1791,7 +1793,7 @@ async def test_stream_messages_system_prompt_content(
         None,
         system_prompt,
         tool_choice=None,
-        system_prompt_content=system_prompt_content,
+        system_prompt_content=exp_system_prompt_content,
         invocation_state=None,
         model_state=None,
         cancel_signal=None,
