@@ -87,7 +87,11 @@ export type ToolSearch = (typeof SEARCH_VALUES)[number]
 export interface DeferConfig {
   /** Who searches the deferred tools, as {@link ToolSearch} says; unset, the model loads them with `load_tools`. */
   search?: ToolSearch
-  /** Picks what `search_tools` loads, under `search` 'auto' or 'client'; a {@link KeywordToolSearcher} unless set. */
+  /**
+   * Picks what `search_tools` loads; a {@link KeywordToolSearcher} unless set. Under `search` 'auto', it runs only on
+   * calls whose model takes stubs, since a native model uses the provider's tool search and any other gets every spec;
+   * use 'client' to run it on every model.
+   */
   searcher?: ToolSearcher
 }
 
