@@ -6,7 +6,6 @@ import {
   BOX_INSTALL_COMMAND,
   BOX_LINKS,
   BOX_PLATFORMS,
-  BOX_RELEASE_STATUS,
   BOX_REPOSITORY_URL,
 } from '../../config/box-landing'
 import { pathWithBase } from '../../util/links'
@@ -27,10 +26,16 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
       <p class="box-hero__product">/box</p>
       <h1 id="box-hero-title" class="box-hero__title">Put your agent in a box.</h1>
       <div class="box-hero__actions">
+        <CommandPill
+          command={BOX_INSTALL_COMMAND}
+          label="Copy the Box install command"
+          surface="install:box"
+        />
+
         <div class="box-hero__links">
           <a
             href={linkHref(BOX_LINKS.quickstart)}
-            class="box-hero__link box-hero__link--primary"
+            class="box-hero__link"
             target={isExternal(BOX_LINKS.quickstart) ? '_blank' : undefined}
             rel={isExternal(BOX_LINKS.quickstart) ? 'noopener' : undefined}
           >
@@ -49,18 +54,11 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
           </a>
         </div>
 
-        <CommandPill
-          command={BOX_INSTALL_COMMAND}
-          label="Copy the Box install command"
-          surface="install:box"
-        />
-
         <p class="box-hero__meta">
-          <span>{BOX_RELEASE_STATUS}</span>
           {
-            BOX_PLATFORMS.map((platform) => (
+            BOX_PLATFORMS.map((platform, index) => (
               <>
-                <span aria-hidden="true">·</span>
+                {index > 0 && <span aria-hidden="true">·</span>}
                 <span>{platform.label}</span>
               </>
             ))
@@ -206,12 +204,6 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
     opacity: 0.75;
   }
 
-  .box-hero__link--primary {
-    border-color: var(--box-purple);
-    background: var(--box-purple);
-    color: var(--box-purple-button-fg);
-  }
-
   .box-hero__link--github {
     gap: 8px;
   }
@@ -254,10 +246,22 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
     color: var(--box-purple);
   }
 
-  .box-hero :global(.command-pill__copy.is-copied) {
-    border-color: transparent;
+  .box-hero :global(.command-pill__copy) {
+    border-color: var(--box-purple);
     background: var(--box-purple);
-    color: var(--bg);
+    color: var(--box-purple-button-fg);
+    font-weight: 600;
+  }
+
+  .box-hero :global(.command-pill__copy:hover) {
+    color: var(--box-purple-button-fg);
+    opacity: 0.75;
+  }
+
+  .box-hero :global(.command-pill__copy.is-copied) {
+    border-color: var(--box-purple);
+    background: var(--box-purple);
+    color: var(--box-purple-button-fg);
   }
 
   .box-hero__meta {

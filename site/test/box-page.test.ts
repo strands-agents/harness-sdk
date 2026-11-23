@@ -12,6 +12,7 @@ import {
   BOX_LANDING_DESCRIPTION,
   BOX_LANDING_TITLE,
   BOX_LINKS,
+  BOX_RELEASE_STATUS,
   BOX_REPOSITORY_URL,
   buildBoxLandingMarkdown,
 } from '../src/config/box-landing'
@@ -54,6 +55,18 @@ describe('Box landing page', () => {
     expect(main?.querySelector('h1')?.text.replace(/\s+/g, ' ').trim()).toBe('Put your agent in a box.')
     expect(page.querySelector('.sidebar')).toBeNull()
     expect(page.querySelector('starlight-menu-button')).toBeNull()
+  })
+
+  it('makes the install command the primary hero action', () => {
+    const actions = page.querySelector('.box-hero__actions')
+    const markup = actions?.innerHTML ?? ''
+    const commandIndex = markup.indexOf('data-command-pill')
+    const linksIndex = markup.indexOf('box-hero__links')
+
+    expect(commandIndex).toBeGreaterThanOrEqual(0)
+    expect(linksIndex).toBeGreaterThan(commandIndex)
+    expect(actions?.querySelector('.box-hero__link--primary')).toBeNull()
+    expect(actions?.querySelector('.box-hero__meta')?.text).not.toContain(BOX_RELEASE_STATUS)
   })
 
   it('wires the agent selector and capability examples accessibly', () => {
