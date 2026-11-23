@@ -201,6 +201,7 @@ const fakeSessions = () => {
         optimize.set({ step: 'pick', runs: (optimize.snapshot().runs ?? []).filter((run) => run.id !== id) })
       ),
       openRun: vi.fn(),
+      autoApplies: vi.fn((): boolean => false),
       appliedChanges: vi.fn((): readonly TemporaryAppliedChange[] => []),
       stop: vi.fn(),
       plan: vi.fn(() => setTimeout(() => optimize.set({ step: 'setup', plan: plan() }), 0)),
@@ -328,6 +329,16 @@ describe('TEMPORARY dev chat instructions', () => {
       '  - instructions in agent.ts: was "Add 10 to every answer.", now "Give the exact answer."'
     )
     expect(part.instructions).toContain('  - prompt caching in agent.ts: auto → on')
+  })
+
+  it('shouldTellTheAgentThatAutoOptimizeMadeAChangeTheDeveloperWasNotShown', () => {
+    const { part } = setup(undefined, [{ ...APPLIED, auto: true }])
+
+    expect(part.instructions).toContain(
+      '- 2026-11-17T14:52:03.000Z: auto-optimize applied 2 edits from run 20261117-144415-diffs of the experiment diffs. ' +
+        'The developer has auto-optimize on, so they were not shown these edits before they were written. ' +
+        'The best candidate scored 0.00 → 1.00 on the test cases.'
+    )
   })
 
   it('shouldSayWhereApplyStoppedWhenAnEditCouldNotBeWritten', () => {
@@ -700,6 +711,80 @@ describe('TEMPORARY dev chat part', () => {
         phase: 'checking the finalists on the validation cases',
         rollouts: { done: 21, total: 30 },
       },
+    })
+  })
+
+  describe('with auto-optimize on', () => {
+    const answered = (): OptimizeReview => ({
+      ...review(),
+      auto: true,
+      edits: review().edits.map((edit) => (edit.unavailable ? edit : { ...edit, accepted: true, decided: true })),
+    })
+
+    it('shouldSayInThePlanThatAFinishedRunIsWrittenWithoutAReview', async () => {
+      const { call, sessions } = setup()
+
+      const off = await call('strands_dev_optimization_plan', { experiment: 'refunds' })
+      sessions.optimize.autoApplies.mockReturnValue(true)
+      const on = await call('strands_dev_optimization_plan', { experiment: 'refunds' })
+
+      expect(off).not.toHaveProperty('autoOptimize')
+      expect(on).toMatchObject({
+        autoOptimize:
+          'Auto-optimize is on in the settings of this workspace: when this run finishes, strands dev writes its ' +
+          'edits to the agent source without showing them for review. Say so in the summary the developer ' +
+          'confirms before the run starts. A run they stop early is not applied. They turn the setting off in ' +
+          '/settings, under Strands dev workspace.',
+      })
+    })
+
+    it('shouldReturnTheEditsAsAppliedOnlyOnceTheyAreWritten', async () => {
+      const { call, sessions, finishRun } = setup()
+      const settled = vi.fn()
+      const run = call('strands_dev_optimize', { experiment: 'refunds' }) as Promise<{ next: string }>
+      void run.then(settled)
+      await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalledOnce())
+
+      finishRun({ step: 'review', review: answered() })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      const beforeTheWrite = settled.mock.calls.length
+      finishRun({ step: 'review', review: { ...answered(), reviewed: true, applied: ['agent.py'] } })
+      const result = await run
+
+      expect(beforeTheWrite).toBe(0)
+      expect(result).toMatchObject({ run: '20261112-130000-refunds', autoApplied: true, applied: ['agent.py'] })
+      expect(result.next).toContain('so strands dev wrote the edits of this run to the agent source itself')
+      expect(result.next).toContain('do not call strands_dev_apply_optimization')
+      expect(result.next).not.toContain("The review is on the developer's screen")
+    })
+
+    it('shouldReturnTheErrorWhenAnEditCouldNotBeWritten', async () => {
+      const { call, sessions, finishRun } = setup()
+      const run = call('strands_dev_optimize', { experiment: 'refunds' })
+      await vi.waitFor(() => expect(sessions.optimize.start).toHaveBeenCalledOnce())
+
+      finishRun({
+        step: 'review',
+        review: { ...answered(), reviewed: true, applied: [], applyError: 'Could not change agent.py: it changed.' },
+      })
+
+      expect(await run).toMatchObject({
+        autoApplied: true,
+        applied: [],
+        applyError: 'Could not change agent.py: it changed.',
+      })
+    })
+
+    it('shouldSayInTheStatusWhichEditsWereWrittenWithoutAReview', async () => {
+      const { call, finishRun } = setup()
+      finishRun({ step: 'review', review: { ...answered(), reviewed: true, applied: ['agent.py'] } })
+      const auto = (await call('strands_dev_status')) as { optimization: object }
+      finishRun({ step: 'review', review: { ...review(), reviewed: true, applied: ['agent.py'] } })
+      const byHand = (await call('strands_dev_status')) as { optimization: object }
+
+      expect(auto.optimization).toMatchObject({ step: 'review', autoApplied: true, applied: ['agent.py'] })
+      expect(auto.optimization).not.toHaveProperty('awaitingAnswer')
+      expect(byHand.optimization).not.toHaveProperty('autoApplied')
     })
   })
 

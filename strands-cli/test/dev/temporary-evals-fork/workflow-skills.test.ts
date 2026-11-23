@@ -259,6 +259,15 @@ describe('optimize-harness guidance', () => {
     expect(instructions).toContain('strands_dev_cancel_optimization only when the developer asks to stop a run')
   })
 
+  it('shouldSayThatAutoOptimizeWritesAFinishedRunWithoutAReviewAndIsTheDevelopersToSet', () => {
+    expect(instructions).toContain('auto-optimize in /settings, under Strands dev workspace')
+    expect(instructions).toContain('strands_dev_optimization_plan says when it is on')
+    expect(instructions).toContain('say that the edits will be applied without a review')
+    expect(instructions).toContain('report what auto-optimize applied instead of pointing at the screen')
+    expect(instructions).toContain('A run they stop early is not applied')
+    expect(instructions).toContain('Never change the setting for them')
+  })
+
   it('shouldCheckFinalAnswerEvaluatorCompatibilityWithoutSilentlyRewritingExperiments', () => {
     expect(instructions).toContain('optimization of a TypeScript agent scores the final answer only')
     expect(instructions).toContain('OutputEvaluator, Contains, Equals, and StartsWith')

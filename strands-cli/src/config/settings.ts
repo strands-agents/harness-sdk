@@ -96,6 +96,8 @@ export interface ChatSettings {
   sessionModelSync: boolean
   /** Answer an agent's on-screen question with its own defaults instead of showing it. */
   uiAutofill: boolean
+  /** Write the edits of a finished strands dev optimization to the agent source without showing them for review. */
+  autoOptimize: boolean
 }
 
 export type ThemeSettings = Pick<ChatSettings, 'frogTheme'>
@@ -115,6 +117,7 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   contextOffloadThreshold: 'default',
   sessionModelSync: false,
   uiAutofill: false,
+  autoOptimize: false,
 }
 
 export type SettingKey =
@@ -131,6 +134,7 @@ export type SettingKey =
   | 'contextOffloadThreshold'
   | 'sessionModelSync'
   | 'uiAutofill'
+  | 'autoOptimize'
 
 export interface SettingDefinition {
   key: SettingKey
@@ -247,6 +251,16 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     ],
   },
   {
+    key: 'autoOptimize',
+    label: 'Auto-optimize (apply edits)',
+    section: 'Workspace',
+    control: 'toggle',
+    options: [
+      { label: 'On', value: true },
+      { label: 'Off', value: false },
+    ],
+  },
+  {
     key: 'sessionModelSync',
     label: 'Sync model to existing sessions',
     section: 'Workspace',
@@ -300,6 +314,10 @@ export function settingDescription(settings: ChatSettings, key: SettingKey): str
       return settings.uiAutofill
         ? 'on · the agent answers its own questions with their defaults, and they never appear'
         : 'off · the agent asks, and you answer on screen'
+    case 'autoOptimize':
+      return settings.autoOptimize
+        ? 'on · the edits of a finished optimization are written to the agent without a review'
+        : 'off · a finished optimization shows its edits, and you apply or leave each one'
     case 'sessionModelSync':
       return settings.sessionModelSync
         ? 'on · existing sessions use the current model configuration'
@@ -355,6 +373,7 @@ export function parseSettings(value: unknown): ChatSettings {
     contextOffloadThreshold,
     sessionModelSync: booleanSetting('sessionModelSync'),
     uiAutofill: booleanSetting('uiAutofill'),
+    autoOptimize: booleanSetting('autoOptimize'),
   }
 }
 
@@ -380,6 +399,7 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     case 'updatePrompts':
     case 'sessionModelSync':
     case 'uiAutofill':
+    case 'autoOptimize':
       return { [name]: !current[name] }
     case 'toolOutput':
       if (selected !== undefined && selected !== 'hidden' && selected !== 'compact' && selected !== 'full') {

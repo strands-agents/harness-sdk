@@ -226,7 +226,10 @@ const chat = () => {
 
 const madeInitialCopy = async (): Promise<string> => 'initial-copy'
 
-const sessionsFor = async (dependencies: Partial<TemporarySessionDependencies> = {}) => {
+const sessionsFor = async (
+  dependencies: Partial<TemporarySessionDependencies> = {},
+  settings: Pick<TemporarySessionHost, 'autoOptimize'> = {}
+) => {
   const workspace = await workspaceFixture()
   const { context, notices } = chat()
   const sessions = temporaryDevSessions({
@@ -234,6 +237,7 @@ const sessionsFor = async (dependencies: Partial<TemporarySessionDependencies> =
     agent: () => ({ description: 'Answers capital city questions', tools: [] }),
     context,
     dependencies: { run: environmentRunner(), initialCopy: madeInitialCopy, ...dependencies },
+    ...settings,
   })
   return { workspace, sessions, notices }
 }
@@ -1771,8 +1775,7 @@ describe('TEMPORARY dev sessions', () => {
     ])
   })
 
-  const closedOnAReview = async () => {
-    const optimizing = optimizingProcess()
+  const closedOnAReview = async (optimizing = optimizingProcess()) => {
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
     sessions.optimize.plan(experiment)
@@ -1786,7 +1789,7 @@ describe('TEMPORARY dev sessions', () => {
     return { workspace, sessions, run, record }
   }
 
-  const reopened = (workspace: DevWorkspace) => {
+  const reopened = (workspace: DevWorkspace, settings: Pick<TemporarySessionHost, 'autoOptimize'> = {}) => {
     const { context, notices } = chat()
     const again = vi.fn()
     const host = (): TemporarySessionHost => ({
@@ -1794,6 +1797,7 @@ describe('TEMPORARY dev sessions', () => {
       agent: () => ({}),
       context,
       dependencies: { initialCopy: madeInitialCopy, run: environmentRunner(), spawnOptimizer: again },
+      ...settings,
     })
     const optimize = new TemporaryOptimize(host, new TemporaryExperiments(host))
     optimize.onReview = vi.fn()
@@ -2178,6 +2182,228 @@ describe('TEMPORARY dev sessions', () => {
       review: { edits: [expect.objectContaining({ after: WINNER })] },
     })
     expect(existsSync(join(workspace.root, 'instructions.md'))).toBe(true)
+  })
+
+  describe('with auto-optimize', () => {
+    const planned = async (
+      optimizing: NonNullable<TemporarySessionDependencies['spawnOptimizer']>,
+      on: () => boolean = () => true
+    ) => {
+      const opened = await sessionsFor({ spawnOptimizer: optimizing }, { autoOptimize: on })
+      const experiment = await savedExperiment(opened.workspace, ['c0', 'c1', 'c2', 'c3'])
+      opened.sessions.optimize.plan(experiment)
+      await vi.waitFor(() => expect(opened.sessions.optimize.snapshot().step).toBe('setup'))
+      return opened
+    }
+
+    const instructionsOf = (workspace: DevWorkspace): Promise<string> =>
+      readFile(join(workspace.root, 'instructions.md'), 'utf8')
+
+    /** A run whose end waits for the test, so the setting can change while the run goes. */
+    const heldRun = () => {
+      const end = held()
+      const finishing = optimizingProcess()
+      const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
+        await end.promise
+        return finishing(process)
+      })
+      return { end, optimizing }
+    }
+
+    it('shouldTakeTheSettingFromTheChatThatOpensTheWorkspaceAsItIsNow', async () => {
+      let on = false
+      const { workspace, sessions } = await sessionsFor()
+      const project = { root: workspace.root, entrypoint: workspace.entrypoint, language: 'python' as const }
+      const commands = temporaryDevCommands(
+        workspace,
+        project,
+        () => ({}),
+        undefined,
+        () => on
+      )
+      commands.find(({ spec }) => spec.name === 'ask')!.attach?.(chat().context)
+
+      const before = sessions.optimize.autoApplies()
+      on = true
+
+      expect(before).toBe(false)
+      expect(sessions.optimize.autoApplies()).toBe(true)
+    })
+
+    it('shouldWriteTheEditsOfAFinishedRunWithoutShowingThemWhenItIsOn', async () => {
+      const optimizing = optimizingProcess()
+      const { workspace, sessions, notices } = await planned(optimizing)
+      const asked = vi.spyOn(sessions.ask, 'ask')
+      const waited: boolean[] = []
+      sessions.optimize.subscribe(() =>
+        waited.push(temporaryOptimizeJobs(sessions.optimize.snapshot()).some(({ waiting }) => waiting === true))
+      )
+
+      sessions.optimize.start()
+
+      await vi.waitFor(() =>
+        expect(sessions.optimize.snapshot()).toMatchObject({
+          step: 'review',
+          review: {
+            auto: true,
+            reviewed: true,
+            applied: ['instructions.md'],
+            edits: [expect.objectContaining({ knob: 'instructions', accepted: true, decided: true })],
+          },
+        })
+      )
+      expect(await instructionsOf(workspace)).toBe(`${WINNER}\n`)
+      expect(asked).not.toHaveBeenCalled()
+      expect(waited).not.toContain(true)
+      expect(temporaryOptimizeJobs(sessions.optimize.snapshot())).toEqual([])
+      const record = recordOf(optimizing.mock.calls[0]![0].args)
+      expect(notices.map(({ text }) => text).filter((text) => text.startsWith('optimize · '))).toEqual([
+        `optimize · run ${optimizationName(record)} finished · auto-optimize is on · applying 1 edit`,
+        'optimize · auto-optimize applied instructions.md · run /evaluate to check your agent',
+      ])
+      expect(sessions.optimize.appliedChanges()).toEqual([
+        expect.objectContaining({ auto: true, edits: [expect.objectContaining({ after: WINNER })] }),
+      ])
+      await vi.waitFor(() => expect(existsSync(resumeRecordOf(record))).toBe(false))
+    })
+
+    const APPLIED = {
+      status: 'success',
+      text: 'optimize · auto-optimize applied instructions.md · run /evaluate to check your agent',
+    }
+
+    /** The chat that opens `after` milliseconds past the write of a run's edits, and what it was told. */
+    const chatOpenedAfterTheWrite = async (after: number) => {
+      const { workspace, sessions } = await planned(optimizingProcess())
+      sessions.optimize.start()
+      await vi.waitFor(() =>
+        expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
+      )
+      const ask = temporaryDevCommands(workspace, {
+        root: workspace.root,
+        entrypoint: workspace.entrypoint,
+        language: 'python',
+      }).find(({ spec }) => spec.name === 'ask')!
+      const opened = chat()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + after)
+      ask.attach?.(opened.context)
+      clock.mockRestore()
+      return opened.notices
+    }
+
+    it('shouldSayWhatWasAppliedInTheChatThatTheReloadOpensOnceTheAgentReportedTheRun', async () => {
+      // The reload waits for the turn that reports the run, which outlasts the wait after an answer on screen.
+      expect(await chatOpenedAfterTheWrite(60_000)).toContainEqual(APPLIED)
+    })
+
+    it('shouldNotSayWhatWasAppliedToAChatThatOpensLongAfterTheWrite', async () => {
+      expect(await chatOpenedAfterTheWrite(600_000)).not.toContainEqual(APPLIED)
+    })
+
+    it('shouldReadTheSettingWhenTheRunEndsSoTurningItOnWhileARunGoesCounts', async () => {
+      let on = false
+      const { end, optimizing } = heldRun()
+      const { workspace, sessions } = await planned(optimizing, () => on)
+      sessions.optimize.start()
+      await vi.waitFor(() => expect(optimizing).toHaveBeenCalledOnce())
+
+      on = true
+      end.resolve()
+
+      await vi.waitFor(() =>
+        expect(sessions.optimize.snapshot()).toMatchObject({ review: { auto: true, applied: ['instructions.md'] } })
+      )
+      expect(await instructionsOf(workspace)).toBe(`${WINNER}\n`)
+      expect(sessions.ask.pending()).toBeUndefined()
+    })
+
+    it('shouldShowTheEditsForReviewWhenItWasTurnedOffBeforeTheRunEnded', async () => {
+      let on = true
+      const { end, optimizing } = heldRun()
+      const { workspace, sessions } = await planned(optimizing, () => on)
+      sessions.optimize.start()
+      await vi.waitFor(() => expect(optimizing).toHaveBeenCalledOnce())
+
+      on = false
+      end.resolve()
+
+      await vi.waitFor(() => expect(sessions.ask.pending()).toMatchObject({ name: 'optimize' }))
+      expect(sessions.optimize.snapshot()).not.toMatchObject({ review: { auto: true } })
+      expect(sessions.optimize.snapshot()).not.toMatchObject({ review: { applied: expect.anything() } })
+      expect(await instructionsOf(workspace)).toBe(`${BASELINE}\n`)
+    })
+
+    it('shouldStillAskAboutTheBestSoFarOfARunTheDeveloperStopped', async () => {
+      const stopped = vi.fn(async ({ args, signal }: TemporaryEvalsProcess) => {
+        await writeOptimizerRun(recordOf(args), studyLines(0.8))
+        await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }))
+        return { code: 143, stdout: '', stderrTail: ['terminated'] }
+      })
+      const { workspace, sessions, notices } = await planned(stopped)
+      sessions.optimize.start()
+      await vi.waitFor(
+        () =>
+          expect(sessions.optimize.snapshot()).toMatchObject({ step: 'running', progress: { best: { number: 1 } } }),
+        { timeout: 5000 }
+      )
+
+      sessions.optimize.stop()
+
+      await vi.waitFor(() => expect(sessions.ask.pending()).toMatchObject({ name: 'optimize' }))
+      expect(sessions.optimize.snapshot()).toMatchObject({
+        step: 'review',
+        review: { edits: [expect.objectContaining({ after: WINNER })] },
+      })
+      expect(sessions.optimize.snapshot()).not.toMatchObject({ review: { auto: true } })
+      expect(await instructionsOf(workspace)).toBe(`${BASELINE}\n`)
+      expect(notices.map(({ text }) => text)).toContainEqual(expect.stringContaining('finished · showing 1 edit'))
+    })
+
+    it('shouldLeaveAReviewThatWaitedWhenStrandsDevClosedWaitingWhenItOpensAgain', async () => {
+      const { workspace, record } = await closedOnAReview()
+      const { optimize, notices } = reopened(workspace, { autoOptimize: () => true })
+
+      await optimize.resume()
+
+      expect(optimize.snapshot().runs).toMatchObject([{ record, state: { step: 'review' } }])
+      expect(optimize.snapshot().runs).not.toMatchObject([{ state: { review: { auto: true } } }])
+      expect(temporaryOptimizeJobs(optimize.snapshot()).map(({ label }) => label)).toEqual([
+        expect.stringContaining('1 to review'),
+      ])
+      expect(notices).toContainEqual({
+        status: 'success',
+        text: `optimize · run ${optimizationName(record)} · 1 edit still to review · ↓ Enter`,
+      })
+      expect(await instructionsOf(workspace)).toBe(`${BASELINE}\n`)
+    })
+
+    it('shouldWriteTheEditsOfARunThatFinishedWhileStrandsDevWasClosedWhenItOpensAgain', async () => {
+      const withResult = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
+        await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')], {
+          baseline_id: 'base',
+          validation: { champion_id: 'win' },
+        })
+        return exit
+      })
+      const { workspace, record } = await closedOnAReview(withResult)
+      const { awaitsReview: _unmarked, ...asTheRunLeftIt } = JSON.parse(
+        await readFile(resumeRecordOf(record), 'utf8')
+      ) as Record<string, unknown>
+      await writeFileAt(resumeRecordOf(record), JSON.stringify({ ...asTheRunLeftIt, pid: 999999 }))
+      const { optimize, notices, again } = reopened(workspace, { autoOptimize: () => true })
+
+      await optimize.resume()
+
+      expect(optimize.snapshot().runs).toMatchObject([
+        { record, state: { step: 'review', review: { auto: true, applied: ['instructions.md'] } } },
+      ])
+      expect(await instructionsOf(workspace)).toBe(`${WINNER}\n`)
+      expect(optimize.onReview).not.toHaveBeenCalled()
+      expect(again).not.toHaveBeenCalled()
+      expect(notices.map(({ text }) => text)).toContainEqual(
+        'optimize · auto-optimize applied instructions.md · run /evaluate to check your agent'
+      )
+    })
   })
 
   it('shouldPutAnAppliedEditWhereTheAgentWatcherReloadsItAndKeepRunRecordsOutOfIt', async () => {

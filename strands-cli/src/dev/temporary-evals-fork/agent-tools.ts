@@ -311,7 +311,7 @@ const runStatus = (run: TestRun): object => {
 const generationStatus = ({ name, phase, made, failed, total, error, log }: Generation): object =>
   defined({ name, phase, made, failed, total, error: error?.summary, log })
 
-const reviewReport = ({ run, baseline, best, measuredOn, edits, applied, applyError }: OptimizeReview): object =>
+const reviewReport = ({ run, baseline, best, measuredOn, edits, applied, applyError, auto }: OptimizeReview): object =>
   defined({
     run,
     baseline,
@@ -322,22 +322,42 @@ const reviewReport = ({ run, baseline, best, measuredOn, edits, applied, applyEr
     ),
     applied,
     applyError,
+    // Written by the auto-optimize setting as the run ended: the developer saw no diff of these edits.
+    autoApplied: auto ? true : undefined,
   })
 
-const reviewSummary = ({ run, baseline, best, measuredOn, edits }: OptimizeReview): object =>
+const REVIEW_NEXT =
+  "The review is on the developer's screen: each edit shows as a diff they apply or reject there, and an " +
+  'accepted edit is written and hot-reloaded without you. Report the run in a line or two: the score before ' +
+  "and after, and this run's own page link from strands_dev_status. Do not print the edit text, do not ask " +
+  'whether to apply, and call strands_dev_apply_optimization only when the developer asks in chat for an ' +
+  'edit the screen no longer offers. If they close the diff without answering, the run keeps waiting on the ' +
+  'status line under the chat input, and strands_dev_review_optimization shows the diff again.'
+
+const AUTO_SETTING = 'Auto-optimize is on in the settings of this workspace'
+
+const AUTO_NEXT =
+  `${AUTO_SETTING}, so strands dev wrote the edits of this run to the agent source itself as the run ended. ` +
+  'The developer was shown no diff and has nothing to answer, and the agent hot-reloads after your reply. ' +
+  'Report the run in a line or two: the score before and after, the edits in applied as what auto-optimize ' +
+  "applied, and this run's own page link from strands_dev_status. With an applyError, an edit could not be " +
+  'written: give that error as it is. Do not print the edit text unless they ask what changed, do not ask ' +
+  'whether to apply, and do not call strands_dev_apply_optimization.'
+
+const AUTO_PLAN =
+  `${AUTO_SETTING}: when this run finishes, strands dev writes its edits to the agent source without showing ` +
+  'them for review. Say so in the summary the developer confirms before the run starts. A run they stop early ' +
+  'is not applied. They turn the setting off in /settings, under Strands dev workspace.'
+
+const reviewSummary = ({ run, baseline, best, measuredOn, edits, applied, applyError, auto }: OptimizeReview): object =>
   defined({
     run,
     baseline,
     best,
     measuredOn,
     edits: edits.map(({ knob, unavailable }, index) => defined({ index, knob, unavailable })),
-    next:
-      "The review is on the developer's screen: each edit shows as a diff they apply or reject there, and an " +
-      'accepted edit is written and hot-reloaded without you. Report the run in a line or two: the score before ' +
-      "and after, and this run's own page link from strands_dev_status. Do not print the edit text, do not ask " +
-      'whether to apply, and call strands_dev_apply_optimization only when the developer asks in chat for an ' +
-      'edit the screen no longer offers. If they close the diff without answering, the run keeps waiting on the ' +
-      'status line under the chat input, and strands_dev_review_optimization shows the diff again.',
+    ...(auto ? { autoApplied: true, applied, applyError } : {}),
+    next: auto ? AUTO_NEXT : REVIEW_NEXT,
   })
 
 /** What a review still waits on, said so the agent does not call a closed diff "on screen". */
@@ -750,6 +770,7 @@ const planTool = (sessions: Sessions): DevChatTool => ({
         estimate: defined({ rollouts: plan.rollouts, judgeCalls: plan.judgeCalls, usage: plan.usage }),
         problem: plan.budgetProblem ?? plan.objectiveProblem,
         warning: plan.warning ?? plan.objectiveWarning,
+        autoOptimize: optimize.autoApplies?.() ? AUTO_PLAN : undefined,
       })
     )
   },
@@ -767,7 +788,9 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     'what is already running, and start this one when the developer wants it. ' +
     'Tunes the createHarness options of this agent (instructions, model, effort, caching, tools, and more) ' +
     'against a saved experiment with the strands-evals optimizer, ' +
-    'and reports the score before and after with the proposed edits. It changes no file. It can take a long time.',
+    'and reports the score before and after with the proposed edits. It changes no file, unless auto-optimize ' +
+    'is on in the settings of the workspace: then the edits of a run that finishes are written without a review, ' +
+    'and the result says so. It can take a long time.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -893,7 +916,9 @@ const optimizeTool = (sessions: Sessions): DevChatTool => ({
     if (started === undefined) throw new Error('The optimization did not start.')
     const finished = await until(optimize, (state) => {
       const run = runState(state, started)
-      return run && run.step !== 'running' ? run : undefined
+      if (!run || run.step === 'running') return undefined
+      // Auto-optimize writes the edits as the run ends: wait for the write, so the result says what was written.
+      return run.step === 'review' && run.review.auto && !run.review.applied ? undefined : run
     })
     if (finished.step === 'failed') throw new Error(finished.message)
     if (finished.step === 'cancelled')
@@ -1066,8 +1091,11 @@ const testCheckText = (check: TestCheck | undefined): string => {
 }
 
 const changeSummary = (change: TemporaryAppliedChange): string =>
-  `- ${new Date(change.appliedAt).toISOString()}: an optimization applied ${counted(change.edits.length, 'edit')} ` +
-  `from run ${change.run} of the experiment ${change.experiment}. ` +
+  `- ${new Date(change.appliedAt).toISOString()}: ${change.auto ? 'auto-optimize' : 'an optimization'} applied ` +
+  `${counted(change.edits.length, 'edit')} from run ${change.run} of the experiment ${change.experiment}. ` +
+  (change.auto
+    ? 'The developer has auto-optimize on, so they were not shown these edits before they were written. '
+    : '') +
   `The best candidate scored ${change.baseline.toFixed(2)} → ${change.best.toFixed(2)} on the ${change.measuredOn}.` +
   testCheckText(change.testCheck) +
   (change.error ? ` Apply stopped early: ${change.error}` : '')

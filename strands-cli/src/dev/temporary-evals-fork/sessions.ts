@@ -137,6 +137,8 @@ export interface TemporaryAppliedChange {
   readonly testCheck?: TestCheck
   readonly edits: readonly ProposedEdit[]
   readonly error?: string
+  /** Auto-optimize wrote these edits as the run ended: the developer did not see them first. */
+  readonly auto?: boolean
 }
 
 export interface TemporaryDevSessions {
@@ -150,6 +152,9 @@ export interface TemporaryDevSessions {
 const DEFAULT_ITERATIONS = 4
 const SOURCE_SETTLE_MS = 300
 const RELOAD_WINDOW_MS = 15_000
+// Auto-optimize writes as the run ends, which is when the agent starts its report of the run, and the reload waits
+// for that turn to end.
+const AUTO_RELOAD_WINDOW_MS = 120_000
 const WIDTH = 4
 const REPETITIONS = 1
 const WORKERS = 4
@@ -227,6 +232,15 @@ export const temporaryOptimizeJobs = ({ runs = [] }: OptimizeState): DevChatJob[
       ? [{ id, label: `${state.review.run} · ${edits} to review`, done: 1, total: 1, waiting: true }]
       : []
   })
+
+/** Every edit the screen would have offered, answered with apply: what auto-optimize does in the developer's place. */
+const autoAnswered = (review: OptimizeReview): OptimizeReview => ({
+  ...review,
+  auto: true,
+  edits: review.edits.map((edit) =>
+    edit.unavailable === undefined ? { ...edit, accepted: true, decided: true } : edit
+  ),
+})
 
 type EditWriter = (after: string) => Promise<void>
 
@@ -627,7 +641,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   private usageProfile: TemporaryUsageProfile | undefined
   private evaluatorNames: readonly string[] = []
   private resumed: Promise<void> | undefined
-  private carried: { status: 'success' | 'error'; text: string; at: number } | undefined
+  private carried: { status: 'success' | 'error'; text: string; at: number; lasts: number } | undefined
   private catalog: readonly TemporaryKnob[] = []
   private page: OptimizePage = { step: 'pick' }
   private opened: ExperimentSummary | undefined
@@ -834,6 +848,10 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
     if (entry) void this.applyAccepted(entry)
   }
 
+  autoApplies(): boolean {
+    return this.host().autoOptimize?.() ?? false
+  }
+
   finishReview(id: string): void {
     const entry = this.entries.get(id)
     if (entry?.state.step !== 'review') return
@@ -879,7 +897,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
   reannounce(): void {
     const notice = this.carried
     this.carried = undefined
-    if (notice && Date.now() - notice.at < RELOAD_WINDOW_MS) announce(this.host(), notice.status, notice.text)
+    if (notice && Date.now() - notice.at < notice.lasts) announce(this.host(), notice.status, notice.text)
   }
 
   /** Called with a run that has edits to read, so a finished run shows them rather than waiting to be found. */
@@ -1446,32 +1464,50 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       announce(this.host(), 'error', `optimize · run ${name} failed · ask in the chat why`)
       return
     }
+    // Read once, as the run ends, so the setting holds for the whole of this run's result. Only a run that ran to its
+    // end is applied unasked: one that was stopped offers the best version it had reached, which nothing validated.
+    const auto = !cancelled && outcome.ended === 'finished' && this.autoApplies()
+    let ready: number
     try {
       // Only a run that produced an edit worth applying opens the review; the rest just say they finished.
-      const ready = await this.enterReview(entry, outcome, record, knobs)
-      const ending = ready === 0 ? 'no edits to apply' : `showing ${plural(ready, 'edit')}`
+      ready = await this.enterReview(entry, outcome, record, knobs, auto)
+      const ending =
+        ready === 0
+          ? 'no edits to apply'
+          : auto
+            ? `auto-optimize is on · applying ${plural(ready, 'edit')}`
+            : `showing ${plural(ready, 'edit')}`
       announce(this.host(), 'success', `optimize · run ${name} finished · ${ending}`)
-      if (ready > 0) this.onReview?.(entry.id)
     } catch (error) {
       if (cancelled) return this.reportCancelled(entry, plan, record)
       this.updateRun(entry, { step: 'failed', message: errorMessage(error), record })
       announce(this.host(), 'error', `optimize · run ${name} could not be read · ask in the chat why`)
+      return
     }
+    if (ready === 0) return
+    // With auto-optimize the edits are answered already, so there is nothing to show: they are written here.
+    if (auto) await this.applyAccepted(entry)
+    else this.onReview?.(entry.id)
   }
 
-  /** Puts a finished run in review, and says how many of its edits the screen can offer. */
+  /**
+   * Puts a finished run in review, and says how many of its edits can be written. Those wait for the developer's
+   * answer on screen, unless `auto` answers each with apply in their place.
+   */
   private async enterReview(
     entry: RunEntry,
     outcome: TemporaryStudyOutcome,
     record: string,
-    knobs: readonly TemporaryKnob[]
+    knobs: readonly TemporaryKnob[],
+    auto = false
   ): Promise<number> {
     const { review, writers, changes } = await this.review(outcome, record, knobs)
     entry.writers = writers
     entry.changes = changes
-    this.updateRun(entry, { step: 'review', review })
+    const ready = review.edits.filter(({ unavailable }) => unavailable === undefined).length
+    this.updateRun(entry, { step: 'review', review: auto && ready > 0 ? autoAnswered(review) : review })
     this.watchSources(entry)
-    return editsToReview(entry.state)
+    return ready
   }
 
   /**
@@ -1597,6 +1633,7 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       measuredOn: review.measuredOn,
       ...(review.testCheck ? { testCheck: review.testCheck } : {}),
       edits: accepted.map(({ edit }) => edit),
+      ...(review.auto ? { auto: true } : {}),
     }
     const recorded = accepted.length > 0 ? this.changes.push(change) - 1 : undefined
     const applied: string[] = []
@@ -1623,14 +1660,17 @@ export class TemporaryOptimize extends Store<OptimizeState> implements OptimizeS
       review: { ...current, applied, reviewed: true, ...(applyError ? { applyError } : {}) },
     })
     this.settleReview(entry)
-    const changed = applied.length > 0 ? `applied ${applied.join(', ')}` : 'changed nothing'
+    const did = applied.length > 0 ? `applied ${applied.join(', ')}` : 'changed nothing'
+    // Nobody saw these edits before they were written, so the notice says who applied them.
+    const changed = review.auto ? `auto-optimize ${did}` : did
     const notice = {
       status: applyError ? ('error' as const) : ('success' as const),
       text: applyError
         ? `optimize · ${changed} · ${applyError}`
         : `optimize · ${changed} · run /evaluate to check your agent`,
     }
-    if (applied.length > 0) this.carried = { ...notice, at: Date.now() }
+    if (applied.length > 0)
+      this.carried = { ...notice, at: Date.now(), lasts: review.auto ? AUTO_RELOAD_WINDOW_MS : RELOAD_WINDOW_MS }
     announce(this.host(), notice.status, notice.text)
   }
 }

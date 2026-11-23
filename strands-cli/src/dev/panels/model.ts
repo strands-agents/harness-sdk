@@ -416,6 +416,8 @@ export interface OptimizeReview {
   readonly applyError?: string
   /** Every edit was answered on screen, so nothing is waiting on the developer. */
   readonly reviewed?: boolean
+  /** Auto-optimize answered every edit with apply when the run ended, so the developer was never asked. */
+  readonly auto?: boolean
 }
 
 export interface PastRun {
@@ -480,6 +482,8 @@ export interface OptimizeSession {
   finishReview(id: string): void
   /** The developer closed a run's question without answering it: the run keeps waiting. */
   leaveReview(id: string): void
+  /** Whether the edits of a run that ends now are written without a review: the auto-optimize setting. */
+  autoApplies?(): boolean
   reset(): void
   agent?(): RunAgent
 }

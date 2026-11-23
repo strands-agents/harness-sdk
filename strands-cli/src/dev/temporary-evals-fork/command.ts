@@ -226,7 +226,8 @@ export const temporaryDevCommands = (
   workspace: DevWorkspace,
   project: ImportedAgentProject,
   agent: () => TemporaryAgentFacts = () => ({}),
-  autofill?: () => boolean
+  autofill?: () => boolean,
+  autoOptimize?: () => boolean
 ): DevChatCommand[] => {
   const target = targetWorkspace(workspace, project)
   const sessions: Sessions = (context) =>
@@ -234,6 +235,7 @@ export const temporaryDevCommands = (
       workspace: target,
       agent,
       ...(autofill ? { autofill } : {}),
+      ...(autoOptimize ? { autoOptimize } : {}),
       ...(context ? { context } : {}),
     })
   return [...PANEL_COMMANDS.map((make) => make(sessions)), askCommand(sessions), optimizeRunsCommand(sessions)]
