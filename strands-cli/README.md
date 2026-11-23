@@ -352,7 +352,7 @@ strands-dev/
       runs/<time>/           one evaluation run, with report.json and run.log
       optimizations/<time>/  one optimization run, with optimizer/ and run.log
   tmp/
-    .state/                  drafts, downloaded skills, and the evals environment of the workspace
+    .state/                  drafts and the evals environment of the workspace
 ```
 
 The `.gitignore` in `experiments/` ignores `runs/`, `optimizations/`, `.state/`, and the latest reports. Thus git keeps only the experiment files.
@@ -361,7 +361,7 @@ At startup, dev moves experiments from the old `tmp/experiments/`, `tmp/reports/
 
 ### Optimization runs
 
-`/optimize` runs the upstream `strands-evals optimize run` command from the pinned evals fork.
+`/optimize` runs the `strands-evals optimize run` command of strands-agents-evals 1.12.0.
 For each run, dev writes `.state/task.py` in the folder of the run. The `--agent` and `--rollout` flags of the command refer to this file.
 The file imports `strands_dev_evals`, a Python package that the CLI includes. Then the file calls `optimize_task` with the agent file, the experiment, and the space file.
 
@@ -380,25 +380,28 @@ A metric name with a colon cannot go into an objective spec. Thus the setup show
 
 A run continues after strands dev closes. When a run stops, for example after a restart, dev continues the run at the next start with `strands-evals optimize resume <run folder>`.
 The upstream command reads the inputs of the run again from `cli.json` in the run folder. Thus `task.py` must stay in its folder.
-When the proposer fails, the search stops early, but the optimizer still selects the best candidate and measures it on the test cases. Then `/optimize` shows the proposer error.
+
+When the proposer fails, the search stops before the end phase, and the optimizer selects no candidate. Then `/optimize` shows the proposer error. Correct the cause, then start the run again.
 
 From a shell, `strands dev optimize <experiment>` runs the same command and prints the result. The flags after `--` go to `strands-evals optimize run`.
 For example, `strands dev optimize refunds -- --max-iterations 2 --constraint 'tokens<=4000'` runs 2 iterations with a token constraint. `--max-iterations 0` measures only the baseline.
 Dev sets the agent, the record folder, and the output format itself. Thus dev rejects `--agent`, `--build-task`, `--space`, `--config`, `--rollout`, `--search`, `--base-dir`, `--name`, `--json`, and `--rich`.
 
-The flags of the older fork command also work. Dev changes `--iterations`, `--width`, `--repetitions`, `--max-concurrency`, `--rewriter-model`, `--at-most`, and `--at-least` to the upstream flags.
+The flags of the earlier dev command also work. Dev changes `--iterations`, `--width`, `--repetitions`, `--max-concurrency`, `--rewriter-model`, `--at-most`, and `--at-least` to the upstream flags.
 Dev also changes an `--objective` expression, such as `Minimize(tokens)`, to the upstream specs. `--tune instructions,effort` selects the settings to tune, as before.
-When the search stops on a proposer error, the command prints the result and exits with 1.
+When the search stops on a proposer error, the command writes the error and exits with 1.
 
 **Limits:**
 
 - Dev tunes only what its space file declares: `createHarness` options as text, choices, and switches, plus the instructions and the effort. Dev does not tune model parameters at this time, for example the temperature.
-- **TEMPORARY:** `/evaluate` and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. When strands-evals can run TypeScript agents, dev removes this limit.
+- **TEMPORARY:** `/evaluate` and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. In strands-agents-evals 1.12.0, `optimize run` can run a TypeScript agent file, but `run` cannot. Thus dev keeps its runner for the two commands at this time.
 - Dev applies the champion itself, in the Apply step of `/optimize`. The upstream CLI only writes the champion to `best.diff` and `best.values.json`.
 
 ### Evals UI
 
-When the chat starts, dev also starts the evals UI of strands-evals for `strands-dev/experiments/`.
+strands-agents-evals 1.12.0 does not include the evals UI. With this release, dev does not start the page server. Then `o` and the chat tools tell you that the UI is not available.
+
+When the installed release includes the UI, dev starts the evals UI of strands-evals for `strands-dev/experiments/` when the chat starts.
 The evals UI is a local web page with larger views of experiments, reports, and optimization runs.
 In `/experiment`, `/evaluate`, and `/optimize`, push `o` to open the current item in a browser.
 
@@ -413,12 +416,12 @@ If the evals UI cannot start, the chat continues to work. A message gives the ca
 
 The experiment skill, workspace instructions, and `strands_dev_*` tools are injected only into the dev chat at runtime. They are not added to the base harness, saved profile, or exported agent source. Exports preserve authored files; they do not remove dev instructions that someone explicitly writes into those files.
 
-**Temporary dependency:** the evaluation workflow installs `strands-agents-evals[optimization]` from the pinned
-[`arielnabavian/evals` fork](https://github.com/arielnabavian/evals/tree/5a41cdabe8090bad9f5200a03039c1beeca0cb68)
-in a separate Python environment on first use. Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. This requires Python, Git, network access, and model credentials for the requested run. The integration is experimental and is not yet backed by a published upstream evals release.
+**Evals dependency:** the evaluation workflow installs `strands-agents-evals[optimization]==1.12.0` from PyPI in a separate Python environment on first use.
+Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. Python 3.10 or later, access to your package index, and model credentials for the run are necessary.
 
-Dev installs the fork one time for each fork commit and Python version, in `~/.strands/temporary-evals/`. All workspaces share that environment.
+Dev installs strands-agents-evals one time for each release and Python version, in `~/.strands/temporary-evals/`. All workspaces share that environment.
 Dev deletes an environment that no workspace used for 7 days. The install uses the package index settings of your pip configuration.
+The `session-converter` skill comes from the installed package. Dev loads the `strands-evals` and `optimize` skills from the `v1.12.0` tag of strands-agents/evals.
 
 The checkout command `strands-dev` is separate: use `strands-dev dev` to run this workflow from a source checkout.
 
