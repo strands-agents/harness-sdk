@@ -55,7 +55,7 @@ async def test_summarize_tool_call_history_in_single_request(provider: providers
         block["text"]
         for message in agent.messages
         for block in message["content"]
-        if block.get("text", "").startswith("[Summarized: 2 messages")
+        if block.get("text", "").startswith("[Summarized: earlier messages")
     ]
     assert len(summaries) == 1
     assert "FX-7731" in summaries[0]

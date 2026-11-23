@@ -3,6 +3,7 @@ import {
   DEFAULT_CONTEXT_WINDOW_LIMIT,
   lookupChatCompletionsTools,
   lookupModelInfo,
+  lookupSystemPromptPlacement,
   getContextWindowLimit,
   lookupModel,
 } from '../model-info.js'
@@ -42,6 +43,7 @@ describe('shared model info data', () => {
         nativeStructuredOutput: true,
         serverSideSummary: true,
         temporaryMessages: true,
+        deferredToolLoading: 'native',
       },
       limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
     })
@@ -54,7 +56,7 @@ describe('shared model info data', () => {
 
   it('returns the entry facts and nothing for unknown ids', () => {
     expect(lookupModelInfo('eu.anthropic.claude-sonnet-4-6')).toEqual({
-      capabilities: { promptCaching: 'cachePoints' },
+      capabilities: { promptCaching: 'cachePoints', deferredToolLoading: 'native' },
       limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
     })
     for (const modelId of ['anthropic.claude-opus-5-5', 'global.anthropic.claude-fable-5-2', 'claude-mythos-5-2']) {
@@ -65,12 +67,13 @@ describe('shared model info data', () => {
           nativeStructuredOutput: true,
           serverSideSummary: true,
           temporaryMessages: true,
+          deferredToolLoading: 'native',
         },
         limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       })
     }
     expect(lookupModelInfo('amazon.nova-pro-v1:0')).toEqual({
-      capabilities: { forcedToolChoice: true, nativeStructuredOutput: false },
+      capabilities: { forcedToolChoice: true, nativeStructuredOutput: false, deferredToolLoading: 'unsupported' },
       limits: { contextWindow: 300_000 },
     })
     expect(lookupModelInfo('claude-future-9')).toEqual({})
@@ -87,6 +90,15 @@ describe('shared model info data', () => {
     ['unknown-model', undefined],
   ])('reads the chatCompletionsTools fact for %s from the entry the id resolves to', (modelId, support) => {
     expect(lookupChatCompletionsTools(modelId)).toBe(support)
+  })
+
+  it.each([
+    ['gpt-6.2-sol', 'message'],
+    ['openai.gpt-6.2-astra', 'message'],
+    ['gpt-6.1-sol', undefined],
+    ['unknown-model', undefined],
+  ])('reads the systemPromptPlacement fact for %s from the entry the id resolves to', (modelId, placement) => {
+    expect(lookupSystemPromptPlacement(modelId)).toBe(placement)
   })
 
   it('keeps getContextWindowLimit working for ids the Python table already knew', () => {
@@ -115,11 +127,14 @@ describe('shared model info data', () => {
       }
       for (const [key, value] of Object.entries(entry.capabilities ?? {})) {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
+        else if (key === 'deferredToolLoading') expect(['unsupported', 'native'], `${id}.${key}`).toContain(value)
         else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
           expect(typeof value, `${id}.${key}`).toBe('boolean')
         // Read by the OpenAI Chat Completions provider, not part of ModelCapabilities.
         else if (key === 'chatCompletionsTools')
           expect(['reasoningOff', 'unsupported'], `${id}.${key}`).toContain(value)
+        // Read by the OpenAI Responses provider, not part of ModelCapabilities.
+        else if (key === 'systemPromptPlacement') expect(value, `${id}.${key}`).toBe('message')
         // A record that the model cannot call tools, not part of ModelCapabilities.
         else if (key === 'toolUse') expect(value, `${id}.${key}`).toBe(false)
         // Read by another consumer (the harness), not typed by the SDK.

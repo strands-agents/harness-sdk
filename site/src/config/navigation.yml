@@ -206,13 +206,15 @@ products:
       - label: Overview
         href: /docs/labs/strands-decider/overview/
       - label: Quickstart
+        href: /docs/labs/strands-decider/quickstart/
+      - label: Introduction
+        href: /docs/labs/strands-decider/introduction/
+      - label: Inference server
         href: /docs/labs/strands-decider/inference/
-      - label: Images
-        href: /docs/labs/strands-decider/images/
-      - label: Architecture
-        href: /docs/labs/strands-decider/architecture/
-      - label: Model names
-        href: /docs/labs/strands-decider/model-names/
+      - label: Models
+        href: /docs/labs/strands-decider/models/
+      - label: Deployment
+        href: /docs/labs/strands-decider/deployment/local/
 
 sidebar:
   # Product-scoped sidebar. Each top-level group below is a product; the route

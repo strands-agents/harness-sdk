@@ -1,61 +1,61 @@
 import { describe, it, expect } from 'vitest'
-import { Stash, formatStashKey, parseStashKey } from '../stash.js'
+import { Archive, formatArchiveKey, parseArchiveKey } from '../archive.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
 import { Message, TextBlock, ToolResultBlock, OffloadedBlock } from '../../types/messages.js'
 import { ImageBlock } from '../../types/media.js'
 
-describe('Stash', () => {
+describe('Archive', () => {
   describe('store and retrieve', () => {
     it('round-trips text content', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const data = { type: 'text', text: 'hello world' }
-      const ref = await stash.store('tool-123', 0, new TextEncoder().encode(JSON.stringify(data)))
+      const ref = await archive.store('tool-123', 0, new TextEncoder().encode(JSON.stringify(data)))
 
       expect(ref).toContain('tool-123')
 
-      const result = await stash.retrieve(ref)
+      const result = await archive.retrieve(ref)
       expect(result).not.toBeNull()
       expect(result!.data).toEqual(data)
     })
 
     it('round-trips JSON content', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const data = { key: 'value', count: 42 }
-      const ref = await stash.store('tool-456', 1, new TextEncoder().encode(JSON.stringify(data)))
+      const ref = await archive.store('tool-456', 1, new TextEncoder().encode(JSON.stringify(data)))
 
-      const result = await stash.retrieve(ref)
+      const result = await archive.retrieve(ref)
       expect(result).not.toBeNull()
       expect(result!.data).toEqual(data)
     })
 
     it('returns null for unknown references', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
-      const result = await stash.retrieve('nonexistent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
+      const result = await archive.retrieve('nonexistent')
       expect(result).toBeNull()
     })
   })
 
   describe('list', () => {
     it('lists all stored references', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const content = new TextEncoder().encode(JSON.stringify('data'))
-      const ref1 = await stash.store('tool-a', 0, content)
-      const ref2 = await stash.store('tool-b', 0, content)
+      const ref1 = await archive.store('tool-a', 0, content)
+      const ref2 = await archive.store('tool-b', 0, content)
 
-      const keys = await stash.list()
+      const keys = await archive.list()
       expect(keys).toContain(ref1)
       expect(keys).toContain(ref2)
     })
   })
 
   describe('delete', () => {
-    it('removes a stashed entry', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+    it('removes an archived entry', async () => {
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const content = new TextEncoder().encode(JSON.stringify('data'))
-      const ref = await stash.store('tool-x', 0, content)
+      const ref = await archive.store('tool-x', 0, content)
 
-      await stash.delete(ref)
-      const result = await stash.retrieve(ref)
+      await archive.delete(ref)
+      const result = await archive.retrieve(ref)
       expect(result).toBeNull()
     })
   })
@@ -63,10 +63,10 @@ describe('Stash', () => {
   describe('namespacing', () => {
     it('does not conflict with other storage users', async () => {
       const storage = new InMemoryStorage()
-      const stash = new Stash(storage, 'test-session', 'test-agent')
+      const archive = new Archive(storage, 'test-session', 'test-agent')
 
-      const content = new TextEncoder().encode(JSON.stringify('stash data'))
-      await stash.store('tool-1', 0, content)
+      const content = new TextEncoder().encode(JSON.stringify('archive data'))
+      await archive.store('tool-1', 0, content)
 
       await storage.write('other-key', new TextEncoder().encode('other'))
 
@@ -81,91 +81,91 @@ describe('Stash', () => {
 
     it('uses the view as the exact root', async () => {
       const storage = new InMemoryStorage()
-      const stash = new Stash(storage.namespace('tenants/t1/research'), 'sess-1', 'agent-a', {
-        customStashNamespace: true,
+      const archive = new Archive(storage.namespace('tenants/t1/research'), 'sess-1', 'agent-a', {
+        customArchiveNamespace: true,
       })
-      await stash.store('tool-1', 0, bytes({ text: 'test' }))
+      await archive.store('tool-1', 0, bytes({ text: 'test' }))
 
       expect(await storage.list('')).toStrictEqual(['tenants/t1/research/tool-1_0'])
     })
 
     it('uses the per-agent root under a view unless allowed', async () => {
       const storage = new InMemoryStorage()
-      const stash = new Stash(storage.namespace('tenant'), 'sess-1', 'agent-a')
-      await stash.store('tool-1', 0, bytes({ text: 'test' }))
+      const archive = new Archive(storage.namespace('tenant'), 'sess-1', 'agent-a')
+      await archive.store('tool-1', 0, bytes({ text: 'test' }))
 
       expect(await storage.list('')).toStrictEqual(['tenant/context/sess-1/scopes/agent/agent-a/tool-1_0'])
     })
 
     it('lets agents in different sessions sharing a view read each other entries', async () => {
       const storage = new InMemoryStorage()
-      const stashA = new Stash(storage.namespace('team'), 'sess-1', 'agent-a', { customStashNamespace: true })
-      const stashB = new Stash(storage.namespace('team'), 'sess-2', 'agent-b', { customStashNamespace: true })
-      await stashA.store('tool-1', 0, bytes({ text: 'from a' }))
+      const archiveA = new Archive(storage.namespace('team'), 'sess-1', 'agent-a', { customArchiveNamespace: true })
+      const archiveB = new Archive(storage.namespace('team'), 'sess-2', 'agent-b', { customArchiveNamespace: true })
+      await archiveA.store('tool-1', 0, bytes({ text: 'from a' }))
 
-      expect(await stashB.retrieve('tool-1_0')).toStrictEqual({ data: { text: 'from a' } })
+      expect(await archiveB.retrieve('tool-1_0')).toStrictEqual({ data: { text: 'from a' } })
     })
 
     it('keeps a shared view on clearSession', async () => {
       const storage = new InMemoryStorage()
-      const stash = new Stash(storage.namespace('team'), 'sess-1', 'agent-a', { customStashNamespace: true })
-      await stash.store('tool-1', 0, bytes({ text: 'shared' }))
+      const archive = new Archive(storage.namespace('team'), 'sess-1', 'agent-a', { customArchiveNamespace: true })
+      await archive.store('tool-1', 0, bytes({ text: 'shared' }))
 
-      await stash.clearSession()
+      await archive.clearSession()
 
       expect(await storage.list('')).toStrictEqual(['team/tool-1_0'])
     })
   })
 
-  describe('stash keys', () => {
+  describe('archive keys', () => {
     it.each([
       { id: 'tu-1', index: 0 },
       { id: 'call_12', index: 3 },
       { id: 'removed-0199-abc', index: 0 },
     ])('round-trips $id_$index', (key) => {
-      expect(parseStashKey(formatStashKey(key))).toEqual(key)
+      expect(parseArchiveKey(formatArchiveKey(key))).toEqual(key)
     })
 
     it.each(['tu-1', 'tu-1_', '_0', 'tu-1_x', 'tu-1_1a'])('rejects %j', (key) => {
-      expect(parseStashKey(key)).toBeNull()
+      expect(parseArchiveKey(key)).toBeNull()
     })
   })
 
   describe('offload placeholders', () => {
-    it('ensureStashed references a tool result by its toolUseId and any other block by its position', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+    it('ensureArchived references a tool result by its toolUseId and any other block by its position', async () => {
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const toolResult = new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [new TextBlock('a')] })
       const message = new Message({ role: 'user', content: [new TextBlock('t'), toolResult], trackingId: 'track-1' })
 
-      expect(await stash.ensureStashed(toolResult, message, 1)).toBe('tu-1')
-      expect(await stash.ensureStashed(message.content[0]!, message, 0)).toBe('track-1_0')
-      expect(await stash.takeSnapshot()).toStrictEqual({ 'tu-1_0': { text: 'a' }, 'track-1_0': { text: 't' } })
+      expect(await archive.ensureArchived(toolResult, message, 1)).toBe('tu-1')
+      expect(await archive.ensureArchived(message.content[0]!, message, 0)).toBe('track-1_0')
+      expect(await archive.takeSnapshot()).toStrictEqual({ 'tu-1_0': { text: 'a' }, 'track-1_0': { text: 't' } })
     })
 
-    it('ensureStashed leaves an entry already stored under the reference untouched', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
-      await stash.store('track-1', 0, new TextEncoder().encode(JSON.stringify({ text: 'original' })))
+    it('ensureArchived leaves an entry already stored under the reference untouched', async () => {
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
+      await archive.store('track-1', 0, new TextEncoder().encode(JSON.stringify({ text: 'original' })))
       const message = new Message({ role: 'user', content: [new TextBlock('edited')], trackingId: 'track-1' })
 
-      expect(await stash.ensureStashed(message.content[0]!, message, 0)).toBe('track-1_0')
-      expect(await stash.retrieve('track-1_0')).toStrictEqual({ data: { text: 'original' } })
+      expect(await archive.ensureArchived(message.content[0]!, message, 0)).toBe('track-1_0')
+      expect(await archive.retrieve('track-1_0')).toStrictEqual({ data: { text: 'original' } })
     })
 
-    it('stashes text that only looks like a placeholder', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+    it('archives text that only looks like a placeholder', async () => {
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const message = new Message({
         role: 'user',
         content: [new TextBlock('[Dropped] [ref: tu-1]')],
         trackingId: 'track-1',
       })
 
-      await stash.storeMessage(message)
+      await archive.storeMessage(message)
 
-      expect(await stash.takeSnapshot()).toStrictEqual({ 'track-1_0': { text: '[Dropped] [ref: tu-1]' } })
+      expect(await archive.takeSnapshot()).toStrictEqual({ 'track-1_0': { text: '[Dropped] [ref: tu-1]' } })
     })
 
     it('skips a placeholder and a tool result that holds one, keeping other blocks', async () => {
-      const stash = new Stash(new InMemoryStorage(), 'test-session', 'test-agent')
+      const archive = new Archive(new InMemoryStorage(), 'test-session', 'test-agent')
       const message = new Message({
         role: 'user',
         content: [
@@ -187,9 +187,9 @@ describe('Stash', () => {
         trackingId: 'track-1',
       })
 
-      await stash.storeMessage(message)
+      await archive.storeMessage(message)
 
-      expect(await stash.takeSnapshot()).toStrictEqual({ 'track-1_2': { text: 'kept' } })
+      expect(await archive.takeSnapshot()).toStrictEqual({ 'track-1_2': { text: 'kept' } })
     })
   })
 })
