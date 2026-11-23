@@ -2,9 +2,8 @@ import { unwrapInvocationContext, type InvocationContext } from '../agent/invoca
 import type { LocalAgent } from '../types/agent.js'
 import { Message, TextBlock, ToolResultBlock, type ContentBlock } from '../types/messages.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
-import { SEARCH_TOOLS_TOOL_NAME } from '../tools/search-tools.js'
 import { latestUserIndex } from './model.js'
-import { hasToolReferences, withToolReferenceSchemas, withToolReferenceText } from './tool-references.js'
+import { hasToolReferences, stub, withToolReferenceSchemas, withToolReferenceText } from './tool-references.js'
 import type { ToolSpec } from '../tools/types.js'
 import type { CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
 import type { ModelStreamEvent } from './streaming.js'
@@ -94,7 +93,7 @@ export class ModelProxy {
     const deferred = options?.deferredTools
     if (!deferred?.size || !options?.toolSpecs) return options
     if (this._model.modelInfo.capabilities?.deferredToolLoading !== 'stubs') return options
-    const loader = loaderOf(options.toolSpecs)
+    const loader = options.loader ?? LOAD_TOOLS_TOOL_NAME
     return {
       ...options,
       toolSpecs: options.toolSpecs.map((spec) => (deferred.has(spec.name) ? stub(spec, loader) : spec)),
@@ -108,6 +107,7 @@ export class ModelProxy {
       toolSpecs: [...(options?.toolSpecs ?? [])],
       ...(options?.deferredTools && { deferredTools: options.deferredTools }),
       ...(options?.serverToolSearch && { serverToolSearch: true }),
+      ...(options?.loader && { loader: options.loader }),
     })
   }
 
@@ -178,7 +178,7 @@ export async function countRequestTokens(agent: LocalAgent, messages: Message[])
     toolSpecs: deferred
       ? toolSpecs.map((spec) =>
           deferred.has(spec.name) && !searched.has(spec.name)
-            ? unloadedSpec(spec, agent.model, loaderOf(toolSpecs))
+            ? unloadedSpec(spec, agent.model, tools?.loader ?? LOAD_TOOLS_TOOL_NAME)
             : spec
         )
       : toolSpecs,
@@ -186,7 +186,10 @@ export async function countRequestTokens(agent: LocalAgent, messages: Message[])
 }
 
 /** Each agent's latest model call tools, as the call passed them, before any stubs. */
-const latestTools = new WeakMap<LocalAgent, Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'>>()
+const latestTools = new WeakMap<
+  LocalAgent,
+  Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch' | 'loader'>
+>()
 
 /**
  * The tools the agent's latest model call sent.
@@ -197,7 +200,7 @@ const latestTools = new WeakMap<LocalAgent, Pick<StreamOptions, 'toolSpecs' | 'd
  */
 export function latestCallTools(
   agent: LocalAgent
-): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'> | undefined {
+): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch' | 'loader'> | undefined {
   return latestTools.get(agent)
 }
 
@@ -212,20 +215,6 @@ function searchedTools(messages: Message[], model: Model): Set<string> {
       message.content.flatMap((block) => (block.type === 'serverToolBlock' ? (block.loadedTools ?? []) : []))
     )
   )
-}
-
-/** The loader a call's tools carry: `search_tools` when the model searches, `load_tools` otherwise. */
-function loaderOf(toolSpecs: readonly ToolSpec[]): string {
-  return toolSpecs.some((spec) => spec.name === SEARCH_TOOLS_TOOL_NAME) ? SEARCH_TOOLS_TOOL_NAME : LOAD_TOOLS_TOOL_NAME
-}
-
-/**
- * A deferred tool's spec as a model that takes stubs receives it: its name and description with a pointer to the
- * loader, and an open schema.
- */
-function stub(spec: ToolSpec, loader: string): ToolSpec {
-  const description = `${spec.description}\nCall ${loader} with this name for its parameters first.`
-  return { name: spec.name, description, inputSchema: { type: 'object' } }
 }
 
 /** A deferred tool's spec as the model sees it before loading it: a stub, or its name and description. */

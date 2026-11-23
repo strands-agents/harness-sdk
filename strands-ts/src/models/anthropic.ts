@@ -21,7 +21,7 @@ import {
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
-import { isLoaderName, loaderListing, withToolListing } from '../tools/search-tools.js'
+import { loaderListing, withToolListing } from '../tools/search-tools.js'
 import type { ToolSpec } from '../tools/types.js'
 import { lookupModelInfo, ModelInfo } from './model-info.js'
 import { withToolReferenceText } from './tool-references.js'
@@ -142,11 +142,12 @@ function validateAnthropicTools(anthropicTools: Anthropic.ToolUnion[]): void {
 function formatFunctionTools(
   toolSpecs: ToolSpec[],
   deferredTools: ReadonlySet<string>,
+  loader: string | undefined,
   listing: string | undefined
 ): Anthropic.Tool[] {
   return toolSpecs.map((tool) => ({
     name: tool.name,
-    description: isLoaderName(tool.name) && listing ? withToolListing(tool.description, listing) : tool.description,
+    description: tool.name === loader && listing ? withToolListing(tool.description, listing) : tool.description,
     input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
     ...(deferredTools.has(tool.name) && { defer_loading: true }),
   }))
@@ -937,6 +938,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       ...(options?.toolSpecs !== undefined && { toolSpecs: options.toolSpecs }),
       ...(options?.deferredTools !== undefined && { deferredTools: options.deferredTools }),
       ...(options?.serverToolSearch && { serverToolSearch: true }),
+      ...(options?.loader && { loader: options.loader }),
     })
     // The API rejects these on a compaction request.
     const {
@@ -1198,12 +1200,12 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     const deferred = allSpecs.filter((spec) => deferredTools.has(spec.name))
     if (deferred.length === 0) return { toolSpecs: allSpecs, deferredTools, serverTools: [] }
     const contextWindow = this.modelInfo.limits?.contextWindow || DEFAULT_CONTEXT_WINDOW_LIMIT
-    const listing = loaderListing(allSpecs, deferred, contextWindow)
-    if (!options?.serverToolSearch || allSpecs.some((spec) => spec.name === LOAD_TOOLS_TOOL_NAME)) {
+    const listing = loaderListing(options?.loader, deferred, contextWindow)
+    if (!options?.serverToolSearch || options.loader === LOAD_TOOLS_TOOL_NAME) {
       return { toolSpecs: allSpecs, deferredTools, loaderListing: listing, serverTools: [] }
     }
     return {
-      toolSpecs: allSpecs.filter((spec) => !isLoaderName(spec.name)),
+      toolSpecs: allSpecs.filter((spec) => spec.name !== options.loader),
       deferredTools,
       systemListing: listing,
       serverTools: [TOOL_SEARCH_TOOL],
@@ -1244,7 +1246,12 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
     if (deferral.systemListing) request.system = withSystemToolListing(request.system, deferral.systemListing)
 
-    const tools: Anthropic.ToolUnion[] = formatFunctionTools(toolSpecs, deferredTools, deferral.loaderListing)
+    const tools: Anthropic.ToolUnion[] = formatFunctionTools(
+      toolSpecs,
+      deferredTools,
+      options?.loader,
+      deferral.loaderListing
+    )
     const serverTools = [
       ...(this._config.anthropicTools ?? []),
       ...((this._config.params?.tools as Anthropic.ToolUnion[] | undefined) ?? []),

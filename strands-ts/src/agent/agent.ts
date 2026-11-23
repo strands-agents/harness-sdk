@@ -2680,6 +2680,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             ...(ctx.structuredOutputSchema && { structuredOutputSchema: ctx.structuredOutputSchema }),
             ...(ctx.deferredTools?.size ? { deferredTools: ctx.deferredTools } : {}),
             ...(ctx.serverToolSearch && { serverToolSearch: true }),
+            ...(ctx.loader && { loader: ctx.loader }),
           }
           const gen = self._streamFromModel(
             ctx.model,

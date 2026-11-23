@@ -2076,6 +2076,7 @@ describe('AnthropicModel', () => {
         provider.stream([userMessage('Hi')], {
           toolSpecs: [loader, ...toolSpecs],
           deferredTools: new Set(['t1']),
+          loader: 'load_tools',
         })
       )
       expect(captured.request.tools[0].description).toBe('Load tools.\n\nTools you can load:\n- t1: tool one')
@@ -4064,6 +4065,7 @@ describe('AnthropicModel tool search', () => {
     toolSpecs,
     deferredTools: new Set(['get_weather', 'get_forecast']),
     serverToolSearch: true,
+    loader: 'search_tools',
     ...extra,
   })
 

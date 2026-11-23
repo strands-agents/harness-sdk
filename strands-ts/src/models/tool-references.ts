@@ -123,6 +123,20 @@ export function referenceText(name: string, spec: ToolSpec | undefined): string 
   return `${name} parameters: ${JSON.stringify(spec.inputSchema ?? {})}`
 }
 
+/**
+ * A deferred tool's spec as a model that takes stubs receives it: its name and description with a pointer to the
+ * loader, and an open schema.
+ *
+ * @param spec - The deferred tool's spec
+ * @param loader - The call's loader
+ * @returns The stub
+ * @internal
+ */
+export function stub(spec: ToolSpec, loader: string): ToolSpec {
+  const description = `${spec.description}\nCall ${loader} with this name for its parameters first.`
+  return { name: spec.name, description, inputSchema: { type: 'object' } }
+}
+
 function hasToolReference(block: ContentBlock): block is ToolResultBlock {
   return block.type === 'toolResultBlock' && holdsToolReference(block)
 }

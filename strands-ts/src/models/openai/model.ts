@@ -159,7 +159,8 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
    * `api: 'responses'` with `stateful === true`. Chat Completions is always stateless, and
    * Responses defaults to stateless. Turns `serverSideSummary` off, and native deferred tools back on
    * for the models the shared model info lists on the OpenAI API's Responses endpoint, where they were
-   * measured with tool search.
+   * measured with tool search. A deferred function loads only through tool search, so a call that loads by name
+   * (`load_tools`) sends stubs, and only a call that searches defers natively.
    */
   override get modelInfo(): ModelInfo {
     const stateful = this._api === 'responses' && this._config.stateful === true

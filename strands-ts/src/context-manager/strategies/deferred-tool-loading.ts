@@ -17,9 +17,9 @@ import {
 import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../../models/defaults.js'
 import { heuristicJson, type Model, type StreamOptions } from '../../models/model.js'
 import { lookupModel, type DeferredToolLoading } from '../../models/model-info.js'
-import { LOAD_TOOLS_TOOL_NAME } from '../../tools/load-tools.js'
+import { isLoadTools, LOAD_TOOLS_TOOL_NAME } from '../../tools/load-tools.js'
 import {
-  checkLoaderNames,
+  isSearchTools,
   SEARCH_TOOLS_TOOL_NAME,
   toolListing,
   withToolListing,
@@ -42,12 +42,11 @@ import type { AgentStreamEvent, LocalAgent } from '../../types/agent.js'
 import type { ContextStrategy } from '../types.js'
 
 /**
- * SDK tools that are never deferred, since SDK-injected text tells the model to call them or they load the rest. The
- * background-tasks manage tool is one too, recognized by `isManageTool` since its name is configurable.
+ * SDK tools that are never deferred, since SDK-injected text tells the model to call them. The loaders, which load the
+ * rest, and the background-tasks manage tool, whose name is configurable, are never deferred either; they are
+ * recognized by identity.
  */
 const PROTECTED_TOOL_NAMES = new Set([
-  LOAD_TOOLS_TOOL_NAME,
-  SEARCH_TOOLS_TOOL_NAME,
   RETRIEVAL_TOOL_NAME,
   STRUCTURED_OUTPUT_TOOL_NAME,
   // ContextOffloader's and AgentSkills' tools, named here since the core doesn't import the vended plugins.
@@ -258,7 +257,7 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     toolSpecs: readonly ToolSpec[],
     model: Model,
     messages: readonly Message[] = agent.messages
-  ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'> {
+  ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch' | 'loader'> {
     return this._plan(agent, toolSpecs, model, messages).tools
   }
 
@@ -268,7 +267,10 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     toolSpecs: readonly ToolSpec[],
     model: Model,
     messages: readonly Message[]
-  ): { tools: Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'>; deferred: ReadonlySet<string> } {
+  ): {
+    tools: Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch' | 'loader'>
+    deferred: ReadonlySet<string>
+  } {
     const deferred = this._toDefer(agent, toolSpecs, model)
     const withoutLoader = { toolSpecs: toolSpecs.filter((spec) => spec.name !== this._loader) }
     const delivery = deferredToolLoading(model)
@@ -279,7 +281,12 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     const serverToolSearch =
       delivery === 'native' && (this._config.search === 'auto' || this._config.search === 'server')
     return {
-      tools: { toolSpecs: [...toolSpecs], deferredTools: deferred, ...(serverToolSearch && { serverToolSearch }) },
+      tools: {
+        toolSpecs: [...toolSpecs],
+        deferredTools: deferred,
+        ...(serverToolSearch && { serverToolSearch }),
+        loader: this._loader,
+      },
       deferred,
     }
   }
@@ -291,8 +298,6 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
 
   /** Defers this call's tools, or sends every spec without the loader when the call defers none. */
   private _render(context: InvokeModelContext): InvokeModelContext {
-    // Again on each call, since a tool added after init could take the name of the loader not in use.
-    checkLoaderNames(context.agent)
     checkServerSearch(this._config.search, context.model)
     const { tools, deferred } = this._plan(context.agent, context.toolSpecs, context.model, context.messages)
     this._record(context.agent, deferred, context.model)
@@ -337,6 +342,8 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
     const tool = agent.toolRegistry.get(spec.name)
     return (
       !PROTECTED_TOOL_NAMES.has(spec.name) &&
+      !isLoadTools(tool) &&
+      !isSearchTools(tool) &&
       !isManageTool(tool) &&
       // The tool's own schema, since background tasks add a parameter to every schema in the call.
       takesParameters(tool?.toolSpec ?? spec) &&
@@ -466,7 +473,10 @@ function searchedOnly(
   deferred: ReadonlySet<string>,
   messages: readonly Message[],
   model: Model
-): { tools: Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'>; deferred: ReadonlySet<string> } {
+): {
+  tools: Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch' | 'loader'>
+  deferred: ReadonlySet<string>
+} {
   const loaded = loadOrder(messages).filter((name) => deferred.has(name))
   const specs = new Map(toolSpecs.map((spec) => [spec.name, spec]))
   const listing = toolListing(

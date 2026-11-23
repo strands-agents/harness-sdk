@@ -335,7 +335,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
    */
   private _replayedTools(
     agent: LocalAgent
-  ): Pick<SummarizeOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'> {
+  ): Pick<SummarizeOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch' | 'loader'> {
     const recorded = latestCallTools(agent)
     if (recorded) return recorded
     const toolSpecs = agent.toolRegistry.toolSpecs()

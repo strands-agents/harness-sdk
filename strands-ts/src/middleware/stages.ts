@@ -120,6 +120,13 @@ export interface InvokeModelContext {
    */
   readonly serverToolSearch?: boolean
 
+  /**
+   * Name of the call's loader, set by deferred tool loading and passed to the provider in `StreamOptions.loader`.
+   *
+   * @internal
+   */
+  readonly loader?: string
+
   /** The request this model call belongs to, if any. See {@link InvokeOptions.invocationContext}. */
   readonly invocationContext?: InvocationContext
 }

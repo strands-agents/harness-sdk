@@ -45,8 +45,9 @@ import { applyCacheConfig, CACHE_LIFETIMES } from './cache.js'
 import type { OpenAIResponsesConfig } from './types.js'
 import { lookupSystemPromptPlacement } from '../model-info.js'
 import type { ModelInfo } from '../model-info.js'
-import { referenceText } from '../tool-references.js'
-import { isLoaderName, loaderListing, SEARCH_TOOLS_TOOL_NAME, withToolListing } from '../../tools/search-tools.js'
+import { referenceText, stub, withToolReferenceText } from '../tool-references.js'
+import { LOAD_TOOLS_TOOL_NAME } from '../../tools/load-tools.js'
+import { loaderListing, SEARCH_TOOLS_TOOL_NAME, withToolListing } from '../../tools/search-tools.js'
 import type { ToolSpec } from '../../tools/types.js'
 import type { JSONValue } from '../../types/json.js'
 
@@ -67,6 +68,8 @@ const MANAGED_PARAMS: ReadonlySet<string> = new Set(['model', 'input', 'stream',
 interface DeferredToolsRequest {
   /** The tools the request defers. */
   readonly deferred: ReadonlySet<string>
+  /** The request's loader, which goes as a client tool search. */
+  readonly loader: string | undefined
   /** Whether the API searches the deferred tools itself, in place of the loader. */
   readonly onServer: boolean
   /** The request's tool specs by name, which a client tool search output loads. */
@@ -103,6 +106,10 @@ export function formatResponsesRequest(
   const cachePoints = modelInfo.capabilities?.promptCaching === 'cachePoints'
   const cacheMessages = cachePoints && cacheConfig !== undefined && cacheConfig.messagesTTL !== false
   const deferral = deferredToolsRequest(messages, options, modelInfo)
+  // A model that defers natively gets tool references as they are; on a call that loads by name they go as text.
+  if (!deferral && modelInfo.capabilities?.deferredToolLoading === 'native') {
+    messages = withToolReferenceText(messages, options?.toolSpecs ?? [])
+  }
   const { input, explicitCache } = cacheMessages
     ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks, cacheConfig.messagesTTL, deferral)
     : { input: formatResponsesMessages(messages, deferral), explicitCache: false }
@@ -137,7 +144,8 @@ export function formatResponsesRequest(
 
   if (options?.toolSpecs && options.toolSpecs.length > 0) {
     const existingTools = request.tools ?? []
-    request.tools = [...existingTools, ...formatTools(options.toolSpecs, deferral, existingTools)]
+    const toolSpecs = deferral ? options.toolSpecs : withStubs(options, modelInfo)
+    request.tools = [...existingTools, ...formatTools(toolSpecs, deferral, existingTools)]
 
     if (options.toolChoice) {
       if ('auto' in options.toolChoice) {
@@ -178,7 +186,7 @@ function formatTools(
   const deferred = deferral?.deferred ?? new Set<string>()
   const configured = existingTools.some((tool) => tool.type === 'tool_search')
   const tools = toolSpecs.flatMap((spec): Tool[] => {
-    if (!deferral || deferred.size === 0 || !isLoaderName(spec.name)) {
+    if (!deferral || deferred.size === 0 || spec.name !== deferral.loader) {
       return [functionTool(spec, deferred.has(spec.name))]
     }
     return deferral.onServer || configured ? [] : [clientToolSearch(spec, deferral.listing)]
@@ -208,13 +216,17 @@ function functionTool(spec: ToolSpec, deferred: boolean): FunctionTool {
   }
 }
 
-/** How the request sends deferred tools and their loads, or undefined when the model doesn't defer tools natively. */
+/**
+ * How the request sends deferred tools and their loads, or undefined when it doesn't defer them natively: the model
+ * doesn't, or the model loads by name. A deferred function loads only through tool search, so only a call that
+ * searches (`search_tools`) defers natively.
+ */
 function deferredToolsRequest(
   messages: Message[],
   options: StreamOptions | undefined,
   modelInfo: ModelInfo
 ): DeferredToolsRequest | undefined {
-  if (modelInfo.capabilities?.deferredToolLoading !== 'native') return undefined
+  if (!searchesNatively(options, modelInfo)) return undefined
   const deferred = options?.deferredTools ?? new Set<string>()
   const toolSpecs = options?.toolSpecs ?? []
   const contextWindow = modelInfo.limits?.contextWindow || DEFAULT_CONTEXT_WINDOW_LIMIT
@@ -222,24 +234,42 @@ function deferredToolsRequest(
     deferred,
     onServer: deferred.size > 0 && options?.serverToolSearch === true,
     toolSpecs: new Map(toolSpecs.map((spec) => [spec.name, spec])),
+    loader: options?.loader,
     listing: loaderListing(
-      toolSpecs,
+      options?.loader,
       toolSpecs.filter((spec) => deferred.has(spec.name)),
       contextWindow
     ),
-    searchCalls: loadingSearchCalls(messages),
+    searchCalls: loadingSearchCalls(messages, options?.loader),
   }
+}
+
+/** Whether the call defers natively: on a model that defers tools natively, with `search_tools` as its loader. */
+function searchesNatively(options: StreamOptions | undefined, modelInfo: ModelInfo): boolean {
+  return modelInfo.capabilities?.deferredToolLoading === 'native' && options?.loader === SEARCH_TOOLS_TOOL_NAME
+}
+
+/**
+ * The call's tool specs, each deferred one as a stub when the model defers natively but the call loads by name, as
+ * on a model that takes stubs. A model that takes stubs already got them from the agent.
+ */
+function withStubs(options: StreamOptions, modelInfo: ModelInfo): ToolSpec[] {
+  const deferred = options.deferredTools
+  const toolSpecs = options.toolSpecs ?? []
+  if (!deferred?.size || modelInfo.capabilities?.deferredToolLoading !== 'native') return toolSpecs
+  const loader = options.loader ?? LOAD_TOOLS_TOOL_NAME
+  return toolSpecs.map((spec) => (deferred.has(spec.name) ? stub(spec, loader) : spec))
 }
 
 /**
  * IDs of the loader calls whose result loaded tools: it holds only tool references. Any other, such as a failed load,
  * goes as a function call with its text.
  */
-function loadingSearchCalls(messages: Message[]): Set<string> {
+function loadingSearchCalls(messages: Message[], loader: string | undefined): Set<string> {
   const searches = new Set<string>()
   const ids = new Set<string>()
   for (const block of messages.flatMap((message) => message.content)) {
-    if (block.type === 'toolUseBlock' && isLoaderName(block.name)) searches.add(block.toolUseId)
+    if (block.type === 'toolUseBlock' && block.name === loader) searches.add(block.toolUseId)
     if (block.type === 'toolResultBlock' && searches.has(block.toolUseId) && onlyReferences(block)) {
       ids.add(block.toolUseId)
     }
@@ -633,7 +663,7 @@ export function createResponsesStreamState(options?: StreamOptions): ResponsesSt
     toolCalls: new Map(),
     finalUsage: null,
     stopReason: 'endTurn',
-    loader: options?.toolSpecs?.find((spec) => isLoaderName(spec.name))?.name ?? SEARCH_TOOLS_TOOL_NAME,
+    loader: options?.loader ?? SEARCH_TOOLS_TOOL_NAME,
   }
 }
 

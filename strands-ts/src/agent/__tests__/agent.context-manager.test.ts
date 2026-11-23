@@ -143,10 +143,8 @@ describe('Agent contextManager', () => {
 
     it.each([
       ['load_tools', 'Offload.defer without search', Offload.defer('toolSpecs')],
-      ['search_tools', 'Offload.defer without search', Offload.defer('toolSpecs')],
-      ['load_tools', 'the deferredToolLoading preset', 'deferredToolLoading' as const],
       ['search_tools', 'the deferredToolLoading preset', 'deferredToolLoading' as const],
-    ])('rejects an agent tool named %s with %s', async (name, _strategyName, strategy) => {
+    ])('rejects an agent tool named %s, the loader of %s', async (name, _strategyName, strategy) => {
       const agentTool = tool({
         name,
         description: 'Load data.',
@@ -158,25 +156,44 @@ describe('Agent contextManager', () => {
         tools: [agentTool],
         contextManager: { strategies: [strategy] },
       })
-
       await expect(agent.initialize()).rejects.toThrow(
-        "contextManager reserves the tool names 'load_tools' and 'search_tools' for Offload.defer and the " +
-          `'deferredToolLoading' preset, and the agent has a tool named '${name}'; rename it`
+        `contextManager adds a tool named '${name}' for Offload.defer and the 'deferredToolLoading' preset, and the ` +
+          "agent already has one; rename the agent's tool"
       )
     })
 
     it.each([
-      ['search_tools', 'Offload.defer without search', Offload.defer('toolSpecs')],
-      ['load_tools', 'search', Offload.defer('toolSpecs', { search: 'client' })],
-    ])('rejects an agent tool named %s added after init, with %s', async (name, _strategyName, strategy) => {
-      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'hi' })
-      const agent = new Agent({ model, contextManager: { strategies: [strategy] }, printer: false })
-      await agent.initialize()
-      agent.toolRegistry.add(
-        tool({ name, description: 'Load data.', inputSchema: z.object({ id: z.string() }), callback: () => 'done' })
-      )
+      ['search_tools', 'Offload.defer without search', undefined],
+      ['load_tools', 'search', 'client' as const],
+    ])('runs an agent tool named %s, which is not the loader of %s', async (name, _strategyName, search) => {
+      const callback = vi.fn(() => 'done')
+      const agentTool = tool({
+        name,
+        description: 'Look up data.',
+        inputSchema: z.object({ id: z.string() }),
+        callback,
+      })
+      const other = tool({ name: 'other', description: 'Other.', inputSchema: z.object({ id: z.string() }), callback })
+      const model = new MockMessageModel()
+      model.updateConfig({ modelInfo: { capabilities: { deferredToolLoading: 'stubs' } } })
+      vi.spyOn(model, 'stream')
+      model
+        .addTurn({ type: 'toolUseBlock', name, toolUseId: 'call-1', input: { id: 'a' } })
+        .addTurn({ type: 'textBlock', text: 'done' })
+      const strategy = Offload.defer([`!${name}`], search ? { search } : {})
+      const agent = new Agent({
+        model,
+        tools: [agentTool, other],
+        contextManager: { strategies: [strategy] },
+        printer: false,
+      })
 
-      await expect(agent.invoke('Hi.')).rejects.toThrow(`the agent has a tool named '${name}'; rename it`)
+      await agent.invoke('Look it up.')
+
+      const [, options] = vi.mocked(model.stream).mock.calls[0]!
+      expect(options?.deferredTools).toEqual(new Set(['other']))
+      expect(options?.toolSpecs?.find((spec) => spec.name === name)).toEqual(agentTool.toolSpec)
+      expect(callback).toHaveBeenCalledTimes(1)
     })
   })
 

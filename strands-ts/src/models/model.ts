@@ -309,6 +309,13 @@ export interface StreamOptions {
    * @internal
    */
   serverToolSearch?: boolean
+  /**
+   * Name of the spec in `toolSpecs` that loads the call's `deferredTools`: `load_tools`, or `search_tools` when the
+   * model searches. A provider treats only this tool as the loader, so a tool with the other name is an ordinary tool.
+   *
+   * @internal
+   */
+  loader?: string
 }
 
 /**
@@ -371,6 +378,12 @@ export interface SummarizeOptions {
    * @internal
    */
   serverToolSearch?: boolean
+  /**
+   * Name of the request's loader, as in {@link StreamOptions.loader}.
+   *
+   * @internal
+   */
+  loader?: string
 }
 
 /**

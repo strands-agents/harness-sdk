@@ -54,15 +54,13 @@ describe('loaderListing', () => {
   const tools = Array.from({ length: 10 }, (_, index) => spec(`tool_${index}`, `Run tool_${index}. Then report back.`))
 
   it('lists every deferred tool with its whole description for load_tools, which takes only names', () => {
-    expect(loaderListing([spec('load_tools', 'Load tools.'), ...tools], tools, 100)).toBe(
+    expect(loaderListing('load_tools', tools, 100)).toBe(
       tools.map((toolSpec) => `- ${toolSpec.name}: ${toolSpec.description}`).join('\n')
     )
   })
 
   it('lists the deferred tools within 1% of the context window for search_tools', () => {
-    expect(loaderListing([spec('search_tools', 'Load tools.'), ...tools], tools, 100)).toBe(
-      '10 tools; search to find them'
-    )
+    expect(loaderListing('search_tools', tools, 100)).toBe('10 tools; search to find them')
   })
 })
 

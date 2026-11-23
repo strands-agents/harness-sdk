@@ -23,8 +23,8 @@ import { DeferredToolLoadingStrategy } from './strategies/deferred-tool-loading.
 import { resolveStrategies } from './presets.js'
 import { Archive } from './archive.js'
 import { createRetrievalTool, RETRIEVAL_TOOL_NAME } from './retrieval-tool.js'
-import { createLoadTools } from '../tools/load-tools.js'
-import { checkLoaderNames, createSearchTools } from '../tools/search-tools.js'
+import { createLoadTools, LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
+import { createSearchTools, SEARCH_TOOLS_TOOL_NAME } from '../tools/search-tools.js'
 import { ToolUseBlock, type Message } from '../types/messages.js'
 
 /**
@@ -152,7 +152,7 @@ export class ContextManager implements Plugin {
     toolSpecs: readonly ToolSpec[],
     model: Model,
     messages?: readonly Message[]
-  ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch'> {
+  ): Pick<StreamOptions, 'toolSpecs' | 'deferredTools' | 'serverToolSearch' | 'loader'> {
     const strategy = toolLoadingStrategy(this._strategies)
     return strategy?.callTools(agent, toolSpecs, model, messages) ?? { toolSpecs: [...toolSpecs] }
   }
@@ -298,11 +298,17 @@ export class ContextManager implements Plugin {
  * The loader for the `Offload.defer` strategy, if there is one: `search_tools` when the model searches, `load_tools`
  * otherwise. It loads the tools the strategy deferred on the agent's latest model call.
  *
- * @throws Error when the agent already has a tool named `load_tools` or `search_tools`
+ * @throws Error when the agent already has a tool with the loader's name
  */
 function loadToolsFor(strategy: DeferredToolLoadingStrategy | undefined, agent: LocalAgent): Tool[] {
   if (!strategy) return []
-  checkLoaderNames(agent)
+  const name = strategy.search ? SEARCH_TOOLS_TOOL_NAME : LOAD_TOOLS_TOOL_NAME
+  if (agent.toolRegistry.get(name)) {
+    throw new Error(
+      `contextManager adds a tool named '${name}' for Offload.defer and the 'deferredToolLoading' preset, and the ` +
+        "agent already has one; rename the agent's tool"
+    )
+  }
   const deferredTools = (callingAgent: LocalAgent): string[] => strategy.deferredTools(callingAgent)
   return [strategy.search ? createSearchTools(deferredTools, strategy.searcher) : createLoadTools(deferredTools)]
 }

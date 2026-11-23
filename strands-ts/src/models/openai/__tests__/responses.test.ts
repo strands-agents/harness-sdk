@@ -1309,6 +1309,7 @@ describe("OpenAIModel (api: 'responses') tool search", () => {
   const deferring = (serverToolSearch?: boolean): Parameters<OpenAIModel['stream']>[1] => ({
     toolSpecs,
     deferredTools: new Set(['get_weather', 'get_forecast']),
+    loader: 'search_tools',
     ...(serverToolSearch !== undefined && { serverToolSearch }),
   })
 
@@ -1354,45 +1355,44 @@ describe("OpenAIModel (api: 'responses') tool search", () => {
     ])
   })
 
-  it('sends load_tools as the client tool search when the model loads by name, and runs its call', async () => {
+  it('sends stubs and load_tools as a function when the model loads by name, and each reference as its parameters', async () => {
     const loadTools = { name: 'load_tools', description: 'Load tools.', inputSchema: { type: 'object' as const } }
-    const searchCall = {
-      type: 'tool_search_call',
-      id: 'tsc_1',
-      call_id: 'call_9',
-      execution: 'client',
-      arguments: { names: ['get_weather'] },
-      status: 'completed',
-    }
-    const { request, content } = await run(
-      { toolSpecs: [loadTools, weather, forecast], deferredTools: new Set(['get_weather', 'get_forecast']) },
-      { events: [{ type: 'response.output_item.done', item: searchCall }] }
+    const loaded = [
+      userMessage('Hi'),
+      new Message({
+        role: 'assistant',
+        content: [new ToolUseBlock({ name: 'load_tools', toolUseId: 'call_9', input: { names: ['get_weather'] } })],
+      }),
+      new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'call_9',
+            status: 'success',
+            content: [new ToolReferenceBlock({ name: 'get_weather' })],
+          }),
+        ],
+      }),
+    ]
+    const { request } = await run(
+      {
+        toolSpecs: [loadTools, weather, forecast],
+        deferredTools: new Set(['get_weather', 'get_forecast']),
+        loader: 'load_tools',
+      },
+      { messages: loaded }
     )
-
-    expect(request.tools[0]).toEqual({
-      type: 'tool_search',
-      execution: 'client',
-      description:
-        'Load tools.\n\nTools you can load:\n- get_weather: Get the weather.\n- get_forecast: Get a forecast.',
+    const stub = (spec: typeof weather): ReturnType<typeof functionTool> => ({
+      ...functionTool(spec),
+      description: `${spec.description}\nCall load_tools with this name for its parameters first.`,
       parameters: { type: 'object' },
     })
-    expect(content).toEqual([
-      new ToolUseBlock({ name: 'load_tools', toolUseId: 'call_9', input: { names: ['get_weather'] } }),
-    ])
-  })
-
-  it('lists every deferred tool with its whole description for load_tools, which takes only names', async () => {
-    const loadTools = { name: 'load_tools', description: 'Load tools.', inputSchema: { type: 'object' as const } }
-    const detailed = { ...weather, description: 'Get the weather. Covers every city.' }
-
-    const { request } = await run({
-      toolSpecs: [loadTools, detailed, forecast],
-      deferredTools: new Set(['get_weather', 'get_forecast']),
+    expect(request.tools).toEqual([functionTool(loadTools as typeof weather), stub(weather), stub(forecast)])
+    expect(request.input.find((item: { type: string }) => item.type === 'function_call_output')).toEqual({
+      type: 'function_call_output',
+      call_id: 'call_9',
+      output: `get_weather parameters: ${JSON.stringify(params)}`,
     })
-
-    expect(request.tools[0].description).toBe(
-      'Load tools.\n\nTools you can load:\n- get_weather: Get the weather. Covers every city.\n- get_forecast: Get a forecast.'
-    )
   })
 
   it('sends every function as it is on a model that does not defer tools natively', async () => {
