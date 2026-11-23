@@ -595,9 +595,17 @@ class OpenAIModel(Model):
         if stream:
             request["stream_options"] = stream_options
 
-        apply_cache_config(request, cast(CacheConfig | None, self.config.get("cache_config")), agent_metadata)
+        apply_cache_config(request, self._routing_cache_config(), agent_metadata)
 
         return request
+
+    def _routing_cache_config(self) -> CacheConfig | None:
+        """The cache config the OpenAI routing fields are built from.
+
+        A subclass that applies some fields itself returns a narrower config, so they are neither mapped onto
+        OpenAI's fields nor reported as having no effect.
+        """
+        return cast(CacheConfig | None, self.config.get("cache_config"))
 
     def format_chunk(self, event: dict[str, Any], **kwargs: Any) -> StreamEvent:
         """Format an OpenAI response event into a standardized message chunk.

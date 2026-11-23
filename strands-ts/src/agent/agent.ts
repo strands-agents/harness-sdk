@@ -185,9 +185,10 @@ export type AgentConfig = {
    */
   model?: Model<BaseModelConfig> | ModelRouter | string
   /**
-   * Model for the auxiliary side calls the SDK makes outside the main agent loop: context
-   * summarization, memory extraction, the HITL risk classifier, LLM steering, the goal judge, and
-   * the `web_fetch` analyst. Defaults to `model`, so leaving it unset changes nothing; set it
+   * Model for the auxiliary side calls the SDK makes outside the main agent loop:
+   * conversation-manager summarization, memory extraction, the HITL risk classifier, LLM steering,
+   * the goal judge, and the `web_fetch` analyst. The context manager's summarize strategy does
+   * not use it; it resolves `this model > model`. Defaults to `model`, so leaving it unset changes nothing; set it
    * (typically to a smaller, cheaper model) to move every side call off the main model at once.
    * Each side call resolves its model as `component's own model > auxModel > model`.
    * Accepts a Model or a string representing a Bedrock model ID, like `model`; a ModelRouter is
@@ -238,7 +239,7 @@ export type AgentConfig = {
    * - `"agentic"`: (Experimental) Lets the model drive context management via injected tools,
    *   with a higher truncation threshold and summarization only on overflow.
    *   This mode may change in future versions.
-   * - `ContextManagerConfig` object: Custom strategy pipeline and stash configuration.
+   * - `ContextManagerConfig` object: Custom strategy pipeline and archive configuration.
    * - `ContextManager` instance: Used as-is. An instance binds to one agent; construct one per `Agent`.
    * - `false`: Explicitly disable context management (no compression, no offloading).
    *
@@ -2677,6 +2678,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             ...(ctx.dynamicTrailingBlocks ? { dynamicTrailingBlocks: ctx.dynamicTrailingBlocks } : {}),
             ...(self.agentMetadata && { agentMetadata: self.agentMetadata }),
             ...(ctx.structuredOutputSchema && { structuredOutputSchema: ctx.structuredOutputSchema }),
+            ...(ctx.deferredTools?.size ? { deferredTools: ctx.deferredTools } : {}),
           }
           const gen = self._streamFromModel(
             ctx.model,
@@ -2751,7 +2753,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     invocationContext: InvocationContextImpl
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
     messages = fillEmptyAssistantMessages(normalizeToolUseNames(messages))
-    const proxy = new ModelProxy(model)
+    const proxy = new ModelProxy(model, this)
     const streamGenerator = proxy.streamAggregated(messages, streamOptions, invocationContext)
     try {
       let result = await streamGenerator.next()

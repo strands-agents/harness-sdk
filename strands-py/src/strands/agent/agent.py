@@ -280,8 +280,9 @@ class Agent(AgentBase, LocalAgent):
                 May also be a ``ModelRouter``, whose first candidate is resolved to a concrete model and
                 exposed as ``agent.model``. Defaults to strands.models.BedrockModel if None.
             aux_model: Optional model for auxiliary side calls the SDK makes outside the main agent loop:
-                context summarization, memory extraction, the HITL risk classifier, LLM steering, the
-                goal judge, and the ``web_fetch`` analyst. Defaults to ``model``, so leaving it unset
+                conversation-manager summarization, memory extraction, the HITL risk classifier, LLM
+                steering, the goal judge, and the ``web_fetch`` analyst. The context manager's summarize
+                strategy does not use it; it resolves ``model=`` > ``model``. Defaults to ``model``, so leaving it unset
                 changes nothing; set it (typically to a smaller, cheaper model) to move every side call
                 off the main model at once. Each side call resolves its model as: the component's own
                 ``model=`` > ``aux_model`` > ``model``. Accepts a ``Model`` or a Bedrock model id string,

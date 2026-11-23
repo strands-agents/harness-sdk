@@ -20,6 +20,11 @@ export interface GeneratedExternalDocsNavigation {
 export type GeneratedExternalDocsNavigationItem =
   { label: string; slug: string } | { label: string; items: GeneratedExternalDocsNavigationItem[] }
 
+/** Flattens a nested navigation tree to the slugs of its leaf (linked) pages. */
+export function leafSlugs(items: GeneratedExternalDocsNavigationItem[]): string[] {
+  return items.flatMap((item) => ('slug' in item ? [item.slug] : leafSlugs(item.items)))
+}
+
 export function loadGeneratedExternalDocsNavigation(
   externalDocsDir: string,
   productId: string
