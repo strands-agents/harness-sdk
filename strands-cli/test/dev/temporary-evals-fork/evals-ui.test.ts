@@ -113,7 +113,14 @@ describe('TEMPORARY evals UI server', () => {
     expect(env.PYTHONUNBUFFERED).toBe('1')
     expect(existsSync(folder)).toBe(true)
     expect(setup.notices).toEqual([
-      { status: 'success', text: expect.stringMatching(/^evals UI ready · http:\/\/127\.0\.0\.1:\d+\/\?t=/u) },
+      {
+        status: 'success',
+        // The address rides inside the hyperlink escape, so the line stays short but still opens the UI.
+        text: expect.stringMatching(
+          // eslint-disable-next-line no-control-regex -- the OSC 8 escapes are the point of the assertion
+          /^evals UI ready · \u001b\]8;;http:\/\/127\.0\.0\.1:\d+\/\?t=[\w-]+\u0007open 127\.0\.0\.1:\d+\u001b\]8;;\u0007$/u
+        ),
+      },
     ])
   })
 

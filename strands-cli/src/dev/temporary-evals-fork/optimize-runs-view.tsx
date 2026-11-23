@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactElement } from 'react'
-import { useInput } from 'ink'
+import { Text, useInput } from 'ink'
 
 import type { DevChatPanelProps } from '../../ui/chat/types.js'
+import { Box } from '../../ui/theme.js'
+import { hyperlinkEscapes } from '../../terminal/terminal.js'
 import { Fill, KeyHints, Line, PanelTitle, plural } from '../../ui/panels/kit.js'
 import type { EvalsBrowser, OptimizeState } from '../panels/model.js'
 import type { TemporaryStore } from './jobs.js'
@@ -11,6 +13,17 @@ const recordOf = (state: OptimizeState, id: string): string | undefined => {
   const run = state.runs?.find((candidate) => candidate.id === id)
   if (run?.state.step === 'running') return run.state.progress.run
   return run?.state.step === 'review' ? run.state.review.run : undefined
+}
+
+const LinkLine = ({ url }: { url: string }): ReactElement => {
+  const link = hyperlinkEscapes(url)
+  return (
+    <Box height={1} flexShrink={0} overflow="hidden">
+      <Text dimColor wrap="truncate-end">
+        {link ? `    ${link.open}open in the evals UI${link.close}` : `    ${url}`}
+      </Text>
+    </Box>
+  )
 }
 
 /** The runs line's landing view: optimization is chat-driven, so this only shows what is going. */
@@ -61,7 +74,7 @@ export const OptimizeRunsView = ({
         <Line
           key={job.id}
         >{`  ● ${job.label}${job.total === undefined ? '' : ` · ${job.done ?? 0}/${job.total}`}`}</Line>,
-        ...(links[job.id] ? [<Line key={`${job.id}:link`} tone="muted">{`    ${links[job.id]}`}</Line>] : []),
+        ...(links[job.id] ? [<LinkLine key={`${job.id}:link`} url={links[job.id]!} />] : []),
       ])}
       <Line tone="muted">{'  Runs are set up and reviewed in the chat. Ask how a run is going, or to start one.'}</Line>
       <Fill />

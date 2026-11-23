@@ -67,7 +67,7 @@ describe('OptimizeRunsView', () => {
   it('shouldShowEachRunWithItsOwnPageLink', async () => {
     const { text } = await show()
 
-    await vi.waitFor(() => expect(text()).toContain('http://127.0.0.1:7777/optimization/run-1?t=tok'))
+    await vi.waitFor(() => expect(text()).toContain('open in the evals UI'))
     expect(text()).toContain('● 20261120-215946-diff-smoke-test · 1/17')
   })
 })

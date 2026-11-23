@@ -449,8 +449,9 @@ const lastRun = (runs: readonly ExperimentRun[], path: string): object | undefin
 
 const EVALS_UI_USE =
   "Each page link below opens in the developer's own browser. Give them the one that matches what you are " +
-  'talking about, as a plain link in your message, and let them decide whether to open it. Never open it for ' +
-  'them, and never write an address that is not here.'
+  'talking about, written as a markdown link with a short label, such as [watch this run](url) or ' +
+  '[open the experiment](url): the chat renders it as a clickable link, and the raw address is long and noisy. ' +
+  'Let them decide whether to open it. Never open it for them, and never write an address that is not here.'
 
 const pageLink = async (ui: EvalsBrowser, place: EvalsBrowserPlace): Promise<string | undefined> => {
   const address = await ui.address(place).catch(() => undefined)

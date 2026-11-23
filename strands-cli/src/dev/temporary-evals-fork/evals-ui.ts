@@ -6,6 +6,7 @@ import { URL } from 'node:url'
 
 import { containsPath } from '../../paths.js'
 import { errorMessage } from '../../terminal/text.js'
+import { hyperlinkEscapes } from '../../terminal/terminal.js'
 import type {
   EvalsBrowser,
   EvalsBrowserAddress,
@@ -290,7 +291,10 @@ export class TemporaryEvalsUi implements EvalsBrowser {
     this.set({ status: 'ready' })
     if (this.announced) return
     this.announced = true
-    announce(this.host(), 'success', `evals UI ready · ${url}`)
+    const link = hyperlinkEscapes(url)
+    // A linked label keeps the line short; a terminal without hyperlinks gets the whole address.
+    const shown = link ? `${link.open}open ${new URL(url).host}${link.close}` : url
+    announce(this.host(), 'success', `evals UI ready · ${shown}`)
   }
 
   private fail(reason: string): void {
