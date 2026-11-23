@@ -105,9 +105,15 @@ export function newestDateForSources(lastModMap: Map<string, string>, sources: s
 const EXCLUDED_ROUTES = ['blog/tags/', 'blog/authors/', 'frogs/']
 const basePath = (process.env.ASTRO_BASE_PATH || '/').replace(/\/+$/, '')
 
-export function sitemapWithLastmod(contentDir: string = 'src/content') {
+interface SitemapLastmodOptions {
+  /** Content directory used to resolve generated routes to source files. */
+  contentDir?: string
+  /** Git-log scope covering content and every standalone page's lastmod sources. */
+  sourceRoot?: string
+}
+
+export function sitemapWithLastmod({ contentDir = 'src/content', sourceRoot = 'src' }: SitemapLastmodOptions = {}) {
   const gitPrefix = getGitPrefix()
-  const sourceRoot = path.posix.dirname(contentDir)
   const lastModMap = buildLastModMap(sourceRoot)
   console.log(`[sitemap-lastmod] Loaded ${lastModMap.size} git dates`)
 

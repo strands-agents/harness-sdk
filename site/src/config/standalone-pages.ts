@@ -23,6 +23,7 @@ export const INDEXABLE_STANDALONE_PAGES: IndexableStandalonePage[] = [
       'src/pages/box/',
       'src/config/box-landing.ts',
       'src/components/box/',
+      'src/components/SiteHead.astro',
       'src/layouts/ProductLandingLayout.astro',
     ],
   },

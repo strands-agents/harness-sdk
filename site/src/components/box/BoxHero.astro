@@ -3,9 +3,9 @@ import arrow from '../../assets/banner/arrow.svg?raw'
 import halftone from '../../assets/banner/halftone.svg?url'
 import github from '../../assets/nav/github.svg?raw'
 import {
-  BOX_CORE_REPOSITORY_URL,
   BOX_INSTALL_COMMAND,
   BOX_LINKS,
+  BOX_REPOSITORY_URL,
 } from '../../config/box-landing'
 import { pathWithBase } from '../../util/links'
 import CommandPill from '../CommandPill.astro'
@@ -36,7 +36,7 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
             <span class="box-hero__arrow" set:html={arrow} />
           </a>
           <a
-            href={BOX_CORE_REPOSITORY_URL}
+            href={BOX_REPOSITORY_URL}
             class="box-hero__link box-hero__link--github"
             aria-label="View Strands Box on GitHub"
             target="_blank"
@@ -54,9 +54,11 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
         />
 
         <p class="box-hero__meta">
+          <span>Preview</span>
+          <span aria-hidden="true">·</span>
           <span>macOS 15+ (Apple silicon)</span>
           <span aria-hidden="true">·</span>
-          <span>Linux ARM64</span>
+          <span>Linux ARM64 + x86-64</span>
         </p>
       </div>
     </div>

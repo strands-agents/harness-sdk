@@ -4,15 +4,12 @@ export const BOX_LANDING_TITLE = 'Strands Box | Put your agent in a box'
 export const BOX_LANDING_DESCRIPTION =
   'Strands Box runs AI agents in a sandbox that limits the files, programs, websites, and credentials they can access locally or in supported cloud deployments.'
 
-export const BOX_CORE_REPOSITORY_URL = 'https://github.com/strands-agents/box'
-export const BOX_REPOSITORY_URL = BOX_CORE_REPOSITORY_URL
-export const BOX_CLI_REPOSITORY_URL = 'https://github.com/strands-agents/staging-boxy'
-const BOX_CLI_USER_GUIDE_URL = `${BOX_CLI_REPOSITORY_URL}/blob/main/docs/user`
-const BOX_PACKS_URL = `${BOX_CLI_REPOSITORY_URL}/blob/main/resources/packs`
+export const BOX_REPOSITORY_URL = 'https://github.com/strands-agents/box'
+const BOX_CLI_USER_GUIDE_URL = `${BOX_REPOSITORY_URL}/blob/main/docs/cli`
+const BOX_PACKS_URL = `${BOX_REPOSITORY_URL}/blob/main/resources/packs`
 
-export const BOX_INSTALL_COMMAND = `gh api 'repos/strands-agents/staging-boxy/contents/install.sh?ref=main' \\
-  -H 'Accept: application/vnd.github.raw' > install.sh &&
-sh ./install.sh`
+export const BOX_INSTALL_COMMAND =
+  'curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | BOX_VERSION=0.3.0-preview.1 sh'
 export const BOX_VERIFY_COMMAND = 'box --version'
 
 export const BOX_LINKS = {
@@ -27,7 +24,7 @@ export const BOX_LINKS = {
   deployment: '/docs/user-guide/box/reference/cloud-deployments/',
   configuration: `${BOX_CLI_USER_GUIDE_URL}/profiles.md`,
   credentialGuide: '/docs/user-guide/box/guides/network-and-credentials/',
-  decisionLog: `${BOX_CLI_USER_GUIDE_URL}/README.md#see-what-the-box-allowed-and-denied`,
+  decisionLog: `${BOX_CLI_USER_GUIDE_URL}/cli.md#box-runs-history`,
   mcp: `${BOX_CLI_USER_GUIDE_URL}/starters.md`,
   dogwood: 'https://github.com/dogwood-policy/dogwood',
   designStory: '/blog/strands-box-the-big-picture/',
@@ -151,8 +148,6 @@ export const BOX_AGENT_EXAMPLES = [
   },
 ] as const
 
-export const BOX_FEATURED_AGENT_EXAMPLES = BOX_AGENT_EXAMPLES
-
 export const BOX_CAPABILITIES_HEADLINE = 'Control what your agent can access and do.'
 export const BOX_CAPABILITIES_SUMMARY =
   'Give the agent only the access it needs, check sensitive actions as they happen, and keep real credentials outside the agent.'
@@ -227,11 +222,11 @@ export function buildBoxLandingMarkdown(headingLevel = 1): string {
     '',
     `- [Run Box](${landingLink(BOX_LINKS.quickstart)})`,
     `- [Install Box CLI](${landingLink(BOX_LINKS.install)})`,
-    `- [View Box Core on GitHub](${BOX_CORE_REPOSITORY_URL})`,
+    `- [View Box on GitHub](${BOX_REPOSITORY_URL})`,
     '',
     heading(root + 1, 'Install Box CLI'),
     '',
-    'Box CLI is beta. The installer supports Apple silicon macOS 15 or later. ARM64 Linux support is experimental.',
+    'Box is in preview and works on Apple silicon Macs with macOS 15 or later and on Linux ARM64 and x86-64.',
     '',
     '```sh',
     BOX_INSTALL_COMMAND,
@@ -323,7 +318,7 @@ export function buildBoxLandingMarkdown(headingLevel = 1): string {
     '',
     heading(root + 1, 'Deploy with Box Core'),
     '',
-    'Use Box CLI to run supported coding agents locally. Box Core is in preview and supports embedded workloads and documented ARM64 deployment environments.',
+    'Use Box CLI to run supported coding agents locally. Box Core is in preview and supports embedded workloads and documented Linux deployment environments.',
     '',
     `[Read the Box Core deployment guide](${landingLink(BOX_LINKS.deployment)})`,
     '',

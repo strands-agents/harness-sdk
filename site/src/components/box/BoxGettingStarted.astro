@@ -1,12 +1,12 @@
 ---
 import arrow from '../../assets/banner/arrow.svg?raw'
 import {
+  BOX_AGENT_EXAMPLES,
   BOX_BOUNDARY_PANELS,
   BOX_CAPABILITIES,
   BOX_EXAMPLE_BOUNDARY,
   BOX_EXAMPLE_BOUNDARY_DESCRIPTION,
   BOX_EXAMPLE_BOUNDARY_LABEL,
-  BOX_FEATURED_AGENT_EXAMPLES,
   BOX_OVERVIEW_DESCRIPTION,
 } from '../../config/box-landing'
 import { pathWithBase } from '../../util/links'
@@ -47,7 +47,7 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
             <div class="box-start__launcher">
               <nav class="box-start__agent-tabs" aria-label="Choose an agent" data-box-agent-tablist>
                 {
-                  BOX_FEATURED_AGENT_EXAMPLES.map((example, index) => (
+                  BOX_AGENT_EXAMPLES.map((example, index) => (
                     <a
                       id={`box-agent-tab-${example.id}`}
                       href={linkHref(example.href)}
@@ -64,7 +64,7 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
               </nav>
               <div class="box-start__start-commands" aria-live="polite">
                 {
-                  BOX_FEATURED_AGENT_EXAMPLES.map((example, index) => (
+                  BOX_AGENT_EXAMPLES.map((example, index) => (
                     <div
                       class="box-start__start-command"
                       id={`box-agent-panel-${example.id}`}
