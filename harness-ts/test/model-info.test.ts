@@ -49,6 +49,7 @@ describe('lookupModel', () => {
     'us.anthropic.claude-opus-5-5-20260401-v1:0',
     'arn:aws:bedrock:us-west-2:123:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0',
     'claude-haiku-4-5@20251001',
+    // TODO: re-add 'gpt-5.4-2026-03-05' once the @strands-agents/sdk floor includes the YYYY-MM-DD date rule (#6497)
     'anthropic.claude-3-5-haiku-20241022-v2:0',
     'openai.gpt-6.1-sol',
     'global.openai.gpt-6-astra',

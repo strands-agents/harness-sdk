@@ -56,13 +56,7 @@ def test_every_default_effort_is_an_effort_level():
         "us.anthropic.claude-opus-5-5-20260401-v1:0",
         "arn:aws:bedrock:us-west-2:123:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0",
         "claude-haiku-4-5@20251001",
-        pytest.param(
-            "gpt-5.4-2026-03-05",
-            marks=pytest.mark.skipif(
-                sdk_lookup_model("gpt-5.4-2026-03-05") is None,
-                reason="installed SDK predates the YYYY-MM-DD date rule (#6497)",
-            ),
-        ),
+        # TODO: re-add "gpt-5.4-2026-03-05" once the strands-agents floor includes the YYYY-MM-DD date rule (#6497)
         "anthropic.claude-3-5-haiku-20241022-v2:0",
         "openai.gpt-6.1-sol",
         "global.openai.gpt-6-astra",
