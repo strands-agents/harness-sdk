@@ -14,8 +14,8 @@ sourceLinks:
 result as every other [decision model](index.mdx), plus a probability for each label
 and a confidence for each answer.
 
-Choose it over the [LLM decision model](llm.mdx) when you want an answer you can
-threshold. A general-purpose model picks a choice or says it's uncertain; Jev tells you
+Choose it when you want an answer you can threshold, which the
+[LLM decision model](llm.mdx) can't give you. A general-purpose model picks a choice or says it's uncertain; Jev tells you
 how sure it is, and you decide where "sure enough" sits.
 
 Follow the [quickstart](../quickstart.mdx) to ask your first questions. Swap in
@@ -64,7 +64,7 @@ neither is set.
 | <Syntax py="api_key" ts="apiKey" /> | TypeSafe API key. Defaults to `TYPESAFE_API_KEY`. |
 | <Syntax py="model_id" ts="modelId" /> | Jev model identifier. Defaults to `jev-latest`. |
 | <Syntax py="default_min_confidence" ts="defaultMinConfidence" /> | Confidence below which an answer comes back `Uncertain`, in `[0.0, 1.0]`. Defaults to `0.5`. See [Confidence and uncertainty](#confidence-and-uncertainty). |
-| <Syntax py="http_client" ts="fetch" /> | How the request is sent. Defaults to a new client per call. See [Timeouts and connections](#timeouts-and-connections). |
+| <Syntax py="http_client" ts="fetch" /> | How the request is sent. See [Timeouts and connections](#timeouts-and-connections). |
 
 See the API reference for [Python][model-api] or [TypeScript][model-api-ts] for all
 constructor options.
@@ -127,102 +127,29 @@ asyncio.run(main())
 </Tabs>
 
 The result reports the Jev version that answered, such as `jev-1.14.0`, not the
-`jev-latest` alias you requested. Log it with the answer when you need to trace a
-decision back to a model version.
-
-
-The result also carries the call's token usage in `usage` and its latency in
-<Syntax py="metadata.latency_ms" ts="metadata.latencyMs" />, which the
-[decision span](../observability.mdx) records too.
+`jev-latest` alias you requested. Log it with the answer to trace a decision back to a
+model version.
 
 ## Confidence and uncertainty
 
-Every answer from Jev carries a confidence in `[0.0, 1.0]`, and the result keeps it in
-`metadata.confidence`, keyed by question id. When an answer's confidence falls below
-the minimum, the decision model returns `Uncertain` in its place. The probabilities
-and confidence stay in the metadata either way, so you can still see what Jev leaned
-toward.
+Jev reports a confidence for every answer. An answer below the minimum comes back as
+`Uncertain`, and `metadata.confidence` and `metadata.probabilities` still show what Jev
+leaned toward. [Confidence](../questions.mdx#confidence) explains how it's measured.
 
-How the confidence is measured depends on the question:
-
-- **Yes/no**: Jev returns the probability of yes. The answer is yes when that
-  probability is at least 0.5, and the confidence is how far it sits from a coin flip:
-  0 at 0.5, 1 at 0.0 or 1.0. `metadata.probabilities` holds the probability of
-  `"true"` and `"false"`. With the default minimum of 0.5, a yes/no answer comes back
-  `Uncertain` unless the probability of yes is at least 0.75 or at most 0.25.
-- **Multiple choice**: Jev returns a probability for each label and its own confidence
-  in the label it picked. `metadata.probabilities` holds every label's probability.
-
-The default minimum of 0.5 suits most routing and triage questions. Raise it for
-questions where a wrong answer costs more than asking a person. Set it on the question,
-not the decision model, so the other questions keep the default. This question needs a
-confidence of 0.8, and prints the probability of yes when the answer is uncertain:
-
-<Tabs>
-<Tab label="Python">
-
-```python
-import asyncio
-
-from strands import Uncertain
-from strands.decisions import TypeSafeDecisionModel
-
-
-async def main():
-    decisions = TypeSafeDecisionModel()
-    result = await decisions.ask(
-        "The customer says the delivery was fine, I guess.",
-        {
-            "satisfied": {
-                "question": "Is the customer satisfied?",
-                "choices": "boolean",
-                "uncertainty": {"min_confidence": 0.8},
-            },
-        },
-    )
-    answer = result.answers["satisfied"]
-    if isinstance(answer, Uncertain):
-        yes = result.metadata.probabilities["satisfied"]["true"]
-        print(f"Uncertain, probability of yes {yes:.2f}")
-    else:
-        print(answer)
-
-
-asyncio.run(main())
-
-# Typical output:
-# Uncertain, probability of yes 0.49
-```
-
-</Tab>
-<Tab label="TypeScript">
-
-```typescript
---8<-- "user-guide/sdk/decision-models/models/typesafe_imports.ts:uncertain_imports"
-
---8<-- "user-guide/sdk/decision-models/models/typesafe.ts:uncertain"
-```
-
-</Tab>
-</Tabs>
-
-A question's own minimum overrides
-<Syntax py="default_min_confidence" ts="defaultMinConfidence" />. A question with
-uncertainty turned off always returns Jev's choice, however low the confidence.
-[Uncertainty](../questions.mdx#uncertainty) covers the settings.
+The default minimum of 0.5 suits most routing and triage questions. For a question
+where a wrong answer costs more than asking a person, raise the minimum on that
+question alone: set its `uncertainty` to
+<Syntax py='{"min_confidence": 0.8}' ts="{ minConfidence: 0.8 }" />.
 
 ## Timeouts and connections
 
-Each decision is one HTTP request to TypeSafe's API.
-
 <Tabs>
 <Tab label="Python">
 
-With no client configured, the decision model opens a new `httpx.AsyncClient` with a
-30-second timeout for every call. httpx applies a timeout to each phase of the request,
-such as connecting or reading, not to the whole call. Pass your own client to reuse
-connections across decisions, set a different timeout, or add headers. You own the
-client, so close it when you're done:
+With no client configured, each call opens an `httpx.AsyncClient` with a 30-second
+timeout, which httpx applies to each phase, such as connecting or reading. Pass your own
+client to reuse connections across decisions, change the timeout, or add headers. You
+own the client, so close it when you're done:
 
 ```python
 import asyncio
@@ -271,56 +198,30 @@ own. Pass a `cancelSignal` to `ask` to bound how long a decision can take:
 --8<-- "user-guide/sdk/decision-models/models/typesafe.ts:timeout"
 ```
 
-To change how requests are sent, such as routing them through a proxy, pass your own
-implementation as `fetch` when you construct the decision model.
+To route requests through a proxy or change how they're sent, pass your own `fetch`
+implementation to the constructor.
 
 </Tab>
 </Tabs>
 
-## Limits
-
-`ask` rejects these requests before it calls TypeSafe:
-
-- A multiple-choice question with more than 255 labels.
-- Input with binary content, such as an image or document passed as bytes. Send text
-  instead.
-- Input that can't be serialized to JSON. Python also rejects NaN and infinity;
-  TypeScript sends them as `null`.
-
-TypeSafe applies its own size limit and context window to the request, which the
-errors below cover.
-
 ## Errors
 
-Beyond the [question validation errors](../questions.mdx#validation), `ask` raises:
+Beyond the [validation errors](../questions.mdx#validation), `ask` raises:
 
 | Error | When |
 | --- | --- |
 | <Syntax py="ModelThrottledException" ts="ModelThrottledError" /> | TypeSafe is throttling or temporarily unavailable (HTTP 429, 503, or 529). Retry with backoff. |
 | <Syntax py="ContextWindowOverflowException" ts="ContextWindowOverflowError" /> | The request is too large (HTTP 413) or longer than Jev's context window (HTTP 400 with `max_tokens_exceeded`). Shorten the input, such as by sending only the latest messages of a conversation. |
-| <Syntax py="ValueError" ts="Error" /> | The request breaks a [limit](#limits). |
 | <Syntax py="httpx.HTTPStatusError" ts="ModelError" /> | Any other non-2xx response, such as HTTP 401 for an invalid API key. |
 | <Syntax py="httpx.TransportError" ts="ModelError" /> | <Syntax plain py="The request didn't complete, because of a network failure or a timeout." ts="The request failed before the response arrived, because of a network failure or a timeout. A failure after that raises the underlying error." /> |
 | <Syntax py="StructuredOutputException" ts="ModelError" /> | TypeSafe returned a response the decision model can't read, such as an answer outside the question's choices. |
 
 The throttling and context window errors keep the HTTP failure as their cause.
-
-<Tabs>
-<Tab label="Python">
-
-The cause is an `httpx.HTTPStatusError`. Read the status code and body from its
-`response`.
-
-</Tab>
-<Tab label="TypeScript">
-
-`ModelThrottledError` and `ContextWindowOverflowError` extend `ModelError`, so check
-for them before you check for `ModelError`. A failure after the response starts, such
-as a cancel signal firing or the connection dropping while the body downloads, raises
-the underlying error rather than `ModelError`.
-
-</Tab>
-</Tabs>
+<Syntax
+  plain
+  py="Read its status code from the cause's response."
+  ts="Both extend ModelError, so check for them before you check for ModelError."
+/>
 
 [typesafe]: https://typesafe.ai
 [model-api-ts]: @api/typescript/TypeSafeDecisionModelOptions

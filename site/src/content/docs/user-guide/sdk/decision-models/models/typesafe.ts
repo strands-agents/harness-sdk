@@ -1,4 +1,4 @@
-import { TypeSafeDecisionModel, Uncertain } from '@strands-agents/sdk'
+import { TypeSafeDecisionModel } from '@strands-agents/sdk'
 
 async function configurationExample() {
   // --8<-- [start:configuration]
@@ -45,29 +45,4 @@ async function timeoutExample() {
   // Typical output:
   // shipping
   // --8<-- [end:timeout]
-}
-
-async function uncertainExample() {
-  // --8<-- [start:uncertain]
-  const decisions = new TypeSafeDecisionModel()
-  const { answers, metadata } = await decisions.ask(
-    'The customer says the delivery was fine, I guess.',
-    {
-      satisfied: {
-        question: 'Is the customer satisfied?',
-        choices: 'boolean',
-        uncertainty: { minConfidence: 0.8 },
-      },
-    }
-  )
-  if (answers.satisfied instanceof Uncertain) {
-    const yes = metadata.probabilities?.satisfied['true'] ?? 0
-    console.log(`Uncertain, probability of yes ${yes.toFixed(2)}`)
-  } else {
-    console.log(answers.satisfied)
-  }
-
-  // Typical output:
-  // Uncertain, probability of yes 0.49
-  // --8<-- [end:uncertain]
 }
