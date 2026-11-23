@@ -5,6 +5,7 @@ import { basename, dirname, relative, resolve } from 'node:path'
 import { errorMessage } from '../../terminal/text.js'
 import type { DevChatJob, DevChatNotice } from '../../ui/chat/types.js'
 import { WizardBroker } from '../../ui/panels/wizard-request.js'
+import { recordDevEvent } from '../telemetry.js'
 import { isRecord } from '../../values.js'
 import { editAgentOptions } from '../agent-options.js'
 import { baseCliEditProblem, editBaseCliProfile, isProfileBaseCli } from '../base-cli.js'
@@ -325,6 +326,7 @@ export class TemporaryTest extends Store<TestState> {
     for (const experiment of experiments) {
       if (this.isRunning(experiment.path)) continue
       this.starting(experiment, experiment.caseCount, false)
+      recordDevEvent('evaluation_started')
       void this.execute(experiment, experiment.path, false)
     }
   }
@@ -716,6 +718,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
       progress: startingProgress(page.plan, startedAt),
     })
     this.showPage(entry.state, entry.id)
+    recordDevEvent('optimize_run_started')
     void this.run(entry, page.plan, knobs, variables)
     return entry.id
   }
@@ -1300,6 +1303,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
     entry.writers = writers
     entry.changes = changes
     const ready = review.edits.filter(({ unavailable }) => unavailable === undefined).length
+    recordDevEvent('optimize_run_finished')
     this.updateRun(entry, { step: 'review', review: auto && ready > 0 ? autoAnswered(review) : review })
     this.watchSources(entry)
     return ready
@@ -1439,6 +1443,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
         break
       }
     }
+    if (written.length > 0) recordDevEvent('optimize_edits_applied')
     if (recorded !== undefined)
       this.changes[recorded] = { ...change, edits: written, ...(applyError ? { error: applyError } : {}) }
     // The writes are awaited, and the review moves on meanwhile (the walk marks it reviewed), so add to what it is now.
@@ -1481,7 +1486,17 @@ export const temporaryDevSessions = (host: TemporarySessionHost): TemporaryDevSe
     test: new TemporaryTest(current, experiments),
     optimize: new TemporaryOptimize(current, experiments),
     ui: new TemporaryEvalsUi(current, host.evalsUi),
-    ask: new WizardBroker(host.autofill?.() ?? false),
+    ask: new WizardBroker(host.autofill?.() ?? false, (event) =>
+      recordDevEvent(
+        event === 'shown'
+          ? 'ask_shown'
+          : event === 'answered'
+            ? 'ask_answered'
+            : event === 'cancelled'
+              ? 'ask_cancelled'
+              : 'ask_autofilled'
+      )
+    ),
     openFile: async (path: string): Promise<void> => {
       const open = latest.context?.openFile
       if (!open) throw new Error('This terminal cannot open an editor.')

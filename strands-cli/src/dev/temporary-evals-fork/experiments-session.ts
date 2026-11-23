@@ -1,3 +1,4 @@
+import { recordDevEvent } from '../telemetry.js'
 import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -339,6 +340,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
         failed: job.generation.failed + outcome.dropped,
         endedAt: Date.now(),
       })
+      recordDevEvent('experiment_created')
       return this.jobs.get(job.generation.id) === job
     } catch (error) {
       if (job.abort.signal.aborted || this.jobs.get(job.generation.id) !== job) {

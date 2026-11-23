@@ -217,8 +217,11 @@ export class WizardBroker {
   // What each shown question holds on screen, so a chat message that drops it can pass the inputs on.
   private readonly _drafts = new Map<string, Readonly<Record<string, WizardAnswer>>>()
 
-  /** `autofill` starts from the saved setting and lasts for this session only. */
-  constructor(autofill = false) {
+  /** `autofill` starts from the saved setting; `track` hears outcomes for funnel counts, never content. */
+  constructor(
+    autofill = false,
+    private readonly _track?: (event: 'shown' | 'answered' | 'cancelled' | 'autofilled') => void
+  ) {
     this._autofill = autofill
   }
 
@@ -240,7 +243,11 @@ export class WizardBroker {
     if (this._disposed || spec.steps.length === 0) return Promise.resolve(undefined)
     const request = cleanRequest({ ...spec, id: `strands-wizard-${this._next++}` })
     // Autofill hands the agent's own questions back to it. A standing question is the developer's to answer.
-    if (this._autofill && !request.standing) return Promise.resolve(defaultAnswers(request.steps))
+    if (this._autofill && !request.standing) {
+      this._track?.('autofilled')
+      return Promise.resolve(defaultAnswers(request.steps))
+    }
+    this._track?.('shown')
     return new Promise((resolve) => {
       this._queue.push({ request, resolve })
       this._yieldToTurn()
@@ -262,6 +269,7 @@ export class WizardBroker {
     if (!active || active.request.id !== id) return false
     this._active = undefined
     this._drafts.delete(id)
+    this._track?.(outcome === undefined ? 'cancelled' : 'answered')
     active.resolve(outcome)
     // Activating before notifying keeps a queued request on screen: the panel closes itself on undefined.
     if (this._queue.length > 0) this._activateNext()
@@ -281,7 +289,10 @@ export class WizardBroker {
     const pending = [...(this._active ? [this._active] : []), ...this._queue.splice(0)]
     const hadActive = this._active !== undefined
     this._active = undefined
-    for (const wizard of pending) wizard.resolve(undefined)
+    for (const wizard of pending) {
+      this._track?.('cancelled')
+      wizard.resolve(undefined)
+    }
     if (hadActive) this._notify(undefined)
   }
 

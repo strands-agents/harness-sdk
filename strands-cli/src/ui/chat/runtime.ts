@@ -12,6 +12,8 @@ import { configurationSource } from '../../config/source.js'
 import { agentPrivatePaths, exportAgentProject, exportSourceProject } from '../../project/export.js'
 import { type ChatConfigurationSource, type ChatConversation, type ChatConversations } from '../../agent/types.js'
 import { type ChatSettings } from '../../config/settings.js'
+import { telemetryEnabled } from '../../cli/telemetry.js'
+import { configureDevTelemetry, recordDevEvent } from '../../dev/telemetry.js'
 import { ChatController, type ChatControllerOptions } from './controller.js'
 import { isUnresolvedBackgroundTask } from './state.js'
 import { ConversationManager, type ConversationManagerOptions, type InitialConversations } from './conversations.js'
@@ -99,6 +101,13 @@ export async function createTypescriptChat(
   const project = importAgentProject(path)
   const devWorkspace = options.args.dev?.workspace ? await readDevWorkspace(options.args.dev.workspace) : undefined
   const baseCli = devWorkspace ? await profileBaseCliChat(devWorkspace) : undefined
+  if (devWorkspace) {
+    configureDevTelemetry({
+      enabled: telemetryEnabled(config.snapshot().settings),
+      harness: baseCli ? 'base-cli' : project.language,
+    })
+    recordDevEvent('dev_launch')
+  }
   let devAgent = (): TemporaryAgentFacts => ({})
   const extension = devExtension(devWorkspace, project, () => devAgent())
   const messaging = new AgentMessaging()
@@ -358,6 +367,13 @@ export async function createPythonChat(
   const project = importAgentProject(path)
   const devWorkspace = options.devWorkspace ? await readDevWorkspace(options.devWorkspace) : undefined
   const baseCli = devWorkspace ? await profileBaseCliChat(devWorkspace) : undefined
+  if (devWorkspace) {
+    configureDevTelemetry({
+      enabled: telemetryEnabled(config.snapshot().settings),
+      harness: baseCli ? 'base-cli' : project.language,
+    })
+    recordDevEvent('dev_launch')
+  }
   let devAgent = (): TemporaryAgentFacts => ({})
   const extension = devExtension(devWorkspace, project, () => devAgent())
   const createController = async (backend: PythonBackend, conversation?: ChatConversation): Promise<ChatController> => {

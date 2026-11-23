@@ -7,6 +7,7 @@ import { URL } from 'node:url'
 import { containsPath } from '../../paths.js'
 import { errorMessage } from '../../terminal/text.js'
 import { hyperlinkEscapes } from '../../terminal/terminal.js'
+import { recordDevEvent } from '../telemetry.js'
 import type { EvalsBrowser, EvalsBrowserNotice, EvalsBrowserPlace, EvalsBrowserState } from '../panels/model.js'
 import { prepareTemporaryOptimizerEnvironment, type TemporaryEnvironmentOptions } from './environment.js'
 import { temporaryEvalsEnvironment, temporaryWorkspaceDirectory } from './evals-process.js'
@@ -158,6 +159,7 @@ export class TemporaryEvalsUi implements EvalsBrowser {
       }
     const forward = this.forwardLines(this.port)
     if (forward) return { tone: 'normal', lines: [...forward, `Then open ${url}`] }
+    recordDevEvent('evals_ui_opened')
     const opened = await (this.dependencies.openBrowser ?? openBrowser)(url).catch(() => false)
     return opened ? undefined : { tone: 'normal', lines: ['Open this link in a browser:', url] }
   }
