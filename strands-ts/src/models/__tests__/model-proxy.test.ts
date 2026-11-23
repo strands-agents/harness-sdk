@@ -37,16 +37,20 @@ async function drain(
 
 describe('ModelProxy', () => {
   describe('usage recording', () => {
-    it('accumulates a clean call usage into the invocation context total', async () => {
+    it('accumulates a clean call usage into the invocation context total, under the model it wraps', async () => {
       const model = new MockMessageModel().addTurn(
         { type: 'textBlock', text: 'hi' },
         { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }
       )
+      model.updateConfig({ modelId: 'model-a' })
       const invocationContext = new InvocationContextImpl()
 
       await drain(new ModelProxy(model).streamAggregated([userMessage('go')], undefined, invocationContext))
 
       expect(invocationContext.usage).toEqual({ turnsTaken: 0, inputTokens: 10, outputTokens: 5, totalTokens: 15 })
+      expect(invocationContext.usageByModel).toEqual([
+        { providerName: null, modelId: 'model-a', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+      ])
     })
 
     it('accumulates across calls that share one invocation context', async () => {
@@ -84,6 +88,7 @@ describe('ModelProxy', () => {
       await drain(new ModelProxy(model).streamAggregated([userMessage('go')], undefined, invocationContext))
 
       expect(invocationContext.usage).toEqual(new InvocationContextImpl().usage)
+      expect(invocationContext.usageByModel).toEqual([])
     })
 
     it('is a no-op when called without an invocation context', async () => {

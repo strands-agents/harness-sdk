@@ -26,7 +26,7 @@ export type {
   InvokeOptions,
   LocalAgent,
 } from './types/agent.js'
-export type { InvocationContext, InvocationContextUsage } from './agent/invocation-context.js'
+export type { InvocationContext, InvocationContextUsage, ModelUsage } from './agent/invocation-context.js'
 export type { LifecycleObserver } from './types/lifecycle-observer.js'
 
 // Snapshot types

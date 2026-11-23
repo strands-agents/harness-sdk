@@ -3,6 +3,7 @@ import type { LocalAgent } from '../types/agent.js'
 import { Message, TextBlock, ToolResultBlock, type ContentBlock } from '../types/messages.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
 import { latestUserIndex } from './model.js'
+import { modelKey } from './provider-name.js'
 import { hasToolReferences, withToolReferenceSchemas, withToolReferenceText } from './tool-references.js'
 import type { ToolSpec } from '../tools/types.js'
 import type { CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
@@ -134,12 +135,12 @@ export class ModelProxy {
     return withToolReferenceText(messages, toolSpecs)
   }
 
-  /** Adds a completed call's reported usage to the request. */
+  /** Adds a completed call's reported usage to the request, under the model that made the call. */
   private _record(result: StreamAggregatedResult, invocationContext?: InvocationContext): void {
     const usage = result?.metadata?.usage
     const context = unwrapInvocationContext(invocationContext)
     if (usage !== undefined && context !== undefined) {
-      context.recordUsage(usage)
+      context.recordUsage(usage, modelKey(this._model))
     }
   }
 }

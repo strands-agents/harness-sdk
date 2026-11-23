@@ -10,6 +10,7 @@ import { z } from 'zod'
 import { BedrockModel } from '../models/bedrock.js'
 import { Model } from '../models/model.js'
 import { ModelProxy } from '../models/model-proxy.js'
+import { modelKey } from '../models/provider-name.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME, StructuredOutputTool } from '../tools/structured-output-tool.js'
 import { Message, TextBlock, type ContentBlock, type ToolUseBlock } from '../types/messages.js'
 import { DecisionModel, uncertaintyAllowed } from './decision-model.js'
@@ -21,6 +22,7 @@ import {
   type DecisionResult,
   type Question,
 } from './types.js'
+import type { ModelKey } from '../agent/invocation-context.js'
 
 /** Reserved option value used to signal uncertainty on the wire. */
 const UNCERTAIN_LITERAL = 'uncertain'
@@ -92,6 +94,10 @@ export class LLMDecisionModel extends DecisionModel {
     this._systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT
   }
 
+  protected override _usageModelKey(): ModelKey {
+    return modelKey(this._model)
+  }
+
   protected async _ask<const Q extends Record<string, Question>>(
     state: DecisionInput,
     questions: Q,
@@ -133,13 +139,7 @@ export class LLMDecisionModel extends DecisionModel {
 
     return {
       answers,
-      ...(usage !== undefined && {
-        usage: {
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-          totalTokens: usage.totalTokens,
-        },
-      }),
+      ...(usage !== undefined && { usage: { ...usage } }),
       metadata: { latencyMs },
     }
   }

@@ -103,11 +103,16 @@ const BEDROCK_THROTTLING_EVENTS = ['throttlingException', 'serviceUnavailableExc
 // `@anthropic-ai/bedrock-sdk`: by class name, or by its bedrock-runtime base URL when a bundler renamed the class.
 // The Mantle client is a separate class on a bedrock-mantle host and takes the Anthropic API versions.
 function isBedrockRuntimeClient(client: unknown): boolean {
-  for (let proto = Object.getPrototypeOf(client); proto; proto = Object.getPrototypeOf(proto)) {
-    if ((proto as { constructor?: { name?: string } }).constructor?.name === 'AnthropicBedrock') return true
-  }
+  if (hasClassName(client, 'AnthropicBedrock')) return true
   const baseURL = (client as { baseURL?: unknown } | null)?.baseURL
   return typeof baseURL === 'string' && /\bbedrock-runtime\./.test(baseURL)
+}
+
+function hasClassName(client: unknown, name: string): boolean {
+  for (let proto = Object.getPrototypeOf(client); proto; proto = Object.getPrototypeOf(proto)) {
+    if ((proto as { constructor?: { name?: string } }).constructor?.name === name) return true
+  }
+  return false
 }
 
 /**
@@ -422,6 +427,17 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       { capabilities: { temporaryMessages, deferredToolLoading } },
       this._config.modelInfo
     )
+  }
+
+  /**
+   * Names the provider by the client's class; a client the SDK does not recognise may call any vendor.
+   *
+   * @internal
+   */
+  override get _providerName(): string | undefined {
+    if (this._client instanceof Anthropic) return 'anthropic'
+    const onBedrock = isBedrockRuntimeClient(this._client) || hasClassName(this._client, 'AnthropicBedrockMantle')
+    return onBedrock ? 'bedrock' : undefined
   }
 
   updateConfig(modelConfig: AnthropicModelConfig): void {

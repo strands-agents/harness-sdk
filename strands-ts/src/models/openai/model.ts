@@ -45,6 +45,8 @@ import type {
   OpenAIResponsesConfig,
 } from './types.js'
 
+const BEDROCK_HOSTS = /^(?:bedrock-mantle\.[a-z0-9-]+\.api\.aws|bedrock-runtime(-fips)?\.[a-z0-9-]+\.amazonaws\.com)$/
+
 /**
  * OpenAI model provider.
  *
@@ -167,6 +169,18 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
       { capabilities: { stateful } },
       this._config.modelInfo
     )
+  }
+
+  /**
+   * Names the provider by the endpoint the client calls; a base URL other than OpenAI's or Bedrock's may be any vendor.
+   *
+   * @internal
+   */
+  override get _providerName(): string | undefined {
+    if (this._mantleBaseUrl !== undefined) return 'bedrock'
+    const host = new URL(this._client.baseURL).hostname
+    if (host === 'api.openai.com') return 'openai'
+    return BEDROCK_HOSTS.test(host) ? 'bedrock' : undefined
   }
 
   /**

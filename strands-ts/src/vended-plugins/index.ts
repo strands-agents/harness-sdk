@@ -12,3 +12,4 @@ export * from './context-offloader/index.js'
 export * from './context-injector/index.js'
 export * from './goal/index.js'
 export * from './todos/index.js'
+// `cost-estimator` is left out: it needs the optional peer `@pydantic/genai-prices`, so import it from its own subpath.

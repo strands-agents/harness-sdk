@@ -5,6 +5,7 @@
  */
 
 import type { InvocationContext } from '../agent/invocation-context.js'
+import type { Usage } from '../models/streaming.js'
 import type { ContentBlock, Message } from '../types/messages.js'
 
 /**
@@ -109,11 +110,7 @@ export interface DecisionResult<Q extends Record<string, Question> = Record<stri
   /** Per-question answer, statically narrowed from each question's `choices`. */
   answers: { [K in keyof Q]: AnswerOf<Q[K]> }
   /** Aggregate token usage for the underlying model call(s), when the provider reports it. */
-  usage?: {
-    inputTokens: number
-    outputTokens: number
-    totalTokens: number
-  }
+  usage?: Usage
   /** Per-call metadata recorded by the implementation. */
   metadata: {
     /** Time spent in the underlying model call, in milliseconds. */
