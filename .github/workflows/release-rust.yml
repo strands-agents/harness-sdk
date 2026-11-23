@@ -12,8 +12,8 @@ name: "Rust: Release"
 # trusted publisher.
 #
 # One-time setup before the first non-dry run:
-#   - GitHub environments `release-gate` (required reviewers, deployment branch
-#     `main`; shared with the other releases) and `crates-io`.
+#   - GitHub environments `release-gate` (required reviewers; shared with the
+#     other releases) and `crates-io` (deployment branch `main`).
 #   - On crates.io, for each of `strands-macros`, `strands` and `strands-harness`:
 #     Settings -> Trusted Publishing -> add a GitHub publisher with owner
 #     `strands-agents`, repository `harness-sdk`, workflow `release-rust.yml`
