@@ -343,7 +343,7 @@ export interface EvalsBrowserNotice {
 }
 
 export interface EvalsBrowserState {
-  readonly status: 'off' | 'starting' | 'ready' | 'unavailable'
+  readonly status: 'off' | 'starting' | 'ready' | 'unavailable' | 'absent'
   readonly detail?: string
 }
 

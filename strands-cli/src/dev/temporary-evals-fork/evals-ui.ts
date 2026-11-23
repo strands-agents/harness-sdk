@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { hostname } from 'node:os'
 import { relative, sep } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
@@ -7,6 +7,7 @@ import { URL } from 'node:url'
 import { containsPath } from '../../paths.js'
 import { errorMessage } from '../../terminal/text.js'
 import { hyperlinkEscapes } from '../../terminal/terminal.js'
+import { STRANDS_EVALS_LABEL } from '../evals-package.js'
 import { recordDevEvent } from '../telemetry.js'
 import type { EvalsBrowser, EvalsBrowserNotice, EvalsBrowserPlace, EvalsBrowserState } from '../panels/model.js'
 import { prepareTemporaryOptimizerEnvironment, type TemporaryEnvironmentOptions } from './environment.js'
@@ -34,6 +35,7 @@ export interface TemporaryUiDependencies {
     env: NodeJS.ProcessEnv
   ) => TemporaryUiProcess
   readonly openBrowser?: (url: string) => Promise<boolean>
+  readonly hasUi?: (python: string, environment: NodeJS.ProcessEnv) => Promise<boolean>
   readonly environment?: NodeJS.ProcessEnv
   readonly machine?: () => string
 }
@@ -43,6 +45,10 @@ const RUNS_ROUTE = '/runs'
 const OPTIMIZATION_ROUTE = '/optimization'
 const OPTIMIZATION_VIEW = 'overview'
 const START_TIMEOUT_MS = 60_000
+const UI_PROBE_TIMEOUT_MS = 60_000
+const UI_HELP = ['-m', 'strands_evals.cli', 'ui', '--help'] as const
+const ARGUMENT_ERROR_EXIT = 2
+const ABSENT_DETAIL = `${STRANDS_EVALS_LABEL} has no evals UI`
 const ERROR_LINES = 3
 const URL_LINE = /^\s*(http:\/\/127\.0\.0\.1:(\d+)\/\?t=[A-Za-z0-9_-]+)\s*$/u
 const SERVER_WRAPPER = [
@@ -64,6 +70,20 @@ const SERVER_WRAPPER = [
   'sys.stdin.read()',
   'os._exit(0)',
 ].join('\n')
+
+const installedEvalsHasUi = (python: string, environment: NodeJS.ProcessEnv): Promise<boolean> =>
+  new Promise((resolve, reject) => {
+    execFile(
+      python,
+      UI_HELP,
+      { env: environment, timeout: UI_PROBE_TIMEOUT_MS, windowsHide: true },
+      (error, _stdout, stderr) => {
+        if (!error) return resolve(true)
+        if (error.code === ARGUMENT_ERROR_EXIT) return resolve(false)
+        reject(new Error(firstLine(String(stderr)) || error.message))
+      }
+    )
+  })
 
 const spawnServer: NonNullable<TemporaryUiDependencies['spawnServer']> = (command, args, cwd, env) =>
   spawn(command, [...args], { cwd, env, stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true })
@@ -119,7 +139,7 @@ export class TemporaryEvalsUi implements EvalsBrowser {
   snapshot = (): EvalsBrowserState => this.state
 
   start(): void {
-    if (this.state.status === 'starting' || this.state.status === 'ready') return
+    if (this.state.status === 'starting' || this.state.status === 'ready' || this.state.status === 'absent') return
     this.set({ status: 'starting', detail: 'preparing the evals environment' })
     void this.launch()
   }
@@ -139,6 +159,8 @@ export class TemporaryEvalsUi implements EvalsBrowser {
 
   open = async (place: EvalsBrowserPlace): Promise<EvalsBrowserNotice | undefined> => {
     const { state } = this
+    if (state.status === 'absent')
+      return { tone: 'muted', lines: [`The evals UI is not in ${STRANDS_EVALS_LABEL}, which strands dev uses.`] }
     if (state.status === 'off' || state.status === 'unavailable') {
       this.start()
       return {
@@ -204,13 +226,17 @@ export class TemporaryEvalsUi implements EvalsBrowser {
       const python = await (this.dependencies.prepare ?? prepareServerEnvironment)(host, {
         onProgress: (line) => this.set({ status: 'starting', detail: line }),
       })
-      await temporaryWorkspaceReady(temporaryWorkspaceDirectory(host.workspace))
-      const root = await ensureTemporaryExperimentsFolder(temporaryWorkspaceDirectory(host.workspace))
-      this.set({ status: 'starting', detail: 'starting the page server' })
       const environment = {
         ...temporaryEvalsEnvironment(python, this.dependencies.environment ?? process.env),
         PYTHONUNBUFFERED: '1',
       }
+      if (!(await (this.dependencies.hasUi ?? installedEvalsHasUi)(python, environment))) {
+        this.set({ status: 'absent', detail: ABSENT_DETAIL })
+        return
+      }
+      await temporaryWorkspaceReady(temporaryWorkspaceDirectory(host.workspace))
+      const root = await ensureTemporaryExperimentsFolder(temporaryWorkspaceDirectory(host.workspace))
+      this.set({ status: 'starting', detail: 'starting the page server' })
       this.listen(
         (this.dependencies.spawnServer ?? spawnServer)(
           python,

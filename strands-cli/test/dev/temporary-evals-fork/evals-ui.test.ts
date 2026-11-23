@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 
+import { STRANDS_EVALS_VERSION } from '../../../src/dev/evals-package.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import {
   TemporaryEvalsUi,
@@ -73,6 +74,7 @@ const harness = async (dependencies: Partial<TemporaryUiDependencies> = {}): Pro
   }
   const ui = new TemporaryEvalsUi(() => host, {
     prepare: async () => '/envs/evals/bin/python',
+    hasUi: async () => true,
     spawnServer: (command, args, cwd, env) => {
       spawned.push({ command, args, cwd, env })
       const server = new FakeServer()
@@ -263,6 +265,47 @@ describe('TEMPORARY evals UI server', () => {
     await vi.waitFor(() => expect(setup.ui.snapshot().status).toBe('unavailable'))
     expect(setup.ui.snapshot().detail).toBe('Could not install strands-agents-evals:')
     expect(setup.notices).toEqual([{ status: 'error', text: expect.stringContaining('evals UI unavailable') }])
+  })
+
+  it('shouldStayOffWithoutAnErrorWhenTheInstalledEvalsHasNoUi', async () => {
+    const setup = await harness({ hasUi: async () => false })
+
+    setup.ui.start()
+
+    await vi.waitFor(() => expect(setup.ui.snapshot().status).toBe('absent'))
+    expect(setup.ui.snapshot().detail).toBe(`strands-agents-evals ${STRANDS_EVALS_VERSION} has no evals UI`)
+    expect(setup.spawned).toEqual([])
+    expect(setup.notices).toEqual([])
+  })
+
+  it('shouldSayTheUiIsNotInTheInstalledEvalsWithoutStartingItWhenItIsOpened', async () => {
+    const hasUi = vi.fn(async () => false)
+    const setup = await harness({ hasUi })
+    setup.ui.start()
+    await vi.waitFor(() => expect(setup.ui.snapshot().status).toBe('absent'))
+
+    const notice = await setup.ui.open({ view: 'runs' })
+
+    expect(notice).toEqual({
+      tone: 'muted',
+      lines: [`The evals UI is not in strands-agents-evals ${STRANDS_EVALS_VERSION}, which strands dev uses.`],
+    })
+    expect(hasUi).toHaveBeenCalledTimes(1)
+    expect(setup.spawned).toEqual([])
+  })
+
+  it('shouldExplainWhenTheInstalledEvalsCannotBeAskedForItsUi', async () => {
+    const setup = await harness({
+      hasUi: async () => {
+        throw new Error("ModuleNotFoundError: No module named 'strands_evals'")
+      },
+    })
+
+    setup.ui.start()
+
+    await vi.waitFor(() => expect(setup.ui.snapshot().status).toBe('unavailable'))
+    expect(setup.ui.snapshot().detail).toBe("ModuleNotFoundError: No module named 'strands_evals'")
+    expect(setup.spawned).toEqual([])
   })
 
   it('shouldStartAgainWhenOpenedAfterTheServerStopped', async () => {
