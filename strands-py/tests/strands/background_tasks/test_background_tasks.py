@@ -11,6 +11,7 @@ from unittest.mock import ANY, AsyncMock, patch
 import pytest
 
 from strands import Agent, ToolContext, tool
+from strands._context_manager.strategies.offload import Offload
 from strands.hooks import (
     AfterInvocationEvent,
     AfterToolCallEvent,
@@ -20,6 +21,7 @@ from strands.hooks import (
 )
 from strands.interrupt import Interrupt
 from strands.middleware.stages import ExecuteToolStage, InvokeModelStage
+from strands.models._summarize import _SUMMARIZE_GUARD
 from strands.session import FileSessionManager
 from strands.tools.executors import SequentialToolExecutor
 from strands.tools.tools import PythonAgentTool
@@ -123,6 +125,22 @@ def _capture_tool_specs(agent: Agent) -> list[list[ToolSpec]]:
 
     agent.add_middleware(InvokeModelStage, capture)
     return captured
+
+
+class _SpecRecordingModel(MockedModelProvider):
+    """Records every request's tool specs, as the request sent them, and whether the request is a summary replay."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.requests: list[tuple[bool, list[ToolSpec]]] = []
+
+    async def stream(
+        self, messages: Messages, tool_specs: list[ToolSpec] | None = None, *args: Any, **kwargs: Any
+    ) -> AsyncGenerator[Any, None]:
+        replay = any(_SUMMARIZE_GUARD in block.get("text", "") for block in messages[-1]["content"])
+        self.requests.append((replay, tool_specs or []))
+        async for event in super().stream(messages, tool_specs, *args, **kwargs):
+            yield event
 
 
 def _background_agent(
@@ -585,6 +603,31 @@ async def test_applies_always_and_never_policies_per_tool() -> None:
     for tool_name in ("background", "foreground"):
         tool_spec = next(spec for spec in tool_specs[0] if spec["name"] == tool_name)
         assert "_background_execution" not in _schema_properties(tool_spec)
+
+
+# Regression: https://github.com/strands-agents/harness-sdk/issues/6332
+@pytest.mark.asyncio
+async def test_summary_replay_sends_the_tools_the_conversation_call_sent() -> None:
+    model = _SpecRecordingModel([_assistant_text("One."), _assistant_text("Summary."), _assistant_text("Two.")])
+    agent = Agent(
+        model=model,
+        tools=[work],
+        background_tasks={},
+        context_manager={"strategies": [Offload.summarize("*").when(preserve_recent=1)]},
+        callback_handler=None,
+    )
+
+    await agent.invoke_async("Turn one.")
+    await agent.invoke_async("Turn two.")
+
+    conversation_specs = [specs for replay, specs in model.requests if not replay]
+    replayed_specs = [specs for replay, specs in model.requests if replay]
+    assert len(replayed_specs) == 1
+
+    # The replay shares the conversation call's prompt cache only by sending its tools, selection flag included.
+    work_spec = next(spec for spec in replayed_specs[0] if spec["name"] == "work")
+    assert "_background_execution" in _schema_properties(work_spec)
+    assert replayed_specs[0] == conversation_specs[0]
 
 
 # Regression: https://github.com/strands-agents/harness-sdk/issues/5210

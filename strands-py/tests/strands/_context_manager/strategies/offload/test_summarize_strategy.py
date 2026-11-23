@@ -20,6 +20,7 @@ from strands._context_manager.strategies.offload.summarize import BLOCK_SUMMARY_
 from strands._context_manager.types import ContextState
 from strands.agent.invocation_context import ModelUsage, _create_invocation_context
 from strands.models import Model, SummarizeResult
+from strands.models._model_proxy import _latest_tools
 from strands.models._summarize import _SUMMARIZE_GUARD, DEFAULT_SUMMARIZE_INSTRUCTIONS
 from strands.tools.registry import ToolRegistry
 from strands.types.content import ContentBlock, Message, Messages
@@ -625,6 +626,20 @@ class TestRunSummaryReplaysTheAgentRequest:
             "cancel_signal": mock_agent._cancel_signal,
             "agent_metadata": mock_agent._metadata,
         }
+
+    @pytest.mark.asyncio
+    async def test_sends_the_tools_of_the_latest_model_call_rather_than_the_registrys(self, mock_agent):
+        # InvokeModelStage.Input middleware rewrites the call's tools, and the replay shares the call's cache
+        # only when it sends the same ones (#6332).
+        transformed = [{**AGENT_TOOLS[0], "inputSchema": {"json": {"properties": {"_background_execution": {}}}}}]
+        _latest_tools[mock_agent] = transformed
+        messages = self._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        assert mock_agent.model.summarize.await_args.kwargs["tool_specs"] == transformed
 
     @pytest.mark.asyncio
     async def test_sends_the_tools_in_the_same_sorted_order_as_the_model_call(self, mock_agent):
