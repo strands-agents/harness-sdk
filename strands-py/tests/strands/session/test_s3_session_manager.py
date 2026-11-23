@@ -188,14 +188,14 @@ def test_read_session_invalid_json(s3_manager, sample_session):
         ("get_object", lambda manager, session: manager.read_session(session.session_id), "S3 error reading"),
         ("put_object", lambda manager, session: manager.create_session(session), "Failed to write S3 object"),
         ("head_object", lambda manager, session: manager.create_session(session), "S3 error checking session"),
-        ("get_paginator", lambda manager, session: manager.delete_session(session.session_id), "S3 error deleting"),
+        ("list_objects_v2", lambda manager, session: manager.delete_session(session.session_id), "S3 error deleting"),
         (
-            "get_paginator",
+            "list_objects_v2",
             lambda manager, session: manager.list_messages(session.session_id, "test-agent"),
             "S3 error reading messages",
         ),
     ],
-    ids=["read", "write", "create_session", "delete_session", "list_messages"],
+    ids=["read_object", "write_object", "check_session_exists", "delete_session", "list_messages"],
 )
 def test_client_error_raises_session_exception(client_method, operation, match, s3_manager, sample_session):
     """Test that S3 client errors surface as SessionException."""
