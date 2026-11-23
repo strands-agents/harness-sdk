@@ -27,10 +27,10 @@ When the decision model raises, the span ends with an error status and records t
 - [LLM decision model](/docs/user-guide/sdk/decision-models/models/llm/index.md) (1 shared tag)
 - [Questions and answers](/docs/user-guide/sdk/decision-models/questions/index.md) (1 shared tag)
 - [Supported decision models](/docs/user-guide/sdk/decision-models/models/index.md) (1 shared tag)
+- [Typed rubric evaluator](/docs/user-guide/evals-sdk/evaluators/typed_rubric_evaluator/index.md) (1 shared tag)
 - [TypeSafe Jev](/docs/user-guide/sdk/decision-models/models/typesafe/index.md) (1 shared tag)
 - [Evaluating remote traces](/docs/user-guide/evals-sdk/how-to/trace_providers/index.md) (1 shared tag)
 - [Metrics](/docs/user-guide/sdk/observability-evaluation/metrics/index.md) (1 shared tag)
-- [Observability](/docs/user-guide/sdk/observability-evaluation/observability/index.md) (1 shared tag)
 
 
 ## Implementation

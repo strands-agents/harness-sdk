@@ -33,7 +33,7 @@ Pick evaluators along two axes: what you want to check (the six groups above) an
 | **TRACE\_LEVEL** | A single turn | Turn-by-turn analysis |
 | **SESSION\_LEVEL** | A full conversation | End-to-end goal achievement |
 
-`TRACE_LEVEL`, `SESSION_LEVEL`, and `TOOL_LEVEL` are the values of the SDK’s `EvaluationLevel` enum, set through an evaluator’s `evaluation_level`. Evaluators that leave it unset (`OutputEvaluator`, the multimodal and skill evaluators, `TrajectoryEvaluator`, and `InteractionsEvaluator`) receive the agent’s output or full result directly, so the level shown for those is their conceptual scope.
+`TRACE_LEVEL`, `SESSION_LEVEL`, and `TOOL_LEVEL` are the values of the SDK’s `EvaluationLevel` enum, set through an evaluator’s `evaluation_level`. Evaluators that leave it unset (`OutputEvaluator`, `TypedRubricEvaluator`, the multimodal and skill evaluators, `TrajectoryEvaluator`, and `InteractionsEvaluator`) receive the agent’s output or full result directly, so the level shown for those is their conceptual scope.
 
 Combine several evaluators in one experiment to assess different aspects at once. Each evaluator’s page documents its parameters and scoring in full; the tables below summarize what each one checks and links to that detail.
 
@@ -44,6 +44,7 @@ Score whether a response is useful and well-formed, and whether a multi-turn tra
 | Evaluator | Level | What it checks |
 | --- | --- | --- |
 | [OutputEvaluator](/docs/user-guide/evals-sdk/evaluators/output_evaluator/index.md) | OUTPUT\_LEVEL | Any subjective quality against a rubric you write |
+| [TypedRubricEvaluator](/docs/user-guide/evals-sdk/evaluators/typed_rubric_evaluator/index.md) | OUTPUT\_LEVEL | Yes/no, scale, and choice questions scored from a decision model’s probabilities |
 | [HelpfulnessEvaluator](/docs/user-guide/evals-sdk/evaluators/helpfulness_evaluator/index.md) | TRACE\_LEVEL | Response helpfulness from the user’s perspective |
 | [FaithfulnessEvaluator](/docs/user-guide/evals-sdk/evaluators/faithfulness_evaluator/index.md) | TRACE\_LEVEL | Factual accuracy and groundedness |
 | [CorrectnessEvaluator](/docs/user-guide/evals-sdk/evaluators/correctness_evaluator/index.md) | TRACE\_LEVEL | Factual correctness, with optional reference comparison |

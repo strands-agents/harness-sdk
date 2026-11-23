@@ -260,7 +260,7 @@ An OpenAI compatible chat streaming request.
 def format_chunk(event: dict[str, Any], **kwargs: Any) -> StreamEvent
 ```
 
-Defined in: [src/strands/models/openai.py:602](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py#L602)
+Defined in: [src/strands/models/openai.py:610](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py#L610)
 
 Format an OpenAI response event into a standardized message chunk.
 
@@ -290,7 +290,7 @@ async def stream(messages: Messages,
                  **kwargs: Any) -> AsyncGenerator[StreamEvent, None]
 ```
 
-Defined in: [src/strands/models/openai.py:757](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py#L757)
+Defined in: [src/strands/models/openai.py:765](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py#L765)
 
 Stream conversation with the OpenAI model.
 
@@ -323,7 +323,7 @@ async def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/openai.py:908](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py#L908)
+Defined in: [src/strands/models/openai.py:916](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/openai.py#L916)
 
 Get structured output from the model.
 

@@ -85,5 +85,6 @@ The protocol requires just two methods: `load(case_name) -> EvaluationData | Non
 
 ## Related pages
 
+- [Prompt caching](/docs/user-guide/sdk/model-providers/prompt-caching/index.md) (1 shared tag)
 - [Anthropic](/docs/user-guide/sdk/model-providers/anthropic/index.md) (1 shared tag)
 - [Amazon Bedrock](/docs/user-guide/sdk/model-providers/amazon-bedrock/index.md) (1 shared tag)

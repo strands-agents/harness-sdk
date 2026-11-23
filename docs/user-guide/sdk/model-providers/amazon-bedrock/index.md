@@ -1241,7 +1241,7 @@ The retry sets `prefix_mismatch_behavior` to `drop_block` in the `thinking.block
 - [TypeScript Deployment to Amazon Bedrock AgentCore Runtime](/docs/user-guide/sdk/deploy/deploy_to_bedrock_agentcore/typescript/index.md) (2 shared tags)
 - [AgentCore evaluations](/docs/user-guide/evals-sdk/how-to/agentcore_evaluation_dashboard/index.md) (2 shared tags)
 - [PII Redaction](/docs/user-guide/sdk/safety-security/pii-redaction/index.md) (2 shared tags)
-- [Result caching](/docs/user-guide/evals-sdk/how-to/result_caching/index.md) (1 shared tag)
+- [Prompt caching](/docs/user-guide/sdk/model-providers/prompt-caching/index.md) (1 shared tag)
 
 
 ## Implementation

@@ -124,6 +124,7 @@
   - Models
     - [model-providers](https://strandsagents.com/docs/user-guide/sdk/model-providers/index.md): Use any LLM with Strands agents. Switch between Amazon Bedrock, Anthropic, OpenAI, Ollama, and more without changing your agent code.
     - [model-routing](https://strandsagents.com/docs/user-guide/sdk/model-providers/model-routing/index.md): Route each Strands agent invocation across models with ordered fallback, request classification, custom strategies, tenant policies, and bounded switching.
+    - [prompt-caching](https://strandsagents.com/docs/user-guide/sdk/model-providers/prompt-caching/index.md): How Strands caches tools, system prompts, and messages on model providers with explicit or implicit prompt caching, and where caching falls short today.
     - [amazon-bedrock](https://strandsagents.com/docs/user-guide/sdk/model-providers/amazon-bedrock/index.md): Use Amazon Bedrock models in Strands agents. Configure AWS credentials, model settings, guardrails, prompt caching, and multi-modal input.
     - [amazon-bedrock-prompt-caching](https://strandsagents.com/docs/user-guide/sdk/model-providers/amazon-bedrock-prompt-caching/index.md): Cache system prompts, tools, and messages with Amazon Bedrock in Strands to cut token cost and latency, using automatic or manual cache point placement.
     - [amazon-nova](https://strandsagents.com/docs/user-guide/sdk/model-providers/amazon-nova/index.md): Use Amazon Nova models in Strands agents with the strands-amazon-nova package. Install the provider, configure NovaAPIModel, and generate text.
@@ -359,6 +360,7 @@
       - [skill_instruction_following_evaluator](https://strandsagents.com/docs/user-guide/evals-sdk/evaluators/skill_instruction_following_evaluator/index.md): Measure how fully your agent followed each invoked skill's steps with SkillInstructionFollowingEvaluator, a five-point rating grounded in per-step evidence.
     - [Deterministic](https://strandsagents.com/docs/user-guide/evals-sdk/evaluators/deterministic_evaluators/index.md): Run fast, code-based checks without LLM judges: deterministic evaluators match outputs, verify tool calls, and compare state for CI/CD pipelines.
     - [Structured output similarity](https://strandsagents.com/docs/user-guide/evals-sdk/evaluators/structured_output_evaluator/index.md): Score structured agent output field by field with StructuredOutputSimilarity, a deterministic evaluator with order-independent lists and per-field metrics.
+    - [Typed rubric](https://strandsagents.com/docs/user-guide/evals-sdk/evaluators/typed_rubric_evaluator/index.md): Score agent output against yes/no, scale, and choice questions with TypedRubricEvaluator, using a decision model's probabilities instead of judge text.
     - [Custom](https://strandsagents.com/docs/user-guide/evals-sdk/evaluators/custom_evaluator/index.md): Build domain-specific evaluation logic by extending the Evaluator base class: custom scoring, external services, and specialized data analysis.
   - Detectors
     - [Overview](https://strandsagents.com/docs/user-guide/evals-sdk/detectors/index.md): Find out why your agent failed: detectors analyze execution traces to detect failures, classify root causes, and recommend concrete fixes.
@@ -1091,6 +1093,8 @@
 
 ## Blog
 
+- [Introducing Strands Decider v2: open, calibrated system one models](https://strandsagents.com/blog/introducing-strands-decider-v2/index.md): Strands Decider v2 launches with higher accuracy and better-calibrated confidence for making judgements with agents.
+- [Strands Box adds native support for Claude Code, Codex, and Kiro CLI](https://strandsagents.com/blog/strands-box-cli/index.md): Run Claude Code, Codex, or Kiro CLI in YOLO mode inside Strands Box with one command. Profiles and packs set up the agent, credentials stay outside the box, and Dogwood rules decide what it can reach.
 - [Introducing MongoDB memory for Strands Agents](https://strandsagents.com/blog/mongodb-memory-for-strands-agents/index.md): Use MongoDB with Strands to resume agent sessions, retain useful facts across conversations, and retrieve long-term memories with semantic search.
 - [Amazon saves millions by replacing Sonnet 4.6 with Strands Decider](https://strandsagents.com/blog/amazon-saves-millions-replacing-sonnet-with-strands-decider/index.md): Two Amazon engineers swapped Claude Sonnet 4.6 for a decision model in one of the world's biggest internal ticketing systems.
 - [Strands Box brings its open source sandbox to Linux](https://strandsagents.com/blog/strands-box-linux-sandbox/index.md): Strands Box now supports Linux, bringing file and network controls, credential protection, and Dogwood policies to agents on Kubernetes, Amazon Bedrock AgentCore Runtime, and Linux hosts across cloud providers or your own infrastructure.

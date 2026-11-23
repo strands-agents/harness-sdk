@@ -335,4 +335,4 @@ Set `STRANDS_BOX_TELEMETRY_DEBUG` to also print each failed export as it happens
 ## See also
 
 -   [Getting started](/docs/user-guide/box/core/quickstart/index.md): install Box, then run Claude Code or Codex in a box.
--   [How telemetry works](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.

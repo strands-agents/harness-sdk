@@ -63,6 +63,8 @@ How caching reaches the provider depends on the provider:
 -   On OpenAI and bedrock-mantle, Strands harness sends a per-session cache key (when a session is active) and, on GPT-5.6+ models listed in the SDK model info, places cache points ahead of the per-turn memory, todo, and environment context, so the conversation prefix stays cached across turns.
 -   On Google, caching happens automatically server-side, so there is nothing for Strands harness to configure.
 
+On models with only implicit caching, such as OpenAI models on the Amazon Bedrock Converse API, the context Strands harness injects each turn changes the request and breaks the cache. See [Prompt caching: known gaps](/docs/user-guide/sdk/model-providers/prompt-caching/index.md#known-gaps).
+
 Pass `caching` off to disable what Strands harness configures:
 
 (( tab "Strands harness" ))
@@ -110,7 +112,7 @@ const agent = new Agent({ model: bedrockModel })
 (( /tab "TypeScript" ))
 (( /tab "SDK" ))
 
-Turning caching off has no effect where caching is automatic. Enabling caching explicitly on a pre-built `Model` instance is ignored with a warning, because Strands harness cannot know the instance’s provider: configure caching on the instance itself in that case. For the provider-side details, see [Amazon Bedrock prompt caching](/docs/user-guide/sdk/model-providers/amazon-bedrock-prompt-caching/index.md).
+Turning caching off has no effect where caching is automatic. Enabling caching explicitly on a pre-built `Model` instance is ignored with a warning, because Strands harness cannot know the instance’s provider: configure caching on the instance itself in that case. For the provider-side details, see [Amazon Bedrock prompt caching](/docs/user-guide/sdk/model-providers/amazon-bedrock-prompt-caching/index.md). For which models take cache points and where caching falls short, see [Prompt caching](/docs/user-guide/sdk/model-providers/prompt-caching/index.md).
 
 For the full option list, see the [configuration reference](/docs/user-guide/harness/reference/configuration/index.md).
 

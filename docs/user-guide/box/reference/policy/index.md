@@ -804,4 +804,4 @@ Correct the system clock, or remove the box directory to start again, as [gettin
 -   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): a first policy, a denial, and the decision log.
 -   [The action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md): every action, its fields, and which part of the box raises it.
 -   [Security](/docs/user-guide/box/security/index.md): what `box.toml` governs, what `policy.dw` governs, and what a policy cannot do today.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/91e56bddc102a0ebb44333b50ca5f8a2325092fa/docs/design/policy.md): how one engine per box decides, and why.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/policy.md): how one engine per box decides, and why.

@@ -6,6 +6,8 @@ Prompt caching is supported for Anthropic Claude and Amazon Nova models on Bedro
 
 For complete details on supported models, token requirements, and cache field support, see the [Amazon Bedrock prompt caching documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html#prompt-caching-models).
 
+For OpenAI models on Amazon Bedrock, which don’t take cache points through Converse, and other known caching gaps, see [Prompt caching](/docs/user-guide/sdk/model-providers/prompt-caching/index.md).
+
 ## System Prompt Caching
 
 Cache system prompts that remain static across multiple requests. This is useful when your system prompt contains no variables, timestamps, or dynamic content, exceeds the minimum cacheable token threshold for your model, and you make multiple requests with the same system prompt.

@@ -512,6 +512,7 @@ When disabled (or if the API call fails), falls back to estimation with a charac
 
 ## Related pages
 
+- [Prompt caching](/docs/user-guide/sdk/model-providers/prompt-caching/index.md) (1 shared tag)
 - [Result caching](/docs/user-guide/evals-sdk/how-to/result_caching/index.md) (1 shared tag)
 - [LiteLLM](/docs/user-guide/sdk/model-providers/litellm/index.md) (1 shared tag)
 - [Return structured output](/docs/user-guide/sdk/agents/structured-output/index.md) (1 shared tag)

@@ -6,7 +6,7 @@ Abstract base class for Agent model providers.
 class BaseModelConfig(TypedDict)
 ```
 
-Defined in: [src/strands/models/model.py:137](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L137)
+Defined in: [src/strands/models/model.py:138](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L138)
 
 Base configuration shared by all model providers.
 
@@ -22,7 +22,7 @@ Base configuration shared by all model providers.
 class CacheConfig()
 ```
 
-Defined in: [src/strands/models/model.py:159](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L159)
+Defined in: [src/strands/models/model.py:160](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L160)
 
 Configuration for prompt caching.
 
@@ -32,11 +32,11 @@ Providers consume only the fields they support.
 
 -   `strategy` - Caching strategy to use.
     -   “auto”: Automatically detect model support and inject cachePoint to maximize cache coverage
-    -   “anthropic”: Inject cachePoint in Anthropic-compatible format without model support check
+    -   “anthropic”: Inject cachePoint in Anthropic-compatible format without model support check. `LiteLLMModel` places them only where the backend can be Claude-style: a Claude model on any provider, `anthropic/`, or a gateway id that doesn’t name its backend.
 -   `ttl` - Optional TTL duration for cache entries (e.g. “5m”, “1h”). When specified, auto-injected cache points will include this TTL value. Bedrock requires checkpoint TTLs to be non-increasing across toolConfig, system and messages, and rejects a longer TTL that follows a shorter one. This TTL also fills in for a cache point that carries none of its own.
 -   `system_prompt_ttl` - Cache the system prompt, auto-injecting a cache point at its end so repeated calls with the same static system prefix hit the cache. A TTL string (e.g. “1h”) sets this section’s own duration and is honored as written; True derives the duration from `ttl`; False disables it. A hand-placed system cache point is honored rather than doubled.
--   `messages_ttl` - Cache the conversation prefix, placing a cache point on durable user content. A TTL string sets this section’s own duration; True or None derives it from `ttl`; False disables the message cache point. Mirrors the TypeScript `messagesTTL`. Read by `BedrockModel`, `AnthropicModel` and, on models that take cache points, `OpenAIResponsesModel`, which accepts only the OpenAI lifetimes `"30m"` and `"12h"`.
--   `cache_key` - Stable identity a prompt-cache-routing provider (OpenAI, LiteLLM, Mistral) uses as its cache key. Left unset, it is derived per request as `strands-<session_id>` if the agent has a session manager, so repeat runs of a session share a cache prefix with no key management. Set it to a string to pin your own key, or `False` to opt out of routing entirely. The resolved key (whether set or derived from the session id) is transmitted to the provider.
+-   `messages_ttl` - Cache the conversation prefix, placing a cache point on durable user content. A TTL string sets this section’s own duration; True or None derives it from `ttl`; False disables the message cache point. Mirrors the TypeScript `messagesTTL`. Read by `BedrockModel`, `AnthropicModel` and, on models that take cache points, `LiteLLMModel` and `OpenAIResponsesModel`, which accepts only the OpenAI lifetimes `"30m"` and `"12h"`.
+-   `cache_key` - Stable identity a prompt-cache-routing provider (OpenAI, LiteLLM, Mistral) uses as its cache key. Left unset, it is derived per request as `strands-<session_id>` if the agent has a session manager, so repeat runs of a session share a cache prefix with no key management. Set it to a string to pin your own key, or `False` to opt out of routing entirely. The resolved key (whether set or derived from the session id) is transmitted to the provider. `LiteLLMModel` sends it only to models LiteLLM accepts `prompt_cache_key` for.
 -   `tools_ttl` - Cache the tool definitions, auto-injecting a cache point on the tool block so repeated calls with the same tools hit the cache. A TTL string (e.g. “1h”) sets this section’s own duration and is honored as written; True derives the duration from `ttl`; False disables it. None (the default) leaves it unset, deferring to the deprecated model-level `cache_tools`; any explicit value — including False — takes precedence over `cache_tools`.
 
 ## CacheToolsConfig
@@ -46,7 +46,7 @@ Providers consume only the fields they support.
 class CacheToolsConfig()
 ```
 
-Defined in: [src/strands/models/model.py:210](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L210)
+Defined in: [src/strands/models/model.py:214](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L214)
 
 Configuration for the toolConfig cache point.
 
@@ -61,7 +61,7 @@ Configuration for the toolConfig cache point.
 class Model(abc.ABC)
 ```
 
-Defined in: [src/strands/models/model.py:222](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L222)
+Defined in: [src/strands/models/model.py:226](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L226)
 
 Abstract base class for Agent model providers.
 
@@ -74,7 +74,7 @@ This class defines the interface for all model implementations in the Strands Ag
 def stateful() -> bool
 ```
 
-Defined in: [src/strands/models/model.py:234](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L234)
+Defined in: [src/strands/models/model.py:238](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L238)
 
 Whether the model manages conversation state server-side.
 
@@ -91,7 +91,7 @@ False when unknown.
 def model_info() -> ModelInfo
 ```
 
-Defined in: [src/strands/models/model.py:246](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L246)
+Defined in: [src/strands/models/model.py:250](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L250)
 
 Everything the SDK knows about the configured model, resolved on each read.
 
@@ -116,7 +116,7 @@ What the SDK knows about the model; empty when it knows nothing.
 def context_window_limit() -> int | None
 ```
 
-Defined in: [src/strands/models/model.py:291](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L291)
+Defined in: [src/strands/models/model.py:295](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L295)
 
 Maximum context window size in tokens, or None if not known.
 
@@ -127,7 +127,7 @@ Maximum context window size in tokens, or None if not known.
 def update_config(**model_config: Any) -> None
 ```
 
-Defined in: [src/strands/models/model.py:297](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L297)
+Defined in: [src/strands/models/model.py:301](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L301)
 
 Update the model configuration with the provided arguments.
 
@@ -142,7 +142,7 @@ Update the model configuration with the provided arguments.
 def get_config() -> Any
 ```
 
-Defined in: [src/strands/models/model.py:307](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L307)
+Defined in: [src/strands/models/model.py:311](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L311)
 
 Return the model configuration.
 
@@ -161,7 +161,7 @@ def structured_output(
         **kwargs: Any) -> AsyncGenerator[dict[str, T | Any], None]
 ```
 
-Defined in: [src/strands/models/model.py:317](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L317)
+Defined in: [src/strands/models/model.py:321](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L321)
 
 Get structured output from the model.
 
@@ -197,7 +197,7 @@ def stream(messages: Messages,
            **kwargs: Any) -> AsyncIterable[StreamEvent]
 ```
 
-Defined in: [src/strands/models/model.py:338](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L338)
+Defined in: [src/strands/models/model.py:342](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L342)
 
 Stream conversation with the model.
 
@@ -238,7 +238,7 @@ async def count_tokens(
         system_prompt_content: list[SystemContentBlock] | None = None) -> int
 ```
 
-Defined in: [src/strands/models/model.py:387](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L387)
+Defined in: [src/strands/models/model.py:391](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L391)
 
 Estimate token count for the given input before sending to the model.
 
@@ -272,7 +272,7 @@ async def summarize(messages: Messages,
                     **kwargs: Any) -> SummarizeResult
 ```
 
-Defined in: [src/strands/models/model.py:416](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L416)
+Defined in: [src/strands/models/model.py:420](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L420)
 
 Summarize `messages`.
 
@@ -301,7 +301,7 @@ The summary and the token usage of the calls made for it.
 def estimate_utilization(input_tokens: int) -> float
 ```
 
-Defined in: [src/strands/models/model.py:470](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L470)
+Defined in: [src/strands/models/model.py:474](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L474)
 
 Estimate the fraction of the model’s context window consumed by the given input token count.
 
@@ -321,7 +321,7 @@ Token usage ratio (0–1+; above 1.0 means overflow).
 class _ModelPlugin(Plugin)
 ```
 
-Defined in: [src/strands/models/model.py:496](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L496)
+Defined in: [src/strands/models/model.py:500](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L500)
 
 Plugin that manages model-related lifecycle hooks.
 
@@ -332,7 +332,7 @@ Plugin that manages model-related lifecycle hooks.
 def name() -> str
 ```
 
-Defined in: [src/strands/models/model.py:500](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L500)
+Defined in: [src/strands/models/model.py:504](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L504)
 
 A stable string identifier for this plugin.
 
@@ -342,7 +342,7 @@ A stable string identifier for this plugin.
 def init_agent(agent: "Agent") -> None
 ```
 
-Defined in: [src/strands/models/model.py:518](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L518)
+Defined in: [src/strands/models/model.py:522](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/model.py#L522)
 
 Register model lifecycle hooks with the agent.
 

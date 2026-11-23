@@ -133,11 +133,11 @@ TypeSafe Jev, Decisions API, and Amazon SageMaker AI also raise an error, before
 - [Decisions in an agent](/docs/user-guide/sdk/decision-models/agents/index.md) (1 shared tag)
 - [LLM decision model](/docs/user-guide/sdk/decision-models/models/llm/index.md) (1 shared tag)
 - [Supported decision models](/docs/user-guide/sdk/decision-models/models/index.md) (1 shared tag)
+- [Typed rubric evaluator](/docs/user-guide/evals-sdk/evaluators/typed_rubric_evaluator/index.md) (1 shared tag)
 - [TypeSafe Jev](/docs/user-guide/sdk/decision-models/models/typesafe/index.md) (1 shared tag)
 - [Amazon SageMaker AI](/docs/user-guide/sdk/decision-models/models/sagemaker/index.md) (1 shared tag)
 - [Model Routing](/docs/user-guide/sdk/model-providers/model-routing/index.md) (1 shared tag)
 - [Decision model observability](/docs/user-guide/sdk/decision-models/observability/index.md) (1 shared tag)
-- [Decision models quickstart](/docs/user-guide/sdk/decision-models/quickstart/index.md) (1 shared tag)
 
 
 ## Implementation

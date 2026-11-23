@@ -20,7 +20,7 @@ Open a new terminal before verifying the install:
 $ box --version
 ```
 
-## Run the agent you already use in a sandbox
+## Run Box
 
 Open a terminal in the project where you want to run the agent. The first `box run` creates a reusable profile and asks for its settings. Later runs reuse that profile.
 
