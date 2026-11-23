@@ -7,6 +7,7 @@ import { deepCopy } from '../types/json.js'
 import {
   JsonBlock,
   TextBlock,
+  ToolReferenceBlock,
   ToolResultBlock,
   toolResultContentFromData,
   type ToolResultContent,
@@ -350,7 +351,8 @@ export class FunctionTool extends Tool implements InvokableTool<unknown, JSONVal
       value instanceof JsonBlock ||
       value instanceof ImageBlock ||
       value instanceof VideoBlock ||
-      value instanceof DocumentBlock
+      value instanceof DocumentBlock ||
+      value instanceof ToolReferenceBlock
     ) {
       return value
     }

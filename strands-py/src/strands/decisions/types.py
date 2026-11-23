@@ -77,7 +77,8 @@ class DecisionMetadata:
     Attributes:
         latency_ms: Time spent in the underlying model call, in milliseconds.
         provider_name: Provider that served the decision, when API-backed.
-        model_id: Provider-reported model identifier that served the decision.
+        model_id: Model identifier that served the decision, as reported by the provider, or the
+            requested model when the provider reports none.
         probabilities: Per-question probability distributions, keyed first by question id and then
             by answer value. Boolean questions key by ``"true"`` / ``"false"``; choice questions key
             by each choice string.

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type Agent, BedrockModel, tool, type Usage } from '@strands-agents/sdk'
+import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 import { describe, expect, it, onTestFailed } from 'vitest'
 import { z } from 'zod'
 
@@ -12,9 +13,13 @@ import { buildAgent } from '../harness.js'
 const TESTING = 'You are an automated integration test. Do exactly what is asked and nothing else.'
 
 // Pushes the cacheable prefix (system prompt and tool specs) over every model's minimum cacheable size.
-const STABLE_PREFIX = (
-  'You are an automated integration test agent operating under a fixed protocol. '.repeat(8) + '\n'
-).repeat(40)
+// The rules differ from one another because some models refuse a prompt of repeated filler.
+const STABLE_PREFIX = Array.from(
+  { length: 250 },
+  (_, rule) =>
+    `Protocol rule ${rule}: when a request mentions topic ${rule}, answer in at most ${(rule % 7) + 2} sentences ` +
+    `and cite section ${rule * 3}.`
+).join('\n')
 
 // Each page is about 1,200 tokens, so the conversation soon outweighs the fixed prefix: a request
 // can only re-read most of the previous one if the messages are cached too.
@@ -75,8 +80,8 @@ describe('caching', () => {
     })
     expect(misses.length, JSON.stringify(usage)).toBeLessThanOrEqual(1)
 
-    // A second conversation can share only what has its own cache point: on Bedrock, the system prompt and tools.
-    if (!(agent.model instanceof BedrockModel)) {
+    // A second conversation can share only what has its own cache point: here, the system prompt and tools.
+    if (!(agent.model instanceof BedrockModel || agent.model instanceof AnthropicModel)) {
       return
     }
     const fresh = await build()

@@ -46,7 +46,9 @@ describe('compaction', () => {
     await agent.invoke(`${TESTING} Call fetch_report with part 3 and reply "ok".`)
     const result = await agent.invoke(`${TESTING} Reply with the codeword I asked you to remember.`)
 
-    checkInvariants(recording, agent, { prefixBreaks: 1, auxiliaryCalls: 1 })
+    // A model that summarizes server-side makes no summary request of its own.
+    const serverSide = agent.model.modelInfo.capabilities?.serverSideSummary === true
+    checkInvariants(recording, agent, { prefixBreaks: 1, auxiliaryCalls: serverSide ? 0 : 1 })
     const [reduced] = prefixBreaks(recording)
     expect(JSON.stringify(recording.calls[reduced!]!.messages)).toContain('[Summarized: ')
     expect(result.toString()).toContain('OCELOT-93')

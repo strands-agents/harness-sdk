@@ -1402,6 +1402,10 @@ class Tracer:
                 parts.append({"type": "text", "content": block["text"]})
             elif "injected" in block:
                 parts.append({"type": "text", "content": block["injected"]["text"]})
+            elif "reasoningContent" in block:
+                # Standard ReasoningPart; the signature and redacted content are not exported
+                text = (block["reasoningContent"].get("reasoningText") or {}).get("text")
+                parts.append({"type": "reasoning", "content": text} if text else {"type": "reasoningContent"})
             elif "toolUse" in block:
                 # Standard ToolCallRequestPart
                 tool_use = block["toolUse"]

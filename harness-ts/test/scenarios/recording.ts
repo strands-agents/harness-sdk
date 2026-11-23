@@ -25,8 +25,9 @@ export interface ModelCall {
   model: number
   modelId: string | undefined
   systemPrompt: unknown
-  /** Absent on auxiliary requests (context-manager summaries); the agent loop always sends tool specs. */
   toolSpecs: ToolSpec[] | undefined
+  /** A summary or memory-extraction request rather than a request of the agent loop. */
+  auxiliary: boolean
   messages: WireMessage[]
   /** Trailing blocks of the last message that injectors added for this request only. */
   dynamicTrailingBlocks: number
@@ -70,14 +71,26 @@ export class Recording {
   attach(model: Model): void {
     const index = this._models++
     const stream = model.stream.bind(model)
+    const summarize = model.summarize.bind(model)
     const calls = this.calls
     let previous: ModelCall | undefined
+    let summarizing = false
+    model.summarize = async (...args) => {
+      summarizing = true
+      try {
+        return await summarize(...args)
+      } finally {
+        summarizing = false
+      }
+    }
     model.stream = async function* (messages: Message[], options?: StreamOptions) {
       const call: ModelCall = {
         model: index,
         modelId: model.modelId,
         systemPrompt: copy(options?.systemPrompt),
         toolSpecs: copy(options?.toolSpecs),
+        // The agent loop always sends tool specs; a memory-extraction request sends none.
+        auxiliary: summarizing || options?.toolSpecs === undefined,
         messages: wire(messages),
         dynamicTrailingBlocks: options?.dynamicTrailingBlocks ?? 0,
       }
@@ -106,7 +119,7 @@ export class Recording {
 
   /** The agent loop's requests: every call except the auxiliary ones and the attempts the SDK retried. */
   get loopCalls(): ModelCall[] {
-    return this.calls.filter((call) => call.toolSpecs !== undefined && !call.retried)
+    return this.calls.filter((call) => !call.auxiliary && !call.retried)
   }
 
   dump(path: string): void {
@@ -244,7 +257,7 @@ export function checkInvariants(
     }
   }
 
-  const auxiliary = calls.flatMap((call, index) => (call.toolSpecs === undefined && !call.retried ? [index] : []))
+  const auxiliary = calls.flatMap((call, index) => (call.auxiliary && !call.retried ? [index] : []))
   if (auxiliary.length !== auxiliaryCalls) {
     violations.push(
       `expected ${auxiliaryCalls} auxiliary request(s) (summary, memory extraction), ` +

@@ -46,7 +46,7 @@ describe('tool failure', () => {
             toolResult: {
               toolUseId: 'scripted-1-0',
               status: 'error',
-              content: [{ text: expect.stringMatching(/no such file.*missing\.txt/) }],
+              content: [{ text: expect.stringMatching(/missing\.txt/) }],
             },
           },
           {

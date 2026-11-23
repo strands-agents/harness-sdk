@@ -11,6 +11,7 @@ contains shell-special characters, so e.g. ``cd /w`` here vs ``cd '/w'`` in the
 oracle. Expectations below assert the ``shlex`` form.
 """
 
+import threading
 import unittest.mock
 
 import pytest
@@ -181,11 +182,13 @@ async def test_quotes_env_values_with_metacharacters(mock_stream_process):
 
 
 @pytest.mark.asyncio
-async def test_forwards_timeout_and_enoent_message(mock_stream_process):
-    await SshSandbox("h", working_dir="/w").execute("ls", timeout=5)
+async def test_forwards_timeout_cancel_signal_and_enoent_message(mock_stream_process):
+    cancel_signal = threading.Event()
+    await SshSandbox("h", working_dir="/w").execute("ls", timeout=5, cancel_signal=cancel_signal)
     assert mock_stream_process.call_args.kwargs == {
         "timeout": 5,
         "enoent_message": "ssh is not installed or not on PATH",
+        "cancel_signal": cancel_signal,
     }
 
 

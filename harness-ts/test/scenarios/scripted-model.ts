@@ -4,6 +4,8 @@ import {
   type Message,
   type ModelStreamEvent,
   type StreamOptions,
+  type SummarizeOptions,
+  type SummarizeResult,
 } from '@strands-agents/sdk'
 
 export type ToolUse = [name: string, input: object]
@@ -24,13 +26,14 @@ export type Step = FixedStep | ((messages: Message[]) => FixedStep)
 
 /**
  * A real `Model` that replies with `steps` in order, one per request, and fails on a request the
- * script does not expect. A request without tool specs is auxiliary and must meet a `summary` step.
+ * script does not expect. A summary request must meet a `summary` step.
  */
 export class ScriptedModel extends Model {
   private _config: BaseModelConfig
   private readonly _steps: Step[]
   private _next = 0
   private _previousInput = 0
+  private _summarizing = false
 
   constructor(steps: Step[], { modelId = 'scripted' }: { modelId?: string } = {}) {
     super()
@@ -52,8 +55,17 @@ export class ScriptedModel extends Model {
     }
   }
 
+  override async summarize(messages: Message[], options?: SummarizeOptions): Promise<SummarizeResult> {
+    this._summarizing = true
+    try {
+      return await super.summarize(messages, options)
+    } finally {
+      this._summarizing = false
+    }
+  }
+
   async *stream(messages: Message[], options?: StreamOptions): AsyncGenerator<ModelStreamEvent> {
-    const reply = this._nextReply(messages, options?.toolSpecs === undefined)
+    const reply = this._nextReply(messages, this._summarizing)
     const offered = new Set(options?.toolSpecs?.map((spec) => spec.name))
     const unoffered = (reply.toolUses ?? []).map(([name]) => name).filter((name) => !offered.has(name))
     if (unoffered.length > 0) {
@@ -102,8 +114,8 @@ export class ScriptedModel extends Model {
     }
   }
 
-  private _nextReply(messages: Message[], auxiliary: boolean): Reply {
-    const kind = auxiliary ? 'auxiliary request' : 'request'
+  private _nextReply(messages: Message[], summarizing: boolean): Reply {
+    const kind = summarizing ? 'summary request' : 'request'
     let step = this._steps[this._next]
     if (step === undefined) {
       throw new Error(`${this.modelId}: unexpected ${kind} after the script's ${this._steps.length} steps`)
@@ -113,7 +125,7 @@ export class ScriptedModel extends Model {
       step = step(messages)
     }
     const reply = typeof step === 'string' ? { text: step } : Array.isArray(step) ? { toolUses: step } : step
-    if (Boolean(reply.summary) !== auxiliary) {
+    if (Boolean(reply.summary) !== summarizing) {
       throw new Error(
         `${this.modelId}: step ${this._next} ${reply.summary ? 'is' : 'is not'} a summary, but got a ${kind}`
       )

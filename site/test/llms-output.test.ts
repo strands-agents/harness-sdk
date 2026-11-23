@@ -3,9 +3,10 @@ import { existsSync, readFileSync } from 'node:fs'
 import { getCollection } from 'astro:content'
 import { describe, expect, it } from 'vitest'
 import { parseExternalDocsConfig } from '../scripts/external-docs/schema'
+import { GET as getPageMarkdown, buildNotFoundMarkdown } from '../src/pages/[...slug]/index.md'
 import { buildLlmsTxt } from '../src/pages/llms.txt'
 import type { CollectionEntry } from 'astro:content'
-import type { GeneratedExternalDocsNavigation } from '../src/external-docs-navigation'
+import { leafSlugs, type GeneratedExternalDocsNavigation } from '../src/external-docs-navigation'
 import type { StarlightSidebarItem } from '../src/sidebar'
 
 function doc(id: string, title: string, status?: 'preview' | 'stable'): CollectionEntry<'docs'> {
@@ -79,9 +80,39 @@ describe('llms.txt builder', () => {
     expect(occurrences(content, `/${apiDoc.id}/index.md`)).toBe(1)
     expect(content).not.toContain('## Additional documentation')
   })
+
+  it('links the standalone Box landing page', () => {
+    const content = buildLlmsTxt([], [], [], [], [])
+
+    expect(content).toContain('## Product landing pages')
+    expect(occurrences(content, '/box/index.md')).toBe(1)
+  })
 })
 
 describe('llms.txt output', () => {
+  it('publishes a useful Markdown body for the 404 page artifact', async () => {
+    const notFound = readFileSync(new URL('../dist/404/index.md', import.meta.url), 'utf8')
+    const response = await getPageMarkdown({ props: { entry: { id: '404' } } } as never)
+
+    expect(response).toBeInstanceOf(Response)
+    expect(response?.headers.get('content-type')).toBe('text/markdown; charset=utf-8')
+    expect(notFound).toBe(buildNotFoundMarkdown())
+    expect(notFound).toContain('/llms.txt')
+    expect(notFound).toContain('/sitemap-index.xml')
+    expect(notFound.length).toBeGreaterThan(20)
+  })
+
+  it('publishes the Box landing page across machine-readable indexes', () => {
+    const homepage = readFileSync(new URL('../dist/index.md', import.meta.url), 'utf8')
+    const llms = readFileSync(new URL('../dist/llms.txt', import.meta.url), 'utf8')
+    const llmsFull = readFileSync(new URL('../dist/llms-full.txt', import.meta.url), 'utf8')
+
+    expect(homepage).toContain('/box/index.md')
+    expect(llms).toContain('/box/index.md')
+    expect(llmsFull).toContain('## Strands Box')
+    expect(llmsFull).toMatch(/Source: .*\/box\/index\.md/)
+  })
+
   it('keeps external FAQ sources valid in llms-full.txt', () => {
     const llmsFull = readFileSync(new URL('../dist/llms-full.txt', import.meta.url), 'utf8')
 
@@ -115,16 +146,16 @@ describe('llms.txt output', () => {
       const published = product.publicationStatus === 'stable'
 
       expect(navigation.product.status, product.id).toBe(product.publicationStatus)
-      for (const item of navigation.groups.flatMap((group) => group.items)) {
-        const markdownPath = `/${item.slug}/index.md`
-        const html = readFileSync(new URL(`../dist/${item.slug}/index.html`, import.meta.url), 'utf8')
+      for (const slug of navigation.groups.flatMap((group) => leafSlugs(group.items))) {
+        const markdownPath = `/${slug}/index.md`
+        const html = readFileSync(new URL(`../dist/${slug}/index.html`, import.meta.url), 'utf8')
 
-        expect(html.includes('noindex, nofollow'), item.slug).toBe(!published)
-        expect(html.includes('data-pagefind-body'), item.slug).toBe(published)
-        expect(new RegExp(`<loc>[^<]*/${item.slug}/</loc>`).test(sitemap), item.slug).toBe(published)
-        expect(llms.includes(markdownPath), item.slug).toBe(published)
-        expect(llmsFull.includes(markdownPath), item.slug).toBe(published)
-        expect(existsSync(new URL(`../dist/${item.slug}/index.md`, import.meta.url)), item.slug).toBe(published)
+        expect(html.includes('noindex, nofollow'), slug).toBe(!published)
+        expect(html.includes('data-pagefind-body'), slug).toBe(published)
+        expect(new RegExp(`<loc>[^<]*/${slug}/</loc>`).test(sitemap), slug).toBe(published)
+        expect(llms.includes(markdownPath), slug).toBe(published)
+        expect(llmsFull.includes(markdownPath), slug).toBe(published)
+        expect(existsSync(new URL(`../dist/${slug}/index.md`, import.meta.url)), slug).toBe(published)
       }
     }
   })

@@ -48,6 +48,8 @@ async def test_summarizes_mid_conversation_keeps_the_provider_accepting_requests
     await agent.invoke_async(f'{_TESTING} Call fetch_report with part 3 and reply "ok".')
     result = await agent.invoke_async(f"{_TESTING} Reply with the codeword I asked you to remember.")
 
-    check_invariants(recording, agent, prefix_breaks=1, auxiliary_calls=1)
+    # A model that summarizes server-side makes no summary request of its own.
+    server_side = agent.model.model_info.capabilities.server_side_summary is True
+    check_invariants(recording, agent, prefix_breaks=1, auxiliary_calls=0 if server_side else 1)
     assert "[Summarized: " in str(recording.loop_calls[-1].messages)
     assert "OCELOT-93" in str(result)

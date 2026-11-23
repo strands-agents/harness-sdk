@@ -48,6 +48,7 @@ export {
   exaWebSearch,
   Fixed,
   Inherit,
+  makeAgentCoreWebSearch,
   makeExaWebSearch,
   makeProgrammaticToolCaller,
   makeSubagent,
@@ -61,15 +62,11 @@ export {
 } from './tools/index.js'
 export type {
   AgentBuilder,
-  ContextAxis,
-  ContextMode,
-  InstructionsMode,
+  MakeAgentCoreWebSearchOptions,
   MakeProgrammaticToolCallerOptions,
   MakeSubagentOptions,
   MakeWebFetchOptions,
-  ModelMode,
   PresetOptions,
-  ToolsMode,
 } from './tools/index.js'
 export { EnvironmentContext, Todos } from './plugins/index.js'
 export type { EnvironmentContextConfig, TodoItem } from './plugins/index.js'

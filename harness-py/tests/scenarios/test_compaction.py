@@ -93,19 +93,20 @@ def test_summarizes_older_turns_once_keeps_the_recent_exchange_verbatim_and_the_
     ]
     assert tru_reduced == exp_reduced
     summary_marker = tru_reduced[1]["content"][1]["text"]
-    assert re.fullmatch(r"\[Summarized: 6 messages, ~[\d,]+ tokens\]\n\n" + re.escape(_SUMMARY), summary_marker)
-    recent_result = tru_reduced[4]["content"][0]["toolResult"]["content"][0]["text"]
     assert re.fullmatch(
-        r"\[Truncated: .+line 299: quarterly budget notes\.\n\n\[Stashed\] \[ref: scripted-3_0\]", recent_result, re.S
+        r"\[Summarized: earlier messages, ~[\d,]+ tokens\]\n\n" + re.escape(_SUMMARY) + r" \[ref: removed-[\w-]+\]",
+        summary_marker,
     )
+    recent_result = tru_reduced[4]["content"][0]["toolResult"]["content"][0]["text"]
+    assert re.fullmatch(r"\[Truncated: .+line 299: quarterly budget notes\. \[ref: scripted-3\]", recent_result, re.S)
 
     assert not any("ALBATROSS" in str(call.messages) for call in recording.calls[:-1])
     assert "ALBATROSS" in str(recording.calls[-1].messages[-1])
 
 
-# TypeScript has no counterpart: its summarizer sends its own system prompt and no tool specs.
+# Not strict, and not mirrored in TypeScript (vitest has no such mark): the SDK fix is merged but not yet released.
 @pytest.mark.xfail(
-    strict=True,
+    strict=False,
     raises=AssertionError,
     reason="SDK bug: the summary request omits the _background_execution tool property, so it misses the prompt cache",
 )
@@ -114,15 +115,3 @@ def test_summary_request_sends_the_tool_specs_the_agent_sends(compacted):
     before, summary = recording.calls[4:6]
 
     assert summary.tool_specs == before.tool_specs
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="SDK bug: retrieve_context promises a reference in place of summarized content, the summary has none",
-)
-def test_leaves_a_reference_to_the_summarized_messages_in_their_place(compacted):
-    _agent, recording, _paths, _reference = compacted
-    summary_marker = recording.calls[6].messages[1]["content"][-1]["text"]
-
-    assert re.search(r"\[refs?: [^\]]+\]", summary_marker)

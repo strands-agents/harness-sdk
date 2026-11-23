@@ -76,8 +76,11 @@ describe('compaction', () => {
             { text: 'read 1' },
             {
               text: expect.stringMatching(
-                new RegExp(`^\\[Summarized: 6 messages, ~[\\d,]+ tokens\\]\\n\\n${SUMMARY}$`)
+                new RegExp(
+                  `^\\[Summarized: earlier messages, ~[\\d,]+ tokens\\]\\n\\n${SUMMARY} \\[ref: removed-[\\w-]+\\]$`
+                )
               ),
+              offloaded: { method: 'summarize', ref: expect.stringMatching(/^removed-/), tokens: expect.any(Number) },
             },
           ],
         },
@@ -98,8 +101,9 @@ describe('compaction', () => {
                 content: [
                   {
                     text: expect.stringMatching(
-                      /^\[Truncated: [^]+line 299: quarterly budget notes\.\n\n\[Stashed\] \[ref: scripted-5-0_0\]$/
+                      /^\[Truncated: [^]+line 299: quarterly budget notes\. \[ref: scripted-5-0\]$/
                     ),
+                    offloaded: { method: 'truncate', ref: 'scripted-5-0', tokens: expect.any(Number) },
                   },
                 ],
               },
@@ -114,14 +118,4 @@ describe('compaction', () => {
       expect(JSON.stringify(recording.calls.at(-1)!.messages.at(-1))).toContain('ALBATROSS')
     }
   )
-
-  // retrieve_context promises a reference key in place of summarized content; the batched summary has none.
-  it.fails('leaves a reference to the summarized messages in their place', { timeout: 30_000 }, async () => {
-    const recording = await readThreeReports(workDir())
-
-    const summary = recording.calls[6]!.messages.flatMap((message) => message.content).find(
-      (block) => 'text' in block && block.text.startsWith('[Summarized: ')
-    )
-    expect(summary).toMatchObject({ text: expect.stringMatching(/\[refs?: [^\]]+\]/) })
-  })
 })

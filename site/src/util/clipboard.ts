@@ -2,9 +2,8 @@
  * Shared copy-to-clipboard button wiring with "copied!" feedback, reused by the
  * code terminals.
  *
- * (InstallCommand.astro keeps its own inline copy handler: its script is
- * `is:inline` so it can render the pip/npm command before paint, and inline
- * scripts can't import this module.)
+ * InstallCommand.astro keeps its language renderer inline so the pip/npm
+ * command paints before hydration, then uses this helper for copy behavior.
  */
 /**
  * Analytics descriptor for a copy button. On a successful copy the helper fires
@@ -37,7 +36,11 @@ export interface CopyButtonOptions {
   track?: CopyTrack
 }
 
-export function attachCopyButton(button: HTMLElement, options: CopyButtonOptions): void {
+export interface CopyButtonController {
+  reset: () => void
+}
+
+export function attachCopyButton(button: HTMLElement, options: CopyButtonOptions): CopyButtonController {
   const {
     getText,
     label = null,
@@ -48,35 +51,62 @@ export function attachCopyButton(button: HTMLElement, options: CopyButtonOptions
     track,
   } = options
   const target = label ?? button
+  const idleAriaLabel = button.getAttribute('aria-label')
   let resetTimer: number | undefined
+  let operationId = 0
+
+  const setAccessibleState = (message: string | null) => {
+    if (!idleAriaLabel) return
+    button.setAttribute('aria-label', message ?? idleAriaLabel)
+  }
+
+  const reset = () => {
+    operationId += 1
+    if (resetTimer) window.clearTimeout(resetTimer)
+    resetTimer = undefined
+    button.classList.remove(activeClass)
+    target.textContent = idleText
+    setAccessibleState(null)
+  }
 
   button.addEventListener('click', () => {
     const text = getText()
     if (!text) return
+    const pendingOperation = ++operationId
+    const trackDetail = track?.detail?.()
     navigator.clipboard
       .writeText(text)
       .then(() => {
+        if (pendingOperation !== operationId) return
         button.classList.add(activeClass)
         target.textContent = copiedText
+        setAccessibleState('Copied to clipboard')
         if (resetTimer) window.clearTimeout(resetTimer)
         resetTimer = window.setTimeout(() => {
+          if (pendingOperation !== operationId) return
           button.classList.remove(activeClass)
           target.textContent = idleText
+          setAccessibleState(null)
         }, resetMs)
 
         if (track) {
-          const sub = track.detail?.()
-          const label = sub ? `${track.surface}:${sub}` : track.surface
-          window.dispatchEvent(new CustomEvent(COPY_EVENT, { detail: { label, text } }))
+          const eventLabel = trackDetail ? `${track.surface}:${trackDetail}` : track.surface
+          window.dispatchEvent(new CustomEvent(COPY_EVENT, { detail: { label: eventLabel, text } }))
         }
       })
       .catch((err) => {
+        if (pendingOperation !== operationId) return
         console.error('Copy to clipboard failed:', err)
         target.textContent = 'failed'
+        setAccessibleState('Copy to clipboard failed')
         if (resetTimer) window.clearTimeout(resetTimer)
         resetTimer = window.setTimeout(() => {
+          if (pendingOperation !== operationId) return
           target.textContent = idleText
+          setAccessibleState(null)
         }, resetMs)
       })
   })
+
+  return { reset }
 }

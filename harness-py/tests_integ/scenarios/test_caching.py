@@ -10,6 +10,7 @@ import pytest
 from recording import ModelCall, Recording, check_invariants
 from strands import Agent, tool
 from strands.models import BedrockModel
+from strands.models.anthropic import AnthropicModel
 
 Build = Callable[..., Agent]
 Record = Callable[[Agent], Recording]
@@ -17,7 +18,12 @@ Record = Callable[[Agent], Recording]
 _TESTING = "You are an automated integration test. Do exactly what is asked and nothing else."
 
 # Pushes the cacheable prefix (system prompt and tool specs) over every model's minimum cacheable size.
-_STABLE_PREFIX = ("You are an automated integration test agent operating under a fixed protocol. " * 8 + "\n") * 40
+# The rules differ from one another because some models refuse a prompt of repeated filler.
+_STABLE_PREFIX = "\n".join(
+    f"Protocol rule {rule}: when a request mentions topic {rule}, answer in at most {rule % 7 + 2} sentences "
+    f"and cite section {rule * 3}."
+    for rule in range(250)
+)
 
 # With cache points a request re-reads nearly all of the previous request (measured: 0.98 or more).
 _MIN_READ_FRACTION = 0.9
@@ -84,8 +90,8 @@ async def test_reads_most_of_the_previous_request_from_cache_on_every_request_af
         ]
         assert len(misses) <= 1, f"requests {misses} missed the cache; usage of each request: {usage}"
 
-        # A second conversation can share only what has its own cache point: on Bedrock, the system prompt and tools.
-        if isinstance(agent.model, BedrockModel):
+        # A second conversation can share only what has its own cache point: here, the system prompt and tools.
+        if isinstance(agent.model, (BedrockModel, AnthropicModel)):
             fresh = build_agent(instructions=instructions, tools=[fetch_page], builtin_plugins=["environment"])
             fresh_recording = record_agent(fresh)
             await fresh.invoke_async(f"{_TESTING} Reply with exactly the word: ready.")

@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { createHarness } from '../../src/agent.js'
@@ -72,7 +72,7 @@ describe('prefix stability', () => {
       expect(readFileSync(copy, 'utf8')).toBe('beta\n')
       expect(JSON.stringify(recording.calls[1]!.messages.at(-1))).toContain('end-of-notes')
 
-      // The injected reminders reach every request yet never enter the conversation they would rewrite.
+      // The injected reminders reach every request in its trailing blocks.
       const reminders = recording.calls.map(({ messages, dynamicTrailingBlocks }) => {
         const { content } = messages.at(-1)!
         const trailing = content.slice(content.length - dynamicTrailingBlocks) as { text?: string }[]
@@ -85,10 +85,15 @@ describe('prefix stability', () => {
       for (const turnStart of [reminders[0], reminders[2], reminders[4]]) {
         expect(turnStart).toContain('Keep answers short.')
         expect(turnStart).toContain('Date: ')
-        expect(turnStart).toContain(`Working directory: ${process.cwd()}`)
+        // Only the directory's own name: Windows reports the temp path in more than one spelling.
+        expect(turnStart).toMatch(new RegExp(`Working directory: .*${basename(process.cwd())}`))
       }
       expect(reminders[5]).toContain('[completed] Copy notes')
-      expect(JSON.stringify(wire(agent.messages))).not.toContain('system-reminder')
+      // The SDK keeps a reminder in the history as an injected block and never as text, which would be re-sent.
+      const persistedText = wire(agent.messages).flatMap(({ content }) =>
+        content.flatMap((block) => ('text' in block ? [block.text] : []))
+      )
+      expect(persistedText.join('\n')).not.toContain('<system-reminder>')
     }
   )
 })

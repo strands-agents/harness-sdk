@@ -1,0 +1,307 @@
+---
+interface CodeToken {
+  text: string;
+  color?: string;
+}
+
+interface CodeRow {
+  lineNo: number;
+  tokens: CodeToken[];
+}
+
+interface CodeSample {
+  language: 'policy' | 'shell' | 'toml';
+  rows: CodeRow[];
+}
+
+interface Props {
+  copyAriaLabel: string;
+  code?: CodeSample;
+  codePy?: CodeRow[];
+  codeTs?: CodeRow[];
+}
+
+const { copyAriaLabel, code, codePy, codeTs } = Astro.props;
+const panels = [
+  ...(code ? [{ language: code.language, rows: code.rows }] : []),
+  ...(codeTs ? [{ language: 'typescript' as const, rows: codeTs }] : []),
+  ...(codePy ? [{ language: 'python' as const, rows: codePy }] : []),
+];
+const initialLanguage = code?.language ?? (codeTs ? 'typescript' : 'python');
+const languageNames = {
+  policy: 'Policy',
+  shell: 'Shell',
+  toml: 'TOML',
+  typescript: 'TypeScript',
+  python: 'Python',
+};
+---
+
+<div class="toolkit__card-terminal" data-toolkit-terminal>
+  <header class="toolkit__card-terminal-header">
+    <div class="toolkit__card-terminal-dots" aria-hidden="true">
+      <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--red"></span>
+      <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--yellow"></span>
+      <span class="toolkit__card-terminal-dot toolkit__card-terminal-dot--green"></span>
+    </div>
+    <span class="toolkit__card-terminal-language" data-toolkit-terminal-language>
+      {languageNames[initialLanguage]}
+    </span>
+    <button
+      type="button"
+      class="toolkit__card-terminal-copy"
+      aria-label={copyAriaLabel}
+      data-toolkit-terminal-copy
+    >
+      <svg
+        class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--copy"
+        viewBox="0 0 16 19"
+        fill="none"
+        aria-hidden="true"
+      >
+        <rect x="4.5" y="0.5" width="11" height="14" rx="1.5" stroke="currentColor"></rect>
+        <rect
+          x="0.5"
+          y="4.5"
+          width="11"
+          height="14"
+          rx="1.5"
+          fill="var(--terminal-bg)"
+          stroke="currentColor"
+        ></rect>
+      </svg>
+      <svg
+        class="toolkit__card-terminal-copy-icon toolkit__card-terminal-copy-icon--check"
+        viewBox="0 0 16 16"
+        fill="none"
+        aria-hidden="true"
+      >
+        <path
+          d="M13.5 4.5L6.5 11.5L3 8"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        ></path>
+      </svg>
+      <span class="toolkit__card-terminal-copy-label" data-toolkit-terminal-copy-label>copy</span>
+    </button>
+  </header>
+  {
+    panels.map((panel) => (
+      <pre
+        class="toolkit__card-terminal-code"
+        data-lang-code={panel.language}
+        hidden={panel.language !== initialLanguage}
+      ><code>{panel.rows.map((row) => (
+        <span class="toolkit__card-terminal-row">
+          <span class="toolkit__card-terminal-lineno" aria-hidden="true">{row.lineNo}</span>
+          <span class="toolkit__card-terminal-line">{row.tokens.map((token) => (
+            token.color
+              ? <span style={`color: ${token.color};`}>{token.text}</span>
+              : <span>{token.text}</span>
+          ))}</span>
+        </span>
+      ))}</code></pre>
+    ))
+  }
+</div>
+
+<style>
+  .toolkit__card-terminal {
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    background: var(--terminal-bg);
+    border: 0.5px solid var(--strands-charcoal-1);
+    border-radius: 8px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  .toolkit__card-terminal-header {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    padding: 8px 12px;
+    background: var(--terminal-bg);
+    border-bottom: 0.5px solid var(--strands-charcoal-1);
+  }
+
+  .toolkit__card-terminal-dots {
+    display: flex;
+    gap: 4px;
+  }
+
+  .toolkit__card-terminal-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  .toolkit__card-terminal-dot--red {
+    background: var(--strands-red);
+  }
+
+  .toolkit__card-terminal-dot--yellow {
+    background: var(--strands-yellow);
+  }
+
+  .toolkit__card-terminal-dot--green {
+    background: var(--strands-green);
+  }
+
+  .toolkit__card-terminal-language {
+    color: var(--terminal-fg, var(--strands-grey-600));
+    font-size: 10px;
+    line-height: 1;
+  }
+
+  .toolkit__card-terminal-copy {
+    display: inline-flex;
+    align-items: center;
+    justify-self: end;
+    gap: 6px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: var(--terminal-fg, var(--strands-grey-600));
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .toolkit__card-terminal-copy-icon {
+    width: 10px;
+    height: 12px;
+  }
+
+  .toolkit__card-terminal-copy-icon--check {
+    display: none;
+    height: 10px;
+  }
+
+  .toolkit__card-terminal-copy.is-copied {
+    color: var(--strands-green);
+  }
+
+  .toolkit__card-terminal-copy.is-copied .toolkit__card-terminal-copy-icon--copy {
+    display: none;
+  }
+
+  .toolkit__card-terminal-copy.is-copied .toolkit__card-terminal-copy-icon--check {
+    display: inline-block;
+  }
+
+  .toolkit__card-terminal-code {
+    margin: 0;
+    padding: 16px 20px;
+    background: transparent;
+    color: var(--terminal-fg, var(--fg));
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .toolkit__card-terminal-row {
+    display: flex;
+    gap: 12px;
+    min-height: 16px;
+  }
+
+  .toolkit__card-terminal-lineno {
+    display: inline-block;
+    flex: none;
+    width: 18px;
+    color: var(--strands-grey-600);
+    text-align: right;
+    user-select: none;
+  }
+
+  .toolkit__card-terminal-line {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  @media (max-width: 767px) {
+    .toolkit__card-terminal-code {
+      padding: 12px 14px;
+    }
+  }
+</style>
+
+<script>
+  import { attachCopyButton } from '../util/clipboard'
+  import { DEFAULT_LANGUAGE_LABEL, LANGUAGE_STORAGE_KEY } from '../util/language-preference'
+
+  function visibleCode(terminal: HTMLElement): HTMLElement | null {
+    return terminal.querySelector<HTMLElement>('[data-lang-code]:not([hidden])')
+  }
+
+  const languageNames: Record<string, string> = {
+    policy: 'Policy',
+    shell: 'Shell',
+    toml: 'TOML',
+    typescript: 'TypeScript',
+    python: 'Python',
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-toolkit-terminal]').forEach((terminal) => {
+    const button = terminal.querySelector<HTMLButtonElement>('[data-toolkit-terminal-copy]')
+    if (!button || button.dataset.copyAttached) return
+    button.dataset.copyAttached = 'true'
+
+    attachCopyButton(button, {
+      label: button.querySelector<HTMLElement>('[data-toolkit-terminal-copy-label]'),
+      getText: () =>
+        Array.from(visibleCode(terminal)?.querySelectorAll<HTMLElement>('.toolkit__card-terminal-line') ?? [])
+          .map((line) => line.textContent ?? '')
+          .join('\n'),
+      track: {
+        surface: 'code:toolkit',
+        detail: () => visibleCode(terminal)?.dataset.langCode,
+      },
+    })
+  })
+
+  function applyToolkitLanguage(language: string) {
+    const activeLanguage = language === 'Python' ? 'python' : 'typescript'
+
+    document.querySelectorAll<HTMLElement>('[data-toolkit-terminal]').forEach((terminal) => {
+      const generic = terminal.querySelector<HTMLElement>(
+        '[data-lang-code="policy"], [data-lang-code="shell"], [data-lang-code="toml"]'
+      )
+      if (generic) {
+        terminal.querySelectorAll<HTMLElement>('[data-lang-code]').forEach((panel) => {
+          panel.hidden = panel !== generic
+        })
+        return
+      }
+
+      const activePanel =
+        terminal.querySelector<HTMLElement>(`[data-lang-code="${activeLanguage}"]`) ??
+        terminal.querySelector<HTMLElement>('[data-lang-code]')
+      terminal.querySelectorAll<HTMLElement>('[data-lang-code]').forEach((panel) => {
+        panel.hidden = panel !== activePanel
+      })
+
+      const languageLabel = terminal.querySelector<HTMLElement>('[data-toolkit-terminal-language]')
+      if (languageLabel && activePanel?.dataset.langCode) {
+        languageLabel.textContent = languageNames[activePanel.dataset.langCode] ?? activePanel.dataset.langCode
+      }
+    })
+  }
+
+  function currentLanguage() {
+    try {
+      return localStorage.getItem(LANGUAGE_STORAGE_KEY) ?? DEFAULT_LANGUAGE_LABEL
+    } catch {
+      return DEFAULT_LANGUAGE_LABEL
+    }
+  }
+
+  applyToolkitLanguage(currentLanguage())
+  window.addEventListener('lang-change', (event: Event) => {
+    applyToolkitLanguage((event as CustomEvent<string>).detail)
+  })
+</script>

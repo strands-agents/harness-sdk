@@ -1,5 +1,5 @@
 /**
- * L1 stash: durable storage for offloaded context content.
+ * L1 archive: durable storage for offloaded context content.
  *
  * When the ContextManager offloads content from the context window, the
  * original is persisted here so the agent can retrieve it on demand via the
@@ -17,7 +17,7 @@ import { isProtocolBlock } from './strategies/offload/target.js'
 import { isOffloaded } from './placeholder.js'
 
 /** @internal */
-export const STASH_PREFIX = 'context'
+export const ARCHIVE_PREFIX = 'context'
 
 function encode(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value))
@@ -28,12 +28,12 @@ function decode(bytes: Uint8Array): unknown {
 }
 
 /**
- * A stash key, `<id>_<index>`. The id is a tool result's `toolUseId`, a message's `trackingId`,
+ * An archive key, `<id>_<index>`. The id is a tool result's `toolUseId`, a message's `trackingId`,
  * or `removed-<trackingId>` for messages removed together.
  *
  * @internal
  */
-export interface StashKey {
+export interface ArchiveKey {
   /** Owner of the entry. */
   id: string
   /** Position of the entry among the owner's items. */
@@ -41,17 +41,17 @@ export interface StashKey {
 }
 
 /** @internal */
-export function formatStashKey(key: StashKey): string {
+export function formatArchiveKey(key: ArchiveKey): string {
   return `${key.id}_${key.index}`
 }
 
 /**
- * Parses a stash key. The id may itself contain `_`, so the index is whatever follows the last one.
+ * Parses an archive key. The id may itself contain `_`, so the index is whatever follows the last one.
  *
  * @returns The key, or `null` when the text after the last `_` is not an index
  * @internal
  */
-export function parseStashKey(key: string): StashKey | null {
+export function parseArchiveKey(key: string): ArchiveKey | null {
   const separator = key.lastIndexOf('_')
   if (separator <= 0) return null
   const index = key.slice(separator + 1)
@@ -60,28 +60,28 @@ export function parseStashKey(key: string): StashKey | null {
 }
 
 /**
- * Use a caller-scoped view as the exact stash root when allowed; otherwise namespace per session and agent.
+ * Use a caller-scoped view as the exact archive root when allowed; otherwise namespace per session and agent.
  *
  * Only views from the built-in `namespace()` carry {@link NAMESPACED}, so a custom backend's own
  * `namespace()` view gets the per-agent prefix. Mirrors `strands-py`, where `_NamespacedStorage` is private.
  */
-function resolveStashNamespace(
+function resolveArchiveNamespace(
   storage: Storage,
   sessionId: string,
   agentId: string,
-  customStashNamespace: boolean
+  customArchiveNamespace: boolean
 ): Storage {
-  if (customStashNamespace && NAMESPACED in storage) return storage
-  return namespaceStorage(storage, `${STASH_PREFIX}/${sessionId}/scopes/agent/${agentId}`)
+  if (customArchiveNamespace && NAMESPACED in storage) return storage
+  return namespaceStorage(storage, `${ARCHIVE_PREFIX}/${sessionId}/scopes/agent/${agentId}`)
 }
 
 /**
  * Wraps a Storage backend with key management and content framing for the
- * ContextManager's L1 stash.
+ * ContextManager's L1 archive.
  *
  * @internal
  */
-export class Stash {
+export class Archive {
   private readonly _storage: Storage
   private readonly _baseStorage: Storage
   private readonly _sessionId: string
@@ -89,10 +89,10 @@ export class Stash {
   /** Name of the base storage constructor, for diagnostic logging. */
   readonly storageTypeName: string
 
-  constructor(storage: Storage, sessionId: string, agentId: string, options?: { customStashNamespace?: boolean }) {
+  constructor(storage: Storage, sessionId: string, agentId: string, options?: { customArchiveNamespace?: boolean }) {
     this._baseStorage = storage
     this._sessionId = sessionId
-    this._storage = resolveStashNamespace(storage, sessionId, agentId, options?.customStashNamespace ?? false)
+    this._storage = resolveArchiveNamespace(storage, sessionId, agentId, options?.customArchiveNamespace ?? false)
     this.storageTypeName = storage.constructor.name || 'unknown'
   }
 
@@ -108,7 +108,7 @@ export class Stash {
    * @returns Reference key for retrieval
    */
   async store(id: string, blockIndex: number, data: Uint8Array): Promise<string> {
-    const key = formatStashKey({ id, index: blockIndex })
+    const key = formatArchiveKey({ id, index: blockIndex })
     await this._storage.write(key, data)
     return key
   }
@@ -128,14 +128,14 @@ export class Stash {
    * @param blockIndex - Index of the block within the message
    * @returns The reference
    */
-  async ensureStashed(block: ContentBlock, message: Message, blockIndex: number): Promise<string> {
+  async ensureArchived(block: ContentBlock, message: Message, blockIndex: number): Promise<string> {
     if (block instanceof ToolResultBlock) {
       // A result that already holds a placeholder is not the original; its items were stored before it was offloaded.
       if (block.content.some(isOffloaded)) return block.toolUseId
       if ((await this.keysOf(block.toolUseId)).length < block.content.length) await this._storeToolResult(block)
       return block.toolUseId
     }
-    const key = formatStashKey({ id: message.trackingId, index: blockIndex })
+    const key = formatArchiveKey({ id: message.trackingId, index: blockIndex })
     if (!(await this.list(key)).includes(key)) {
       await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
     }
@@ -155,13 +155,13 @@ export class Stash {
   }
 
   /**
-   * Eagerly stash all content from a message on arrival.
+   * Eagerly archive all content from a message on arrival.
    * Called via MessageAddedEvent so content is persisted before any strategy runs.
    * Offload placeholders are never stored: their keys belong to the originals they replaced.
    *
    * @param message - The message whose content should be persisted
    * @param skipToolUseIds - Tool results to leave out, such as the retrieval tool's own
-   * @param storedKeys - Keys already in the stash; a block stored under one keeps its entry, since a
+   * @param storedKeys - Keys already in the archive; a block stored under one keeps its entry, since a
    *   restored history can hold a placeholder where the stored original was
    */
   async storeMessage(
@@ -179,7 +179,7 @@ export class Stash {
       try {
         await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
       } catch (error) {
-        logger.warn(`trackingId=<${message.trackingId}>, error=<${error}> | failed to stash block`)
+        logger.warn(`trackingId=<${message.trackingId}>, error=<${error}> | failed to archive block`)
       }
     }
   }
@@ -194,14 +194,14 @@ export class Stash {
     if (isProtocolBlock(block)) return true
     if (block instanceof ToolResultBlock) {
       if (skipToolUseIds?.has(block.toolUseId) || block.content.some(isOffloaded)) return true
-      return storedKeys !== undefined && [...storedKeys].some((key) => parseStashKey(key)?.id === block.toolUseId)
+      return storedKeys !== undefined && [...storedKeys].some((key) => parseArchiveKey(key)?.id === block.toolUseId)
     }
     if (isOffloaded(block)) return true
-    return storedKeys?.has(formatStashKey({ id: message.trackingId, index: blockIndex })) ?? false
+    return storedKeys?.has(formatArchiveKey({ id: message.trackingId, index: blockIndex })) ?? false
   }
 
   /**
-   * Retrieve previously stashed content as its serialized JSON form.
+   * Retrieve previously archived content as its serialized JSON form.
    *
    * @param reference - Key returned by a previous store call
    * @returns The deserialized block data (from `toJSON()`), or null if not found
@@ -213,7 +213,7 @@ export class Stash {
   }
 
   /**
-   * List stashed references, optionally only those starting with `prefix`.
+   * List archived references, optionally only those starting with `prefix`.
    */
   async list(prefix = ''): Promise<string[]> {
     return this._storage.list(prefix)
@@ -224,24 +224,24 @@ export class Stash {
    */
   async keysOf(id: string): Promise<string[]> {
     return (await this.list(`${id}_`))
-      .map((key) => ({ key, parsed: parseStashKey(key) }))
+      .map((key) => ({ key, parsed: parseArchiveKey(key) }))
       .filter(({ parsed }) => parsed?.id === id)
       .sort((left, right) => left.parsed!.index - right.parsed!.index)
       .map(({ key }) => key)
   }
 
   /**
-   * Delete a stashed entry.
+   * Delete an archived entry.
    */
   async delete(reference: string): Promise<void> {
     await this._storage.delete(reference)
-    logger.debug(`reference=<${reference}> | stash entry deleted`)
+    logger.debug(`reference=<${reference}> | archive entry deleted`)
   }
 
   /**
-   * Delete all entries in this stash instance.
+   * Delete all entries in this archive instance.
    *
-   * On a caller-scoped stash this deletes the whole view, including other agents' entries.
+   * On a caller-scoped archive this deletes the whole view, including other agents' entries.
    * Not called during session deletion; kept for parity with `strands-py`.
    */
   async clear(): Promise<void> {
@@ -250,31 +250,31 @@ export class Stash {
   }
 
   /**
-   * Delete all stash data for this session across all agents.
+   * Delete all archive data for this session across all agents.
    *
    * Scans `context/<sessionId>/` on the base storage to catch data from every
    * agent that wrote to the session. This covers every key {@link clear}
-   * would delete for the default per-agent root. A stash rooted at a
+   * would delete for the default per-agent root. An archive rooted at a
    * caller-scoped view may be shared beyond this session, so its data is left
    * to the caller, including keys written under the pre-sharing
    * `context/...` layout.
    */
   async clearSession(): Promise<void> {
-    // resolveStashNamespace returns the view itself only when it is the caller-scoped root.
+    // resolveArchiveNamespace returns the view itself only when it is the caller-scoped root.
     // Same identity check as `strands-py` (`self._storage is self._base_storage`).
     if (this._storage === this._baseStorage) {
-      logger.debug(`session_id=<${this._sessionId}> | skipping stash deletion, stash is caller-scoped`)
+      logger.debug(`session_id=<${this._sessionId}> | skipping archive deletion, archive is caller-scoped`)
       return
     }
-    const prefix = `${STASH_PREFIX}/${this._sessionId}/`
+    const prefix = `${ARCHIVE_PREFIX}/${this._sessionId}/`
     const keys = await this._baseStorage.list(prefix)
     await Promise.all(keys.map((key) => this._baseStorage.delete(key)))
   }
 
   /**
-   * Serialize all stash entries into a plain object for snapshot persistence.
+   * Serialize all archive entries into a plain object for snapshot persistence.
    *
-   * On a caller-scoped stash this captures every entry in the shared view, not only this
+   * On a caller-scoped archive this captures every entry in the shared view, not only this
    * agent's, and {@link loadSnapshot} writes them all back. Same as `strands-py`.
    *
    * @returns Map of reference keys to their stored JSON values
@@ -292,7 +292,7 @@ export class Stash {
   }
 
   /**
-   * Restore stash entries from a previously captured snapshot.
+   * Restore archive entries from a previously captured snapshot.
    *
    * @param entries - Map of reference keys to their JSON values (from {@link takeSnapshot})
    */
@@ -307,7 +307,7 @@ export class Stash {
         await this.store(block.toolUseId, blockIndex, encode(item.toJSON()))
       } catch (error) {
         logger.warn(
-          `toolUseId=<${block.toolUseId}>, blockIndex=<${blockIndex}>, error=<${error}> | failed to stash sub-block`
+          `toolUseId=<${block.toolUseId}>, blockIndex=<${blockIndex}>, error=<${error}> | failed to archive sub-block`
         )
       }
     }

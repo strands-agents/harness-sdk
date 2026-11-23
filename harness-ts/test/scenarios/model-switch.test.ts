@@ -57,7 +57,10 @@ describe('model switch', () => {
         role: 'assistant',
         content: [{ toolUse: { name: 'shell', toolUseId: 'model-b-1-0', input: { command: 'cat notes.txt' } } }],
       },
-      success('model-b-1-0', { json: { output: expect.stringMatching(/^alpha\r?\n$/), error: '', exit_code: 0 } }),
+      success('model-b-1-0', {
+        // On Windows, PowerShell writes a progress record to stderr the first time it runs.
+        json: { output: expect.stringMatching(/^alpha\r?\n$/), error: expect.any(String), exit_code: 0 },
+      }),
       { role: 'assistant', content: [{ text: 'still alpha' }] },
     ]
     expect(stablePrefix(recording.calls[2]!)).toEqual([

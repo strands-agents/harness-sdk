@@ -67,7 +67,10 @@ describe('session resume', () => {
           role: 'assistant',
           content: [{ toolUse: { name: 'shell', toolUseId: 'second-1-0', input: { command: 'cat notes.txt' } } }],
         },
-        success('second-1-0', { json: { output: expect.stringMatching(/^alpha\r?\n$/), error: '', exit_code: 0 } }),
+        success('second-1-0', {
+          // On Windows, PowerShell writes a progress record to stderr the first time it runs.
+          json: { output: expect.stringMatching(/^alpha\r?\n$/), error: expect.any(String), exit_code: 0 },
+        }),
         { role: 'assistant', content: [{ text: 'still alpha' }] },
       ]
       expect(stablePrefix(recording.calls[3]!)).toEqual([...firstTurns, secondTurn[0]])
