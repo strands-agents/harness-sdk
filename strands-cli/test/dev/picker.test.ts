@@ -127,13 +127,13 @@ describe('HarnessPicker', () => {
     input.write('\u001b[B')
     await vi.waitFor(() => expect(frame().join('\n')).toContain('› Create a new harness'))
     input.write('\r')
-    await vi.waitFor(() => expect(frame().join('\n')).toContain('Language: typescript'))
-    input.write('\t')
     await vi.waitFor(() => expect(frame().join('\n')).toContain('Language: python'))
+    input.write('\t')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Language: typescript'))
     input.write('\r')
 
     await vi.waitFor(() =>
-      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'python' })
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'typescript' })
     )
   })
 
@@ -163,7 +163,7 @@ describe('HarnessPicker', () => {
     input.write('\r')
 
     await vi.waitFor(() =>
-      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness-2b', language: 'typescript' })
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness-2b', language: 'python' })
     )
   })
 
@@ -214,7 +214,7 @@ describe('HarnessPicker', () => {
     input.write('\r')
 
     await vi.waitFor(() =>
-      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'typescript' })
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'python' })
     )
   })
 
@@ -388,7 +388,7 @@ describe('HarnessPicker', () => {
 
     await vi.waitFor(() =>
       expect(selected).toHaveBeenCalledWith(
-        { kind: 'create', name: 'new-harness', language: 'typescript' },
+        { kind: 'create', name: 'new-harness', language: 'python' },
         '/work/strands-dev'
       )
     )
@@ -605,7 +605,7 @@ describe('HarnessPicker', () => {
     input.write('\r')
 
     await vi.waitFor(() =>
-      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'typescript' })
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'python' })
     )
     expect(text()).not.toContain('Create a workspace')
   })
@@ -675,35 +675,35 @@ describe('HarnessPicker', () => {
     const { input, text, selected } = await createForm()
 
     input.write('\u001b[B')
-    await vi.waitFor(() => expect(text()).toContain('› Language: typescript'))
-    input.write('\u001b[C')
     await vi.waitFor(() => expect(text()).toContain('› Language: python'))
+    input.write('\u001b[C')
+    await vi.waitFor(() => expect(text()).toContain('› Language: typescript'))
     input.write('\r')
 
     await vi.waitFor(() =>
-      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'python' })
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harness', language: 'typescript' })
     )
   })
 
   it('shouldShowTheModelNoticeOnlyForTheLanguageThatCannotLoadTheModelModule', async () => {
     const notice = 'Python cannot load the model module custom.mjs.'
     const { input, text } = await createForm({
-      modelNotice: (language) => (language === 'python' ? notice : undefined),
+      modelNotice: (language) => (language === 'typescript' ? notice : undefined),
     })
 
     input.write('\u001b[B')
-    await vi.waitFor(() => expect(text()).toContain('› Language: typescript'))
+    await vi.waitFor(() => expect(text()).toContain('› Language: python'))
     expect(text()).not.toContain(notice)
     input.write('\u001b[C')
 
-    await vi.waitFor(() => expect(text()).toContain('› Language: python'))
+    await vi.waitFor(() => expect(text()).toContain('› Language: typescript'))
     await vi.waitFor(() => expect(text()).toContain(notice))
   })
 
   it('shouldEditTheNameOnlyWhenTheNameFieldIsSelected', async () => {
     const { input, text, selected } = await createForm()
     input.write('\u001b[B')
-    await vi.waitFor(() => expect(text()).toContain('› Language: typescript'))
+    await vi.waitFor(() => expect(text()).toContain('› Language: python'))
 
     input.write('x')
     input.write('\u001b[A')
@@ -713,7 +713,7 @@ describe('HarnessPicker', () => {
     input.write('\r')
 
     await vi.waitFor(() =>
-      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harnessy', language: 'typescript' })
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-harnessy', language: 'python' })
     )
   })
 
@@ -725,7 +725,7 @@ describe('HarnessPicker', () => {
     await press('\r')
 
     await vi.waitFor(() =>
-      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-my-harness', language: 'typescript' })
+      expect(selected).toHaveBeenCalledWith({ kind: 'create', name: 'new-my-harness', language: 'python' })
     )
   })
 
