@@ -11,6 +11,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from ..models._model_proxy import ModelProxy
+from ..models._provider_name import _model_key
 from ..models.bedrock import BedrockModel
 from ..models.model import Model
 from ..types.content import ContentBlock, Message, Messages
@@ -75,6 +76,9 @@ class LLMDecisionModel(DecisionModel):
         self._model = resolved_model
         self._system_prompt = system_prompt
 
+    def _usage_model_key(self, result: DecisionResult) -> tuple[str | None, str | None]:
+        return _model_key(self._model)
+
     async def _ask(self, state: DecisionInput, questions: dict[str, Question], **kwargs: Any) -> DecisionResult:
         answer_model = _build_answer_model(questions)
         messages = _build_messages(state)
@@ -92,11 +96,7 @@ class LLMDecisionModel(DecisionModel):
                 chunk = event.get("event")
                 if isinstance(chunk, Mapping) and isinstance(metadata := chunk.get("metadata"), Mapping):
                     if isinstance(reported := metadata.get("usage"), Mapping):
-                        usage = Usage(
-                            inputTokens=reported.get("inputTokens", 0),
-                            outputTokens=reported.get("outputTokens", 0),
-                            totalTokens=reported.get("totalTokens", 0),
-                        )
+                        usage = cast(Usage, {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0, **reported})
                     if isinstance(metrics := metadata.get("metrics"), Mapping) and metrics.get("latencyMs"):
                         latency_ms = metrics["latencyMs"]
                 if "output" in event:

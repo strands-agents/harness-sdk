@@ -479,6 +479,7 @@ sidebar:
               - docs/user-guide/sdk/plugins/context-injector
               - docs/user-guide/sdk/plugins/todos
               - docs/user-guide/sdk/plugins/goal-loop
+              - docs/user-guide/sdk/plugins/genai-prices-estimator
               - docs/user-guide/sdk/plugins/custom-plugins
           - label: Interventions
             addedDate: 2026-06-03
