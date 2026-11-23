@@ -149,6 +149,21 @@ function listPricedModel(): void {
   })
 }
 
+/** The estimate of `priced-model` on `openai` at the base rates {@link listPricedModel} lists. */
+function listedModelEstimate(modelUsage: Usage, costUsd: number): ModelCostEstimate {
+  const listedPrice = {
+    modelId: 'priced-model',
+    providerName: 'openai',
+    inputPerMillion: 2.0,
+    outputPerMillion: 10.0,
+    cacheReadPerMillion: 0.2,
+  }
+  return {
+    ...modelEstimate('openai', 'priced-model', modelUsage, costUsd, listedPrice),
+    priceSource: 'genai-prices:openai/matched-model',
+  }
+}
+
 function lookups(): [string | undefined, string][] {
   return vi.mocked(calcPrice).mock.calls.map(([, modelId, options]) => [options?.providerId, modelId])
 }
@@ -192,7 +207,12 @@ describe('GenAIPricesEstimator', () => {
       smallPrice.inputPerMillion = -1.0
 
       const estimate = cost.estimate(request([usage(1_000, 100), undefined, 'small']))
-      expect(estimate.totalUsd).toBe((1_000 * 1.0 + 100 * 5.0) / 1_000_000)
+      const expectedCost = (1_000 * 1.0 + 100 * 5.0) / 1_000_000
+      expect(estimate).toStrictEqual({
+        totalUsd: expectedCost,
+        models: [modelEstimate(undefined, 'small', usage(1_000, 100), expectedCost, SMALL_PRICE)],
+        unpriced: [],
+      })
       expect(Object.isFrozen(estimate.models[0]!.price)).toBe(true)
     })
   })
@@ -220,7 +240,12 @@ describe('GenAIPricesEstimator', () => {
         request([callUsage, 'bedrock', 'main'])
       )
 
-      expect(estimate.totalUsd).toBe((500 * 0.3 + 10 * 15.0) / 1_000_000)
+      const expectedCost = (500 * 0.3 + 10 * 15.0) / 1_000_000
+      expect(estimate).toStrictEqual({
+        totalUsd: expectedCost,
+        models: [modelEstimate('bedrock', 'main', callUsage, expectedCost, MAIN_PRICE)],
+        unpriced: [],
+      })
     })
 
     it('charges cached tokens at the input rate when the price has no cache rate', () => {
@@ -230,7 +255,12 @@ describe('GenAIPricesEstimator', () => {
         request([callUsage, undefined, 'small'])
       )
 
-      expect(estimate.totalUsd).toBe((9_000 * 1.0 + 100 * 5.0) / 1_000_000)
+      const expectedCost = (9_000 * 1.0 + 100 * 5.0) / 1_000_000
+      expect(estimate).toStrictEqual({
+        totalUsd: expectedCost,
+        models: [modelEstimate(undefined, 'small', callUsage, expectedCost, SMALL_PRICE)],
+        unpriced: [],
+      })
     })
 
     it('adds the models of a request together', () => {
@@ -242,38 +272,48 @@ describe('GenAIPricesEstimator', () => {
 
       const estimate = new GenAIPricesEstimator({ prices: [MAIN_PRICE, SMALL_PRICE] }).estimate(invocationContext)
 
-      const expectedCosts = [(2_000 * 3.0 + 200 * 15.0) / 1_000_000, (2_000 * 1.0 + 200 * 5.0) / 1_000_000]
-      expect(estimate.models.map((model) => model.costUsd)).toStrictEqual(expectedCosts)
-      expect(estimate.totalUsd).toBe(expectedCosts[0]! + expectedCosts[1]!)
-      expect(estimate.unpriced).toStrictEqual([])
+      const mainCost = (2_000 * 3.0 + 200 * 15.0) / 1_000_000
+      const smallCost = (2_000 * 1.0 + 200 * 5.0) / 1_000_000
+      expect(estimate).toStrictEqual({
+        totalUsd: mainCost + smallCost,
+        models: [
+          modelEstimate(undefined, 'main', usage(2_000, 200), mainCost, MAIN_PRICE),
+          modelEstimate(undefined, 'small', usage(2_000, 200), smallCost, SMALL_PRICE),
+        ],
+        unpriced: [],
+      })
     })
 
     it.each([
-      ['provider entry wins', 'bedrock', 'priced-model', 7.0],
-      ['any-provider entry', 'openai', 'priced-model', 5.0],
-      ['model without provider', undefined, 'priced-model', 5.0],
-      ['id with slash', 'litellm', 'openai/priced-model', 9.0],
-      ['arn', 'bedrock', 'arn:aws:bedrock:us-west-2:1:application-inference-profile/abc', 11.0],
-    ])(
-      'prefers your price and compares the model id as a whole: %s',
-      (_name, providerName, modelId, expectedInputRate) => {
-        listPricedModel()
-        const prices = [
-          price('priced-model', 5.0),
-          price('priced-model', 7.0, 'bedrock'),
-          price('openai/priced-model', 9.0),
-          price('arn:aws:bedrock:us-west-2:1:application-inference-profile/abc', 11.0),
-        ]
+      ['provider entry wins', 'bedrock', 'priced-model', price('priced-model', 7.0, 'bedrock')],
+      ['any-provider entry', 'openai', 'priced-model', price('priced-model', 5.0)],
+      ['model without provider', undefined, 'priced-model', price('priced-model', 5.0)],
+      ['id with slash', 'litellm', 'openai/priced-model', price('openai/priced-model', 9.0)],
+      [
+        'arn',
+        'bedrock',
+        'arn:aws:bedrock:us-west-2:1:application-inference-profile/abc',
+        price('arn:aws:bedrock:us-west-2:1:application-inference-profile/abc', 11.0),
+      ],
+    ])('prefers your price and compares the model id as a whole: %s', (_name, providerName, modelId, expectedPrice) => {
+      listPricedModel()
+      const prices = [
+        price('priced-model', 5.0),
+        price('priced-model', 7.0, 'bedrock'),
+        price('openai/priced-model', 9.0),
+        price('arn:aws:bedrock:us-west-2:1:application-inference-profile/abc', 11.0),
+      ]
 
-        const estimate = new GenAIPricesEstimator({ prices }).estimate(request([usage(1, 1), providerName, modelId]))
+      const estimate = new GenAIPricesEstimator({ prices }).estimate(request([usage(1, 1), providerName, modelId]))
 
-        expect(estimate.models[0]).toMatchObject({
-          price: { inputPerMillion: expectedInputRate },
-          priceSource: 'user',
-        })
-        expect(lookups()).toStrictEqual([])
-      }
-    )
+      const expectedCost = (expectedPrice.inputPerMillion + 1.0) / 1_000_000
+      expect(estimate).toStrictEqual({
+        totalUsd: expectedCost,
+        models: [modelEstimate(providerName, modelId, usage(1, 1), expectedCost, expectedPrice)],
+        unpriced: [],
+      })
+      expect(lookups()).toStrictEqual([])
+    })
 
     it('skips your price for another provider', () => {
       listPricedModel()
@@ -281,7 +321,12 @@ describe('GenAIPricesEstimator', () => {
 
       const estimate = new GenAIPricesEstimator({ prices }).estimate(request([usage(1, 1), 'openai', 'priced-model']))
 
-      expect(estimate.models[0]!.priceSource).toBe('genai-prices:openai/matched-model')
+      const expectedCost = (2.0 + 10.0) / 1_000_000
+      expect(estimate).toStrictEqual({
+        totalUsd: expectedCost,
+        models: [listedModelEstimate(usage(1, 1), expectedCost)],
+        unpriced: [],
+      })
     })
 
     it('leaves the total empty when a model has no price', () => {
@@ -295,30 +340,33 @@ describe('GenAIPricesEstimator', () => {
 
       const estimate = new GenAIPricesEstimator({ prices: [MAIN_PRICE] }).estimate(invocationContext)
 
-      expect(estimate).not.toHaveProperty('totalUsd')
-      expect(estimate.unpriced).toStrictEqual([
+      const priced = modelEstimate(
+        undefined,
+        'main',
+        usage(1_000, 100),
+        (1_000 * 3.0 + 100 * 15.0) / 1_000_000,
+        MAIN_PRICE
+      )
+      const unpriced = [
         modelEstimate('bedrock', 'unlisted', usage(1, 1)),
         modelEstimate(undefined, 'no-provider', usage(1, 1)),
         modelEstimate(undefined, undefined, usage(1, 1)),
-      ])
-      expect(estimate.models[0]!.costUsd).toBe((1_000 * 3.0 + 100 * 15.0) / 1_000_000)
+      ]
+      expect(estimate).toStrictEqual({ models: [priced, ...unpriced], unpriced })
     })
 
     it('uses the base rate of a tiered genai price', () => {
       listPricedModel()
       const callUsage = usage(300_000, 1_000, { read: 100_000, write: 50_000 })
 
-      const model = new GenAIPricesEstimator().estimate(request([callUsage, 'openai', 'priced-model'])).models[0]!
+      const estimate = new GenAIPricesEstimator().estimate(request([callUsage, 'openai', 'priced-model']))
 
-      expect(model.price).toStrictEqual({
-        modelId: 'priced-model',
-        providerName: 'openai',
-        inputPerMillion: 2.0,
-        outputPerMillion: 10.0,
-        cacheReadPerMillion: 0.2,
+      const expectedCost = (300_000 * 2.0 + 100_000 * 0.2 + 50_000 * 2.0 + 1_000 * 10.0) / 1_000_000
+      expect(estimate).toStrictEqual({
+        totalUsd: expectedCost,
+        models: [listedModelEstimate(callUsage, expectedCost)],
+        unpriced: [],
       })
-      expect(model.priceSource).toBe('genai-prices:openai/matched-model')
-      expect(model.costUsd).toBeCloseTo((300_000 * 2.0 + 100_000 * 0.2 + 50_000 * 2.0 + 1_000 * 10.0) / 1_000_000)
     })
 
     it.each([

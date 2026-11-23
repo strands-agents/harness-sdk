@@ -22,10 +22,15 @@ function anthropicOn(client: object): AnthropicModel {
   return new AnthropicModel({ client: client as AnthropicClient, modelId: 'anthropic.claude-a', maxTokens: 1 })
 }
 
+function anthropicWith(clientConfig: { baseURL: string }): AnthropicModel {
+  return new AnthropicModel({ apiKey: 'k', clientConfig, modelId: 'claude-a', maxTokens: 1 })
+}
+
 describe('modelKey', () => {
   beforeEach(() => {
     vi.stubEnv('OPENAI_API_KEY', 'test-key')
     vi.stubEnv('OPENAI_BASE_URL', undefined)
+    vi.stubEnv('ANTHROPIC_BASE_URL', undefined)
   })
 
   it('names the provider of each vended class and of its subclasses', () => {
@@ -133,6 +138,24 @@ describe('modelKey', () => {
       'anthropic',
       'claude-a',
     ],
+    [
+      'anthropic with the anthropic base URL',
+      () => anthropicWith({ baseURL: 'https://api.anthropic.com' }),
+      'anthropic',
+      'claude-a',
+    ],
+    [
+      'anthropic with a custom base URL',
+      () => anthropicWith({ baseURL: 'https://llm.example.com' }),
+      undefined,
+      'claude-a',
+    ],
+    [
+      'anthropic with a bedrock-mantle base URL',
+      () => anthropicWith({ baseURL: 'https://bedrock-mantle.us-east-1.api.aws/anthropic' }),
+      'bedrock',
+      'claude-a',
+    ],
     ['anthropic on bedrock client', () => anthropicOn(new AnthropicBedrock()), 'bedrock', 'anthropic.claude-a'],
     ['anthropic on mantle client', () => anthropicOn(new AnthropicBedrockMantle()), 'bedrock', 'anthropic.claude-a'],
     ['anthropic on unknown client', () => anthropicOn({}), undefined, 'anthropic.claude-a'],
@@ -185,6 +208,14 @@ describe('modelKey', () => {
     vi.stubEnv('OPENAI_BASE_URL', 'https://llm.example.com/v1')
 
     expect(modelKey(new OpenAIModel({ modelId: 'm' }))).toStrictEqual({ modelId: 'm' })
+  })
+
+  it('names no provider for an Anthropic base URL set in the environment', () => {
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'https://llm.example.com')
+
+    expect(modelKey(new AnthropicModel({ apiKey: 'k', modelId: 'claude-a', maxTokens: 1 }))).toStrictEqual({
+      modelId: 'claude-a',
+    })
   })
 
   it.each<[string, () => unknown]>([

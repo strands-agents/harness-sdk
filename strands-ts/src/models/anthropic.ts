@@ -431,19 +431,19 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   }
 
   /**
-   * Names the provider by the client's class, or by a Bedrock host when a bundler renamed the class; a client the
-   * SDK does not recognise may call any vendor.
+   * Names the provider by the client's class and the host it calls; a client the SDK does not recognise, or an
+   * `Anthropic` client on a host other than Anthropic's or Bedrock's, may call any vendor.
    *
    * @internal
    */
   override get _providerName(): string | undefined {
-    if (this._client instanceof Anthropic) return 'anthropic'
+    if (hasClassName(this._client, 'AnthropicBedrock') || hasClassName(this._client, 'AnthropicBedrockMantle')) {
+      return 'bedrock'
+    }
     const { baseURL } = this._client as { baseURL?: unknown }
-    const onBedrock =
-      hasClassName(this._client, 'AnthropicBedrock') ||
-      hasClassName(this._client, 'AnthropicBedrockMantle') ||
-      (typeof baseURL === 'string' && BEDROCK_HOSTS.test(new URL(baseURL).hostname))
-    return onBedrock ? 'bedrock' : undefined
+    const host = typeof baseURL === 'string' ? new URL(baseURL).hostname : undefined
+    if (host !== undefined && BEDROCK_HOSTS.test(host)) return 'bedrock'
+    return this._client instanceof Anthropic && host === 'api.anthropic.com' ? 'anthropic' : undefined
   }
 
   updateConfig(modelConfig: AnthropicModelConfig): void {
