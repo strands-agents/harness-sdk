@@ -14,6 +14,7 @@ from ..models._model_proxy import ModelProxy
 from ..types.content import ContentBlock, Message, MessageMetadata, Messages, Role, _ensure_tracking_id
 from ..types.offload import OffloadMethod
 from .placeholder import carried_tokens, offload_placeholder
+from .types import is_tool_use_block
 
 if TYPE_CHECKING:
     from ..models.model import Model
@@ -38,6 +39,25 @@ async def removed_tokens(run: Messages, model: Model) -> int:
 def _index_of(messages: Messages, message: Message) -> int | None:
     """The position of ``message`` in ``messages`` by identity, since equal messages are not the same message."""
     return next((index for index, candidate in enumerate(messages) if candidate is message), None)
+
+
+def _run_start(messages: Messages, run: Messages) -> int | None:
+    """The index ``run`` starts at, or None once ``messages`` no longer holds it as a contiguous run.
+
+    A pass awaits between selecting a run and removing it, so the run can be displaced or broken up before the
+    removal reaches it. Removing ``len(run)`` messages from a stale start takes messages nobody selected, and those
+    are not in the stash entry the run was written to.
+    """
+    start = _index_of(messages, run[0])
+    if start is None:
+        return None
+    return start if _holds_run(messages, start, run) else None
+
+
+def _holds_run(messages: Messages, start: int, run: Messages) -> bool:
+    """Whether ``messages`` still holds ``run`` as a contiguous run beginning at ``start``, by identity."""
+    held = messages[start : start + len(run)]
+    return len(held) == len(run) and all(kept is member for kept, member in zip(held, run, strict=True))
 
 
 def collect_removable_with_pair(messages: Messages, index: int) -> list[Message]:
@@ -94,18 +114,30 @@ def new_message(role: Role, content: list[ContentBlock]) -> Message:
 def insert_marker(messages: Messages, index: int, marker: ContentBlock) -> None:
     """Add a marker as assistant content at the gap left by removed messages.
 
-    The marker is appended to an assistant message beside the gap, which keeps that message's tracking id and block
-    indices for stash refs, or becomes its own assistant message. It never joins message 0, and the last message is
-    never removed, so a new marker never ends the history.
+    The marker joins an assistant message beside the gap, before any trailing ``toolUse`` blocks, which keeps that
+    message's tracking id for stash refs; otherwise it becomes its own assistant message. It never joins message 0,
+    and the last message is never removed, so a new marker never ends the history.
     """
     index = max(1, min(index, len(messages)))
     for neighbor in (index - 1, index):
         if 0 < neighbor < len(messages) and messages[neighbor]["role"] == "assistant":
             carrier = messages[neighbor].copy()
-            carrier["content"] = [*carrier["content"], marker]
+            carrier["content"] = _content_with_marker(carrier["content"], marker)
             messages[neighbor] = carrier
             return
     messages.insert(index, new_message("assistant", [marker]))
+
+
+def _content_with_marker(content: list[ContentBlock], marker: ContentBlock) -> list[ContentBlock]:
+    """The carrier's content with the marker added before any trailing ``toolUse`` blocks.
+
+    Anthropic models with thinking enabled reject a request whose assistant message carries a text block after a
+    ``toolUse`` block, as assistant prefill.
+    """
+    end = len(content)
+    while end > 0 and is_tool_use_block(content[end - 1]):
+        end -= 1
+    return [*content[:end], marker, *content[end:]]
 
 
 def repair_alternation(messages: Messages) -> None:
@@ -173,7 +205,7 @@ async def _replace_run(
     for.
     """
     stash_ref = await stash_removed(stash, run, method)
-    start = _index_of(messages, run[0])
+    start = _run_start(messages, run)
     if start is None:
         return False
     # Stashed before the splice and the marker inserted without an await between: a cancellation here would

@@ -280,8 +280,9 @@ class Agent(AgentBase, LocalAgent):
                 May also be a ``ModelRouter``, whose first candidate is resolved to a concrete model and
                 exposed as ``agent.model``. Defaults to strands.models.BedrockModel if None.
             aux_model: Optional model for auxiliary side calls the SDK makes outside the main agent loop:
-                context summarization, memory extraction, the HITL risk classifier, LLM steering, the
-                goal judge, and the ``web_fetch`` analyst. Defaults to ``model``, so leaving it unset
+                conversation-manager summarization, memory extraction, the HITL risk classifier, LLM
+                steering, the goal judge, and the ``web_fetch`` analyst. The context manager's summarize
+                strategy does not use it; it resolves ``model=`` > ``model``. Defaults to ``model``, so leaving it unset
                 changes nothing; set it (typically to a smaller, cheaper model) to move every side call
                 off the main model at once. Each side call resolves its model as: the component's own
                 ``model=`` > ``aux_model`` > ``model``. Accepts a ``Model`` or a Bedrock model id string,
@@ -498,6 +499,7 @@ class Agent(AgentBase, LocalAgent):
         # Deferred cancellation requested via cancel(after_current_tools=True); read after the tool batch.
         self._deferred_cancel = False
         self._cancel_message: str | None = None
+        self._invoking_depth = 0
 
         self.tool_registry = ToolRegistry(sort_tool_specs=sort_tools)
 
@@ -683,7 +685,9 @@ class Agent(AgentBase, LocalAgent):
             return MemoryManager(**memory_manager)
         raise ValueError("memory_manager must be a MemoryManager or MemoryManagerConfig")
 
-    def cancel(self, *, message: str | None = None, after_current_tools: bool = False) -> None:
+    def cancel(
+        self, *, message: str | None = None, after_current_tools: bool = False, cancel_background_tasks: bool = False
+    ) -> None:
         """Cancel the currently running agent invocation.
 
         This method is thread-safe and can be called from any context
@@ -711,9 +715,22 @@ class Agent(AgentBase, LocalAgent):
         lifecycle, a timeout), pass a ``cancel_signal`` into the invocation instead. The agent
         observes both, so either cancels independently.
 
+        Background tasks keep running unless ``cancel_background_tasks=True``, which also cancels
+        every queued, working, or input-required background task of this agent immediately, even with
+        ``after_current_tools=True``. Their cancelled results are delivered like a cancel requested by the
+        model, and ``cancel()`` may block briefly (at most a few seconds) until the cancel has landed. If the
+        invocation was only waiting for its background tasks, it returns its natural ``stop_reason`` and the
+        results are delivered on the next invocation. On an
+        idle agent, ``cancel(cancel_background_tasks=True)`` cancels only the background tasks and leaves the
+        next invocation alone, while plain ``cancel()`` cancels the next invocation. An invocation scheduled with
+        ``asyncio.create_task`` counts as idle until it starts running, so in the example below the flagged call
+        would not cancel it; pass a ``cancel_signal`` into the invocation instead. A ``cancel_signal`` passed
+        into an invocation never cancels background tasks.
+
         Args:
             message: Text of the final assistant message the invocation ends with.
             after_current_tools: Let the current tool batch finish before stopping.
+            cancel_background_tasks: Also cancel this agent's outstanding background tasks.
 
         Example:
             ```python
@@ -732,12 +749,15 @@ class Agent(AgentBase, LocalAgent):
         Note:
             Multiple calls to cancel() are safe and idempotent.
         """
-        if message is not None:
-            self._cancel_message = message
-        if after_current_tools:
-            self._deferred_cancel = True
-        else:
-            self._cancel_signal.set()
+        if not cancel_background_tasks or self._invoking_depth > 0:
+            if message is not None:
+                self._cancel_message = message
+            if after_current_tools:
+                self._deferred_cancel = True
+            else:
+                self._cancel_signal.set()
+        if cancel_background_tasks and self._background_tasks is not None:
+            self._background_tasks.cancel_all()
 
     @property
     def cancel_signal(self) -> threading.Event:
@@ -1563,6 +1583,7 @@ class Agent(AgentBase, LocalAgent):
         cancel_watcher: asyncio.Task[None] | None = None
 
         try:
+            self._invoking_depth += 1
             # Clear cancel state that bypassed stream_async's finally (e.g.
             # agent.tool.stop(...) called directly). Keep _cancel_message when the signal is
             # set so a pre-invocation agent.cancel(message=...) still carries its text.
@@ -1668,6 +1689,7 @@ class Agent(AgentBase, LocalAgent):
                 cancel_watcher.cancel()
             self._external_cancel_signal = None
 
+            self._invoking_depth -= 1
             # Clear cancel state to allow agent reuse after cancellation
             self._cancel_signal.clear()
             self._deferred_cancel = False
