@@ -422,7 +422,7 @@ TIME (UTC)  RESULT  ACTION  RESOURCE  RULE  REASON
 
 ## box telemetry
 
-Turn usage telemetry on or off. [Usage telemetry](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/CLI_TELEMETRY.md) says what `box` sends.
+Turn usage telemetry on or off. [Usage telemetry](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/CLI_TELEMETRY.md) says what `box` sends.
 
 ```sh
 box telemetry off

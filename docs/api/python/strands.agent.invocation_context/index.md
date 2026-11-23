@@ -6,7 +6,7 @@ Handle to the request an agent call belongs to, carrying its limits and usage.
 class InvocationContextUsage(Usage)
 ```
 
-Defined in: [src/strands/agent/invocation\_context.py:16](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py#L16)
+Defined in: [src/strands/agent/invocation\_context.py:17](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py#L17)
 
 What the work in an :class:`InvocationContext` has used.
 
@@ -16,13 +16,30 @@ Its turns and the token usage of every model call, including nested and auxiliar
 
 -   `turns_taken` - Turns taken in the context, including its nested calls.
 
+## ModelUsage
+
+```python
+@dataclass(frozen=True, kw_only=True)
+class ModelUsage()
+```
+
+Defined in: [src/strands/agent/invocation\_context.py:31](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py#L31)
+
+Token usage of one model in a request.
+
+**Attributes**:
+
+-   `provider_name` - Name of the model’s provider. For the SDK’s own model classes it is one of `anthropic`, `bedrock`, `google`, `litellm`, `llamaapi`, `llamacpp`, `mistral`, `ollama`, `openai`, `sagemaker`, or `writer`. A decision model reports the provider name from its own metadata, or its wrapped model’s name when it has one. `None` when the SDK cannot tell. Existing names do not change, more may be added, and a `None` may later get a name. It is not the OpenTelemetry provider value.
+-   `model_id` - The model id the calls were made with, or the endpoint name for a SageMaker model; `None` when not known.
+-   `usage` - The summed usage of every call to this model.
+
 ## InvocationContext
 
 ```python
 class InvocationContext()
 ```
 
-Defined in: [src/strands/agent/invocation\_context.py:33](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py#L33)
+Defined in: [src/strands/agent/invocation\_context.py:55](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py#L55)
 
 Handle to the request an object belongs to.
 
@@ -40,7 +57,7 @@ Only the SDK creates instances; pass `limits=` to a top-level call to start a li
 def __init__() -> None
 ```
 
-Defined in: [src/strands/agent/invocation\_context.py:58](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py#L58)
+Defined in: [src/strands/agent/invocation\_context.py:81](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py#L81)
 
 Reject direct construction.
 
@@ -55,8 +72,21 @@ Reject direct construction.
 def usage() -> InvocationContextUsage
 ```
 
-Defined in: [src/strands/agent/invocation\_context.py:67](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py#L67)
+Defined in: [src/strands/agent/invocation\_context.py:90](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py#L90)
 
 What the work in this context has used so far.
 
 It keeps growing while that work runs, including background tasks the request started.
+
+#### usage\_by\_model
+
+```python
+@property
+def usage_by_model() -> list[ModelUsage]
+```
+
+Defined in: [src/strands/agent/invocation\_context.py:98](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py#L98)
+
+The token usage in :attr:`usage`, split by the model that produced it.
+
+One record per distinct `(provider_name, model_id)`, in the order they first recorded usage. Each is a snapshot taken when this property is read. Their token counts add up to :attr:`usage`. Usage whose model is not known is under a record whose `provider_name` and `model_id` are `None`.

@@ -378,6 +378,7 @@ Use skills when you want a single agent that can handle a wide range of tasks by
 ## Related pages
 
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
 - [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
 - [Instruction following evaluator](/docs/user-guide/evals-sdk/evaluators/instruction_following_evaluator/index.md) (1 shared tag)
 - [Built-in Modes](/docs/user-guide/sdk/context-management/built-in-modes/index.md) (1 shared tag)
@@ -386,7 +387,6 @@ Use skills when you want a single agent that can handle a wide range of tasks by
 - [Custom Strategies](/docs/user-guide/sdk/context-management/custom-strategies/index.md) (1 shared tag)
 - [Strategy Presets](/docs/user-guide/sdk/context-management/presets/index.md) (1 shared tag)
 - [Prompt Engineering](/docs/user-guide/sdk/safety-security/prompt-engineering/index.md) (1 shared tag)
-- [Prompts](/docs/user-guide/sdk/agents/prompts/index.md) (1 shared tag)
 
 
 ## Implementation

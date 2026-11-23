@@ -22,7 +22,7 @@ The Qwen3.5-based v1 checkpoint. It is the only v1 model that keeps its base mod
 
 Vision (NaturalBench first 300 groups, POPE-adv first 600): 0.776 / 0.872 accuracy, matching hobson-v21 within paired bootstrap 95% CIs.
 
-Full numbers in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/evaluation/results.md#v1-the-released-model).
+Full numbers in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/evaluation/results.md#v1-the-released-model).
 
 ## Run it
 
@@ -37,7 +37,7 @@ With images (needs `transformers >= 5.18`):
 strands-decider serve StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 --vision --port 8000
 ```
 
-See [Inference server](/docs/labs/strands-decider/inference/index.md) for the request shape and [designs/images](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/images.md) for the vision request format and benchmark results.
+See [Inference server](/docs/labs/strands-decider/inference/index.md) for the request shape and [designs/images](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/images.md) for the vision request format and benchmark results.
 
 ## When to pick it
 

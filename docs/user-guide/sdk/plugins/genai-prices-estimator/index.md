@@ -1,0 +1,204 @@
+The `GenAIPricesEstimator` plugin estimates what a request cost in USD. It multiplies the tokens each model used by that model’s list price and adds the results.
+
+The number is an estimate, not a bill. The prices come from [genai-prices](https://github.com/pydantic/genai-prices), a third-party package that bundles public list prices. Strands does not maintain or vouch for that data, and your invoice depends on things the estimate cannot see. See [What the Estimate Leaves Out](#what-the-estimate-leaves-out).
+
+## Install
+
+The plugin needs the `cost-estimator` extra and Python 3.11 or later:
+
+```bash
+pip install 'strands-agents[cost-estimator]'
+```
+
+The prices ship inside the genai-prices package, so the plugin makes no network calls. To get newer prices, upgrade genai-prices.
+
+On Python 3.10 the plugin is unavailable, because genai-prices needs Python 3.11. [`usage_by_model`](#token-usage-per-model) still works there.
+
+## Read the Estimate from the Stream
+
+Attach the plugin to your agent. After every model call, the agent’s stream carries a `cost_estimate` event:
+
+```python
+import asyncio
+
+from strands import Agent
+from strands.vended_plugins.cost_estimator import GenAIPricesEstimator
+
+cost = GenAIPricesEstimator()
+agent = Agent(plugins=[cost], callback_handler=None)
+
+
+async def main():
+    async for event in agent.stream_async("Why is the sky blue? Answer in one sentence."):
+        if event.get("type") == "cost_estimate":
+            call = event["model_call"]
+            print("call:", call.model_id, call.cost_usd)
+            print("so far:", event["cost_estimate"].total_usd)
+        if "result" in event:
+            estimate = cost.estimate(event["result"])
+            print("request:", estimate.total_usd)
+            for model in estimate.models:
+                print(" ", model.model_id, model.cost_usd, model.price_source)
+
+
+asyncio.run(main())
+
+# Example output:
+# call: global.anthropic.claude-sonnet-4-6 0.000669
+# so far: 0.000669
+# request: 0.000669
+#   global.anthropic.claude-sonnet-4-6 0.000669 genai-prices:aws/global.anthropic.claude-sonnet-4-6-v1:0
+```
+
+Each event carries two estimates:
+
+-   `event["model_call"]` is the estimate for the model call that just ended. It names the model the plugin saw: wrap middleware you add after the plugin that swaps the model is not reflected in it.
+-   `event["cost_estimate"]` is the running estimate for the request so far, including the agents your tools ran in the same request. Do not add events together.
+
+The events are a running figure, not the request’s estimate. Work that happens after the agent’s last model call, such as a goal judge or memory extraction, is not in any event. For the request’s estimate, call `cost.estimate(event["result"])` when the `result` event arrives, as the example does.
+
+A [callback handler](/docs/user-guide/sdk/streaming/callback-handlers/index.md) receives the same two estimates as the `cost_estimate` and `model_call` keyword arguments.
+
+## Estimate a Request
+
+`estimate()` returns the estimate for a request. It accepts an agent result, a Graph or Swarm result, an `invocation_context`, or a list of [`ModelUsage` records](#token-usage-per-model), and it works without attaching the plugin to an agent.
+
+The request includes the model calls the SDK makes for you, such as summarization, and the agents your tools run. An agent started by your own tool counts only when the tool passes `invocation_context` on:
+
+```python
+from strands import Agent, ToolContext, tool
+from strands.vended_plugins.cost_estimator import GenAIPricesEstimator
+
+
+@tool(context=True)
+async def research(topic: str, tool_context: ToolContext) -> str:
+    """Research a topic and return short notes."""
+    researcher = Agent(model="us.amazon.nova-lite-v1:0", callback_handler=None)
+    result = await researcher.invoke_async(topic, invocation_context=tool_context.invocation_context)
+    return str(result)
+
+
+cost = GenAIPricesEstimator()
+agent = Agent(tools=[research], callback_handler=None)
+
+result = agent("Research why the sky is blue, then answer in one sentence.")
+estimate = cost.estimate(result)
+
+print(estimate.total_usd)
+for model in estimate.models:
+    print(" ", model.model_id, model.cost_usd, model.price_source)
+
+# Example output:
+# 0.00636474
+#   global.anthropic.claude-sonnet-4-6 0.006309 genai-prices:aws/global.anthropic.claude-sonnet-4-6-v1:0
+#   us.amazon.nova-lite-v1:0 5.574e-05 genai-prices:aws/amazon.nova-lite-v1:0
+```
+
+A request you continue by passing its `invocation_context` to a later call is one request, so its estimate grows. Do not add the estimates of the two calls together. Resuming after an [interrupt](/docs/user-guide/sdk/interrupts/index.md) starts a new request.
+
+### Nested Agents
+
+A nested agent emits its own `cost_estimate` events when the plugin is attached to it. When the agent runs as a tool, they reach the parent’s stream inside [tool stream events](/docs/user-guide/sdk/tools/custom-tools/index.md#tool-streaming), not at the top level.
+
+A nested agent that sets its own `limits` reports its own share in `cost_estimate`, not the whole request. The parent’s events and `estimate()` still include it.
+
+### Token Usage per Model
+
+The token counts behind the estimate are on the request itself, with or without the plugin. `result.invocation_context.usage_by_model` is a list of `ModelUsage` records, one per model, each with a `provider_name`, a `model_id`, and the model’s summed `usage`. You can save the records and pass them to `estimate()` later.
+
+For the SDK’s model classes, `provider_name` is one of `anthropic`, `bedrock`, `google`, `litellm`, `llamaapi`, `llamacpp`, `mistral`, `ollama`, `openai`, `sagemaker`, or `writer`. A model that reaches Bedrock through another class, such as `OpenAIModel` with `bedrock_mantle_config` or a Bedrock base URL, is `bedrock` too. A decision model reports the provider name from its own metadata. The name is `None` when the SDK cannot tell, as for a custom model or an OpenAI-compatible endpoint with its own base URL. A SageMaker model’s `model_id` is its endpoint name.
+
+## Use Your Own Prices
+
+Pass your own prices for a model genai-prices does not list, or for a rate you negotiated. Prices are in USD per one million tokens:
+
+```python
+from strands.vended_plugins.cost_estimator import GenAIPricesEstimator, ModelPrice
+
+cost = GenAIPricesEstimator(
+    prices=[
+        ModelPrice(model_id="my-endpoint", input_per_million=0.20, output_per_million=0.60),
+        ModelPrice(
+            model_id="us.amazon.nova-lite-v1:0",
+            provider_name="bedrock",
+            input_per_million=0.06,
+            output_per_million=0.24,
+            cache_read_per_million=0.015,
+            cache_write_per_million=0,
+        ),
+    ],
+)
+```
+
+Your prices win over genai-prices. The `model_id` is compared as a whole string. For a SageMaker model, it is the endpoint name. A price with no cache rate charges cached tokens at the input rate.
+
+A price with a `provider_name` applies only when it equals the record’s [provider name](#token-usage-per-model) exactly, and it wins over a price without one. A price with `provider_name="aws"`, for example, never applies to a Bedrock model.
+
+Each model in the estimate reports the price it used in `price` and where the price came from in `price_source`: `"user"`, or the genai-prices entry that matched. `price_source` is for display, so do not parse it.
+
+## When a Model Has No Price
+
+A model with no price has a `cost_usd` of `None`, and then `total_usd` is `None` too. A missing price never counts as zero, so you never read a partial sum as the whole:
+
+```python
+estimate = cost.estimate(result)
+
+if estimate.total_usd is None:
+    print("No price for:", [model.model_id for model in estimate.unpriced])
+```
+
+The plugin looks a model up in genai-prices only when its provider name is `anthropic`, `bedrock`, `google`, `mistral`, `openai`, or `litellm`. For a LiteLLM model, the provider is the part of the model ID before the first `/`; for an ID without one, such as `gpt-4o`, genai-prices infers the provider from the model name. Every other model, such as a custom model, a SageMaker endpoint, or a local model, is priced only by the prices you pass.
+
+genai-prices matches model IDs by rule, so an ID it does not list exactly can match a neighbouring entry. For example, `claude-sonnet-4-5-custom` gets the price of `claude-sonnet-4-5`. `price_source` shows the entry that was used. Pass your own price when it is the wrong one.
+
+## What the Estimate Leaves Out
+
+Each of these makes your bill differ from the estimate:
+
+| Left out | Effect |
+| --- | --- |
+| Models newer than the installed genai-prices | Unpriced, or priced as a neighbouring entry, until you upgrade genai-prices or pass your own price |
+| Per-request fees | A model whose list price adds a fee per request is unpriced; pass your own price |
+| A model with no ID | Unpriced, even with your own prices |
+| Long-context price tiers | Calls above the tier are underpriced, because the estimate uses each model’s base rate |
+| Time-of-day pricing | Priced at the rate in effect when `estimate()` runs, not when the call ran |
+| Amazon Bedrock source region | Regional profiles get one price, while real prices vary by region |
+| Service tier, batch, and provisioned throughput | Flex and batch are overpriced, and priority is underpriced |
+| One-hour cache writes | Priced at the five-minute rate, so underpriced |
+| Amazon Nova cache writes | Priced at the input rate, so overpriced; pass your own price with `cache_write_per_million=0` |
+| Negotiated discounts | Overpriced; pass your own prices |
+| Application inference profile ARNs | Unpriced; pass your own price |
+| A model call that fails or is cancelled mid-stream | A failed call is not counted; a cancelled call counts only the usage reported before the cancel |
+| Background tasks that finish after the result | Counted only in an estimate you take after they finish |
+| `Agent.structured_output()` | Runs outside any request, so not counted |
+| Agents your own tools start without passing `invocation_context` | Not counted |
+| Tool, knowledge base, and other non-model costs | Not counted |
+| Bidirectional streaming | Not counted |
+
+For what you were billed on Amazon Bedrock, use [application inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html) with cost allocation tags.
+
+## Related
+
+-   [Async iterators](/docs/user-guide/sdk/streaming/async-iterators/index.md) covers reading events from the agent’s stream.
+-   [Middleware](/docs/user-guide/sdk/agents/middleware/index.md) is how the plugin adds its event to the stream.
+
+## Related pages
+
+- [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
+- [Built-in Modes](/docs/user-guide/sdk/context-management/built-in-modes/index.md) (1 shared tag)
+- [Context Estimation](/docs/user-guide/sdk/context-management/context-estimation/index.md) (1 shared tag)
+- [Context management](/docs/user-guide/sdk/context-management/index.md) (1 shared tag)
+- [Custom Strategies](/docs/user-guide/sdk/context-management/custom-strategies/index.md) (1 shared tag)
+- [Strategy Presets](/docs/user-guide/sdk/context-management/presets/index.md) (1 shared tag)
+- [Skills](/docs/user-guide/sdk/plugins/skills/index.md) (1 shared tag)
+- [Context Offloader](/docs/user-guide/sdk/plugins/context-offloader/index.md) (1 shared tag)
+- [Conversation Management](/docs/user-guide/sdk/agents/conversation-management/index.md) (1 shared tag)
+
+
+## Implementation
+
+### Python
+
+- [harness-sdk/strands-py/src/strands/vended_plugins/cost_estimator/plugin.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/cost_estimator/plugin.py)
+- [harness-sdk/strands-py/src/strands/agent/invocation_context.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py)

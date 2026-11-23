@@ -1,6 +1,6 @@
 An agent you write with the [Strands Agents SDK](https://github.com/strands-agents/sdk-python) runs in a box like any other program. In this example each of its three tools runs a command through the box’s shell, so the policy decides every command and every file a command touches. By the end of this page you have the agent working on the project from getting started, and you have watched the policy permit two tasks and refuse two, with the refusal text the agent read.
 
-Audience: an operator who has run [getting started](/docs/user-guide/box/core/quickstart/index.md) and [write a policy](/docs/user-guide/box/guides/write-a-policy/index.md) on a Mac. The files are in [`examples/strands-box/strands-sdk-agent`](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/strands-box/strands-sdk-agent/) in the repository, and this page walks through them.
+Audience: an operator who has run [getting started](/docs/user-guide/box/core/quickstart/index.md) and [write a policy](/docs/user-guide/box/guides/write-a-policy/index.md) on a Mac. The files are in [`examples/strands-box/strands-sdk-agent`](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/strands-box/strands-sdk-agent/) in the repository, and this page walks through them.
 
 ## Before you start
 
@@ -348,4 +348,4 @@ A Strands Agents SDK agent that sends every tool call through the box’s shell,
 -   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): each part of a rule, and the record of each decision.
 -   [Strands Shell](/docs/user-guide/box/reference/shell/index.md): what the agent’s `zsh -c` runs, where, and the fields a rule reads.
 -   [Security](/docs/user-guide/box/security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of the agent’s `read` list.
--   [The example directory](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/strands-box/strands-sdk-agent/): the files this page walks through.
+-   [The example directory](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/strands-box/strands-sdk-agent/): the files this page walks through.

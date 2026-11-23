@@ -164,7 +164,8 @@ async def process_stream(
     chunks: AsyncIterable[StreamEvent],
     start_time: float | None = None,
     cancel_signal: threading.Event | None = None,
-    invocation_context: InvocationContext | None = None
+    invocation_context: InvocationContext | None = None,
+    model_key: tuple[str | None, str | None] = (None, None)
 ) -> AsyncGenerator[TypedEvent, None]
 ```
 
@@ -178,6 +179,7 @@ Processes the response stream from the API, constructing the final message and e
 -   `start_time` - Time when the model request is initiated
 -   `cancel_signal` - Optional threading.Event to check for cancellation during streaming.
 -   `invocation_context` - The request the call’s usage adds to once the stream ends. A cancelled stream adds the usage reported before it stopped; a stream that raises adds nothing.
+-   `model_key` - The provider name and model id the usage is recorded under; `None` for what is not known.
 
 **Yields**:
 
@@ -205,7 +207,7 @@ async def stream_messages(model: "Model",
                           **kwargs: Any) -> AsyncGenerator[TypedEvent, None]
 ```
 
-Defined in: [src/strands/event\_loop/streaming.py:540](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/event_loop/streaming.py#L540)
+Defined in: [src/strands/event\_loop/streaming.py:544](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/event_loop/streaming.py#L544)
 
 Streams messages to the model and processes the response, through the SDK-internal `ModelProxy`.
 

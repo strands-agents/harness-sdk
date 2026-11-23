@@ -20,8 +20,8 @@ That’s it — `POST /v1/systemone` is up on `http://localhost:8000`. See [Infe
 -   **`--device mlx`** — Apple Silicon through MLX, 1.4–1.6x faster than MPS on the Qwen3.5 model. Needs the `mlx` extra.
 -   **`--device cpu`** — portable fallback; works everywhere, slower on the larger models.
 
-See [designs/inference](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/inference.md#environments-for-serving) for the full matrix of device × model combinations.
+See [designs/inference](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/inference.md#environments-for-serving) for the full matrix of device × model combinations.
 
 ## See also
 
--   Source: [`deploy/README.md`](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/deploy/README.md) — the top-level deploy guide in the SDK repo, covering local plus every other target.
+-   Source: [`deploy/README.md`](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/README.md) — the top-level deploy guide in the SDK repo, covering local plus every other target.

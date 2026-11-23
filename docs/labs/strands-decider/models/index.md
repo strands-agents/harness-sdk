@@ -34,7 +34,7 @@ Strands Decider v1 publishes five checkpoints: one Qwen3.5 base (with a vision t
 | [12B-gemma4-v1-2610](/docs/labs/strands-decider/models/12b-gemma4/index.md) | gemma-4-12B-it | 12B | 200 | 0.173 | ~23 GB | 136 ms | — |
 | [26B-A4B-gemma4-v1-2610](/docs/labs/strands-decider/models/26b-a4b-gemma4/index.md) | gemma-4-26B-A4B-it | 26B MoE (4B active) | 207 | 0.162 | ~51 GB | 245 ms | — |
 
-JevBench scores come from [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/evaluation/results.md). GPU memory is for the weights only, and it and the latency come from [designs/inference.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/inference.md#gemma-4-models). Activations come on top, and each model page names a GPU that fits. Lower Brier is better; higher JevBench is better.
+JevBench scores come from [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/evaluation/results.md). GPU memory is for the weights only, and it and the latency come from [designs/inference.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/inference.md#gemma-4-models). Activations come on top, and each model page names a GPU that fits. Lower Brier is better; higher JevBench is better.
 
 ## Which v1 model should I pick?
 
@@ -48,4 +48,4 @@ Every v1 checkpoint speaks the same `--state` / `--choice` / `--noul` / `--score
 
 ## Naming
 
-Model IDs follow `strands-decider-{size}-{base}-v{N}-{YYMM}`. See [designs/naming](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/naming.md) for the full rule, including what changes when `N` increments.
+Model IDs follow `strands-decider-{size}-{base}-v{N}-{YYMM}`. See [designs/naming](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/naming.md) for the full rule, including what changes when `N` increments.

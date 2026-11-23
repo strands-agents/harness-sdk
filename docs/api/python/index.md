@@ -179,6 +179,8 @@
     -   **Context Offloader**
         -   [Plugin](/docs/api/python/strands.vended_plugins.context_offloader.plugin)
         -   [Storage](/docs/api/python/strands.vended_plugins.context_offloader.storage)
+    -   **Cost Estimator**
+        -   [Plugin](/docs/api/python/strands.vended_plugins.cost_estimator.plugin)
     -   **Goal**
         -   [Judge](/docs/api/python/strands.vended_plugins.goal.judge)
         -   [Plugin](/docs/api/python/strands.vended_plugins.goal.plugin)

@@ -187,6 +187,7 @@
     - [context-injector](https://strandsagents.com/docs/user-guide/sdk/plugins/context-injector/index.md): Fold real-time text into the model input before each call with the ContextInjector plugin: a clock, environment facts, or a lookup, not stored in history.
     - [todos](https://strandsagents.com/docs/user-guide/sdk/plugins/todos/index.md): Give the agent a task list it maintains with todo_write and keeps in view: the Todos plugin re-surfaces the current plan at intervals during a long run.
     - [goal-loop](https://strandsagents.com/docs/user-guide/sdk/plugins/goal-loop/index.md): Iterative refinement plugin that validates agent responses against a goal, looping with feedback until satisfied.
+    - [genai-prices-estimator](https://strandsagents.com/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md): Estimate what a request cost in USD: the GenAIPricesEstimator plugin prices each model's token usage with the genai-prices package and streams the estimate after every model call.
     - [custom-plugins](https://strandsagents.com/docs/user-guide/sdk/plugins/custom-plugins/index.md): Write your own Strands plugin: attach it to an agent, register hooks and tools, manage state, and initialize asynchronously.
   - Interventions
     - [Overview](https://strandsagents.com/docs/user-guide/sdk/agents/interventions/index.md): A composable control layer for authorization, guardrails, and steering with typed actions, ordered evaluation, and short-circuiting.
@@ -592,6 +593,7 @@
 - [strands.vended_plugins.context_injector.plugin](https://strandsagents.com/docs/api/python/strands.vended_plugins.context_injector.plugin/index.md)
 - [strands.vended_plugins.context_offloader.plugin](https://strandsagents.com/docs/api/python/strands.vended_plugins.context_offloader.plugin/index.md)
 - [strands.vended_plugins.context_offloader.storage](https://strandsagents.com/docs/api/python/strands.vended_plugins.context_offloader.storage/index.md)
+- [strands.vended_plugins.cost_estimator.plugin](https://strandsagents.com/docs/api/python/strands.vended_plugins.cost_estimator.plugin/index.md)
 - [strands.vended_plugins.goal.judge](https://strandsagents.com/docs/api/python/strands.vended_plugins.goal.judge/index.md)
 - [strands.vended_plugins.goal.plugin](https://strandsagents.com/docs/api/python/strands.vended_plugins.goal.plugin/index.md)
 - [strands.vended_plugins.skills.agent_skills](https://strandsagents.com/docs/api/python/strands.vended_plugins.skills.agent_skills/index.md)

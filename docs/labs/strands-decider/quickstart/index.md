@@ -89,7 +89,7 @@ Sample output
 
 Run against this empty-cart screenshot:
 
-![Empty cart screenshot](https://raw.githubusercontent.com/strands-labs/strands-decider/d427f3cfb43e22afbbfc2675c9df8dfdca739197/docs/assets/screen.png)
+![Empty cart screenshot](https://raw.githubusercontent.com/strands-labs/strands-decider/ecdb331493761f889351d3ca4936a9ef4e758b33/docs/assets/screen.png)
 
 ```plaintext
 choice_0 -> empty (confidence 0.887)
@@ -99,7 +99,7 @@ choice_0 -> empty (confidence 0.887)
     retry                    0.001
 ```
 
-From the HTTP API, pass base64 images in the `images` field. See [designs/images](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/images.md) for the request shape, limits, and the vision benchmark results.
+From the HTTP API, pass base64 images in the `images` field. See [designs/images](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/images.md) for the request shape, limits, and the vision benchmark results.
 
 ## Next steps
 

@@ -188,5 +188,5 @@ permit  shell:spawn  /Library/Developer/CommandLineTools/usr/bin/git add todo.tx
 ## See also
 
 -   [Strands Shell reference](/docs/user-guide/box/reference/shell/index.md): every field, action, and exit status.
--   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/shell.md): the order of the checks.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/policy.md): how the engine decides, and what refuses to load.
+-   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/shell.md): the order of the checks.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/policy.md): how the engine decides, and what refuses to load.

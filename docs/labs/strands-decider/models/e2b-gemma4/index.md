@@ -20,7 +20,7 @@ The smallest Gemma 4 v1 checkpoint: a LoRA adapter on `google/gemma-4-E2B-it` pl
 | Held-out code tasks (n=1,996) | 0.773 |
 | GPU memory (bf16) | ~9 GB |
 
-Decision Index was measured before the E2B attention fix; multi-question yes/no answers went through a faulty GPU kernel, so that figure may be off. Single-question numbers (JevBench, internal sets) are unaffected. Full per-skill results: [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/evaluation/results.md).
+Decision Index was measured before the E2B attention fix; multi-question yes/no answers went through a faulty GPU kernel, so that figure may be off. Single-question numbers (JevBench, internal sets) are unaffected. Full per-skill results: [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/evaluation/results.md).
 
 ## Run it
 

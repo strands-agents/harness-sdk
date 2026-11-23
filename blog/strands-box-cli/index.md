@@ -160,7 +160,7 @@ A profile that only reads data and makes no changing API calls works well for an
 
 ## Try it
 
-Box CLI is in preview and runs on Apple silicon Macs with macOS 15 or later, and on Linux ARM64 and x86-64 ([requirements](/docs/user-guide/box/install/index.md#requirements)). Install it with:
+Box CLI runs on Apple silicon Macs with macOS 15 or later, and on Linux ARM64 and x86-64 ([requirements](/docs/user-guide/box/install/index.md#requirements)). Install it with:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | sh

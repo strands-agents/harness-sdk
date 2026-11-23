@@ -93,6 +93,7 @@ Each reminder adds the rendered list to a model call and changes the tail of tha
 ## Related pages
 
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
 - [Built-in Modes](/docs/user-guide/sdk/context-management/built-in-modes/index.md) (1 shared tag)
 - [Context Estimation](/docs/user-guide/sdk/context-management/context-estimation/index.md) (1 shared tag)
 - [Context management](/docs/user-guide/sdk/context-management/index.md) (1 shared tag)

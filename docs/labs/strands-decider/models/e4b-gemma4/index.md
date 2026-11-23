@@ -19,7 +19,7 @@ The mid-size Gemma 4 v1 checkpoint. A LoRA adapter on `google/gemma-4-E4B-it` pl
 | Held-out short tasks (n=6,000) | 0.684 |
 | Held-out code tasks (n=1,996) | 0.815 |
 
-Full per-skill numbers in the HF card and in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/evaluation/results.md).
+Full per-skill numbers in the HF card and in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/evaluation/results.md).
 
 ## Run it
 

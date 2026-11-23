@@ -5826,7 +5826,7 @@ Source: https://strandsagents.com/docs/labs/strands-decider/data-card/index.md
 
 ## Lambda
 
-Serverless: no GPU, no instance to reserve, nothing standing between requests. The SDK’s [`deploy/lambda/`](https://github.com/strands-labs/strands-decider/tree/d427f3cfb43e22afbbfc2675c9df8dfdca739197/deploy/lambda) CDK stack builds an arm64 image with the 2B Qwen3.5 Decider baked in (LoRA merged into the torso, quantized to Q8\_0 for [llama.cpp](https://github.com/ggml-org/llama.cpp)) and creates one Lambda function behind an IAM-authenticated Function URL. Requests take seconds.
+Serverless: no GPU, no instance to reserve, nothing standing between requests. The SDK’s [`deploy/lambda/`](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/lambda) CDK stack builds an arm64 image with the 2B Qwen3.5 Decider baked in (LoRA merged into the torso, quantized to Q8\_0 for [llama.cpp](https://github.com/ggml-org/llama.cpp)) and creates one Lambda function behind an IAM-authenticated Function URL. Requests take seconds.
 
 -   **When to pick it:** triage, moderation, routing queues, batch scoring, pre-action checks — decisions that can wait seconds, at volumes where a GPU would sit idle. For a per-tool-call guard inside an agent loop, serve on a GPU instead.
 
@@ -5887,7 +5887,7 @@ Removes the function, versions, snapshots, log group, ECR repo, CodeBuild projec
 
 ## Lambda Managed Instances (GPU)
 
-A separate CDK stack at [`deploy/lambda-gpu/`](https://github.com/strands-labs/strands-decider/tree/d427f3cfb43e22afbbfc2675c9df8dfdca739197/deploy/lambda-gpu) serves the same `POST /v1/systemone` API on a CUDA GPU under [Lambda Managed Instances](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-gpu.html). Same torch + CUDA code path as [SageMaker](/docs/labs/strands-decider/deployment/sagemaker/index.md), so the engine sees the model’s full weights and the GPU does the forward pass. The stack defaults to T4 (`g4dn`) for availability; switch to L4 with `-c instance_types=g6.xlarge,g6.2xlarge -c accelerator_memory_gb=24`.
+A separate CDK stack at [`deploy/lambda-gpu/`](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/lambda-gpu) serves the same `POST /v1/systemone` API on a CUDA GPU under [Lambda Managed Instances](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-gpu.html). Same torch + CUDA code path as [SageMaker](/docs/labs/strands-decider/deployment/sagemaker/index.md), so the engine sees the model’s full weights and the GPU does the forward pass. The stack defaults to T4 (`g4dn`) for availability; switch to L4 with `-c instance_types=g6.xlarge,g6.2xlarge -c accelerator_memory_gb=24`.
 
 -   **When to pick it:** Low-latency agent-loop guards, per-tool-call checks, and moderate-throughput classifiers behind SQS / EventBridge / direct `Invoke`. Requires an EC2 GPU vCPU quota; Event Functions only — no Function URL, no synchronous HTTP.
 
@@ -5933,8 +5933,8 @@ Removes the function, capacity provider, VPC, ECR repository, CodeBuild project,
 
 ## See also
 
--   **CPU stack:** [`deploy/lambda/`](https://github.com/strands-labs/strands-decider/tree/d427f3cfb43e22afbbfc2675c9df8dfdca739197/deploy/lambda) — [full README](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/deploy/lambda/README.md). Exhaustive measurements, precision notes, image-size tradeoffs, cost breakdown, and debugging.
--   **GPU stack:** [`deploy/lambda-gpu/`](https://github.com/strands-labs/strands-decider/tree/d427f3cfb43e22afbbfc2675c9df8dfdca739197/deploy/lambda-gpu) — [full README](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/deploy/lambda-gpu/README.md). CDK context knobs, capacity-provider wiring, image-build caveats.
+-   **CPU stack:** [`deploy/lambda/`](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/lambda) — [full README](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/lambda/README.md). Exhaustive measurements, precision notes, image-size tradeoffs, cost breakdown, and debugging.
+-   **GPU stack:** [`deploy/lambda-gpu/`](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/lambda-gpu) — [full README](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/lambda-gpu/README.md). CDK context knobs, capacity-provider wiring, image-build caveats.
 
 Source: https://strandsagents.com/docs/labs/strands-decider/deployment/lambda/index.md
 
@@ -5964,11 +5964,11 @@ That’s it — `POST /v1/systemone` is up on `http://localhost:8000`. See [Infe
 -   **`--device mlx`** — Apple Silicon through MLX, 1.4–1.6x faster than MPS on the Qwen3.5 model. Needs the `mlx` extra.
 -   **`--device cpu`** — portable fallback; works everywhere, slower on the larger models.
 
-See [designs/inference](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/inference.md#environments-for-serving) for the full matrix of device × model combinations.
+See [designs/inference](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/inference.md#environments-for-serving) for the full matrix of device × model combinations.
 
 ## See also
 
--   Source: [`deploy/README.md`](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/deploy/README.md) — the top-level deploy guide in the SDK repo, covering local plus every other target.
+-   Source: [`deploy/README.md`](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/README.md) — the top-level deploy guide in the SDK repo, covering local plus every other target.
 
 Source: https://strandsagents.com/docs/labs/strands-decider/deployment/local/index.md
 
@@ -5998,7 +5998,7 @@ Trade-offs vs. CDK:
 
 ## CDK deploy
 
-For repeatable deploys with every tuning knob exposed, use the CDK stack in [`deploy/sagemaker/`](https://github.com/strands-labs/strands-decider/tree/d427f3cfb43e22afbbfc2675c9df8dfdca739197/deploy/sagemaker) on the Decider repo. One stack copies the model to S3, picks (or builds) a serving image, and creates the endpoint; `cdk destroy` removes everything.
+For repeatable deploys with every tuning knob exposed, use the CDK stack in [`deploy/sagemaker/`](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/sagemaker) on the Decider repo. One stack copies the model to S3, picks (or builds) a serving image, and creates the endpoint; `cdk destroy` removes everything.
 
 ### Deploy it
 
@@ -6089,8 +6089,8 @@ Callers need IAM `sagemaker:InvokeEndpoint` on the endpoint. The container has n
 
 ## See also
 
--   Source: [`deploy/sagemaker/`](https://github.com/strands-labs/strands-decider/tree/d427f3cfb43e22afbbfc2675c9df8dfdca739197/deploy/sagemaker)
--   Full README: [`deploy/sagemaker/README.md`](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/deploy/sagemaker/README.md)
+-   Source: [`deploy/sagemaker/`](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/sagemaker)
+-   Full README: [`deploy/sagemaker/README.md`](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/sagemaker/README.md)
 
 Source: https://strandsagents.com/docs/labs/strands-decider/deployment/sagemaker/index.md
 
@@ -6117,7 +6117,7 @@ CMD ["strands-decider", "serve", \
      "--port", "8000"]
 ```
 
-Build `--platform linux/amd64` for most cloud hosts; use a GPU-capable base and host for the Gemma 4 12B / 26B-A4B models ([designs/inference](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/inference.md#environments-for-serving)).
+Build `--platform linux/amd64` for most cloud hosts; use a GPU-capable base and host for the Gemma 4 12B / 26B-A4B models ([designs/inference](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/inference.md#environments-for-serving)).
 
 ## AWS ECS / Fargate
 
@@ -6280,7 +6280,7 @@ The server picks a device automatically — `cuda`, then `mps`, then `cpu`. Pass
 
 ## Flags worth knowing
 
--   `--vision` loads the vision tower on the v1 Qwen3.5 checkpoint so requests may carry base64 `images`. v2 Gemma 4 models accept images without this flag. See [designs/images](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/images.md).
+-   `--vision` loads the vision tower on the v1 Qwen3.5 checkpoint so requests may carry base64 `images`. v2 Gemma 4 models accept images without this flag. See [designs/images](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/images.md).
 -   `--max-concurrency N` caps in-flight requests. Each request runs to completion before another picks it up on the engine.
 -   `--max-batch N` sets the per-request question budget.
 -   `--device-map auto` splits a model across multiple GPUs when one is not enough.
@@ -6291,7 +6291,7 @@ Asking several questions about the same state is nearly free because the server 
 
 ## Deeper reading
 
--   [designs/inference](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/inference.md) — full operator reference, calibration notes, and Mac/MLX kernel details.
+-   [designs/inference](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/inference.md) — full operator reference, calibration notes, and Mac/MLX kernel details.
 -   [Deployment](/docs/labs/strands-decider/deployment/local/index.md) — local, SageMaker, Lambda, and other hosting targets.
 
 Source: https://strandsagents.com/docs/labs/strands-decider/inference/index.md
@@ -6356,7 +6356,7 @@ Rate something on an ordered scale. Decider returns an expected value along the 
 
 ### Image input
 
-Decider can also answer questions about images: pass up to four base64 images alongside the state, and the model reads them through its vision tower and answers the same three question types. Every v2 model accepts images out of the box. The [Quickstart](/docs/labs/strands-decider/quickstart/index.md#ask-about-an-image) has a runnable example; [designs/images](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/images.md) has the full request shape and vision benchmark results.
+Decider can also answer questions about images: pass up to four base64 images alongside the state, and the model reads them through its vision tower and answers the same three question types. Every v2 model accepts images out of the box. The [Quickstart](/docs/labs/strands-decider/quickstart/index.md#ask-about-an-image) has a runnable example; [designs/images](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/images.md) has the full request shape and vision benchmark results.
 
 > Note: on the v1 Qwen3.5 checkpoint, load the server with `serve --vision` (or `ask --image …`) to attach the vision tower. v2 Gemma 4 models don’t need the flag. The other v1 Gemma 4 checkpoints don’t support images.
 
@@ -6406,7 +6406,7 @@ Strands Decider v1 publishes five checkpoints: one Qwen3.5 base (with a vision t
 | [12B-gemma4-v1-2610](/docs/labs/strands-decider/models/12b-gemma4/index.md) | gemma-4-12B-it | 12B | 200 | 0.173 | ~23 GB | 136 ms | — |
 | [26B-A4B-gemma4-v1-2610](/docs/labs/strands-decider/models/26b-a4b-gemma4/index.md) | gemma-4-26B-A4B-it | 26B MoE (4B active) | 207 | 0.162 | ~51 GB | 245 ms | — |
 
-JevBench scores come from [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/evaluation/results.md). GPU memory is for the weights only, and it and the latency come from [designs/inference.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/inference.md#gemma-4-models). Activations come on top, and each model page names a GPU that fits. Lower Brier is better; higher JevBench is better.
+JevBench scores come from [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/evaluation/results.md). GPU memory is for the weights only, and it and the latency come from [designs/inference.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/inference.md#gemma-4-models). Activations come on top, and each model page names a GPU that fits. Lower Brier is better; higher JevBench is better.
 
 ## Which v1 model should I pick?
 
@@ -6420,7 +6420,7 @@ Every v1 checkpoint speaks the same `--state` / `--choice` / `--noul` / `--score
 
 ## Naming
 
-Model IDs follow `strands-decider-{size}-{base}-v{N}-{YYMM}`. See [designs/naming](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/naming.md) for the full rule, including what changes when `N` increments.
+Model IDs follow `strands-decider-{size}-{base}-v{N}-{YYMM}`. See [designs/naming](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/naming.md) for the full rule, including what changes when `N` increments.
 
 Source: https://strandsagents.com/docs/labs/strands-decider/models/index.md
 
@@ -6450,7 +6450,7 @@ The dense Gemma 4 12B v1 checkpoint: a LoRA adapter on `google/gemma-4-12B-it` p
 | Held-out code tasks (n=1,996) | 0.870 |
 | HotpotQA, never trained on (n=959) | 0.911 |
 
-Full per-task table in the [model card](https://huggingface.co/StrandsAgents/strands-decider-12B-gemma4-v1-2610) and in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/evaluation/results.md).
+Full per-task table in the [model card](https://huggingface.co/StrandsAgents/strands-decider-12B-gemma4-v1-2610) and in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/evaluation/results.md).
 
 ## Run it
 
@@ -6600,7 +6600,7 @@ The largest v1 checkpoint. A mixture of experts: 26B total parameters with ~4B a
 | GPU memory (bf16) | ~51 GB |
 | Latency, H100 (median) | 245 ms |
 
-Full per-skill numbers (including 12 code sub-tasks ranging 0.562–0.989) are on the [Hugging Face card](https://huggingface.co/StrandsAgents/strands-decider-26B-A4B-gemma4-v1-2610#results) and in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/evaluation/results.md).
+Full per-skill numbers (including 12 code sub-tasks ranging 0.562–0.989) are on the [Hugging Face card](https://huggingface.co/StrandsAgents/strands-decider-26B-A4B-gemma4-v1-2610#results) and in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/evaluation/results.md).
 
 ## Run it
 
@@ -6746,7 +6746,7 @@ The Qwen3.5-based v1 checkpoint. It is the only v1 model that keeps its base mod
 
 Vision (NaturalBench first 300 groups, POPE-adv first 600): 0.776 / 0.872 accuracy, matching hobson-v21 within paired bootstrap 95% CIs.
 
-Full numbers in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/evaluation/results.md#v1-the-released-model).
+Full numbers in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/evaluation/results.md#v1-the-released-model).
 
 ## Run it
 
@@ -6761,7 +6761,7 @@ With images (needs `transformers >= 5.18`):
 strands-decider serve StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 --vision --port 8000
 ```
 
-See [Inference server](/docs/labs/strands-decider/inference/index.md) for the request shape and [designs/images](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/images.md) for the vision request format and benchmark results.
+See [Inference server](/docs/labs/strands-decider/inference/index.md) for the request shape and [designs/images](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/images.md) for the vision request format and benchmark results.
 
 ## When to pick it
 
@@ -6895,7 +6895,7 @@ The smallest Gemma 4 v1 checkpoint: a LoRA adapter on `google/gemma-4-E2B-it` pl
 | Held-out code tasks (n=1,996) | 0.773 |
 | GPU memory (bf16) | ~9 GB |
 
-Decision Index was measured before the E2B attention fix; multi-question yes/no answers went through a faulty GPU kernel, so that figure may be off. Single-question numbers (JevBench, internal sets) are unaffected. Full per-skill results: [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/evaluation/results.md).
+Decision Index was measured before the E2B attention fix; multi-question yes/no answers went through a faulty GPU kernel, so that figure may be off. Single-question numbers (JevBench, internal sets) are unaffected. Full per-skill results: [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/evaluation/results.md).
 
 ## Run it
 
@@ -7037,7 +7037,7 @@ The mid-size Gemma 4 v1 checkpoint. A LoRA adapter on `google/gemma-4-E4B-it` pl
 | Held-out short tasks (n=6,000) | 0.684 |
 | Held-out code tasks (n=1,996) | 0.815 |
 
-Full per-skill numbers in the HF card and in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/evaluation/results.md).
+Full per-skill numbers in the HF card and in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/evaluation/results.md).
 
 ## Run it
 
@@ -7158,7 +7158,7 @@ Source: https://strandsagents.com/docs/labs/strands-decider/models/e4b-gemma4-v2
 
 ## Overview
 
-![Strands Decider](https://raw.githubusercontent.com/strands-labs/strands-decider/d427f3cfb43e22afbbfc2675c9df8dfdca739197/docs/assets/strands-decider-logo.png)
+![Strands Decider](https://raw.githubusercontent.com/strands-labs/strands-decider/ecdb331493761f889351d3ca4936a9ef4e758b33/docs/assets/strands-decider-logo.png)
 
 Strands Decider is a System One model built by the Strands Agents team at AWS. It’s a small, fast decision model you can drop into your agentic applications today.
 
@@ -7278,7 +7278,7 @@ Sample output
 
 Run against this empty-cart screenshot:
 
-![Empty cart screenshot](https://raw.githubusercontent.com/strands-labs/strands-decider/d427f3cfb43e22afbbfc2675c9df8dfdca739197/docs/assets/screen.png)
+![Empty cart screenshot](https://raw.githubusercontent.com/strands-labs/strands-decider/ecdb331493761f889351d3ca4936a9ef4e758b33/docs/assets/screen.png)
 
 ```plaintext
 choice_0 -> empty (confidence 0.887)
@@ -7288,7 +7288,7 @@ choice_0 -> empty (confidence 0.887)
     retry                    0.001
 ```
 
-From the HTTP API, pass base64 images in the `images` field. See [designs/images](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/images.md) for the request shape, limits, and the vision benchmark results.
+From the HTTP API, pass base64 images in the `images` field. See [designs/images](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/images.md) for the request shape, limits, and the vision benchmark results.
 
 ## Next steps
 
@@ -7306,7 +7306,7 @@ The v2 models on the [Models](/docs/labs/strands-decider/models/index.md) page c
 
 ## Which path to take
 
-**You have a decision in your application and some labelled examples.** Start with the [`customize-decider` skill](https://github.com/strands-labs/strands-decider/tree/d427f3cfb43e22afbbfc2675c9df8dfdca739197/skills/customize-decider). It is a guide that an AI coding agent, or a person, follows step by step: build an evaluation set from your data, measure the released models on it, recalibrate the best one, and fine-tune it only if the measurement shows a gap that training can close. Recalibration needs no training run. This is the path for the rows of one application, whether you have hundreds of rows or hundreds of thousands. The skill works with the released models, and its result serves the same way as they do. For a v2 model it fine-tunes with `init_from`: a new LoRA adapter trains on the released weights, and the readout trains on from the released one.
+**You have a decision in your application and some labelled examples.** Start with the [`customize-decider` skill](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/skills/customize-decider). It is a guide that an AI coding agent, or a person, follows step by step: build an evaluation set from your data, measure the released models on it, recalibrate the best one, and fine-tune it only if the measurement shows a gap that training can close. Recalibration needs no training run. This is the path for the rows of one application, whether you have hundreds of rows or hundreds of thousands. The skill works with the released models, and its result serves the same way as they do. For a v2 model it fine-tunes with `init_from`: a new LoRA adapter trains on the released weights, and the readout trains on from the released one.
 
 **You want to train a general model from the base model, on a broad data mix of millions of rows.** Use a v2 recipe. The rest of this page gives the steps.
 
@@ -7344,7 +7344,7 @@ The configs are sized for the v2 data mix of 17.48 million rows, which the [data
     pip install -e ".[train,dev]"
     ```
     
-    [Setup](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/training/README.md#setup) in the training guide has the notes on PyTorch versions.
+    [Setup](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/training/README.md#setup) in the training guide has the notes on PyTorch versions.
     
 -   Network access to Hugging Face for the Gemma 4 base model. Each config pins the revision of its base model.
     
@@ -7409,7 +7409,7 @@ The exported directory has the format of a released v2 model, so you run it the 
 strands-decider serve exports/E4B --port 8000
 ```
 
-See [The token readout](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/architecture.md#training-a-token-readout) for what the export checks.
+See [The token readout](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/architecture.md#training-a-token-readout) for what the export checks.
 
 ## 4\. Evaluate and calibrate the export
 
@@ -7424,18 +7424,18 @@ python -m training.evaluate calibrate exports/E4B --data data/dev_examples.jsonl
 
 The version names: v19 is a research version from before the first release, and its models have `hobson` in their names. v1 and v2 are the first and the second release.
 
-**The v19 reference recipe.** `training/recipe.sh all` builds the data, trains one seed of the v19 reference model (Qwen3.5-2B-Base with a pointer head), calibrates and evaluates. It takes about 11 hours on one RTX 3090. [Usage](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/training/README.md#usage) in the training guide has the stages and what each one writes.
+**The v19 reference recipe.** `training/recipe.sh all` builds the data, trains one seed of the v19 reference model (Qwen3.5-2B-Base with a pointer head), calibrates and evaluates. It takes about 11 hours on one RTX 3090. [Usage](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/training/README.md#usage) in the training guide has the stages and what each one writes.
 
-**The released v1 models.** `configs/v1/` holds the training config of each released v1 model. Each release is an average of three runs of its config (a soup), calibrated after the average. Part of the v1 training data is built outside the repository, so `recipe.sh all` does not rebuild a v1 model. [The v1 release recipes](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/training/README.md#the-v1-release-recipes) says what each config reads.
+**The released v1 models.** `configs/v1/` holds the training config of each released v1 model. Each release is an average of three runs of its config (a soup), calibrated after the average. Part of the v1 training data is built outside the repository, so `recipe.sh all` does not rebuild a v1 model. [The v1 release recipes](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/training/README.md#the-v1-release-recipes) says what each config reads.
 
-**Fine-tuning a released v1 model.** A training config can start from a released model with `init_from` and train it on your rows. [Fine-tuning a released model](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/training/README.md#fine-tuning-a-released-model-with-init_from) has an example config, and the `customize-decider` skill covers the whole path.
+**Fine-tuning a released v1 model.** A training config can start from a released model with `init_from` and train it on your rows. [Fine-tuning a released model](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/training/README.md#fine-tuning-a-released-model-with-init_from) has an example config, and the `customize-decider` skill covers the whole path.
 
 ## Where to go next
 
--   [The `customize-decider` skill](https://github.com/strands-labs/strands-decider/tree/d427f3cfb43e22afbbfc2675c9df8dfdca739197/skills/customize-decider) — measure a released model on your data, and train only if the measurement says so.
--   [The v2 recipes](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/training/README.md#the-v2-recipes) — the three steps in the training guide.
--   [The token readout](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/architecture.md#training-a-token-readout) — the design of the readout, the attention and the export.
--   [`training/hardware.md`](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/training/hardware.md) — memory, throughput, and length-grouped batching.
+-   [The `customize-decider` skill](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/skills/customize-decider) — measure a released model on your data, and train only if the measurement says so.
+-   [The v2 recipes](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/training/README.md#the-v2-recipes) — the three steps in the training guide.
+-   [The token readout](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/architecture.md#training-a-token-readout) — the design of the readout, the attention and the export.
+-   [`training/hardware.md`](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/training/hardware.md) — memory, throughput, and length-grouped batching.
 
 Source: https://strandsagents.com/docs/labs/strands-decider/training/index.md
 
@@ -7443,7 +7443,7 @@ Source: https://strandsagents.com/docs/labs/strands-decider/training/index.md
 
 ## Understanding Strands Decider
 
-Strands Decider is a decision model built on a pretrained language model. Training does not change the base model’s own weights. It adds two small parts: a LoRA adapter (a small set of extra weights next to the base model’s) and a readout (the layer that turns the model’s output into one score for each option). This page explains the shape of the system — what it answers, how the readout works, how to read its confidence, and what the models train on — without going into the full operator reference. For that, see the design notes in [designs/](https://github.com/strands-labs/strands-decider/tree/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs) on GitHub.
+Strands Decider is a decision model built on a pretrained language model. Training does not change the base model’s own weights. It adds two small parts: a LoRA adapter (a small set of extra weights next to the base model’s) and a readout (the layer that turns the model’s output into one score for each option). This page explains the shape of the system — what it answers, how the readout works, how to read its confidence, and what the models train on — without going into the full operator reference. For that, see the design notes in [designs/](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/designs) on GitHub.
 
 There are two versions. The v2 models are the current models: five sizes on Gemma 4, with the token readout that this page describes first. The five v1 models stay available. [Models](/docs/labs/strands-decider/models/index.md) lists the two families, and [Training a Decider model](/docs/labs/strands-decider/training/index.md) has the v2 training steps.
 
@@ -7495,9 +7495,9 @@ If you want to train your own decider, see [Training a Decider model](/docs/labs
 
 The full design notes live in the GitHub repository. These are deeper than the site surface and change as the research moves:
 
--   [designs/architecture.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/architecture.md) — the pointer head, the token readout, question-type read-back, and confidence.
--   [designs/inference.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/inference.md) — the full operator reference, the shared-prefix cache, device kernels, and Hub artifact format.
--   [designs/naming.md](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/naming.md) — released model identifiers and version fields.
+-   [designs/architecture.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/architecture.md) — the pointer head, the token readout, question-type read-back, and confidence.
+-   [designs/inference.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/inference.md) — the full operator reference, the shared-prefix cache, device kernels, and Hub artifact format.
+-   [designs/naming.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/naming.md) — released model identifiers and version fields.
 
 Source: https://strandsagents.com/docs/labs/strands-decider/understanding/index.md
 
@@ -9410,7 +9410,7 @@ Source: https://strandsagents.com/docs/learning/switching-model-providers/index.
 
 Box Core runs an agent on Linux or macOS under a policy. The agent can reach only the files, programs, and network destinations you allow. You describe a box in two files: `box.toml` says what to run and what it can reach, and `policy.dw` decides each request it makes.
 
-In this guide you’ll put the [Strands CLI](https://github.com/strands-agents/harness-sdk/tree/main/strands-cli) in a box on macOS. You’ll give it one tool, a shell, so your policy decides every command it runs and every file its shell reads or writes, and you’ll watch the box refuse a write, then change the policy to allow it. The finished files are in [`examples/strands-cli`](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/strands-cli/).
+In this guide you’ll put the [Strands CLI](https://github.com/strands-agents/harness-sdk/tree/main/strands-cli) in a box on macOS. You’ll give it one tool, a shell, so your policy decides every command it runs and every file its shell reads or writes, and you’ll watch the box refuse a write, then change the policy to allow it. The finished files are in [`examples/strands-cli`](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/strands-cli/).
 
 To run a coding agent such as Claude Code with a profile instead, install the Box CLI and follow [Get started with Box](/docs/user-guide/box/quickstart/index.md).
 
@@ -9423,7 +9423,7 @@ Show the prompt
 ```text
 Help me put the Strands CLI in a Strands Box on this Mac. Fetch this guide and follow it step by
 step, and prefer it over what you remember about Box:
-https://raw.githubusercontent.com/strands-agents/box/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/user/getting-started.md
+https://raw.githubusercontent.com/strands-agents/box/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/user/getting-started.md
 
 Rules:
 - First, check the guide's "Before you start" list. Tell me what's missing, and stop if something
@@ -9438,7 +9438,7 @@ Rules:
   its decision log command to find the cause.
 - When the box works, offer to help me change what it allows in my-box/policy.dw. The
   policy-authoring skill at
-  https://raw.githubusercontent.com/strands-agents/box/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/.agents/skills/authoring-box-policy/SKILL.md
+  https://raw.githubusercontent.com/strands-agents/box/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/.agents/skills/authoring-box-policy/SKILL.md
   teaches the Dogwood policy language and the box's action vocabulary; fetch it and follow it.
 ```
 
@@ -9482,7 +9482,7 @@ Box has no runtime environment opt-in for ARM64 or x86-64.
 
 After installation, run the [native Linux example](/docs/user-guide/box/reference/linux-requirements/index.md#run-a-native-linux-example) to check sandbox startup and file access without model credentials. For a cloud workload, continue with the [Amazon EKS coding example](/docs/user-guide/box/guides/deploy-to-eks/index.md) or the [AgentCore Runtime shipment example](/docs/user-guide/box/guides/deploy-to-agentcore-runtime/index.md). Steps 2 to 8 below follow the macOS Strands CLI example.
 
-Check the [Linux requirements](/docs/user-guide/box/reference/linux-requirements/index.md) before running a workload; a successful `box --version` does not test sandbox startup. Use the [platform comparison](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/platform-differences.md) when adapting a macOS configuration.
+Check the [Linux requirements](/docs/user-guide/box/reference/linux-requirements/index.md) before running a workload; a successful `box --version` does not test sandbox startup. Use the [platform comparison](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/platform-differences.md) when adapting a macOS configuration.
 
 Build from source (optional)
 
@@ -9579,7 +9579,7 @@ Save this file as `my-box/box.toml`:
 
 ```toml
 # To author or change the policy next to this file, point your coding agent at the skill:
-#   https://raw.githubusercontent.com/strands-agents/box/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/.agents/skills/authoring-box-policy/SKILL.md
+#   https://raw.githubusercontent.com/strands-agents/box/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/.agents/skills/authoring-box-policy/SKILL.md
 
 # The box's name, and where it keeps its own state. The agent can't reach box_dir.
 name = "strands"
@@ -9789,7 +9789,7 @@ rm -rf ~/box-tutorial
 -   [Collect the Strands CLI’s traces and metrics](/docs/user-guide/box/guides/strands-cli-telemetry/index.md): put the agent’s own spans and metrics in the same records file as the box’s decisions.
 -   [The `[mcp.<name>]` table](/docs/user-guide/box/guides/add-an-mcp-server/index.md): add an MCP server to the box you wrote.
 -   [Policy](/docs/user-guide/box/reference/policy/index.md): what a policy is, the actions, the common rules, and what to do when a policy fails to load.
--   [The design guide](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/): how Box works, why it’s safe, and the decisions behind it.
+-   [The design guide](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/): how Box works, why it’s safe, and the decisions behind it.
 
 Source: https://strandsagents.com/docs/user-guide/box/core/quickstart/index.md
 
@@ -10166,9 +10166,9 @@ For a request the policy refuses, see [troubleshooting](/docs/user-guide/box/gui
 ## See also
 
 -   [Write policy for an MCP server](/docs/user-guide/box/guides/write-mcp-policy/index.md): the rules that let the agent start, list, and call a server, and how to connect the harness.
--   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/mcp.md): how the box starts a server and decides each call.
--   [Local MCP servers in the design guide](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/containment.md#local-mcp-servers): what a stdio server’s sandbox reaches.
--   [macOS network restrictions](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/macos-enforcement.md#network-connections-and-local-services): how the sandbox limits a server’s connections.
+-   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/mcp.md): how the box starts a server and decides each call.
+-   [Local MCP servers in the design guide](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/containment.md#local-mcp-servers): what a stdio server’s sandbox reaches.
+-   [macOS network restrictions](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/macos-enforcement.md#network-connections-and-local-services): how the sandbox limits a server’s connections.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/add-an-mcp-server/index.md
 
@@ -10182,11 +10182,11 @@ Eligibility checks and dispatch requests share `/orders/{order_id}/replacement`.
 
 ## Before you start
 
-Prepare the package on Linux ARM64 with Python 3.12, pip, Git, and Rust through rustup. ARM64 is the 64-bit Arm processor architecture. The Box checkout selects its Rust toolchain. Install its [native build dependencies](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/README.md#build-from-source). On Amazon Linux 2023, the build requires GCC, G++, Make, CMake, OpenSSL development files, pkg-config, and Perl. Python 3.12 also needs the pip and virtual-environment packages.
+Prepare the package on Linux ARM64 with Python 3.12, pip, Git, and Rust through rustup. ARM64 is the 64-bit Arm processor architecture. The Box checkout selects its Rust toolchain. Install its [native build dependencies](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/README.md#build-from-source). On Amazon Linux 2023, the build requires GCC, G++, Make, CMake, OpenSSL development files, pkg-config, and Perl. Python 3.12 also needs the pip and virtual-environment packages.
 
 Use a development AWS account and an existing Amazon S3 bucket in `us-west-2` owned by that account. Authenticate a profile with permissions to deploy CloudFormation, create the execution role, upload the package, and invoke Runtime. The execution role receives model permissions from the generated template. Model and cloud-resource usage can incur charges.
 
-The [sample README](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/cloud-deployments/agentcore-runtime/README.md#tested-scope) records the tested source revision, framework versions, and platform limits. The deployment uses managed Runtime V2 with Python 3.12 and a non-root operator. The model profile and endpoint are fixed to the tested commercial AWS configuration.
+The [sample README](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/cloud-deployments/agentcore-runtime/README.md#tested-scope) records the tested source revision, framework versions, and platform limits. The deployment uses managed Runtime V2 with Python 3.12 and a non-root operator. The model profile and endpoint are fixed to the tested commercial AWS configuration.
 
 ## Prepare the package
 
@@ -10316,7 +10316,7 @@ Use an EKS cluster with Linux ARM64 workers. ARM64 is the 64-bit Arm processor a
 
 ## Check your cluster
 
-The scripted example passed on EKS 1.33.13; the Claude examples were tested on EKS 1.35. The [tested configurations](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/cloud-deployments/eks/README.md#tested-configuration) list worker versions and results. These are tested combinations, not minimum supported versions.
+The scripted example passed on EKS 1.33.13; the Claude examples were tested on EKS 1.35. The [tested configurations](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/cloud-deployments/eks/README.md#tested-configuration) list worker versions and results. These are tested combinations, not minimum supported versions.
 
 Your cluster must accept these settings, and its workers must support them:
 
@@ -10420,7 +10420,7 @@ python3 run.py --mode claude --exercise deployment-cooldown \
 
 The runner selects `deployment-cooldown` by default for Claude and records the selected example in `receipt.json`. A successful result contains `passed: true`. The test checks for three failed deployments, at least two blocked retries, and a successful status check after the failures. The mock service returns HTTP 503 (service unavailable) for its first three deployment requests and HTTP 201 (created) afterward. Box enforces the cooldown.
 
-The agent finishes after those checks. It does not wait for the cooldown to end. Run the [test without a model](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/cloud-deployments/eks/claude/README.md#check-cooldown-expiry-without-a-model) to check that deployment becomes available again. That test waits through the full ten-minute cooldown and checks that Box permits the next deployment request. The supplied client makes sequential calls within one box. Requests already in flight and activity in other boxes remain outside this limit. Model responses can vary. Check `receipt.json` for the test result, even if the agent reports success.
+The agent finishes after those checks. It does not wait for the cooldown to end. Run the [test without a model](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/cloud-deployments/eks/claude/README.md#check-cooldown-expiry-without-a-model) to check that deployment becomes available again. That test waits through the full ten-minute cooldown and checks that Box permits the next deployment request. The supplied client makes sequential calls within one box. Requests already in flight and activity in other boxes remain outside this limit. Model responses can vary. Check `receipt.json` for the test result, even if the agent reports success.
 
 To run the coding and file-permission example, select `boundaries`:
 
@@ -10449,7 +10449,7 @@ A feature gate is a switch that enables a Kubernetes feature. Kubernetes 1.31 ha
 
 The error names these gates as troubleshooting hints. A changed seccomp profile points to Pod Security and other admission rules. The script does not inspect the gates or rules, so these hints do not confirm the cause.
 
-Use the [tested configurations](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/cloud-deployments/eks/README.md#tested-configuration) as a starting point when choosing cluster and worker versions. This guide does not provide a validated older-cluster opt-in procedure. Changing only `spec.kubelet.config.featureGates.UserNamespacesSupport` in an Amazon Linux 2023 node launch template does not enable an API-server feature or `ProcMountType`.
+Use the [tested configurations](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/cloud-deployments/eks/README.md#tested-configuration) as a starting point when choosing cluster and worker versions. This guide does not provide a validated older-cluster opt-in procedure. Changing only `spec.kubelet.config.featureGates.UserNamespacesSupport` in an Amazon Linux 2023 node launch template does not enable an API-server feature or `ProcMountType`.
 
 ### The Job does not create a Pod
 
@@ -10516,7 +10516,7 @@ The controller reads a short-lived token from the VM’s service account. The ag
 | Retry after the ten-minute cooldown | Allows the request in the separate policy check. |
 | Call Gemini | Allows streaming requests for the configured project, location, and model. |
 
-Dogwood is Box’s policy language. The [policy](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/cloud-deployments/eks/claude/deployment_policy.py) counts completed failure responses in this Box’s history. The tools contain no retry guard. The mock service accepts the first request that reaches it after those three failures.
+Dogwood is Box’s policy language. The [policy](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/cloud-deployments/eks/claude/deployment_policy.py) counts completed failure responses in this Box’s history. The tools contain no retry guard. The mock service accepts the first request that reaches it after those three failures.
 
 ## Before you start
 
@@ -10531,7 +10531,7 @@ Install Python 3.10 or later, Git, and the [Google Cloud CLI](https://cloud.goog
 
 The VM service account receives only `aiplatform.endpoints.predict`.
 
-The [sample README](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/cloud-deployments/gcp/README.md#tested-configuration) records the tested image, source revision, and runtime versions.
+The [sample README](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/cloud-deployments/gcp/README.md#tested-configuration) records the tested image, source revision, and runtime versions.
 
 The default deployment creates a billable `t2a-standard-4` VM and a 40 GB disk in `us-central1-a`. It creates a separate network with no incoming firewall rules. The VM uses an ephemeral external IP for outgoing downloads and model calls. No SSH access or downloaded service-account key is needed.
 
@@ -10608,7 +10608,7 @@ Box uses native filesystem grants for Python libraries, example code, and the wr
 
 Each run has separate Box history. The cooldown is not a shared quota across VMs or concurrent agents. The model check stops before cooldown expiry. The separate policy check verifies expiry. The controller does not refresh its token during a run and requires sufficient token lifetime before it starts. It retains up to 4 MiB of standard output and 1 MiB of standard error for each Box run. This example does not establish support for Google Kubernetes Engine, Cloud Run, x86-64 Linux, or other VM images.
 
-The [source revision](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/cloud-deployments/gcp/deploy.py), [dependency lock](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/cloud-deployments/gcp/dependency-lock.txt), and [startup script](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/cloud-deployments/gcp/setup-vm.sh) define the build. Model availability can change. Select another supported Gemini model with `--model` when needed. The default image is `debian-12-bookworm-arm64-v20261102` from `debian-cloud`. Use `--image` to select another Debian image and rerun the checks.
+The [source revision](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/cloud-deployments/gcp/deploy.py), [dependency lock](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/cloud-deployments/gcp/dependency-lock.txt), and [startup script](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/cloud-deployments/gcp/setup-vm.sh) define the build. Model availability can change. Select another supported Gemini model with `--model` when needed. The default image is `debian-12-bookworm-arm64-v20261102` from `debian-cloud`. Use `--image` to select another Debian image and rerun the checks.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/deploy-to-google-cloud/index.md
 
@@ -10618,11 +10618,11 @@ Source: https://strandsagents.com/docs/user-guide/box/guides/deploy-to-google-cl
 
 An `[egress.<name>]` table in `box.toml` binds a credential to a set of destinations. The box’s egress gateway adds the credential to each request to those destinations. Policy decides whether each request goes out.
 
-Audience: an operator with a working box from [getting started](/docs/user-guide/box/core/quickstart/index.md) who gives the agent a credential for a service. For how the gateway decides and forwards each request, read [how Box controls outbound traffic](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/egress.md).
+Audience: an operator with a working box from [getting started](/docs/user-guide/box/core/quickstart/index.md) who gives the agent a credential for a service. For how the gateway decides and forwards each request, read [how Box controls outbound traffic](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/egress.md).
 
 A tool or local MCP server with `network.contain_egress = false` can connect directly, outside gateway policy. On Linux, this includes IPv4 access to reachable private networks, loopback services, and instance metadata endpoints. See [server network settings](/docs/user-guide/box/guides/add-an-mcp-server/index.md#network).
 
-Such a program connects as it would on the host. Box sets no proxy variable and no CA file for it, so it uses its own defaults and verifies the real server’s certificate. Its table’s `env` may set `HTTPS_PROXY`, `SSL_CERT_FILE`, `GIT_SSL_CAINFO` and the other proxy and CA names, for a company proxy or CA bundle; add a `read_file` entry for a file it names. On macOS, the program may ask the system’s certificate services (`trustd` and `SecurityServer`), and keychain files stay unreadable. On Linux, if the default bundle is a link outside `/etc/ssl`, such as into `/etc/pki`, add a `read` entry for it. The startup report shows a `native trust:` line for the program. See [a native-egress process keeps its own proxy and trust settings](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/decisions.md#a-native-egress-process-keeps-its-own-proxy-and-trust-settings).
+Such a program connects as it would on the host. Box sets no proxy variable and no CA file for it, so it uses its own defaults and verifies the real server’s certificate. Its table’s `env` may set `HTTPS_PROXY`, `SSL_CERT_FILE`, `GIT_SSL_CAINFO` and the other proxy and CA names, for a company proxy or CA bundle; add a `read_file` entry for a file it names. On macOS, the program may ask the system’s certificate services (`trustd` and `SecurityServer`), and keychain files stay unreadable. On Linux, if the default bundle is a link outside `/etc/ssl`, such as into `/etc/pki`, add a `read` entry for it. The startup report shows a `native trust:` line for the program. See [a native-egress process keeps its own proxy and trust settings](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/decisions.md#a-native-egress-process-keeps-its-own-proxy-and-trust-settings).
 
 ## Example
 
@@ -10640,7 +10640,7 @@ secret.ref   = "aws://my-profile"
 
 `box run` reads `GITHUB_TOKEN` from its own environment. The agent gets a placeholder in `GITHUB_TOKEN`, and sends it as it would send the token. The gateway replaces the placeholder with the real token on each request to `api.github.com`.
 
-> **Every process in the box can use every route.** The agent, each tool, each stdio MCP server, and the Shell that runs the agent’s commands get the same placeholders, and the gateway adds the real credential to a request from any of them. The gateway can’t tell which process sent a request, so no setting limits a route to one process. To keep a credential away from a tool or a server, run it in a separate box. [The box is the credential boundary](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/decisions.md#the-box-is-the-credential-boundary) explains why.
+> **Every process in the box can use every route.** The agent, each tool, each stdio MCP server, and the Shell that runs the agent’s commands get the same placeholders, and the gateway adds the real credential to a request from any of them. The gateway can’t tell which process sent a request, so no setting limits a route to one process. To keep a credential away from a tool or a server, run it in a separate box. [The box is the credential boundary](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/decisions.md#the-box-is-the-credential-boundary) explains why.
 
 To let the requests out, permit them in `policy.dw`:
 
@@ -10894,7 +10894,7 @@ Without forced termination, Box waits for active upstream exchanges and other wo
 
 ## See also
 
--   [How Box controls outbound traffic](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/egress.md): routing, the connect and request decisions, and how the gateway adds a credential.
+-   [How Box controls outbound traffic](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/egress.md): routing, the connect and request decisions, and how the gateway adds a credential.
 -   [The `[mcp.<name>]` table](/docs/user-guide/box/guides/add-an-mcp-server/index.md): a credential for an http MCP server.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/network-and-credentials/index.md
@@ -11240,7 +11240,7 @@ Set `STRANDS_BOX_TELEMETRY_DEBUG` to also print each failed export as it happens
 ## See also
 
 -   [Getting started](/docs/user-guide/box/core/quickstart/index.md): install Box, then run Claude Code or Codex in a box.
--   [How telemetry works](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/record-telemetry/index.md
 
@@ -11250,7 +11250,7 @@ Source: https://strandsagents.com/docs/user-guide/box/guides/record-telemetry/in
 
 An agent you write with the [Strands Agents SDK](https://github.com/strands-agents/sdk-python) runs in a box like any other program. In this example each of its three tools runs a command through the box’s shell, so the policy decides every command and every file a command touches. By the end of this page you have the agent working on the project from getting started, and you have watched the policy permit two tasks and refuse two, with the refusal text the agent read.
 
-Audience: an operator who has run [getting started](/docs/user-guide/box/core/quickstart/index.md) and [write a policy](/docs/user-guide/box/guides/write-a-policy/index.md) on a Mac. The files are in [`examples/strands-box/strands-sdk-agent`](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/strands-box/strands-sdk-agent/) in the repository, and this page walks through them.
+Audience: an operator who has run [getting started](/docs/user-guide/box/core/quickstart/index.md) and [write a policy](/docs/user-guide/box/guides/write-a-policy/index.md) on a Mac. The files are in [`examples/strands-box/strands-sdk-agent`](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/strands-box/strands-sdk-agent/) in the repository, and this page walks through them.
 
 ## Before you start
 
@@ -11598,7 +11598,7 @@ A Strands Agents SDK agent that sends every tool call through the box’s shell,
 -   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): each part of a rule, and the record of each decision.
 -   [Strands Shell](/docs/user-guide/box/reference/shell/index.md): what the agent’s `zsh -c` runs, where, and the fields a rule reads.
 -   [Security](/docs/user-guide/box/security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of the agent’s `read` list.
--   [The example directory](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/strands-box/strands-sdk-agent/): the files this page walks through.
+-   [The example directory](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/strands-box/strands-sdk-agent/): the files this page walks through.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/run-strands-harness/index.md
 
@@ -11805,7 +11805,7 @@ For errors from the box itself, see [If something goes wrong](/docs/user-guide/b
 
 -   [Telemetry](/docs/user-guide/box/guides/record-telemetry/index.md): send records to a file of your own, and what each record carries.
 -   [The `[telemetry.<label>]` table](/docs/user-guide/box/reference/configuration/index.md#telemetrylabel): every key, and the exporter variables a box owns.
--   [How telemetry works](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/strands-cli-telemetry/index.md
 
@@ -12566,8 +12566,8 @@ Read the startup warning as the signal that a rule went inert, then check it aga
 ## See also
 
 -   [The `[mcp.<name>]` table](/docs/user-guide/box/guides/add-an-mcp-server/index.md): the keys for a `stdio` and an `http` server.
--   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/mcp.md): how the box starts a server and decides each call.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/policy.md): how the engine decides, and what refuses to load.
+-   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/mcp.md): how the box starts a server and decides each call.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/policy.md): how the engine decides, and what refuses to load.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/write-mcp-policy/index.md
 
@@ -12765,8 +12765,8 @@ permit  shell:spawn  /Library/Developer/CommandLineTools/usr/bin/git add todo.tx
 ## See also
 
 -   [Strands Shell reference](/docs/user-guide/box/reference/shell/index.md): every field, action, and exit status.
--   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/shell.md): the order of the checks.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/policy.md): how the engine decides, and what refuses to load.
+-   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/shell.md): the order of the checks.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/policy.md): how the engine decides, and what refuses to load.
 
 Source: https://strandsagents.com/docs/user-guide/box/guides/write-shell-policy/index.md
 
@@ -12792,7 +12792,7 @@ The agent runs inside an operating system sandbox. Box enforces what it can reac
 -   The sandbox limits the agent’s own file access, such as its tools that read and edit files, to the files and folders that the profile grants.
 -   Box checks everything else against your policy before it happens: each shell command and the files that command touches, each network request, and each MCP tool call.
 
-![The agent runs in an OS sandbox inside the box. Its requests go to Box, which checks each one against your policy before it reaches files, commands, the network, or MCP tools. Denied requests stop there.](https://raw.githubusercontent.com/strands-agents/box/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/cli/images/how-box-works.png)
+![The agent runs in an OS sandbox inside the box. Its requests go to Box, which checks each one against your policy before it reaches files, commands, the network, or MCP tools. Denied requests stop there.](https://raw.githubusercontent.com/strands-agents/box/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/cli/images/how-box-works.png)
 
 The picture is simplified: the agent’s own file reads and writes reach only the files the profile grants, and the sandbox enforces that. Box checks the rest against policy, including each command the box’s shell runs itself, such as `echo`, `cp`, or a redirect. A program that the shell starts, such as `git` or `node`, runs in a sandbox of its own, which reaches only the files its toolchain grants. So a file rule in your policy decides the shell’s own commands, and not what those programs or the agent’s file tools open ([Where file rules apply](/docs/user-guide/box/file-rules/index.md)). A sandbox refusal fails with an error such as `operation not permitted`. It isn’t a policy decision, so the activity banner and the run history don’t show it.
 
@@ -12815,7 +12815,7 @@ policies = ["policy.dw"]
 
 A pack holds what one program needs in a box: how to start it, where its settings are, and which hosts it reaches. A profile lists its packs, and `box` puts them together for each run.
 
-An agent pack runs the agent, a tool pack runs a program that the agent calls from its shell, and a support pack adds the rest, such as a model provider’s [route](#credentials) and where Box gets its credential. [Packs](/docs/user-guide/box/packs/index.md) says what each kind holds and how to write one, and the [user guide](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/cli/README.md#packs) lists the packs that Box ships.
+An agent pack runs the agent, a tool pack runs a program that the agent calls from its shell, and a support pack adds the rest, such as a model provider’s [route](#credentials) and where Box gets its credential. [Packs](/docs/user-guide/box/packs/index.md) says what each kind holds and how to write one, and the [user guide](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/cli/README.md#packs) lists the packs that Box ships.
 
 ## Starters
 
@@ -12833,7 +12833,7 @@ An edit to a rule can take effect while the agent keeps running: the banner show
 
 The agent needs keys to do its work, such as its model key or a token to push to GitHub. Box keeps them outside the box. A host that needs a key is reached through a route: an `[egress.<name>]` table in a pack or the profile that names the hosts and where the key comes from, such as a variable in your shell, never the key itself. Where the key comes from can also be your password manager: a [plugin](/docs/user-guide/box/plugins/index.md) in the profile reads it on your machine when the box starts ([Read a token from your vault](/docs/user-guide/box/profiles/index.md#read-a-token-from-your-vault)). Inside the box, the agent sees a placeholder key in place of the key, and Box puts the real key in as the request leaves for one of the route’s hosts.
 
-![The agent in the box sends a placeholder key. Box holds the real token and adds it as the request leaves for github.com.](https://raw.githubusercontent.com/strands-agents/box/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/cli/images/credentials.png)
+![The agent in the box sends a placeholder key. Box holds the real token and adds it as the request leaves for github.com.](https://raw.githubusercontent.com/strands-agents/box/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/cli/images/credentials.png)
 
 The model provider’s pack sets this up for the model key. For another service, you add a route to the profile ([Give the agent a token for another service](/docs/user-guide/box/profiles/index.md#give-the-agent-a-token-for-another-service)).
 
@@ -12849,7 +12849,7 @@ A box limits what the agent can reach, but it doesn’t check what the agent wri
 
 -   [Get started](/docs/user-guide/box/quickstart/index.md): install `box` and run Claude Code in a box.
 -   [Command reference](/docs/user-guide/box/reference/cli/index.md): every `box` command and its flags.
--   For how each part works inside, the [design pages](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/profiles.md) go deeper.
+-   For how each part works inside, the [design pages](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/profiles.md) go deeper.
 
 Source: https://strandsagents.com/docs/user-guide/box/how-box-works/index.md
 
@@ -12872,7 +12872,7 @@ Install your agent, such as Claude Code, and set up its credentials first. The i
 Download the installer and run it:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/strands-agents/box/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/strands-agents/box/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/install.sh | sh
 ```
 
 Example output on a Mac:
@@ -12894,7 +12894,7 @@ box run claude                             # Run from your project
 
 box sends usage telemetry to telemetry.strandsagents.com
 To opt out, run: box telemetry off
-To learn more: https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/CLI_TELEMETRY.md
+To learn more: https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/CLI_TELEMETRY.md
 ```
 
 In a color terminal, a progress bar replaces the `Downloading` and `Installed` lines. On Linux, the check line is `Verified checksum and archive`, because there are no Apple checks. The telemetry lines appear only while telemetry is on, so if you’ve already [turned it off](/docs/user-guide/box/reference/cli/index.md#box-telemetry), a new install keeps that choice and leaves them out.
@@ -12929,7 +12929,7 @@ The installer reads your shell from `SHELL`. If `SHELL` is unset, it uses zsh on
 To upgrade to the latest release, run the install command again. To install another release, run the installer again with its number in `BOX_VERSION`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/strands-agents/box/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/install.sh | BOX_VERSION=0.3.1 sh
+curl -fsSL https://raw.githubusercontent.com/strands-agents/box/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/install.sh | BOX_VERSION=0.3.1 sh
 ```
 
 It switches `current` to that release, prints `Updated box 0.3.0 to 0.3.1.`, and then shows the same welcome as a first install. When you have that release already, it prints `box 0.3.1 is already installed.` and keeps your release, without the welcome. If you installed with any of the other [installer variables](#installer-variables), set them again.
@@ -12951,7 +12951,7 @@ Old releases stay in `~/.strands/box/packages/`. Installing one you already have
 To install from another public repository, such as your own fork, name it in `BOX_GITHUB_REPO`. On macOS, a release that isn’t signed by the Box publisher, such as a fork’s own build, also needs `BOX_ALLOW_UNSIGNED=1`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/strands-agents/box/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/install.sh |
+curl -fsSL https://raw.githubusercontent.com/strands-agents/box/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/install.sh |
   BOX_GITHUB_REPO=your-account/box BOX_ALLOW_UNSIGNED=1 sh
 ```
 
@@ -12960,7 +12960,7 @@ curl -fsSL https://raw.githubusercontent.com/strands-agents/box/7c4ea75ff509e542
 ## Manage PATH without the installer
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/strands-agents/box/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/install.sh |
+curl -fsSL https://raw.githubusercontent.com/strands-agents/box/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/install.sh |
   BOX_NO_MODIFY_PATH=1 sh
 ```
 
@@ -12977,7 +12977,7 @@ just build-cli
 export PATH="$PWD/target/debug:$PATH"
 ```
 
-The build uses the packs and starters in the checkout’s `resources/`. The `export` lasts only in this terminal, so add `target/debug` to your `PATH` in your shell’s startup file to keep it. [CONTRIBUTING.md](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/CONTRIBUTING.md) has more on building from source.
+The build uses the packs and starters in the checkout’s `resources/`. The `export` lasts only in this terminal, so add `target/debug` to your `PATH` in your shell’s startup file to keep it. [CONTRIBUTING.md](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/CONTRIBUTING.md) has more on building from source.
 
 ## Uninstall
 
@@ -13009,7 +13009,7 @@ Source: https://strandsagents.com/docs/user-guide/box/install/index.md
 
 Read this page before you trust a run with work that matters, such as a run with the agent’s permission prompts off. While the box runs, it controls which files the agent reads and writes, which programs it starts, and which hosts it reaches ([How Box works](/docs/user-guide/box/how-box-works/index.md#the-box)). What happens in your project after the run is up to you, and the box trusts the settings, profiles, and packs you give it. Each section below names one thing the box leaves to you, who it affects, and what to check or turn off.
 
-This page covers what holds for every run. A pack or a plugin can have limits of its own, and those are in the **Limitations** section of its README. Its fixes are in the **Troubleshooting** section of the same README. [Packs](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/cli/README.md#packs) and [Plugins](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/cli/README.md#plugins) list each one.
+This page covers what holds for every run. A pack or a plugin can have limits of its own, and those are in the **Limitations** section of its README. Its fixes are in the **Troubleshooting** section of the same README. [Packs](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/cli/README.md#packs) and [Plugins](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/cli/README.md#plugins) list each one.
 
 ## How the agents ask before they act
 
@@ -13138,7 +13138,7 @@ Some tools are one file with several names: rustup’s `cargo` and `rustc` are n
 
 The first time you run a profile, `box` copies some of your own files into that profile’s [storage](/docs/user-guide/box/reference/files/index.md#profile-storage-and-runs), such as your instructions, skills, and preferences, and the agent reads them from there in every project. The agent’s pack decides which files come in, and its README lists them. `box profile show` prints a `copy` line for each one. The rest of your setup stays outside the box, so the agent doesn’t see it. Your MCP settings come in separately, as the [next section](#mcp-servers-in-the-box) explains.
 
-The agent can change those copies. Its edits never reach your own files, but they do reach every project of the profile ([One profile is shared by all projects](#one-profile-is-shared-by-all-projects)). For files such as your instructions and skills, each run copies in a file you changed since the last copy, and if the agent changed its copy too, yours replaces it and `box` prints which copy it replaced. A file you delete on your machine stays in the box. A file that the agent adds to, such as Claude Code’s settings, comes in only once, and `box profile show` marks it `already in storage`. To take a fresh copy of one of those, delete the copy from the storage folder that `box profile show` prints, and the next run copies your file again. That throws away what the agent changed in it ([Copy status](/docs/user-guide/box/reference/packs/index.md#copy-status)). The full copy rules are on the [design page](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/profile-language.md#sync), if you want the details.
+The agent can change those copies. Its edits never reach your own files, but they do reach every project of the profile ([One profile is shared by all projects](#one-profile-is-shared-by-all-projects)). For files such as your instructions and skills, each run copies in a file you changed since the last copy, and if the agent changed its copy too, yours replaces it and `box` prints which copy it replaced. A file you delete on your machine stays in the box. A file that the agent adds to, such as Claude Code’s settings, comes in only once, and `box profile show` marks it `already in storage`. To take a fresh copy of one of those, delete the copy from the storage folder that `box profile show` prints, and the next run copies your file again. That throws away what the agent changed in it ([Copy status](/docs/user-guide/box/reference/packs/index.md#copy-status)). The full copy rules are on the [design page](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/profile-language.md#sync), if you want the details.
 
 A skill that is a link to a folder elsewhere comes in too, unless that folder is in your project, in `~/.strands/box`, in a folder the agent can write, or in a folder that a [plugin](/docs/user-guide/box/plugins/index.md) keeps on your machine. `box` leaves those out and prints a line for each one when the run starts. So don’t link a folder with secrets into your skills: `box` copies what the link points to.
 
@@ -13162,7 +13162,7 @@ Your servers reach the agent in two ways:
     box: no automatic MCP declaration for tickets (from ~/.claude.json): runs docker, a launcher that fetches the server when it starts, and box ships no pack that runs it in the box
     ```
     
-    A server that isn’t declared still comes into the agent’s settings as you wrote it, but it gets only what your profile already grants, so it may fail. The line says why, and [An MCP server has no automatic declaration](/docs/user-guide/box/troubleshooting/index.md#an-mcp-server-has-no-automatic-declaration) has the fixes. How `box` matches a server and fills in its variables is on the [design page](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/profiles.md#mcp-servers), if you want the details.
+    A server that isn’t declared still comes into the agent’s settings as you wrote it, but it gets only what your profile already grants, so it may fail. The line says why, and [An MCP server has no automatic declaration](/docs/user-guide/box/troubleshooting/index.md#an-mcp-server-has-no-automatic-declaration) has the fixes. How `box` matches a server and fills in its variables is on the [design page](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/profiles.md#mcp-servers), if you want the details.
     
 
 A server that signs in through your browser (OAuth) may fail when the agent uses it, and the agent pack’s README says how its agent handles sign-in. Before you turn import on, know what it opens:
@@ -13264,7 +13264,7 @@ Every pack has a kind:
 
 There are three places a pack can be defined:
 
-1.  **In Box**, for the packs that ship with it. Each is named `@box/<name>`, such as `@box/claude`, and [the pack list](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/cli/README.md#packs) links each one’s README.
+1.  **In Box**, for the packs that ship with it. Each is named `@box/<name>`, such as `@box/claude`, and [the pack list](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/cli/README.md#packs) links each one’s README.
     
 2.  **In your Box folder**, for a pack of your own. It’s a folder in `~/.strands/box/packs/`, and the folder’s name is the pack’s name, so `~/.strands/box/packs/team-agent/pack.toml` is the pack `team-agent`.
     
@@ -13568,7 +13568,7 @@ A plugin is not a pack. Every program a pack names runs inside the box. A plugin
 
 ## Where plugins are defined
 
-A profile lists a plugin in `plugins`. `@box/<name>` is a plugin that ships with `box`, and a plain name is a folder in `~/.strands/box/plugins/`, so `~/.strands/box/plugins/op-service/plugin.toml` is the plugin `op-service`. A plugin that a team shares is in the `plugins/` folder of a [collection](/docs/user-guide/box/reference/files/index.md#collections), and `@<scope>/<name>` names it, such as `@acme/vault` for `~/.strands/box/external/acme/plugins/vault/`. `box` ships two plugins, and [Plugins](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/cli/README.md#plugins) lists them.
+A profile lists a plugin in `plugins`. `@box/<name>` is a plugin that ships with `box`, and a plain name is a folder in `~/.strands/box/plugins/`, so `~/.strands/box/plugins/op-service/plugin.toml` is the plugin `op-service`. A plugin that a team shares is in the `plugins/` folder of a [collection](/docs/user-guide/box/reference/files/index.md#collections), and `@<scope>/<name>` names it, such as `@acme/vault` for `~/.strands/box/external/acme/plugins/vault/`. `box` ships two plugins, and [Plugins](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/cli/README.md#plugins) lists them.
 
 ## Use a plugin
 
@@ -13620,7 +13620,7 @@ env   = ["OP_SERVICE_ACCOUNT_TOKEN"]
 paths = ["${{ home }}/.config/op"]
 ```
 
-Compare it with the shipped [`@box/1password`](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/resources/plugins/1password/plugin.toml).
+Compare it with the shipped [`@box/1password`](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/resources/plugins/1password/plugin.toml).
 
 The program runs on your machine, outside the box. So a plugin’s `[env]` goes to that program and never to the agent, and its `[protect]` says what the box keeps from the agent. The [plugin reference](/docs/user-guide/box/reference/plugins/index.md) lists each key.
 
@@ -13944,7 +13944,7 @@ Add its pack to `packs`, or delete it. `@box/npm` brings `@box/node` with it, be
 box: skipped tool cargo (@box/cargo): cargo is not on PATH
 ```
 
-Be choosy. A toolchain runs code from your project (git hooks, `build.rs`, npm scripts) that the agent can write, so whatever a toolchain can reach, the agent can too. [Packs](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/cli/README.md#packs) lists the tool packs that Box ships.
+Be choosy. A toolchain runs code from your project (git hooks, `build.rs`, npm scripts) that the agent can write, so whatever a toolchain can reach, the agent can too. [Packs](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/cli/README.md#packs) lists the tool packs that Box ships.
 
 ### Change a toolchain’s settings
 
@@ -14003,7 +14003,7 @@ Then `git push` and `git pull` work in the box, over HTTPS and for a `git@github
 
 ### Read a token from your vault
 
-If the token lives in a password manager, the box can read it for you when it starts, so there’s nothing to export. A plugin does the reading: it runs your vault’s own command-line program on your machine, outside the box, with your sign-in. [Use a plugin](/docs/user-guide/box/plugins/index.md#use-a-plugin) shows how to list one and name the item on a route, and [Plugins](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/cli/README.md#plugins) lists the ones that `box` ships. You sign in to your vault before `box run`, and the plugin’s README says how.
+If the token lives in a password manager, the box can read it for you when it starts, so there’s nothing to export. A plugin does the reading: it runs your vault’s own command-line program on your machine, outside the box, with your sign-in. [Use a plugin](/docs/user-guide/box/plugins/index.md#use-a-plugin) shows how to list one and name the item on a route, and [Plugins](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/cli/README.md#plugins) lists the ones that `box` ships. You sign in to your vault before `box run`, and the plugin’s README says how.
 
 ## Files and folders
 
@@ -14155,7 +14155,7 @@ On this page, you install Box and run Claude Code in a box in one of your own pr
     curl -fsSL https://claude.ai/install.sh | bash
     ```
     
--   An AWS account that can call Claude models on Amazon Bedrock, and an AWS profile for it on this machine. If the model refuses you, [Every model request fails with 403](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/resources/packs/bedrock/README.md#every-model-request-fails-with-403) lists what an account needs. With a claude.ai Pro or Max plan instead, you need neither AWS nor the AWS CLI: in step 2, make the profile as [`@box/claude-subscription`](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/resources/packs/claude-subscription/README.md) shows, then skip step 3.
+-   An AWS account that can call Claude models on Amazon Bedrock, and an AWS profile for it on this machine. If the model refuses you, [Every model request fails with 403](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/resources/packs/bedrock/README.md#every-model-request-fails-with-403) lists what an account needs. With a claude.ai Pro or Max plan instead, you need neither AWS nor the AWS CLI: in step 2, make the profile as [`@box/claude-subscription`](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/resources/packs/claude-subscription/README.md) shows, then skip step 3.
     
 
 ## 1\. Install Box
@@ -14163,10 +14163,10 @@ On this page, you install Box and run Claude Code in a box in one of your own pr
 Download the installer and run it:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/strands-agents/box/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/strands-agents/box/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/install.sh | sh
 ```
 
-It installs the latest stable release, puts `box` on your `PATH`, and ends with example next steps. Usage telemetry is on by default, and the installer says how to turn it off ([Usage telemetry](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/CLI_TELEMETRY.md)).
+It installs the latest stable release, puts `box` on your `PATH`, and ends with example next steps. Usage telemetry is on by default, and the installer says how to turn it off ([Usage telemetry](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/CLI_TELEMETRY.md)).
 
 Open a new terminal, and do every step from here on in it, because later steps use variables that earlier ones set. Check that `box` runs:
 
@@ -14228,7 +14228,7 @@ aws sso login   # or: aws login
 eval "$(aws configure export-credentials --format env)"
 ```
 
-The keys end with the sign-in session, so run this again in each new terminal and after you sign in again. [Which AWS profiles work](/docs/user-guide/box/reference/profiles/index.md#aws-credentials) is in the reference. To sign in with a Bedrock API key instead, see [Sign in with a Bedrock API key](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/resources/packs/bedrock/README.md#sign-in-with-a-bedrock-api-key).
+The keys end with the sign-in session, so run this again in each new terminal and after you sign in again. [Which AWS profiles work](/docs/user-guide/box/reference/profiles/index.md#aws-credentials) is in the reference. To sign in with a Bedrock API key instead, see [Sign in with a Bedrock API key](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/resources/packs/bedrock/README.md#sign-in-with-a-bedrock-api-key).
 
 A run that has already started keeps its old sign-in, so start a new run after you change it.
 
@@ -14264,7 +14264,7 @@ box run claude
 
 If you already use Claude Code in this project, it goes straight to the prompt, because `box` brings in your finished onboarding and your answer to the folder trust question. Otherwise Claude Code asks its first-time questions: a color theme, some security notes, and whether you trust the folder. That last one defaults to **No, exit**, so press the down arrow to pick **Yes, I trust this folder** before you press Enter. It won’t ask you to log in, since the profile points it at Bedrock.
 
-Claude Code starts with the permission settings from your machine, so it may ask before it edits a file or runs a command, and the box checks each action either way. [How Claude Code asks before it acts](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/resources/packs/claude/README.md#how-claude-code-asks-before-it-acts) shows how to change that.
+Claude Code starts with the permission settings from your machine, so it may ask before it edits a file or runs a command, and the box checks each action either way. [How Claude Code asks before it acts](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/resources/packs/claude/README.md#how-claude-code-asks-before-it-acts) shows how to change that.
 
 Now watch the box work. Ask Claude Code to create `hello.txt` with the word hi in it, and say yes if it asks. The file shows up in `~/src/my-app`. Then ask Claude Code to run `echo hi > ~/outside.txt` in its shell, and say yes if it asks. The box stops that command, and Claude Code tells you it couldn’t write the file. Press **Ctrl+\]** to see the denial in the banner. If Claude Code uses its own Write tool instead, the box stops that too, but the banner doesn’t show it ([The box](/docs/user-guide/box/how-box-works/index.md#the-box) says why).
 
@@ -14279,9 +14279,9 @@ box run claude -- --continue
 | What you see | What to do |
 | --- | --- |
 | `AWS default credential chain resolved no credentials` | Set `AWS_PROFILE`, or export the SSO keys, in this terminal (step 3). |
-| `credential variable AWS_BEARER_TOKEN_BEDROCK is not set` | The profile signs in with a key. Make the key in this terminal ([Sign in with a Bedrock API key](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/resources/packs/bedrock/README.md#sign-in-with-a-bedrock-api-key)). |
+| `credential variable AWS_BEARER_TOKEN_BEDROCK is not set` | The profile signs in with a key. Make the key in this terminal ([Sign in with a Bedrock API key](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/resources/packs/bedrock/README.md#sign-in-with-a-bedrock-api-key)). |
 | Claude Code starts, but after you give it a task it says `API error` and keeps retrying | Check the model ID from step 3. |
-| A `403` error from the model | Check the sign-in from step 3. With a key, make a new one for the profile’s region. If that doesn’t help, work through [Every model request fails with 403](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/resources/packs/bedrock/README.md#every-model-request-fails-with-403). |
+| A `403` error from the model | Check the sign-in from step 3. With a key, make a new one for the profile’s region. If that doesn’t help, work through [Every model request fails with 403](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/resources/packs/bedrock/README.md#every-model-request-fails-with-403). |
 
 ## What’s set up
 
@@ -14825,7 +14825,7 @@ TIME (UTC)  RESULT  ACTION  RESOURCE  RULE  REASON
 
 ## box telemetry
 
-Turn usage telemetry on or off. [Usage telemetry](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/CLI_TELEMETRY.md) says what `box` sends.
+Turn usage telemetry on or off. [Usage telemetry](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/CLI_TELEMETRY.md) says what `box` sends.
 
 ```sh
 box telemetry off
@@ -14983,7 +14983,7 @@ Source: https://strandsagents.com/docs/user-guide/box/reference/cloud-deployment
 
 `box.toml` is Box Core’s stable interface. A program that runs Box Core, such as the `box` CLI, writes it, and each key keeps its meaning across releases. If you use the `box` CLI, you don’t write this file: the CLI builds it from your [profile](/docs/user-guide/box/profiles/index.md).
 
-Audience: an operator who runs an agent or another command under a box, and who declares the paths, hosts, credentials, MCP servers, and telemetry targets it can use. The example on this page is the box that [getting started](/docs/user-guide/box/core/quickstart/index.md) builds: the Strands CLI on a Mac. Each section below annotates it. To write the policy the file points at, read [policy](/docs/user-guide/box/reference/policy/index.md), and point a coding agent at [the policy-authoring skill](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/.agents/skills/authoring-box-policy/SKILL.md).
+Audience: an operator who runs an agent or another command under a box, and who declares the paths, hosts, credentials, MCP servers, and telemetry targets it can use. The example on this page is the box that [getting started](/docs/user-guide/box/core/quickstart/index.md) builds: the Strands CLI on a Mac. Each section below annotates it. To write the policy the file points at, read [policy](/docs/user-guide/box/reference/policy/index.md), and point a coding agent at [the policy-authoring skill](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/.agents/skills/authoring-box-policy/SKILL.md).
 
 ## Example
 
@@ -14991,7 +14991,7 @@ Getting started builds this macOS example one file at a time, and the block is t
 
 ```toml
 # To author or change the policy next to this file, point your coding agent at the skill:
-#   https://raw.githubusercontent.com/strands-agents/box/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/.agents/skills/authoring-box-policy/SKILL.md
+#   https://raw.githubusercontent.com/strands-agents/box/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/.agents/skills/authoring-box-policy/SKILL.md
 
 # The box's name, and where it keeps its own state. The agent can't reach box_dir.
 name = "strands"
@@ -15203,7 +15203,7 @@ Both tables hold one process, in one shape:
 | `[tool.<name>.grammar]` | table | Experimental, and `[tool.<name>]` only. The tool grammar for the program this tool runs. See [`[tool.<name>.grammar]`](#toolnamegrammar). |
 | `[[agent.ingress]]` | list of tables | `[agent]` only. Where callers reach the agent’s servers, one entry per port. See [`[[agent.ingress]]`](#agentingress). |
 
-The box adds the runtime minimum to every process; see [the runtime minimum](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/containment.md#the-runtime-minimum).
+The box adds the runtime minimum to every process; see [the runtime minimum](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/containment.md#the-runtime-minimum).
 
 The program is a full path or a bare name. A bare name uses `env.PATH` when set. Otherwise, Box uses the operator’s `PATH`, or `/usr/bin:/bin` if it is absent. In the Shell, the last part of a `[tool]`’s program is the name that runs it, before the operator’s `PATH`, and `run` prints ``strands-box: [tool.git]: a bare `git` in the Shell runs <file>`` for each. See [`PATH` in the Shell reference](/docs/user-guide/box/reference/shell/index.md#path). A relative path with more than one component is refused: `` `command` element 0 "<program>" is a relative path; write an absolute path, or a bare name that `env.PATH` resolves ``. Scripts on Linux require [interpreter grants](#script-commands-on-linux). The example’s `command` runs Homebrew’s `node`, which loads the preload file and then the CLI’s script; the arguments after the script are the CLI’s own.
 
@@ -15215,7 +15215,7 @@ When the box declares an MCP server, it also protects directories on the `PATH` 
 
 `env` is literal. Four kinds of name have their own rule:
 
--   **Names Box sets itself, which a table cannot claim:** `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, `https_proxy`, `NO_PROXY`, `no_proxy`, `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `NODE_USE_ENV_PROXY`, `CODEX_CA_CERTIFICATE`, `AWS_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`, `PWD`, `USER`, and every name that starts with `OTEL_EXPORTER_OTLP_`. A `[tool.<name>]` or stdio `[mcp.<name>]` table with `contain_egress = false` may set the first thirteen, because Box sets none of them there; see [a native-egress process keeps its own proxy and trust settings](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/decisions.md#a-native-egress-process-keeps-its-own-proxy-and-trust-settings).
+-   **Names Box sets itself, which a table cannot claim:** `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, `https_proxy`, `NO_PROXY`, `no_proxy`, `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `NODE_USE_ENV_PROXY`, `CODEX_CA_CERTIFICATE`, `AWS_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`, `PWD`, `USER`, and every name that starts with `OTEL_EXPORTER_OTLP_`. A `[tool.<name>]` or stdio `[mcp.<name>]` table with `contain_egress = false` may set the first thirteen, because Box sets none of them there; see [a native-egress process keeps its own proxy and trust settings](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/decisions.md#a-native-egress-process-keeps-its-own-proxy-and-trust-settings).
 -   **Names the dynamic loader reads, refused:** every name that starts with `LD_` or `DYLD_`. Box’s own aliases run in the box, so their loader would read the value too. A runtime’s own option variables, such as `NODE_OPTIONS`, `BASH_ENV`, `RUBYOPT`, `JAVA_TOOL_OPTIONS`, and `PYTHONPATH`, are the operator’s to set, and they reach only the process whose table names them. The `zsh`, `bash`, `sh`, `python3`, and `python` aliases run in Box and do not read them, so a shell or Python option variable reaches a real interpreter that the table runs or spawns, and not an alias call.
 -   **`HOME`:** an absolute path. It stays the operator’s own home unless `[agent] env.HOME` names another directory; the example names `strands-home`, so the CLI reads its settings and writes its sessions there. A home inside `box_dir` is refused with `` `env.HOME` is <path>, which lies in trusted Box state. The box directory holds `bin`, `run`, `trust`, and `private`, and none of them is a home. Name a directory outside it, or omit `env.HOME` for the operator's own home ``, and a home that encloses `box_dir` is refused with `` `env.HOME` is <path>, which encloses the box directory <path>. A declared home is reachable, so a home above the box directory would put this box's own state, and any sibling box's, inside the reachable set. Name a home beside the box directory rather than above it, or omit `env.HOME` for the operator's own home ``.
 -   **`TMPDIR`:** an absolute path.
@@ -15224,7 +15224,7 @@ A name Box sets is refused with `` `env` name "<name>" is set by the box itself,
 
 `TERM` and `COLORTERM` reach the process only when `env` names them, so a program that picks colors from them renders plain otherwise. The example names `TERM`; an operator who wants a program’s colors writes their own terminal’s values for both.
 
-The agent reaches every `[egress.<name>]` route, every `[tool.<name>]`, and every `[mcp.<name>]` the file declares. A tool or MCP server reaches every egress route and starts no tool or MCP server of its own. All of them share one egress gateway, so the box is the credential boundary: a process that must not hold a credential goes in another box. Each tool and each `stdio` MCP server runs in its own separate sandbox (see [the sandboxes for tools and local MCP servers](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/containment.md#the-agents-box-and-leaf-boxes)).
+The agent reaches every `[egress.<name>]` route, every `[tool.<name>]`, and every `[mcp.<name>]` the file declares. A tool or MCP server reaches every egress route and starts no tool or MCP server of its own. All of them share one egress gateway, so the box is the credential boundary: a process that must not hold a credential goes in another box. Each tool and each `stdio` MCP server runs in its own separate sandbox (see [the sandboxes for tools and local MCP servers](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/containment.md#the-agents-box-and-leaf-boxes)).
 
 ### File watching
 
@@ -15356,7 +15356,7 @@ The box raises its own open-file limit as far as the system allows, and holds at
 
 ## `[agent.filesystem]` and `[tool.<name>.filesystem]`
 
-Each list, and what one entry in it grants. `[agent.filesystem]` takes all nine; `[tool.<name>.filesystem]` takes seven. A `metadata` or `exec` list there is refused by name at load. [A tool’s sandbox](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/containment.md#a-tools-leaf-box) states what a tool reaches in their place.
+Each list, and what one entry in it grants. `[agent.filesystem]` takes all nine; `[tool.<name>.filesystem]` takes seven. A `metadata` or `exec` list there is refused by name at load. [A tool’s sandbox](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/containment.md#a-tools-leaf-box) states what a tool reaches in their place.
 
 Every process’s writable grants must exclude the installed Box programs, their hard-link names, mounted aliases, and enclosing directories. [Installation integrity](#installation-integrity) describes the checks and refusals.
 
@@ -15414,7 +15414,7 @@ An agent’s read grant on a recognized Linux loader directory also permits shar
 
 Startup output states `read-only`, `write-only`, or `read-write` for each content-access grant. For partial overlaps, the parent entry also identifies the overlapping grants that allow both. Denials and protected paths still restrict access. Duplicate or nested grants of the same operation still cause startup refusal.
 
-The example uses four lists. `read` covers the CLI’s install tree and `strands-home`, `read_file` names the preload file and Homebrew’s OpenSSL settings, `write` covers `strands-home`, and `list` names the project. `strands-home` is in both `read` and `write` to request read-write access explicitly. On macOS, the project is in `list` alone, so the CLI sees its names while policy decides each file its shell opens. Linux refuses this example’s `list` entry. See the [platform comparison](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/platform-differences.md).
+The example uses four lists. `read` covers the CLI’s install tree and `strands-home`, `read_file` names the preload file and Homebrew’s OpenSSL settings, `write` covers `strands-home`, and `list` names the project. `strands-home` is in both `read` and `write` to request read-write access explicitly. On macOS, the project is in `list` alone, so the CLI sees its names while policy decides each file its shell opens. Linux refuses this example’s `list` entry. See the [platform comparison](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/platform-differences.md).
 
 Each entry is absolute, or is `~` or starts with `~/`. An entry carries no pattern, no control character, and no `..` component. A directory entry that encloses this box’s `box.toml` and `policy.dw` grants everything below it except the directory that holds those two files.
 
@@ -15624,7 +15624,7 @@ An entry needs a `secret` or a backend. One with neither is refused: `an entry w
 
 An `aws://` route signs inside the box, so it takes no `header`, `prefix`, `placement`, `param`, `inject`, or `phantom_prefix`. Setting one is refused when the configuration loads. A bare `aws://` (no profile) signs with the host’s ambient identity; [Credential sources](/docs/user-guide/box/guides/network-and-credentials/index.md#credential-sources) describes the default chain, the profiles it does not resolve (AWS SSO), the warning and when it prints, and the writable-`~/.aws` rule.
 
-An entry re-routes to a backend with one `[[egress.<name>.backends]]` table, holding a `url` (`scheme://host[:port][/prefix]`, `https` or `http`) and an optional `auth`, which is the backend’s own credential: an `env://` token, a token in a declared scheme, or an `aws://` profile SigV4-signed over the backend host (with an explicit `auth.aws.service` and `auth.aws.region`, since a gateway host carries no derivable scope). An `auth` takes no `env` key, because the workload holds no placeholder for it. The backend `url`’s path prefix joins in front of the agent’s request path. An entry may keep its own `env://` `secret` beside a backend, phantom-only: the box provisions the placeholder and strips it, never injecting the real destination credential, so the named variable need not be set. The loader refuses more than one backend, a destination that is not one exact host, a host with a backend that another entry also names (on any port), a `url` with a query, fragment, or a non-`http(s)` scheme, a `credsd://` `auth`, an `aws://` `auth` without a valid `auth.aws.service`/`auth.aws.region` (each non-empty and only lowercase `[a-z0-9-]`, or those keys on a non-`aws://` auth), a signed (`aws://` or `credsd://`) destination `secret`, a destination `secret` in a declared scheme, a destination `secret` beside an `http` backend, a destination `secret.inject` beside a backend (the re-routed secret is phantom-only, so `inject` has no effect), and an `auth` on an `http` backend. [The egress table](/docs/user-guide/box/guides/network-and-credentials/index.md#backends) describes the backend, and [egress design](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/egress.md) describes how the box dials it.
+An entry re-routes to a backend with one `[[egress.<name>.backends]]` table, holding a `url` (`scheme://host[:port][/prefix]`, `https` or `http`) and an optional `auth`, which is the backend’s own credential: an `env://` token, a token in a declared scheme, or an `aws://` profile SigV4-signed over the backend host (with an explicit `auth.aws.service` and `auth.aws.region`, since a gateway host carries no derivable scope). An `auth` takes no `env` key, because the workload holds no placeholder for it. The backend `url`’s path prefix joins in front of the agent’s request path. An entry may keep its own `env://` `secret` beside a backend, phantom-only: the box provisions the placeholder and strips it, never injecting the real destination credential, so the named variable need not be set. The loader refuses more than one backend, a destination that is not one exact host, a host with a backend that another entry also names (on any port), a `url` with a query, fragment, or a non-`http(s)` scheme, a `credsd://` `auth`, an `aws://` `auth` without a valid `auth.aws.service`/`auth.aws.region` (each non-empty and only lowercase `[a-z0-9-]`, or those keys on a non-`aws://` auth), a signed (`aws://` or `credsd://`) destination `secret`, a destination `secret` in a declared scheme, a destination `secret` beside an `http` backend, a destination `secret.inject` beside a backend (the re-routed secret is phantom-only, so `inject` has no effect), and an `auth` on an `http` backend. [The egress table](/docs/user-guide/box/guides/network-and-credentials/index.md#backends) describes the backend, and [egress design](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/egress.md) describes how the box dials it.
 
 One placeholder variable holds one secret. Two entries that place a placeholder in one variable must name the same reference, and an `env://NAME` entry counts under `NAME`. Otherwise the load is refused, and the message names both tables: `` `[egress.b]` and `[egress.a]` both hold a placeholder in the variable TOKEN, and they name different secrets; one placeholder variable holds one secret, so give one of them another variable ``. An `aws://` route fills `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` with its own placeholders, so beside one, no other route can hold a placeholder in either variable. The own `secret` of an entry with a backend is not such a route, because Box strips that placeholder.
 
@@ -15761,7 +15761,7 @@ These limits remain:
     when { context.input.path == "~/.config/op" || context.input.path like "~/.config/op/*" };
     ```
     
-    The rule names the path and each path inside it. It compares each letter exactly, so it doesn’t match another case of a name. The path conditions of your `fs:*` permits protect the vault, and this rule is a second check. From Strands Shell, [policy reads a path](/docs/user-guide/box/reference/policy-actions/index.md#filesystem) with each symbolic link resolved. So when the path is a symbolic link or passes through one, write the rule for the path that it resolves to, and for each link on the way. The rule doesn’t match a move or a deletion of a folder above the path or above a link on the way, so don’t permit those on your home, on `~/.config`, or on a folder that holds such a link. No check beneath policy refuses these paths in the Shell or Monty. The [limits page](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/limitations.md#a-secret-source-runs-outside-every-sandbox) says more.
+    The rule names the path and each path inside it. It compares each letter exactly, so it doesn’t match another case of a name. The path conditions of your `fs:*` permits protect the vault, and this rule is a second check. From Strands Shell, [policy reads a path](/docs/user-guide/box/reference/policy-actions/index.md#filesystem) with each symbolic link resolved. So when the path is a symbolic link or passes through one, write the rule for the path that it resolves to, and for each link on the way. The rule doesn’t match a move or a deletion of a folder above the path or above a link on the way, so don’t permit those on your home, on `~/.config`, or on a folder that holds such a link. No check beneath policy refuses these paths in the Shell or Monty. The [limits page](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/limitations.md#a-secret-source-runs-outside-every-sandbox) says more.
     
 -   Box doesn’t compare the `env` or the `command` of a table with your values of the `pass-secret-env` variables. A workload holds one of those values only when you write the value in a table of `box.toml` or type it after `box run`. Don’t do either. A workload can use the same name for a value of its own, such as the placeholder of a signed `aws://` route in `AWS_ACCESS_KEY_ID`.
     
@@ -15774,7 +15774,7 @@ These limits remain:
 
 ## `[mcp.<name>]`
 
-Each table declares one MCP server. `type` selects the transport. A `stdio` server is a local program that the box starts in its own separate sandbox. It starts only when a `shell:spawn` permit covers its `command`; [MCP policy](/docs/user-guide/box/guides/write-mcp-policy/index.md) lists the fields that decision carries. When no permit covers it, the open fails with `MCP server "<name>" may not start: <decision>` and the server does not run. An `http` server is a remote server the workload reaches through the egress gateway. Each request is an `mcp:call` decision, and a rule reads the table’s name as `context.input.server`. The current reference for this table is [`mcp.md`](/docs/user-guide/box/guides/add-an-mcp-server/index.md). The box adds the runtime minimum to the server’s process; see [the runtime minimum](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/containment.md#the-runtime-minimum).
+Each table declares one MCP server. `type` selects the transport. A `stdio` server is a local program that the box starts in its own separate sandbox. It starts only when a `shell:spawn` permit covers its `command`; [MCP policy](/docs/user-guide/box/guides/write-mcp-policy/index.md) lists the fields that decision carries. When no permit covers it, the open fails with `MCP server "<name>" may not start: <decision>` and the server does not run. An `http` server is a remote server the workload reaches through the egress gateway. Each request is an `mcp:call` decision, and a rule reads the table’s name as `context.input.server`. The current reference for this table is [`mcp.md`](/docs/user-guide/box/guides/add-an-mcp-server/index.md). The box adds the runtime minimum to the server’s process; see [the runtime minimum](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/containment.md#the-runtime-minimum).
 
 The example box declares no MCP server. To give the Strands CLI one, declare it here, and add it under `mcpServers` in the file the CLI reads through its `--mcp-config` option. Use the executable’s filename and the same arguments, in the same order. The box places an alias with that filename on the agent’s `PATH`, so when the CLI starts `mcp-server-fetch`, the box runs this table’s `command` in a separate sandbox:
 
@@ -15793,7 +15793,7 @@ read = ["~/.local/share/uv/tools/mcp-server-fetch", "~/.local/share/uv/python"]
 | `command` | string array | For `stdio`: a bare program name or absolute executable path, followed by its arguments. The executable’s filename names the alias in the box’s `bin/`. The harness runs that alias with the arguments. Two tables can share an alias when their arguments distinguish them. See [executable paths](/docs/user-guide/box/guides/add-an-mcp-server/index.md#select-an-executable-by-path). |
 | `workspace` | string | For `stdio`: the server’s initial working directory. It grants nothing. |
 | `env` | table | For `stdio`: the literal environment the server receives. `HOME` and `PATH` default to the operator’s own, as for `[agent]`. |
-| `filesystem` | table | For `stdio`: the six lists the server’s own syscalls reach, the same six a `[tool.<name>.filesystem]` takes; a `metadata` or `exec` list is refused by name. An absent table grants nothing, so the server’s sandbox has the runtime minimum and the reach that [a local MCP server’s sandbox](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/containment.md#local-mcp-servers) states. |
+| `filesystem` | table | For `stdio`: the six lists the server’s own syscalls reach, the same six a `[tool.<name>.filesystem]` takes; a `metadata` or `exec` list is refused by name. An absent table grants nothing, so the server’s sandbox has the runtime minimum and the reach that [a local MCP server’s sandbox](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/containment.md#local-mcp-servers) states. |
 | `argument_wildcards` | bool | For `stdio`: `false` by default. `true` lets this server’s whole-argument `*` entries match and forward caller-supplied values. See [argument wildcards](/docs/user-guide/box/guides/add-an-mcp-server/index.md#argument-wildcards). |
 | `network.contain_egress` | bool | For `stdio`: `true` by default. `false` gives this one server direct network access, with no gateway, no policy decision per request, and no credential injection. |
 | `native-filesystem-policy` | boolean | For `stdio`: override the global experimental filesystem policy setting. Remote `http` entries refuse this field. See [workload selection](/docs/user-guide/box/security/native-filesystem-policy/index.md#select-workloads). |
@@ -15913,7 +15913,7 @@ A value never carries the policy engine’s own spelling: read `fs:read`, not `B
 | Correlation | `strands.box.request.id` (egress only), `jsonrpc.request.id` (an MCP request), and `strands.box.trace.parent_span_id`, `.parent_sampled`, `.state` on the log record |
 | What it was about | `server.address` and `server.port` on a `net:*` decision, `http.request.method` on a request, `file.path` on `fs:*` |
 
-The shipped example under [`examples/strands-box/strands-sdk-agent/`](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/strands-box/strands-sdk-agent/README.md) writes a `@description` on its rules. It runs a Strands Agents SDK agent written in Python, which is a different workload from the Strands CLI on this page.
+The shipped example under [`examples/strands-box/strands-sdk-agent/`](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/strands-box/strands-sdk-agent/README.md) writes a `@description` on its rules. It runs a Strands Agents SDK agent written in Python, which is a different workload from the Strands CLI on this page.
 
 The record omits `url.full` and `process.command_line`.
 
@@ -16031,7 +16031,7 @@ Each run has a folder in `~/.strands/box/r/`, named by its box ID, such as `b-5b
 
 A new run that fails before the box starts leaves no folder. Every other run folder stays until you clean it up, and storage stays until you delete it.
 
-Two more items in `~/.strands/box` need no edits. `installation.toml` holds the choice made with `box telemetry` and the random ID that [usage telemetry](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/CLI_TELEMETRY.md) sends. `packages/` holds each release that [the installer](/docs/user-guide/box/install/index.md#what-the-installer-adds) put on this computer. [Upgrade or choose a version](/docs/user-guide/box/install/index.md#upgrade-or-choose-a-version) says which old releases you can delete.
+Two more items in `~/.strands/box` need no edits. `installation.toml` holds the choice made with `box telemetry` and the random ID that [usage telemetry](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/CLI_TELEMETRY.md) sends. `packages/` holds each release that [the installer](/docs/user-guide/box/install/index.md#what-the-installer-adds) put on this computer. [Upgrade or choose a version](/docs/user-guide/box/install/index.md#upgrade-or-choose-a-version) says which old releases you can delete.
 
 ## Deleting files
 
@@ -16301,8 +16301,8 @@ Use the failed setup operation to identify what needs configuration:
 
 These examples record settings and results for specific Box revisions and environments:
 
--   [Amazon Linux 2023 ARM64 on Amazon EKS](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/cloud-deployments/eks/README.md#tested-configuration).
--   [Debian 12 ARM64 on Google Compute Engine](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/examples/cloud-deployments/gcp/README.md#tested-configuration).
+-   [Amazon Linux 2023 ARM64 on Amazon EKS](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/cloud-deployments/eks/README.md#tested-configuration).
+-   [Debian 12 ARM64 on Google Compute Engine](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/examples/cloud-deployments/gcp/README.md#tested-configuration).
 
 Each record identifies the configuration and checks that passed. Repeat the checks for your Box build and deployment.
 
@@ -16445,7 +16445,7 @@ The packs that ship with `box` are in `resources/packs/`. `box profile show <nam
 
 The header holds no other key, and `box` refuses a pack that has no header.
 
-When a tool pack extends another tool pack, it takes that pack’s tool in, and the base is not a tool of its own. `@box/go` extends `@box/git`, so go gets git’s settings and the agent gets no `git` tool, unless the profile or a support pack sets `[tool.git] program`. To keep both tools, use `include` too: `@box/npm` extends and includes `@box/node`, so npm gets node’s settings and the agent keeps a `node` tool. [Pack kinds](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/profile-language.md#pack-kinds) has the background.
+When a tool pack extends another tool pack, it takes that pack’s tool in, and the base is not a tool of its own. `@box/go` extends `@box/git`, so go gets git’s settings and the agent gets no `git` tool, unless the profile or a support pack sets `[tool.git] program`. To keep both tools, use `include` too: `@box/npm` extends and includes `@box/node`, so npm gets node’s settings and the agent keeps a `node` tool. [Pack kinds](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/profile-language.md#pack-kinds) has the background.
 
 ## Inputs
 
@@ -16506,7 +16506,7 @@ A route’s credential never reaches the agent through an input. If `from = "env
 
 ### Two packs that declare one input
 
-Two packs can declare the same name, and then it is one input. The declarations agree on `type`, and the value satisfies every `pattern` and `values` list. When the packs give different defaults or sources, `box` picks neither and the error names each pack: set the input in your profile’s `[options]`. [One input in two packs](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/profile-language.md#one-input-in-two-packs) has the full rules.
+Two packs can declare the same name, and then it is one input. The declarations agree on `type`, and the value satisfies every `pattern` and `values` list. When the packs give different defaults or sources, `box` picks neither and the error names each pack: set the input in your profile’s `[options]`. [One input in two packs](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/profile-language.md#one-input-in-two-packs) has the full rules.
 
 ## Providers
 
@@ -16562,7 +16562,7 @@ The first three roles are for a server at a URL, and the last two for a server o
 -   A `target` cannot overlap a `[[storage.files]]` target, except a `fill` row. Rows that share a target use the same `kind`, and one row’s section is not inside another’s.
 -   `box` reads no file in your project, in `~/.strands/box`, in a folder the agent can write, or in a folder that a [plugin](/docs/user-guide/box/plugins/index.md) keeps on your machine. A file or a key your machine does not have reads as no servers.
 
-[MCP servers](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/profiles.md#mcp-servers) says how `box` declares a server, fills in its variables, and why it declares none for some, and [An MCP server has no automatic declaration](/docs/user-guide/box/troubleshooting/index.md#an-mcp-server-has-no-automatic-declaration) has the fixes.
+[MCP servers](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/profiles.md#mcp-servers) says how `box` declares a server, fills in its variables, and why it declares none for some, and [An MCP server has no automatic declaration](/docs/user-guide/box/troubleshooting/index.md#an-mcp-server-has-no-automatic-declaration) has the fixes.
 
 ## Storage
 
@@ -16617,7 +16617,7 @@ optional = true
     Quit the program that writes the file, such as the agent on your machine, then run again. A `sync` update does not make this check, so a file written during an update can come in part written, and the next update brings it up to date.
     
 
-[Copies](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/profile-language.md#copies) has the full steps, including `sync`.
+[Copies](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/profile-language.md#copies) has the full steps, including `sync`.
 
 ### Copy only part of a settings file
 
@@ -16715,7 +16715,7 @@ When a run brings a `sync` copy up to date, it prints what it did, such as `upda
 
 ### Import hooks: `[[storage.hooks]]`
 
-A `[[storage.hooks]]` row makes the hooks in a JSON copy in storage follow the hooks in a file of yours, on each run. `box` keeps each hook that runs one shell script, and lets the box read that script. The row says where the file keeps its hooks and what a kept hook looks like. [Hooks](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/profile-language.md#hooks) shows `@box/claude`’s row and the checks each hook and script pass. An agent pack that imports hooks says in its README how the [`[limits]`](/docs/user-guide/box/profiles/index.md#what-a-profile-holds) apply to a hook.
+A `[[storage.hooks]]` row makes the hooks in a JSON copy in storage follow the hooks in a file of yours, on each run. `box` keeps each hook that runs one shell script, and lets the box read that script. The row says where the file keeps its hooks and what a kept hook looks like. [Hooks](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/profile-language.md#hooks) shows `@box/claude`’s row and the checks each hook and script pass. An agent pack that imports hooks says in its README how the [`[limits]`](/docs/user-guide/box/profiles/index.md#what-a-profile-holds) apply to a hook.
 
 | Key | What it does |
 | --- | --- |
@@ -16759,7 +16759,7 @@ The file is one tool table. `box` puts `[run]` and the tables after it under `[t
 | `homebrew` | A program installed through Homebrew: its own files, its dependencies, and their configuration folders. |
 | `directory` | A standalone program that reads files beside it, when nothing else in the list fits. |
 
-List every type the program can have. A type that does not fit adds nothing, so `["node", "homebrew"]` works for Node from nvm and Node from Homebrew. For another layout, leave out `installation` and list the paths in `[filesystem]`. The `# installation` comments in `box profile show --full` name each type that applied. [Installation layouts](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/profile-language.md#installation-layouts) says what each type matches and reads.
+List every type the program can have. A type that does not fit adds nothing, so `["node", "homebrew"]` works for Node from nvm and Node from Homebrew. For another layout, leave out `installation` and list the paths in `[filesystem]`. The `# installation` comments in `box profile show --full` name each type that applied. [Installation layouts](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/profile-language.md#installation-layouts) says what each type matches and reads.
 
 A tool pack’s program input finds the program on your `PATH` only, because the agent types the bare name and the box finds it on the agent’s `PATH`. Leave out `search`, or write exactly `[{ env = "PATH" }]`. Only `[run] command` names the input, and a profile cannot set it in `[options]`. Another pack that needs the program’s folder uses `${{ tool.git.root }}`.
 
@@ -16812,7 +16812,7 @@ Each `[[storage.files]]` row in a tool’s storage names its `mode`:
 | `"link"` | One read-only link to the source file or folder. |
 | `"link-children"` | A folder of the tool’s own with one read-only link for each entry in the source folder, so the tool can add its own entries beside them. A source that is a file stops the run. |
 
-A link row holds only `source`, `target`, and `mode`, and its `target` holds no placeholder. Each run brings the links up to date with their sources, and leaves what the tool put at a target in place of a link. A link grants nothing, so the tool still needs a `read` entry for its source. Two rows of one tool cannot have the same target, or one inside the other. [Tool storage](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/profile-language.md#tool-storage) has the background.
+A link row holds only `source`, `target`, and `mode`, and its `target` holds no placeholder. Each run brings the links up to date with their sources, and leaves what the tool put at a target in place of a link. A link grants nothing, so the tool still needs a `read` entry for its source. Two rows of one tool cannot have the same target, or one inside the other. [Tool storage](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/profile-language.md#tool-storage) has the background.
 
 ### Tool grammars
 
@@ -17857,7 +17857,7 @@ Correct the system clock, or remove the box directory to start again, as [gettin
 -   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): a first policy, a denial, and the decision log.
 -   [The action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md): every action, its fields, and which part of the box raises it.
 -   [Security](/docs/user-guide/box/security/index.md): what `box.toml` governs, what `policy.dw` governs, and what a policy cannot do today.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/policy.md): how one engine per box decides, and why.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/policy.md): how one engine per box decides, and why.
 
 Source: https://strandsagents.com/docs/user-guide/box/reference/policy/index.md
 
@@ -18314,7 +18314,7 @@ A filesystem list entry is a path. So is a `command` element that is the program
 2.  Each later placeholder fills one folder or file name. Its value holds no `/`, and it is not `.` or `..`.
 3.  The result is an absolute path, or a path that starts with `~/` for your home directory, and it holds no `..`.
 
-`box` refuses a path that goes through a link inside a folder the box can write, because the agent could change that link. Those folders are your project, the run’s storage, `~/.strands/box`, and each folder that a `write` entry names. Name the real path instead. A link above such a folder is fine, such as `/tmp` on macOS. An entry whose path does not exist stops the run, so mark an entry that some machines lack `optional = true`. [Values](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/profile-language.md#values) says how `box` writes each value safely into the run’s files.
+`box` refuses a path that goes through a link inside a folder the box can write, because the agent could change that link. Those folders are your project, the run’s storage, `~/.strands/box`, and each folder that a `write` entry names. Name the real path instead. A link above such a folder is fine, such as `/tmp` on macOS. An entry whose path does not exist stops the run, so mark an entry that some machines lack `optional = true`. [Values](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/profile-language.md#values) says how `box` writes each value safely into the run’s files.
 
 ## `when`
 
@@ -18364,7 +18364,7 @@ box = ">=0.3.0"
 
 `box` merges each name in `packs` after its own `extend`, left to right, each pack once, then each [plugin](/docs/user-guide/box/plugins/index.md) in `plugins`, and your profile last, so the profile wins. Tables merge key by key, and a later file can change a key but cannot remove one. These lists join: the filesystem lists, `dependency`, `[storage] directories`, the `[[storage.files]]` and `[[storage.hooks]]` rows, the `[[mcp-servers]]` rows, and a tool’s own `directories` and `files` in `[tool.<name>.storage]`. Every other list is replaced, `command` included, so add arguments to the agent with `agent-args`.
 
-Each route and each `env://` variable a route reads comes from one pack, though your profile can change a route’s keys. To replace a tool that `box` finds, write its `[tool.<name>]` in your profile, or in your own pack, with a `command` and no `program`, as [A tool table in the full form](#a-tool-table-in-the-full-form) says. [Composition](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/profile-language.md#composition) has the full rules.
+Each route and each `env://` variable a route reads comes from one pack, though your profile can change a route’s keys. To replace a tool that `box` finds, write its `[tool.<name>]` in your profile, or in your own pack, with a `command` and no `program`, as [A tool table in the full form](#a-tool-table-in-the-full-form) says. [Composition](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/profile-language.md#composition) has the full rules.
 
 ## Routes and other hosts
 
@@ -18481,7 +18481,7 @@ The server can read every credential in that file, though the agent can’t, and
 
 A tool is a program that the agent runs from its shell, such as `git` or `npm`. A [tool pack](/docs/user-guide/box/packs/index.md#tool-packs) writes one tool, and a `[tool.<name>]` table in a profile or a pack adds to a tool or writes one. [Add or remove a toolchain](/docs/user-guide/box/profiles/index.md#add-or-remove-a-toolchain) shows how a profile picks its tools. Local MCP servers reuse the launcher packs, such as `@box/npx`, without the pack in `packs`.
 
-When a run starts, `box` finds each tool’s `program` on your `PATH`, the same one the agent gets when it types the name. It skips a tool whose program is missing, or is in your project, the run’s storage, `~/.strands/box`, or a folder the agent can write, and prints a line such as `box: skipped tool cargo (@box/cargo): cargo is not on PATH`. In a tool table with a `program`, a grant whose path is not on your machine is dropped, and a `*` in one part of a path matches each name that is there, so `${{ root.parent }}/share/node-*` finds `share/node-20`. A `deny` entry stays as written and holds no `*`. `box profile show` lists each skipped tool and each path it dropped. [Resolution](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/profile-language.md#resolution) has the background, including scripts whose `#!` line names another tool.
+When a run starts, `box` finds each tool’s `program` on your `PATH`, the same one the agent gets when it types the name. It skips a tool whose program is missing, or is in your project, the run’s storage, `~/.strands/box`, or a folder the agent can write, and prints a line such as `box: skipped tool cargo (@box/cargo): cargo is not on PATH`. In a tool table with a `program`, a grant whose path is not on your machine is dropped, and a `*` in one part of a path matches each name that is there, so `${{ root.parent }}/share/node-*` finds `share/node-20`. A `deny` entry stays as written and holds no `*`. `box profile show` lists each skipped tool and each path it dropped. [Resolution](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/profile-language.md#resolution) has the background, including scripts whose `#!` line names another tool.
 
 Each tool with a `program` gets `PATH = "/usr/bin:/bin"` and its own empty `TMPDIR`, unless its table sets them, and reads and writes your project as [Project access](#project-access) says.
 
@@ -18523,7 +18523,7 @@ A tool’s connections go through the box’s gateway, where your policy decides
 contain_egress = false
 ```
 
-This doesn’t make SSH work for git: the box has no `ssh`, as the [`@box/git` README](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/resources/packs/git/README.md#limitations) says.
+This doesn’t make SSH work for git: the box has no `ssh`, as the [`@box/git` README](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/resources/packs/git/README.md#limitations) says.
 
 Know what that gives away. The tool, and every program it starts, can then connect to any host, outside your policy, and no credential from a route reaches it. The agent picks the tool’s arguments, so it can aim those connections wherever it likes. Don’t set it on a general client such as `curl`, or on an interpreter. The tool still reaches only the files it’s granted, so a client such as `ssh` needs grants for its program and for what it reads, such as an SSH agent socket, and the box refuses a grant in `~/.ssh`.
 
@@ -18536,7 +18536,7 @@ With native filesystem policy, your policy also decides the file operations that
 -   On macOS: macOS 27 or later, and a `box` built with the macOS 27 SDK or later, with a valid signature and Apple’s Endpoint Security entitlement.
 -   On Linux: an ARM64 machine with the required kernel support, and the `CAP_BPF` and `CAP_PERFMON` capabilities for `box`, which a normal install does not give it. Linux x86-64 refuses selection.
 
-See the [prerequisites in Box’s own guide](/docs/user-guide/box/security/native-filesystem-policy/index.md) and the [build instructions](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/dev/manual-testing.md#build-the-native-filesystem-policy-experiment).
+See the [prerequisites in Box’s own guide](/docs/user-guide/box/security/native-filesystem-policy/index.md) and the [build instructions](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/dev/manual-testing.md#build-the-native-filesystem-policy-experiment).
 
 Turn it on in `profile.toml`. Only a profile holds this table:
 
@@ -18558,7 +18558,7 @@ The box refuses to start a run that turns it on when it cannot check, so a `box`
 
 On macOS, native policy checks need the `box` process to stay alive. If an uncatchable signal such as `SIGKILL` terminates it, programs in the box can survive. Those programs can then perform new file operations within their existing filesystem grants without native policy checks, so previously denied operations can succeed. Because `box` cannot catch that signal, it cannot run its normal shutdown cleanup.
 
-[Experimental native filesystem policy](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/profile-language.md#experimental-native-filesystem-policy) has the background.
+[Experimental native filesystem policy](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/profile-language.md#experimental-native-filesystem-policy) has the background.
 
 ## Errors
 
@@ -18572,7 +18572,7 @@ Source: https://strandsagents.com/docs/user-guide/box/reference/profiles/index.m
 
 A box runs the agent’s Python scripts in [Monty](https://github.com/pydantic/monty), an interpreter for a subset of Python. Policy decides each file operation a script makes, and the egress gateway decides each request a script sends with `fetch()`.
 
-Audience: an operator with a working box from [getting started](/docs/user-guide/box/core/quickstart/index.md) whose agent runs Python. For how Box runs a script and why a script cannot act on its own, read [how Box runs Python scripts](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/monty.md).
+Audience: an operator with a working box from [getting started](/docs/user-guide/box/core/quickstart/index.md) whose agent runs Python. For how Box runs a script and why a script cannot act on its own, read [how Box runs Python scripts](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/monty.md).
 
 ## Example
 
@@ -18788,7 +18788,7 @@ The decision log records each decision with the rule’s `@id` ([getting started
 
 ## See also
 
--   [How Box runs Python scripts](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/monty.md): the routes, the steps for each file operation, and the residual risk.
+-   [How Box runs Python scripts](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/monty.md): the routes, the steps for each file operation, and the residual risk.
 -   [The `[egress.<name>]` table](/docs/user-guide/box/guides/network-and-credentials/index.md): the rules for a host, and a credential that the gateway adds to a request.
 
 Source: https://strandsagents.com/docs/user-guide/box/reference/python/index.md
@@ -19030,7 +19030,7 @@ A name changes only which file runs. The spawn still needs a `shell:spawn` permi
 
 ## `curl`
 
-`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/egress.md)). A request the gateway refuses makes `curl` exit `1` and print the reason, even with `-s`. A request the gateway doesn’t refuse but can’t complete makes `curl` exit `6` and print `curl: (6)` and the reason, unless `-s` hides errors.
+`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/egress.md)). A request the gateway refuses makes `curl` exit `1` and print the reason, even with `-s`. A request the gateway doesn’t refuse but can’t complete makes `curl` exit `6` and print `curl: (6)` and the reason, unless `-s` hides errors.
 
 A response body is at most [`limits.shell.max_output`](/docs/user-guide/box/reference/configuration/index.md#limits) bytes, 1 MiB by default. Past it, `curl` exits with status `6`, writes none of the body, and prints `curl: (6) response body too large` unless `-s` hides errors. The request was already sent, so its effect at the server stays.
 
@@ -19062,8 +19062,8 @@ A response body is at most [`limits.shell.max_output`](/docs/user-guide/box/refe
 ## See also
 
 -   [Write policy for shell commands](/docs/user-guide/box/guides/write-shell-policy/index.md): rules for commands, programs, and paths.
--   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
--   [A tool’s sandbox](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
+-   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
+-   [A tool’s sandbox](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
 -   [The `[egress.<name>]` table](/docs/user-guide/box/guides/network-and-credentials/index.md): credentials for the requests `curl` sends.
 
 Source: https://strandsagents.com/docs/user-guide/box/reference/shell/index.md
@@ -19138,7 +19138,7 @@ project = "write"
 | `description` | Required. What the policy menu shows beside the label. |
 | `project` | The [`[project] access`](/docs/user-guide/box/profiles/index.md#project-access) that a profile made from this policy gets: `"write"`, `"read"`, or `"none"`. Without it, the profile gets no `[project]` table, so the agent can’t reach your project until you add one. |
 
-[Starters](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/starters.md) and [Detection](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/cli/detection.md) explain how `box` reads a starter and answers its questions, for background.
+[Starters](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/starters.md) and [Detection](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/cli/detection.md) explain how `box` reads a starter and answers its questions, for background.
 
 Source: https://strandsagents.com/docs/user-guide/box/reference/starters/index.md
 
@@ -19148,9 +19148,9 @@ Source: https://strandsagents.com/docs/user-guide/box/reference/starters/index.m
 
 A box has two enforcement tiers: operating system enforcement, and policy enforcement. `box.toml` sets which paths the workload’s own processes can open. The operating system enforces that, and it is fixed before the first process starts. `policy.dw` decides each request the workload sends through the box’s trusted process (its shell, its Python, its egress gateway, and its MCP broker), and the policy engine enforces that. This page says which tier governs what, what Box always enforces, and what a policy cannot do today.
 
-Audience: an operator deciding what to put in `box.toml` and what to put in `policy.dw`. [Policy](/docs/user-guide/box/reference/policy/index.md) introduces the rules, and the [design guide](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/policy.md) holds the reasoning.
+Audience: an operator deciding what to put in `box.toml` and what to put in `policy.dw`. [Policy](/docs/user-guide/box/reference/policy/index.md) introduces the rules, and the [design guide](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/policy.md) holds the reasoning.
 
-For ownership of enforcement, configuration, and the surrounding environment, read the [shared responsibility model](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/security.md). This page covers the operator’s configuration choices and policy limitations.
+For ownership of enforcement, configuration, and the surrounding environment, read the [shared responsibility model](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/security.md). This page covers the operator’s configuration choices and policy limitations.
 
 ## The two tiers
 
@@ -19160,7 +19160,7 @@ For ownership of enforcement, configuration, and the surrounding environment, re
 -   A tool’s own files. A program under `[tool.<name>]` runs in its own sandbox and reaches the paths named in its own `filesystem` lists. Policy sees none of its file operations or child processes.
 -   A program of the surrounding OS that a `shell:spawn` permit admits. Policy decides once: whether the program runs. Its file operations are not decided.
 
-You own what `box.toml` grants. Review each path in `[agent.filesystem]` and each `[tool.<name>]` table, because direct reach raises no decision. When adapting grants between macOS and Linux, see the [platform comparison](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/platform-differences.md).
+You own what `box.toml` grants. Review each path in `[agent.filesystem]` and each `[tool.<name>]` table, because direct reach raises no decision. When adapting grants between macOS and Linux, see the [platform comparison](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/platform-differences.md).
 
 **`policy.dw` governs each request through the box’s trusted process, and the policy engine enforces it:** each command line and file operation in Strands Shell (the box’s shell), each file operation in Monty (the box’s Python), each connection and HTTP request through the egress gateway, and each MCP request through a declared server. Remote MCP checks require a [matching configured host](/docs/user-guide/box/guides/add-an-mcp-server/index.md#remote-destination-matching). [When the box asks policy](/docs/user-guide/box/reference/policy/index.md#when-the-box-asks-policy) lists the decisions, and [policy limitations](#policy-limitations) says what a broad permit reaches. An [`[egress.<name>]`](/docs/user-guide/box/guides/network-and-credentials/index.md) credential is attached to a request only after policy permits it. The table binds the credential, and the policy’s permits open the destination.
 
@@ -19211,21 +19211,21 @@ when {
 };
 ```
 
-[Cloud instance metadata](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/egress.md#cloud-instance-metadata) in the design guide states that these two rules are the only check on the metadata endpoints.
+[Cloud instance metadata](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/egress.md#cloud-instance-metadata) in the design guide states that these two rules are the only check on the metadata endpoints.
 
 ## Policy limitations
 
 Each item is something a policy cannot do today, with what to do about it. Where a design page records why, the item links it.
 
--   **A broad read permit reaches your secrets.** Strands Shell and Monty can name any path under your home, including `~/.aws` and `~/.ssh`. A `permit` on `fs:read` with no path condition grants all of them. Write every filesystem rule with a path condition. See [where policy sits](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/policy.md#where-policy-sits).
+-   **A broad read permit reaches your secrets.** Strands Shell and Monty can name any path under your home, including `~/.aws` and `~/.ssh`. A `permit` on `fs:read` with no path condition grants all of them. Write every filesystem rule with a path condition. See [where policy sits](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/policy.md#where-policy-sits).
 -   **Remote MCP tool restrictions apply only to matching configured hosts.** [Restrict other routes](/docs/user-guide/box/guides/write-mcp-policy/index.md#scope-of-remote-server-rules) when every request to the application must use those restrictions.
--   **Box does not check that the rules of a policy agree with one another.** Two permits that admit the same requests load without a word. Write every cap as a `forbid`. [A cap written as a permit](/docs/user-guide/box/reference/policy/index.md#a-cap-written-as-a-permit) describes what the load does catch. See [what refuses to load](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/policy.md#what-refuses-to-load).
--   **A rule that requires an earlier event sees refused attempts too.** A `::request` event is recorded for every attempt, permitted or refused. Key the condition on `::response`, which is recorded only for an operation that ran. See [what a history rule sees](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/policy.md#what-a-history-rule-sees).
--   **A budget keyed on `::response` can be overspent by requests in flight.** A `::response` is recorded when the operation ends, so several requests in flight pass the same count. A budget keyed on `::request` is exact, and a refused attempt spends from it. See [what a history rule sees](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/policy.md#what-a-history-rule-sees).
--   **A rule that calls a temporal macro, such as `count_within`, loses its count when any text before the call changes**, even a comment. A rule that writes its `when temporal` clause inline keeps its count until that clause changes. Every rule in this guide is written inline. See [residual risk](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/policy.md#residual-risk).
--   **Monty judges a path as the script spelled it.** When a path the script names goes through a symlink, policy decides on the link’s spelling, and the decision log records that spelling. The operation is then refused, because Monty acts on the canonical path only. Name the target directly. See [how Box decides a file operation](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/monty.md#how-box-decides-a-file-operation).
+-   **Box does not check that the rules of a policy agree with one another.** Two permits that admit the same requests load without a word. Write every cap as a `forbid`. [A cap written as a permit](/docs/user-guide/box/reference/policy/index.md#a-cap-written-as-a-permit) describes what the load does catch. See [what refuses to load](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/policy.md#what-refuses-to-load).
+-   **A rule that requires an earlier event sees refused attempts too.** A `::request` event is recorded for every attempt, permitted or refused. Key the condition on `::response`, which is recorded only for an operation that ran. See [what a history rule sees](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/policy.md#what-a-history-rule-sees).
+-   **A budget keyed on `::response` can be overspent by requests in flight.** A `::response` is recorded when the operation ends, so several requests in flight pass the same count. A budget keyed on `::request` is exact, and a refused attempt spends from it. See [what a history rule sees](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/policy.md#what-a-history-rule-sees).
+-   **A rule that calls a temporal macro, such as `count_within`, loses its count when any text before the call changes**, even a comment. A rule that writes its `when temporal` clause inline keeps its count until that clause changes. Every rule in this guide is written inline. See [residual risk](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/policy.md#residual-risk).
+-   **Monty judges a path as the script spelled it.** When a path the script names goes through a symlink, policy decides on the link’s spelling, and the decision log records that spelling. The operation is then refused, because Monty acts on the canonical path only. Name the target directly. See [how Box decides a file operation](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/monty.md#how-box-decides-a-file-operation).
 -   **The decision log records the rule and the path, and not the operation.** A `cat` and an `ls` of one file produce the same entry.
--   **A long temporal window slows every decision on that action.** Each decision recounts the events in the window, so a `24h` window on a busy action costs more than a `1m` one. Pick the shortest window the rule needs. See [residual risk](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/policy.md#residual-risk).
+-   **A long temporal window slows every decision on that action.** Each decision recounts the events in the window, so a `24h` window on a busy action costs more than a `1m` one. Pick the shortest window the rule needs. See [residual risk](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/policy.md#residual-risk).
 
 ## File attributes on macOS
 
@@ -19247,7 +19247,7 @@ Turn the switch on only for a box whose write folders you review afterwards, and
 -   [Policy](/docs/user-guide/box/reference/policy/index.md): what a policy is, the actions, common rules, and load failures.
 -   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): a first policy, a denial, and the decision log.
 -   [The action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md): every action, its fields, and which part of the box raises it.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/design/policy.md): how each tier is enforced, and why.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/policy.md): how each tier is enforced, and why.
 
 Source: https://strandsagents.com/docs/user-guide/box/security/index.md
 
@@ -19357,7 +19357,7 @@ Native entry handling has these limits in addition to baseline containment:
 
 These operations are refused before a Dogwood decision or file effect. The workload receives an operating-system permission error; the source and destination entries remain unchanged.
 
-For native rename cases, the [comparison suite](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/dev/linux-native-tests.md#compare-shell-and-native-policy-events) uses a test program that calls `renameat` directly; it does not execute GNU `mv`. Its permitted rename cases do not establish that GNU `mv` works with native filesystem policy.
+For native rename cases, the [comparison suite](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/dev/linux-native-tests.md#compare-shell-and-native-policy-events) uses a test program that calls `renameat` directly; it does not execute GNU `mv`. Its permitted rename cases do not establish that GNU `mv` works with native filesystem policy.
 
 An existing descriptor can carry later reads, writes, or directory listings without another Dogwood check. Linux permission changes remain subject to filesystem grants, without a fresh Dogwood permission-change check. The Linux adapter does not mediate standalone metadata queries or link-target reads. Outcome records distinguish descriptor delivery from later file effects. A descriptor’s delivery does not prove that a subsequent write succeeded. Policy storage errors, worker failures, and expired processing deadlines stop Box. The kernel tests cover pending requests, process termination, detached descendants, and concurrent writes. Telemetry remains best effort: its bounded exporter queue can lose records under sustained load. Use the durable policy history and saved file effects when assessing enforcement.
 
@@ -19515,7 +19515,7 @@ This page explains what a starter is, where it’s defined, and what’s in its 
 
 A starter names the packs every profile starts with, and asks questions whose answers add more packs and settings. When you make a profile, `box` writes your answers into `profile.toml`, and the profile never refers to the starter again. You edit it like any other profile, and a later change to the starter doesn’t reach it.
 
-A starter can also read answers from the agent’s own settings, so if Claude Code on your machine already uses Bedrock, `box` doesn’t ask again.
+A starter can also read answers from the agent’s own settings, so if Claude Code on your machine already uses Bedrock, `box` selects Bedrock for you and still lists every provider.
 
 ## Where starters are defined
 
@@ -19803,11 +19803,11 @@ The name is the profile’s name, and because it matches the `claude` starter, t
 
 Press Enter to keep the default. The lines that start with `!` under a question say what a yes lets the box do, so read them before you turn a setting on. On **Review**, choose **Save profile**. Then **Before running** names the variable the box reads your key from: set it in the terminal you run `box run` from. When a [plugin](/docs/user-guide/box/plugins/index.md) reads the key from your vault, it says that instead, and it names a plugin’s program that your machine doesn’t have.
 
-To make a second profile from the same starter, pick a new name and pass the starter to `--with`, as in `box profile create claude-east --with claude`. Each agent’s README in [Packs](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/cli/README.md#packs) says what its starter asks, and any step the agent needs on your machine first.
+To make a second profile from the same starter, pick a new name and pass the starter to `--with`, as in `box profile create claude-east --with claude`. Each agent’s README in [Packs](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/cli/README.md#packs) says what its starter asks, and any step the agent needs on your machine first.
 
-### Skip questions the agent’s settings already answer
+### Start from the agent’s settings
 
-Before it asks anything, the starter reads the agent’s settings and answers each question they decide. Review shows each detected answer and where it came from:
+Before it asks anything, the starter reads the agent’s settings. At a terminal, it still asks each question that they decide, such as the provider, with the found choice selected, so Enter keeps it and every other choice stays in view. It fills an input that they decide, such as the region, without asking. Without a terminal, a found choice is the answer. Review shows each detected answer and where it came from:
 
 ```text
 DETECTED OPTIONS
@@ -19822,7 +19822,7 @@ Your flags win over what it found, and at a terminal, **Review or change setting
 
 The policy question picks the policy starter that a new profile begins with. It sets two things: the rules that `box` copies into the profile’s `policy.dw`, and the profile’s starting [`[project] access`](/docs/user-guide/box/reference/profiles/index.md#project-access). The packs and the profile then build on that start. A route, a tool, an MCP server, a filesystem grant, or storage lets the agent reach more, and a rule or a `deny` entry of yours takes something away ([Policies](/docs/user-guide/box/policies/index.md) explains how they combine). So the policy you pick is where the profile starts, and you change it by editing the profile.
 
-Box ships a few policy starters, and the menu shows each one’s label and description. The [policy starters folder](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/resources/policies/) holds each one, with a README that lists its rules and its limits. To offer a policy of your own, or make Enter pick another, see [Policy starters](#policy-starters).
+Box ships a few policy starters, and the menu shows each one’s label and description. The [policy starters folder](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/resources/policies/) holds each one, with a README that lists its rules and its limits. To offer a policy of your own, or make Enter pick another, see [Policy starters](#policy-starters).
 
 The policy question comes after the agent starter’s own questions, and the menu shows each policy’s `label` and `description`. `--policy` names a policy by its folder name, such as `team`, a shipped one by its short name, such as `scoped`, and one from a collection by its full name, such as `@acme/team`. `--policy` picks the policy of a new profile, or of one that `--force` replaces. To move a profile you already have to another policy, see [Switch a profile to another policy](/docs/user-guide/box/policies/index.md#switch-a-profile-to-another-policy).
 
@@ -19863,7 +19863,7 @@ Source: https://strandsagents.com/docs/user-guide/box/starters/index.md
 
 Use this page when `box` stops with an error, or when the agent can’t do something in the box. Most messages that start with `box: error:` name their own fix, so this page covers the ones that don’t, and the failures that show up after the box starts. Search the page for a few words of your message. The examples use `/Users/you` for your home folder.
 
-This page covers what every [pack](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/cli/README.md#packs) and [plugin](https://github.com/strands-agents/box/blob/7c4ea75ff509e54298e8a077f6c8e0dae1e8e216/docs/cli/README.md#plugins) can hit, such as `@box/claude`, which runs Claude Code. An error that only one pack or plugin prints, and its fix, is in the **Troubleshooting** section of its README, and its own limits are in its **Limitations** section.
+This page covers what every [pack](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/cli/README.md#packs) and [plugin](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/cli/README.md#plugins) can hit, such as `@box/claude`, which runs Claude Code. An error that only one pack or plugin prints, and its fix, is in the **Troubleshooting** section of its README, and its own limits are in its **Limitations** section.
 
 ## Before the box starts
 
@@ -38378,7 +38378,7 @@ See the [SlidingWindowConversationManager](https://github.com/strands-agents/har
 - [Search Strategies](/docs/user-guide/sdk/storage/search-strategies/index.md) (1 shared tag)
 - [Storage](/docs/user-guide/sdk/storage/index.md) (1 shared tag)
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
-- [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
+- [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
 
 
 ## Implementation
@@ -48625,9 +48625,9 @@ Sessions saved before the rename still resume, but the compatibility read goes a
 - [Context Offloader](/docs/user-guide/sdk/plugins/context-offloader/index.md) (2 shared tags)
 - [Conversation Management](/docs/user-guide/sdk/agents/conversation-management/index.md) (2 shared tags)
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
 - [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
 - [Coherence evaluator](/docs/user-guide/evals-sdk/evaluators/coherence_evaluator/index.md) (1 shared tag)
-- [Conciseness evaluator](/docs/user-guide/evals-sdk/evaluators/conciseness_evaluator/index.md) (1 shared tag)
 
 
 ## Implementation
@@ -48777,9 +48777,9 @@ The agent runs without any context reduction. Overflow errors propagate directly
 - [Context Offloader](/docs/user-guide/sdk/plugins/context-offloader/index.md) (2 shared tags)
 - [Conversation Management](/docs/user-guide/sdk/agents/conversation-management/index.md) (2 shared tags)
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
 - [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
 - [Coherence evaluator](/docs/user-guide/evals-sdk/evaluators/coherence_evaluator/index.md) (1 shared tag)
-- [Conciseness evaluator](/docs/user-guide/evals-sdk/evaluators/conciseness_evaluator/index.md) (1 shared tag)
 
 
 ## Implementation
@@ -48884,9 +48884,9 @@ Both the built-in [context management modes](/docs/user-guide/sdk/context-manage
 - [Context Offloader](/docs/user-guide/sdk/plugins/context-offloader/index.md) (2 shared tags)
 - [Conversation Management](/docs/user-guide/sdk/agents/conversation-management/index.md) (2 shared tags)
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
 - [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
 - [Coherence evaluator](/docs/user-guide/evals-sdk/evaluators/coherence_evaluator/index.md) (1 shared tag)
-- [Conciseness evaluator](/docs/user-guide/evals-sdk/evaluators/conciseness_evaluator/index.md) (1 shared tag)
 
 
 ## Implementation
@@ -49279,9 +49279,9 @@ A message-level summary runs client-side, which drops thinking, when either mode
 - [Context Offloader](/docs/user-guide/sdk/plugins/context-offloader/index.md) (2 shared tags)
 - [Conversation Management](/docs/user-guide/sdk/agents/conversation-management/index.md) (2 shared tags)
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
 - [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
 - [Coherence evaluator](/docs/user-guide/evals-sdk/evaluators/coherence_evaluator/index.md) (1 shared tag)
-- [Conciseness evaluator](/docs/user-guide/evals-sdk/evaluators/conciseness_evaluator/index.md) (1 shared tag)
 
 
 ## Implementation
@@ -49421,9 +49421,9 @@ The preset handles large tool results eagerly, and the custom summarization stra
 - [Context Offloader](/docs/user-guide/sdk/plugins/context-offloader/index.md) (2 shared tags)
 - [Conversation Management](/docs/user-guide/sdk/agents/conversation-management/index.md) (2 shared tags)
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
 - [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
 - [Coherence evaluator](/docs/user-guide/evals-sdk/evaluators/coherence_evaluator/index.md) (1 shared tag)
-- [Conciseness evaluator](/docs/user-guide/evals-sdk/evaluators/conciseness_evaluator/index.md) (1 shared tag)
 
 
 ## Implementation
@@ -49591,6 +49591,8 @@ Hook events that belong to a request carry the same invocation context, so a hoo
 ## Token usage
 
 With the invocation context, the decision’s tokens add to the request’s usage, which the agent result reports. The agent’s own model metrics stay separate and cover only the agent’s model calls. A decision always runs to completion, even when the request has reached one of its [invocation limits](/docs/user-guide/sdk/agents/agent-loop/index.md#invocation-limits), and it doesn’t count as a turn. Its tokens do count toward the request’s token limits, so later turns can stop sooner.
+
+In Python, `result.invocation_context.usage_by_model` splits the request’s usage by model. It is a list of `ModelUsage` records, each with a `provider_name`, a `model_id`, and the model’s summed `usage`, and their token counts add up to the request’s usage. A decision’s tokens are in the record of the model that answered it. The [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md#token-usage-per-model) prices these records.
 
 Without the invocation context, the decision still reports its tokens in its own result, but the request doesn’t include them.
 
@@ -71455,6 +71457,8 @@ Plugins change the typical behavior of an agent. They let you introduce concepts
 
 [GoalLoop](goal-loop/index.md)Validate responses against a goal and loop with feedback until they satisfy it.
 
+[GenAI Prices Estimator](genai-prices-estimator/index.md)Estimate what a request cost in USD from each model's token usage and list prices (Python).
+
 [Build a custom plugin](custom-plugins/index.md)Write your own plugin: register hooks and tools, manage state, and initialize it.
 
 ## Attach a plugin
@@ -71498,7 +71502,7 @@ From here you attach the plugins your application needs, or build your own.
 
 ## Where to go next
 
-New to plugins? Attach a built-in one from the grid above—[Skills](/docs/user-guide/sdk/plugins/skills/index.md), [Context Offloader](/docs/user-guide/sdk/plugins/context-offloader/index.md), [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md), [Todos](/docs/user-guide/sdk/plugins/todos/index.md), or [GoalLoop](/docs/user-guide/sdk/plugins/goal-loop/index.md)—and see it change the agent’s behavior.
+New to plugins? Attach a built-in one from the grid above ([Skills](/docs/user-guide/sdk/plugins/skills/index.md), [Context Offloader](/docs/user-guide/sdk/plugins/context-offloader/index.md), [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md), [Todos](/docs/user-guide/sdk/plugins/todos/index.md), [GoalLoop](/docs/user-guide/sdk/plugins/goal-loop/index.md), or [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md)) and see it change the agent’s behavior.
 
 Ready to write your own? [Build a custom plugin](/docs/user-guide/sdk/plugins/custom-plugins/index.md) walks through registering hooks and tools, managing state, and async initialization. [Hooks](/docs/user-guide/sdk/agents/hooks/index.md) covers how the hook system works, and [Hook events](/docs/user-guide/sdk/agents/hooks-events/index.md) is the reference for every lifecycle event a plugin can react to.
 
@@ -71653,6 +71657,7 @@ The rendered text is a prompt-injection surface. If it interpolates attacker-inf
 
 ## Related pages
 
+- [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
 - [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
 - [Built-in Modes](/docs/user-guide/sdk/context-management/built-in-modes/index.md) (1 shared tag)
 - [Context Estimation](/docs/user-guide/sdk/context-management/context-estimation/index.md) (1 shared tag)
@@ -72122,9 +72127,9 @@ const agent = new Agent({
 - [Strategy Presets](/docs/user-guide/sdk/context-management/presets/index.md) (2 shared tags)
 - [Conversation Management](/docs/user-guide/sdk/agents/conversation-management/index.md) (2 shared tags)
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
 - [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
 - [Coherence evaluator](/docs/user-guide/evals-sdk/evaluators/coherence_evaluator/index.md) (1 shared tag)
-- [Conciseness evaluator](/docs/user-guide/evals-sdk/evaluators/conciseness_evaluator/index.md) (1 shared tag)
 
 
 ## Implementation
@@ -72552,6 +72557,217 @@ class AsyncConfigPlugin implements Plugin {
 - [harness-sdk/strands-ts/src/plugins/plugin.ts](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/plugins/plugin.ts)
 
 Source: https://strandsagents.com/docs/user-guide/sdk/plugins/custom-plugins/index.md
+
+---
+
+## GenAI Prices Estimator
+
+The `GenAIPricesEstimator` plugin estimates what a request cost in USD. It multiplies the tokens each model used by that model’s list price and adds the results.
+
+The number is an estimate, not a bill. The prices come from [genai-prices](https://github.com/pydantic/genai-prices), a third-party package that bundles public list prices. Strands does not maintain or vouch for that data, and your invoice depends on things the estimate cannot see. See [What the Estimate Leaves Out](#what-the-estimate-leaves-out).
+
+## Install
+
+The plugin needs the `cost-estimator` extra and Python 3.11 or later:
+
+```bash
+pip install 'strands-agents[cost-estimator]'
+```
+
+The prices ship inside the genai-prices package, so the plugin makes no network calls. To get newer prices, upgrade genai-prices.
+
+On Python 3.10 the plugin is unavailable, because genai-prices needs Python 3.11. [`usage_by_model`](#token-usage-per-model) still works there.
+
+## Read the Estimate from the Stream
+
+Attach the plugin to your agent. After every model call, the agent’s stream carries a `cost_estimate` event:
+
+```python
+import asyncio
+
+from strands import Agent
+from strands.vended_plugins.cost_estimator import GenAIPricesEstimator
+
+cost = GenAIPricesEstimator()
+agent = Agent(plugins=[cost], callback_handler=None)
+
+
+async def main():
+    async for event in agent.stream_async("Why is the sky blue? Answer in one sentence."):
+        if event.get("type") == "cost_estimate":
+            call = event["model_call"]
+            print("call:", call.model_id, call.cost_usd)
+            print("so far:", event["cost_estimate"].total_usd)
+        if "result" in event:
+            estimate = cost.estimate(event["result"])
+            print("request:", estimate.total_usd)
+            for model in estimate.models:
+                print(" ", model.model_id, model.cost_usd, model.price_source)
+
+
+asyncio.run(main())
+
+# Example output:
+# call: global.anthropic.claude-sonnet-4-6 0.000669
+# so far: 0.000669
+# request: 0.000669
+#   global.anthropic.claude-sonnet-4-6 0.000669 genai-prices:aws/global.anthropic.claude-sonnet-4-6-v1:0
+```
+
+Each event carries two estimates:
+
+-   `event["model_call"]` is the estimate for the model call that just ended. It names the model the plugin saw: wrap middleware you add after the plugin that swaps the model is not reflected in it.
+-   `event["cost_estimate"]` is the running estimate for the request so far, including the agents your tools ran in the same request. Do not add events together.
+
+The events are a running figure, not the request’s estimate. Work that happens after the agent’s last model call, such as a goal judge or memory extraction, is not in any event. For the request’s estimate, call `cost.estimate(event["result"])` when the `result` event arrives, as the example does.
+
+A [callback handler](/docs/user-guide/sdk/streaming/callback-handlers/index.md) receives the same two estimates as the `cost_estimate` and `model_call` keyword arguments.
+
+## Estimate a Request
+
+`estimate()` returns the estimate for a request. It accepts an agent result, a Graph or Swarm result, an `invocation_context`, or a list of [`ModelUsage` records](#token-usage-per-model), and it works without attaching the plugin to an agent.
+
+The request includes the model calls the SDK makes for you, such as summarization, and the agents your tools run. An agent started by your own tool counts only when the tool passes `invocation_context` on:
+
+```python
+from strands import Agent, ToolContext, tool
+from strands.vended_plugins.cost_estimator import GenAIPricesEstimator
+
+
+@tool(context=True)
+async def research(topic: str, tool_context: ToolContext) -> str:
+    """Research a topic and return short notes."""
+    researcher = Agent(model="us.amazon.nova-lite-v1:0", callback_handler=None)
+    result = await researcher.invoke_async(topic, invocation_context=tool_context.invocation_context)
+    return str(result)
+
+
+cost = GenAIPricesEstimator()
+agent = Agent(tools=[research], callback_handler=None)
+
+result = agent("Research why the sky is blue, then answer in one sentence.")
+estimate = cost.estimate(result)
+
+print(estimate.total_usd)
+for model in estimate.models:
+    print(" ", model.model_id, model.cost_usd, model.price_source)
+
+# Example output:
+# 0.00636474
+#   global.anthropic.claude-sonnet-4-6 0.006309 genai-prices:aws/global.anthropic.claude-sonnet-4-6-v1:0
+#   us.amazon.nova-lite-v1:0 5.574e-05 genai-prices:aws/amazon.nova-lite-v1:0
+```
+
+A request you continue by passing its `invocation_context` to a later call is one request, so its estimate grows. Do not add the estimates of the two calls together. Resuming after an [interrupt](/docs/user-guide/sdk/interrupts/index.md) starts a new request.
+
+### Nested Agents
+
+A nested agent emits its own `cost_estimate` events when the plugin is attached to it. When the agent runs as a tool, they reach the parent’s stream inside [tool stream events](/docs/user-guide/sdk/tools/custom-tools/index.md#tool-streaming), not at the top level.
+
+A nested agent that sets its own `limits` reports its own share in `cost_estimate`, not the whole request. The parent’s events and `estimate()` still include it.
+
+### Token Usage per Model
+
+The token counts behind the estimate are on the request itself, with or without the plugin. `result.invocation_context.usage_by_model` is a list of `ModelUsage` records, one per model, each with a `provider_name`, a `model_id`, and the model’s summed `usage`. You can save the records and pass them to `estimate()` later.
+
+For the SDK’s model classes, `provider_name` is one of `anthropic`, `bedrock`, `google`, `litellm`, `llamaapi`, `llamacpp`, `mistral`, `ollama`, `openai`, `sagemaker`, or `writer`. A model that reaches Bedrock through another class, such as `OpenAIModel` with `bedrock_mantle_config` or a Bedrock base URL, is `bedrock` too. A decision model reports the provider name from its own metadata. The name is `None` when the SDK cannot tell, as for a custom model or an OpenAI-compatible endpoint with its own base URL. A SageMaker model’s `model_id` is its endpoint name.
+
+## Use Your Own Prices
+
+Pass your own prices for a model genai-prices does not list, or for a rate you negotiated. Prices are in USD per one million tokens:
+
+```python
+from strands.vended_plugins.cost_estimator import GenAIPricesEstimator, ModelPrice
+
+cost = GenAIPricesEstimator(
+    prices=[
+        ModelPrice(model_id="my-endpoint", input_per_million=0.20, output_per_million=0.60),
+        ModelPrice(
+            model_id="us.amazon.nova-lite-v1:0",
+            provider_name="bedrock",
+            input_per_million=0.06,
+            output_per_million=0.24,
+            cache_read_per_million=0.015,
+            cache_write_per_million=0,
+        ),
+    ],
+)
+```
+
+Your prices win over genai-prices. The `model_id` is compared as a whole string. For a SageMaker model, it is the endpoint name. A price with no cache rate charges cached tokens at the input rate.
+
+A price with a `provider_name` applies only when it equals the record’s [provider name](#token-usage-per-model) exactly, and it wins over a price without one. A price with `provider_name="aws"`, for example, never applies to a Bedrock model.
+
+Each model in the estimate reports the price it used in `price` and where the price came from in `price_source`: `"user"`, or the genai-prices entry that matched. `price_source` is for display, so do not parse it.
+
+## When a Model Has No Price
+
+A model with no price has a `cost_usd` of `None`, and then `total_usd` is `None` too. A missing price never counts as zero, so you never read a partial sum as the whole:
+
+```python
+estimate = cost.estimate(result)
+
+if estimate.total_usd is None:
+    print("No price for:", [model.model_id for model in estimate.unpriced])
+```
+
+The plugin looks a model up in genai-prices only when its provider name is `anthropic`, `bedrock`, `google`, `mistral`, `openai`, or `litellm`. For a LiteLLM model, the provider is the part of the model ID before the first `/`; for an ID without one, such as `gpt-4o`, genai-prices infers the provider from the model name. Every other model, such as a custom model, a SageMaker endpoint, or a local model, is priced only by the prices you pass.
+
+genai-prices matches model IDs by rule, so an ID it does not list exactly can match a neighbouring entry. For example, `claude-sonnet-4-5-custom` gets the price of `claude-sonnet-4-5`. `price_source` shows the entry that was used. Pass your own price when it is the wrong one.
+
+## What the Estimate Leaves Out
+
+Each of these makes your bill differ from the estimate:
+
+| Left out | Effect |
+| --- | --- |
+| Models newer than the installed genai-prices | Unpriced, or priced as a neighbouring entry, until you upgrade genai-prices or pass your own price |
+| Per-request fees | A model whose list price adds a fee per request is unpriced; pass your own price |
+| A model with no ID | Unpriced, even with your own prices |
+| Long-context price tiers | Calls above the tier are underpriced, because the estimate uses each model’s base rate |
+| Time-of-day pricing | Priced at the rate in effect when `estimate()` runs, not when the call ran |
+| Amazon Bedrock source region | Regional profiles get one price, while real prices vary by region |
+| Service tier, batch, and provisioned throughput | Flex and batch are overpriced, and priority is underpriced |
+| One-hour cache writes | Priced at the five-minute rate, so underpriced |
+| Amazon Nova cache writes | Priced at the input rate, so overpriced; pass your own price with `cache_write_per_million=0` |
+| Negotiated discounts | Overpriced; pass your own prices |
+| Application inference profile ARNs | Unpriced; pass your own price |
+| A model call that fails or is cancelled mid-stream | A failed call is not counted; a cancelled call counts only the usage reported before the cancel |
+| Background tasks that finish after the result | Counted only in an estimate you take after they finish |
+| `Agent.structured_output()` | Runs outside any request, so not counted |
+| Agents your own tools start without passing `invocation_context` | Not counted |
+| Tool, knowledge base, and other non-model costs | Not counted |
+| Bidirectional streaming | Not counted |
+
+For what you were billed on Amazon Bedrock, use [application inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html) with cost allocation tags.
+
+## Related
+
+-   [Async iterators](/docs/user-guide/sdk/streaming/async-iterators/index.md) covers reading events from the agent’s stream.
+-   [Middleware](/docs/user-guide/sdk/agents/middleware/index.md) is how the plugin adds its event to the stream.
+
+## Related pages
+
+- [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
+- [Built-in Modes](/docs/user-guide/sdk/context-management/built-in-modes/index.md) (1 shared tag)
+- [Context Estimation](/docs/user-guide/sdk/context-management/context-estimation/index.md) (1 shared tag)
+- [Context management](/docs/user-guide/sdk/context-management/index.md) (1 shared tag)
+- [Custom Strategies](/docs/user-guide/sdk/context-management/custom-strategies/index.md) (1 shared tag)
+- [Strategy Presets](/docs/user-guide/sdk/context-management/presets/index.md) (1 shared tag)
+- [Skills](/docs/user-guide/sdk/plugins/skills/index.md) (1 shared tag)
+- [Context Offloader](/docs/user-guide/sdk/plugins/context-offloader/index.md) (1 shared tag)
+- [Conversation Management](/docs/user-guide/sdk/agents/conversation-management/index.md) (1 shared tag)
+
+
+## Implementation
+
+### Python
+
+- [harness-sdk/strands-py/src/strands/vended_plugins/cost_estimator/plugin.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/cost_estimator/plugin.py)
+- [harness-sdk/strands-py/src/strands/agent/invocation_context.py](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/agent/invocation_context.py)
+
+Source: https://strandsagents.com/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md
 
 ---
 
@@ -73376,6 +73592,7 @@ Use skills when you want a single agent that can handle a wide range of tasks by
 ## Related pages
 
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
 - [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
 - [Instruction following evaluator](/docs/user-guide/evals-sdk/evaluators/instruction_following_evaluator/index.md) (1 shared tag)
 - [Built-in Modes](/docs/user-guide/sdk/context-management/built-in-modes/index.md) (1 shared tag)
@@ -73384,7 +73601,6 @@ Use skills when you want a single agent that can handle a wide range of tasks by
 - [Custom Strategies](/docs/user-guide/sdk/context-management/custom-strategies/index.md) (1 shared tag)
 - [Strategy Presets](/docs/user-guide/sdk/context-management/presets/index.md) (1 shared tag)
 - [Prompt Engineering](/docs/user-guide/sdk/safety-security/prompt-engineering/index.md) (1 shared tag)
-- [Prompts](/docs/user-guide/sdk/agents/prompts/index.md) (1 shared tag)
 
 
 ## Implementation
@@ -73500,6 +73716,7 @@ Each reminder adds the rendered list to a model call and changes the tail of tha
 ## Related pages
 
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
 - [Built-in Modes](/docs/user-guide/sdk/context-management/built-in-modes/index.md) (1 shared tag)
 - [Context Estimation](/docs/user-guide/sdk/context-management/context-estimation/index.md) (1 shared tag)
 - [Context management](/docs/user-guide/sdk/context-management/index.md) (1 shared tag)
@@ -85747,7 +85964,7 @@ A profile that only reads data and makes no changing API calls works well for an
 
 ## Try it
 
-Box CLI is in preview and runs on Apple silicon Macs with macOS 15 or later, and on Linux ARM64 and x86-64 ([requirements](/docs/user-guide/box/install/index.md#requirements)). Install it with:
+Box CLI runs on Apple silicon Macs with macOS 15 or later, and on Linux ARM64 and x86-64 ([requirements](/docs/user-guide/box/install/index.md#requirements)). Install it with:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | sh

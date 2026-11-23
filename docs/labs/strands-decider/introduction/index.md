@@ -54,7 +54,7 @@ Rate something on an ordered scale. Decider returns an expected value along the 
 
 ### Image input
 
-Decider can also answer questions about images: pass up to four base64 images alongside the state, and the model reads them through its vision tower and answers the same three question types. Every v2 model accepts images out of the box. The [Quickstart](/docs/labs/strands-decider/quickstart/index.md#ask-about-an-image) has a runnable example; [designs/images](https://github.com/strands-labs/strands-decider/blob/d427f3cfb43e22afbbfc2675c9df8dfdca739197/designs/images.md) has the full request shape and vision benchmark results.
+Decider can also answer questions about images: pass up to four base64 images alongside the state, and the model reads them through its vision tower and answers the same three question types. Every v2 model accepts images out of the box. The [Quickstart](/docs/labs/strands-decider/quickstart/index.md#ask-about-an-image) has a runnable example; [designs/images](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/images.md) has the full request shape and vision benchmark results.
 
 > Note: on the v1 Qwen3.5 checkpoint, load the server with `serve --vision` (or `ask --image …`) to attach the vision tower. v2 Gemma 4 models don’t need the flag. The other v1 Gemma 4 checkpoints don’t support images.
 

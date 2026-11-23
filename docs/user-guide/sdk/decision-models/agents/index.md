@@ -83,6 +83,8 @@ Hook events that belong to a request carry the same invocation context, so a hoo
 
 With the invocation context, the decision’s tokens add to the request’s usage, which the agent result reports. The agent’s own model metrics stay separate and cover only the agent’s model calls. A decision always runs to completion, even when the request has reached one of its [invocation limits](/docs/user-guide/sdk/agents/agent-loop/index.md#invocation-limits), and it doesn’t count as a turn. Its tokens do count toward the request’s token limits, so later turns can stop sooner.
 
+In Python, `result.invocation_context.usage_by_model` splits the request’s usage by model. It is a list of `ModelUsage` records, each with a `provider_name`, a `model_id`, and the model’s summed `usage`, and their token counts add up to the request’s usage. A decision’s tokens are in the record of the model that answered it. The [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md#token-usage-per-model) prices these records.
+
 Without the invocation context, the decision still reports its tokens in its own result, but the request doesn’t include them.
 
 ## Approve tool calls
