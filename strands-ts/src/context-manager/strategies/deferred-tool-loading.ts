@@ -1,6 +1,9 @@
 /**
  * Deferred tool loading — keeps tools' input schemas out of the model's context until the model loads them. Users
  * build it with `Offload.defer`.
+ *
+ * The whole feature is experimental: every public export here carries `@experimental`, as does anything added here,
+ * so its shape and behavior may change in future versions.
  */
 
 import { logger } from '../../logging/logger.js'

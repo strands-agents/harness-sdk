@@ -6,6 +6,9 @@
  * `contextManager` parameter; the Agent registers it and it owns overflow recovery
  * and proactive compression.
  *
+ * Deferred tool loading is experimental and may change in future versions: `Offload.defer` and the `DeferTarget`,
+ * `DeferConditions`, and `DeferStrategy` types. Everything else here is stable, the preset names included.
+ *
  * @example
  * ```typescript
  * import { ContextManager, Offload } from '@strands-agents/sdk/context-manager'
