@@ -8,8 +8,21 @@ export const BOX_REPOSITORY_URL = 'https://github.com/strands-agents/box'
 const BOX_CLI_USER_GUIDE_URL = `${BOX_REPOSITORY_URL}/blob/main/docs/cli`
 const BOX_PACKS_URL = `${BOX_REPOSITORY_URL}/blob/main/resources/packs`
 
-export const BOX_INSTALL_COMMAND =
-  'curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | BOX_VERSION=0.3.0-preview.1 sh'
+// Canonical release and platform requirements: docs/cli/install.md in the public Box repository.
+export const BOX_RELEASE_STATUS = 'Preview'
+export const BOX_VERSION = '0.3.0-preview.1'
+export const BOX_PLATFORMS = [
+  {
+    label: 'macOS 15+ (Apple silicon)',
+    description: 'Apple silicon Macs with macOS 15 or later',
+  },
+  {
+    label: 'Linux ARM64 + x86-64',
+    description: 'Linux ARM64 and x86-64',
+  },
+] as const
+
+export const BOX_INSTALL_COMMAND = `curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | BOX_VERSION=${BOX_VERSION} sh`
 export const BOX_VERIFY_COMMAND = 'box --version'
 
 export const BOX_LINKS = {
@@ -226,7 +239,7 @@ export function buildBoxLandingMarkdown(headingLevel = 1): string {
     '',
     heading(root + 1, 'Install Box CLI'),
     '',
-    'Box is in preview and works on Apple silicon Macs with macOS 15 or later and on Linux ARM64 and x86-64.',
+    `Box is in ${BOX_RELEASE_STATUS.toLowerCase()} and works on ${BOX_PLATFORMS.map((platform) => platform.description).join(' and on ')}.`,
     '',
     '```sh',
     BOX_INSTALL_COMMAND,

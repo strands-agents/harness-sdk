@@ -5,6 +5,8 @@ import github from '../../assets/nav/github.svg?raw'
 import {
   BOX_INSTALL_COMMAND,
   BOX_LINKS,
+  BOX_PLATFORMS,
+  BOX_RELEASE_STATUS,
   BOX_REPOSITORY_URL,
 } from '../../config/box-landing'
 import { pathWithBase } from '../../util/links'
@@ -54,11 +56,15 @@ const linkHref = (href: string) => (isExternal(href) ? href : pathWithBase(href)
         />
 
         <p class="box-hero__meta">
-          <span>Preview</span>
-          <span aria-hidden="true">·</span>
-          <span>macOS 15+ (Apple silicon)</span>
-          <span aria-hidden="true">·</span>
-          <span>Linux ARM64 + x86-64</span>
+          <span>{BOX_RELEASE_STATUS}</span>
+          {
+            BOX_PLATFORMS.map((platform) => (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{platform.label}</span>
+              </>
+            ))
+          }
         </p>
       </div>
     </div>
