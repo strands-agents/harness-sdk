@@ -1,7 +1,7 @@
 ---
 title: Declaring what can change
 description: Mark prompts, files, skills, tool descriptions, numbers, and components as tunable, including context strategies, component swaps, and multi-agent factories.
-tags: [prompt-authoring, conversation-management]
+tags: [prompt-authoring, token-management]
 sidebar:
   label: "Declaring what can change"
 ---
@@ -56,6 +56,11 @@ tunable_agent = tunable(
 
 Mistakes fail at declaration, before any rollout: a marker naming no parameter, a
 component whose constructor rejects its own defaults, or two markers on the same file.
+
+Declarations are flat: one tunable factory holds every marker for the agent, and the
+optimizer tunes only the markers on the factory you pass it. Stacking a second `@tunable`
+on the same function fails at declaration. A tunable factory called from inside another
+one is a trap: it builds its baseline every time, and its markers are never tuned.
 
 ## The markers
 
@@ -244,17 +249,17 @@ and give it to `component()`:
 ```python
 from strands import Agent
 from strands.experimental.context_manager import Offload
-from strands_evals.optimization import Float, Int, choice, component, tunable
+from strands_evals.optimization import Int, choice, component, tunable
 
 
-def offload_config(summarize_at=0.85, keep_recent=4, tool_result_tokens=2000):
+def offload_config(summarize_at=85, keep_recent=4, tool_result_tokens=2000):
     return {
         "strategies": [
             Offload.truncate("tool_results", {"preview_tokens": 500}).when(
-                threshold=tool_result_tokens
+                block_threshold=tool_result_tokens
             ),
             Offload.summarize("*").when(
-                utilization=summarize_at, preserve_recent=keep_recent
+                context_utilization=f"{summarize_at}%", preserve_recent=keep_recent
             ),
         ],
     }
@@ -266,7 +271,7 @@ def offload_config(summarize_at=0.85, keep_recent=4, tool_result_tokens=2000):
         presets={"strategies": ["large_tool_offloading", "proactive_summarization"]},
         custom=component(
             offload_config,
-            summarize_at=Float(0.5, 0.95),
+            summarize_at=Int(50, 95),
             keep_recent=Int(2, 20),
             tool_result_tokens=Int(500, 8000),
         ),
@@ -289,12 +294,23 @@ See [Custom strategies](../../sdk/context-management/custom-strategies.md) for e
 
 ## Tune a multi-agent system
 
-One factory may build every agent in the system, and each agent's prompt can carry its own
-marker. Here an orchestrator calls a billing specialist as a tool:
+One factory builds every agent in the system, and each agent's prompt carries its own
+marker. Keep the declaration flat: put every marker on the one tunable factory, and write
+the agents it builds as plain functions that take those values as parameters. Here an
+orchestrator calls a billing specialist as a tool:
 
 ```python
 from strands import Agent
 from strands_evals.optimization import TextValue, tunable
+
+
+def billing_agent(billing_prompt):  # a plain builder: no @tunable here
+    return Agent(
+        name="billing",
+        description="Answers billing questions.",
+        system_prompt=billing_prompt,
+        callback_handler=None,
+    )
 
 
 @tunable(orchestrator_prompt=TextValue(), billing_prompt=TextValue())
@@ -302,15 +318,29 @@ def create_agent(
     orchestrator_prompt="Route each customer question to the right specialist.",
     billing_prompt="You resolve billing questions: charges, refunds, and invoices.",
 ):
-    billing = Agent(
-        name="billing",
-        description="Answers billing questions.",
-        system_prompt=billing_prompt,
+    return Agent(
+        system_prompt=orchestrator_prompt,
+        tools=[billing_agent(billing_prompt)],
         callback_handler=None,
     )
-    return Agent(
-        system_prompt=orchestrator_prompt, tools=[billing], callback_handler=None
-    )
+```
+
+Don't make `billing_agent` tunable too. The optimizer would see only the orchestrator's
+marker, and the specialist would run its baseline prompt in every trial with no error to
+tell you.
+
+If the builders live in production code you'd rather not touch, leave them undecorated and
+mount the outer factory from your eval script, with every marker in one call:
+
+```python
+from strands_evals.optimization import TextValue, tunable
+
+from my_app.agents import create_support_agent  # builds the orchestrator and its specialist
+
+tunable_agent = tunable(
+    create_support_agent,
+    inject={"orchestrator_prompt": TextValue(), "billing_prompt": TextValue()},
+)
 ```
 
 Token and latency metrics count the agent the factory returns and every agent running under
@@ -332,7 +362,7 @@ example above, a custom-pipeline candidate looks like this:
 ```python
 {
     "context_manager": "custom",
-    "context_manager.custom.summarize_at": 0.85,
+    "context_manager.custom.summarize_at": 85,
     "context_manager.custom.keep_recent": 4,
     "context_manager.custom.tool_result_tokens": 2000,
 }

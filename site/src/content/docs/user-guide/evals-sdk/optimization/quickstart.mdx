@@ -173,43 +173,65 @@ result = optimizer.run()
 print(result.summary())
 ```
 
-`run()` prints one line per step and writes everything to a run folder under
-`.strands-evals/optimization/runs/`. Use `await optimizer.run_async()` inside an event
+`run()` writes everything to a run folder under `.strands-evals/optimization/runs/` and
+returns the result when the run ends. Use `await optimizer.run_async()` inside an event
 loop.
 
 ```text
 # Example output (abridged):
-Run 20261123-150500-a63ce4: the search stopped (budget) after 2 steps, 108 rollouts.
-Ships candidate 8 (a19ce5784eea), proposed from candidate 4 (416583fac32e) by text + numbers.
-
-Validation:
-     candidate                   objective  Triage         output_tokens
-     the baseline                -1.026     0.078 ± 0.062  213 ± 12
-  *  candidate 8 (a19ce5784eea)  0.3765     0.887 ± 0.063  13.4 ± 9.7
-     candidate 6 (602ddaa1c0cf)  0.3525     0.821 ± 0.062  11.6 ± 8.6
-     candidate 7 (12b56162be36)  0.354      0.822 ± 0.062  11.4 ± 8.8
-
-Test, the champion vs the baseline (paired 90% interval; reported only):
-  objective      +1.38 [+1.15, +1.61] over 6 cases
-  Triage         +0.917 [+0.749, +1.08] over 6 cases
-  output_tokens  -184 [-227, -140] over 6 cases
-
-Changes: 1 text value (diff())
-  temperature: 0.9 -> 0.9758723400488937
+Optimization result: 20261123-200351-8245db
+===================================================================================
+Objective:    WeightedSum(Maximize(Triage), Minimize(output_tokens, scale=100))
+Stop reason:  budget                  Rollouts:   108 / 120
+Iterations:   2                       Pick rule:  Mean
+Champion:     candidate 6             Outcome:    top_finalist
+Parent:       candidate 4
+Proposers:    text (Reflection), numbers (TPE)
+Changed:      system_prompt, temperature
+===================================================================================
+Validation     id            objective  goal           estimate     sd  measured  n
+-----------------------------------------------------------------------------------
+baseline       e8f41ba9c90b     -0.909  Triage            0.056  0.069     0.000  6
+                                        output_tokens     187.4    9.5     192.8  6
+candidate 5    f1436f1cdb76      0.289  Triage            0.672  0.068     0.667  6
+                                        output_tokens       9.4    7.9      10.0  6
+candidate 4    50e6d7c2701e      0.268  Triage            0.655  0.065     0.667  6
+                                        output_tokens      11.9    7.3      10.0  6
+candidate 6 *  7153e597806d      0.332  Triage            0.793  0.071     0.833  6
+                                        output_tokens      12.9    7.8      10.0  6
+===================================================================================
+Test vs baseline  baseline  champion    diff            90% CI  n
+-----------------------------------------------------------------------------------
+objective           -0.998     0.325  +1.323  [+1.133, +1.512]  6
+Triage               0.083     0.750  +0.667  [+0.454, +0.879]  6
+output_tokens        207.8      10.0  -197.8  [-234.9, -160.8]  6
+===================================================================================
+Changed      baseline  champion
+-----------------------------------------------------------------------------------
+temperature  0.9       0.500304
+===================================================================================
+Tokens         search  validation   test    total
+-----------------------------------------------------------------------------------
+agent          22,577       7,735  3,685   33,997
+proposers     426,851           0      0  426,851
+judges              -           -      -  287,276
 ```
 
 ## Read what won
 
 The summary answers three questions:
 
-- **What ships.** Candidate 8, marked `*`, ranked highest on the validation cases the
-  search never saw. The baseline scored about 0 on Triage: it answered every ticket with a
-  paragraph. The champion scores 0.89 and writes about 13 tokens instead of 213.
+- **What ships.** The header names the champion, candidate 6, and the outcome
+  `top_finalist`: a finalist beat your current agent on validation. In the validation
+  table (marked `*`), the baseline scored about 0 on Triage because it answered every
+  ticket with a paragraph. The champion scores 0.79 and writes about 13 tokens instead of
+  187.
 - **Whether it holds up.** Yes. On the six test cases, which neither the search nor the
-  pick ever read, Triage rose by 0.92 and output tokens fell by 184, both with intervals
-  far from zero.
-- **What to change.** One text value, the system prompt, and a slightly higher
-  temperature.
+  pick ever read, Triage went from 0.08 to 0.75 and output tokens from 208 to 10, both with
+  intervals far from zero.
+- **What to change.** The header's `Changed` line lists the system prompt and the
+  temperature. Numbers and choices are in the `Changed` table; text changes are in the
+  diff.
 
 The effects file tells you which of those changes did the work:
 
@@ -222,13 +244,13 @@ for row in result.effects["effects"]:
 
 ```text
 # Example output (abridged):
-Triage: rewritten:text=rewritten vs default: +0.743 [+0.678, +0.809]
-Triage: temperature=(0.308522, 0.594614] vs (0.594614, 0.975872]: +0.00274 [-0.0324, +0.0379]
-output_tokens: rewritten:text=rewritten vs default: -211 [-222, -200]
+Triage: rewritten:text=rewritten vs default: +0.743 [+0.641, +0.846]
+Triage: temperature=(0.308522, 0.594614] vs (0.594614, 0.975872]: +0.00917 [-0.0531, +0.0715]
+output_tokens: rewritten:text=rewritten vs default: -213 [-224, -202]
 ```
 
-The rewritten prompt did all of it: +0.74 Triage and 211 fewer tokens. Temperature made
-no difference, so the champion's `0.98` is where the search happened to be, not a
+The rewritten prompt did all of it: +0.74 Triage and 213 fewer tokens. Temperature made
+no difference, so the champion's `0.50` is where the search happened to be, not a
 finding: keep your current value. See
 [Reading the results](results.md#which-options-mattered) for the full effects table.
 
@@ -246,27 +268,28 @@ The rewritten prompt, from `best.diff` (abridged):
 +++ system_prompt
 @@ -1 +1,20 @@
 -You are a helpful support assistant.
-+You are a support ticket triage classifier. Every user message is a customer ticket.
-+Never answer it, give advice, ask questions, or greet. Only classify it.
++You are a support-ticket triage classifier. You do NOT answer, advise, or ask questions.
++Whatever the customer message says (question, complaint, request), your only job is to
++classify it.
 +
 +Output exactly one line, nothing else:
 +category: <category>, priority: <priority>
 +
 +category (pick one, lowercase):
-+- billing: charges, duplicate charges, payments, invoices, tax IDs, pricing
-+- returns: returns, refunds, return policy, damaged/defective/wrong items, exchanges
-+- account: login, password reset, profile/name/email changes, security
-+- shipping: delivery status, lost/late packages, tracking, shipping address
-+- product: product features, usage, availability, compatibility
++- billing: charges, duplicate charges, invoices, tax IDs, payment methods, pricing
++- returns: returning items, return policy, damaged or defective items, exchanges
++- account: login, password, profile settings, unauthorized access or orders
++- shipping: delivery status, lost or late packages, tracking, address
++- technical: product or app malfunction, bugs, how-to for product use
 +- other: anything that fits none of the above
 +
 +priority (pick one, lowercase):
-+- high: money lost or at risk, damaged or broken goods, security/unauthorized access
-+- normal: routine request with a specific problem to fix
-+- low: general questions, policy inquiries, minor changes with no urgency
++- high: money lost or at risk, security or unauthorized activity, damaged goods
++- normal: routine requests needing action but not urgent
++- low: general questions, policy info, cosmetic or minor settings changes
 ```
 
-Review the rewrite before you copy it in. This one added two categories, `product` and
+Review the rewrite before you copy it in. This one added two categories, `technical` and
 `other`, that none of the tickets use. They're harmless here, but you might drop them, or
 keep them if your real tickets need somewhere to go. Then rerun your experiment on a few
 fresh tickets to confirm.

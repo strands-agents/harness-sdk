@@ -679,6 +679,7 @@ sidebar:
               - docs/user-guide/evals-sdk/optimization/tunables
               - docs/user-guide/evals-sdk/optimization/entry_routes
               - docs/user-guide/evals-sdk/optimization/objectives
+              - docs/user-guide/evals-sdk/optimization/search
               - docs/user-guide/evals-sdk/optimization/results
           - docs/user-guide/evals-sdk/chaos_testing
       - label: CLI

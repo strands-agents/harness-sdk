@@ -11,20 +11,38 @@ apply it. It also covers resuming a run that was stopped partway.
 
 ## Start with the summary
 
-`result.summary()` is the overview. It names the champion, shows how each finalist scored
-on validation, prints the test report, and lists every changed value:
+`result.summary()` is the overview. From the CLI, `strands-evals optimize run` prints the
+same summary when the run finishes; add `--json` for the whole result as JSON.
 
 ```python
 result = optimizer.run()
 print(result.summary())
 ```
 
-From the CLI, `strands-evals optimize run` prints the same summary when the run finishes.
-Add `--json` for the whole result as JSON.
+The summary is a stack of tables, read top to bottom:
 
-The champion is the baseline when nothing that meets every constraint beats your current
-agent. That's a real answer: your current configuration is as good as anything the search
-found within the budget.
+| Section | Answers |
+|---|---|
+| Header | What ran and what shipped: the objective, why the search stopped, rollouts spent against the budget, the champion, and the outcome |
+| Validation | How the baseline and each finalist scored on cases the search never saw: the estimate, its sd, and the measured mean per metric, with P(met) for each constraint |
+| Test vs baseline | Whether the win holds on cases nothing else read: both means, the difference, and its 90% interval |
+| Changed | The champion's new numbers and choices, next to the baseline's |
+| Tokens | What the run spent, by split: the agent, the proposers, and the judges |
+
+Notes at the end define each column. The [quickstart](quickstart.md#run-it) shows a full
+summary from a real run.
+
+The header's **outcome** says how the pick ended:
+
+| Outcome | Means |
+|---|---|
+| `top_finalist` | A finalist beat your current agent and ships |
+| `baseline_best` | Your current agent ranked first among the feasible candidates and ships |
+| `no_feasible_finalist` | No finalist met every constraint, so your current agent ships |
+| `no_finalists` | The search produced nothing to validate, so your current agent ships |
+
+Your current agent shipping is a real answer: it's as good as anything the search found
+within the budget. `result.validation.outcome` holds the same value.
 
 ## What changed
 
@@ -42,17 +60,14 @@ Text from a file marker appears in the diff on its real file path; text from you
 appears as a hunk headed by its key. `result.improved` is `False` when the baseline
 shipped.
 
-The run folder already holds both parts, written when the run ends: `best.diff` for the text
-and `best.values.json` for the numbers and choices.
-
 ## Apply the champion
 
-Nothing in your project changes during a run. Review `best.diff` and `best.values.json`,
-then edit the values into your code or config. To get the same files for another
+The run folder holds both parts: `best.diff` for the text and `best.values.json` for the
+numbers and choices. Review them, then edit the values into your code or config. To get the same files for another
 candidate, such as a runner-up from the summary, look it up by id and call `write_diff`:
 
 ```python
-runner_up = result.candidate("602ddaa1c0cf")
+runner_up = result.candidate("f1436f1cdb76")
 runner_up.write_diff("runner_up.diff")  # writes runner_up.diff and runner_up.values.json
 ```
 
@@ -62,16 +77,21 @@ runs against the same cases can slowly fit them.
 ## How sure the run is
 
 The **test report** compares the champion with your current agent on test cases that
-neither the search nor the pick ever read. For the objective and each metric, it gives the
-paired difference with a 90% interval, and a ratio for metrics that can't go negative:
+neither the search nor the pick ever read. For the objective and each metric, it gives
+both sides' means over the same cases, the paired difference with a 90% interval, and a
+ratio for metrics that can't go negative:
 
 ```python
 report = result.test
-if report is None or report.objective is None:
+if report is None:
     print(result.test_reason)
 else:
-    diff = report.objective
-    print(f"{diff.mean_diff:+.3g} [{diff.ci_low}, {diff.ci_high}], {diff.n_cases} cases")
+    for metric, diff in report.difference.items():
+        print(
+            f"{metric}: {diff.reference_mean:.3g} -> {diff.candidate_mean:.3g}, "
+            f"{diff.mean_diff:+.3g} [{diff.ci_low:+.3g}, {diff.ci_high:+.3g}] "
+            f"over {diff.n_cases} cases"
+        )
 ```
 
 Read the interval, not the point. An interval that excludes zero is a change the test cases
@@ -79,7 +99,7 @@ support. One that includes zero means the test cases can't tell, often because t
 few of them. The report never changes what ships.
 
 `result.validation` shows how the champion was picked: every finalist's estimate on
-validation, and why any finalist was ruled out.
+validation, the pick rule, each constraint's P(met), and why any finalist was ruled out.
 
 ## Which options mattered
 
@@ -98,9 +118,9 @@ From the [quickstart](quickstart.md) run:
 
 | Option | Triage | Output tokens |
 |---|---|---|
-| system prompt rewritten vs the original | +0.74 [+0.68, +0.81] | -211 [-222, -200] |
-| temperature 0.31 to 0.59 vs above 0.59 | +0.003 [-0.032, +0.038] | +0.7 [-6.5, +7.8] |
-| temperature 0.31 or lower vs above 0.59 | -0.006 [-0.045, +0.032] | +2.4 [-6.0, +11] |
+| system prompt rewritten vs the original | +0.74 [+0.64, +0.85] | -213 [-224, -202] |
+| temperature 0.31 to 0.59 vs above 0.59 | +0.009 [-0.053, +0.072] | -1.7 [-9.1, +5.7] |
+| temperature 0.31 or lower vs above 0.59 | +0.011 [-0.050, +0.072] | -2.5 [-11, +5.8] |
 
 The rewritten prompt did all the work; temperature did nothing measurable. That's worth
 more than the champion's exact values: it tells you to keep the rewrite, leave the
@@ -108,7 +128,8 @@ temperature where it was, and stop spending budget on it.
 
 ## What the run cost
 
-The budget counts rollouts. Everything else is reported next to it:
+The budget counts rollouts. Everything else is reported next to it, in the summary's
+Tokens table and on the result:
 
 ```python
 result.agent_cost["train"]   # the agent's tokens during the search
@@ -128,7 +149,7 @@ import pandas as pd
 
 proposals = pd.DataFrame(result.to_rows("proposal"))  # one row per candidate
 cases = pd.DataFrame(result.to_rows("case"))          # one row per case and run
-result.reports[result.best.id]["test"].run_display()  # an EvaluationReport per split
+result.reports[result.best.id]["test"].display()  # an EvaluationReport per split
 ```
 
 `to_rows` also takes `"iteration"`, one row per search step.
@@ -158,7 +179,7 @@ the optimizer or the agent:
 from strands_evals.optimization import OptimizationResult
 
 result = OptimizationResult.from_file(
-    ".strands-evals/optimization/runs/20261123-150500-a63ce4/result.json"
+    ".strands-evals/optimization/runs/20261123-200351-8245db/result.json"
 )
 print(result.summary())
 ```
@@ -172,20 +193,23 @@ Every trial is saved the moment it finishes, so a run that was killed, interrupt
 stopped on an error picks up where it left off without paying for finished work again:
 
 ```python
-from strands_evals.optimization import Optimizer
+from strands_evals.optimization import Maximize, Minimize, Optimizer, WeightedSum
 
 optimizer = Optimizer.resume(
-    ".strands-evals/optimization/runs/20261123-150500-a63ce4",
+    ".strands-evals/optimization/runs/20261123-200351-8245db",
     experiment=experiment,
     factory=create_agent,
+    objective=WeightedSum(Maximize("Triage"), Minimize("output_tokens", scale=100)),
 )
 result = optimizer.run()
 ```
 
+Pass the same experiment, factory, objective, constraints, and search the run started with.
+
 From the CLI, resume needs only the run folder, because the CLI saved its inputs there:
 
 ```bash
-strands-evals optimize resume .strands-evals/optimization/runs/20261123-150500-a63ce4
+strands-evals optimize resume .strands-evals/optimization/runs/20261123-200351-8245db
 ```
 
 A killed run may resume with a larger `--max-rollouts`. A finished run only prints its
@@ -194,7 +218,9 @@ saved result again; to search more, start a new run.
 Resume checks the cases, the declared space, the objective, the constraints, and the
 search against the saved run, and refuses on a mismatch. It doesn't check your agent code,
 so leave it unchanged between a kill and a resume. The resumed run replays the same
-splits, parents, and proposals, except where a model rewrote text.
+splits, parents, and proposals. The step that was cut off reuses the proposals it had
+already drawn, even the text rewriter's, so the candidates it scored come back with their
+trials. A step killed before it drew anything asks its proposers again.
 
 When a proposer fails in a way retrying can't fix (a wrong model id, no model access), the
 search halts before the end phase and raises `ProposerError`, so no validation or test

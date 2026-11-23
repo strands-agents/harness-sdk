@@ -44,8 +44,6 @@ run, one lucky run looks like a win, and nobody remembers which combination was 
 **Optimizing:**
 
 - Prompts, components, and numbers searched together, within a rollout budget you set
-- A statistical model shares evidence across similar configurations, so a lucky run
-  doesn't win
 - The winner is picked on cases the search never saw, then compared with your current
   agent on a third set of cases
 - Every trial is saved, so a killed run resumes without paying twice
@@ -59,9 +57,6 @@ run, one lucky run looks like a win, and nobody remembers which combination was 
 - **Choosing components**: compare context strategies, models, or other components on
   your workload instead of guessing
 - **Before a model upgrade**: retune the prompt and settings for the new model
-
-Skip it when you have only a handful of cases. The optimizer splits your cases three ways,
-and with fewer than about 15 the intervals in its report are too wide to tell you much.
 
 ## Quick example
 
@@ -102,8 +97,7 @@ print(result.summary())
 ```
 
 The parameter defaults are the baseline, and `create_agent()` still builds that baseline
-with no optimizer present. The optimizer rewrites the system prompt from the agent's own
-conversations and searches the temperature alongside it.
+with no optimizer present.
 
 ## How it works
 
@@ -144,35 +138,35 @@ more reliably and tells you which options actually moved a metric.
 | **Output** | Scores per case | A champion, a diff, typed values, and a test report |
 | **Changes your agent** | No | No: you apply the result |
 
-**Use together:** the experiment is how the optimizer judges each configuration. If you
-already evaluate the agent, reuse that experiment. If not, [build one](../quickstart.md#run-your-first-evaluation) first: a set of cases
-that look like the agent's real work, and evaluators that measure what you care about. The
-optimizer can only be as good as its evaluators.
+**Use together:** the experiment is how the optimizer judges each configuration, so the
+optimizer can only be as good as its evaluators. To build one first, see
+[Run your first evaluation](../quickstart.md#run-your-first-evaluation).
 
 ## Best practices
 
 - **Get the evaluators right first.** The optimizer finds whatever your evaluators reward,
   including their blind spots. Read a few judge reasons before you optimize against them.
-- **Give it enough cases.** Twenty or more lets each split hold real evidence. With 10
-  cases the test split has 3, and its intervals say so.
+- **Give it enough cases.** The cases are split three ways, so use twenty or more. With 10
+  cases the test split has 3, and its intervals are too wide to tell you much.
 - **Price what you care about.** If cost matters, put tokens in the objective or add a
   constraint. An objective that ignores the model happily picks the most expensive one.
 - **Start small, then widen.** Run a 60-rollout pass on two or three knobs first. It's
   cheap, and it catches a broken evaluator before you spend 500 rollouts.
 - **Read the test report before shipping.** It's the only number from cases nothing else
   touched.
-- **Run text rewriting somewhere without production credentials.** The default text
-  rewriter runs shell commands in a confined folder that isn't a sandbox.
 
 ## Next steps
 
-- [Quickstart](../optimization/quickstart.md): Optimize a support agent end to end
+- [Quickstart](../optimization/quickstart.md): Optimize a support-ticket triage agent end to
+  end
 - [Declaring what can change](tunables.md): Every marker, plus advanced examples such as
   context strategies and component swaps
 - [Choosing an entry route](entry_routes.md): Python factory, your own task, the CLI, or an
   agent file, and what each one can't do
 - [Objectives, constraints, and budget](objectives.md): Say what "better" means and how much
   to spend
+- [Customizing the search](search.md): Pick the proposer for each value, including
+  Thompson sampling for choices
 - [Reading the results](results.md): The summary, the diff, the effects, and resuming a run
 
 ## Related documentation

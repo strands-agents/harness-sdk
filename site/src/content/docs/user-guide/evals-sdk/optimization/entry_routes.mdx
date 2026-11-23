@@ -272,13 +272,13 @@ cost a rollout.
 - **CLI only.** The Python `Optimizer` still takes a tunable factory.
 - **Option values aren't checked before the run**, unlike a config file's. A value the
   harness rejects shows up as an invalid candidate.
-- **TypeScript:** a custom rollout can only call the agent's invoke method, and an
-  environment hook's resources don't reach the Node.js worker.
+- **TypeScript:** a custom rollout gets a stand-in for the agent. Its invoke method asks a
+  fresh agent once; for a multi-turn conversation, open its session and call `turn` once per
+  message, and the same agent answers every turn. Nothing else on the agent is reachable,
+  and an environment hook's resources don't reach the Node.js worker.
 
 ## What every route shares
 
-- **The optimizer only reports.** On every route the champion lands in the run folder as a
-  diff and a values file for you to review and apply.
 - **Resume trusts your code.** Resuming re-imports the agent code, rollout, and environment
   without comparing them, so don't change them between a kill and a resume.
 - **The test split is the unseen-case check.** The search and the pick never read it. Before
