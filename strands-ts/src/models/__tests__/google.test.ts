@@ -580,50 +580,7 @@ describe('GoogleModel', () => {
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelNetworkError)
     })
 
-    // #5744
-    const midStreamMessage =
-      'got status: RESOURCE_EXHAUSTED. {"error":{"code":429,"message":"Resource exhausted","status":"RESOURCE_EXHAUSTED"}}'
-    it.each([
-      [
-        'an ApiError with a non-JSON body wrapped by @google/genai',
-        new ApiError({
-          message: JSON.stringify({ error: { message: 'Rate limited', code: 429, status: 'Too Many Requests' } }),
-          status: 429,
-        }),
-      ],
-      ['a mid-stream ApiError', new ApiError({ message: midStreamMessage, status: 429 })],
-      [
-        'a mid-stream ApiError from another @google/genai module copy',
-        Object.assign(new Error(midStreamMessage), { name: 'ApiError', status: 429 }),
-      ],
-      [
-        'an error whose JSON message carries code 429',
-        new Error(JSON.stringify({ error: { message: 'Rate limited', code: 429, status: 'Too Many Requests' } })),
-      ],
-    ])('throws ModelThrottledError for HTTP 429 from %s', async (_, error) => {
-      const mockClient = {
-        models: {
-          generateContentStream: vi.fn(async () => {
-            throw error
-          }),
-        },
-      } as unknown as GoogleGenAI
-
-      const provider = new GoogleModel({ client: mockClient })
-      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
-
-      await expect(collectIterator(provider.stream(messages))).rejects.toMatchObject({
-        name: 'ModelThrottledError',
-        cause: error,
-      })
-    })
-
-    // #5916
-    const unavailableMessage =
-      'got status: UNAVAILABLE. {"error":{"code":503,"message":"The model is overloaded.","status":"UNAVAILABLE"}}'
-    const serviceUnavailableBody = JSON.stringify({
-      error: { message: 'Service Unavailable', code: 503, status: 'Service Unavailable' },
-    })
+    // #5744 #5916
     const throwingProvider = (error: Error): GoogleModel =>
       new GoogleModel({
         client: {
@@ -635,40 +592,36 @@ describe('GoogleModel', () => {
         } as unknown as GoogleGenAI,
       })
     const hi = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+    const errorShapes = (code: number): [string, Error][] => {
+      const body = JSON.stringify({ error: { message: 'Try again later', code, status: 'Reason Phrase' } })
+      const midStream = `got status: UNKNOWN. {"error":{"code":${code},"message":"Try again later","status":"UNKNOWN"}}`
+      return [
+        ['an ApiError with a non-JSON body wrapped by @google/genai', new ApiError({ message: body, status: code })],
+        ['a mid-stream ApiError', new ApiError({ message: midStream, status: code })],
+        [
+          'a mid-stream ApiError from another @google/genai module copy',
+          Object.assign(new Error(midStream), { name: 'ApiError', status: code }),
+        ],
+        ['an error whose JSON message carries the code', new Error(body)],
+      ]
+    }
 
-    it.each([
-      [
-        'an ApiError with a non-JSON body wrapped by @google/genai',
-        new ApiError({ message: serviceUnavailableBody, status: 503 }),
-      ],
-      ['a mid-stream ApiError', new ApiError({ message: unavailableMessage, status: 503 })],
-      [
-        'a mid-stream ApiError from another @google/genai module copy',
-        Object.assign(new Error(unavailableMessage), { name: 'ApiError', status: 503 }),
-      ],
-      ['an error whose JSON message carries code 503', new Error(serviceUnavailableBody)],
-    ])('throws ModelThrottledError for HTTP 503 from %s', async (_, error) => {
+    it.each(
+      [408, 429, 500, 502, 503, 504].flatMap((code) =>
+        errorShapes(code).map(([shape, error]) => [code, shape, error] as const)
+      )
+    )('throws ModelThrottledError for HTTP %i from %s', async (_, __, error) => {
       await expect(collectIterator(throwingProvider(error).stream(hi))).rejects.toMatchObject({
         name: 'ModelThrottledError',
         cause: error,
       })
     })
 
+    it.each(errorShapes(400))('rethrows HTTP 400 from %s unchanged', async (_, error) => {
+      await expect(collectIterator(throwingProvider(error).stream(hi))).rejects.toBe(error)
+    })
+
     it.each([
-      [
-        'an ApiError 500 with a non-JSON body',
-        new ApiError({
-          message: JSON.stringify({ error: { message: 'oops', code: 500, status: 'Internal Server Error' } }),
-          status: 500,
-        }),
-      ],
-      [
-        'a mid-stream ApiError 500',
-        new ApiError({
-          message: 'got status: INTERNAL. {"error":{"code":500,"message":"Internal error","status":"INTERNAL"}}',
-          status: 500,
-        }),
-      ],
       [
         'an ApiError 400 that mentions unavailable',
         new ApiError({
