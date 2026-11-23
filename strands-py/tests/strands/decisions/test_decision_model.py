@@ -8,6 +8,7 @@ import pytest
 from strands import Agent, tool
 from strands.agent.invocation_context import (
     InvocationContext,
+    ModelUsage,
     _create_auxiliary_invocation_context,
     _create_invocation_context,
 )
@@ -131,6 +132,20 @@ async def test_runs_and_records_usage_when_the_request_has_reached_its_limit():
         "outputTokens": 3,
         "totalTokens": 7,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("provider_name", "model_id"), [("typesafe", "jev-1"), (None, None)])
+async def test_adds_reported_usage_under_the_model_named_in_the_result_metadata(provider_name, model_id):
+    metadata = DecisionMetadata(latency_ms=1, provider_name=provider_name, model_id=model_id)
+    decision = StubDecisionModel(DecisionResult(answers={"is_safe": True}, metadata=metadata, usage=DECISION_USAGE))
+    invocation_context = _create_invocation_context()
+
+    await decision.ask("ls", QUESTIONS, invocation_context=invocation_context)
+
+    assert invocation_context.usage_by_model == [
+        ModelUsage(provider_name=provider_name, model_id=model_id, usage=DECISION_USAGE)
+    ]
 
 
 @pytest.mark.asyncio

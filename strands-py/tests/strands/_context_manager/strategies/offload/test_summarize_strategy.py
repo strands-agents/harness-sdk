@@ -18,7 +18,7 @@ from strands._context_manager.placeholder import (
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.summarize import BLOCK_SUMMARY_INSTRUCTIONS
 from strands._context_manager.types import ContextState
-from strands.agent.invocation_context import _create_invocation_context
+from strands.agent.invocation_context import ModelUsage, _create_invocation_context
 from strands.models import Model, SummarizeResult
 from strands.models._summarize import _SUMMARIZE_GUARD, DEFAULT_SUMMARIZE_INSTRUCTIONS
 from strands.tools.registry import ToolRegistry
@@ -1177,6 +1177,24 @@ class TestClientSideSummariesUseModelSummarize:
         assert await strategy.apply(context) is bool(content)
 
         assert request.usage == {"turns_taken": 0, "inputTokens": 100, "outputTokens": 20, "totalTokens": 120}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("server_side_summary", [False, True])
+    async def test_a_summary_adds_its_usage_under_the_model_that_wrote_it(self, mock_agent, server_side_summary):
+        mock_agent.model.model_info.capabilities.server_side_summary = server_side_summary
+        mock_agent.model.get_config = unittest.mock.Mock(return_value={"model_id": "summary-model"})
+        usage = Usage(inputTokens=100, outputTokens=20, totalTokens=120)
+        content = [ContentBlock(summary={"provider": "anthropic", "text": "compacted"})]
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=SummarizeResult(content, usage))
+        messages = TestServerSideSummary._messages()
+        mock_agent.messages = messages
+        request = _create_invocation_context()
+        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, invocation_context=request)
+        assert await strategy.apply(context) is True
+
+        assert request.usage_by_model == [ModelUsage(provider_name=None, model_id="summary-model", usage=usage)]
 
     @pytest.mark.asyncio
     async def test_warns_when_summarize_returns_no_text(self, mock_agent, caplog):
