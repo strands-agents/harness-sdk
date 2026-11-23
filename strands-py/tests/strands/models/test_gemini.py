@@ -1379,22 +1379,6 @@ async def test_stream_response_throttled_exception(gemini_client, model, message
 
 
 @pytest.mark.asyncio
-async def test_stream_response_throttled_exception_non_json_body(gemini_client, model, messages):
-    """Regression test for https://github.com/strands-agents/harness-sdk/issues/4523.
-
-    For a 429 with a non-JSON body, google-genai sets status to the HTTP reason phrase; the 429
-    code alone must be enough to classify it as throttling.
-    """
-    body = '{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}}'
-    gemini_client.aio.models.generate_content_stream.side_effect = genai.errors.ClientError(
-        429, {"message": body, "status": "Too Many Requests"}
-    )
-
-    with pytest.raises(ModelThrottledException, match="RESOURCE_EXHAUSTED"):
-        await anext(model.stream(messages))
-
-
-@pytest.mark.asyncio
 async def test_stream_response_throttled_exception_server_error(gemini_client, model, messages):
     """Regression test for https://github.com/strands-agents/harness-sdk/issues/5916."""
     gemini_client.aio.models.generate_content_stream.side_effect = genai.errors.ServerError(
@@ -1405,19 +1389,31 @@ async def test_stream_response_throttled_exception_server_error(gemini_client, m
         await anext(model.stream(messages))
 
 
+@pytest.mark.parametrize("code", [408, 429, 500, 502, 503, 504])
 @pytest.mark.asyncio
-async def test_stream_response_throttled_exception_server_error_non_json_body(gemini_client, model, messages):
-    """Regression test for https://github.com/strands-agents/harness-sdk/issues/5916.
-
-    For a 503 with a non-JSON body the status is the reason phrase, so the code alone
-    must classify it as throttling.
-    """
-    gemini_client.aio.models.generate_content_stream.side_effect = genai.errors.ServerError(
-        503, {"message": "Service Unavailable", "status": "Service Unavailable"}
+async def test_stream_response_retryable_code_throttled_exception(gemini_client, model, messages, code):
+    """Regression test for #4523 and #5916."""
+    body = f'{{"error": {{"code": {code}, "status": "UNKNOWN"}}}}'
+    error_class = genai.errors.ClientError if code < 500 else genai.errors.ServerError
+    gemini_client.aio.models.generate_content_stream.side_effect = error_class(
+        code, {"message": body, "status": "Reason Phrase"}
     )
 
-    with pytest.raises(ModelThrottledException, match="Service Unavailable"):
+    with pytest.raises(ModelThrottledException, match="UNKNOWN"):
         await anext(model.stream(messages))
+
+
+@pytest.mark.asyncio
+async def test_stream_response_bad_request_rethrown(gemini_client, model, messages):
+    error = genai.errors.ClientError(
+        400, {"error": {"code": 400, "status": "INVALID_ARGUMENT", "message": "Model unavailable in this region"}}
+    )
+    gemini_client.aio.models.generate_content_stream.side_effect = error
+
+    with pytest.raises(genai.errors.ClientError) as caught:
+        await anext(model.stream(messages))
+
+    assert caught.value is error
 
 
 @pytest.mark.asyncio
@@ -1433,14 +1429,6 @@ async def test_stream_response_context_overflow_exception(gemini_client, model, 
     )
 
     with pytest.raises(ContextWindowOverflowException, match="exceeds the maximum number of tokens"):
-        await anext(model.stream(messages))
-
-
-@pytest.mark.asyncio
-async def test_stream_response_client_exception(gemini_client, model, messages):
-    gemini_client.aio.models.generate_content_stream.side_effect = genai.errors.ClientError(500, {"status": "INTERNAL"})
-
-    with pytest.raises(genai.errors.ClientError, match="INTERNAL"):
         await anext(model.stream(messages))
 
 
