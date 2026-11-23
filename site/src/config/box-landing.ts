@@ -1,6 +1,8 @@
 import { siteLink } from '../util/links'
 
-export const BOX_LANDING_TITLE = 'Strands Box | Put your agent in a box'
+export const BOX_HERO_TITLE = 'Contain your AI agent'
+export const BOX_HERO_DESCRIPTION = 'Run Claude Code, Codex or Kiro CLI in a sandbox you control.'
+export const BOX_LANDING_TITLE = `Strands Box | ${BOX_HERO_TITLE}`
 export const BOX_LANDING_DESCRIPTION =
   'Strands Box runs AI agents in a sandbox that limits the files, programs, websites, and credentials they can access locally or in supported cloud deployments.'
 
@@ -10,7 +12,6 @@ const BOX_PACKS_URL = `${BOX_REPOSITORY_URL}/blob/main/resources/packs`
 
 // Canonical release and platform requirements: docs/cli/install.md in the public Box repository.
 export const BOX_RELEASE_STATUS = 'Preview'
-export const BOX_VERSION = '0.3.0-preview.1'
 export const BOX_PLATFORMS = [
   {
     label: 'macOS 15+ (Apple silicon)',
@@ -22,7 +23,8 @@ export const BOX_PLATFORMS = [
   },
 ] as const
 
-export const BOX_INSTALL_COMMAND = `curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | BOX_VERSION=${BOX_VERSION} sh`
+export const BOX_INSTALL_COMMAND =
+  'curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | sh'
 export const BOX_VERIFY_COMMAND = 'box --version'
 
 export const BOX_LINKS = {
@@ -251,7 +253,7 @@ export function buildBoxLandingMarkdown(headingLevel = 1): string {
     `$ ${BOX_VERIFY_COMMAND}`,
     '```',
     '',
-    heading(root + 1, 'Run the agent you already use in a sandbox'),
+    heading(root + 1, 'Run Box'),
     '',
     'Open a terminal in the project where you want to run the agent. The first `box run` creates a reusable profile and asks for its settings. Later runs reuse that profile.',
     '',
