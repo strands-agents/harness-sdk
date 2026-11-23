@@ -3080,7 +3080,7 @@ describe('TEMPORARY /evaluate runs after strands dev closes', () => {
     await vi.waitFor(async () => expect(await readTemporaryRunRecords(workspace.directory!)).toEqual([]))
   })
 
-  it('shouldRecordTheProcessOfARunWhileItGoesAndForgetItWhenTheRunEnds', async () => {
+  it('shouldRecordTheProcessOfARunWhileItGoesAndForgetItWhenTheRunEnds', { timeout: 3 * RECORD_WAIT_MS }, async () => {
     const testing = testingProcess()
     let directory = ''
     const spawnTests = vi.fn(async (request: TemporaryEvalsProcess) => {

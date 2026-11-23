@@ -42,7 +42,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  await rm(root, { recursive: true, force: true })
+  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 })
 
 function factorySource(name: string): string {
