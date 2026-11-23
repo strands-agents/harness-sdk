@@ -265,7 +265,11 @@ describe('homepage machine-readable metadata', () => {
           text: product.querySelector('.toolkit__card-slug')?.text.trim(),
         },
         description: product.querySelector('.toolkit__card-desc')?.text.trim(),
-        action: product.querySelector('.toolkit__card-read')?.text.trim(),
+        action: {
+          text: product.querySelector('.toolkit__card-read')?.text.trim(),
+          href: product.querySelector('.toolkit__card-read')?.getAttribute('href'),
+          ariaLabel: product.querySelector('.toolkit__card-read')?.getAttribute('aria-label'),
+        },
       }))
     ).toEqual([
       {
@@ -282,7 +286,11 @@ describe('homepage machine-readable metadata', () => {
         },
         description:
           'Run coding agents like Claude Code in an OS-enforced sandbox. Choose which files, programs, and hosts they reach, and keep your keys out of their reach.',
-        action: 'Explore Strands Box',
+        action: {
+          text: 'Explore Strands Box',
+          href: configuredPathWithBase('/box/'),
+          ariaLabel: 'Explore Strands Box',
+        },
       },
       {
         tag: 'ARTICLE',
@@ -297,7 +305,11 @@ describe('homepage machine-readable metadata', () => {
           text: '/evals',
         },
         description: 'Run evaluations, detect failures, and measure agent behavior before deployment.',
-        action: 'Run an evaluation',
+        action: {
+          text: 'Run an evaluation',
+          href: configuredPathWithBase('/docs/user-guide/evals-sdk/'),
+          ariaLabel: 'Run an evaluation with Strands Evals',
+        },
       },
       {
         tag: 'ARTICLE',
@@ -312,7 +324,11 @@ describe('homepage machine-readable metadata', () => {
           text: '/decider',
         },
         description: 'Route, classify, or score known outcomes with a small decision model that reports confidence.',
-        action: 'Explore the models',
+        action: {
+          text: 'Explore the models',
+          href: configuredPathWithBase('/docs/labs/strands-decider/overview/'),
+          ariaLabel: 'Explore the Strands Decider models',
+        },
       },
     ])
     expect(cards).toHaveLength(3)
@@ -425,6 +441,7 @@ describe('homepage machine-readable metadata', () => {
 
     expect(markdown).toContain('# Strands Agents')
     expect(markdown).toContain('/docs/user-guide/sdk/quickstart/overview/index.md')
+    expect(markdown).toContain('/box/index.md')
     expect(markdown).toContain('/examples/')
     expect(markdown).toContain('/faq/index.md')
     expect(markdown).toContain('https://pypi.org/project/strands-agents/')
