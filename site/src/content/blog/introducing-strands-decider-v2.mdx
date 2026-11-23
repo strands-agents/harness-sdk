@@ -57,7 +57,6 @@ _Figure 2: Calibration error on the six text benchmarks; lower is better._
 | **Bases**         | Qwen3.5-2B; Gemma 4 E2B to 26B-A4B                    | Gemma 4 E2B, E4B, 12B, 26B-A4B, and 31B                 |
 | **Readout**       | Added pointer head                                    | Direct scoring of option tokens                         |
 | **Attention**     | Causal                                                | Prefix-bidirectional                                    |
-| **Prompt**        | Plain text; numbered options                          | strands-chat, option tokens such as A, B, C, etc.       |
 | **LoRA**          | Rank 16                                               | Rank 64 (α 128), and every routed expert of the 26B-A4B |
 | **Training data** | 136k examples                                         | 17M examples                                            |
 | **Objective**     | Cross-entropy with distillation and KL regularization | Answer-only cross-entropy                               |
@@ -76,7 +75,7 @@ _Figure 3: The Strands Decider v2 architecture._
 
 ## What can you build with it?
 
-Decider fits the decisions inside an agent loop that have a known set of answers: which model or tool to use, whether a tool call's arguments look right, whether an answer is grounded or safe, and which team should own a request. If you build with the [Strands Harness SDK](/), you can place Decider directly in your agent. The [Strands Decider docs](/docs/labs/strands-decider/overview/) cover the question types and when to use them, and the repo's [Strands agent example](https://github.com/strands-labs/strands-decider/tree/main/examples/strands) gates a tool call with a `before_tool_call` intervention, so the agent asks which city you mean instead of guessing.
+Decider fits the decisions inside an agent loop that have a known set of answers: which model or tool to use, whether a tool call's arguments look right, whether an answer is grounded or safe, and which team should own a request. If you build with the [Strands Harness SDK](/), you can place Decider directly in your agent with [decision models](/docs/user-guide/sdk/decision-models/). The [Strands Decider docs](/docs/labs/strands-decider/overview/) cover the question types and when to use them, and the repo's [Strands agent example](https://github.com/strands-labs/strands-decider/tree/main/examples/strands) gates a tool call with a `before_tool_call` intervention, so the agent asks which city you mean instead of guessing.
 
 Calibration makes a simple pattern work: let a small model do the job, and call a large one only when Decider doesn't trust the answer. On AutoMix's reading-comprehension benchmarks, we sent the half of Llama-2-13B's answers that v2 trusted least to Llama-2-70B. That recovered 94% to 99% of the larger model's gain. A random half recovered 50%.
 
@@ -94,7 +93,7 @@ _Figure 4: Strands Decider v2 31B on LIBERO-Long: it puts the white mug on the l
 
 ## How do I run it?
 
-Use `ask` for one-off decisions, as shown above. For anything more, serve a model and send it HTTP requests. The state is read once, and each extra question adds only its own tokens:
+Use `ask` for one-off decisions, as shown above. For anything more, serve a model and send it HTTP requests. The state is read once, and each extra question adds only its own tokens. For a full walkthrough, see the [Strands Decider quickstart](/docs/labs/strands-decider/quickstart/).
 
 ```bash
 strands-decider serve StrandsAgents/strands-decider-E4B-gemma4-v2-2611 --port 8000
@@ -113,12 +112,10 @@ curl -s localhost:8000/v1/systemone \
 
 The server you run locally is the same server you deploy. The repo's [deploy guide](https://github.com/strands-labs/strands-decider/tree/main/deploy) lists where it can run, with instructions for each: on your own machine with CUDA, on a Mac, or on CPU; on a real-time [Amazon SageMaker AI endpoint](https://github.com/strands-labs/strands-decider/tree/main/deploy/sagemaker), created and removed with one CDK stack; or on [AWS Lambda](https://github.com/strands-labs/strands-decider/tree/main/deploy/lambda), where the repo's stack runs a quantized model on arm64 CPUs, with nothing running between requests. SageMaker is how the ticketing team runs Decider in production.
 
-v2 also runs in llama.cpp and MLX, thanks to fixes we contributed upstream for Gemma 4 checkpoints. We appreciate the maintainers who reviewed them.
-
 ## What's next
 
 Most of what an agent does is decide: which tool, which model, whether to trust an answer. v2 makes those decisions fast enough to run on every step, and honest enough about its confidence that you can act on it.
 
-This is Strands Labs, so it's early, and it's open. The weights are on [Hugging Face](https://huggingface.co/StrandsAgents), and the code, training recipe, and evaluations are on [GitHub](https://github.com/strands-labs/strands-decider). Try v2 on one real decision in your agent, then open an issue, send a pull request, or share your task and results in the [Strands Discord](https://discord.com/invite/strands). What you tell us decides what we train next.
+The weights are on [Hugging Face](https://huggingface.co/StrandsAgents), and the code, training recipe, and evaluations are on [GitHub](https://github.com/strands-labs/strands-decider). Try v2 on one real decision in your agent, then open an issue, send a pull request, or share your task and results in the [Strands Discord](https://discord.com/invite/strands). What you tell us decides what we train next.
 
 We can't wait to see what you 'decide' to build.
