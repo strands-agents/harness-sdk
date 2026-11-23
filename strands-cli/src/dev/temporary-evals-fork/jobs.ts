@@ -39,7 +39,8 @@ const sameJobs = (left: readonly DevChatJob[], right: readonly DevChatJob[]): bo
       job.id === right[index]?.id &&
       job.label === right[index]?.label &&
       job.done === right[index]?.done &&
-      job.total === right[index]?.total
+      job.total === right[index]?.total &&
+      job.waiting === right[index]?.waiting
   )
 
 export const temporaryJobsFeed = <State>(

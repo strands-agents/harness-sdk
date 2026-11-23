@@ -40,6 +40,8 @@ interface PanelCommand<State> {
   readonly details: string
   readonly session: (sessions: TemporaryDevSessions) => PanelSession<State>
   readonly jobs: (state: State) => readonly DevChatJob[]
+  /** The agent tool that does this command's work, whose background run the jobs line already shows. */
+  readonly tool: string
   readonly view: (sessions: TemporaryDevSessions, opening?: DevPanelOpening) => DevChatPanelView
   readonly openJob?: (sessions: TemporaryDevSessions, job: string) => void
   readonly resume?: (sessions: TemporaryDevSessions) => Promise<void>
@@ -69,10 +71,11 @@ const EVALUATE_DETAILS = paragraphs(
 )
 
 const devCommand = <State>(
-  { name, description, details, session, jobs, view, openJob, resume }: PanelCommand<State>,
+  { name, description, details, session, jobs, tool, view, openJob, resume }: PanelCommand<State>,
   sessions: Sessions
 ): DevChatCommand => ({
   spec: { name, usage: `/${name}`, description, details },
+  backgroundTools: [tool],
   open: (context, opening): DevChatPanelView => {
     const opened = sessions(context)
     if (!opening?.restore) session(opened).show()
@@ -96,6 +99,7 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
           show: () => experiments.refresh(),
         }),
         jobs: temporaryGenerationJobs,
+        tool: 'strands_dev_create_experiment',
         resume: async ({ ui }) => ui.start(),
         view:
           ({ experiments, ui }) =>
@@ -112,6 +116,7 @@ const PANEL_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
         details: EVALUATE_DETAILS,
         session: ({ test }) => test,
         jobs: temporaryTestJobs,
+        tool: 'strands_dev_evaluate',
         resume: ({ test }) => test.resume(),
         view:
           ({ test, ui }, opening) =>
@@ -175,6 +180,7 @@ const optimizeRunsCommand = (sessions: Sessions): DevChatCommand => ({
   spec: { name: 'optimize', usage: '/optimize', description: 'Set up an optimization run of this agent' },
   // Typing it starts the skill in the chat; the panel stays as the jobs line's landing view.
   run: (context): void => context.submit('optimize'),
+  backgroundTools: ['strands_dev_optimize'],
   // A finished run's line is its review: open the change it waits on, not the list of runs.
   openJob: (context, job): boolean => {
     const opened = sessions(context)

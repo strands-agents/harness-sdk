@@ -16,11 +16,10 @@ import type {
   ChatConfigurationLanguage,
   ChatConfigurationSource,
   ChatDiffPreview,
-  ChatTask,
 } from '../../agent/types.js'
-import type { ChatControllerApi, ChatSnapshot, DevChatJobGroup, DevJobTarget } from './controller.js'
+import type { ChatControllerApi, ChatSnapshot, DevJobTarget } from './controller.js'
 import { commandAssistance, parseCommandInvocation } from './commands.js'
-import { isActiveTask, isConfigurationTool } from './state.js'
+import { isConfigurationTool, listedBackgroundTasks } from './state.js'
 import { filePathsFromPaste, loadAttachments } from './attachments.js'
 import { splitArguments } from '../../terminal/arguments.js'
 import {
@@ -521,10 +520,7 @@ export function ChatApp({
     setFocusedStatus(undefined)
   }, [controller, snapshot.conversationId])
   useEffect(() => {
-    if (
-      focusedStatus &&
-      !statusTargets(snapshot.tasks, snapshot.devJobs).some((target) => sameStatus(target, focusedStatus))
-    ) {
+    if (focusedStatus && !statusTargets(snapshot).some((target) => sameStatus(target, focusedStatus))) {
       setFocusedStatus(undefined)
     }
   }, [focusedStatus, snapshot.tasks, snapshot.devJobs])
@@ -1360,7 +1356,7 @@ export function ChatApp({
       } else if (queuedPromptTarget) {
         activateQueuedPrompt(queuedPromptTarget)
       } else if (backgroundTaskHit) {
-        const tasks = snapshot.tasks.filter((task) => task.source === 'background' && isActiveTask(task.status))
+        const tasks = listedBackgroundTasks(snapshot)
         const task = tasks.find((candidate) => candidate.id === viewPropsRef.current.focusedBackgroundTask) ?? tasks[0]
         if (task) controller.openTask(task.id)
       } else if (footerAction) {
@@ -2036,7 +2032,7 @@ export function ChatApp({
         if (prompts[next]) editQueuedPrompt(prompts[next].id)
         return
       }
-      const statuses = statusTargets(snapshot.tasks, snapshot.devJobs)
+      const statuses = statusTargets(snapshot)
       if (
         key.tab &&
         (focusedQueuedPrompt ||
@@ -2342,12 +2338,13 @@ export function ChatApp({
 type StatusFocus =
   { readonly kind: 'background'; readonly id: string } | { readonly kind: 'dev'; readonly job: DevJobTarget }
 
-function statusTargets(tasks: readonly ChatTask[], devJobs: readonly DevChatJobGroup[] = []): StatusFocus[] {
+function statusTargets(snapshot: Pick<ChatSnapshot, 'tasks' | 'devJobs'>): StatusFocus[] {
   return [
-    ...tasks
-      .filter((task) => task.source === 'background' && isActiveTask(task.status))
-      .map(({ id }): StatusFocus => ({ kind: 'background', id })),
-    ...stackedDevJobs(devJobs).map(({ command, job }): StatusFocus => ({ kind: 'dev', job: { command, id: job.id } })),
+    ...listedBackgroundTasks(snapshot).map(({ id }): StatusFocus => ({ kind: 'background', id })),
+    ...stackedDevJobs(snapshot.devJobs ?? []).map(({ command, job }): StatusFocus => ({
+      kind: 'dev',
+      job: { command, id: job.id },
+    })),
   ]
 }
 

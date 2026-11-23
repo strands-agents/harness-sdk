@@ -217,7 +217,7 @@ export const temporaryOptimizeJobs = ({ runs = [] }: OptimizeState): DevChatJob[
     }
     const edits = editsToReview(state)
     return edits > 0 && state.step === 'review'
-      ? [{ id, label: `${state.review.run} · ${edits} to review`, done: 1, total: 1 }]
+      ? [{ id, label: `${state.review.run} · ${edits} to review`, done: 1, total: 1, waiting: true }]
       : []
   })
 

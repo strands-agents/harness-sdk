@@ -90,6 +90,8 @@ export interface DevChatJob {
   readonly label: string
   readonly done?: number
   readonly total?: number
+  /** Nothing is running for this job: it waits on the developer, as a finished run waits for its review. */
+  readonly waiting?: boolean
 }
 
 export interface DevChatJobs {
@@ -100,6 +102,8 @@ export interface DevChatJobs {
 export interface DevChatJobGroup {
   readonly command: string
   readonly jobs: readonly DevChatJob[]
+  /** The tools whose background runs this line stands for right now, so they are not listed a second time. */
+  readonly covers?: readonly string[]
 }
 
 export interface DevJobTarget {
@@ -120,6 +124,11 @@ export interface DevChatCommand {
   run?(context: DevChatCommandContext): void
   /** Opening one of its jobs from the status line asks this first. True means it showed the job itself, so no panel opens. */
   openJob?(context: DevChatCommandContext, job: string): boolean
+  /**
+   * The agent tools that do this command's work. While one of its jobs runs, the jobs line shows that work with its
+   * progress, so the background run of such a tool is not listed again as a background task.
+   */
+  backgroundTools?: readonly string[]
   /** Keeps the panel open when the developer clicks away, for a panel something is waiting on. */
   sticky?: boolean
   /** Renders beside the transcript at the dock's width, when its content needs that width right now. */

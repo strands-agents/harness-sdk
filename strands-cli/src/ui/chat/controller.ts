@@ -3085,11 +3085,18 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _devJobs(): DevChatJobGroup[] {
-    return this._devCommands.flatMap(({ spec, jobs }) => {
-      const running = jobs?.snapshot() ?? []
-      return running.length > 0
-        ? [{ command: spec.name, jobs: running.map((job) => ({ ...job, label: jobLabel(job.label) })) }]
-        : []
+    return this._devCommands.flatMap(({ spec, jobs, backgroundTools = [] }) => {
+      const listed = jobs?.snapshot() ?? []
+      if (listed.length === 0) return []
+      // Only a job that is running stands for its tool: one that waits on the developer says nothing of a new run.
+      const working = listed.some(({ waiting }) => !waiting)
+      return [
+        {
+          command: spec.name,
+          jobs: listed.map((job) => ({ ...job, label: jobLabel(job.label) })),
+          ...(working && backgroundTools.length > 0 ? { covers: backgroundTools } : {}),
+        },
+      ]
     })
   }
 

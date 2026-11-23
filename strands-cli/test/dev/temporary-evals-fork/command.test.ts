@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { saveTemporaryRunRecord } from '../../../src/dev/temporary-evals-fork/background-runs.js'
 
-import { temporaryDevCommands } from '../../../src/dev/temporary-evals-fork/command.js'
+import { temporaryDevChatPart, temporaryDevCommands } from '../../../src/dev/temporary-evals-fork/command.js'
 import { temporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import type { ImportedAgentProject } from '../../../src/project/import.js'
@@ -64,6 +64,21 @@ describe('TEMPORARY dev commands', () => {
     expect(details[1]).toContain('the latest one as <name>.report.json')
     expect(details.slice(0, 2).every((text) => text.includes('Experimental: a fork of strands-evals'))).toBe(true)
     expect(details.some((text) => text.includes('TEMPORARY'))).toBe(false)
+  })
+
+  it('shouldNameForEachJobsLineTheToolWhoseBackgroundRunItStandsFor', async () => {
+    const { workspace, project } = await fixture()
+
+    const commands = temporaryDevCommands(workspace, project)
+    const tools = temporaryDevChatPart(workspace, project, () => ({})).tools.map(({ name }) => name)
+
+    expect(commands.map(({ spec, backgroundTools }) => [spec.name, backgroundTools])).toEqual([
+      ['experiment', ['strands_dev_create_experiment']],
+      ['evaluate', ['strands_dev_evaluate']],
+      ['ask', undefined],
+      ['optimize', ['strands_dev_optimize']],
+    ])
+    expect(tools).toEqual(expect.arrayContaining(commands.flatMap(({ backgroundTools = [] }) => backgroundTools)))
   })
 
   it('shouldReportNoRunningJobsWhenNothingRuns', async () => {

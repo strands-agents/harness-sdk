@@ -8,7 +8,7 @@ import {
   type ChatPanelSlider,
   type ChatSnapshot,
 } from './chat/controller.js'
-import { isActiveTask } from './chat/state.js'
+import { listedBackgroundTasks } from './chat/state.js'
 import { resolveModelTarget } from '../model/selection.js'
 import { COMPOSER_PANEL_HEIGHT, MIN_PROMPT_HEIGHT } from '../terminal/composer.js'
 import { type MouseInput } from '../terminal/mouse-input.js'
@@ -182,9 +182,7 @@ export function composerStatusLayout(
   const rows = composerStatusRows(snapshot)
   const height = Math.min(rows, Math.max(2, Math.floor(terminalHeight / 3)))
   const viewportHeight = height - Number(rows > height)
-  const backgroundHeight = Number(
-    snapshot.tasks.some((task) => task.source === 'background' && isActiveTask(task.status))
-  )
+  const backgroundHeight = Number(listedBackgroundTasks(snapshot).length > 0)
   return {
     height:
       height +

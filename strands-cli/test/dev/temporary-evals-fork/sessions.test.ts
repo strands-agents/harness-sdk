@@ -1638,7 +1638,7 @@ describe('TEMPORARY dev sessions', () => {
     const mixed = temporaryOptimizeJobs(state([edit, { ...edit, unavailable: 'set in code' }]) as never)
     const none = temporaryOptimizeJobs(state([{ ...edit, unavailable: 'set in code' }]) as never)
 
-    expect(mixed.map(({ label }) => label)).toEqual(['r1 · 1 to review'])
+    expect(mixed.map(({ label, waiting }) => [label, waiting])).toEqual([['r1 · 1 to review', true]])
     expect(none).toEqual([])
   })
 

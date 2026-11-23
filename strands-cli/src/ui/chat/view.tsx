@@ -12,7 +12,7 @@ import type {
   DevChatJobGroup,
   DevJobTarget,
 } from './controller.js'
-import { isActiveTask, isConfigurationTool } from './state.js'
+import { isConfigurationTool, listedBackgroundTasks } from './state.js'
 import {
   commandAssistance as commandAssistanceForInput,
   type CommandAssistance,
@@ -279,9 +279,7 @@ function ChatViewContent({
   const showVoiceStatus = snapshot.voice !== undefined && snapshot.voice.status !== 'off'
   const showVoiceFrog =
     snapshot.voice !== undefined && snapshot.voice.status !== 'off' && snapshot.voice.status !== 'error' && !frog
-  const activeBackgroundTasks = snapshot.tasks.filter(
-    (task) => task.source === 'background' && isActiveTask(task.status)
-  )
+  const activeBackgroundTasks = listedBackgroundTasks(snapshot)
   const backgroundTaskIndex = Math.max(
     0,
     activeBackgroundTasks.findIndex((task) => task.id === focusedBackgroundTask)

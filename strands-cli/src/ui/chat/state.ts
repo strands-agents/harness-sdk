@@ -18,6 +18,15 @@ export function isActiveTask(status: ChatTask['status']): boolean {
   return ['pending', 'queued', 'in_progress', 'working', 'paused'].includes(status)
 }
 
+/**
+ * The background tasks the status rows list: the active ones that no jobs line already stands for. A tool that runs
+ * in the background is a task labelled with its name, and a command whose job shows that run's progress covers it.
+ */
+export function listedBackgroundTasks({ tasks, devJobs = [] }: Pick<ChatSnapshot, 'tasks' | 'devJobs'>): ChatTask[] {
+  const covered = new Set(devJobs.flatMap(({ covers = [] }) => covers))
+  return tasks.filter((task) => task.source === 'background' && isActiveTask(task.status) && !covered.has(task.label))
+}
+
 export function cloneRuntime(runtime: ChatRuntimeInfo): ChatRuntimeInfo {
   return {
     agent: sanitizeTerminalText(runtime.agent),
