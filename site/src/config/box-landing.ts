@@ -10,7 +10,6 @@ const BOX_PACKS_URL = `${BOX_REPOSITORY_URL}/blob/main/resources/packs`
 
 // Canonical release and platform requirements: docs/cli/install.md in the public Box repository.
 export const BOX_RELEASE_STATUS = 'Preview'
-export const BOX_VERSION = '0.3.0-preview.1'
 export const BOX_PLATFORMS = [
   {
     label: 'macOS 15+ (Apple silicon)',
@@ -22,23 +21,24 @@ export const BOX_PLATFORMS = [
   },
 ] as const
 
-export const BOX_INSTALL_COMMAND = `curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | BOX_VERSION=${BOX_VERSION} sh`
+export const BOX_INSTALL_COMMAND =
+  'curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | sh'
 export const BOX_VERIFY_COMMAND = 'box --version'
 
 export const BOX_LINKS = {
-  quickstart: `${BOX_CLI_USER_GUIDE_URL}/getting-started.md`,
-  install: `${BOX_CLI_USER_GUIDE_URL}/install.md`,
+  quickstart: '/docs/user-guide/box/quickstart/',
+  install: '/docs/user-guide/box/install/',
   userGuide: `${BOX_CLI_USER_GUIDE_URL}/README.md`,
-  profiles: `${BOX_CLI_USER_GUIDE_URL}/profiles.md`,
-  cli: `${BOX_CLI_USER_GUIDE_URL}/cli.md`,
-  limitations: `${BOX_CLI_USER_GUIDE_URL}/limitations.md`,
+  profiles: '/docs/user-guide/box/profiles/',
+  cli: '/docs/user-guide/box/reference/cli/',
+  limitations: '/docs/user-guide/box/limitations/',
   security: '/docs/user-guide/box/security/',
   policy: '/docs/user-guide/box/reference/policy/',
   deployment: '/docs/user-guide/box/reference/cloud-deployments/',
-  configuration: `${BOX_CLI_USER_GUIDE_URL}/profiles.md`,
+  configuration: '/docs/user-guide/box/profiles/',
   credentialGuide: '/docs/user-guide/box/guides/network-and-credentials/',
-  decisionLog: `${BOX_CLI_USER_GUIDE_URL}/cli.md#box-runs-history`,
-  mcp: `${BOX_CLI_USER_GUIDE_URL}/starters.md`,
+  decisionLog: '/docs/user-guide/box/reference/cli/#box-runs-history',
+  mcp: '/docs/user-guide/box/profiles/#mcp-servers',
   dogwood: 'https://github.com/dogwood-policy/dogwood',
   designStory: '/blog/strands-box-the-big-picture/',
 } as const
