@@ -6,12 +6,13 @@ import { SignatureV4 } from '@smithy/signature-v4'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ModelError, ModelThrottledError } from '../../errors.js'
+import { sigV4Auth as sigV4AuthAnyRuntime } from '../http-decision-model.js'
 import {
   HttpDecisionModel,
   sigV4Auth,
   type HttpDecisionModelAuth,
   type HttpDecisionModelOptions,
-} from '../http-decision-model.js'
+} from '../http-decision-model.node.js'
 import { Uncertain } from '../types.js'
 
 const LOCAL_ENDPOINT = 'http://localhost:8000/v1/systemone'
@@ -36,13 +37,14 @@ function fakeFetch(
   options: { status?: number; captured?: CapturedRequest[] } = {}
 ): typeof globalThis.fetch {
   return vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    const rawBody = String(init?.body)
+    const request = new Request(input, init)
+    const rawBody = await request.text()
     options.captured?.push({
-      url: String(input),
-      headers: Object.fromEntries(new Headers(init?.headers).entries()),
+      url: request.url,
+      headers: Object.fromEntries(request.headers),
       rawBody,
       body: JSON.parse(rawBody) as Record<string, unknown>,
-      redirect: init?.redirect,
+      redirect: request.redirect,
     })
     return new Response(JSON.stringify(payload), {
       status: options.status ?? 200,
@@ -157,7 +159,7 @@ describe('HttpDecisionModel', () => {
 
     it.each([
       ['a sigv4 endpoint', { auth: sigV4Auth({ service: 'lambda', region: 'us-east-1', credentials: CREDENTIALS }) }],
-      ['an endpoint with a custom auth function', { auth: async () => ({ authorization: 'Bearer t' }) }],
+      ['an endpoint with a custom auth function', { auth: (request: Request) => request }],
       ['an endpoint with an API key header', { headers: { 'x-api-key': 'k' } }],
     ] as const)('adds a hint when %s answers 403', async (_name, options) => {
       const decision = create({
@@ -330,7 +332,15 @@ describe('HttpDecisionModel', () => {
 
     it('passes auth the request about to be sent', async () => {
       const captured: CapturedRequest[] = []
-      const auth = vi.fn<HttpDecisionModelAuth>(async () => ({}))
+      const seen: { url: string; headers: Record<string, string>; body: string }[] = []
+      const auth: HttpDecisionModelAuth = async (request) => {
+        seen.push({
+          url: request.url,
+          headers: Object.fromEntries(request.headers),
+          body: await request.clone().text(),
+        })
+        return request
+      }
       const decision = create({
         auth,
         headers: { 'x-api-key': 'key-1' },
@@ -339,24 +349,43 @@ describe('HttpDecisionModel', () => {
 
       await decision.ask('state', QUESTIONS)
 
-      expect(auth).toHaveBeenCalledWith({
-        url: LOCAL_ENDPOINT,
-        headers: { 'x-api-key': 'key-1', 'content-type': 'application/json' },
-        body: captured[0]?.rawBody,
-      })
+      expect(seen).toEqual([
+        {
+          url: LOCAL_ENDPOINT,
+          headers: { 'x-api-key': 'key-1', 'content-type': 'application/json' },
+          body: captured[0]?.rawBody,
+        },
+      ])
     })
 
-    it('lets auth headers replace static ones and the transport own Content-Type', async () => {
+    it('sends the request auth returns, which may be the same one, synchronously', async () => {
       const captured: CapturedRequest[] = []
       const decision = create({
-        auth: async () => ({ Authorization: 'Bearer tok' }),
+        auth: (request) => {
+          request.headers.set('authorization', 'Bearer tok')
+          return request
+        },
         headers: { 'content-type': 'text/plain', Authorization: 'Bearer other' },
         fetch: fakeFetch(systemOneBody(), { captured }),
       })
 
       await decision.ask('state', QUESTIONS)
 
-      expect(captured[0]?.headers).toEqual({ authorization: 'Bearer tok', 'content-type': 'application/json' })
+      expect(captured[0]).toMatchObject({
+        headers: { authorization: 'Bearer tok', 'content-type': 'application/json' },
+        redirect: 'manual',
+      })
+    })
+
+    it('rejects a request that auth points at plain http', async () => {
+      const fetch = fakeFetch()
+      const decision = create({ auth: (request) => new Request('http://example.com/v1/systemone', request), fetch })
+
+      await expectModelError(
+        decision.ask('state', QUESTIONS),
+        'http decision request failed: HttpDecisionModel auth and headers require an https endpoint unless the host is loopback'
+      )
+      expect(fetch).not.toHaveBeenCalled()
     })
 
     it('reports an auth failure as a model error without sending the request', async () => {
@@ -398,7 +427,7 @@ describe('HttpDecisionModel', () => {
           hostname: url.hostname,
           ...(url.port !== '' && { port: Number(url.port) }),
           path: url.pathname,
-          query: {},
+          query: Object.fromEntries(url.searchParams),
           headers: { ...staticHeaders, host: url.host, 'content-type': 'application/json' },
           body: request.rawBody,
         },
@@ -490,6 +519,19 @@ describe('HttpDecisionModel', () => {
       const [request] = captured
       expect(request?.headers['authorization']).toMatch(/SignedHeaders=[^,]*x-api-key/)
       expect(request?.headers['authorization']).toBe(await expectedSignature(request!, 'execute-api', 'eu-west-1'))
+    })
+
+    it('signs the query string', async () => {
+      const captured: CapturedRequest[] = []
+      const decision = create({
+        endpoint: `${LAMBDA_ENDPOINT}?Qualifier=live&note=a%20b`,
+        auth: sigV4Auth({ service: 'lambda', region: 'us-east-1', credentials: CREDENTIALS }),
+        fetch: fakeFetch(systemOneBody(), { captured }),
+      })
+
+      await decision.ask('state', QUESTIONS)
+
+      expect(captured[0]?.headers['authorization']).toBe(await expectedSignature(captured[0]!, 'lambda', 'us-east-1'))
     })
 
     it('signs the body that is sent, whatever the state contains', async () => {
@@ -608,20 +650,15 @@ describe('HttpDecisionModel', () => {
   })
 
   describe('constructor validation', () => {
-    const auth: HttpDecisionModelAuth = async () => ({ authorization: 'Bearer t' })
+    const auth: HttpDecisionModelAuth = (request) => request
 
     it.each([
-      ['an invalid endpoint', { endpoint: 'not a url' }, 'endpoint must be a valid URL'],
-      ['a non-http endpoint', { endpoint: 'ftp://example.com/x' }, 'endpoint must use http or https'],
+      ['an invalid endpoint', { endpoint: 'not a url' }, 'Invalid URL'],
+      ['an endpoint without a scheme', { endpoint: 'localhost:8000/v1/systemone' }, 'endpoint must use http or https'],
       [
         'credentials in the endpoint',
         { endpoint: 'https://user:hunter2@example.com/v1/systemone' },
         'endpoint must not contain credentials',
-      ],
-      [
-        'a query string in the endpoint',
-        { endpoint: 'https://example.com/v1/systemone?stage=a' },
-        'endpoint must not contain a query string',
       ],
       [
         'an auth that is not a function',
@@ -657,10 +694,9 @@ describe('HttpDecisionModel', () => {
         { endpoint: 'http://example.com/v1/systemone', headers: { 'x-api-key': 'k' } },
         'auth and headers require an https endpoint',
       ],
-      ['a zero timeout', { timeoutMs: 0 }, 'timeoutMs must be an integer from 1 to 2147483647'],
-      ['a fractional timeout', { timeoutMs: 1.5 }, 'timeoutMs must be an integer'],
-      ['a non-finite timeout', { timeoutMs: Number.POSITIVE_INFINITY }, 'timeoutMs must be an integer'],
-      ['a timeout above the timer limit', { timeoutMs: 2 ** 31 }, 'timeoutMs must be an integer'],
+      ['a zero timeout', { timeoutMs: 0 }, 'timeoutMs must be greater than 0 and at most 2147483647'],
+      ['a non-numeric timeout', { timeoutMs: Number.NaN }, 'timeoutMs must be greater than 0'],
+      ['a timeout above the timer limit', { timeoutMs: 2 ** 31 }, 'timeoutMs must be greater than 0'],
       ['an out-of-range confidence', { defaultMinConfidence: 1.5 }, 'defaultMinConfidence must be in [0.0, 1.0]'],
     ] as const)('rejects %s', (_name, options, message) => {
       expect(() => create(options as Partial<HttpDecisionModelOptions>)).toThrow(message)
@@ -703,10 +739,51 @@ describe('HttpDecisionModel', () => {
       expect(() => create({ headers: { 'x-amz-date': 'x' } })).not.toThrow()
     })
 
-    it('rejects construction in a browser', () => {
-      vi.stubGlobal('window', {})
+    describe('in a browser', () => {
+      it('allows an endpoint that needs no auth or headers', () => {
+        vi.stubGlobal('window', {})
 
-      expect(() => create()).toThrow('HttpDecisionModel cannot run in a browser')
+        expect(() => create()).not.toThrow()
+      })
+
+      it('rejects static headers, which every user of the page could read', () => {
+        vi.stubGlobal('window', {})
+
+        expect(() => create({ headers: { 'x-api-key': 'k' } })).toThrow(
+          'HttpDecisionModel headers would be readable by every user of the page'
+        )
+      })
+
+      it('signs with temporary credentials', async () => {
+        vi.stubGlobal('window', {})
+        const captured: CapturedRequest[] = []
+        const decision = create({
+          endpoint: LAMBDA_ENDPOINT,
+          auth: sigV4AuthAnyRuntime({ service: 'lambda', region: 'us-east-1', credentials: CREDENTIALS }),
+          fetch: fakeFetch(systemOneBody(), { captured }),
+        })
+
+        await decision.ask('state', QUESTIONS)
+
+        expect(captured[0]?.headers['x-amz-security-token']).toBe('session-token')
+      })
+
+      it('refuses to sign with long-term access keys', async () => {
+        vi.stubGlobal('window', {})
+        const fetch = fakeFetch()
+        const { sessionToken: _sessionToken, ...longTerm } = CREDENTIALS
+        const decision = create({
+          endpoint: LAMBDA_ENDPOINT,
+          auth: sigV4AuthAnyRuntime({ service: 'lambda', region: 'us-east-1', credentials: longTerm }),
+          fetch,
+        })
+
+        await expectModelError(
+          decision.ask('state', QUESTIONS),
+          'http decision request failed: sigV4Auth in a browser requires temporary credentials with a sessionToken'
+        )
+        expect(fetch).not.toHaveBeenCalled()
+      })
     })
   })
 
@@ -721,6 +798,12 @@ describe('HttpDecisionModel', () => {
 
       expect(() => sigV4Auth({ service: 'lambda' })).toThrow(
         'sigV4Auth requires a region: pass region or set AWS_REGION or AWS_DEFAULT_REGION'
+      )
+    })
+
+    it('requires credentials outside Node.js, where there is no default credential chain', () => {
+      expect(() => sigV4AuthAnyRuntime({ service: 'lambda', region: 'us-east-1' })).toThrow(
+        'sigV4Auth requires credentials outside Node.js'
       )
     })
   })

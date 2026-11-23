@@ -46,6 +46,7 @@
     },
     "./decisions/http": {
       "types": "./dist/src/decisions/http-decision-model.d.ts",
+      "node": "./dist/src/decisions/http-decision-model.node.js",
       "default": "./dist/src/decisions/http-decision-model.js"
     },
     "./models/vercel": {
