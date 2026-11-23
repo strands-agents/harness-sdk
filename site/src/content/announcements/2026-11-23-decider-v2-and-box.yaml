@@ -1,0 +1,8 @@
+# Two posts launched on 2026-11-23; show both until a newer post replaces them.
+title: "Introducing Strands Decider v2, and Strands Box now supports Claude Code, Codex, and Kiro"
+links:
+  - title: "Introducing Strands Decider v2"
+    href: "/blog/introducing-strands-decider-v2/"
+  - title: "Strands Box now supports Claude Code, Codex, and Kiro"
+    href: "/blog/strands-box-cli/"
+date: 2026-11-23

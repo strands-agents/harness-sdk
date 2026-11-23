@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from strands.agent.invocation_context import ModelUsage, _create_invocation_context
 from strands.decisions import (
     DecisionInput,
     DecisionMetadata,
@@ -432,6 +433,31 @@ async def test_rejects_duplicate_option_values():
     with pytest.raises(ValueError, match="unique"):
         await decision.ask("x", {"q": {"question": "pick", "choices": ["a", "a"]}})
     assert model.calls == []
+
+
+@pytest.mark.asyncio
+async def test_adds_reported_usage_under_the_model_it_wraps():
+    model = RecordingModel({"q": "true"})
+    model.get_config = lambda: {"model_id": "model-a"}
+    invocation_context = _create_invocation_context()
+
+    questions = {"q": {"question": "ok?", "choices": "boolean"}}
+    result = await LLMDecisionModel(model=model).ask("x", questions, invocation_context=invocation_context)
+
+    assert invocation_context.usage_by_model == [
+        ModelUsage(provider_name=None, model_id="model-a", usage=DEFAULT_USAGE)
+    ]
+    assert (result.metadata.provider_name, result.metadata.model_id) == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_keeps_the_cache_tokens_of_reported_usage():
+    usage: Usage = {**DEFAULT_USAGE, "cacheReadInputTokens": 7, "cacheWriteInputTokens": 1}
+    model = RecordingModel({"q": "true"}, usage=usage)
+
+    result = await LLMDecisionModel(model=model).ask("x", {"q": {"question": "ok?", "choices": "boolean"}})
+
+    assert result.usage == usage
 
 
 @pytest.mark.asyncio

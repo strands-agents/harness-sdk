@@ -48,9 +48,9 @@ at what granularity:
 
 `TRACE_LEVEL`, `SESSION_LEVEL`, and `TOOL_LEVEL` are the values of the SDK's
 `EvaluationLevel` enum, set through an evaluator's `evaluation_level`. Evaluators
-that leave it unset (`OutputEvaluator`, the multimodal and skill evaluators,
-`TrajectoryEvaluator`, and `InteractionsEvaluator`) receive the agent's output or
-full result directly, so the level shown for those is their conceptual scope.
+that leave it unset (`OutputEvaluator`, `TypedRubricEvaluator`, the multimodal and
+skill evaluators, `TrajectoryEvaluator`, and `InteractionsEvaluator`) receive the agent's
+output or full result directly, so the level shown for those is their conceptual scope.
 
 Combine several evaluators in one experiment to assess different aspects at once.
 Each evaluator's page documents its parameters and scoring in full; the tables
@@ -64,6 +64,7 @@ trajectory of actions holds together.
 | Evaluator | Level | What it checks |
 |-----------|-------|----------------|
 | [OutputEvaluator](output_evaluator.md) | OUTPUT_LEVEL | Any subjective quality against a rubric you write |
+| [TypedRubricEvaluator](typed_rubric_evaluator.md) | OUTPUT_LEVEL | Yes/no, scale, and choice questions scored from a decision model's probabilities |
 | [HelpfulnessEvaluator](helpfulness_evaluator.md) | TRACE_LEVEL | Response helpfulness from the user's perspective |
 | [FaithfulnessEvaluator](faithfulness_evaluator.md) | TRACE_LEVEL | Factual accuracy and groundedness |
 | [CorrectnessEvaluator](correctness_evaluator.md) | TRACE_LEVEL | Factual correctness, with optional reference comparison |

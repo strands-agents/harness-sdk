@@ -7,6 +7,7 @@ from strands import Agent, tool
 from strands.agent.conversation_manager import NullConversationManager
 from strands.agent.invocation_context import (
     InvocationContext,
+    ModelUsage,
     _create_auxiliary_invocation_context,
     _create_invocation_context,
 )
@@ -400,3 +401,53 @@ async def test_invoke_async_with_invocation_context_and_limits_runs_as_a_child_o
     assert seen[1] is second.invocation_context
     assert second.invocation_context.usage == {"turns_taken": 1, "inputTokens": 2, "outputTokens": 2, "totalTokens": 4}
     assert first.invocation_context.usage == {"turns_taken": 2, "inputTokens": 3, "outputTokens": 3, "totalTokens": 6}
+
+
+class _NamedModel(MockedModelProvider):
+    def __init__(self, model_id, agent_responses, usages):
+        super().__init__(agent_responses, usages)
+        self.model_id = model_id
+
+    def get_config(self):
+        return {"model_id": self.model_id}
+
+
+def _token_totals(usages):
+    return {key: sum(usage[key] for usage in usages) for key in ("inputTokens", "outputTokens", "totalTokens")}
+
+
+@pytest.mark.asyncio
+async def test_invoke_async_records_usage_under_the_model_of_each_call_in_the_request():
+    contexts = {}
+
+    @tool(context=True)
+    async def relay(tool_context: ToolContext) -> str:
+        """Runs one sub-agent in the request, one with its own limits, and one as an auxiliary call."""
+        request = tool_context.invocation_context
+        shared = Agent(model=_NamedModel("small", [_text("shared")], [_usage(10, 1)]), callback_handler=None)
+        limited = Agent(model=_NamedModel("small", [_text("limited")], [_usage(20, 2)]), callback_handler=None)
+        auxiliary = Agent(model=MockedModelProvider([_text("auxiliary")], [_usage(40, 4)]), callback_handler=None)
+        await shared.invoke_async("go", invocation_context=request)
+        contexts["limited"] = (
+            await limited.invoke_async("go", invocation_context=request, limits={"turns": 3})
+        ).invocation_context
+        contexts["auxiliary"] = _create_auxiliary_invocation_context(request)
+        await auxiliary.invoke_async("go", invocation_context=contexts["auxiliary"])
+        return "ok"
+
+    parent_model = _NamedModel("main", [_tool_use("relay", "tu-1"), _text("done")], [_usage(100, 5), _usage(200, 6)])
+    parent = Agent(model=parent_model, tools=[relay], callback_handler=None)
+
+    contexts["request"] = (await parent.invoke_async("start")).invocation_context
+
+    assert contexts["request"].usage_by_model == [
+        ModelUsage(provider_name=None, model_id="main", usage=_usage(300, 11)),
+        ModelUsage(provider_name=None, model_id="small", usage=_usage(30, 3)),
+        ModelUsage(provider_name=None, model_id=None, usage=_usage(40, 4)),
+    ]
+    assert contexts["limited"].usage_by_model == [ModelUsage(provider_name=None, model_id="small", usage=_usage(20, 2))]
+    assert contexts["auxiliary"].usage_by_model == [ModelUsage(provider_name=None, model_id=None, usage=_usage(40, 4))]
+    for context in contexts.values():
+        tru_totals = _token_totals([record.usage for record in context.usage_by_model])
+        exp_totals = _token_totals([context.usage])
+        assert tru_totals == exp_totals

@@ -22,7 +22,7 @@ const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
   description={BOX_LANDING_DESCRIPTION}
   canonicalPath="/box/"
   markdownPath="/box/index.md"
-  ogImageAlt="Strands Box: put your agent in a box"
+  ogImageAlt="Strands Box: contain your AI agent"
   structuredData={[productSchema(boxProduct, siteUrl)]}
   footerTopShape={false}
 >
@@ -33,7 +33,7 @@ const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
   <NextSteps
     title="Start with Box"
     ctas={[
-      { label: 'Install Box', href: BOX_LINKS.install, external: true },
+      { label: 'Install Box', href: BOX_LINKS.install },
       { label: 'Deploy Box', href: BOX_LINKS.deployment },
       { label: 'How Box protects your agent', href: BOX_LINKS.security },
     ]}
