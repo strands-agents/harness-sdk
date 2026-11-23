@@ -124,7 +124,6 @@ export interface WizardProps {
 const LABEL_WIDTH = 12
 const SLIDER_WIDTH = 21
 const FULL_ROWS = 12
-const LIST_CHROME_ROWS = 9
 const BODY_CHROME_ROWS = 6
 const COMPACT_BODY_CHROME_ROWS = 4
 const MIN_LIST_ROWS = 3
@@ -530,15 +529,15 @@ export const Wizard = ({
   const rowOf = (key: string): number => rows.findIndex((row) => row.kind === 'field' && row.field.key === key)
   const toggleRows = toggles.map(({ key }) => rowOf(key))
   const notice = step.body ? undefined : (step.notice ?? blocking)
-  // A single question is sized to its content, so its list chrome is counted, not approximated.
-  const listChrome = walked
-    ? LIST_CHROME_ROWS
-    : 3 +
-      (hasQuestion ? 1 : 0) +
-      (compact ? 0 : 1) +
-      (compact || step.listLabel === undefined ? 0 : 1) +
-      (notice ? 1 : compact ? 0 : 1) +
-      (step.footnote !== undefined && !compact ? 1 : 0)
+  // The list chrome is counted from what the panel renders, so a sized panel shows every option.
+  const listChrome =
+    3 +
+    (walked ? 2 : 0) +
+    (hasQuestion ? 1 : 0) +
+    (compact ? 0 : 1) +
+    (compact || step.listLabel === undefined ? 0 : 1) +
+    (notice ? 1 : compact ? 0 : 1) +
+    (step.footnote !== undefined && !compact ? 1 : 0)
   // One scrolling list for every toggle of the step, placed where the first one was declared.
   const toggleList = (): ReactNode => (
     <>

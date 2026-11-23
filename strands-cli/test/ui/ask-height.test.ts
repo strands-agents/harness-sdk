@@ -109,10 +109,22 @@ describe('wizardRequestRows', () => {
     expect(wizardRequestRows(five)).toBe(10)
   })
 
-  it('shouldNotSizeAWalkedFormToItsFirstStep', () => {
-    const walked = { ...twoOptions, id: 'r3', steps: [twoOptions.steps[0]!, twoOptions.steps[0]!] }
+  it('shouldSizeAWalkedFormToItsTallestStepPlusItsStepBar', () => {
+    const single = wizardRequestRows({ ...twoOptions, id: 'r3' })!
+    const taller = {
+      ...twoOptions.steps[0]!,
+      fields: [
+        {
+          kind: 'select' as const,
+          key: 'more',
+          multiple: false,
+          options: ['a', 'b', 'c', 'd'].map((value) => ({ value, label: value })),
+        },
+      ],
+    }
+    const walked = { ...twoOptions, id: 'r4', steps: [twoOptions.steps[0]!, taller] }
 
-    expect(wizardRequestRows(walked)).toBeUndefined()
+    expect(wizardRequestRows(walked)).toBe(single + 2 + 1)
   })
 })
 

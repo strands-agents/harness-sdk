@@ -137,11 +137,14 @@ const fieldRows = (field: WizardFieldSpec, width: number | undefined): number =>
 export const wizardRequestHasDiff = (request: WizardRequest | undefined): boolean =>
   request?.steps.some((step) => step.fields.some((field) => field.kind === 'diff')) === true
 
-/** The rows one question needs at a panel `width` wide, so its panel is not half the terminal with the rest empty. */
+/** The rows a question needs at a panel `width` wide, so its panel is not half the terminal with the rest empty. */
 export const wizardRequestRows = (request: WizardRequest | undefined, width?: number): number | undefined => {
-  if (!request || request.steps.length !== 1) return undefined
-  const fields = request.steps[0]!.fields.reduce((rows, field) => rows + fieldRows(field, width), 0)
-  return CHROME_ROWS - (request.question === undefined ? 1 : 0) + fields
+  if (!request) return undefined
+  // A walked request sizes to its tallest step, plus its step bar, so moving between steps keeps one frame.
+  const fields = Math.max(
+    ...request.steps.map((step) => step.fields.reduce((rows, field) => rows + fieldRows(field, width), 0))
+  )
+  return CHROME_ROWS - (request.question === undefined ? 1 : 0) + (request.steps.length > 1 ? 1 : 0) + fields
 }
 
 export const defaultAnswers = (steps: readonly WizardStepSpec[]): Record<string, WizardAnswer> => {
