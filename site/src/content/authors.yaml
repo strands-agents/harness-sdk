@@ -302,3 +302,13 @@
   name: Mehul Jaiswal
   role: "Software Engineer, AWS"
   bio: Mehul Jaiswal is a Software Engineer at AWS working on platform services.
+
+- id: kang-zhou
+  name: Kang Zhou
+  role: "Senior Applied Scientist, AWS"
+  bio: Kang Zhou is a Senior Applied Scientist at AWS.
+
+- id: xiangyi-chen
+  name: Xiangyi Chen
+  role: "Senior Applied Scientist, AWS"
+  bio: Xiangyi Chen is a Senior Applied Scientist at AWS.
