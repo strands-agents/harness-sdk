@@ -4,12 +4,13 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { STRANDS_EVALS_REQUIREMENT, STRANDS_EVALS_VERSION } from '../../../src/dev/evals-package.js'
 import {
+  installedEvalsSkill,
   prepareTemporaryOptimizerEnvironment,
   temporaryVenvPython,
   type TemporaryCommandRequest,
 } from '../../../src/dev/temporary-evals-fork/environment.js'
-import { TEMPORARY_EVALS_FORK, TEMPORARY_EVALS_FORK_REQUIREMENT } from '../../../src/dev/temporary-evals-fork/fork.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 interface Layout {
@@ -26,6 +27,11 @@ interface FakePython {
 const DAY_MS = 24 * 60 * 60 * 1000
 const PACKAGES_FILE = 'temporary_strands_dev_packages.pth'
 const MARKER_FILE = 'temporary-evals-fork.json'
+
+const writeFileAt = async (path: string, text: string): Promise<void> => {
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, text)
+}
 
 const writeExecutable = async (path: string): Promise<void> => {
   await mkdir(dirname(path), { recursive: true })
@@ -44,8 +50,8 @@ const layout = async (): Promise<Layout> => {
 
 const pythonTag = (version: string): string => `cpython-${version.split('.').slice(0, 2).join('')}-linux-x86_64`
 
-const sharedFolder = (version = '3.12.4', commit: string = TEMPORARY_EVALS_FORK.commit): string =>
-  join(homedir(), '.strands', 'temporary-evals', `${commit.slice(0, 12)}-${pythonTag(version)}`)
+const sharedFolder = (version = '3.12.4', release: string = STRANDS_EVALS_VERSION): string =>
+  join(homedir(), '.strands', 'temporary-evals', `${release}-${pythonTag(version)}`)
 
 const buildingFolder = (): string => `${sharedFolder()}.${process.pid}.tmp`
 
@@ -100,7 +106,7 @@ describe('TEMPORARY optimizer environment', () => {
     vi.unstubAllEnvs()
   })
 
-  it('shouldInstallTheForkWithTheProjectPackagesVisibleWhenTheEnvironmentIsMissing', async () => {
+  it('shouldInstallStrandsEvalsWithTheProjectPackagesVisibleWhenTheEnvironmentIsMissing', async () => {
     const paths = await layout()
     const run = fakeRunner(paths)
 
@@ -111,11 +117,11 @@ describe('TEMPORARY optimizer environment', () => {
     expect(existsSync(sitePackagesOf(sharedFolder()))).toBe(true)
     const [install] = installs(run)
     expect(install?.command).toBe(temporaryVenvPython(buildingFolder()))
-    expect(install?.args).toContain(TEMPORARY_EVALS_FORK_REQUIREMENT)
+    expect(install?.args).toContain(STRANDS_EVALS_REQUIREMENT)
     expect(install?.env?.PIP_REQUIRE_VIRTUALENV).toBe('true')
   })
 
-  it('shouldReuseTheEnvironmentWhenTheForkAndTheProjectPythonAreUnchanged', async () => {
+  it('shouldReuseTheEnvironmentWhenTheEvalsVersionAndTheProjectPythonAreUnchanged', async () => {
     const paths = await layout()
     await prepareTemporaryOptimizerEnvironment(paths, { run: fakeRunner(paths) })
     const run = fakeRunner(paths)
@@ -177,7 +183,7 @@ describe('TEMPORARY optimizer environment', () => {
     {
       failing: 'install',
       message:
-        /Could not install strands-agents-evals from .+\nERROR: No matching distribution\nCheck your network connection, your pip index settings, and that git is installed/u,
+        /Could not install strands-agents-evals .+:\nERROR: No matching distribution\nCheck your network connection and your pip index settings, then try again\./u,
     },
     {
       failing: 'venv',
@@ -196,17 +202,13 @@ describe('TEMPORARY optimizer environment', () => {
     await expect(prepareTemporaryOptimizerEnvironment(paths, { run })).rejects.toThrow(message)
   })
 
-  it('shouldShowTheGitErrorWhenPipCannotFetchTheFork', async () => {
+  it('shouldShowThePipErrorWhenPipCannotReachThePackageIndex', async () => {
     const paths = await layout()
     const succeeding = fakeRunner(paths)
     const stderr = [
-      '  Running command git clone --filter=blob:none --quiet https://github.com/arielnabavian/evals /tmp/pip-req',
-      "  fatal: unable to access 'https://github.com/arielnabavian/evals/': Could not resolve host: github.com",
-      '  error: subprocess-exited-with-error',
-      '  × git clone did not run successfully.',
-      '  │ exit code: 128',
-      '  ╰─> No available output.',
-      'note: This error originates from a subprocess, and is likely not a problem with pip.',
+      "WARNING: Retrying (Retry(total=4, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError'",
+      `ERROR: Could not find a version that satisfies the requirement ${STRANDS_EVALS_REQUIREMENT} (from versions: none)`,
+      'ERROR: No matching distribution found for strands-agents-evals',
     ].join('\n')
     const run = vi.fn(async (request: TemporaryCommandRequest): Promise<string> => {
       if (request.args.includes('install')) throw Object.assign(new Error('Command failed'), { stderr })
@@ -214,7 +216,7 @@ describe('TEMPORARY optimizer environment', () => {
     })
 
     await expect(prepareTemporaryOptimizerEnvironment(paths, { run })).rejects.toThrow(
-      /Could not resolve host: github\.com/u
+      /ERROR: No matching distribution found for strands-agents-evals/u
     )
   })
 
@@ -268,7 +270,7 @@ describe('TEMPORARY optimizer environment', () => {
     await expect(other).resolves.toBe(temporaryVenvPython(workspaceVenv(paths)))
   })
 
-  it('shouldInstallTheForkOnceWhenTwoWorkspacesUseTheSamePython', async () => {
+  it('shouldInstallStrandsEvalsOnceWhenTwoWorkspacesUseTheSamePython', async () => {
     const first = await layout()
     const second = await layout()
     const firstRun = fakeRunner(first)
@@ -316,9 +318,9 @@ describe('TEMPORARY optimizer environment', () => {
     })
   })
 
-  it('shouldDeleteTheSharedEnvironmentOfAnotherCommitWhenNothingUsedItForMoreThanSevenDays', async () => {
-    const stale = sharedFolder('3.12.4', '0'.repeat(40))
-    const recent = sharedFolder('3.12.4', '1'.repeat(40))
+  it('shouldDeleteTheSharedEnvironmentOfAnotherVersionWhenNothingUsedItForMoreThanSevenDays', async () => {
+    const stale = sharedFolder('3.12.4', '1.10.0')
+    const recent = sharedFolder('3.12.4', '1.11.0')
     await usedDaysAgo(stale, 8)
     await usedDaysAgo(recent, 6)
     const paths = await layout()
@@ -328,5 +330,38 @@ describe('TEMPORARY optimizer environment', () => {
     expect(existsSync(stale)).toBe(false)
     expect(existsSync(recent)).toBe(true)
     expect(existsSync(sharedFolder())).toBe(true)
+  })
+})
+
+describe('installed evals skills', () => {
+  const installedPackage = async (skill?: string): Promise<string> => {
+    const folder = join(await temporaryDirectory(), 'site-packages', 'strands_evals')
+    if (skill) await writeFileAt(join(folder, '.agents', 'skills', skill, 'SKILL.md'), `---\nname: ${skill}\n---\n`)
+    else await mkdir(folder, { recursive: true })
+    return folder
+  }
+
+  it('shouldFindTheSkillFolderInTheInstalledPackageWhenTheWheelShipsIt', async () => {
+    const folder = await installedPackage('session-converter')
+    const run = vi.fn(async (_request: TemporaryCommandRequest): Promise<string> => `${folder}\n`)
+
+    const skill = await installedEvalsSkill('/env/bin/python', 'session-converter', run)
+
+    expect(skill).toBe(join(folder, '.agents', 'skills', 'session-converter'))
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: '/env/bin/python',
+        args: ['-c', expect.stringContaining("find_spec('strands_evals')")],
+      })
+    )
+  })
+
+  it('shouldNameTheVersionAndANextStepWhenTheInstalledPackageHasNoSuchSkill', async () => {
+    const folder = await installedPackage()
+    const run = vi.fn(async (_request: TemporaryCommandRequest): Promise<string> => `${folder}\n`)
+
+    await expect(installedEvalsSkill('/env/bin/python', 'session-converter', run)).rejects.toThrow(
+      `The installed strands-agents-evals ${STRANDS_EVALS_VERSION} has no session-converter skill in ${join(folder, '.agents', 'skills', 'session-converter')}. Restart strands dev, then try again.`
+    )
   })
 })

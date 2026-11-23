@@ -90,9 +90,24 @@ class FakeHarness(types.ModuleType):
         "interventions": None,
     }
 
+    DEFAULT_MEMORY_DIR = "./.agent/memory"
+
     def __init__(self) -> None:
         super().__init__("strands_harness")
         self.calls: list[dict[str, Any]] = []
+        self.agent = types.ModuleType("strands_harness.agent")
+        self.agent.create_harness = self.create_harness
+        self.defaults = types.ModuleType("strands_harness.defaults")
+        self.defaults.DEFAULT_MEMORY_DIR = self.DEFAULT_MEMORY_DIR
+
+    def submodules(self) -> dict[str, types.ModuleType]:
+        return {"strands_harness.agent": self.agent, "strands_harness.defaults": self.defaults}
+
+    def define_harness_agent_config(self, config: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {**self.DEFAULT_HARNESS_AGENT_CONFIG, **(config or {})}
+
+    def harness_agent_kwargs_from_config(self, value: object, base_dir: str = ".") -> dict[str, Any]:
+        return dict(value) if isinstance(value, dict) else {}
 
     def create_harness(self, **options: Any) -> Agent:
         self.calls.append(options)

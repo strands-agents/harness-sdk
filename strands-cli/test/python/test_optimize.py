@@ -287,7 +287,7 @@ def test_should_print_a_summary_when_the_output_is_rich(harness, tmp_path, capsy
 
     assert code == 0
     captured = capsys.readouterr()
-    assert captured.out.startswith(f"Run {run_dir(tmp_path).name}")
+    assert captured.out.startswith(f"Optimization result: {run_dir(tmp_path).name}")
     assert f"run folder {run_dir(tmp_path)}" in captured.err
 
 

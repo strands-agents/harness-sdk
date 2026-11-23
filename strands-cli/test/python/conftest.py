@@ -21,6 +21,8 @@ def offline_aws(tmp_path, monkeypatch):
 def harness(monkeypatch):
     fake = FakeHarness()
     monkeypatch.setitem(sys.modules, "strands_harness", fake)
+    for name, module in fake.submodules().items():
+        monkeypatch.setitem(sys.modules, name, module)
     monkeypatch.setattr(sys, "path", list(sys.path))
     return fake
 

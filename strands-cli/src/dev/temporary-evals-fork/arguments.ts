@@ -12,11 +12,11 @@ export interface TemporaryDevCommandArguments {
 const DESCRIPTIONS: Record<TemporaryDevCommandName, string> = {
   optimize:
     'Experimental: tune the dev workspace agent against an experiment in strands-dev/experiments with ' +
-    'strands-evals optimize run from the evals fork. Flags after -- go to strands-evals optimize run. ' +
+    'strands-evals optimize run. Flags after -- go to strands-evals optimize run. ' +
     '--max-iterations 0 measures only the baseline.',
   evaluate:
     'Experimental: run the dev workspace agent on an experiment in strands-dev/experiments with strands-evals run ' +
-    "from the evals fork, and save the report in the experiment's runs folder. Flags after -- go to strands-evals run.",
+    "and save the report in the experiment's runs folder. Flags after -- go to strands-evals run.",
 }
 
 export const isTemporaryDevCommand = (name: string | undefined): name is TemporaryDevCommandName =>

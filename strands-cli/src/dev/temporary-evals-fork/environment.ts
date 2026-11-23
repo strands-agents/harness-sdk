@@ -8,7 +8,7 @@ import { strandsUserPath } from '../../paths.js'
 import { redactPreparationOutput } from '../../project/preparation.js'
 import { PIP_CONFIG_LIST_ARGUMENTS, pythonInstallEnvironment } from '../../project/python-runtime.js'
 import { isRecord } from '../../values.js'
-import { TEMPORARY_EVALS_FORK, TEMPORARY_EVALS_FORK_REQUIREMENT } from './fork.js'
+import { STRANDS_EVALS_LABEL, STRANDS_EVALS_REQUIREMENT, STRANDS_EVALS_VERSION } from '../evals-package.js'
 import { temporaryEvalsEnvironmentFolder } from './layout.js'
 
 export interface TemporaryCommandRequest {
@@ -38,16 +38,17 @@ const PROJECT_SITE_PROBE = [
   'print(json.dumps({"version": platform.python_version(), "tag": f"{tag}-{sysconfig.get_platform()}", "paths": site.getsitepackages()}))',
 ].join('; ')
 const OPTIMIZER_SITE_PROBE = 'import site; print(site.getsitepackages()[0])'
+const EVALS_PACKAGE_PROBE =
+  "import importlib.util; print(importlib.util.find_spec('strands_evals').submodule_search_locations[0])"
+const EVALS_SKILLS = ['.agents', 'skills'] as const
 const PACKAGES_FILE = 'temporary_strands_dev_packages.pth'
 const MARKER_FILE = 'temporary-evals-fork.json'
 const SHARED_FOLDER = 'temporary-evals'
-const SHARED_COMMIT_LENGTH = 12
 const SHARED_UNUSED_MS = 7 * 24 * 60 * 60 * 1000
 const UNSAFE_PATH_CHARACTERS = /[^A-Za-z0-9._-]/gu
 const TAKEN_CODES = new Set(['EEXIST', 'ENOTEMPTY', 'EPERM', 'EACCES'])
 const MINIMUM_PYTHON_MINOR = 10
 const DETAIL_LINES = 3
-const FORK_LABEL = `strands-agents-evals from ${TEMPORARY_EVALS_FORK.repository} at ${TEMPORARY_EVALS_FORK.commit.slice(0, 7)}`
 
 const execute = promisify(execFile)
 
@@ -70,6 +71,25 @@ const projectPackagesHook = (paths: readonly string[]): string =>
 
 export const temporaryVenvPython = (venv: string): string =>
   join(venv, process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
+
+export const installedEvalsSkill = async (
+  python: string,
+  name: string,
+  run: TemporaryCommandRunner = runCommand
+): Promise<string> => {
+  const where = await run({
+    command: python,
+    args: ['-c', EVALS_PACKAGE_PROBE],
+    cwd: dirname(python),
+    timeout: PROBE_TIMEOUT_MS,
+  })
+  const folder = join(where.trim(), ...EVALS_SKILLS, name)
+  if (!existsSync(join(folder, 'SKILL.md')))
+    throw new Error(
+      `The installed ${STRANDS_EVALS_LABEL} has no ${name} skill in ${folder}. Restart strands dev, then try again.`
+    )
+  return folder
+}
 
 interface ProjectPython {
   readonly version: string
@@ -206,13 +226,10 @@ const commandRequest =
   })
 
 const sharedFolder = (tag: string): string =>
-  strandsUserPath(
-    SHARED_FOLDER,
-    `${TEMPORARY_EVALS_FORK.commit.slice(0, SHARED_COMMIT_LENGTH)}-${tag.replace(UNSAFE_PATH_CHARACTERS, '_')}`
-  )
+  strandsUserPath(SHARED_FOLDER, `${STRANDS_EVALS_VERSION}-${tag.replace(UNSAFE_PATH_CHARACTERS, '_')}`)
 
 const sharedMarker = (tag: string, sitePackages: string): string =>
-  JSON.stringify({ requirement: TEMPORARY_EVALS_FORK_REQUIREMENT, tag, sitePackages })
+  JSON.stringify({ requirement: STRANDS_EVALS_REQUIREMENT, tag, sitePackages })
 
 const readySharedPackages = async (folder: string, tag: string): Promise<string | undefined> => {
   const text = await readMarker(join(folder, MARKER_FILE))
@@ -292,19 +309,19 @@ const buildSharedPackages = async (build: Build, projectPython: string, tag: str
     await step(build.run(request(python, ['-c', OPTIMIZER_SITE_PROBE], PROBE_TIMEOUT_MS)), cannotCreate)
   ).trim()
   const configured = await pipConfigList(build, request, python)
-  build.onProgress(`Installing ${FORK_LABEL}. This takes about a minute, once for each version of the fork.`)
+  build.onProgress(`Installing ${STRANDS_EVALS_LABEL}. This takes about a minute, once for each version.`)
   await step(
     build.run(
       request(
         python,
-        ['-m', 'pip', 'install', '--disable-pip-version-check', '--prefer-binary', TEMPORARY_EVALS_FORK_REQUIREMENT],
+        ['-m', 'pip', 'install', '--disable-pip-version-check', '--prefer-binary', STRANDS_EVALS_REQUIREMENT],
         INSTALL_TIMEOUT_MS,
         pythonInstallEnvironment(process.env, configured)
       )
     ),
     (detail) =>
-      `Could not install ${FORK_LABEL}:\n${detail}\n` +
-      'Check your network connection, your pip index settings, and that git is installed, then try again.'
+      `Could not install ${STRANDS_EVALS_LABEL}:\n${detail}\n` +
+      'Check your network connection and your pip index settings, then try again.'
   )
   const inside = relative(building, sitePackages)
   await writeFile(join(building, MARKER_FILE), sharedMarker(tag, inside))
