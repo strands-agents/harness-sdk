@@ -478,7 +478,7 @@ describe("OpenAIModel (api: 'responses')", () => {
       ]
       const req = await runOnce({}, messages)
       const out = req.input.find((i: any) => i.type === 'function_call_output')
-      expect(out.output).toBe('4\n["4"]')
+      expect(out).toEqual({ type: 'function_call_output', call_id: 't1', output: '4\n["4"]' })
     })
 
     it('emits an array output with input_image when a tool result carries image bytes', async () => {
