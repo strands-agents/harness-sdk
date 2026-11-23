@@ -522,7 +522,7 @@ describe('Graph', () => {
         ),
         printer: false,
         id: 'classifier',
-        structuredOutputSchema: z.object({ category: z.string() }),
+        structuredOutputSchema: z.object({ category: z.string(), priority: z.string().default('normal') }),
       })
       const inner = new Graph({ id: 'inner', nodes: [classifier], edges: [] })
       const specialist = makeAgent('billing')
@@ -533,17 +533,21 @@ describe('Graph', () => {
         edges: [['inner', 'billing']],
       })
 
-      await graph.invoke('I was double charged')
+      const result = await graph.invoke('I was double charged')
 
+      expect(result.results.find((r) => r.nodeId === 'inner')?.structuredOutput).toStrictEqual({
+        category: 'billing',
+        priority: 'normal',
+      })
       expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
         new TextBlock('I was double charged'),
         new TextBlock('[node: inner]'),
-        new TextBlock('{"category":"billing"}'),
+        new TextBlock('{"category":"billing","priority":"normal"}'),
       ])
     })
 
     it('forwards every terminus structured output from a nested graph with multiple termini', async () => {
-      const schema = z.object({ category: z.string() })
+      const schema = z.object({ category: z.string(), priority: z.string().default('normal') })
       const c1 = new Agent({
         model: new MockMessageModel().addTurn(
           new ToolUseBlock({ name: STRUCTURED_OUTPUT_TOOL_NAME, toolUseId: 't1', input: { category: 'billing' } })
@@ -569,13 +573,16 @@ describe('Graph', () => {
         edges: [['inner', 'billing']],
       })
 
-      await graph.invoke('I was double charged')
+      const result = await graph.invoke('I was double charged')
 
+      expect(result.results.find((r) => r.nodeId === 'inner')?.structuredOutput).toStrictEqual([
+        { category: 'billing', priority: 'normal' },
+        { category: 'urgent', priority: 'normal' },
+      ])
       expect(streamSpy.mock.calls[0]![0]).toStrictEqual([
         new TextBlock('I was double charged'),
         new TextBlock('[node: inner]'),
-        new TextBlock('{"category":"billing"}'),
-        new TextBlock('{"category":"urgent"}'),
+        new TextBlock('[{"category":"billing","priority":"normal"},{"category":"urgent","priority":"normal"}]'),
       ])
     })
 

@@ -411,9 +411,13 @@ export class MultiAgentNode extends Node {
       ...(invocationContext && { invocationContext }),
     }
     const gen = this._orchestrator.stream(input, nestedOptions)
+    let innerState: MultiAgentState | undefined
     let next = await gen.next()
     while (!next.done) {
       const event = next.value
+      if (event.type === 'afterMultiAgentInvocationEvent') {
+        innerState = event.state
+      }
       if (event.type === 'nodeStreamUpdateEvent') {
         yield event
       } else {
@@ -429,6 +433,17 @@ export class MultiAgentNode extends Node {
     }
     const innerResult = next.value
     const interrupted = innerResult.interrupts && innerResult.interrupts.length > 0
+    const terminusOutputs = innerState
+      ? [...innerState.nodes.values()]
+          .filter((ns) => ns.terminus)
+          .map((ns) => ns.results[ns.results.length - 1]?.structuredOutput)
+          .filter((value) => value !== undefined)
+      : innerResult.results
+          .slice(-1)
+          .map((r) => r.structuredOutput)
+          .filter((value) => value !== undefined)
+    const structuredOutput =
+      terminusOutputs.length === 1 ? terminusOutputs[0] : terminusOutputs.length > 1 ? terminusOutputs : undefined
 
     return omitUndefined({
       content: innerResult.content,
@@ -436,6 +451,7 @@ export class MultiAgentNode extends Node {
       status: innerResult.status !== Status.COMPLETED ? innerResult.status : undefined,
       error: innerResult.error,
       interrupts: interrupted ? innerResult.interrupts : undefined,
+      structuredOutput,
     })
   }
 }

@@ -785,23 +785,16 @@ export class Graph implements MultiAgent {
     const deps: ContentBlock[] = []
     for (const edge of this.edges.filter((e) => e.target.id === node.id)) {
       const ns = state.node(edge.source.id)!
-      // User messages cannot carry tool blocks. Surface validated structuredOutput once;
-      // fall back to each toolUse input for nested MultiAgentNode (no validated value).
+      // User messages cannot carry tool blocks. Surface validated structuredOutput once.
       const validated = ns.results[ns.results.length - 1]?.structuredOutput
       const content: ContentBlock[] = []
       let validatedEmitted = false
       for (const block of ns.content) {
         if (block.type === 'reasoningBlock' || block.type === 'toolResultBlock') continue
         if (block.type === 'toolUseBlock') {
-          if (block.name === STRUCTURED_OUTPUT_TOOL_NAME) {
-            if (validated !== undefined) {
-              if (!validatedEmitted) {
-                content.push(new TextBlock(JSON.stringify(validated)))
-                validatedEmitted = true
-              }
-            } else {
-              content.push(new TextBlock(JSON.stringify(block.input)))
-            }
+          if (block.name === STRUCTURED_OUTPUT_TOOL_NAME && validated !== undefined && !validatedEmitted) {
+            content.push(new TextBlock(JSON.stringify(validated)))
+            validatedEmitted = true
           }
           continue
         }
