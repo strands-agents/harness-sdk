@@ -129,8 +129,7 @@ export interface DevPanelOpening {
 /** Activates a skill and sends the workflow with the developer's request, instead of opening a panel. */
 export interface DevChatSkillRun {
   readonly skill: string
-  /** The workflow that goes with the request, or how to pick it from what follows the command name. */
-  readonly workflow: string | ((request: string) => string)
+  readonly workflow: string
   /** Why the skill cannot load, shown when activation finds no such skill. */
   readonly unavailable: string
   /** The request that a click on one of this command's jobs sends. */

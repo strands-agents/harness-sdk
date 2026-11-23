@@ -1498,13 +1498,32 @@ export const temporaryDevSessions = (host: TemporarySessionHost): TemporaryDevSe
   const current = (): TemporarySessionHost => latest
   const experiments = new TemporaryExperiments(current)
   const optimize = new TemporaryOptimize(current, experiments)
+  const optimizing = (): boolean => temporaryOptimizeJobs(optimize.snapshot()).length > 0
   const sessions = {
     experiments,
     test: new TemporaryTest(current, experiments),
     optimize,
     // A run that is going, or one whose edits still wait for an answer, is done with before the next one starts.
     auto: new TemporaryAutoOptimize(current, {
-      busy: (): boolean => temporaryOptimizeJobs(optimize.snapshot()).length > 0,
+      busy: optimizing,
+      idle: (signal): Promise<void> =>
+        new Promise((resolveIdle, rejectIdle) => {
+          if (!optimizing()) return resolveIdle()
+          const settle = (): void => {
+            unsubscribe()
+            signal.removeEventListener('abort', aborted)
+          }
+          const aborted = (): void => {
+            settle()
+            rejectIdle(signal.reason)
+          }
+          const unsubscribe = optimize.subscribe(() => {
+            if (optimizing()) return
+            settle()
+            resolveIdle()
+          })
+          signal.addEventListener('abort', aborted, { once: true })
+        }),
     }),
     setSettings: async (update: Partial<ChatSettings>): Promise<void> => {
       const set = latest.context?.setSettings

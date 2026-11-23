@@ -55,17 +55,23 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         const { prepareDevRun } = await import('../dev/prepare.js')
         const prepared = await prepareDevRun(args, { deferPreparation: true })
         if (prepared) {
-          const { planProjectPreparation, describePreparationCommand } = await import('../project/preparation-plan.js')
-          const { executePreparation, redactPreparationOutput } = await import('../project/preparation.js')
-          const plan = await planProjectPreparation({
-            root: prepared.workspace.root,
-            entrypoint: prepared.workspace.entrypoint,
-            language: prepared.workspace.config.language,
-          })
-          process.stderr.write(
-            `Project root: ${plan.project.root}\nRuntime: ${plan.runtime}\n${plan.commands.map((step) => redactPreparationOutput(describePreparationCommand(step))).join('\n')}\n${plan.guidance ?? ''}\n`
-          )
-          await executePreparation(plan)
+          const { projectPreparedByParent } = await import('../dev/runtime.js')
+          // A strands dev that is open on this project prepared it, and installing or building again under it
+          // would change the files it watches.
+          if (!projectPreparedByParent()) {
+            const { planProjectPreparation, describePreparationCommand } =
+              await import('../project/preparation-plan.js')
+            const { executePreparation, redactPreparationOutput } = await import('../project/preparation.js')
+            const plan = await planProjectPreparation({
+              root: prepared.workspace.root,
+              entrypoint: prepared.workspace.entrypoint,
+              language: prepared.workspace.config.language,
+            })
+            process.stderr.write(
+              `Project root: ${plan.project.root}\nRuntime: ${plan.runtime}\n${plan.commands.map((step) => redactPreparationOutput(describePreparationCommand(step))).join('\n')}\n${plan.guidance ?? ''}\n`
+            )
+            await executePreparation(plan)
+          }
           await prepared.keep()
           prepared.args.dev = { ...prepared.args.dev!, prepared: true }
         }

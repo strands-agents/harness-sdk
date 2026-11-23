@@ -24,6 +24,7 @@ import {
   TEMPORARY_DECISION_DEFAULTS,
   TEMPORARY_TEST_SHARES,
 } from '../../../src/dev/temporary-evals-fork/plan.js'
+import type { AutoOptimizeStatus } from '../../../src/dev/temporary-evals-fork/auto-optimize.js'
 import type { TemporaryEvaluator } from '../../../src/dev/temporary-evals-fork/evaluators.js'
 import type { AnsweredOptimizeReview, AppliedOptimizeEdits } from '../../../src/dev/temporary-evals-fork/review-run.js'
 import type { TemporaryAppliedChange, TemporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
@@ -212,7 +213,10 @@ const fakeSessions = () => {
     },
     ui: { ...ui, open: vi.fn() },
     openFile: vi.fn(async (_path: string): Promise<void> => {}),
-    auto: { status: vi.fn(async () => ({ everyTurns: settings.autoOptimize, turnsSince: 3 })) },
+    auto: {
+      status: vi.fn(async (): Promise<AutoOptimizeStatus> => ({ everyTurns: settings.autoOptimize, turnsSince: 3 })),
+      settingChanged: vi.fn(async (): Promise<string | undefined> => undefined),
+    },
     settings: vi.fn(() => settings),
     // As the settings panel does: what is set is what the workspace then goes by.
     setSettings: vi.fn(async (update: Partial<typeof settings>): Promise<void> => {
@@ -273,6 +277,7 @@ const setup = (evaluators = vi.fn(async () => CATALOG), changes: readonly Tempor
   const history = {
     pastChats: vi.fn(async (): Promise<number> => 12),
     converter: vi.fn(async (): Promise<string> => 'Follow the session-converter skill below.'),
+    unattendedConverter: vi.fn(async (): Promise<string> => 'Follow the session-converter skill on your own.'),
   }
   const showReview = vi.fn((_run: string): boolean => true)
   const answerReview = vi.fn(
@@ -1287,8 +1292,29 @@ describe('dev chat tool errors and states', () => {
 
       expect(sessions.setSettings.mock.calls).toEqual([[{ autoOptimize: 20 }]])
       expect(set.autoOptimize).toMatchObject({ everyTurns: 20, turnsSinceTheLastOne: 3 })
-      expect(set.autoOptimize.state).toContain('strands dev sends you an "/optimize auto-optimize" request')
+      // The agent of the chat has no part in it, so it is told not to expect a request or to start anything.
+      expect(set.autoOptimize.state).toContain('strands dev works in the background, outside this chat')
+      expect(set.autoOptimize.state).toContain('you are sent nothing and start nothing')
       expect(set.autoOptimize.state).toContain('Each one is a paid run.')
+      expect(set.autoOptimize).not.toHaveProperty('now')
+    })
+
+    it('shouldSayWhatTheBackgroundAgentMakesRightNowAndWhereItsLogIs', async () => {
+      const { call, sessions } = setup()
+      await call('strands_dev_auto_optimize', { everyTurns: 20 })
+      sessions.auto.status.mockResolvedValueOnce({
+        everyTurns: 20,
+        turnsSince: 21,
+        building: 'history-20261123-1502',
+        log: '/w/strands-dev/tmp/.state/auto-optimize/history-20261123-1502.log',
+      })
+
+      const read = (await call('strands_dev_auto_optimize')) as { autoOptimize: { now: string } }
+
+      expect(read.autoOptimize.now).toBe(
+        'The background agent is making the experiment history-20261123-1502 from the chats. ' +
+          'Its log: /w/strands-dev/tmp/.state/auto-optimize/history-20261123-1502.log'
+      )
     })
 
     it('shouldSetWhetherTheEditsAreWrittenWithoutADiffAndLeaveTheTurnsAsTheyAre', async () => {
@@ -1313,6 +1339,21 @@ describe('dev chat tool errors and states', () => {
       expect(sessions.setSettings.mock.calls.at(-1)).toEqual([
         { autoOptimize: 0, autoAcceptOptimizationResults: false },
       ])
+    })
+
+    it('shouldSayThatTheBackgroundAgentStoppedWhenTurningItOffStoppedOne', async () => {
+      const { call, sessions } = setup()
+      sessions.auto.settingChanged.mockResolvedValueOnce('history-20261123-1502')
+
+      const set = (await call('strands_dev_auto_optimize', { everyTurns: 0 })) as { stopped?: string }
+
+      // Without this the agent told the developer that the work went on and offered to stop it.
+      expect(set.stopped).toBe(
+        'The background agent that was making history-20261123-1502 has stopped, and no optimization starts from it.'
+      )
+      expect(sessions.auto.settingChanged.mock.invocationCallOrder[0]).toBeGreaterThan(
+        sessions.setSettings.mock.invocationCallOrder[0]!
+      )
     })
 
     it.each<[string, Record<string, JSONValue>, string]>([

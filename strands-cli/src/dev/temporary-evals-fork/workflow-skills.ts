@@ -36,18 +36,6 @@ strands dev runs strands-evals commands for you with strands_dev_run_background,
 
 Read the results with strands_dev_status and strands_dev_evaluation_results. Stop a run with strands_dev_stop_background only when the developer asks; cancelling the chat turn leaves it running. List the evaluators with strands_dev_evaluators.`
 
-const AUTO_OPTIMIZE_COMMAND = `# /optimize auto-optimize
-
-The optimize skill is active, and this chat runs in strands dev. This request starts an optimization from the chats of the developer with this agent. strands dev sends it when they turned on Auto-optimize every N turns in /settings and that many chat turns have passed; they can also type it. Either way it is their approval of this run and of what it costs. So ask nothing, show no question on screen, print no review, and wait for no approval, also where a skill says to. Do it all in this turn:
-
-1. Make an experiment from their chats with this agent. Call strands_dev_session_converter and follow what it returns, with two changes: answer each of its questions yourself with the option it recommends, and include this chat, although its rules say to skip it. Name the experiment history-<year><month><day>-<hour><minute>.
-2. Score it only with evaluators that strands_dev_evaluators lists as available: call it before you write the evaluators, and where the skill picks one that is unavailable, take the nearest available one. The optimizer refuses an experiment with an unavailable evaluator.
-3. When the chats give fewer than three cases, say in one line that there is too little history to tune on yet, and stop.
-4. Start the optimizer on that experiment through the background-evals skill, never from a shell, with the knobs and the budget that strands_dev_optimization_plan gives by default.
-5. Say in two lines what you made and what you started. When the run finishes, its edits show on the developer's screen as a diff, or are written without one when strands_dev_optimization_plan returned autoAccept.
-
-When a step fails, say what failed in one line and stop. With Auto-optimize on, the next run comes after the same number of turns.`
-
 /** Runtime-only guidance that the skill commands and plain requests share. */
 export const temporaryWorkflowSkills = (): AgentExtensionInlineSkill[] => [
   {
@@ -59,9 +47,6 @@ export const temporaryWorkflowSkills = (): AgentExtensionInlineSkill[] => [
     instructions: BACKGROUND_EVALS,
   },
 ]
-
-/** What /optimize sends instead of its own workflow when the request is the one auto-optimize makes. */
-export const temporaryAutoOptimizeWorkflow = AUTO_OPTIMIZE_COMMAND
 
 /** The text that each skill command sends with its skill. */
 export const temporaryCommandWorkflows = {

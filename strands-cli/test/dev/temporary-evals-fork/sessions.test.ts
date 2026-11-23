@@ -22,6 +22,8 @@ import { temporaryDevChatPart, temporaryDevCommands } from '../../../src/dev/tem
 import { TemporaryExperiments } from '../../../src/dev/temporary-evals-fork/experiments-session.js'
 import { readTemporaryTestResults, rememberTemporaryTestResults } from '../../../src/dev/temporary-evals-fork/report.js'
 import type { TemporarySessionHost } from '../../../src/dev/temporary-evals-fork/host.js'
+import type { AutoOptimizeRun } from '../../../src/dev/temporary-evals-fork/auto-optimize.js'
+import type { AutoOptimizeWorker } from '../../../src/dev/temporary-evals-fork/auto-optimize-worker.js'
 import { readTemporaryOptimizeRecords } from '../../../src/dev/temporary-evals-fork/optimize-runs.js'
 import {
   answerOptimizeReview,
@@ -2260,27 +2262,54 @@ describe('TEMPORARY dev sessions', () => {
     const everyFive: Pick<TemporarySessionHost, 'settings'> = {
       settings: () => ({ autoAcceptOptimizationResults: false, autoOptimize: 5 }),
     }
-    const REQUEST = '/optimize auto-optimize: 5 chat turns since the last one'
     const FIVE = ['one', 'two', 'three', 'four', 'five']
 
-    it('shouldSendItsRequestThroughTheChatWhenTheOptimizeCommandHearsThatManyTurnsEnd', async () => {
-      const { workspace } = await sessionsFor({}, everyFive)
+    it('shouldMakeAnExperimentAwayFromTheChatAndStartTheOptimizerOnItWhenThatManyTurnsEnd', async () => {
+      const optimizer = optimizingProcess()
+      const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizer }, everyFive)
+      const order: string[] = []
+      // The agent in a process of its own, played here: it saves the experiment it is asked for.
+      const worker = vi.fn<AutoOptimizeWorker>(async ({ prompt }) => {
+        order.push('agent')
+        await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], /save it as (\S+)/u.exec(prompt)![1])
+        return { code: 0 }
+      })
+      optimizer.mockImplementationOnce(async (process) => {
+        order.push('optimizer')
+        return optimizingProcess()(process)
+      })
       const optimize = temporaryDevCommands(
         workspace,
         { root: workspace.root, entrypoint: workspace.entrypoint, language: 'python' },
         () => ({}),
-        everyFive.settings
+        everyFive.settings,
+        {
+          worker,
+          history: { unattendedConverter: async ({ name }) => `save it as ${name}` },
+          evaluators: async () => [
+            { name: 'OutputEvaluator', kind: 'judge', description: '', settings: [], available: true },
+          ],
+          now: () => new Date(2026, 10, 23, 15, 2),
+        }
       ).find(({ spec }) => spec.name === 'optimize')!
-      const { context } = chat()
+      const { context, notices } = chat()
 
       // The turn that set the cadence is not counted.
       for (const prompt of ['optimize every 5 turns', ...FIVE.slice(0, 4)]) optimize.turnEnded?.(context, { prompt })
       await new Promise((done) => setTimeout(done, 20))
-      const before = vi.mocked(context.submit).mock.calls.length
+      const before = worker.mock.calls.length
       optimize.turnEnded?.(context, { prompt: 'five' })
+      await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'), { timeout: 5000 })
+      await sessions.auto.settled()
 
-      await vi.waitFor(() => expect(context.submit).toHaveBeenCalledExactlyOnceWith(REQUEST))
       expect(before).toBe(0)
+      expect(order).toEqual(['agent', 'optimizer'])
+      expect(recordOf(optimizer.mock.calls[0]![0].args)).toContain(join('experiments', 'history-20261123-1502'))
+      // The chat is sent no request and asked nothing: it is told of the work in one notice, and of the run's end.
+      expect(context.submit).not.toHaveBeenCalled()
+      expect(notices.map(({ text }) => text).filter((text) => text.startsWith('auto-optimize'))).toEqual([
+        'auto-optimize · made history-20261123-1502 from your chats (4 cases) · optimizing on it in the background',
+      ])
     })
 
     it('shouldWaitUntilTheEditsOfAFinishedRunHaveTheirAnswer', async () => {
@@ -2290,16 +2319,40 @@ describe('TEMPORARY dev sessions', () => {
       await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
       sessions.optimize.start()
       await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
-      const { context } = chat()
+      const work = vi.fn<AutoOptimizeRun>(async () => ({ experiment: 'history-20261123-1502', cases: 4 }))
 
-      for (const prompt of ['optimize every 5 turns', ...FIVE]) await sessions.auto.turnEnded(context, { prompt })
-      const whileTheDiffWaits = vi.mocked(context.submit).mock.calls.length
+      for (const prompt of ['optimize every 5 turns', ...FIVE]) await sessions.auto.turnEnded({ prompt }, work)
+      const whileTheDiffWaits = work.mock.calls.length
       sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'reject' })
       await vi.waitFor(() => expect(sessions.optimize.snapshot()).toMatchObject({ review: { reviewed: true } }))
-      await sessions.auto.turnEnded(context, { prompt: 'six' })
+      await sessions.auto.turnEnded({ prompt: 'six' }, work)
 
       expect(whileTheDiffWaits).toBe(0)
-      expect(context.submit).toHaveBeenCalledExactlyOnceWith(REQUEST)
+      expect(work).toHaveBeenCalledOnce()
+    })
+
+    it('shouldLetAnOptimizationThatStartedMeanwhileEndBeforeItsOwnBegins', async () => {
+      const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizingProcess() }, everyFive)
+      const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+      const reached: string[] = []
+      const work = vi.fn<AutoOptimizeRun>(async ({ idle }) => {
+        // The developer starts a run of their own while the experiment is made.
+        sessions.optimize.plan(experiment)
+        await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+        sessions.optimize.start()
+        await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+        void idle().then(() => reached.push('idle'))
+        await new Promise((done) => setTimeout(done, 20))
+        reached.push('waited')
+        sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'reject' })
+        await vi.waitFor(() => expect(reached).toContain('idle'))
+        return { experiment: 'history-20261123-1502', cases: 4 }
+      })
+
+      for (const prompt of ['optimize every 5 turns', ...FIVE]) await sessions.auto.turnEnded({ prompt }, work)
+      await sessions.auto.settled()
+
+      expect(reached).toEqual(['waited', 'idle'])
     })
 
     it('shouldChangeASettingThroughTheChatThatIsOpenAndSayWhenItCannot', async () => {

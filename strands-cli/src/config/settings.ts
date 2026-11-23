@@ -326,7 +326,7 @@ export function settingDescription(settings: ChatSettings, key: SettingKey): str
     case 'autoOptimize':
       return settings.autoOptimize === 0
         ? 'off · an optimization runs only when you start one'
-        : `every ${settings.autoOptimize} chat turns · builds an experiment from your chats and optimizes on it · paid`
+        : `every ${settings.autoOptimize} chat turns · in the background, makes an experiment from your chats and optimizes on it · paid`
     case 'sessionModelSync':
       return settings.sessionModelSync
         ? 'on · existing sessions use the current model configuration'

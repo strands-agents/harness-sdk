@@ -51,9 +51,9 @@ describe('autoOptimize setting', () => {
     expect(parseSettings({ autoOptimize: '20' }).autoOptimize).toBe(0)
   })
 
-  it('shouldSayWhatItStartsAndThatItIsPaidWhenItIsOn', () => {
+  it('shouldSayThatItWorksInTheBackgroundAndIsPaidWhenItIsOn', () => {
     expect(settingDescription({ ...DEFAULT_CHAT_SETTINGS, autoOptimize: 20 }, 'autoOptimize')).toBe(
-      'every 20 chat turns · builds an experiment from your chats and optimizes on it · paid'
+      'every 20 chat turns · in the background, makes an experiment from your chats and optimizes on it · paid'
     )
     expect(settingDescription(DEFAULT_CHAT_SETTINGS, 'autoOptimize')).toBe(
       'off · an optimization runs only when you start one'

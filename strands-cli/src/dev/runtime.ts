@@ -65,3 +65,12 @@ export const devStateNotice = (turnedOff: readonly DevStateManager[]): string | 
   const notice = `Dev deactivated the custom ${managers} of this agent in this chat. Thus the chat cannot write into the stores of the agent.`
   return turnedOff.includes('session') ? `${notice} Dev does not save this chat.` : notice
 }
+
+/**
+ * Set for a strands dev that another strands dev starts on the project it has open. The project is prepared then,
+ * so the one that is started does not install or build it again.
+ */
+export const DEV_PROJECT_PREPARED = 'STRANDS_DEV_PROJECT_PREPARED'
+
+export const projectPreparedByParent = (environment: NodeJS.ProcessEnv = process.env): boolean =>
+  environment[DEV_PROJECT_PREPARED] === '1'

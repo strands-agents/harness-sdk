@@ -1631,12 +1631,7 @@ export class ChatController implements ChatControllerApi {
         const devCommand = this._typedDevCommand(command)
         if (devCommand?.skill) {
           const { skill, workflow, unavailable } = devCommand.skill
-          const asked = parseCommandInvocation(prompt)?.argument ?? ''
-          const request = skillCommandRequest(
-            devCommand.spec.name,
-            typeof workflow === 'function' ? workflow(asked) : workflow,
-            prompt
-          )
+          const request = skillCommandRequest(devCommand.spec.name, workflow, prompt)
           if ((await this._activateSkillAndRun(skill, prompt, request)) === null) {
             this._openError('skill unavailable', `/${devCommand.spec.name}`, unavailable)
           }

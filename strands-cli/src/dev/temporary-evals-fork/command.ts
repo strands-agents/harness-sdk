@@ -9,15 +9,16 @@ import type { DevChatPart } from '../chat-extension.js'
 import { evalsSkillUnavailable, STRANDS_EVALS_OPTIMIZE_SKILL, STRANDS_EVALS_SKILL } from '../evals-skill.js'
 import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryAgentFacts } from './agent-context.js'
-import { temporaryDevChatPart as temporaryAgentTools } from './agent-tools.js'
+import { startTemporaryOptimizationWithDefaults, temporaryDevChatPart as temporaryAgentTools } from './agent-tools.js'
+import { AUTO_OPTIMIZE_JOB, autoOptimizeJobs, type AutoOptimizeRun } from './auto-optimize.js'
+import { autoOptimizeRun, type AutoOptimizeRunOptions } from './auto-optimize-run.js'
 import { readTemporaryEvaluators } from './evaluators.js'
 import { temporaryGenerationJobs } from './experiments-session.js'
 import type { TemporaryDevSettings } from './host.js'
 import { mergedJobsFeed, temporaryJobsFeed } from './jobs.js'
 import { optimizeReviewContext, showOptimizeReview } from './review-run.js'
 import { temporarySessionHistory } from './session-converter.js'
-import { temporaryAutoOptimizeWorkflow, temporaryCommandWorkflows } from './workflow-skills.js'
-import { isAutoOptimizeRequest } from './auto-optimize.js'
+import { temporaryCommandWorkflows } from './workflow-skills.js'
 import {
   temporaryDevSessions,
   temporaryOptimizeJobs,
@@ -87,7 +88,7 @@ const optimizationName = (sessions: Sessions, id: string): string | undefined =>
 // The tool that starts each command's work; its jobs line already shows that run, so it is not listed twice.
 const BACKGROUND_TOOLS = ['strands_dev_run_background']
 
-const EVALS_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
+const EVALS_COMMANDS: readonly ((sessions: Sessions, auto: AutoOptimizeRun) => DevChatCommand)[] = [
   (sessions): DevChatCommand => ({
     spec: {
       name: 'experiment',
@@ -112,7 +113,7 @@ const EVALS_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
     ),
     backgroundTools: BACKGROUND_TOOLS,
   }),
-  (sessions): DevChatCommand => ({
+  (sessions, auto): DevChatCommand => ({
     spec: {
       name: 'optimize',
       usage: '/optimize',
@@ -120,20 +121,25 @@ const EVALS_COMMANDS: readonly ((sessions: Sessions) => DevChatCommand)[] = [
       details: OPTIMIZE_DETAILS,
     },
     skill: evalsSkill(
-      // The request that auto-optimize makes brings its own workflow: nothing is asked, and the chats are the cases.
-      (request) =>
-        isAutoOptimizeRequest(request) ? temporaryAutoOptimizeWorkflow : temporaryCommandWorkflows.optimize,
-      (id) => `how is the optimization of ${optimizationName(sessions, id) ?? 'the experiment'} going?`,
+      temporaryCommandWorkflows.optimize,
+      (id) =>
+        id === AUTO_OPTIMIZE_JOB
+          ? 'how is the automatic optimization going?'
+          : `how is the optimization of ${optimizationName(sessions, id) ?? 'the experiment'} going?`,
       STRANDS_EVALS_OPTIMIZE_SKILL
     ),
     attach: (context): void => {
-      const { optimize } = sessions(context)
+      const { optimize, auto: counting } = sessions(context)
       optimize.reannounce()
+      counting.reannounce()
       void optimize.resume()
     },
-    // Auto-optimize counts the chat turns and sends its own /optimize when the cadence comes round.
-    turnEnded: (context, turn): void => void sessions(context).auto.turnEnded(context, turn),
-    jobs: temporaryJobsFeed(sessions().optimize, temporaryOptimizeJobs),
+    // Auto-optimize counts the chat turns. When the cadence comes round, its work goes on away from the chat.
+    turnEnded: (context, turn): void => void sessions(context).auto.turnEnded(turn, auto),
+    jobs: mergedJobsFeed(
+      temporaryJobsFeed(sessions().auto, autoOptimizeJobs),
+      temporaryJobsFeed(sessions().optimize, temporaryOptimizeJobs)
+    ),
     backgroundTools: BACKGROUND_TOOLS,
     // A finished run's line is its review: open the diff it waits on instead of asking the chat.
     openJob: (context, job): boolean => {
@@ -192,11 +198,17 @@ export const temporaryDevChatPart = (
   })
 }
 
+/** The parts of an automatic optimization that a test puts its own in place of. */
+export type TemporaryAutoOptimizeParts = Partial<
+  Pick<AutoOptimizeRunOptions, 'worker' | 'evaluators' | 'history' | 'now'>
+>
+
 export const temporaryDevCommands = (
   workspace: DevWorkspace,
   project: ImportedAgentProject,
   agent: () => TemporaryAgentFacts = () => ({}),
-  settings?: () => TemporaryDevSettings
+  settings?: () => TemporaryDevSettings,
+  autoOptimize: TemporaryAutoOptimizeParts = {}
 ): DevChatCommand[] => {
   const target = targetWorkspace(workspace, project)
   const sessions: Sessions = (context) =>
@@ -206,5 +218,12 @@ export const temporaryDevCommands = (
       ...(settings ? { settings } : {}),
       ...(context ? { context } : {}),
     })
-  return [...EVALS_COMMANDS.map((make) => make(sessions)), askCommand(sessions)]
+  const auto = autoOptimizeRun({
+    workspace: target,
+    history: temporarySessionHistory({ workspace: target, agent }),
+    evaluators: () => readTemporaryEvaluators(target),
+    start: (experiment) => startTemporaryOptimizationWithDefaults(sessions, experiment),
+    ...autoOptimize,
+  })
+  return [...EVALS_COMMANDS.map((make) => make(sessions, auto)), askCommand(sessions)]
 }

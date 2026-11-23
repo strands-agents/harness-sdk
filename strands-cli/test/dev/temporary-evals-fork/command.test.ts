@@ -8,10 +8,7 @@ import { temporaryDevCommands } from '../../../src/dev/temporary-evals-fork/comm
 import { temporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
 import { uiTools } from '../../../src/dev/temporary-evals-fork/ui-tools.js'
 import type { DevChatTool } from '../../../src/dev/chat-extension.js'
-import {
-  temporaryAutoOptimizeWorkflow,
-  temporaryCommandWorkflows,
-} from '../../../src/dev/temporary-evals-fork/workflow-skills.js'
+import { temporaryCommandWorkflows } from '../../../src/dev/temporary-evals-fork/workflow-skills.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import type { ImportedAgentProject } from '../../../src/project/import.js'
 import { ChatController } from '../../../src/ui/chat/controller.js'
@@ -203,15 +200,7 @@ describe('TEMPORARY dev commands', () => {
 
     expect(commands.map(({ open }) => open)).toEqual([undefined, undefined])
     expect(commands.map(({ skill }) => skill?.skill)).toEqual(['strands-evals', 'optimize'])
-    const workflowFor = (request: string) =>
-      commands.map(({ skill }) => (typeof skill?.workflow === 'function' ? skill.workflow(request) : skill?.workflow))
-    expect(workflowFor('')).toEqual(Object.values(temporaryCommandWorkflows))
-    expect(workflowFor('refunds, instructions only')).toEqual(Object.values(temporaryCommandWorkflows))
-    // The request that auto-optimize sends brings its own workflow, and only /optimize answers to it.
-    expect(workflowFor('auto-optimize: 20 chat turns since the last one')).toEqual([
-      temporaryCommandWorkflows.experiment,
-      temporaryAutoOptimizeWorkflow,
-    ])
+    expect(commands.map(({ skill }) => skill?.workflow)).toEqual(Object.values(temporaryCommandWorkflows))
     expect(commands[1]!.skill?.unavailable).toContain('could not load the optimize skill from https://')
     expect(commands.map(({ skill }) => skill?.job?.('missing'))).toEqual([
       'how is the evaluation of the experiment going?',

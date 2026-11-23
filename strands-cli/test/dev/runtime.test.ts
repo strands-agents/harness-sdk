@@ -4,7 +4,7 @@ import type { HarnessAgentOptions } from '@strands-agents/harness'
 import { MemoryManager, SessionManager } from '@strands-agents/sdk'
 import { InMemoryStorage } from '@strands-agents/sdk/storage'
 import { TestMemoryStore } from '@strands-agents/sdk/vended-memory-stores/test-memory-store'
-import { devStateNotice, isolateDevState } from '../../src/dev/runtime.js'
+import { devStateNotice, isolateDevState, projectPreparedByParent } from '../../src/dev/runtime.js'
 
 const sessionManager = (): SessionManager => new SessionManager({ sessionId: 'own' })
 const memoryStore = (): TestMemoryStore =>
@@ -86,5 +86,16 @@ describe('devStateNotice', () => {
     ],
   ])('shouldDescribeWhatDevTurnedOffWhenTheListIs %j', (turnedOff, notice) => {
     expect(devStateNotice(turnedOff)).toBe(notice)
+  })
+})
+
+describe('a strands dev that another strands dev started', () => {
+  it.each<[NodeJS.ProcessEnv, boolean]>([
+    [{ STRANDS_DEV_PROJECT_PREPARED: '1' }, true],
+    [{ STRANDS_DEV_PROJECT_PREPARED: '0' }, false],
+    [{ STRANDS_DEV_PROJECT_PREPARED: '' }, false],
+    [{}, false],
+  ])('shouldTakeTheProjectAsPreparedOnlyWhenItsParentSaysSo %j', (environment, prepared) => {
+    expect(projectPreparedByParent(environment)).toBe(prepared)
   })
 })

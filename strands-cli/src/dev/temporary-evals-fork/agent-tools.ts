@@ -88,7 +88,7 @@ Runs cost money. Name the scope in chat and end the turn; start a run only after
 
 When an optimization run finishes, its edits appear on the developer's screen as a diff, and they apply or leave each edit there, unless auto-accept writes them. Do not print the edits or ask in chat which ones to apply; strands_dev_review_optimization puts a closed diff back on screen. A message that comes with a <strands_dev_screen> block was written while that diff was on their screen: when it answers the diff, such as "approve this" or "leave it", pick for them with strands_dev_answer_review as the block says, and do not ask them to confirm. Call strands_dev_apply_optimization only for edits the developer names in chat when no diff of them is on screen. strands_dev_status gives each edit's answer: one they left as it is has been answered, so a bare "yes" never applies it.
 
-Optimization can also run by itself. Auto-optimize every N turns makes an experiment from the chats of the developer with this agent every N chat turns and tunes the agent on it; Auto-accept optimization results writes the edits of a finished run without showing them. Both are in /settings under Strands dev workspace, and strands_dev_auto_optimize reads and sets them, so do not search files for how they work. When the developer asks for it, such as "optimize every 20 turns from my history", say what it does and that every automatic run is paid. A question whether you can is not yet a request: set it once they say to.
+Optimization can also run by itself. Auto-optimize every N turns makes an experiment from the chats of the developer with this agent every N chat turns and tunes the agent on it, in the background and outside this chat: you take no part in it, and a notice and the line below the chat input show it; Auto-accept optimization results writes the edits of a finished run without showing them. Both are in /settings under Strands dev workspace, and strands_dev_auto_optimize reads and sets them, so do not search files for how they work. When the developer asks for it, such as "optimize every 20 turns from my history", say what it does and that every automatic run is paid. A question whether you can is not yet a request: set it once they say to.
 
 Answer what was asked from tool output of this turn: call strands_dev_status again whenever the question is what exists, because runs and files change between turns. Ask the developer to choose or enter numbers with the strands_dev_ UI tools, and ask a free-form question in chat. When a question comes back interrupted, the developer wrote to you instead of answering: reply to that message and end the turn, and never take its unsubmitted draft as the answer. Never make up the evals UI address; pass on only what strands_dev_open_evals_ui returns, as a markdown link with a short label such as [open the run](url).`
 
@@ -459,18 +459,26 @@ const sessionConverterTool = (history: TemporarySessionHistory): DevChatTool => 
 const AUTO_OPTIMIZE_TURNS = AUTO_OPTIMIZE_OPTIONS.map(({ value }) => value)
 
 const AUTO_OPTIMIZE_ON =
-  'Every that many chat turns, strands dev sends you an "/optimize auto-optimize" request: you then make an ' +
-  'experiment from the chats of the developer with this agent and start an optimization on it, without asking. ' +
+  'Every that many chat turns, strands dev works in the background, outside this chat: an agent in a process of ' +
+  'its own makes an experiment from the chats of the developer with this agent, and strands dev then starts an ' +
+  'optimization on it with the defaults of its plan. Nobody is asked, and you are sent nothing and start nothing. ' +
   'Each one is a paid run. A new everyTurns starts the count at 0 after the turn that set it.'
 
 const autoOptimizeReport = async (sessions: Sessions): Promise<object> => {
-  const { everyTurns, turnsSince } = await sessions().auto.status()
+  const { everyTurns, turnsSince, building, log } = await sessions().auto.status()
   const accept = sessions().settings()?.autoAcceptOptimizationResults ?? false
   return {
     autoOptimize:
       everyTurns === 0
         ? { everyTurns: 0, state: 'off: an optimization starts only when the developer asks for one' }
-        : { everyTurns, turnsSinceTheLastOne: turnsSince, state: AUTO_OPTIMIZE_ON },
+        : {
+            everyTurns,
+            turnsSinceTheLastOne: turnsSince,
+            state: AUTO_OPTIMIZE_ON,
+            ...(building
+              ? { now: `The background agent is making the experiment ${building} from the chats. Its log: ${log}` }
+              : {}),
+          },
     autoAcceptOptimizationResults: accept
       ? 'on: the edits of a finished run are written to the agent source without a diff to answer'
       : 'off: the edits of a finished run show as a diff, and the developer applies or leaves each one',
@@ -513,7 +521,15 @@ const autoOptimizeTool = (sessions: Sessions): DevChatTool => ({
         ...(cadence === undefined ? {} : { autoOptimize: cadence }),
         ...(accept === undefined ? {} : { autoAcceptOptimizationResults: accept }),
       })
-    return reply(await autoOptimizeReport(sessions))
+    const stopped = await sessions().auto.settingChanged()
+    return reply({
+      ...(await autoOptimizeReport(sessions)),
+      ...(stopped
+        ? {
+            stopped: `The background agent that was making ${stopped} has stopped, and no optimization starts from it.`,
+          }
+        : {}),
+    })
   },
 })
 
@@ -683,6 +699,10 @@ const startOptimization = async (
   if (started === undefined) throw new Error('The optimization did not start.')
   return started
 }
+
+/** Starts an optimization of a saved experiment as the background tool does with no flags: the defaults of its plan. */
+export const startTemporaryOptimizationWithDefaults = async (sessions: Sessions, experiment: string): Promise<string> =>
+  startOptimization(sessions, await findExperiment(sessions, experiment), optimizeFlagSettings([]))
 
 const caseNames = async (experiment: ExperimentSummary, names: readonly string[]): Promise<void> => {
   const { raw } = await readTemporaryExperimentFile(experiment.path)

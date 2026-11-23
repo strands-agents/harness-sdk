@@ -131,6 +131,36 @@ describe('TEMPORARY session-converter skill', () => {
     expect(guide.endsWith('Follow [assets/segmenter.md](assets/segmenter.md).')).toBe(true)
   })
 
+  it('shouldGiveAnAgentThatWorksOnItsOwnRulesThatAskNothingAndNameTheFileAndTheEvaluators', async () => {
+    const { workspace, history } = await setup()
+
+    const guide = await history.unattendedConverter({
+      name: 'history-20261123-1502',
+      evaluators: ['OutputEvaluator', 'StartsWith'],
+      fewestCases: 3,
+    })
+
+    expect(guide).toContain('You work for strands dev on your own')
+    expect(guide).toContain('Questions: ask none.')
+    expect(guide).toContain('do not wait for a yes')
+    expect(guide).toContain('write only these in "evaluators": OutputEvaluator, StartsWith.')
+    expect(guide).toContain(
+      `save the experiment as ${join(workspace.directory!, 'experiments', 'history-20261123-1502', 'history-20261123-1502.json')}`
+    )
+    expect(guide).toContain('fewer than 3 cases, save no file')
+    expect(guide).toContain('Start no evaluation and no optimization')
+    // The chat it works for is one of the chats: the agent keeps no session of its own to skip.
+    expect(guide).toContain(
+      `${join(workspace.directory!, '.strands/state/sessions')} is their <directory>. Use all of them`
+    )
+    expect(guide).not.toContain('Skip 20261117t101500z-current')
+    // None of the rules for a chat with the developer are in it.
+    expect(guide).not.toContain('strands_dev_evaluators')
+    expect(guide).not.toContain("ask the skill's questions one at a time")
+    expect(guide).not.toContain('point to /experiment')
+    expect(guide.endsWith('Follow [assets/segmenter.md](assets/segmenter.md).')).toBe(true)
+  })
+
   it('shouldUseTheEvalsPinOfStrandsDevWhenNoVersionIsGiven', async () => {
     const { historyAt, requested } = await setup()
 

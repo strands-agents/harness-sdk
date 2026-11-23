@@ -717,42 +717,4 @@ describe('what a dev command hears and can change', () => {
     expect(setSettings).toHaveBeenCalledExactlyOnceWith({ autoOptimize: 20 })
     expect(controller.getSnapshot().settings.autoOptimize).toBe(20)
   })
-
-  it('shouldSendTheWorkflowThatTheCommandPicksForTheRequest', async () => {
-    const prompts: unknown[] = []
-    const picking: DevChatCommand = {
-      ...skillCommand(),
-      skill: {
-        ...skillCommand().skill!,
-        workflow: (request) => (request.startsWith('auto') ? 'Ask nothing.' : 'Run the cases.'),
-      },
-    }
-    const controller = new ChatController(
-      idleBackend({
-        async *stream(prompt) {
-          prompts.push(prompt)
-          yield* []
-          return { stopReason: 'endTurn' }
-        },
-      }),
-      {
-        devCommands: [picking],
-        skills: {
-          list: async () => [],
-          activate: async (name) => ({
-            skill: { name, description: 'Evals', instructions: 'Use evals.', active: true },
-            content: 'Use evals.',
-          }),
-        },
-      }
-    )
-
-    await controller.submit('/evaluate auto: 5 turns')
-    await controller.submit('/evaluate refunds')
-
-    expect(String(prompts[0])).toContain('<strands_dev_command name="evaluate">\nAsk nothing.\n</strands_dev_command>')
-    expect(String(prompts[1])).toContain(
-      '<strands_dev_command name="evaluate">\nRun the cases.\n</strands_dev_command>'
-    )
-  })
 })
