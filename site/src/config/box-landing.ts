@@ -38,7 +38,7 @@ export const BOX_LINKS = {
   configuration: '/docs/user-guide/box/profiles/',
   credentialGuide: '/docs/user-guide/box/guides/network-and-credentials/',
   decisionLog: '/docs/user-guide/box/reference/cli/#box-runs-history',
-  mcp: '/docs/user-guide/box/starters/',
+  mcp: '/docs/user-guide/box/profiles/#mcp-servers',
   dogwood: 'https://github.com/dogwood-policy/dogwood',
   designStory: '/blog/strands-box-the-big-picture/',
 } as const
