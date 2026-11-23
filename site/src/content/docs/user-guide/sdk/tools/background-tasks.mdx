@@ -1,0 +1,385 @@
+---
+title: Background tasks
+description: >-
+  Run tools in the background while your agent continues working. Configure
+  execution policies, deliver results, cancel tasks, and handle interrupts in both SDKs.
+sourceLinks:
+  - path: strands-py/src/strands/background_tasks/_background_tasks.py
+  - path: strands-py/src/strands/background_tasks/_types.py
+  - path: strands-py/src/strands/background_tasks/in_process/_manager.py
+  - path: strands-ts/src/background-tasks/background-tasks.ts
+  - path: strands-ts/src/background-tasks/types.ts
+  - path: strands-ts/src/background-tasks/in-process/manager.ts
+---
+
+Use background tasks when a tool takes time and the agent has other work it can do.
+The tool runs in the background, the agent receives a task ID, and its loop continues.
+When the result is ready, the SDK adds it to the conversation so the agent can use it.
+
+Background tasks are disabled by default in the SDK. Enable them with the
+<Syntax py="background_tasks" ts="backgroundTasks" /> option on `Agent`.
+[Strands harness](../../harness/configure/background-tasks.md) enables them by default
+and has additional behavior for subagents and the interactive CLI.
+
+## Run a tool in the background
+
+This example simulates a slow report query. It always runs `build_report` in the
+background and keeps other tools in the foreground. Configure a
+[model provider](../model-providers/) before running it; these examples use the default
+Amazon Bedrock provider.
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    import asyncio
+
+    from strands import Agent, tool
+
+
+    @tool
+    async def build_report(region: str) -> str:
+        """Build an example sales report for a region."""
+        await asyncio.sleep(1)
+        return f"Example report for {region}: revenue grew 12%."
+
+
+    async def main() -> None:
+        agent = Agent(
+            tools=[build_report],
+            background_tasks={
+                "always": [build_report],
+                "never": ["*"],
+                "max_concurrency": 2,
+                "timeout": 30,
+            },
+        )
+        result = await agent.invoke_async(
+            "Build the north region report. While it runs, outline three "
+            "questions to ask about sales growth. Then summarize the report."
+        )
+        print(result)
+
+
+    asyncio.run(main())
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    --8<-- "user-guide/sdk/tools/background-tasks_imports.ts:background_basic_imports"
+
+    --8<-- "user-guide/sdk/tools/background-tasks.ts:background_basic"
+    ```
+  </Tab>
+</Tabs>
+
+The model still decides whether to call a tool. An `always` policy controls how a
+tool call executes; it does not cause the call itself.
+
+By default, the invocation waits for outstanding background work before returning.
+The agent can continue reasoning and calling other tools during that invocation.
+Once it receives the report, it can incorporate the result into its final response.
+
+### What happens during the call
+
+1. The model requests a tool call. The SDK applies the tool's execution policy.
+2. A background call is queued and returns a receipt containing its task ID, tool
+   name, and current status. The receipt is not the tool's final result.
+3. The tool runs when a background execution slot is available.
+4. At a subsequent model-call boundary, or when the invocation would finish, the SDK
+   delivers ready results and lets the agent continue.
+
+[Tool executors](executors.md) control the order of foreground tool calls in a batch.
+Background tasks use a separate queue, allowing the agent loop to continue before
+those tool calls finish. Direct calls through `agent.tool` execute in the foreground
+even when the tool has an `always` policy.
+
+## Choose an execution policy
+
+Set <Syntax py="background_tasks=True" ts="backgroundTasks: true" /> to let the model
+choose background execution for all compatible tools. Pass a configuration object
+when you need finer control. Pass <Syntax py="False" ts="false" /> to disable it.
+
+Each policy accepts tool instances, registered tool names, or the wildcard `"*"`:
+
+| Policy | Behavior when the model calls a matching tool |
+| --- | --- |
+| `agentic` | The model chooses foreground or background execution. |
+| `always` | The tool runs in the background. |
+| `never` | The tool runs in the foreground. |
+
+Exact matches take precedence over a wildcard. For example, `always` containing
+`build_report` plus `never` containing `"*"` backgrounds only the report tool.
+Putting the same selector in different policies is an error.
+
+If you omit `agentic`, it defaults to `["*"]`, unless `always` or `never` explicitly
+contains `"*"`. If you provide `agentic`, only its selectors apply; tools unmatched
+by any policy stay in the foreground. An empty `agentic` list therefore disables
+model-selected background execution.
+
+### Tools eligible for model-selected execution
+
+For an `agentic` tool, the SDK adds an optional `_background_execution` boolean to
+the schema shown to the model. It removes that flag before calling your tool.
+Do not add this reserved parameter to your own tool signature.
+
+This transformation requires an object input schema without top-level `$ref`,
+`allOf`, `anyOf`, `oneOf`, `not`, `if`, `then`, or `else`. An explicitly selected
+incompatible tool causes an error; a wildcard match leaves it in the foreground.
+
+Some tools must stay in the foreground regardless of their input schema: the
+background-task management tool, structured-output tools, context-management tools,
+and agents configured with <Syntax py="delegate=True" ts="delegate: true" />.
+An explicit background policy for one of these tools is invalid.
+
+## Configure execution limits
+
+The public `BackgroundTasksConfig` type describes the configuration object. Its
+defaults apply when you enable background tasks with
+<Syntax py="True" ts="true" /> or an empty configuration.
+
+<Tabs>
+  <Tab label="Python">
+    | Option | Default | Meaning |
+    | --- | --- | --- |
+    | `agentic` | `["*"]` | Tools whose execution mode the model chooses. |
+    | `always` | `[]` | Tools that run in the background. |
+    | `never` | `[]` | Tools that run in the foreground. |
+    | `wait_for_completion` | `True` | Wait for background work before returning. |
+    | `max_concurrency` | `4` | Positive integer limiting background execution slots. |
+    | `timeout` | `float("inf")` | Positive execution timeout in seconds. |
+
+    `timeout` accepts a positive number of seconds or positive infinity.
+
+  </Tab>
+  <Tab label="TypeScript">
+    | Option | Default | Meaning |
+    | --- | --- | --- |
+    | `agentic` | `["*"]` | Tools whose execution mode the model chooses. |
+    | `always` | `[]` | Tools that run in the background. |
+    | `never` | `[]` | Tools that run in the foreground. |
+    | `waitForCompletion` | `true` | Wait for background work before returning. |
+    | `maxConcurrency` | `4` | Positive integer limiting background execution slots. |
+    | `timeout` | `Infinity` | Positive execution timeout in milliseconds. |
+
+    A finite `timeout` must be an integer no larger than `2_147_483_647`.
+
+  </Tab>
+</Tabs>
+
+Tasks beyond the concurrency limit wait in submission order. The timeout starts
+when execution starts, so time spent queued does not count. A timed-out task becomes
+`failed` with a `timeout` error. Resuming an interrupted task starts a new execution
+attempt with a fresh timeout.
+
+These limits apply to background work on one agent. Tools still share the host
+process and its resources. Use asynchronous I/O for waiting operations; CPU-bound
+JavaScript still blocks the event loop.
+
+## Receive and inspect results
+
+The SDK registers `strands_manage_background_task` when you enable background tasks.
+The model can use it to inspect or cancel work. It does not need to poll for results.
+
+Automatic delivery adds a synthetic call to that tool with `mode: "get"` and a
+matching result to the conversation. The first result content block contains task
+metadata; any tool output follows in its original content blocks, including images.
+This keeps the dispatch receipt separate from the actual result.
+
+After automatic delivery, the task is removed from the management list. Its delivered
+result remains in conversation history, subject to normal context management.
+The management tool is therefore a view of tracked work, not a permanent task archive.
+
+### Task states
+
+| Status | Meaning |
+| --- | --- |
+| `queued` | Waiting for an execution slot. |
+| `working` | The tool is executing. |
+| `input_required` | Execution paused for an interrupt response. |
+| `completed` | The tool finished successfully. |
+| `failed` | The tool returned an error, raised an exception, or timed out. |
+| `cancelled` | Cancellation was requested and recorded. |
+
+The last three states are terminal. A task can remain listed in a terminal state
+until its result is delivered.
+
+Task metadata includes <Syntax py="task_id" ts="taskId" />,
+<Syntax py="tool_use_id" ts="toolUseId" />, <Syntax py="tool_name" ts="toolName" />,
+`status`, and creation and update timestamps. The task ID identifies background
+work; it is distinct from the original tool-use ID.
+
+Failed tasks include an `error` with a `type` and `message`. Error types are
+<Syntax py="tool_error" ts="toolError" /> for an error returned by a tool,
+<Syntax py="execution_error" ts="executionError" /> for an execution exception, and
+`timeout` for an expired execution timeout. Read the task's `status` and `error`:
+a successful management-tool response can describe a failed task.
+
+## Return while tasks are still running
+
+Set <Syntax py="wait_for_completion" ts="waitForCompletion" /> to
+<Syntax py="False" ts="false" /> for detached execution. The invocation can then
+return with work still outstanding. Results that are already ready can still be
+delivered during the current invocation.
+
+Keep the process and the tool's execution environment alive. In an asynchronous
+Python application, that includes the event loop on which the tool started.
+Exiting the program or closing that loop can stop the work.
+
+The SDK does not automatically invoke an idle agent when a detached task finishes.
+Your application must invoke the same agent again, either with a new user request or
+with <Syntax py="await agent.invoke_async([])" ts="await agent.invoke([])" />.
+An empty invocation adds no new user message. Ready results are delivered during
+that invocation. Wait for the previous invocation to finish before starting another.
+
+With the default wait setting, the SDK can deliver completed tasks between model
+calls. If the agent reaches the end of its turn with tasks outstanding, it waits for
+the outstanding work before continuing with those results.
+
+### List, inspect, and cancel from your application
+
+The management tool supports three modes:
+
+| Mode | Request | Response content |
+| --- | --- | --- |
+| `list` | No task ID. | A `tasks` array of task IDs, tool names, and statuses. |
+| `get` | A task ID. | Task metadata followed by available tool output. |
+| `cancel` | A task ID. | The task ID and resulting status. |
+
+Use the ID returned by dispatch or `list`. A task that has already been delivered
+is no longer available to `get` or `cancel`. Inspecting a task with `get` does not
+consume its automatic delivery.
+
+This example starts a slow tool, inspects any tracked tasks, and cancels unfinished
+work. Direct management calls do not invoke the model. Setting
+<Syntax py="record_direct_tool_call=False" ts="recordDirectToolCall: false" />
+also keeps those calls out of the conversation.
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    import asyncio
+
+    from strands import Agent, tool
+
+
+    @tool
+    async def build_report(region: str) -> str:
+        """Build an example report after a simulated slow query."""
+        await asyncio.sleep(10)
+        return f"Example report for {region}: revenue grew 12%."
+
+
+    async def main() -> None:
+        agent = Agent(
+            tools=[build_report],
+            system_prompt="Report cancelled tasks without retrying them.",
+            background_tasks={
+                "always": [build_report],
+                "never": ["*"],
+                "wait_for_completion": False,
+            },
+        )
+        await agent.invoke_async(
+            "Start the north region report and tell me it has started."
+        )
+
+        manage = agent.tool.strands_manage_background_task
+        listing = manage(mode="list", record_direct_tool_call=False)
+        tasks = listing["content"][0]["json"]["tasks"]
+        for task in tasks:
+            print(manage(
+                mode="get",
+                task_id=task["task_id"],
+                record_direct_tool_call=False,
+            ))
+            if task["status"] in {"queued", "working", "input_required"}:
+                manage(
+                    mode="cancel",
+                    task_id=task["task_id"],
+                    record_direct_tool_call=False,
+                )
+
+        # Deliver any recorded outcomes to the agent.
+        print(await agent.invoke_async([]))
+
+
+    asyncio.run(main())
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    --8<-- "user-guide/sdk/tools/background-tasks_imports.ts:background_manage_imports"
+
+    --8<-- "user-guide/sdk/tools/background-tasks.ts:background_manage"
+    ```
+  </Tab>
+</Tabs>
+
+The task may finish before inspection, so an empty list is valid. Direct management
+calls with recording disabled are also allowed while an invocation is running.
+In Python, they are not allowed while the agent is paused on an interrupt;
+respond to the interrupt first.
+
+### Cancellation is cooperative
+
+Cancelling a task records a terminal outcome and signals the tool to stop.
+It does not guarantee that an external operation or blocking function has stopped.
+Tools should check <Syntax py="tool_context.cancel_signal" ts="context.cancelSignal" />
+and pass cancellation through to libraries that support it. In Python the signal is
+a `threading.Event`; in TypeScript it is an `AbortSignal`.
+
+Background tasks have their own cancellation signals. Calling `agent.cancel()`
+cancels the foreground invocation, but does not automatically cancel background
+tasks. Use the management tool to cancel those tasks explicitly.
+
+## Handle interrupts
+
+A background tool can request input through
+<Syntax py="tool_context.interrupt()" ts="context.interrupt()" />.
+Execution middleware can also request an interrupt. The task enters
+`input_required`, releases its execution slot, and exposes its unanswered interrupts.
+Other background tasks can continue.
+
+The parent agent surfaces the request through the normal
+[interrupt and resume flow](../interrupts.md). Supply an interrupt response for each
+request, then invoke the agent with those responses. Resuming queues the interrupted
+task for another execution attempt.
+
+The tool runs again from the beginning, with previous interrupt responses available.
+Place irreversible side effects after approval, or make them safe to repeat.
+Keep background approvals inside the tool or execution middleware. A foreground
+before-tool hook can request approval before a task is submitted.
+
+Interrupt propagation from a child wrapped with
+<Syntax py="Agent.as_tool()" ts="Agent.asTool()" /> is not currently supported
+reliably when that wrapper runs in the background. Keep that wrapper in the
+foreground if its child needs approval.
+
+## Observe execution
+
+Background tools still run through tool execution middleware and the tool lifecycle
+hooks. A before-tool hook runs before dispatch; an after-tool hook observes actual
+execution, rather than just the dispatch receipt. Streaming tool events can arrive
+while the agent is doing other work.
+
+Use [hooks](../agents/hooks.md), [middleware](../agents/middleware.md), and
+[streaming](../streaming/async-iterators.md) to observe execution. Account for
+overlapping work when callbacks update shared application state. The management
+tool exposes task status and available results; it has no progress-update or
+task-messaging mode.
+
+## Persist state and recover after a restart
+
+Background task metadata and pending results are included in agent state. A
+[session manager](../agents/session-management.md) or
+[snapshot](../agents/snapshots.md) can save that state through the normal
+persistence lifecycle. A task update does not by itself guarantee a durable write.
+
+Restoring state preserves saved terminal outcomes for delivery, but marks saved
+unfinished tasks as failed. It does not resume the running function, replay its
+queue, or restart an external job. For work that must survive a process restart,
+have your tool submit work to a durable service and retain that service's job ID.
+
+Loading a snapshot into an agent that still tracks background tasks is rejected,
+including when results are terminal but undelivered. Finish or cancel the work and
+deliver its outcomes before loading another snapshot.
