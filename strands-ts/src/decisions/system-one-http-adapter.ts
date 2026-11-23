@@ -58,13 +58,14 @@ export type AuthHeadersProvider = (apiKey: string) => Record<string, string>
 export const bearerAuth: AuthHeadersProvider = (apiKey) => ({ Authorization: `Bearer ${apiKey}` })
 
 /**
- * A decision API's JSON request body. Every System One API takes `questions`; the rest of the body varies.
+ * A decision API's JSON request body. Every System One API takes `questions`, keyed by question id or as an
+ * ordered array that names each question; the rest of the body varies.
  *
  * @internal
  */
 export interface WireRequestBody {
   model?: string
-  questions: Record<string, WireQuestion>
+  questions: Record<string, WireQuestion> | readonly Record<string, unknown>[]
   [field: string]: unknown
 }
 
@@ -185,8 +186,19 @@ interface WireChoiceQuestion {
 /** @internal */
 export type WireQuestion = WireNoulQuestion | WireChoiceQuestion
 
+/**
+ * Answer a provider returns when its API refused to answer a question. The shared parser reports it as
+ * {@link Uncertain} carrying `reason`, and throws for a question that disabled uncertainty. Probabilities
+ * and confidence stay empty: the provider returned none. A class instance, so no server JSON can produce it.
+ *
+ * @internal
+ */
+export class RefusedAnswer {
+  constructor(readonly reason?: string) {}
+}
+
 interface ParsedAnswer {
-  answer: boolean | string
+  answer: boolean | string | Uncertain
   probabilities: Readonly<Record<string, number>>
   confidence: number
 }
@@ -399,7 +411,7 @@ function parseResult<const Q extends Record<string, Question>>(
         ? config.defaultMinConfidence
         : (config.defaultChoiceMinConfidence ?? config.defaultMinConfidence)
     )
-    const answer = minConfidence !== undefined && parsed.confidence < minConfidence ? new Uncertain() : parsed.answer
+    const answer = resolveAnswer(parsed, minConfidence)
     return { id, answer, probabilities: parsed.probabilities, confidence: parsed.confidence }
   })
 
@@ -420,9 +432,23 @@ function parseResult<const Q extends Record<string, Question>>(
 }
 
 function parseAnswer(rawAnswer: unknown, question: Question, id: string, config: SystemOneRequestConfig): ParsedAnswer {
+  if (rawAnswer instanceof RefusedAnswer) return parseRefusedAnswer(rawAnswer, question, id)
   const answer = requireRecord(rawAnswer, `answer for question id=<${id}>`)
   if (question.choices === 'boolean') return parseNoulAnswer(answer, id)
   return parseChoiceAnswer(answer, question.choices, id, config.probabilitySumTolerance)
+}
+
+function parseRefusedAnswer(refused: RefusedAnswer, question: Question, id: string): ParsedAnswer {
+  if (question.uncertainty === false) {
+    throw new ModelError(`question id=<${id}> | decision provider refused to answer and uncertainty is disabled`)
+  }
+  return { answer: new Uncertain(refused.reason), probabilities: {}, confidence: 0 }
+}
+
+function resolveAnswer(parsed: ParsedAnswer, minConfidence: number | undefined): boolean | string | Uncertain {
+  if (parsed.answer instanceof Uncertain) return parsed.answer
+  if (minConfidence !== undefined && parsed.confidence < minConfidence) return new Uncertain()
+  return parsed.answer
 }
 
 function parseNoulAnswer(answer: Record<string, unknown>, id: string): ParsedAnswer {

@@ -7,6 +7,7 @@ import { GuardContentBlock, JsonBlock, Message, TextBlock, ToolResultBlock } fro
 import { DecisionModel } from '../decision-model.js'
 import { DecisionsAPIDecisionModel } from '../decisions-api-decision-model.js'
 import { GeminiDecisionModel } from '../gemini-decision-model.js'
+import { OpenAIDecisionModel } from '../openai-decision-model.js'
 import { TypeSafeDecisionModel } from '../typesafe-decision-model.js'
 import { Uncertain } from '../types.js'
 import type { Question } from '../types.js'
@@ -500,6 +501,17 @@ describe.each(PROVIDERS)('$name', ({ create, endpoint, defaultModelId, providerN
       )
     })
 
+    it('rejects a server answer typed as refused instead of treating it as Uncertain', async () => {
+      const decision = create({
+        apiKey: 'test-key',
+        fetch: fakeFetch(responseBody({ q: { type: 'refused', reason: 'policy' } })),
+      })
+
+      await expect(decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })).rejects.toThrow(
+        /must have type 'noul'/
+      )
+    })
+
     it('rejects a Choice answer whose selection is not the most probable', async () => {
       const decision = create({
         apiKey: 'test-key',
@@ -949,5 +961,174 @@ describe('GeminiDecisionModel', () => {
       /do not support binary ContentBlock state/
     )
     expect(fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('OpenAIDecisionModel', () => {
+  it('sends the OpenAI request shape and maps its answer array', async () => {
+    const captured: CapturedRequest[] = []
+    const fetch = fakeFetch(
+      {
+        answers: [
+          { type: 'predicate', name: 'urgent', probability: 0.9 },
+          {
+            type: 'choice',
+            name: 'department',
+            choice: 'billing',
+            probabilities: [
+              { value: 'billing', probability: 0.7 },
+              { value: 'support', probability: 0.3 },
+            ],
+            confidence: 0.7,
+          },
+        ],
+        usage: { input_tokens: 12, output_tokens: 0, total_tokens: 12 },
+      },
+      { captured }
+    )
+    const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch })
+
+    const result = await decision.ask('Refund this today', {
+      urgent: { question: 'Is this urgent?', choices: 'boolean' },
+      department: { question: 'Which team should handle this?', choices: ['billing', 'support'] },
+    })
+
+    expect(captured).toEqual([
+      {
+        url: 'https://api.openai.com/v1/decisions',
+        headers: { authorization: 'Bearer test-key', 'content-type': 'application/json' },
+        body: {
+          model: 'gpt-6-luna',
+          input: 'Refund this today',
+          questions: [
+            { name: 'urgent', type: 'predicate', instructions: 'Is this urgent?' },
+            {
+              name: 'department',
+              type: 'choice',
+              instructions: 'Which team should handle this?',
+              choices: [{ value: 'billing' }, { value: 'support' }],
+            },
+          ],
+        },
+      },
+    ])
+    expect(result).toEqual({
+      answers: { urgent: true, department: 'billing' },
+      usage: { inputTokens: 12, outputTokens: 0, totalTokens: 12 },
+      metadata: {
+        latencyMs: expect.any(Number),
+        providerName: 'openai',
+        modelId: 'gpt-6-luna',
+        probabilities: {
+          urgent: { true: 0.9, false: 0.09999999999999998 },
+          department: { billing: 0.7, support: 0.3 },
+        },
+        confidence: { urgent: 0.8, department: 0.7 },
+      },
+    })
+  })
+
+  it('reports a refused question as Uncertain and keeps the answers it did return', async () => {
+    const fetch = fakeFetch({
+      answers: [
+        { type: 'refusal', name: 'refused' },
+        { type: 'predicate', name: 'answered', probability: 0.99 },
+      ],
+    })
+    const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch })
+
+    const result = await decision.ask('state', {
+      refused: { question: 'ok?', choices: 'boolean' },
+      answered: { question: 'also ok?', choices: 'boolean' },
+    })
+
+    expect(result).toEqual({
+      answers: { refused: new Uncertain('openai refused to answer'), answered: true },
+      metadata: {
+        latencyMs: expect.any(Number),
+        providerName: 'openai',
+        modelId: 'gpt-6-luna',
+        probabilities: { refused: {}, answered: { true: 0.99, false: 0.010000000000000009 } },
+        confidence: { refused: 0, answered: 0.98 },
+      },
+    })
+  })
+
+  it('reports the model id the API echoes over the configured one', async () => {
+    const fetch = fakeFetch({
+      model: 'gpt-6-luna-2026-11',
+      answers: [{ type: 'predicate', name: 'q', probability: 0.99 }],
+    })
+    const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch })
+
+    const result = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+    expect(result.metadata.modelId).toBe('gpt-6-luna-2026-11')
+  })
+
+  it('throws when a refused question disabled uncertainty', async () => {
+    const fetch = fakeFetch({ answers: [{ type: 'refusal', name: 'q' }] })
+    const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch })
+
+    await expect(
+      decision.ask('state', { q: { question: 'ok?', choices: 'boolean', uncertainty: false } })
+    ).rejects.toThrow(/question id=<q> \| decision provider refused to answer/)
+  })
+
+  it.each([
+    { name: 'a non-object response', payload: null },
+    { name: 'a non-object answer', payload: { answers: [null] } },
+    {
+      name: 'a non-object choice probability',
+      payload: { answers: [{ type: 'choice', name: 'q', choice: 'a', probabilities: [null], confidence: 1 }] },
+    },
+  ])('rejects $name with ModelError', async ({ payload }) => {
+    const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch: fakeFetch(payload) })
+
+    await expect(decision.ask('state', { q: { question: 'Which?', choices: ['a', 'b'] } })).rejects.toThrow(ModelError)
+  })
+
+  it.each([
+    { status: 400, message: 'Decision input exceeds the token limit.', expectedClass: ContextWindowOverflowError },
+    { status: 400, message: 'Invalid question type.', expectedClass: ModelError },
+    { status: 500, message: 'Decision input exceeds the token limit.', expectedClass: ModelError },
+  ])('scopes context overflow for HTTP $status: $message', async ({ status, message, expectedClass }) => {
+    const body = { error: { message, type: 'invalid_request_error', code: null } }
+    const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch: fakeFetch(body, { status }) })
+    const error = await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } }).then(
+      () => undefined,
+      (caught: unknown) => caught
+    )
+
+    expect((error as Error).constructor).toBe(expectedClass)
+    expect((error as Error).message).toBe(`openai decision request failed with HTTP ${status}: ${message}`)
+    expect((error as Error).cause).toMatchObject({ status, body })
+  })
+
+  it('sends message state as JSON text input', async () => {
+    const captured: CapturedRequest[] = []
+    const fetch = fakeFetch({ answers: [{ type: 'predicate', name: 'q', probability: 0.99 }] }, { captured })
+    const decision = new OpenAIDecisionModel({ apiKey: 'test-key', fetch })
+
+    await decision.ask([new Message({ role: 'user', content: [new TextBlock('hello')] })], {
+      q: { question: 'Greeting?', choices: 'boolean' },
+    })
+
+    expect(captured[0]?.body['input']).toBe('[{"role":"user","content":[{"text":"hello"}]}]')
+  })
+
+  it('reads OPENAI_API_KEY', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'openai-env-key')
+    const captured: CapturedRequest[] = []
+    const decision = new OpenAIDecisionModel({
+      fetch: fakeFetch(
+        { model: 'gpt-6-luna', answers: [{ type: 'predicate', name: 'q', probability: 0.99 }] },
+        { captured }
+      ),
+    })
+
+    await decision.ask('state', { q: { question: 'ok?', choices: 'boolean' } })
+
+    expect(captured[0]?.headers['authorization']).toBe('Bearer openai-env-key')
   })
 })

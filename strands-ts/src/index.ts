@@ -228,6 +228,7 @@ export {
   defineQuestions,
   GeminiDecisionModel,
   LLMDecisionModel,
+  OpenAIDecisionModel,
   TypeSafeDecisionModel,
   Uncertain,
 } from './decisions/index.js'
@@ -240,6 +241,7 @@ export type {
   DecisionsAPIDecisionModelOptions,
   GeminiDecisionModelOptions,
   LLMDecisionModelOptions,
+  OpenAIDecisionModelOptions,
   Question,
   TypeSafeDecisionModelOptions,
 } from './decisions/index.js'
