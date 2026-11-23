@@ -249,12 +249,6 @@ export function withToolListing(description: string, listing: string): string {
   return `${description}\n\nTools you can load:\n${listing}`
 }
 
-/** The words a search compares: a tool's name and its MCP server's name, and its description. */
-interface SearchFields {
-  readonly names: readonly string[]
-  readonly description: readonly string[]
-}
-
 /** At most `limit` tools that match a query, best first, as {@link KeywordToolSearcher} describes. */
 function keywordSearch(query: string, tools: readonly Tool[], limit: number): Tool[] {
   const fields = tools.map(searchFields)
@@ -276,7 +270,8 @@ function keywordSearch(query: string, tools: readonly Tool[], limit: number): To
     .map((entry) => entry.candidate)
 }
 
-function searchFields(candidate: Tool): SearchFields {
+/** The words a search compares: a tool's name and its MCP server's name, and its description. */
+function searchFields(candidate: Tool): { names: string[]; description: string[] } {
   const server = candidate instanceof McpTool ? (candidate.mcpClient.serverVersion?.name ?? '') : ''
   return { names: words(`${candidate.name} ${server}`), description: words(candidate.description) }
 }

@@ -59,9 +59,6 @@ type InputPart = { type: string; prompt_cache_breakpoint?: { mode: 'explicit'; t
 
 const MANAGED_PARAMS: ReadonlySet<string> = new Set(['model', 'input', 'stream', 'store'])
 
-/** Provider name of the server tool blocks this API writes. */
-const PROVIDER = 'openai'
-
 /**
  * How a request to a model that defers tools natively sends its deferred tools and their loads: with `defer_loading`,
  * and loaded by the provider's tool search, or by the SDK's loader (`load_tools` or `search_tools`) as a client tool
@@ -484,7 +481,7 @@ function formatToolCallOutput(block: ToolResultBlock, deferral: DeferredToolsReq
  * tools natively gets one back, since the API rejects a tool search item for a model without tool search.
  */
 function formatServerTool(block: ServerToolBlock, deferral: DeferredToolsRequest | undefined): ResponseInputItem[] {
-  return deferral && block.provider === PROVIDER ? [block.data as unknown as ResponseInputItem] : []
+  return deferral && block.provider === 'openai' ? [block.data as unknown as ResponseInputItem] : []
 }
 
 /** A loader result as the client tool search output that loads its tools, each the request still has. */
@@ -902,7 +899,7 @@ function toolSearchItemEvents(item: ResponseOutputItem, state: ResponsesStreamSt
       type: 'modelContentBlockDeltaEvent',
       delta: {
         type: 'serverToolDelta',
-        provider: PROVIDER,
+        provider: 'openai',
         data: item as unknown as JSONValue,
         ...(loadedTools && { loadedTools }),
       },
