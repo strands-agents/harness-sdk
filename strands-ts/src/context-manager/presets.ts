@@ -20,14 +20,15 @@ import { Offload } from './strategies/offload/index.js'
  * - `'largeToolOffloading'` — truncate tool results over 2500 tokens to a 1000-token preview
  * - `'overflowProtection'` — drop the oldest messages when the context window is full
  * - `'staleToolCleanup'` — drop tool results outside the newest 5 tool-result messages
- * - `'deferredToolLoading'` — experimental: from 20 tools, the SDK's own included, defer tools' input schemas until
- *   the model searches for them (`Offload.defer('toolSpecs', { search: 'auto' })`). Claude 4.5 and later through
- *   `AnthropicModel` and GPT-5.4 and later through the OpenAI API's Responses endpoint defer natively and search with
- *   the provider's tool search; most other models get each deferred tool as a stub (name and description) and
- *   search with `search_tools`; models that can't use stubs (`deferredToolLoading: 'unsupported'`) get every tool
- *   spec, as without the preset. The SDK's own tools and tools without parameters are always sent in full and every
- *   other tool is deferred, so the model searches even for its most used tools first; `Offload.defer` keeps the ones
- *   you name
+ * - `'deferredToolLoading'` — from 20 tools, the SDK's own included, defer tools' input schemas until the model
+ *   searches for them: `Offload.defer('toolSpecs', { search: 'auto' }).when({ toolCount: 20 })`. The name is stable;
+ *   what it does is `Offload.defer`'s, which is experimental and may change. Claude 4.5 and later through
+ *   `AnthropicModel` and GPT-5.4 and later through the OpenAI API's Responses endpoint search with the provider's tool
+ *   search; models that take stubs get each deferred tool as its name and description and search with
+ *   `search_tools`; models that can't (`deferredToolLoading: 'unsupported'`) get every tool spec, as without the
+ *   preset. The SDK's own tools and tools without parameters are always sent in full. Every other tool is deferred,
+ *   so the model searches even for the tools it uses most; to keep some in full, use
+ *   `Offload.defer(['!shell'], { search: 'auto' }).when({ toolCount: 20 })` in the preset's place
  */
 export const STRATEGY_PRESET_NAMES = [
   'proactiveSummarization',
