@@ -62,8 +62,8 @@ export function hasToolReferences(messages: Message[]): boolean {
 }
 
 /**
- * Whether a tool result holds a tool reference, as a `search_tools` result and the answer to a call made before its
- * tool's load do. Such a result is what keeps a loaded tool's schema in the model's context.
+ * Whether a tool result holds a tool reference, as a loader's result and the answer to a call made before its tool's
+ * load do. Such a result is what keeps a loaded tool's schema in the model's context.
  *
  * @param block - The tool result
  * @returns `true` when a block of the result is a `ToolReferenceBlock`

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { createSearchTools, isSearchTools, KeywordToolSearcher, toolListing } from '../search-tools.js'
+import { createSearchTools, isSearchTools, KeywordToolSearcher, loaderListing, toolListing } from '../search-tools.js'
 import { tool } from '../tool-factory.js'
 import type { ToolSpec } from '../types.js'
 import type { Tool } from '../tool.js'
@@ -15,9 +15,9 @@ describe('toolListing', () => {
     [
       'each name with its first sentence while they fit',
       5_500,
-      tools.map((t) => `- ${t.name}: Run ${t.name}.`).join('\n'),
+      tools.map((toolSpec) => `- ${toolSpec.name}: Run ${toolSpec.name}.`).join('\n'),
     ],
-    ['names alone when only they fit', 2_000, tools.map((t) => t.name).join(', ')],
+    ['names alone when only they fit', 2_000, tools.map((toolSpec) => toolSpec.name).join(', ')],
     ['the names that fit and a count of the rest otherwise', 1_000, 'tool_0, and 9 more; search to find them'],
     ['only a count when no name fits', 100, '10 tools; search to find them'],
   ])('lists %s, in 1%% of the context window', (_name, contextWindow, expected) => {
@@ -32,6 +32,22 @@ describe('toolListing', () => {
     ]
 
     expect(toolListing(listed, 200_000)).toBe(`- reader: Reads a file.\n- long: ${'x'.repeat(119)}…\n- bare`)
+  })
+})
+
+describe('loaderListing', () => {
+  const tools = Array.from({ length: 10 }, (_, index) => spec(`tool_${index}`, `Run tool_${index}. Then report back.`))
+
+  it('lists every deferred tool with its whole description for load_tools, which takes only names', () => {
+    expect(loaderListing([spec('load_tools', 'Load tools.'), ...tools], tools, 100)).toBe(
+      tools.map((toolSpec) => `- ${toolSpec.name}: ${toolSpec.description}`).join('\n')
+    )
+  })
+
+  it('lists the deferred tools within 1% of the context window for search_tools', () => {
+    expect(loaderListing([spec('search_tools', 'Load tools.'), ...tools], tools, 100)).toBe(
+      '10 tools; search to find them'
+    )
   })
 })
 

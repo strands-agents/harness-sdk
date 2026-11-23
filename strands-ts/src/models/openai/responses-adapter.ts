@@ -39,15 +39,14 @@ import type { StateStore } from '../../state-store.js'
 import type { ModelStreamEvent } from '../streaming.js'
 import type { StreamOptions } from '../model.js'
 import { logger } from '../../logging/logger.js'
-import { MODEL_DEFAULTS } from '../defaults.js'
+import { DEFAULT_CONTEXT_WINDOW_LIMIT, MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
 import { applyCacheConfig, CACHE_LIFETIMES } from './cache.js'
 import type { OpenAIResponsesConfig } from './types.js'
 import { lookupSystemPromptPlacement } from '../model-info.js'
 import type { ModelInfo } from '../model-info.js'
 import { referenceText } from '../tool-references.js'
-import { isLoaderName, SEARCH_TOOLS_TOOL_NAME, toolListing, withToolListing } from '../../tools/search-tools.js'
-import { DEFAULT_CONTEXT_WINDOW_LIMIT } from '../defaults.js'
+import { isLoaderName, loaderListing, SEARCH_TOOLS_TOOL_NAME, withToolListing } from '../../tools/search-tools.js'
 import type { ToolSpec } from '../../tools/types.js'
 import type { JSONValue } from '../../types/json.js'
 
@@ -65,9 +64,10 @@ const PROVIDER = 'openai'
 
 /**
  * How a request to a model that defers tools natively sends its deferred tools and their loads: with `defer_loading`,
- * and loaded by the API's tool search, or by the SDK's loader (`load_tools` or `search_tools`) as a client tool search.
+ * and loaded by the provider's tool search, or by the SDK's loader (`load_tools` or `search_tools`) as a client tool
+ * search.
  */
-interface ToolSearchContext {
+interface DeferredToolsRequest {
   /** The tools the request defers. */
   readonly deferred: ReadonlySet<string>
   /** Whether the API searches the deferred tools itself, in place of the loader. */
@@ -105,10 +105,10 @@ export function formatResponsesRequest(
   const { cacheConfig } = config
   const cachePoints = modelInfo.capabilities?.promptCaching === 'cachePoints'
   const cacheMessages = cachePoints && cacheConfig !== undefined && cacheConfig.messagesTTL !== false
-  const toolSearch = toolSearchContext(messages, options, modelInfo)
+  const deferral = deferredToolsRequest(messages, options, modelInfo)
   const { input, explicitCache } = cacheMessages
-    ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks, cacheConfig.messagesTTL, toolSearch)
-    : { input: formatResponsesMessages(messages, toolSearch), explicitCache: false }
+    ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks, cacheConfig.messagesTTL, deferral)
+    : { input: formatResponsesMessages(messages, deferral), explicitCache: false }
 
   // User `params` are spread first so provider-managed fields (asserted
   // required by `ResponseCreateParamsStreaming` below) always win. The
@@ -140,7 +140,7 @@ export function formatResponsesRequest(
 
   if (options?.toolSpecs && options.toolSpecs.length > 0) {
     const existingTools = request.tools ?? []
-    request.tools = [...existingTools, ...formatTools(options.toolSpecs, toolSearch, existingTools)]
+    request.tools = [...existingTools, ...formatTools(options.toolSpecs, deferral, existingTools)]
 
     if (options.toolChoice) {
       if ('auto' in options.toolChoice) {
@@ -170,23 +170,23 @@ export function formatResponsesRequest(
 
 /**
  * The request's tools: a function per spec, each deferred one with `defer_loading`. When the request defers tools,
- * the loader becomes a client tool search, or the API's own tool search takes its place under `serverToolSearch`
+ * the loader becomes a client tool search, or the provider's tool search takes its place under `serverToolSearch`
  * unless the caller configured one.
  */
 function formatTools(
   toolSpecs: ToolSpec[],
-  toolSearch: ToolSearchContext | undefined,
+  deferral: DeferredToolsRequest | undefined,
   existingTools: readonly Tool[]
 ): Tool[] {
-  const deferred = toolSearch?.deferred ?? new Set<string>()
+  const deferred = deferral?.deferred ?? new Set<string>()
   const tools = toolSpecs.flatMap((spec): Tool[] => {
-    if (!toolSearch || deferred.size === 0 || !isLoaderName(spec.name)) {
+    if (!deferral || deferred.size === 0 || !isLoaderName(spec.name)) {
       return [functionTool(spec, deferred.has(spec.name))]
     }
-    return toolSearch.onServer ? [] : [clientToolSearch(spec, toolSearch.listing)]
+    return deferral.onServer ? [] : [clientToolSearch(spec, deferral.listing)]
   })
   const configured = existingTools.some((tool) => tool.type === 'tool_search')
-  if (toolSearch?.onServer && !configured) tools.push({ type: 'tool_search' })
+  if (deferral?.onServer && !configured) tools.push({ type: 'tool_search' })
   return tools
 }
 
@@ -212,11 +212,11 @@ function functionTool(spec: ToolSpec, deferred: boolean): FunctionTool {
 }
 
 /** How the request sends deferred tools and their loads, or undefined when the model doesn't defer tools natively. */
-function toolSearchContext(
+function deferredToolsRequest(
   messages: Message[],
   options: StreamOptions | undefined,
   modelInfo: ModelInfo
-): ToolSearchContext | undefined {
+): DeferredToolsRequest | undefined {
   if (modelInfo.capabilities?.deferredToolLoading !== 'native') return undefined
   const deferred = options?.deferredTools ?? new Set<string>()
   const toolSpecs = options?.toolSpecs ?? []
@@ -225,7 +225,8 @@ function toolSearchContext(
     deferred,
     onServer: deferred.size > 0 && options?.serverToolSearch === true,
     toolSpecs: new Map(toolSpecs.map((spec) => [spec.name, spec])),
-    listing: toolListing(
+    listing: loaderListing(
+      toolSpecs,
       toolSpecs.filter((spec) => deferred.has(spec.name)),
       contextWindow
     ),
@@ -273,7 +274,7 @@ function formatCacheableResponsesMessages(
   messages: Message[],
   dynamicTrailingBlocks = 0,
   messagesTTL: boolean | string | undefined,
-  toolSearch: ToolSearchContext | undefined
+  deferral: DeferredToolsRequest | undefined
 ): { input: ResponseInputItem[]; explicitCache: boolean } {
   const ttl = typeof messagesTTL === 'string' && CACHE_LIFETIMES.has(messagesTTL) ? { ttl: messagesTTL } : {}
   const input: ResponseInputItem[] = []
@@ -281,7 +282,7 @@ function formatCacheableResponsesMessages(
   for (const [index, { role, content }] of messages.entries()) {
     const dynamicCount = role === 'user' && index === messages.length - 1 ? dynamicTrailingBlocks : 0
     const boundary = Math.max(0, content.length - dynamicCount)
-    const items = formatResponsesMessages([new Message({ role, content: content.slice(0, boundary) })], toolSearch)
+    const items = formatResponsesMessages([new Message({ role, content: content.slice(0, boundary) })], deferral)
     normalizeToolOutputs(items)
     const part = role === 'user' ? lastCacheablePart(items) : undefined
     if (part) {
@@ -291,10 +292,7 @@ function formatCacheableResponsesMessages(
       hasCheckpoints = true
     }
     if (dynamicCount > 0) {
-      const tail = formatResponsesMessages(
-        [new Message({ role: 'user', content: content.slice(boundary) })],
-        toolSearch
-      )
+      const tail = formatResponsesMessages([new Message({ role: 'user', content: content.slice(boundary) })], deferral)
       normalizeToolOutputs(tail)
       appendDynamicContent(items, tail)
     }
@@ -340,11 +338,11 @@ function appendDynamicContent(items: ResponseInputItem[], tail: ResponseInputIte
  *
  * Per message, content blocks are split into four buckets:
  * - Text/media → grouped in `{ role, content: [...] }`
- * - This API's own tool items, such as a hosted tool search → sent as they came
+ * - This API's own tool items, such as the provider's tool search → sent as they came
  * - Tool calls → separate `{ type: 'function_call', ... }` items, or client tool search calls
  * - Tool results → separate `{ type: 'function_call_output', ... }` items, or client tool search outputs
  */
-function formatResponsesMessages(messages: Message[], toolSearch?: ToolSearchContext): ResponseInputItem[] {
+function formatResponsesMessages(messages: Message[], deferral?: DeferredToolsRequest): ResponseInputItem[] {
   const input: ResponseInputItem[] = []
 
   for (const message of messages) {
@@ -386,11 +384,11 @@ function formatResponsesMessages(messages: Message[], toolSearch?: ToolSearchCon
         }
 
         case 'toolUseBlock':
-          toolCallItems.push(formatToolCall(block, toolSearch))
+          toolCallItems.push(formatToolCall(block, deferral))
           break
 
         case 'toolResultBlock':
-          toolResultItems.push(formatToolCallOutput(block, toolSearch))
+          toolResultItems.push(formatToolCallOutput(block, deferral))
           break
 
         case 'serverToolBlock':
@@ -452,8 +450,8 @@ function formatResponsesMessages(messages: Message[], toolSearch?: ToolSearchCon
 }
 
 /** A tool call as a function call with its namespace, or as a client tool search for a loader call that loaded tools. */
-function formatToolCall(block: ToolUseBlock, toolSearch: ToolSearchContext | undefined): ResponseInputItem {
-  if (toolSearch?.searchCalls.has(block.toolUseId)) {
+function formatToolCall(block: ToolUseBlock, deferral: DeferredToolsRequest | undefined): ResponseInputItem {
+  if (deferral?.searchCalls.has(block.toolUseId)) {
     return {
       type: 'tool_search_call',
       call_id: block.toolUseId,
@@ -472,12 +470,12 @@ function formatToolCall(block: ToolUseBlock, toolSearch: ToolSearchContext | und
 }
 
 /** A tool result as a function call output, or as the client tool search output of a loader call that loaded tools. */
-function formatToolCallOutput(block: ToolResultBlock, toolSearch: ToolSearchContext | undefined): ResponseInputItem {
-  if (toolSearch?.searchCalls.has(block.toolUseId)) return toolSearchOutput(block, toolSearch)
+function formatToolCallOutput(block: ToolResultBlock, deferral: DeferredToolsRequest | undefined): ResponseInputItem {
+  if (deferral?.searchCalls.has(block.toolUseId)) return toolSearchOutput(block, deferral)
   return {
     type: 'function_call_output',
     call_id: block.toolUseId,
-    output: formatToolResultOutput(block, toolSearch?.toolSpecs),
+    output: formatToolResultOutput(block, deferral?.toolSpecs),
   }
 }
 
@@ -487,9 +485,9 @@ function formatServerTool(block: ServerToolBlock): ResponseInputItem[] {
 }
 
 /** A loader result as the client tool search output that loads its tools, each the request still has. */
-function toolSearchOutput(block: ToolResultBlock, toolSearch: ToolSearchContext): ResponseInputItem {
+function toolSearchOutput(block: ToolResultBlock, deferral: DeferredToolsRequest): ResponseInputItem {
   const tools = block.content.flatMap((content) => {
-    const spec = content.type === 'toolReferenceBlock' ? toolSearch.toolSpecs.get(content.name) : undefined
+    const spec = content.type === 'toolReferenceBlock' ? deferral.toolSpecs.get(content.name) : undefined
     return spec ? [functionTool(spec, true)] : []
   })
   return { type: 'tool_search_output', call_id: block.toolUseId, execution: 'client', status: 'completed', tools }
@@ -625,6 +623,8 @@ export interface ResponsesStreamState {
 /**
  * Creates fresh stream state for a new Responses API stream.
  *
+ * @param options - The request's options, whose tool specs name the loader a client tool search call runs
+ * @returns The stream state
  * @internal
  */
 export function createResponsesStreamState(options?: StreamOptions): ResponsesStreamState {

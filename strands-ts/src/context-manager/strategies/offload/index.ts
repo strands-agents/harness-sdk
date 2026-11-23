@@ -41,9 +41,11 @@ interface OffloadNamespace {
   summarize(target: OffloadTarget, config?: SummarizeConfig): OffloadStrategy
   /**
    * Keep tools' input schemas out of the context until the model loads them with `load_tools`, or with
-   * `config.search` set, until it searches for them. The model still sees each deferred tool's name and description.
-   * Without `.when()` conditions, defers at any tool count. One per agent, the `deferredToolLoading` preset included.
+   * `config.search` set, until it searches for them. The model still sees each deferred tool's name and description,
+   * except where a search listing outgrows 1% of the context window. Without `.when()` conditions, defers at any tool
+   * count. One per agent, the `deferredToolLoading` preset included.
    *
+   * @throws Error when the target is neither `'toolSpecs'` nor a list of tool names, or the config is invalid
    * @experimental
    */
   defer(target: DeferTarget, config?: DeferConfig): DeferStrategy
@@ -82,8 +84,8 @@ interface OffloadNamespace {
  * // Tool specs: from 20 tools, or once their schemas reach 5% of the context window, defer every one but shell's.
  * // Checked on every call, so the same tools give the same tools list
  * Offload.defer(["!shell"]).when({ toolCount: 20, schemaTokens: "5%" })
- * // Tool specs: the same, and the model searches for them: with the provider's own tool search where the model has
- * // one ('server' throws where it doesn't), or with search_tools ('client' on every model)
+ * // Tool specs: the same, and the model searches for them: with the provider's tool search where the model has one
+ * // ('server' throws where it doesn't), or with search_tools ('client' on every model)
  * Offload.defer(["!shell"], { search: "auto" }).when({ toolCount: 20, schemaTokens: "5%" })
  * // Tool specs: search_tools on every model, ranking with your own searcher (a ToolSearcher) instead of keywords
  * Offload.defer(["!shell"], { search: "client", searcher }).when({ toolCount: 20 })

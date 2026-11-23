@@ -89,7 +89,8 @@ describe('ContextManager', () => {
     ])('rejects %s, which would share one tools list', (_name, strategies) => {
       expect(() => new ContextManager({ strategies })).toThrow(
         "contextManager takes one Offload.defer strategy, and the 'deferredToolLoading' preset is one; " +
-          'to change what the preset defers or when, use Offload.defer(target).when(conditions) in its place'
+          "to change what the preset defers or when, use Offload.defer(target, { search: 'auto' }).when(conditions) in " +
+          'its place'
       )
     })
   })

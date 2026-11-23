@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
 import { ToolReferenceBlock } from '../types/messages.js'
-import { LOAD_TOOLS_TOOL_NAME } from './load-tools.js'
+import { LOAD_TOOLS_TOOL_NAME, loadableNames } from './load-tools.js'
 import { McpTool } from './mcp-tool.js'
 import { tool } from './tool-factory.js'
 import type { InvocationContext } from '../agent/invocation-context.js'
@@ -10,7 +10,11 @@ import type { LocalAgent } from '../types/agent.js'
 import type { Tool } from './tool.js'
 import type { ToolSpec } from './types.js'
 
-/** Name of the tool a model calls to find deferred tools and load their input schemas. */
+/**
+ * Name of the tool a model calls to find deferred tools and load their input schemas.
+ *
+ * @internal
+ */
 export const SEARCH_TOOLS_TOOL_NAME = 'search_tools'
 
 /** How many tools a query loads when the call sets no `limit`. */
@@ -85,7 +89,7 @@ export class KeywordToolSearcher implements ToolSearcher {
 }
 
 /**
- * Whether a tool name is one of the SDK's loaders: `load_tools`, or `search_tools` when the model searches.
+ * Whether a tool name is one of the SDK's loaders, `load_tools` or `search_tools`. The context manager reserves both.
  *
  * @param name - The tool name
  * @returns Whether a call to it loads deferred tools
@@ -134,7 +138,7 @@ export function createSearchTools(
     callback: async (input, context) => {
       const { agent, cancelSignal, invocationContext } = context!
       const deferred = deferredTools(agent)
-      const names = namedTools(agent, deferred, input.names ?? [])
+      const names = loadableNames(agent, deferred, input.names ?? [])
       const query = input.query?.trim() ?? ''
       if (names.length === 0 && query === '') {
         throw new Error('Nothing loaded: name the tools to load, or search for them with a query.')
@@ -171,7 +175,11 @@ async function searched(searcher: ToolSearcher, context: ToolSearchContext): Pro
   const picked = (await searcher.search(context)) ?? keywordSearch(context.query, context.tools, context.limit)
   const found = [...new Set(picked)].filter((candidate) => offered.has(candidate))
   if (found.length < picked.length) {
-    warnOnce(logger, 'searcher returned tools that are not deferred, or a tool twice | loading the others')
+    warnOnce(
+      logger,
+      `searcher=<${searcher.constructor.name}> | searcher returned tools it was not given or repeated a tool | ` +
+        'loading the others'
+    )
   }
   return found.slice(0, context.limit).map((candidate) => candidate.name)
 }
@@ -202,7 +210,26 @@ export function toolListing(tools: readonly ToolSpec[], contextWindow: number): 
 }
 
 /**
- * The `search_tools` description with a listing of the deferred tools after it, for a model whose API hides them.
+ * The listing a call's loader shows of the deferred tools, for a model whose API hides them. `load_tools` takes only
+ * names, so it lists every deferred tool with its description; `search_tools` lists them as {@link toolListing} does.
+ *
+ * @param toolSpecs - The call's tool specs, its loader among them
+ * @param deferred - The specs of the tools the call defers
+ * @param contextWindow - The model's context window, in tokens
+ * @returns The listing
+ * @internal
+ */
+export function loaderListing(
+  toolSpecs: readonly ToolSpec[],
+  deferred: readonly ToolSpec[],
+  contextWindow: number
+): string {
+  if (!toolSpecs.some((spec) => spec.name === LOAD_TOOLS_TOOL_NAME)) return toolListing(deferred, contextWindow)
+  return deferred.map((spec) => `- ${spec.name}: ${spec.description}`).join('\n')
+}
+
+/**
+ * A loader's description with a listing of the deferred tools after it, for a model whose API hides them.
  *
  * @param description - The tool's description
  * @param listing - The listing, from {@link toolListing}
@@ -211,31 +238,6 @@ export function toolListing(tools: readonly ToolSpec[], contextWindow: number): 
  */
 export function withToolListing(description: string, listing: string): string {
   return `${description}\n\nTools you can load:\n${listing}`
-}
-
-/** The named tools, deduplicated in order. */
-function namedTools(agent: LocalAgent, deferred: readonly string[], requested: readonly string[]): string[] {
-  const names = [...new Set(requested)]
-  const missing = names.filter((name) => !agent.toolRegistry.get(name))
-  const shown = names.filter((name) => !deferred.includes(name) && agent.toolRegistry.get(name))
-  // One bad name loads none: a result that mixes references with text loses Claude's native references.
-  if (missing.length > 0 || shown.length > 0) throw new Error(nothingLoaded(missing, shown))
-  return names
-}
-
-/** Why a load loaded nothing, naming each tool it couldn't load and what to do instead. */
-function nothingLoaded(missing: readonly string[], shown: readonly string[]): string {
-  const reasons: string[] = []
-  if (shown.length > 0) {
-    reasons.push(namesWith(shown, 'is shown in full, so call it directly', 'are shown in full, so call them directly'))
-  }
-  if (missing.length > 0) reasons.push(namesWith(missing, 'is not a tool', 'are not tools'))
-  return `Nothing loaded: ${reasons.join('; ')}. Load only tools whose parameters are not shown.`
-}
-
-/** The names, followed by the phrase that agrees with how many there are. */
-function namesWith(names: readonly string[], one: string, many: string): string {
-  return `${names.join(', ')} ${names.length === 1 ? one : many}`
 }
 
 /** The words a search compares: a tool's name and its MCP server's name, and its description. */

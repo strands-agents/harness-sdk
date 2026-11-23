@@ -22,7 +22,7 @@ import {
 } from './native-output.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
-import { isLoaderName, toolListing, withToolListing } from '../tools/search-tools.js'
+import { isLoaderName, loaderListing, withToolListing } from '../tools/search-tools.js'
 import type { ToolSpec } from '../tools/types.js'
 import { lookupModelInfo, ModelInfo } from './model-info.js'
 import { withToolReferenceText } from './tool-references.js'
@@ -57,7 +57,7 @@ const CONTEXT_WINDOW_OVERFLOW_ERRORS = [
   'input and output tokens exceed your context limit',
 ]
 // Content blocks for tools Anthropic executes server side. They have no toolUse/toolResult equivalent
-// (the agent never runs them), so they are not streamed, but for tool search's, which ServerToolBlocks keeps.
+// (the agent never runs them), so they are not streamed, but for tool search's, which ServerToolCollector keeps.
 const SERVER_TOOL_BLOCK_TYPES = new Set([
   'bash_code_execution_tool_result',
   'code_execution_tool_result',
@@ -153,7 +153,7 @@ function formatFunctionTools(
   }))
 }
 
-/** The API's own tool search, which takes natural-language queries. */
+/** The provider's tool search, which takes natural-language queries. */
 const TOOL_SEARCH_TOOL: Anthropic.ToolSearchToolBm25_20251119 = {
   type: 'tool_search_tool_bm25_20251119',
   name: 'tool_search_tool_bm25',
@@ -164,15 +164,15 @@ const TOOL_SEARCH_TOOL_NAMES: ReadonlySet<string> = new Set(['tool_search_tool_b
 
 /** How a request sends its deferred tools. */
 interface DeferredToolsRequest {
-  /** The request's tool specs, the loader left out where the API's own tool search takes its place. */
+  /** The request's tool specs, the loader left out where the provider's tool search takes its place. */
   readonly toolSpecs: ToolSpec[]
   /** The tools sent with `defer_loading`. */
   readonly deferredTools: ReadonlySet<string>
   /** The listing of the deferred tools for the loader's description. */
   readonly loaderListing?: string
-  /** The listing of the deferred tools for the system prompt, for the API's own tool search. */
+  /** The listing of the deferred tools for the system prompt, for the provider's tool search. */
   readonly systemListing?: string
-  /** The server tools the deferred tools need: the API's own tool search, or none. */
+  /** The server tools the deferred tools need: the provider's tool search, or none. */
   readonly serverTools: readonly Anthropic.ToolUnion[]
 }
 
@@ -184,12 +184,12 @@ function withoutConfigured(
   return configured.some(isToolSearchTool) ? needed.filter((tool) => !isToolSearchTool(tool)) : needed
 }
 
-/** Whether a server tool is one of the API's tool search tools. */
+/** Whether a server tool is one of the provider's tool search tools. */
 function isToolSearchTool(tool: Anthropic.ToolUnion): boolean {
   return 'type' in tool && typeof tool.type === 'string' && tool.type.startsWith('tool_search_tool_')
 }
 
-/** The system prompt with the listing of the deferred tools after it, for the API's own tool search to find. */
+/** The system prompt with the listing of the deferred tools after it, for the provider's tool search to find. */
 function withSystemToolListing(
   system: string | Anthropic.TextBlockParam[] | undefined,
   listing: string
@@ -243,11 +243,11 @@ function isAnthropicServerTool(block: ContentBlock): block is ServerToolBlock {
 }
 
 /**
- * The server tool blocks of a stream. The API's tool search blocks are collected whole, so each reaches the history:
- * the call, whose input streams in parts, and the result, which names the tools it loaded. Every other one is left out,
- * since it has no toolUse/toolResult equivalent and the agent never runs the tool.
+ * The server tool blocks of a stream. The provider's tool search blocks are collected whole, so each reaches the
+ * history: the call, whose input streams in parts, and the result, which names the tools it loaded. Every other one is
+ * left out, since it has no toolUse/toolResult equivalent and the agent never runs the tool.
  */
-class ServerToolBlocks {
+class ServerToolCollector {
   private readonly _skipped = new Set<number>()
   private readonly _collected = new Map<number, { block: Record<string, unknown>; input: string }>()
 
@@ -692,7 +692,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         let messageStopped = false
         const responseUsage: Record<string, number> = {}
 
-        const serverToolBlocks = new ServerToolBlocks()
+        const serverToolCollector = new ServerToolCollector()
 
         for await (const event of stream) {
           switch (event.type) {
@@ -709,7 +709,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
             }
 
             case 'content_block_start':
-              if (serverToolBlocks.start(event.index, event.content_block)) break
+              if (serverToolCollector.start(event.index, event.content_block)) break
 
               if (event.content_block.type === 'tool_use') {
                 yield {
@@ -753,7 +753,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
               break
 
             case 'content_block_delta':
-              if (serverToolBlocks.delta(event.index, event.delta)) break
+              if (serverToolCollector.delta(event.index, event.delta)) break
 
               if (event.delta.type === 'text_delta') {
                 yield {
@@ -787,7 +787,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
               break
 
             case 'content_block_stop':
-              yield* serverToolBlocks.stop(event.index) ?? [{ type: 'modelContentBlockStopEvent' as const }]
+              yield* serverToolCollector.stop(event.index) ?? [{ type: 'modelContentBlockStopEvent' as const }]
               break
 
             case 'message_delta':
@@ -1190,22 +1190,19 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   /**
    * How a request sends its deferred tools. A model that defers natively gets them with `defer_loading`, and a listing
    * of them, since the API hides them until they are loaded: in the loader's description, or in the system prompt when
-   * the API's own tool search takes the loader's place. `load_tools` lists every deferred tool with its description;
-   * a search lists them within 1% of the context window.
+   * the provider's tool search takes the loader's place.
    */
   private _deferredToolsRequest(options: StreamOptions | undefined): DeferredToolsRequest {
-    const defersTools = this.modelInfo.capabilities?.deferredToolLoading === 'native'
-    const deferredTools: ReadonlySet<string> = (defersTools && options?.deferredTools) || new Set()
+    const nativeDeferral = this.modelInfo.capabilities?.deferredToolLoading === 'native'
+    const deferredTools: ReadonlySet<string> = (nativeDeferral && options?.deferredTools) || new Set()
     const allSpecs = options?.toolSpecs ?? []
     const deferred = allSpecs.filter((spec) => deferredTools.has(spec.name))
     if (deferred.length === 0) return { toolSpecs: allSpecs, deferredTools, serverTools: [] }
-    if (allSpecs.some((spec) => spec.name === LOAD_TOOLS_TOOL_NAME)) {
-      const loaderListing = deferred.map((spec) => `- ${spec.name}: ${spec.description}`).join('\n')
-      return { toolSpecs: allSpecs, deferredTools, loaderListing, serverTools: [] }
-    }
-    const listing = toolListing(deferred, this.modelInfo.limits?.contextWindow || DEFAULT_CONTEXT_WINDOW_LIMIT)
-    if (!options?.serverToolSearch)
+    const contextWindow = this.modelInfo.limits?.contextWindow || DEFAULT_CONTEXT_WINDOW_LIMIT
+    const listing = loaderListing(allSpecs, deferred, contextWindow)
+    if (!options?.serverToolSearch || allSpecs.some((spec) => spec.name === LOAD_TOOLS_TOOL_NAME)) {
       return { toolSpecs: allSpecs, deferredTools, loaderListing: listing, serverTools: [] }
+    }
     return {
       toolSpecs: allSpecs.filter((spec) => !isLoaderName(spec.name)),
       deferredTools,

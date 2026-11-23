@@ -142,10 +142,12 @@ describe('Agent contextManager', () => {
     })
 
     it.each([
-      ['load_tools', 'Offload.defer', Offload.defer('toolSpecs')],
-      ['search_tools', 'the deferredToolLoading preset, which searches', 'deferredToolLoading' as const],
-    ])('rejects an agent tool named %s when %s defers tools', async (name, _strategyName, strategy) => {
-      const loadTools = tool({
+      ['load_tools', 'Offload.defer without search', Offload.defer('toolSpecs')],
+      ['search_tools', 'Offload.defer without search', Offload.defer('toolSpecs')],
+      ['load_tools', 'the deferredToolLoading preset', 'deferredToolLoading' as const],
+      ['search_tools', 'the deferredToolLoading preset', 'deferredToolLoading' as const],
+    ])('rejects an agent tool named %s with %s', async (name, _strategyName, strategy) => {
+      const agentTool = tool({
         name,
         description: 'Load data.',
         inputSchema: z.object({}),
@@ -153,13 +155,13 @@ describe('Agent contextManager', () => {
       })
       const agent = new Agent({
         model: new MockMessageModel(),
-        tools: [loadTools],
+        tools: [agentTool],
         contextManager: { strategies: [strategy] },
       })
 
       await expect(agent.initialize()).rejects.toThrow(
-        `contextManager adds a tool named '${name}' for Offload.defer and the 'deferredToolLoading' preset, and ` +
-          "the agent already has one; rename the agent's tool"
+        "contextManager reserves the tool names 'load_tools' and 'search_tools' for Offload.defer and the " +
+          `'deferredToolLoading' preset, and the agent has a tool named '${name}'; rename it`
       )
     })
   })

@@ -519,13 +519,14 @@ export interface ToolReferenceBlockData {
 }
 
 /**
- * A tool whose input schema a tool result loads. `search_tools` returns one for each tool it loads, and any
- * tool can return them too, such as a custom loader that searches the tool catalog.
+ * A tool whose input schema a tool result loads. The SDK's loaders, `load_tools` and `search_tools`, return one for
+ * each tool they load, and any tool can return them too, such as a custom loader that searches the tool catalog.
  *
  * It reaches the model as a reference only when the model defers tools natively
  * (`modelInfo.capabilities.deferredToolLoading` is `'native'`), the request defers this tool, and the tool result holds
- * only such references; the provider then sends a reference the API expands into the tool's definition. Otherwise the
- * model gets the parameters of the request's tool with this name as text, so a tool that changed is shown as it is now.
+ * only such references, which on OpenAI's Responses API must also be a loader's result; the provider then sends a
+ * reference the API expands into the tool's definition. Otherwise the model gets the parameters of the request's tool
+ * with this name as text, so a tool that changed is shown as it is now.
  *
  * @example
  * ```typescript
@@ -968,7 +969,7 @@ export interface ServerToolBlockData {
   provider: string
 
   /**
-   * The provider's own content block or output item, sent back to that provider unchanged.
+   * The provider's own content block or output item, which goes back to that provider.
    */
   data: JSONValue
 
@@ -979,8 +980,9 @@ export interface ServerToolBlockData {
 }
 
 /**
- * A call to a tool the provider's API runs itself, or its result, such as the provider's own tool search. The agent
- * never runs it. The provider that wrote it gets it back as it was, and every other provider leaves it out.
+ * A call to a tool the provider runs itself, or its result, such as the provider's tool search. The agent never runs
+ * it. It sits in the assistant message as the provider wrote it, unlike a {@link ToolReferenceBlock}, which an SDK tool
+ * returns in a tool result. The provider that wrote it gets it back, and every other provider leaves it out.
  */
 export class ServerToolBlock implements ServerToolBlockData, JSONSerializable<{ serverTool: ServerToolBlockData }> {
   /**
@@ -994,7 +996,7 @@ export class ServerToolBlock implements ServerToolBlockData, JSONSerializable<{ 
   readonly provider: string
 
   /**
-   * The provider's own content block or output item, sent back to that provider unchanged.
+   * The provider's own content block or output item, which goes back to that provider.
    */
   readonly data: JSONValue
 

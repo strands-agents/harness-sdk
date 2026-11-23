@@ -50,7 +50,7 @@ const PROTECTED_TOOL_NAMES = new Set([
 
 const CONDITION_NAMES = ['toolCount', 'schemaTokens']
 
-const SEARCH_VALUES = ['auto', 'client', 'server']
+const SEARCH_VALUES = ['auto', 'client', 'server'] as const
 
 const CONFIG_NAMES = ['search', 'searcher']
 
@@ -69,12 +69,17 @@ const ANNOTATION_KEYWORDS = new Set(['$schema', 'type', 'title', 'description'])
 export type DeferTarget = 'toolSpecs' | string[]
 
 /**
- * Who searches the deferred tools for the model: `'server'` the provider's own tool search, `'client'` the SDK's
- * `search_tools`, and `'auto'` the provider's where the call's model has one and `search_tools` elsewhere.
+ * Who searches the deferred tools for the model: `'server'` the provider's tool search, `'client'` the SDK's
+ * `search_tools`, which returns the tools that best match the model's query, and `'auto'` the provider's tool search
+ * where the call's model has one and `search_tools` elsewhere. The provider's tool search runs on a model whose
+ * provider defers tools natively (`modelInfo.capabilities.deferredToolLoading` is `'native'`: Claude 4.5 and later
+ * through `AnthropicModel`, GPT-5.4 and later through the OpenAI API's Responses endpoint), and `'server'` throws on
+ * any other. A model that can't take stubs gets each tool `search_tools` returns in full from then on, so its tools
+ * list changes with each load.
  *
  * @experimental
  */
-export type ToolSearch = 'auto' | 'client' | 'server'
+export type ToolSearch = (typeof SEARCH_VALUES)[number]
 
 /**
  * How `Offload.defer` lets the model find the tools it defers.
@@ -82,19 +87,9 @@ export type ToolSearch = 'auto' | 'client' | 'server'
  * @experimental
  */
 export interface DeferConfig {
-  /**
-   * Lets the model search the deferred tools rather than load them by name with `load_tools`. A model whose provider
-   * defers tools natively (`modelInfo.capabilities.deferredToolLoading` is `'native'`: Claude 4.5 and later through
-   * `AnthropicModel`, GPT-5.4 and later through the OpenAI API's Responses endpoint) can use the provider's own tool
-   * search; every other model uses `search_tools`, which returns the tools that best match its query. A model that
-   * can't take stubs gets each tool `search_tools` returns in full from then on, so its tools list changes with each
-   * load. `'server'` throws on a model without its own tool search. Unset, the model loads with `load_tools`.
-   */
+  /** Who searches the deferred tools, as {@link ToolSearch} says; unset, the model loads them with `load_tools`. */
   search?: ToolSearch
-  /**
-   * Picks the tools that match a `search_tools` query: a {@link KeywordToolSearcher} unless set. It runs wherever
-   * `search_tools` does, so it needs `search: 'auto'` or `'client'`.
-   */
+  /** Picks what `search_tools` loads, under `search` 'auto' or 'client'; a {@link KeywordToolSearcher} unless set. */
   searcher?: ToolSearcher
 }
 
@@ -140,7 +135,7 @@ export interface DeferStrategy extends ContextStrategy {
  * passes their names on the call as its `deferredTools`. The call's model decides how a deferred tool reaches it
  * (`modelInfo.capabilities.deferredToolLoading`); a model that can't defer tools gets every spec, or with `search` set,
  * only the tools it searched for. The model loads a schema with the loader the context manager registers,
- * `load_tools` or with `search` set `search_tools`, or with the provider's own tool search, which the call asks for
+ * `load_tools` or with `search` set `search_tools`, or with the provider's tool search, which the call asks for
  * with `serverToolSearch`. A call to a deferred tool before its load gets the schema back instead of running. SDK
  * tools such as the loaders and `retrieve_context` are never deferred, nor is a tool that takes no parameters, since
  * its stub would leave nothing out.
@@ -159,7 +154,7 @@ export class DeferredToolLoadingStrategy implements DeferStrategy {
   /** The tools each agent's latest model call deferred. */
   private readonly _deferred = new WeakMap<LocalAgent, ReadonlySet<string>>()
   /**
-   * The tools each agent's latest model response loaded with the provider's own tool search. The agent adds the
+   * The tools each agent's latest model response loaded with the provider's tool search. The agent adds the
    * response to its messages after running its tool calls, so the guard can't read these loads there yet.
    */
   private readonly _searched = new WeakMap<LocalAgent, ReadonlySet<string>>()
@@ -434,12 +429,12 @@ function checkSearcher({ search, searcher }: DeferConfig): void {
   throw new Error(`Offload.defer searcher never runs with ${shown}: set search to 'auto' or 'client'`)
 }
 
-/** Rejects a call whose model has no tool search of its own, under `search: 'server'`. */
+/** Rejects a call whose model has no provider tool search, under `search: 'server'`. */
 function checkServerSearch(search: ToolSearch | undefined, model: Model): void {
   if (search !== 'server' || deferredToolLoading(model) === 'native') return
   throw new Error(
-    `Offload.defer search 'server' needs a model whose API searches tools, and model ${model.modelId} has none: ` +
-      "use search 'auto' or 'client'"
+    `Offload.defer search 'server' needs the provider's tool search, which model ${model.modelId} doesn't have: ` +
+      "set search to 'auto' or 'client'"
   )
 }
 
@@ -481,7 +476,7 @@ function checkConditionNames(conditions: DeferConditions | undefined): void {
 }
 
 /**
- * The tools these messages loaded: with a `ToolReferenceBlock` in a tool result, or with the provider's own tool search,
+ * The tools these messages loaded: with a `ToolReferenceBlock` in a tool result, or with the provider's tool search,
  * whose `ServerToolBlock` names them.
  */
 function loadedTools(messages: readonly Message[]): Set<string> {

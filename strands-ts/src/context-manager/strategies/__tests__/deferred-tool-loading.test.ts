@@ -375,14 +375,14 @@ describe('DeferredToolLoadingStrategy', () => {
     })
 
     it.each(['stubs', 'unsupported'] as const)(
-      "throws with search 'server' on a %s model, which has no tool search of its own",
+      "throws with search 'server' on a %s model, which has no provider tool search",
       async (delivery) => {
         const { agent, model } = makeAgent(delivery, { strategy: searching('server') })
         model.addTurn({ type: 'textBlock', text: 'ok' })
 
         await expect(agent.invoke('Hi.')).rejects.toThrow(
-          "Offload.defer search 'server' needs a model whose API searches tools, and model test-model has none: " +
-            "use search 'auto' or 'client'"
+          "Offload.defer search 'server' needs the provider's tool search, which model test-model doesn't have: " +
+            "set search to 'auto' or 'client'"
         )
       }
     )

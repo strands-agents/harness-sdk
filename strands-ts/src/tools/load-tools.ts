@@ -4,7 +4,11 @@ import { tool } from './tool-factory.js'
 import type { LocalAgent } from '../types/agent.js'
 import type { Tool } from './tool.js'
 
-/** Name of the tool a model calls to load the input schemas of deferred tools. */
+/**
+ * Name of the tool a model calls to load the input schemas of deferred tools.
+ *
+ * @internal
+ */
 export const LOAD_TOOLS_TOOL_NAME = 'load_tools'
 
 /** The loaders {@link createLoadTools} made, told apart from a user's tool of the same name by identity. */
@@ -38,17 +42,30 @@ export function createLoadTools(deferredTools: (agent: LocalAgent) => readonly s
     inputSchema: z.object({ names: z.array(z.string()).min(1).describe('Names of the tools to load.') }),
     callback: (input, context) => {
       const agent = context!.agent
-      const deferred = new Set(deferredTools(agent))
-      const names = [...new Set(input.names)]
-      const missing = names.filter((name) => !agent.toolRegistry.get(name))
-      const shown = names.filter((name) => !deferred.has(name) && agent.toolRegistry.get(name))
-      // One bad name loads none: a result that mixes references with text loses Claude's native references.
-      if (missing.length > 0 || shown.length > 0) throw new Error(nothingLoaded(missing, shown))
-      return names.map((name) => new ToolReferenceBlock({ name }))
+      return loadableNames(agent, deferredTools(agent), input.names).map((name) => new ToolReferenceBlock({ name }))
     },
   })
   LOADERS.add(loader)
   return loader
+}
+
+/**
+ * The names a load asks for, each once, when every one is a deferred tool. One bad name loads none, since a result
+ * that mixes tool references with text loses Claude's native references.
+ *
+ * @param agent - The agent loading
+ * @param deferred - The names of the agent's deferred tools
+ * @param requested - The names the model asked for
+ * @returns The names, in order
+ * @throws Error naming each one that is no tool or is shown in full
+ * @internal
+ */
+export function loadableNames(agent: LocalAgent, deferred: readonly string[], requested: readonly string[]): string[] {
+  const names = [...new Set(requested)]
+  const missing = names.filter((name) => !agent.toolRegistry.get(name))
+  const shown = names.filter((name) => !deferred.includes(name) && agent.toolRegistry.get(name))
+  if (missing.length > 0 || shown.length > 0) throw new Error(nothingLoaded(missing, shown))
+  return names
 }
 
 /** Why a load loaded nothing, naming each tool it couldn't load and what to do instead. */

@@ -4067,7 +4067,7 @@ describe('AnthropicModel tool search', () => {
     ...extra,
   })
 
-  it('sends the API tool search in place of search_tools, and lists the deferred tools after the system prompt cache point', async () => {
+  it("sends the provider's tool search in place of search_tools, and lists the deferred tools after the system prompt cache point", async () => {
     const { captured, mockClient } = setupCapture()
     const provider = new AnthropicModel({ client: mockClient, cacheConfig: { messagesTTL: false, toolsTTL: false } })
 
@@ -4098,7 +4098,7 @@ describe('AnthropicModel tool search', () => {
     )
   })
 
-  it('caches on a copy of the API tool search, so a later request without caching sends it bare', async () => {
+  it("caches on a copy of the provider's tool search, so a later request without caching sends it bare", async () => {
     const { captured, mockClient } = setupCapture()
     const provider = new AnthropicModel({ client: mockClient, cacheConfig: { toolsTTL: true } })
 
@@ -4110,7 +4110,7 @@ describe('AnthropicModel tool search', () => {
     expect(captured.request.tools.at(-1)).toEqual(BM25)
   })
 
-  it('leaves the API tool search out of a forced turn without a warning', async () => {
+  it("leaves the provider's tool search out of a forced turn without a warning", async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const { captured, mockClient } = setupCapture()
     const provider = new AnthropicModel({ client: mockClient })
@@ -4151,7 +4151,7 @@ describe('AnthropicModel tool search', () => {
   it.each([
     ['without serverToolSearch', { serverToolSearch: false }],
     ['on a call that defers nothing', { deferredTools: new Set<string>() }],
-  ])('sends search_tools and no API tool search %s', async (_name, extra) => {
+  ])("sends search_tools and no provider's tool search %s", async (_name, extra) => {
     const { captured, mockClient } = setupCapture()
     const provider = new AnthropicModel({ client: mockClient })
 

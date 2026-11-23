@@ -303,7 +303,7 @@ export interface StreamOptions {
   deferredTools?: ReadonlySet<string>
 
   /**
-   * Whether a provider whose model defers tools natively may search the call's `deferredTools` with its API's own tool
+   * Whether a provider whose model defers tools natively may search the call's `deferredTools` with the provider's tool
    * search, in place of the `search_tools` spec in `toolSpecs`; every other provider sends `search_tools`.
    *
    * @internal

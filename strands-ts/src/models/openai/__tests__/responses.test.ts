@@ -1271,7 +1271,7 @@ describe("OpenAIModel (api: 'responses') tool search", () => {
   const forecast = { name: 'get_forecast', description: 'Get a forecast.', inputSchema: params }
   const toolSpecs = [searchTools, weather, forecast]
   const userMessage = (text: string): Message => new Message({ role: 'user', content: [new TextBlock(text)] })
-  const fn = (spec: typeof weather, deferred = false): { [key: string]: JSONValue } => ({
+  const functionTool = (spec: typeof weather, deferred = false): { [key: string]: JSONValue } => ({
     type: 'function',
     name: spec.name,
     description: spec.description,
@@ -1323,16 +1323,16 @@ describe("OpenAIModel (api: 'responses') tool search", () => {
     expect(model.modelInfo.capabilities?.deferredToolLoading).toBe(expected)
   })
 
-  it('sends the API tool search in place of search_tools, each deferred function with defer_loading', async () => {
+  it("sends the provider's tool search in place of search_tools, each deferred function with defer_loading", async () => {
     const { request } = await run(deferring(true))
 
-    expect(request.tools).toEqual([fn(weather, true), fn(forecast, true), { type: 'tool_search' }])
+    expect(request.tools).toEqual([functionTool(weather, true), functionTool(forecast, true), { type: 'tool_search' }])
   })
 
   it('keeps a tool search the caller put in params, and adds no other', async () => {
     const { request } = await run(deferring(true), { params: { tools: [{ type: 'tool_search' }] } })
 
-    expect(request.tools).toEqual([{ type: 'tool_search' }, fn(weather, true), fn(forecast, true)])
+    expect(request.tools).toEqual([{ type: 'tool_search' }, functionTool(weather, true), functionTool(forecast, true)])
   })
 
   it('sends search_tools as a client tool search that lists the deferred tools, without serverToolSearch', async () => {
@@ -1346,8 +1346,8 @@ describe("OpenAIModel (api: 'responses') tool search", () => {
           'Load tools.\n\nTools you can load:\n- get_weather: Get the weather.\n- get_forecast: Get a forecast.',
         parameters: { type: 'object' },
       },
-      fn(weather, true),
-      fn(forecast, true),
+      functionTool(weather, true),
+      functionTool(forecast, true),
     ])
   })
 
@@ -1378,13 +1378,31 @@ describe("OpenAIModel (api: 'responses') tool search", () => {
     ])
   })
 
+  it('lists every deferred tool with its whole description for load_tools, which takes only names', async () => {
+    const loadTools = { name: 'load_tools', description: 'Load tools.', inputSchema: { type: 'object' as const } }
+    const detailed = { ...weather, description: 'Get the weather. Covers every city.' }
+
+    const { request } = await run({
+      toolSpecs: [loadTools, detailed, forecast],
+      deferredTools: new Set(['get_weather', 'get_forecast']),
+    })
+
+    expect(request.tools[0].description).toBe(
+      'Load tools.\n\nTools you can load:\n- get_weather: Get the weather. Covers every city.\n- get_forecast: Get a forecast.'
+    )
+  })
+
   it('sends every function as it is on a model that does not defer tools natively', async () => {
     const { request } = await run(deferring(true), { modelId: 'gpt-5.4-nano' })
 
-    expect(request.tools).toEqual([fn(searchTools as typeof weather), fn(weather), fn(forecast)])
+    expect(request.tools).toEqual([
+      functionTool(searchTools as typeof weather),
+      functionTool(weather),
+      functionTool(forecast),
+    ])
   })
 
-  it("keeps the API's tool search items where they came and the namespace of a call to a tool it loaded", async () => {
+  it("keeps the provider's tool search items where they came and the namespace of a call to a tool it loaded", async () => {
     const searchCall = {
       type: 'tool_search_call',
       id: 'tsc_1',
@@ -1400,8 +1418,8 @@ describe("OpenAIModel (api: 'responses') tool search", () => {
       execution: 'server',
       status: 'completed',
       tools: [
-        { ...fn(weather, true) },
-        { type: 'namespace', name: 'crm', description: 'CRM tools.', tools: [{ ...fn(forecast, true) }] },
+        { ...functionTool(weather, true) },
+        { type: 'namespace', name: 'crm', description: 'CRM tools.', tools: [{ ...functionTool(forecast, true) }] },
       ],
     }
     const call = {
@@ -1534,7 +1552,7 @@ describe("OpenAIModel (api: 'responses') tool search", () => {
         call_id: 'call_9',
         execution: 'client',
         status: 'completed',
-        tools: [fn(weather, true)],
+        tools: [functionTool(weather, true)],
       },
     ])
   })

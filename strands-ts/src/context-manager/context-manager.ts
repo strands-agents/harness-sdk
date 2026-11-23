@@ -293,15 +293,16 @@ export class ContextManager implements Plugin {
  * The loader for the `Offload.defer` strategy, if there is one: `search_tools` when the model searches, `load_tools`
  * otherwise. It loads the tools the strategy deferred on the agent's latest model call.
  *
- * @throws Error when the agent already has a tool with the loader's name
+ * @throws Error when the agent already has a tool named `load_tools` or `search_tools`
  */
 function loaderFor(strategy: DeferredToolLoadingStrategy | undefined, agent: LocalAgent): Tool[] {
   if (!strategy) return []
-  const name = strategy.searches ? SEARCH_TOOLS_TOOL_NAME : LOAD_TOOLS_TOOL_NAME
-  if (agent.toolRegistry.get(name)) {
+  // Both names stay reserved, since model providers recognize either loader by its name.
+  const taken = [LOAD_TOOLS_TOOL_NAME, SEARCH_TOOLS_TOOL_NAME].find((name) => agent.toolRegistry.get(name))
+  if (taken) {
     throw new Error(
-      `contextManager adds a tool named '${name}' for Offload.defer and the 'deferredToolLoading' preset, and the ` +
-        "agent already has one; rename the agent's tool"
+      `contextManager reserves the tool names '${LOAD_TOOLS_TOOL_NAME}' and '${SEARCH_TOOLS_TOOL_NAME}' for ` +
+        `Offload.defer and the 'deferredToolLoading' preset, and the agent has a tool named '${taken}'; rename it`
     )
   }
   const deferredTools = (callingAgent: LocalAgent): string[] => strategy.deferredTools(callingAgent)
@@ -320,6 +321,7 @@ function checkOneToolLoadingStrategy(strategies: ContextStrategy[]): void {
   if (strategies.filter((strategy) => strategy instanceof DeferredToolLoadingStrategy).length < 2) return
   throw new Error(
     "contextManager takes one Offload.defer strategy, and the 'deferredToolLoading' preset is one; " +
-      'to change what the preset defers or when, use Offload.defer(target).when(conditions) in its place'
+      "to change what the preset defers or when, use Offload.defer(target, { search: 'auto' }).when(conditions) in " +
+      'its place'
   )
 }
