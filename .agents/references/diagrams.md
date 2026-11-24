@@ -160,8 +160,7 @@ existing `--dg-*` tokens. Don't hard-code a color in the SVG.
   pixels. Leave a 16px margin and nothing outside the viewBox. On narrow screens the
   figure scales down to fit the column (readers can pinch-zoom; the SVG stays sharp), so
   a phone shows it at roughly half size. That's one more reason to keep diagrams within
-  budget and never go below the class text sizes. Don't wrap a `<Diagram>` in `:::wide`
-  (it would only scale up). Click-to-zoom covers Markdown images only, not inlined
+  budget and never go below the class text sizes. Click-to-zoom covers Markdown images only, not inlined
   diagram SVGs.
 - **4px grid:** node x, y, width, height, gaps, and padding are multiples of 4.
 - **Node sizes:** heights of 48 (name only), 56–64 (name + sub), or 80 (focal);

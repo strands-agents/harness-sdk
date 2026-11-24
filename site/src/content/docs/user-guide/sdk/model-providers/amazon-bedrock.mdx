@@ -802,14 +802,12 @@ credentials, and the model provider runs the agent loop on top of it. We chose t
 Bedrock-specific wrappers because the vendor SDKs already ship Bedrock clients and keep
 them current.
 
-:::wide
 | API | Endpoint | Model provider | Client |
 |-----|----------|----------------|--------|
 | Anthropic Messages (InvokeModel) | `bedrock-runtime` | <Syntax py="AnthropicModel" ts="AnthropicModel" /> | <Syntax py="anthropic.AsyncAnthropicBedrock" ts="AnthropicBedrock" /> |
 | Anthropic Messages | `bedrock-mantle` | <Syntax py="AnthropicModel" ts="AnthropicModel" /> | <Syntax py="anthropic.AsyncAnthropicBedrockMantle" ts="AnthropicBedrockMantle" /> |
 | OpenAI Responses | both | <Syntax py="OpenAIResponsesModel" ts="OpenAIModel" /> | <Syntax py="openai.AsyncOpenAI" ts="OpenAI" /> |
 | OpenAI Chat Completions | both | <Syntax py="OpenAIModel" ts="OpenAIModel with api: 'chat'" /> | <Syntax py="openai.AsyncOpenAI" ts="OpenAI" /> |
-:::
 
 The model provider doesn't close a client you pass in. In Python, don't share one client
 across asyncio event loops.

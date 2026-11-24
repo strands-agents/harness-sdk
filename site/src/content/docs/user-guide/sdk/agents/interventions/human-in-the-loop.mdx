@@ -242,7 +242,6 @@ provide your own classification function:
 
 ## Configuration
 
-:::wide
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `mode` | <Syntax py='"auto"' ts="'auto'" /> | <Syntax py="None" ts="undefined" /> | Positional. Lets the SDK pick the approval strategy; see [Auto Mode](#auto-mode). Only `ask` and <Syntax py="allowed_tools" ts="allowedTools" /> may be passed alongside it. |
@@ -252,7 +251,6 @@ provide your own classification function:
 | <Syntax py="evaluate_trust" ts="evaluateTrust" /> | Function | Accepts `"t"` or `"trust"` | Custom validator for trust responses. Only evaluated when trust is enabled. |
 | `evaluate` | Function | Accepts <Syntax py='True, "y", or "yes"' ts="true, 'y', or 'yes'" /> | Custom validator for approval responses. |
 | `ask` | <Syntax py='Function or "stdio"' ts="Function or 'stdio'" /> | <Syntax py="None" ts="undefined" /> | Pass a function for custom UIs, `"stdio"` for CLI prompting, or omit for interrupt/resume. |
-:::
 
 ### Allowed Tools
 

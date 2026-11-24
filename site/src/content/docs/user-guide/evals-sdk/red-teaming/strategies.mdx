@@ -12,7 +12,6 @@ Some strategies use an **attacker LLM**: a second model that writes the adversar
 
 ## Built-in strategies
 
-:::wide
 | Strategy | Class | Mechanism | Attacker LLM? | Based on |
 |----------|-------|-----------|---------------|----------|
 | Crescendo | `CrescendoStrategy` | Gradually escalates over multiple turns, backtracking on refusals | Yes | [arXiv:2404.01833](https://arxiv.org/abs/2404.01833) |
@@ -20,7 +19,6 @@ Some strategies use an **attacker LLM**: a second model that writes the adversar
 | PAIR | `PairStrategy` | Refines a single adversarial prompt from per-turn judge feedback | Yes | [arXiv:2310.08419](https://arxiv.org/abs/2310.08419) |
 | Bad Likert Judge | `BadLikertJudgeStrategy` | Casts the target as a harmfulness-rating judge, then elicits a top-score example | No (scripted) | [Unit 42](https://unit42.paloaltonetworks.com/multi-turn-technique-jailbreaks-llms/) |
 | SequentialBreak | `SequentialBreakStrategy` | Hides the harmful request among benign siblings in one narrative scaffold | No (scripted) | [arXiv:2411.06426](https://arxiv.org/abs/2411.06426) |
-:::
 
 All five work against a plain `Agent` with no special setup.
 

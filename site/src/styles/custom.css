@@ -108,8 +108,8 @@ a[aria-current="page"]:hover {
    Wider buys little for code and makes prose lines long. */
 :root {
 	--sl-content-width: 55rem;
-	/* Widest a `:::wide` block grows (see below). */
-	--wide-block-max: 72rem;
+	/* Widest a top-level table or image grows on large screens (see below). */
+	--wide-max: 72rem;
 }
 
 /* Docs layout at 72rem and up, on pages with both sidebars. Starlight sizes the TOC column to
@@ -128,32 +128,51 @@ a[aria-current="page"]:hover {
 	}
 }
 
-/* Wide blocks (`:::wide`, rendered by src/plugins/remark-wide-blocks.ts): one figure, table,
-   or code block that stays centred on the text column and grows by the same amount on both
-   sides into the spare room, up to --wide-block-max in total. Below 72rem there is no spare
-   room, so it stays column width. Terms: R = 100vw - left sidebar, S the TOC column, W the text
-   column, P the panel padding. 100vw counts a classic scrollbar, which overstates the room by
-   half its width; the P gutters absorb that. Tables and code keep their own horizontal scroll.
-   Only top-level blocks widen: inside an aside or a <TabItem> the block would leave the aside's
-   border or its tab bar behind, so a nested `:::wide` stays column width. */
+/* Wide tables and images: a top-level table or image that doesn't fit the text column grows into
+   the spare room on both sides, staying centred on the text, up to --wide-max in total. Anything
+   that fits keeps its normal width and position, so only tables whose cells wrap and images wider
+   than the column change. Below 72rem there is no spare room, and pages without the left sidebar
+   (blog, integrations) already have a wider column, so neither changes.
+   Room per side, with R = 100vw - left sidebar, S the TOC column, W the text column and P the
+   panel padding: (R - S - W) / 2 - P with a TOC, (R - W) / 2 - P without one. 100vw counts a
+   classic scrollbar, which overstates the room by half its width; the P gutters absorb that.
+   Centring: translateX(min(0px, 50cqw - 50%)) is 0 for an element no wider than the column
+   (cqw is the text column, % the element), and moves a wider one left by half its overhang.
+   Only direct children widen: inside an aside or a <TabItem> they would leave its box behind. */
 @media (min-width: 72rem) {
-	/* With a TOC the text is centred between the sidebar and the TOC, so each side has
-	   (R - S - W) / 2 - P of room. */
-	:root[data-has-sidebar][data-has-toc] .sl-markdown-content > .wide-block {
-		--wide-room: max(
-			0px,
+	:root[data-has-sidebar] .sl-markdown-content {
+		container-type: inline-size;
+		--wide-grow: max(0px, min(var(--wide-room), (var(--wide-max) - var(--sl-content-width)) / 2));
+	}
+	:root[data-has-sidebar][data-has-toc] .sl-markdown-content {
+		--wide-room: calc(
 			(100vw - var(--sl-content-inline-start, 0px) - var(--sl-sidebar-width) - var(--sl-content-width)) / 2 -
 				var(--sl-content-pad-x)
 		);
-		margin-inline: calc(-1 * min(var(--wide-room), (var(--wide-block-max) - var(--sl-content-width)) / 2));
 	}
-	/* Without a TOC the column is centred in the full width, so each side has (R - W) / 2 - P. */
-	:root[data-has-sidebar]:not([data-has-toc]) .sl-markdown-content > .wide-block {
-		--wide-room: max(
-			0px,
-			(100vw - var(--sl-content-inline-start, 0px) - 2 * var(--sl-content-pad-x) - var(--sl-content-width)) / 2
+	:root[data-has-sidebar]:not([data-has-toc]) .sl-markdown-content {
+		--wide-room: calc(
+			(100vw - var(--sl-content-inline-start, 0px) - var(--sl-content-width)) / 2 - var(--sl-content-pad-x)
 		);
-		margin-inline: calc(-1 * min(var(--wide-room), (var(--wide-block-max) - var(--sl-content-width)) / 2));
+	}
+	/* Starlight makes tables display: block with their own scroll; max-content lets one grow only
+	   as far as its unwrapped cells need, and a table too wide even at the cap still scrolls. */
+	:root[data-has-sidebar] .sl-markdown-content > table:not(:where(.not-content *)) {
+		width: max-content;
+		min-width: 100%;
+		max-width: calc(100cqw + 2 * var(--wide-grow));
+		transform: translateX(min(0px, 50cqw - 50%));
+	}
+	/* Markdown images sit in a <p>, inside the zoom control when image zoom wraps them. */
+	:root[data-has-sidebar] .sl-markdown-content > p > :is(img, starlight-image-zoom-zoomable > img) {
+		max-width: calc(100cqw + 2 * var(--wide-grow));
+		transform: translateX(min(0px, 50cqw - 50%));
+	}
+	/* The agent-foundation comparison always wraps heavily at column width, so it takes the full
+	   wide width whenever there is room. */
+	:root[data-has-sidebar] .sl-markdown-content > .fc {
+		width: calc(100cqw + 2 * var(--wide-grow));
+		transform: translateX(calc(-1 * var(--wide-grow)));
 	}
 }
 

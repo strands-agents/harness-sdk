@@ -290,22 +290,22 @@ EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box npm run dev
 
 **What it does:** Sets the docs text column to `--sl-content-width: 55rem` and, at 72rem and up on every page with both sidebars, gives the TOC a fixed column of `--sl-sidebar-width` (300px), matching the left sidebar, with the text centred between the two (`.right-sidebar-container` and `.main-pane` rules).
 
-**Why:** Starlight gives the TOC a column of the TOC width plus half the spare width and pushes the text against it, so on wide screens the text sits off centre with the spare space on its left. Centring the text balances the page, and gives `:::wide` blocks equal room on both sides.
+**Why:** Starlight gives the TOC a column of the TOC width plus half the spare width and pushes the text against it, so on wide screens the text sits off centre with the spare space on its left. Centring the text balances the page, and gives wide tables and images equal room on both sides.
 
 **What readers see:** Below about 1480px there is no spare width, so the layout looks the same as Starlight's. Above that, the TOC stays pinned to the window's right edge, so it sits further from the text as the screen grows: about 220px away at 1920px and about 540px at 2560px, where Starlight keeps it 24px away.
 
-### 10. Wide Blocks (`src/plugins/remark-wide-blocks.ts`)
+### 10. Wide Tables and Images (`src/styles/custom.css`)
 
-**What it does:** Renders a `:::wide` container directive as `<div class="wide-block">`. CSS in `src/styles/custom.css` lets that block grow past the text column into spare room on large screens, up to `--wide-block-max` (72rem). Authoring rules are in [mdx-authoring.md](../.agents/references/mdx-authoring.md#wide-blocks).
+**What it does:** On large screens, a top-level table that doesn't fit the text column, or a Markdown image wider than it, grows into the spare room on both sides of the text, staying centred on it, up to `--wide-max` (72rem). Anything that fits keeps its normal width and position. Authors mark nothing, so imported product docs get it too. The agent-foundation comparison (`.fc`) always takes the full wide width, since it wraps heavily at column width.
 
-**Why:** A few tables and screenshots need more width than the column, and a page-wide content width would make every paragraph harder to read. A per-block marker keeps prose at the column width. A directive, rather than a component, works in plain `.md` files, so imported product docs can use it too.
+**Why:** Tables with long cells wrap into tall rows at column width, and large screenshots are shrunk. A page-wide content width would make every paragraph harder to read, so only tables and images grow; prose and code blocks keep the column width.
 
-**How the width is worked out:** A wide block stays centred on the text column and grows by the same amount on each side, up to `--wide-block-max` in total. The CSS repeats the layout maths with `100vw`, since the block can't measure its container. Only pages with the left sidebar get wider blocks, and only at 72rem and up:
+**How the width is worked out:** Only pages with the left sidebar get wider elements, and only at 72rem and up. Each side has `(100vw - sidebar - TOC - column) / 2 - panel padding` of room with a TOC (the text is centred between the sidebar and the TOC, see [Docs Layout](#9-docs-layout-srcstylescustomcss)), or `(100vw - sidebar - column) / 2 - panel padding` without one. With a 55rem column there is no room up to about 1536px screens; at 1728px each side gains 100px, and the 136px-per-side cap is reached at about 1850px.
 
-- **With a TOC**, the text is centred between the sidebar and the TOC (see [Docs Layout](#9-docs-layout-srcstylescustomcss)), so each side has `(100vw - sidebar - TOC - column) / 2 - panel padding` of room. With a 55rem column there is no room up to about 1536px screens; the block grows 100px each side at 1728px and reaches the 136px-per-side cap at about 1850px.
-- **Without a TOC**, the column is centred, and the block grows by `(100vw - sidebar - 2 × panel padding - column) / 2` on each side, up to the same cap.
-
-The block stops one 1.5rem panel padding short of the TOC, the sidebar or the window edge, which also absorbs the up to ~8px a classic scrollbar adds to `100vw`. Tables and code blocks keep their own horizontal scroll inside the block.
+- **Tables** get `width: max-content` with `min-width: 100%` and the cap as `max-width`, so a table grows only as far as its unwrapped cells need, and a table too wide even at the cap still scrolls inside itself.
+- **Images** get the cap as `max-width`, so only an image wider than the column grows.
+- **Centring:** `.sl-markdown-content` is an inline-size container, and each element is moved by `translateX(min(0px, 50cqw - 50%))`. That is 0 for an element no wider than the column and half its overhang for a wider one.
+- Only direct children of `.sl-markdown-content` widen. Inside an aside or a `<TabItem>` they stay at the width of their box. The block stops one 1.5rem panel padding short of the TOC, the sidebar or the window edge, which also absorbs the up to ~8px a classic scrollbar adds to `100vw`.
 
 ## Configuration (`astro.config.mjs`)
 

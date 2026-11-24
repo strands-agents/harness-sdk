@@ -63,7 +63,6 @@ Executes operations on a remote host via SSH. Each command spawns a fresh `ssh` 
 
 ### Options
 
-:::wide
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | <Syntax py="host" ts="host" /> | <Syntax py="str" ts="string" /> | (required) | SSH destination (e.g., `"user@host"`, `"192.168.1.10"`) |
@@ -73,7 +72,6 @@ Executes operations on a remote host via SSH. Each command spawns a fresh `ssh` 
 | <Syntax py="allow_unknown_hosts" ts="allowUnknownHosts" /> | <Syntax py="bool" ts="boolean" /> | <Syntax py="False" ts="false" /> | When false, uses `StrictHostKeyChecking=accept-new`. When true, disables host key verification. |
 | <Syntax py="ssh_options" ts="sshOptions" /> | <Syntax py="list[str] \| None" ts="string[]" /> | <Syntax py="None" ts="[]" /> | Additional SSH options passed as `-o` flags |
 | <Syntax py="allow_unsafe_ssh_options" ts="allowUnsafeSshOptions" /> | <Syntax py="bool" ts="boolean" /> | <Syntax py="False" ts="false" /> | Bypass the SSH option allowlist. When false, unknown options throw at construction time. |
-:::
 
 ### SSH Option Allowlist
 

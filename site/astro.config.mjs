@@ -7,7 +7,6 @@ import starlightImageZoom from 'starlight-image-zoom'
 import remarkMkdocsSnippets from './src/plugins/remark-mkdocs-snippets.ts'
 import sdkSetupPlugin from './src/plugins/vite-plugin-sdk-setup.ts'
 import remarkReadingTime from './src/plugins/remark-reading-time.ts'
-import remarkWideBlocks from './src/plugins/remark-wide-blocks.ts'
 import watchNavigationPlugin from './src/plugins/vite-plugin-watch-navigation.ts'
 import legacyRedirectPages from './src/plugins/legacy-redirect-pages.ts'
 import legacyRoutes from './src/config/legacy-routes.json'
@@ -50,7 +49,7 @@ export default defineConfig({
 	},
   markdown: {
     processor: unified(),
-    remarkPlugins: [remarkMkdocsSnippets, remarkReadingTime, remarkWideBlocks],
+    remarkPlugins: [remarkMkdocsSnippets, remarkReadingTime],
   },
   integrations: [
     // Sitemap with git-based <lastmod> dates — must be before Starlight

@@ -143,7 +143,6 @@ the [vended `graph` tool](../tools/vended-tools/graph.md). The model supplies
 nodes and dependency edges on each call; the tool builds and runs the graph.
 Use the Graph SDK API when you want to define the nodes and edges yourself.
 
-:::wide
 | Dimension | Graph | Swarm | Workflow in your code |
 |---|---|---|---|
 | Core concept | Agents as nodes joined by developer-defined edges; optional conditions route on model output or app state. | A team that autonomously hands off tasks. | Agent calls coordinated by your application. |
@@ -152,7 +151,6 @@ Use the Graph SDK API when you want to define the nodes and edges yourself.
 | Cycles | Yes. | Yes. | Use loops in your application code. |
 | State sharing | Shared state object all nodes read and write. | Shared context and working memory. | Your code passes results between agents. |
 | Error handling | A conditional edge can route on a result a node returns, such as a validator's verdict. Execution errors are not routed to another node. In Python, a node exception raises from the graph call and ends the run. In TypeScript, the failed node records `FAILED`, its downstream nodes do not run, and parallel branches continue. Timeouts end the run in both (see [Graph](./graph.md)). | Agents can hand off to an error specialist; handoff limits and timeouts stop runaway loops by ending the run. | Your code catches errors and decides whether to retry, stop, or continue. There is no separate orchestrator status to inspect. |
-:::
 
 The sections below give one or two concrete triggers for each.
 
