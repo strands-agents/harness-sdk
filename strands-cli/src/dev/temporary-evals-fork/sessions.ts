@@ -17,6 +17,7 @@ import {
   type ExperimentRun,
   type ExperimentSummary,
   type DecisionSetting,
+  type EvalCase,
   type KnobKey,
   type OptimizeDecision,
   type OptimizeObjective,
@@ -186,15 +187,6 @@ const objectiveFields = (
   }
 }
 
-const withObjective = (
-  plan: OptimizePlan,
-  objective: OptimizeObjective,
-  evaluators: readonly string[]
-): OptimizePlan => {
-  const { objectiveProblem: _problem, objectiveWarning: _warning, ...rest } = plan
-  return { ...rest, ...objectiveFields(objective, evaluators) }
-}
-
 const MEASURED_ON: Record<TemporaryMeasurement, string> = {
   search: 'training cases',
   validation: 'validation cases',
@@ -247,7 +239,6 @@ interface RunEntry {
   readonly id: string
   readonly experiment: string
   readonly startedAt: number
-  readonly listed: boolean
   state: OptimizeRunState
   record?: string
   abort: AbortController | undefined
@@ -680,7 +671,9 @@ export class TemporaryOptimize extends Store<OptimizeState> {
   }
 
   setObjective(objective: OptimizeObjective): void {
-    this.updatePlan((plan) => this.estimate(withObjective(plan, objective, this.evaluatorNames)))
+    this.updatePlan(({ objectiveProblem: _problem, objectiveWarning: _warning, ...plan }) =>
+      this.estimate({ ...plan, ...objectiveFields(objective, this.evaluatorNames) })
+    )
   }
 
   setDecision<Setting extends keyof OptimizeDecision>(setting: Setting, value: OptimizeDecision[Setting]): void {
@@ -814,13 +807,12 @@ export class TemporaryOptimize extends Store<OptimizeState> {
     return this.entries.get(run ?? this.shown ?? '')
   }
 
-  private addRun(experiment: string, startedAt: number, state: OptimizeRunState, listed = true): RunEntry {
+  private addRun(experiment: string, startedAt: number, state: OptimizeRunState): RunEntry {
     this.runCount += 1
     const entry: RunEntry = {
       id: `run-${this.runCount}`,
       experiment,
       startedAt,
-      listed,
       state,
       abort: undefined,
       stopping: false,
@@ -846,7 +838,6 @@ export class TemporaryOptimize extends Store<OptimizeState> {
 
   private publish(): void {
     const runs = [...this.entries.values()]
-      .filter(({ listed }) => listed)
       .sort((left, right) => right.startedAt - left.startedAt)
       .map(({ id, experiment, startedAt, record, state }) => ({
         id,
@@ -1061,12 +1052,33 @@ export class TemporaryOptimize extends Store<OptimizeState> {
     const abort = new AbortController()
     entry.abort = abort
     entry.stopping = false
+    const cases = await readTemporaryRunnableCases(saved.experiment).catch(() => [])
+    const tail = this.track(entry, plan, saved.record, saved.startedAt, knobs, cases)
+    try {
+      await waitForTemporaryOptimize(saved, abort.signal)
+    } finally {
+      await tail.stop()
+      entry.abort = undefined
+    }
+    await this.finish(entry, saved.record, plan, knobs, abort.signal.aborted)
+    await this.keepForReview(entry, saved.record, saved)
+  }
+
+  /** Shows the progress of the run as its record grows, until the tail is stopped. */
+  private track(
+    entry: RunEntry,
+    plan: RunPlan,
+    record: string,
+    startedAt: number,
+    knobs: readonly TemporaryKnob[],
+    cases: readonly EvalCase[]
+  ): TemporaryTail {
     const reader = temporaryStudyReader({
-      run: temporaryOptimizationRunName(saved.record),
-      record: saved.record,
-      startedAt: saved.startedAt,
+      run: temporaryOptimizationRunName(record),
+      record,
+      startedAt,
       labels: temporaryKnobLabels(knobs),
-      cases: await readTemporaryRunnableCases(saved.experiment).catch(() => []),
+      cases,
       planned: plannedRollouts(plan),
     })
     const show = (): void =>
@@ -1079,19 +1091,12 @@ export class TemporaryOptimize extends Store<OptimizeState> {
           stopping: entry.stopping,
         },
       })
-    const tail = tailTemporaryRun(saved.record, (line) => {
+    const tail = tailTemporaryRun(record, (line) => {
       reader.push(line)
       show()
     })
     show()
-    try {
-      await waitForTemporaryOptimize(saved, abort.signal)
-    } finally {
-      await tail.stop()
-      entry.abort = undefined
-    }
-    await this.finish(entry, saved.record, plan, knobs, abort.signal.aborted)
-    await this.keepForReview(entry, saved.record, saved)
+    return tail
   }
 
   private async run(
@@ -1104,7 +1109,6 @@ export class TemporaryOptimize extends Store<OptimizeState> {
     const abort = new AbortController()
     const startedAt = continuing?.startedAt ?? entry.startedAt
     const now = new Date(startedAt)
-    const labels = temporaryKnobLabels(knobs)
     const shares = continuing ? continuing.split : temporarySplitShares(plan.split)
     entry.abort = abort
     entry.stopping = false
@@ -1124,19 +1128,8 @@ export class TemporaryOptimize extends Store<OptimizeState> {
           )
         )
     }
-    let reader: ReturnType<typeof temporaryStudyReader> | undefined
     let tail: TemporaryTail | undefined
-    const progress = (): OptimizeProgress =>
-      reader
-        ? {
-            ...reader.progress(),
-            planned: 1 + plan.iterations * plan.width,
-            trainCases: plan.split.train,
-            stopping: entry.stopping,
-          }
-        : { ...startingProgress(plan, startedAt), stopping: entry.stopping }
-    const show = (): void => this.updateRun(entry, { step: 'running', progress: progress() })
-    show()
+    this.updateRun(entry, { step: 'running', progress: startingProgress(plan, startedAt) })
     try {
       await (this.host().dependencies?.initialCopy ?? ensureInitialCopy)(this.host().workspace, abort.signal)
       const space = continuing?.space ?? (await this.writeSpace(plan, now, variables))
@@ -1180,19 +1173,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
               decision: plan.decision,
               startedAt,
             })
-            reader = temporaryStudyReader({
-              run: temporaryOptimizationRunName(path),
-              record: path,
-              startedAt,
-              labels,
-              cases,
-              planned: plannedRollouts(plan),
-            })
-            tail = tailTemporaryRun(path, (line) => {
-              reader?.push(line)
-              show()
-            })
-            show()
+            tail = this.track(entry, plan, path, startedAt, knobs, cases)
           },
         },
         this.host().dependencies
