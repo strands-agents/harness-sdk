@@ -156,7 +156,7 @@ jobs:
       contents: read
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      local-strands-py: ${{ needs.detect-changes.outputs.strands-py-src == 'true' }}
+      local-strands-py: true
 
   harness-typescript:
     name: Harness TypeScript
