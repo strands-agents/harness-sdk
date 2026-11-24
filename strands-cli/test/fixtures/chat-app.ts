@@ -3,7 +3,7 @@ import { type Instance } from 'ink'
 import { afterEach } from 'vitest'
 
 import type { ChatBackend } from '../../src/agent/types.js'
-import { ChatController, type DevChatCommand } from '../../src/ui/chat/controller.js'
+import { ChatController, type DevChatCommand, type DevChatJob, type DevChatJobs } from '../../src/ui/chat/controller.js'
 import { ChatApp } from '../../src/ui/chat/screen.js'
 import { idleBackend } from './chat-backend.js'
 import { captureFrame, render, ttyInput, ttyOutput } from './terminal.js'
@@ -42,4 +42,22 @@ export async function mountChat({
   }
   const row = (text: string): number => frame().findIndex((line) => line.includes(text))
   return { controller, instance, press, row, lines: frame, screen: (): string => frame().join('\n') }
+}
+
+/** The jobs of a dev command, as a test sets them. */
+export const jobStore = (): DevChatJobs & { set: (jobs: readonly DevChatJob[]) => void; listeners: () => number } => {
+  let jobs: readonly DevChatJob[] = []
+  const listeners = new Set<() => void>()
+  return {
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    snapshot: () => jobs,
+    set: (next) => {
+      jobs = next
+      for (const listener of listeners) listener()
+    },
+    listeners: () => listeners.size,
+  }
 }

@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { ChatController } from '../../src/ui/chat/controller.js'
 import type { DevChatCommand, DevChatCommandContext, DevChatPanelView } from '../../src/ui/chat/controller.js'
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
-import type { DevChatJob, DevChatJobs } from '../../src/ui/chat/types.js'
 import {
   type ChatBackend,
   type ChatConfigurationSource,
@@ -19,6 +18,7 @@ import {
 import type { BackgroundAgentActivity } from '../../src/agent/background.js'
 import { ModelControlError, resolveModelTarget } from '../../src/model/selection.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
+import { jobStore } from '../fixtures/chat-app.js'
 import type { McpServerInfo } from '../../src/agent/mcp.js'
 
 function backend(
@@ -4095,23 +4095,6 @@ describe('dev chat commands', () => {
     expect(context().signal.aborted).toBe(true)
   })
 })
-
-const jobStore = (): DevChatJobs & { set: (jobs: readonly DevChatJob[]) => void; listeners: () => number } => {
-  let jobs: readonly DevChatJob[] = []
-  const listeners = new Set<() => void>()
-  return {
-    subscribe: (listener) => {
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    },
-    snapshot: () => jobs,
-    set: (next) => {
-      jobs = next
-      for (const listener of listeners) listener()
-    },
-    listeners: () => listeners.size,
-  }
-}
 
 // A backend whose turns each wait until the test releases them.
 const gatedBackend = () => {
