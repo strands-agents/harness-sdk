@@ -147,16 +147,13 @@ const BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
 const SKIP_COUNT_TOKENS_MODELS = new Set<string>()
 
 /**
- * Model IDs Converse refused cache points for. Their requests go without cache points for the lifetime of the process
- * and rely on implicit caching.
+ * The regions Converse refused cache points in, by OpenAI GPT model ID. Requests to a model in one of its regions go
+ * without cache points for the lifetime of the process.
  */
-const IMPLICIT_CACHE_MODELS = new Set<string>()
+const CACHE_POINTS_REFUSED = new Map<string, Set<string>>()
 
-/** The message Converse rejects a request's cache points with, by error name. */
-const CACHE_POINT_REJECTIONS: Record<string, string> = {
-  AccessDeniedException: 'did not allow prompt caching',
-  ValidationException: "doesn't support the cachePoint field",
-}
+/** The `AccessDeniedException` message Converse refuses every cache point for a model with. */
+const CACHE_POINTS_REFUSED_MESSAGE = 'did not allow prompt caching'
 
 /**
  * Mapping of Bedrock stop reasons to SDK stop reasons.
@@ -530,6 +527,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   private _config: BedrockModelConfig
   private _client: BedrockRuntimeClient
   private _dropStaleThinkingModelId: string | undefined
+  /** The client's region, resolved before each request once Converse has refused cache points for this model ID. */
+  private _region: string | undefined
 
   /**
    * Clears the cache of model IDs for which CountTokens is skipped.
@@ -700,14 +699,27 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Whether this is an OpenAI GPT model that takes cache points, unless Converse has refused them for it.
+   * Whether this is an OpenAI GPT model that takes cache points, unless Converse has refused them for it in the
+   * client's region.
+   *
+   * The region is resolved before each request once the model ID has a refusal, so a read before this instance's first
+   * such request does not see a refusal in its region.
    *
    * @param info - The model info before the Converse caching override
    * @returns True when cache points are placed for an OpenAI GPT model
    */
   private _takesGptCachePoints(info: ModelInfo): boolean {
-    const modelId = this.modelId ?? ''
-    return bedrockTakesGptCachePoints(modelId, info) && !IMPLICIT_CACHE_MODELS.has(modelId)
+    return bedrockTakesGptCachePoints(this.modelId ?? '', info) && !this._cachePointsRefused()
+  }
+
+  /**
+   * Whether Converse has refused cache points for this model ID in the client's last resolved region.
+   *
+   * @returns True once a refusal is recorded for the model ID and region
+   */
+  private _cachePointsRefused(): boolean {
+    const regions = CACHE_POINTS_REFUSED.get(this.modelId ?? '')
+    return this._region !== undefined && regions?.has(this._region) === true
   }
 
   /**
@@ -1028,10 +1040,6 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * Formats and sends the request, with the strongest structured output mechanism the model accepts when the call
    * must produce a schema.
    *
-   * Mechanisms the model rejects are remembered for the process, so later requests start at the one that works.
-   * Rejections happen during request validation, before the model generates anything. AnthropicModel follows the
-   * same order but resends through stream(), since its rejection arrives inside the stream.
-   *
    * @param messages - Conversation messages
    * @param options - Stream options
    * @param send - Sends a request to the Converse or ConverseStream API
@@ -1042,12 +1050,39 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     options: StreamOptions | undefined,
     send: (input: ConverseStreamCommandInput) => Promise<T>
   ): Promise<T> {
+    // Resolved before formatting so placement sees a refusal in this region; other model IDs format without waiting.
+    if (CACHE_POINTS_REFUSED.has(this.modelId ?? '')) {
+      this._region = await this._client.config.region()
+    }
     const schema = options?.structuredOutputSchema
     const modelId = this._config.modelId
     if (!schema || !modelId) {
       return this._send(this._formatRequest(messages, options), send)
     }
+    return this._sendStructuredOutputRequest(messages, options, schema, modelId, send)
+  }
 
+  /**
+   * Formats and sends the request with the strongest structured output mechanism the model accepts.
+   *
+   * Mechanisms the model rejects are remembered for the process, so later requests start at the one that works.
+   * Rejections happen during request validation, before the model generates anything. AnthropicModel follows the
+   * same order but resends through stream(), since its rejection arrives inside the stream.
+   *
+   * @param messages - Conversation messages
+   * @param options - Stream options
+   * @param schema - The schema the response must produce
+   * @param modelId - The configured model ID
+   * @param send - Sends a request to the Converse or ConverseStream API
+   * @returns The API response
+   */
+  private async _sendStructuredOutputRequest<T>(
+    messages: Message[],
+    options: StreamOptions,
+    schema: z.ZodSchema,
+    modelId: string,
+    send: (input: ConverseStreamCommandInput) => Promise<T>
+  ): Promise<T> {
     const mechanisms = structuredOutputMechanisms('bedrock', modelId, options.toolChoice, schema, this.modelInfo)
     for (const mechanism of mechanisms.slice(0, -1)) {
       try {
@@ -1122,11 +1157,13 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Sends the request, resending it once without cache points when Converse refuses them for this model.
+   * Sends the request, resending it once without cache points when Converse refuses every cache point for an OpenAI
+   * GPT model this provider places them for.
    *
-   * Converse takes cache points for some models its documentation lists without them, so it may refuse them. Once the
-   * resend is accepted, every later request to this model ID in the process goes without cache points, caller-placed ones
-   * included, and relies on implicit caching.
+   * Converse takes cache points for some OpenAI GPT models and refuses them for others with an
+   * `AccessDeniedException`. Once the resend is accepted, every later request to this model ID in the client's region
+   * goes without cache points for the process, caller-placed ones included. Any other error, including a
+   * `ValidationException` for one misplaced cache point, and any error for another model, is rethrown.
    *
    * @param request - Formatted Bedrock request
    * @param send - Sends a request to the Converse or ConverseStream API
@@ -1136,24 +1173,46 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     request: ConverseStreamCommandInput,
     send: (input: ConverseStreamCommandInput) => Promise<T>
   ): Promise<T> {
-    const modelId = this.modelId ?? ''
-    if (IMPLICIT_CACHE_MODELS.has(modelId)) {
+    if (!this._fallsBackFromCachePoints()) {
+      return send(request)
+    }
+    if (this._cachePointsRefused()) {
       return send(requestWithoutCachePoints(request) ?? request)
     }
     try {
       return await send(request)
     } catch (error) {
-      const retryRequest = isCachePointRejection(error) ? requestWithoutCachePoints(request) : undefined
+      const retryRequest = isCachePointsRefusal(error) ? requestWithoutCachePoints(request) : undefined
       if (!retryRequest) throw error
 
       const response = await send(retryRequest)
-      IMPLICIT_CACHE_MODELS.add(modelId)
-      warnOnce(
-        logger,
-        `model_id=<${modelId}> | converse rejected cache points for this model, sending none and relying on implicit caching`
-      )
+      await this._recordCachePointsRefusal()
       return response
     }
+  }
+
+  /**
+   * Whether a refusal of every cache point is resent without them: only for an OpenAI GPT model this provider places
+   * cache points for, whether or not Converse has refused them yet.
+   *
+   * @returns True when the cache point fallback applies
+   */
+  private _fallsBackFromCachePoints(): boolean {
+    return bedrockTakesGptCachePoints(this.modelId ?? '', super.modelInfo)
+  }
+
+  /**
+   * Records that Converse refused cache points for this model ID in the client's region, warning once per pair.
+   */
+  private async _recordCachePointsRefusal(): Promise<void> {
+    const modelId = this.modelId ?? ''
+    const region = await this._client.config.region()
+    this._region = region
+    CACHE_POINTS_REFUSED.set(modelId, (CACHE_POINTS_REFUSED.get(modelId) ?? new Set()).add(region))
+    warnOnce(
+      logger,
+      `model_id=<${modelId}>, region=<${region}> | converse rejected cache points for this model, sending none`
+    )
   }
 
   /**
@@ -2621,15 +2680,17 @@ function requestWithDropBlock(request: ConverseStreamCommandInput): ConverseStre
 }
 
 /**
- * Whether Converse rejected the request for carrying cache points the model does not take.
+ * Whether Converse refused the request because the model takes no cache points at all.
  *
  * @param error - The error the request failed with
- * @returns True for a cache point rejection
+ * @returns True for a refusal of every cache point
  */
-function isCachePointRejection(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-  const message = CACHE_POINT_REJECTIONS[error.name]
-  return message !== undefined && error.message.includes(message)
+function isCachePointsRefusal(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.name === 'AccessDeniedException' &&
+    error.message.includes(CACHE_POINTS_REFUSED_MESSAGE)
+  )
 }
 
 /**
