@@ -76,8 +76,8 @@ constraints = [
 
 During the search, constraints only rank: candidates likely to meet every constraint come
 first, but the others can still be parents. At the end, only a candidate that meets every
-constraint on validation can be the champion, and "meets" means the model puts the chance of meeting
-it at 90% or more. When no candidate qualifies, your current agent stays the champion.
+constraint on validation can be the champion, and "meets" means the model puts the chance
+of meeting it at 90% or more. When no candidate qualifies, your current agent stays the champion.
 
 Prefer a constraint over a cost term when you have a hard limit. A weighted cost term buys
 quality with tokens at a fixed rate; a constraint says "never above this".
@@ -132,7 +132,8 @@ The quickstart's run works out like this, with 20 cases split 8 / 6 / 6 and the 
 | Test reserve | 2 x (6 + 2) = 16 |
 
 The minimum budget is the baseline plus both reserves, 56 here, and a smaller budget fails
-at construction with that number. With `max_rollouts=120`, the search gets the other 64,
+at construction with that number. The minimum leaves nothing for the search, so a budget
+below 56 + 32 = 88 warns that it can't pay for one step. With `max_rollouts=120`, the search gets the other 64,
 which pays for two steps. The run then spent 108 of its 120 rollouts: it needed no re-runs,
 so the headroom went unused.
 
@@ -190,7 +191,7 @@ written as `_`:
 # runs/triage.toml
 experiment = "../experiment.json"
 max_rollouts = 120
-name = "triage"
+name = "triage"  # prefix of the run folder's name
 
 [agent]
 factory = "../agent.py:create_agent"

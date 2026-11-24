@@ -78,8 +78,8 @@ optimizer's space, so it stays at its baseline with no error.
 
 Each marker's baseline, the value the search starts from, comes from one place:
 
-- **`Int`, `Float`, `TextValue`**: the parameter's default, so you write the baseline once.
-  Pass `default=` only when the parameter has none.
+- **`Int`, `Float`, `TextValue`**: `default=` if you pass it, else the parameter's default.
+  Leave `default=` off when the parameter has one, so you write the baseline once.
 - **`OneOf`, `JsonChoice`**: `default=` if you pass it, else the parameter's default, which
   must be one of the options. With neither, the **first option** is the baseline.
 - **`choice()`**: always the **first alternative**. A default on the parameter is ignored,

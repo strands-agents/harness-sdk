@@ -128,6 +128,13 @@ experiment = Experiment(
 Every case needs a unique name, because candidates are compared case by case. Twenty cases
 split into 8 for the search, 6 for picking the winner, and 6 for the final test.
 
+To reuse the experiment from the command line, or to rerun the same cases later, save it
+to a file:
+
+```python
+experiment.to_file("experiment.json")
+```
+
 ## Declare what may change
 
 Write the agent as a factory function and mark the parameters the optimizer may change.

@@ -66,16 +66,6 @@ run, one lucky run looks like a win, and nobody remembers which combination was 
   agent on a third set of cases
 - Every trial is saved, so a killed run resumes without paying twice
 
-## When to use optimization
-
-- **A prompt that underperforms on known cases**: let a model rewrite it from the agent's
-  own failing conversations
-- **Cost or latency targets**: trade a little quality for fewer tokens, or hold quality
-  fixed with a constraint
-- **Choosing components**: compare context strategies, models, or other components on
-  your workload instead of guessing
-- **Before a model upgrade**: retune the prompt and settings for the new model
-
 ## Quick example
 
 Mark the parameters that may change, then hand the factory and your experiment to an
@@ -159,6 +149,17 @@ more reliably and tells you which options actually moved a metric.
 **Use together:** the experiment is how the optimizer judges each configuration, so the
 optimizer can only be as good as its evaluators. To build one first, see
 [Run your first evaluation](../quickstart.md#run-your-first-evaluation).
+
+## What you can optimize
+
+Any part of the agent its factory builds from a parameter: prompts and other text, files,
+skills, tool descriptions, which tools or skills load, components such as the model or the
+context strategy, and numbers such as a temperature, across one agent or a multi-agent
+system. [Declaring what can change](tunables.md#the-markers) lists every kind of value.
+
+You can run it from Python, from the `strands-evals optimize` command line, or straight
+from a Strands harness config file or an exported `agent.py` or `agent.ts` file.
+[Choosing an entry route](entry_routes.md) compares them.
 
 ## Best practices
 
