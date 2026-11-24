@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -60,8 +60,7 @@ const environmentRunner = () =>
 interface ControlledRun {
   readonly args: readonly string[]
   readonly signal?: AbortSignal
-  progress(event: object): Promise<void>
-  finish(cases: readonly string[], code?: number): Promise<void>
+  finish(cases: readonly string[], code?: number, stderrTail?: readonly string[]): Promise<void>
   finishWith(document: object): Promise<void>
 }
 
@@ -74,14 +73,13 @@ const controlledGenerator = () => {
         runs.push({
           args,
           ...(signal ? { signal } : {}),
-          progress: async (event) => {
-            const path = flagValue(args, '--temporary-progress')
-            await mkdir(dirname(path), { recursive: true })
-            await appendFile(path, `${JSON.stringify(event)}\n`)
-          },
-          finish: async (cases, code = 0) => {
+          finish: async (cases, code = 0, stderrTail) => {
             if (code === 0) await writeFileAt(flagValue(args, '--output'), JSON.stringify(experimentDocument(cases)))
-            resolve({ code, stdout: '', stderrTail: code === 0 ? [] : ['strands-evals generate: error: boom'] })
+            resolve({
+              code,
+              stdout: '',
+              stderrTail: [...(stderrTail ?? (code === 0 ? [] : ['strands-evals generate: error: boom']))],
+            })
           },
           finishWith: async (document) => {
             await writeFileAt(flagValue(args, '--output'), JSON.stringify(document))
@@ -142,7 +140,6 @@ describe('TEMPORARY experiment generation session', () => {
       task: 'Answers refund questions',
       model: '',
       cases: 20,
-      evaluators: [{ name: 'OutputEvaluator' }],
     })
     expect(experiments.agentSummary()).toBe('agent.py · 1 tool · instructions.md')
   })
@@ -168,18 +165,13 @@ describe('TEMPORARY experiment generation session', () => {
     expect(experiments.suggested().model).toBe('')
   })
 
-  it('shouldShowLiveProgressAndThenSaveTheExperimentWhenAGenerationRuns', async () => {
+  it('shouldShowThatItWritesCasesAndThenSaveTheExperimentWhenAGenerationRuns', async () => {
     const { workspace, experiments, generator, notices, start } = await setup()
 
     expect(start({ name: 'refunds', cases: 3 })).toBeUndefined()
     await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
     const [run] = generator.runs
-    await run!.progress({ event: 'cases', total: 3 })
-    await run!.progress({ event: 'case', ok: true, done: 1, failed: 0, total: 3 })
-    await vi.waitFor(
-      () => expect(onlyGeneration(experiments)).toMatchObject({ phase: 'cases', made: 1, total: 3 }),
-      LIVE
-    )
+    await vi.waitFor(() => expect(onlyGeneration(experiments)).toMatchObject({ phase: 'cases', total: 3 }), LIVE)
     const live = temporaryGenerationJobs(experiments.snapshot())
     const { id } = onlyGeneration(experiments)
     const draft = flagValue(run!.args, '--output')
@@ -187,7 +179,7 @@ describe('TEMPORARY experiment generation session', () => {
     await vi.waitFor(() => expect(experiments.snapshot().generations).toEqual([]))
 
     const path = join(workspace.directory!, 'experiments/refunds/refunds.json')
-    expect(live).toEqual([{ id, label: 'refunds', done: 1, total: 3 }])
+    expect(live).toEqual([{ id, label: 'refunds writing cases' }])
     expect(JSON.parse(await readFile(path, 'utf8')).cases).toHaveLength(3)
     await vi.waitFor(() => expect(existsSync(draft)).toBe(false))
     expect(experiments.snapshot().saved).toEqual([{ name: 'refunds', path, caseCount: 3 }])
@@ -247,9 +239,7 @@ describe('TEMPORARY experiment generation session', () => {
     await vi.waitFor(() => expect(generator.runs).toHaveLength(1))
     const denied = 'AccessDeniedException: You do not have access to the model with the specified model ID.'
 
-    await generator.runs[0]!.progress({ event: 'case', ok: false, done: 0, failed: 1, total: 2, error: denied })
-    await generator.runs[0]!.progress({ event: 'case', ok: false, done: 0, failed: 2, total: 2, error: denied })
-    await generator.runs[0]!.finish([])
+    await generator.runs[0]!.finish([], 0, [`botocore.errorfactory.${denied}`, 'generated 0 case(s), 1 evaluator(s)'])
     await vi.waitFor(() => expect(onlyGeneration(experiments).phase).toBe('failed'))
 
     const { error } = onlyGeneration(experiments)
@@ -260,7 +250,7 @@ describe('TEMPORARY experiment generation session', () => {
     expect(onlyGeneration(experiments).log).toMatch(/refunds\.log$/u)
     expect(onlyGeneration(experiments).log.startsWith(drafts)).toBe(true)
     expect(notices.at(-1)?.text).toMatch(
-      /^experiment · refunds stopped: Bedrock denied access to the default model · strands-evals said: AccessDeniedException/u
+      /^experiment · refunds stopped: Bedrock denied access to the default model · strands-evals said: strands-evals generate wrote no cases, because every case failed: botocore\.errorfactory\.AccessDeniedException/u
     )
     expect(notices.at(-1)?.text).toContain(`· log in ${drafts}`)
   })
@@ -290,7 +280,7 @@ describe('TEMPORARY experiment generation session', () => {
     await vi.waitFor(() => expect(generator.runs).toHaveLength(2))
 
     expect(experiments.snapshot().generations).toHaveLength(1)
-    expect(onlyGeneration(experiments)).toMatchObject({ name: 'refunds', phase: 'preparing' })
+    expect(onlyGeneration(experiments)).toMatchObject({ name: 'refunds', phase: 'cases' })
     expect(onlyGeneration(experiments).id).not.toBe(failed.id)
   })
 

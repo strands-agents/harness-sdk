@@ -25,7 +25,6 @@ import {
   TEMPORARY_TEST_SHARES,
 } from '../../../src/dev/temporary-evals-fork/plan.js'
 import type { AutoOptimizeStatus } from '../../../src/dev/temporary-evals-fork/auto-optimize.js'
-import type { TemporaryEvaluator } from '../../../src/dev/temporary-evals-fork/evaluators.js'
 import type { AnsweredOptimizeReview, AppliedOptimizeEdits } from '../../../src/dev/temporary-evals-fork/review-run.js'
 import type { TemporaryAppliedChange, TemporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
 
@@ -232,12 +231,7 @@ const generationSettings = (overrides: Partial<GenerationSettings> = {}): Genera
   context: '',
   cases: 20,
   topics: 0,
-  evaluators: [{ name: 'OutputEvaluator' }],
   model: 'us.anthropic.claude-test',
-  parallel: 4,
-  expectedTrajectory: false,
-  expectedInteractions: false,
-  metadata: false,
   ...overrides,
 })
 
@@ -252,26 +246,7 @@ const progress = () => ({
   stopping: false,
 })
 
-const CATALOG: readonly TemporaryEvaluator[] = [
-  { name: 'OutputEvaluator', kind: 'rubric', description: 'Judges the answer', settings: [], available: true },
-  {
-    name: 'ToolCalled',
-    kind: 'check',
-    description: 'Checks that a tool ran',
-    settings: [{ name: 'tool_name', type: 'string', required: true, description: 'The tool' }],
-    available: true,
-  },
-  {
-    name: 'InteractionsEvaluator',
-    kind: 'rubric',
-    description: 'Judges interactions',
-    settings: [],
-    available: false,
-    limit: 'A dev run records no interactions.',
-  },
-]
-
-const setup = (evaluators = vi.fn(async () => CATALOG), changes: readonly TemporaryAppliedChange[] = []) => {
+const setup = (changes: readonly TemporaryAppliedChange[] = []) => {
   const fake = fakeSessions()
   fake.sessions.optimize.appliedChanges.mockReturnValue(changes)
   const history = {
@@ -295,7 +270,6 @@ const setup = (evaluators = vi.fn(async () => CATALOG), changes: readonly Tempor
   )
   const part = temporaryDevChatPart({
     sessions: () => fake.sessions as unknown as TemporaryDevSessions,
-    evaluators,
     history,
     showReview,
     answerReview,
@@ -304,7 +278,7 @@ const setup = (evaluators = vi.fn(async () => CATALOG), changes: readonly Tempor
   const tool = (name: string): DevChatTool => part.tools.find((candidate) => candidate.name === name)!
   const call = async (name: string, input: Record<string, JSONValue> = {}): Promise<unknown> =>
     JSON.parse(await tool(name).run(input))
-  return { ...fake, part, tool, call, evaluators, history, showReview, answerReview, applyEdits }
+  return { ...fake, part, tool, call, history, showReview, answerReview, applyEdits }
 }
 
 const APPLIED: TemporaryAppliedChange = {
@@ -349,7 +323,7 @@ const APPLIED: TemporaryAppliedChange = {
 
 describe('TEMPORARY dev chat instructions', () => {
   it('shouldTellTheAgentWhatStrandsDevChangedInItWhenAnOptimizationWasApplied', () => {
-    const { part } = setup(undefined, [APPLIED])
+    const { part } = setup([APPLIED])
 
     expect(part.instructions).toContain(
       '- 2026-11-17T14:52:03.000Z: /optimize applied 3 edits from run 20261117-144415-diffs of the experiment diffs. ' +
@@ -367,7 +341,7 @@ describe('TEMPORARY dev chat instructions', () => {
   })
 
   it('shouldTellTheAgentThatAutoAcceptMadeAChangeTheDeveloperWasNotShown', () => {
-    const { part } = setup(undefined, [{ ...APPLIED, auto: true }])
+    const { part } = setup([{ ...APPLIED, auto: true }])
 
     expect(part.instructions).toContain(
       '- 2026-11-17T14:52:03.000Z: auto-accept applied 3 edits from run 20261117-144415-diffs of the experiment diffs. ' +
@@ -377,7 +351,7 @@ describe('TEMPORARY dev chat instructions', () => {
   })
 
   it('shouldSayWhereApplyStoppedWhenAnEditCouldNotBeWritten', () => {
-    const { part } = setup(undefined, [{ ...APPLIED, edits: [], error: 'Could not change agent.ts: it changed.' }])
+    const { part } = setup([{ ...APPLIED, edits: [], error: 'Could not change agent.ts: it changed.' }])
 
     expect(part.instructions).toContain('/optimize applied 0 edits from run')
     expect(part.instructions).toContain('Apply stopped early: Could not change agent.ts: it changed.')
@@ -397,7 +371,6 @@ describe('TEMPORARY dev chat part', () => {
     expect(part.skills.map(({ name }) => name)).toEqual(['strands-evals', 'optimize', 'background-evals'])
     expect(part.tools.map(({ name, readOnly }) => [name, readOnly === true])).toEqual([
       ['strands_dev_status', true],
-      ['strands_dev_evaluators', false],
       ['strands_dev_session_converter', false],
       ['strands_dev_read_experiment', true],
       ['strands_dev_evaluation_results', true],
@@ -490,43 +463,6 @@ describe('TEMPORARY dev chat part', () => {
 
     expect(guide).toBe('Follow the session-converter skill below.')
     expect(history.converter).toHaveBeenCalledTimes(1)
-  })
-
-  it('shouldListTheUsableEvaluatorsAndReadTheCatalogOnceWhenItIsAskedTwice', async () => {
-    const { call, evaluators } = setup()
-
-    const first = await call('strands_dev_evaluators')
-    await call('strands_dev_evaluators')
-
-    expect(first).toEqual({
-      available: [
-        { name: 'OutputEvaluator', kind: 'rubric', description: 'Judges the answer', settings: [] },
-        {
-          name: 'ToolCalled',
-          kind: 'check',
-          description: 'Checks that a tool ran',
-          settings: [{ name: 'tool_name', type: 'string', required: true, description: 'The tool' }],
-        },
-      ],
-      unavailable: [
-        {
-          name: 'InteractionsEvaluator',
-          description: 'Judges interactions',
-          limit: 'A dev run records no interactions.',
-        },
-      ],
-    })
-    expect(evaluators).toHaveBeenCalledOnce()
-  })
-
-  it('shouldReadTheCatalogAgainWhenTheFirstReadFailed', async () => {
-    const evaluators = vi.fn().mockRejectedValueOnce(new Error('no venv')).mockResolvedValue(CATALOG)
-    const { tool } = setup(evaluators)
-
-    await expect(tool('strands_dev_evaluators').run({})).rejects.toThrow('no venv')
-    await tool('strands_dev_evaluators').run({})
-
-    expect(evaluators).toHaveBeenCalledTimes(2)
   })
 
   it('shouldReadSavedCasesAndEvaluatorsWithoutRunningAnything', async () => {

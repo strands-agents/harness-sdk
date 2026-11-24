@@ -12,11 +12,9 @@ import {
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import {
   generateTemporaryExperiment,
-  parseTemporaryGenerationEvent,
   temporaryGenerateArguments,
   temporaryGenerationError,
   temporaryGenerationFiles,
-  type TemporaryGenerationEvent,
 } from '../../../src/dev/temporary-evals-fork/experiment.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
@@ -32,12 +30,7 @@ const settings = (overrides: Partial<GenerationSettings> = {}): GenerationSettin
   context: '',
   cases: 3,
   topics: 0,
-  evaluators: [{ name: 'OutputEvaluator' }],
   model: '',
-  parallel: 4,
-  expectedTrajectory: false,
-  expectedInteractions: false,
-  metadata: false,
   ...overrides,
 })
 
@@ -73,12 +66,8 @@ const completeCases = (count: number) =>
     expected_output: `answer ${index}`,
   }))
 
-const generating = (cases: readonly object[], events: readonly object[] = []) =>
+const generating = (cases: readonly object[]) =>
   vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-    await writeFileAt(
-      flagValue(args, '--temporary-progress'),
-      events.map((event) => `${JSON.stringify(event)}\n`).join('')
-    )
     await writeFileAt(flagValue(args, '--output'), JSON.stringify({ cases }))
     return { code: 0, stdout: '', stderrTail: [] }
   })
@@ -96,7 +85,7 @@ describe('TEMPORARY experiment generation', () => {
           workspace,
           settings: settings({ model: 'openai.gpt-6.1-sol' }),
           context: 'diagnostic agent',
-          files: { draft: '/unused/draft', log: '/unused/log', progress: '/unused/progress' },
+          files: { draft: '/unused/draft', log: '/unused/log' },
         },
         { run, spawnGenerator: spawn }
       )
@@ -106,31 +95,20 @@ describe('TEMPORARY experiment generation', () => {
   })
 
   it('shouldRemoveOnlyAnExplicitBedrockProviderPrefixForTheEvalsCli', () => {
-    const args = temporaryGenerateArguments(
-      settings({ model: 'bedrock/openai.gpt-oss-120b-1:0' }),
-      'context',
-      { draft: 'd', log: 'l', progress: 'p' },
-      'python'
-    )
+    const args = temporaryGenerateArguments(settings({ model: 'bedrock/openai.gpt-oss-120b-1:0' }), 'context', {
+      draft: 'd',
+      log: 'l',
+    })
     expect(args[args.indexOf('--model') + 1]).toBe('openai.gpt-oss-120b-1:0')
   })
 
-  it('shouldPassEveryGeneratorSettingWhenTheyDifferFromTheDefaults', () => {
-    const files = { draft: '/d/refunds.json', log: '/d/refunds.log', progress: '/d/refunds.progress.jsonl' }
+  it('shouldPassOnlyTheFlagsOfUpstreamGenerateWhenTheSettingsSetThem', () => {
+    const files = { draft: '/d/refunds.json', log: '/d/refunds.log' }
 
     const args = temporaryGenerateArguments(
-      settings({
-        topics: 3,
-        evaluators: [{ name: 'TrajectoryEvaluator' }],
-        model: 'us.anthropic.claude-sonnet',
-        parallel: 2,
-        expectedTrajectory: true,
-        expectedInteractions: true,
-        metadata: true,
-      }),
+      settings({ topics: 3, model: 'us.anthropic.claude-sonnet' }),
       'An agent for refunds',
-      files,
-      'python'
+      files
     )
 
     expect(args).toEqual([
@@ -146,97 +124,43 @@ describe('TEMPORARY experiment generation', () => {
       '--num-topics',
       '3',
       '--evaluator',
-      'TrajectoryEvaluator',
-      '--temporary-agent-language',
-      'python',
+      'OutputEvaluator',
       '--model',
       'us.anthropic.claude-sonnet',
-      '--max-parallel-num-cases',
-      '2',
-      '--expected-trajectory',
-      '--expected-interactions',
-      '--metadata',
-      '--temporary-progress',
-      '/d/refunds.progress.jsonl',
       '--output',
       '/d/refunds.json',
     ])
   })
 
   it('shouldLeaveOptionalFlagsOutWhenTheDefaultsAreUsed', () => {
-    const args = temporaryGenerateArguments(settings(), 'context', { draft: 'd', log: 'l', progress: 'p' }, 'python')
+    const args = temporaryGenerateArguments(settings(), 'context', { draft: 'd', log: 'l' })
 
     expect(args).not.toContain('--num-topics')
     expect(args).not.toContain('--model')
-    expect(args).not.toContain('--no-expected-output')
-    expect(args).toContain('--max-parallel-num-cases')
+    expect(flagValue(args, '--evaluator')).toBe('OutputEvaluator')
   })
 
-  it('shouldPassEachEvaluatorWhenSeveralAreChosen', () => {
-    const evaluators = [
-      { name: 'OutputEvaluator' },
-      { name: 'HelpfulnessEvaluator', settings: {} },
-      { name: 'ToolCalled', settings: { tool_name: 'lookup_order' } },
-      { name: 'Contains', settings: { value: 'refund', case_sensitive: false, name: 'says refund' } },
-    ]
-
-    const args = temporaryGenerateArguments(
-      settings({ evaluators }),
-      'context',
-      { draft: 'd', log: 'l', progress: 'p' },
-      'typescript'
-    )
-
-    const values = args.flatMap((arg, index) => (args[index - 1] === '--evaluator' ? [arg] : []))
-    expect(values).toEqual([
-      'OutputEvaluator',
-      'HelpfulnessEvaluator',
-      JSON.stringify({ tool_name: 'lookup_order', evaluator_type: 'ToolCalled' }),
-      JSON.stringify({ value: 'refund', case_sensitive: false, name: 'says refund', evaluator_type: 'Contains' }),
-    ])
-    expect(flagValue(args, '--temporary-agent-language')).toBe('typescript')
-  })
-
-  it('shouldNameTheEvaluatorTypeFromTheChoiceWhenItsSettingsAlsoNameOne', () => {
-    const args = temporaryGenerateArguments(
-      settings({ evaluators: [{ name: 'ToolCalled', settings: { evaluator_type: 'Equals', tool_name: 'search' } }] }),
-      'context',
-      { draft: 'd', log: 'l', progress: 'p' },
-      'python'
-    )
-
-    expect(JSON.parse(flagValue(args, '--evaluator'))).toEqual({ evaluator_type: 'ToolCalled', tool_name: 'search' })
-  })
-
-  it('shouldPutTheDraftLogAndProgressNextToEachOtherWhenFilesAreNamed', () => {
+  it('shouldPutTheDraftAndTheLogNextToEachOtherWhenFilesAreNamed', () => {
     const files = temporaryGenerationFiles('/w/strands-dev', 'refunds', NOW)
 
     expect(files).toEqual({
       draft: join('/w/strands-dev', 'tmp', '.state', 'drafts', '20261112-153012-refunds.json'),
       log: join('/w/strands-dev', 'tmp', '.state', 'drafts', '20261112-153012-refunds.log'),
-      progress: join('/w/strands-dev', 'tmp', '.state', 'drafts', '20261112-153012-refunds.progress.jsonl'),
     })
   })
 
-  it('shouldReportEachProgressEventAndReturnTheDraftWhenGenerationSucceeds', async () => {
+  it('shouldSayThatItWritesCasesAndReturnTheDraftWhenGenerationSucceeds', async () => {
     const workspace = await workspaceFixture()
     const files = temporaryGenerationFiles(workspace.directory!, 'refunds', NOW)
-    const progress = [
-      { event: 'cases', total: 3 },
-      { event: 'case', ok: true, done: 1, failed: 0, total: 3 },
-      { event: 'case', ok: false, done: 1, failed: 1, total: 3, error: 'ThrottlingException: slow down' },
-      { event: 'case', ok: true, done: 2, failed: 1, total: 3 },
-      { event: 'rubric' },
-    ]
-    const events: TemporaryGenerationEvent[] = []
+    const onGenerating = vi.fn()
 
     const outcome = await generateTemporaryExperiment(
-      { workspace, settings: settings(), context: 'context', files, onEvent: (event) => events.push(event) },
-      { run: environmentRunner(), spawnGenerator: generating(completeCases(2), progress) }
+      { workspace, settings: settings(), context: 'context', files, onGenerating },
+      { run: environmentRunner(), spawnGenerator: generating(completeCases(2)) }
     )
 
     expect(outcome).toEqual({ path: files.draft, cases: 2, dropped: 0 })
-    expect(events).toEqual(progress)
+    expect(onGenerating).toHaveBeenCalledTimes(1)
   })
 
   it('shouldDeleteTheDraftAndSayWhyWhenEveryCaseFails', async () => {
@@ -290,14 +214,14 @@ describe('TEMPORARY experiment generation', () => {
     expect(existsSync(files.draft)).toBe(false)
   })
 
-  it('shouldGiveTheEvaluatorErrorOfTheForkAndANextStepWhenGenerateRejectsAnEvaluator', async () => {
+  it('shouldGiveTheFlagErrorAndANextStepWhenGenerateRejectsASetting', async () => {
     const workspace = await workspaceFixture()
     const rejected = vi.fn(async (_process: TemporaryEvalsProcess) => ({
       code: 2,
       stdout: '',
       stderrTail: [
         'usage: strands-evals generate [-h] ...',
-        'strands-evals generate: error: argument --evaluator: ToolCalled needs tool_name.',
+        "strands-evals generate: error: argument --num-cases: invalid int value: 'many'",
       ],
     }))
 
@@ -305,17 +229,16 @@ describe('TEMPORARY experiment generation', () => {
       generateTemporaryExperiment(
         {
           workspace,
-          settings: settings({ evaluators: [{ name: 'ToolCalled' }] }),
+          settings: settings(),
           context: 'context',
           files: temporaryGenerationFiles(workspace.directory!, 'refunds', NOW),
         },
         { run: environmentRunner(), spawnGenerator: rejected }
       )
     ).rejects.toThrow(
-      'strands-evals generate stopped with exit code 2: argument --evaluator: ToolCalled needs tool_name.\n' +
-        'Change the evaluator or the setting that the error names, then try again.'
+      "strands-evals generate stopped with exit code 2: argument --num-cases: invalid int value: 'many'\n" +
+        'Change the setting that the error names, then try again.'
     )
-    expect(flagValue(rejected.mock.calls[0]![0].args, '--temporary-agent-language')).toBe('python')
   })
 
   it('shouldNotStartTheGeneratorWhenItWasCancelledDuringSetup', async () => {
@@ -344,45 +267,19 @@ describe('TEMPORARY experiment generation', () => {
     )
   })
 
-  it('shouldNameTheRejectedEvaluatorAndPointToTheChatWhenGenerateRejectsItsFlags', () => {
+  it('shouldNameTheRejectedSettingAndPointToTheChatWhenGenerateRejectsItsFlags', () => {
     const error = new Error(
-      'strands-evals generate stopped with exit code 2: HelpfulnessEvaluator cannot score a TypeScript agent in ' +
-        'strands dev. It reads the agent trace, and strands dev records a trace only for Python agents.\n' +
-        'Change the evaluator or the setting that the error names, then try again.'
+      "strands-evals generate stopped with exit code 2: argument --num-cases: invalid int value: 'many'\n" +
+        'Change the setting that the error names, then try again.'
     )
 
     const failure = temporaryGenerationError(error, { settings: settings(), log: '/d/refunds.log' })
 
-    expect(failure.summary).toBe('HelpfulnessEvaluator cannot score a TypeScript agent in strands dev')
+    expect(failure.summary).toBe("invalid int value: 'many'")
     expect(failure.detail.split('\n')[0]).toBe(
-      'Press Enter to change the evaluators or their settings in the chat. The error below names the problem.'
+      'Change the setting that the error below names in the chat, then generate again.'
     )
     expect(failure.detail).toContain('strands-evals said: strands-evals generate stopped with exit code 2')
-  })
-
-  it('shouldDropTheArgumentPrefixFromTheSummaryWhenArgparseRejectsAnEvaluator', () => {
-    const error = new Error(
-      'strands-evals generate stopped with exit code 2: argument --evaluator: ToolCalled needs tool_name. ' +
-        'Pass it as JSON: {"evaluator_type": "ToolCalled", "tool_name": "..."}'
-    )
-
-    expect(temporaryGenerationError(error, { settings: settings(), log: 'l' }).summary).toBe(
-      'ToolCalled needs tool_name'
-    )
-  })
-
-  it.each<[string, TemporaryGenerationEvent | undefined]>([
-    ['{"event":"topics"}', { event: 'topics' }],
-    ['{"event":"cases","total":20}', { event: 'cases', total: 20 }],
-    [
-      '{"event":"case","ok":true,"done":4,"failed":1,"total":20}',
-      { event: 'case', ok: true, done: 4, failed: 1, total: 20 },
-    ],
-    ['{"event":"failed","error":"ValueError: no"}', { event: 'failed', error: 'ValueError: no' }],
-    ['{"event":"unknown"}', undefined],
-    ['not json', undefined],
-  ])('shouldReadTheProgressLine%s', (line, event) => {
-    expect(parseTemporaryGenerationEvent(line)).toEqual(event)
   })
 
   it.each([
@@ -396,7 +293,7 @@ describe('TEMPORARY experiment generation', () => {
       'Bedrock denied access to us.model',
       'choose a model that your AWS account can use',
     ],
-    ['ThrottlingException: Too many requests', 'Bedrock throttled the requests', 'lower Parallel'],
+    ['ThrottlingException: Too many requests', 'Bedrock throttled the requests', 'retry in a few minutes'],
     ['ValidationException: The provided model identifier is invalid.', 'Bedrock cannot use us.model', 'fix the Model'],
     ['EndpointConnectionError: Could not connect to the endpoint URL', 'Could not reach Bedrock', 'Check your network'],
     ['ZeroDivisionError: division by zero', 'ZeroDivisionError: division by zero', 'Read the log for the cause'],
@@ -406,9 +303,8 @@ describe('TEMPORARY experiment generation', () => {
       'choose a model that your AWS account can use',
     ],
   ])('shouldExplainTheFailureCleanlyWhenTheGeneratorReports%s', (reported, summary, next) => {
-    const failure = temporaryGenerationError(new Error('strands-evals generate stopped with exit code 3'), {
+    const failure = temporaryGenerationError(new Error(reported), {
       settings: settings({ model: reported.includes('inference-profile') ? '' : 'us.model' }),
-      reported,
       log: 'strands-dev/tmp/.state/drafts/refunds.log',
     })
 

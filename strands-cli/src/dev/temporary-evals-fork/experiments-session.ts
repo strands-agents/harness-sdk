@@ -21,7 +21,6 @@ import {
   isTemporaryExperimentName,
   temporaryGenerationError,
   temporaryGenerationFiles,
-  type TemporaryGenerationEvent,
   type TemporaryGenerationFiles,
 } from './experiment.js'
 import { temporaryExperimentFile, temporaryExperimentsFolder, watchTemporaryExperiments } from './layout.js'
@@ -37,14 +36,11 @@ import { announce, plural, absolutePath, evalsLinkText, type TemporaryHost } fro
 import { Store } from './jobs.js'
 
 const DEFAULT_CASES = 20
-const DEFAULT_PARALLEL = 4
 const NAME_STEM = 'experiment'
 
 const PHASE_LABELS: Record<GenerationPhase, string> = {
   preparing: 'preparing',
-  planning: 'planning topics',
   cases: 'writing cases',
-  rubric: 'writing the rubric',
   ready: 'ready',
   failed: 'stopped',
 }
@@ -53,25 +49,14 @@ interface Job {
   generation: Generation
   readonly files: TemporaryGenerationFiles
   readonly abort: AbortController
-  reported?: string
   cause?: string
   draft?: TemporaryExperimentDocument
 }
 
 export const temporaryGenerationJobs = ({ generations }: ExperimentsState): DevChatJob[] =>
-  generations.filter(isGenerating).map((generation) =>
-    generation.phase === 'cases'
-      ? {
-          id: generation.id,
-          label: generation.name,
-          done: generation.made + generation.failed,
-          total: generation.total,
-        }
-      : {
-          id: generation.id,
-          label: `${generation.name} ${PHASE_LABELS[generation.phase]}`,
-        }
-  )
+  generations
+    .filter(isGenerating)
+    .map((generation) => ({ id: generation.id, label: `${generation.name} ${PHASE_LABELS[generation.phase]}` }))
 
 export class TemporaryExperiments extends Store<ExperimentsState> {
   private readonly jobs = new Map<string, Job>()
@@ -200,13 +185,8 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
       context: '',
       cases: DEFAULT_CASES,
       topics: 0,
-      evaluators: [{ name: 'OutputEvaluator' }],
       // A model ID alone does not identify the chat provider or its credentials.
       model: '',
-      parallel: DEFAULT_PARALLEL,
-      expectedTrajectory: false,
-      expectedInteractions: false,
-      metadata: false,
     }
   }
 
@@ -286,29 +266,6 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
     this.publish()
   }
 
-  private changeFor(job: Job, event: TemporaryGenerationEvent): Partial<Generation> {
-    switch (event.event) {
-      case 'topics':
-        return { phase: 'planning', status: `Planning ${job.generation.settings.topics} topics` }
-      case 'cases':
-        return { phase: 'cases', total: event.total, status: 'Writing cases' }
-      case 'case':
-        if (event.error) job.reported = event.error
-        return {
-          phase: 'cases',
-          made: event.done,
-          failed: event.failed,
-          total: event.total,
-          ...(event.error ? { caseError: event.error } : {}),
-        }
-      case 'rubric':
-        return { phase: 'rubric', status: 'Writing the rubric' }
-      case 'failed':
-        job.reported = event.error
-        return {}
-    }
-  }
-
   private async draft(job: Job): Promise<boolean> {
     const { workspace, agent, dependencies } = this.host()
     const { settings } = job.generation
@@ -324,7 +281,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
           signal: job.abort.signal,
           background: true,
           onStatus: (status) => this.update(job, { status }),
-          onEvent: (event) => this.update(job, this.changeFor(job, event)),
+          onGenerating: () => this.update(job, { phase: 'cases', status: 'Writing cases' }),
         },
         dependencies
       )
@@ -347,12 +304,8 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
         this.discardDraft(job)
         return false
       }
-      job.cause = job.reported ?? errorMessage(error)
-      const failure = temporaryGenerationError(error, {
-        settings,
-        ...(job.reported ? { reported: job.reported } : {}),
-        log: job.generation.log,
-      })
+      job.cause = errorMessage(error)
+      const failure = temporaryGenerationError(error, { settings, log: job.generation.log })
       this.update(job, { phase: 'failed', error: failure, endedAt: Date.now() })
       return false
     }

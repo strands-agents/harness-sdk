@@ -22,26 +22,16 @@ export interface Experiment {
   readonly evaluators: readonly string[]
 }
 
-export interface EvaluatorChoice {
-  readonly name: string
-  readonly settings?: Readonly<Record<string, unknown>>
-}
-
 export interface GenerationSettings {
   readonly name: string
   readonly task: string
   readonly context: string
   readonly cases: number
   readonly topics: number
-  readonly evaluators: readonly EvaluatorChoice[]
   readonly model: string
-  readonly parallel: number
-  readonly expectedTrajectory: boolean
-  readonly expectedInteractions: boolean
-  readonly metadata: boolean
 }
 
-export type GenerationPhase = 'preparing' | 'planning' | 'cases' | 'rubric' | 'ready' | 'failed'
+export type GenerationPhase = 'preparing' | 'cases' | 'ready' | 'failed'
 
 export interface GenerationError {
   readonly summary: string
@@ -60,7 +50,6 @@ export interface Generation {
   readonly endedAt?: number
   readonly status: string
   readonly log: string
-  readonly caseError?: string
   readonly error?: GenerationError
 }
 

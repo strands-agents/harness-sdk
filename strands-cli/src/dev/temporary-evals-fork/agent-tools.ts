@@ -27,7 +27,6 @@ import type {
 import { uiTools } from './ui-tools.js'
 import { temporaryWorkflowSkills } from './workflow-skills.js'
 import { readTemporaryExperimentFile } from './experiment-files.js'
-import type { TemporaryEvaluator } from './evaluators.js'
 import type { TemporaryStore } from './jobs.js'
 import {
   BACKGROUND_COMMANDS,
@@ -56,11 +55,9 @@ import { temporaryEditsAwaitingAnswer, type TemporaryAppliedChange, type Tempora
 
 type Input = Readonly<Record<string, JSONValue>>
 type Sessions = () => TemporaryDevSessions
-type Evaluators = () => Promise<readonly TemporaryEvaluator[]>
 
 export interface TemporaryDevChatHost {
   readonly sessions: Sessions
-  readonly evaluators: Evaluators
   readonly history: TemporarySessionHistory
   /** Puts a run's waiting edits on the developer's screen. Says whether it had any to show. */
   readonly showReview?: (run: string) => boolean
@@ -427,25 +424,6 @@ const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevCh
   },
 })
 
-const evaluatorsTool = (evaluators: Evaluators): DevChatTool => ({
-  name: 'strands_dev_evaluators',
-  description:
-    'List the strands-evals evaluators that can score this agent, with what each one checks and its settings. ' +
-    'The first call can take a minute while strands dev prepares the evals environment.',
-  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-  run: async (): Promise<string> => {
-    const catalog = await evaluators()
-    return reply({
-      available: catalog
-        .filter(({ available }) => available)
-        .map(({ name, kind, description, settings }) => ({ name, kind, description, settings })),
-      unavailable: catalog
-        .filter(({ available }) => !available)
-        .map(({ name, description, limit }) => defined({ name, description, limit })),
-    })
-  },
-})
-
 const sessionConverterTool = (history: TemporarySessionHistory): DevChatTool => ({
   name: 'strands_dev_session_converter',
   description:
@@ -728,9 +706,9 @@ const backgroundTool = (sessions: Sessions): DevChatTool => ({
     '(--case NAME, repeatable, runs only those cases), optimize run takes the flags of the optimize skill ' +
     '(--tune, --no-tune-instructions, --objective, --pareto, --constraint, --max-iterations, ' +
     '--proposals-per-iteration, --runs-per-candidate, --n-finalists, --max-workers, --feasibility-threshold, ' +
-    '--agent-failure-score), and generate takes the flags of strands-evals generate (--task-description, ' +
-    '--context, --num-cases, --num-topics, --evaluator, --model, --expected-trajectory, and more) and saves ' +
-    'experiments/<experiment>/<experiment>.json. strands dev runs it in its prepared evals environment with ' +
+    '--agent-failure-score), and generate takes --task-description, --context, and --num-cases of ' +
+    'strands-evals generate and saves experiments/<experiment>/<experiment>.json. strands dev runs it in its ' +
+    'prepared evals environment with ' +
     'this agent, writes run.log and the records under strands-dev/experiments/<experiment>/, and continues ' +
     'a run that stopped when strands dev closed. Flags that strands dev sets itself come back as ignored.',
   inputSchema: {
@@ -1075,17 +1053,6 @@ const applyTool = (applyEdits: NonNullable<TemporaryDevChatHost['applyEdits']>):
   },
 })
 
-const once = (read: Evaluators): Evaluators => {
-  let catalog: Promise<readonly TemporaryEvaluator[]> | undefined
-  return () => {
-    catalog ??= read().catch((error: unknown) => {
-      catalog = undefined
-      throw error
-    })
-    return catalog
-  }
-}
-
 const CHANGE_LIMIT = 600
 
 const signed = (value: number): string => `${value >= 0 ? '+' : ''}${value.toFixed(2)}`
@@ -1131,7 +1098,6 @@ const changesSection = (changes: readonly TemporaryAppliedChange[]): string[] =>
 
 export const temporaryDevChatPart = ({
   sessions,
-  evaluators,
   history,
   showReview = (run): boolean => showOptimizeReview(sessions(), run),
   answerReview = (answer): Promise<AnsweredOptimizeReview> => answerOptimizeReview(sessions(), answer),
@@ -1141,7 +1107,6 @@ export const temporaryDevChatPart = ({
   skills: [STRANDS_EVALS_SKILL, STRANDS_EVALS_OPTIMIZE_SKILL, ...temporaryWorkflowSkills()],
   tools: [
     statusTool(sessions, history),
-    evaluatorsTool(once(evaluators)),
     sessionConverterTool(history),
     readExperimentTool(sessions),
     testResultsTool(sessions),

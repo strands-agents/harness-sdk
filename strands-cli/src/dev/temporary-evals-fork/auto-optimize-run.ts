@@ -5,7 +5,6 @@ import type { DevWorkspace } from '../workspace.js'
 import type { AutoOptimizeRun } from './auto-optimize.js'
 import { spawnAutoOptimizeWorker, type AutoOptimizeWorker } from './auto-optimize-worker.js'
 import { temporaryWorkspaceDirectory } from './evals-process.js'
-import type { TemporaryEvaluator } from './evaluators.js'
 import { readTemporaryExperimentFile } from './experiment-files.js'
 import { temporaryExperimentFile, temporaryStateFolder } from './layout.js'
 import type { TemporarySessionHistory } from './session-converter.js'
@@ -21,7 +20,6 @@ const TASK =
 export interface AutoOptimizeRunOptions {
   readonly workspace: DevWorkspace
   readonly history: Pick<TemporarySessionHistory, 'unattendedConverter'>
-  readonly evaluators: () => Promise<readonly TemporaryEvaluator[]>
   /** Starts an optimization of the saved experiment with the defaults of its plan. */
   readonly start: (experiment: string) => Promise<unknown>
   readonly worker?: AutoOptimizeWorker
@@ -58,7 +56,6 @@ export const autoOptimizeRun =
   ({
     workspace,
     history,
-    evaluators,
     start,
     worker = spawnAutoOptimizeWorker,
     now = (): Date => new Date(),
@@ -68,9 +65,7 @@ export const autoOptimizeRun =
     const experiment = freshName(directory, now())
     const log = autoOptimizeLog(directory, experiment)
     building(experiment, log)
-    const usable = (await evaluators()).filter(({ available }) => available).map(({ name }) => name)
-    if (usable.length === 0) throw new Error('no evaluator can score this agent')
-    const guide = await history.unattendedConverter({ name: experiment, evaluators: usable, fewestCases: FEWEST_CASES })
+    const guide = await history.unattendedConverter({ name: experiment, fewestCases: FEWEST_CASES })
     signal.throwIfAborted()
     const { code } = await worker({ workspace, prompt: `${TASK}\n\n${guide}`, log, signal })
     signal.throwIfAborted()

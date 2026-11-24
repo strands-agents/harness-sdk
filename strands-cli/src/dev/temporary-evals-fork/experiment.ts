@@ -4,12 +4,10 @@ import { mkdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
-import { isRecord } from '../../values.js'
 import type { GenerationError, GenerationSettings } from '../panels/model.js'
-import type { DevWorkspace, DevWorkspaceConfig } from '../workspace.js'
+import type { DevWorkspace } from '../workspace.js'
 import { temporaryDropIncompleteCases } from './experiment-files.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment, type TemporaryCommandRunner } from './environment.js'
-import { temporaryEvaluatorArguments } from './evaluators.js'
 import {
   spawnTemporaryEvals,
   temporaryEvalsEnvironment,
@@ -17,27 +15,11 @@ import {
   temporaryWorkspaceDirectory,
   type TemporaryEvalsSpawner,
 } from './evals-process.js'
-import { tailTemporaryLines } from './jobs.js'
 import { temporaryDraftsFolder, temporaryRunStamp } from './layout.js'
-
-export type TemporaryGenerationEvent =
-  | { readonly event: 'topics' }
-  | { readonly event: 'cases'; readonly total: number }
-  | {
-      readonly event: 'case'
-      readonly ok: boolean
-      readonly done: number
-      readonly failed: number
-      readonly total: number
-      readonly error?: string
-    }
-  | { readonly event: 'rubric' }
-  | { readonly event: 'failed'; readonly error: string }
 
 export interface TemporaryGenerationFiles {
   readonly draft: string
   readonly log: string
-  readonly progress: string
 }
 
 export interface TemporaryGenerationRequest {
@@ -48,7 +30,7 @@ export interface TemporaryGenerationRequest {
   readonly environment?: NodeJS.ProcessEnv
   readonly signal?: AbortSignal
   readonly background?: boolean
-  readonly onEvent?: (event: TemporaryGenerationEvent) => void
+  readonly onGenerating?: () => void
   readonly onStatus?: (line: string) => void
 }
 
@@ -64,6 +46,7 @@ export interface TemporaryExperimentDependencies {
 }
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
+const GENERATED_EVALUATOR = 'OutputEvaluator'
 const SUMMARY_LIMIT = 140
 
 export const isTemporaryExperimentName = (name: string): boolean => NAME.test(name)
@@ -74,14 +57,13 @@ export const temporaryGenerationFiles = (
   now: Date
 ): TemporaryGenerationFiles => {
   const stem = join(temporaryDraftsFolder(workspaceDirectory), `${temporaryRunStamp(now)}-${name}`)
-  return { draft: `${stem}.json`, log: `${stem}.log`, progress: `${stem}.progress.jsonl` }
+  return { draft: `${stem}.json`, log: `${stem}.log` }
 }
 
 export const temporaryGenerateArguments = (
   settings: GenerationSettings,
   context: string,
-  files: TemporaryGenerationFiles,
-  language: DevWorkspaceConfig['language']
+  files: TemporaryGenerationFiles
 ): string[] => [
   '-m',
   'strands_evals.cli',
@@ -93,58 +75,24 @@ export const temporaryGenerateArguments = (
   '--num-cases',
   String(settings.cases),
   ...(settings.topics > 0 ? ['--num-topics', String(settings.topics)] : []),
-  ...temporaryEvaluatorArguments(settings.evaluators),
-  '--temporary-agent-language',
-  language,
+  '--evaluator',
+  GENERATED_EVALUATOR,
   ...(settings.model.trim() ? ['--model', generatorModelId(settings.model)] : []),
-  '--max-parallel-num-cases',
-  String(settings.parallel),
-  ...(settings.expectedTrajectory ? ['--expected-trajectory'] : []),
-  ...(settings.expectedInteractions ? ['--expected-interactions'] : []),
-  ...(settings.metadata ? ['--metadata'] : []),
-  '--temporary-progress',
-  files.progress,
   '--output',
   files.draft,
 ]
 
-const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+const EXCEPTION_LINE = /\b\w*(?:Error|Exception)\b/u
 
-export const parseTemporaryGenerationEvent = (line: string): TemporaryGenerationEvent | undefined => {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(line)
-  } catch {
-    return undefined
-  }
-  if (!isRecord(parsed)) return undefined
-  const error = typeof parsed.error === 'string' ? parsed.error : undefined
-  switch (parsed.event) {
-    case 'topics':
-      return { event: 'topics' }
-    case 'cases':
-      return { event: 'cases', total: count(parsed.total) }
-    case 'case':
-      return {
-        event: 'case',
-        ok: parsed.ok === true,
-        done: count(parsed.done),
-        failed: count(parsed.failed),
-        total: count(parsed.total),
-        ...(error ? { error } : {}),
-      }
-    case 'rubric':
-      return { event: 'rubric' }
-    case 'failed':
-      return { event: 'failed', error: error ?? 'strands-evals generate stopped' }
-    default:
-      return undefined
-  }
-}
+const lastException = (lines: readonly string[]): string | undefined =>
+  [...lines]
+    .reverse()
+    .find((line) => EXCEPTION_LINE.test(line))
+    ?.trim()
 
 const generatorNextStep = (code: number): string =>
   code === 2
-    ? 'Change the evaluator or the setting that the error names, then try again.'
+    ? 'Change the setting that the error names, then try again.'
     : 'Check that your AWS credentials can call the generator model, then try again.'
 
 export const generateTemporaryExperiment = async (
@@ -153,7 +101,6 @@ export const generateTemporaryExperiment = async (
 ): Promise<TemporaryGenerationOutcome> => {
   const { workspace, settings, context, files, environment = process.env, signal } = request
   generatorModelId(settings.model) // Validate before installing dependencies or starting a paid job.
-  const onEvent = request.onEvent ?? ignoreProgress
   const directory = temporaryWorkspaceDirectory(workspace)
   const python = await prepareTemporaryOptimizerEnvironment(
     { workspaceDirectory: directory, projectRoot: workspace.root, language: workspace.config.language },
@@ -165,36 +112,28 @@ export const generateTemporaryExperiment = async (
   )
   signal?.throwIfAborted()
   await mkdir(dirname(files.draft), { recursive: true })
-  request.onStatus?.('Starting strands-evals generate')
-  const tail = tailTemporaryLines(files.progress, (line) => {
-    const event = parseTemporaryGenerationEvent(line)
-    if (event) onEvent(event)
+  request.onGenerating?.()
+  const exit = await (dependencies.spawnGenerator ?? spawnTemporaryEvals)({
+    command: python,
+    args: temporaryGenerateArguments(settings, context, files),
+    cwd: workspace.root,
+    env: temporaryEvalsEnvironment(python, environment),
+    ...(signal ? { signal } : {}),
+    ...(request.background ? { background: true } : {}),
+    log: files.log,
+    onLine: ignoreProgress,
   })
-  let exit
-  try {
-    exit = await (dependencies.spawnGenerator ?? spawnTemporaryEvals)({
-      command: python,
-      args: temporaryGenerateArguments(settings, context, files, workspace.config.language),
-      cwd: workspace.root,
-      env: temporaryEvalsEnvironment(python, environment),
-      ...(signal ? { signal } : {}),
-      ...(request.background ? { background: true } : {}),
-      log: files.log,
-      onLine: ignoreProgress,
-    })
-  } finally {
-    await tail.stop()
-  }
   if (exit.code !== 0)
     throw temporaryEvalsFailure('strands-evals generate', exit, environment, generatorNextStep(exit.code))
   if (!existsSync(files.draft)) throw new Error(`strands-evals generate finished without writing ${files.draft}.`)
   const { complete, dropped } = await temporaryDropIncompleteCases(files.draft)
   if (complete === 0) {
     await rm(files.draft, { force: true })
+    const cause = lastException(exit.stderrTail)
     throw new Error(
       dropped > 0
         ? 'strands-evals generate wrote no case with both an input and an expected answer.'
-        : 'strands-evals generate wrote no cases, because every case failed.'
+        : `strands-evals generate wrote no cases, because every case failed${cause ? `: ${cause}` : '.'}`
     )
   }
   return { path: files.draft, cases: complete, dropped }
@@ -212,7 +151,7 @@ const DIAGNOSES: readonly Diagnosis[] = [
   {
     pattern: REJECTED_FLAGS,
     summary: (_model, cause) => firstSentence(cause.replace(REJECTED_FLAGS, '')),
-    next: 'Press Enter to change the evaluators or their settings in the chat. The error below names the problem.',
+    next: 'Change the setting that the error below names in the chat, then generate again.',
   },
   {
     pattern:
@@ -228,7 +167,7 @@ const DIAGNOSES: readonly Diagnosis[] = [
   {
     pattern: /ThrottlingException|Too many requests|ModelThrottledException|Rate exceeded/iu,
     summary: () => 'Bedrock throttled the requests',
-    next: 'Press Enter and lower Parallel, or press r to retry in a few minutes.',
+    next: 'Press r to retry in a few minutes.',
   },
   {
     pattern:
@@ -255,9 +194,9 @@ const firstSentence = (text: string): string => firstLine(text.split('. ')[0] ??
 
 export const temporaryGenerationError = (
   error: unknown,
-  { settings, reported, log }: { settings: GenerationSettings; reported?: string; log: string }
+  { settings, log }: { settings: GenerationSettings; log: string }
 ): GenerationError => {
-  const cause = reported ?? errorMessage(error)
+  const cause = errorMessage(error)
   const diagnosis = DIAGNOSES.find(({ pattern }) => pattern.test(cause))
   const model = settings.model || REFUSED_MODEL.exec(cause)?.[1] || 'the default model'
   return {

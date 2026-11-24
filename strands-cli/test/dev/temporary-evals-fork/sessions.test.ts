@@ -2287,9 +2287,6 @@ describe('TEMPORARY dev sessions', () => {
         {
           worker,
           history: { unattendedConverter: async ({ name }) => `save it as ${name}` },
-          evaluators: async () => [
-            { name: 'OutputEvaluator', kind: 'judge', description: '', settings: [], available: true },
-          ],
           now: () => new Date(2026, 10, 23, 15, 2),
         }
       ).find(({ spec }) => spec.name === 'optimize')!

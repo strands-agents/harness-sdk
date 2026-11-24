@@ -7,21 +7,12 @@ import type {
   AutoOptimizeWorker,
   AutoOptimizeWorkerRequest,
 } from '../../../src/dev/temporary-evals-fork/auto-optimize-worker.js'
-import type { TemporaryEvaluator } from '../../../src/dev/temporary-evals-fork/evaluators.js'
 import type { UnattendedConversion } from '../../../src/dev/temporary-evals-fork/session-converter.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const NOW = new Date(2026, 10, 23, 15, 2)
 const NAME = 'history-20261123-1502'
-
-const evaluator = (name: string, available: boolean): TemporaryEvaluator => ({
-  name,
-  kind: 'judge',
-  description: '',
-  settings: [],
-  available,
-})
 
 const experimentWith = (cases: number): string =>
   JSON.stringify({
@@ -57,9 +48,7 @@ const setup = async (made: { cases?: number; code?: number } = { cases: 5 }) => 
     }
     return { code: made.code ?? 0 }
   })
-  const unattendedConverter = vi.fn(
-    async ({ name, evaluators }: UnattendedConversion) => `the skill: save it as ${name} with ${evaluators.join('+')}`
-  )
+  const unattendedConverter = vi.fn(async ({ name }: UnattendedConversion) => `the skill: save it as ${name}`)
   const start = vi.fn(async (_experiment: string) => {
     order.push('optimizer')
     return 'run-1'
@@ -72,7 +61,6 @@ const setup = async (made: { cases?: number; code?: number } = { cases: 5 }) => 
   const run = autoOptimizeRun({
     workspace,
     history: { unattendedConverter },
-    evaluators: async () => [evaluator('OutputEvaluator', true), evaluator('GoalSuccessRateEvaluator', false)],
     start,
     worker,
     now: () => NOW,
@@ -93,19 +81,15 @@ describe('what auto-optimize does in the background when it is due', () => {
     expect(start).toHaveBeenCalledExactlyOnceWith(NAME)
   })
 
-  it('shouldGiveTheAgentTheSkillForItsExperimentWithOnlyTheEvaluatorsTheOptimizerTakes', async () => {
+  it('shouldGiveTheAgentTheSkillForItsExperimentWhenItStarts', async () => {
     const { go, requests, unattendedConverter, root } = await setup()
 
     await go()
 
-    expect(unattendedConverter).toHaveBeenCalledExactlyOnceWith({
-      name: NAME,
-      evaluators: ['OutputEvaluator'],
-      fewestCases: 3,
-    })
+    expect(unattendedConverter).toHaveBeenCalledExactlyOnceWith({ name: NAME, fewestCases: 3 })
     expect(requests[0]!.prompt).toContain('strands dev runs you in the background')
     expect(requests[0]!.prompt).toContain('strands dev starts the optimization itself')
-    expect(requests[0]!.prompt.endsWith(`the skill: save it as ${NAME} with OutputEvaluator`)).toBe(true)
+    expect(requests[0]!.prompt.endsWith(`the skill: save it as ${NAME}`)).toBe(true)
     expect(requests[0]!.log).toBe(join(root, 'strands-dev', 'tmp', '.state', 'auto-optimize', `${NAME}.log`))
   })
 
@@ -150,34 +134,6 @@ describe('what auto-optimize does in the background when it is due', () => {
     const log = join(root, 'strands-dev', 'tmp', '.state', 'auto-optimize', `${NAME}.log`)
 
     await expect(go()).rejects.toThrow(`the agent that makes the experiment stopped with code 1 · see ${log}`)
-  })
-
-  it('shouldStartNoAgentWhenNoEvaluatorCanScoreTheAgent', async () => {
-    const root = await temporaryDirectory()
-    const worker = vi.fn<AutoOptimizeWorker>()
-    const run = autoOptimizeRun({
-      workspace: {
-        directory: join(root, 'strands-dev'),
-        root,
-        entrypoint: join(root, 'agent.ts'),
-        config: {
-          version: 1,
-          name: 'd',
-          language: 'typescript',
-          entrypoint: 'agent.ts',
-          origin: { kind: 'discovered' },
-        },
-      },
-      history: { unattendedConverter: async () => '' },
-      evaluators: async () => [evaluator('GoalSuccessRateEvaluator', false)],
-      start: async () => 'run-1',
-      worker,
-    })
-
-    await expect(
-      run({ signal: new AbortController().signal, building: vi.fn(), idle: async (): Promise<void> => undefined })
-    ).rejects.toThrow('no evaluator can score this agent')
-    expect(worker).not.toHaveBeenCalled()
   })
 
   it('shouldStartNoOptimizerWhenItWasStoppedWhileTheAgentWorked', async () => {

@@ -13,12 +13,7 @@ const SUGGESTED: GenerationSettings = {
   context: '',
   cases: 20,
   topics: 0,
-  evaluators: [{ name: 'OutputEvaluator' }],
   model: '',
-  parallel: 4,
-  expectedTrajectory: false,
-  expectedInteractions: false,
-  metadata: false,
 }
 
 describe('TEMPORARY background flags', () => {

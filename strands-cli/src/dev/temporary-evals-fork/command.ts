@@ -12,7 +12,6 @@ import type { TemporaryAgentFacts } from './agent-context.js'
 import { startTemporaryOptimizationWithDefaults, temporaryDevChatPart as temporaryAgentTools } from './agent-tools.js'
 import { AUTO_OPTIMIZE_JOB, autoOptimizeJobs, type AutoOptimizeRun } from './auto-optimize.js'
 import { autoOptimizeRun, type AutoOptimizeRunOptions } from './auto-optimize-run.js'
-import { readTemporaryEvaluators } from './evaluators.js'
 import { temporaryGenerationJobs } from './experiments-session.js'
 import type { TemporaryDevSettings } from './host.js'
 import { mergedJobsFeed, temporaryJobsFeed } from './jobs.js'
@@ -193,15 +192,12 @@ export const temporaryDevChatPart = (
   const target = targetWorkspace(workspace, project)
   return temporaryAgentTools({
     sessions: () => temporaryDevSessions({ workspace: target, agent }),
-    evaluators: () => readTemporaryEvaluators(target),
     history: temporarySessionHistory({ workspace: target, agent }),
   })
 }
 
 /** The parts of an automatic optimization that a test puts its own in place of. */
-export type TemporaryAutoOptimizeParts = Partial<
-  Pick<AutoOptimizeRunOptions, 'worker' | 'evaluators' | 'history' | 'now'>
->
+export type TemporaryAutoOptimizeParts = Partial<Pick<AutoOptimizeRunOptions, 'worker' | 'history' | 'now'>>
 
 export const temporaryDevCommands = (
   workspace: DevWorkspace,
@@ -221,7 +217,6 @@ export const temporaryDevCommands = (
   const auto = autoOptimizeRun({
     workspace: target,
     history: temporarySessionHistory({ workspace: target, agent }),
-    evaluators: () => readTemporaryEvaluators(target),
     start: (experiment) => startTemporaryOptimizationWithDefaults(sessions, experiment),
     ...autoOptimize,
   })

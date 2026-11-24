@@ -38,18 +38,21 @@ const installedSkill = async (): Promise<string> => {
   return folder
 }
 
-const workspaceFixture = async (): Promise<DevWorkspace> => {
+const workspaceFixture = async (language: DevWorkspace['config']['language'] = 'python'): Promise<DevWorkspace> => {
   const root = await temporaryDirectory()
   return {
     directory: join(root, 'strands-dev'),
     root,
     entrypoint: join(root, 'agent.py'),
-    config: { version: 1, name: 'desk', language: 'python', entrypoint: 'agent.py', origin: { kind: 'discovered' } },
+    config: { version: 1, name: 'desk', language, entrypoint: 'agent.py', origin: { kind: 'discovered' } },
   }
 }
 
-const setup = async (facts: TemporaryAgentFacts = { sessionId: CURRENT }) => {
-  const workspace = await workspaceFixture()
+const setup = async (
+  facts: TemporaryAgentFacts = { sessionId: CURRENT },
+  language: DevWorkspace['config']['language'] = 'python'
+) => {
+  const workspace = await workspaceFixture(language)
   const folder = await installedSkill()
   const asked: string[] = []
   const history = temporarySessionHistory({
@@ -92,7 +95,7 @@ describe('TEMPORARY session-converter skill', () => {
     expect(guide).toContain('Skip 20261117t101500z-current, which is this chat.')
     expect(guide).toContain(`"${PYTHON}" -m strands_evals.cli validate <file>`)
     expect(guide).toContain(join(workspace.directory!, 'experiments', '<name>', '<name>.json'))
-    expect(guide).toContain('call strands_dev_evaluators before you write "evaluators"')
+    expect(guide).not.toContain('strands dev runs this TypeScript agent')
     expect(guide).toContain("ask the skill's questions one at a time")
     expect(guide).toContain('wait for a yes')
     expect(guide).toContain('point to /experiment to review the cases and to run them')
@@ -102,16 +105,11 @@ describe('TEMPORARY session-converter skill', () => {
   it('shouldGiveAnAgentThatWorksOnItsOwnRulesThatAskNothingAndNameTheFileAndTheEvaluators', async () => {
     const { workspace, history } = await setup()
 
-    const guide = await history.unattendedConverter({
-      name: 'history-20261123-1502',
-      evaluators: ['OutputEvaluator', 'StartsWith'],
-      fewestCases: 3,
-    })
+    const guide = await history.unattendedConverter({ name: 'history-20261123-1502', fewestCases: 3 })
 
     expect(guide).toContain('You work for strands dev on your own')
     expect(guide).toContain('Questions: ask none.')
     expect(guide).toContain('do not wait for a yes')
-    expect(guide).toContain('write only these in "evaluators": OutputEvaluator, StartsWith.')
     expect(guide).toContain(
       `save the experiment as ${join(workspace.directory!, 'experiments', 'history-20261123-1502', 'history-20261123-1502.json')}`
     )
@@ -123,10 +121,22 @@ describe('TEMPORARY session-converter skill', () => {
     )
     expect(guide).not.toContain('Skip 20261117t101500z-current')
     // None of the rules for a chat with the developer are in it.
-    expect(guide).not.toContain('strands_dev_evaluators')
     expect(guide).not.toContain("ask the skill's questions one at a time")
     expect(guide).not.toContain('point to /experiment')
     expect(guide.endsWith('Follow [assets/segmenter.md](assets/segmenter.md).')).toBe(true)
+  })
+
+  it('shouldLimitTheEvaluatorsToThoseThatScoreTheAnswerWhenTheAgentIsTypeScript', async () => {
+    const { history } = await setup({ sessionId: CURRENT }, 'typescript')
+
+    const chat = await history.converter()
+    const unattended = await history.unattendedConverter({ name: 'history-20261123-1502', fewestCases: 3 })
+
+    const rule =
+      'Evaluators: strands dev runs this TypeScript agent in its own runner, which records the answer but no trace. ' +
+      'Use only evaluators that score the answer, such as OutputEvaluator.'
+    expect(chat).toContain(`${rule} When you leave out an evaluator that the skill suggests, tell the developer.`)
+    expect(unattended).toContain(`${rule} Replace any other that the skill suggests with the nearest of these.`)
   })
 })
 
