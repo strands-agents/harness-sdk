@@ -11,6 +11,8 @@ import sys
 import warnings
 from typing import TYPE_CHECKING, Any, Literal
 
+from typing_extensions import deprecated
+
 from ..agent.invocation_context import _create_auxiliary_invocation_context
 from ..hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
 from ..models._model_proxy import _count_request_tokens
@@ -139,30 +141,51 @@ class ContextManager(Plugin):
         """
         return self._archive_is_durable
 
-    def __getattr__(self, name: str) -> Any:
-        """Serve the pre-rename ``stash`` names, warning at the caller. Removed in v1.68.0.
+    if TYPE_CHECKING:
+        # Declared for type checkers, served at runtime from __getattr__ below. As real properties they
+        # would warn on construction: plugin discovery reads every class attribute off the instance.
 
-        Args:
-            name: Attribute being read.
-
-        Returns:
-            The value held under the current name.
-
-        Raises:
-            AttributeError: For any name other than the two pre-rename ones.
-        """
-        # Not properties: plugin discovery reads every class attribute, so a property here warns on
-        # construction, naming a spelling the caller never used.
-        current_name = _RENAMED_ATTRIBUTES.get(name)
-        if current_name is None:
-            raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
-        warnings.warn(
-            f"ContextManager.{name} is deprecated and will be removed in v1.68.0. "
-            f"Use ContextManager.{current_name} instead.",
-            DeprecationWarning,
-            stacklevel=2,
+        @property
+        @deprecated(
+            "ContextManager.stash is deprecated and will be removed in v1.68.0. Use ContextManager.archive instead."
         )
-        return getattr(self, current_name)
+        def stash(self) -> Archive | None:
+            """Deprecated name for :attr:`archive`. Removed in v1.68.0."""
+            ...
+
+        @property
+        @deprecated(
+            "ContextManager.stash_is_durable is deprecated and will be removed in v1.68.0. "
+            "Use ContextManager.archive_is_durable instead."
+        )
+        def stash_is_durable(self) -> bool:
+            """Deprecated name for :attr:`archive_is_durable`. Removed in v1.68.0."""
+            ...
+
+    else:
+
+        def __getattr__(self, name: str) -> Any:
+            """Serve the pre-rename ``stash`` names, warning at the caller. Removed in v1.68.0.
+
+            Args:
+                name: Attribute being read.
+
+            Returns:
+                The value held under the current name.
+
+            Raises:
+                AttributeError: For any name other than the two pre-rename ones.
+            """
+            current_name = _RENAMED_ATTRIBUTES.get(name)
+            if current_name is None:
+                raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+            warnings.warn(
+                f"ContextManager.{name} is deprecated and will be removed in v1.68.0. "
+                f"Use ContextManager.{current_name} instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return getattr(self, current_name)
 
     @staticmethod
     def from_strategy(

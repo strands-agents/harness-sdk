@@ -1,5 +1,7 @@
 """Tests for the ContextManager plugin."""
 
+import sys
+import textwrap
 import unittest.mock
 import warnings
 
@@ -659,19 +661,28 @@ class TestStrategyInit:
 
         assert strategy.received == {"archive": cm.archive}
 
-    def test_strategy_init_annotations_are_not_evaluated(self, mock_agent):
-        """Reading the keyword off the signature must not resolve a TYPE_CHECKING-only annotation."""
+    @pytest.mark.skipif(sys.version_info < (3, 14), reason="annotations are only deferred on 3.14+")
+    def test_strategy_init_with_unresolvable_annotations(self, mock_agent):
+        """Reading the keyword off the signature must not resolve a type-only annotation."""
+        # Built from source because below 3.14 an unresolvable annotation raises at definition time.
+        namespace = {}
+        exec(  # noqa: S102
+            textwrap.dedent(
+                """
+                class AnnotatedStrategy:
+                    name = "custom"
 
-        class AnnotatedStrategy:
-            name = "custom"
+                    def init(self, agent: OnlyForTypeChecking, archive: OnlyForTypeChecking = None) -> None:
+                        self.received = archive
 
-            def init(self, agent: "OnlyForTypeChecking", archive: "OnlyForTypeChecking | None" = None) -> None:  # noqa: F821
-                self.received = archive
+                    async def apply(self, context):
+                        return False
+                """
+            ),
+            namespace,
+        )
 
-            async def apply(self, context):
-                return False
-
-        strategy = AnnotatedStrategy()
+        strategy = namespace["AnnotatedStrategy"]()
         cm = ContextManager(strategies=[strategy])
         cm.init_agent(mock_agent)
 
