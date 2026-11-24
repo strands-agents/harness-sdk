@@ -175,7 +175,7 @@ def _default_resume_prompt(feedback: str | None) -> str:
 
 def _last_assistant_message(messages: Messages) -> Message | None:
     """Find the last assistant message, or None if the model never replied."""
-    # TODO: Remove this declaration when mypy keeps the element type through reversed().
+    # Declared because mypy 2.4 infers Any through reversed().
     # https://github.com/python/mypy/issues/22174
     message: Message
     for message in reversed(messages):

@@ -1063,7 +1063,7 @@ class BedrockModel(Model):
         Returns:
             Index of the last user message with text/image content, or None if not found
         """
-        # TODO: Remove these declarations when mypy keeps the element types through reversed().
+        # Declared because mypy 2.4 infers Any through reversed().
         # https://github.com/python/mypy/issues/22174
         idx: int
         msg: Message
