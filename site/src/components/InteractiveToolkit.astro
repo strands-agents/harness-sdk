@@ -1,5 +1,6 @@
 ---
 import arrow from '../assets/banner/arrow.svg?raw';
+import { DECIDER_DEFAULT_MODEL, DECIDER_RECORDED_EXAMPLE } from '../config/decider-landing';
 import { pathWithBase } from '../util/links';
 import InstallCommand from './InstallCommand.astro';
 import ToolkitTerminal from './ToolkitTerminal.astro';
@@ -10,6 +11,9 @@ import ToolkitTerminal from './ToolkitTerminal.astro';
 const kw = (text: string) => ({ text, color: 'var(--code-keyword)' });
 const str = (text: string) => ({ text, color: 'var(--code-string)' });
 const t = (text: string) => ({ text });
+const deciderChoiceArgument = `${DECIDER_RECORDED_EXAMPLE.choice.question}=${DECIDER_RECORDED_EXAMPLE.choice.criteria
+  .map(({ label }) => label)
+  .join(',')}`;
 
 interface CodeRow {
   lineNo: number;
@@ -139,22 +143,18 @@ const cards: ToolkitCard[] = [
     slug: '/decider',
     color: 'var(--card-accent-red)',
     roleLabel: 'Make fast decisions',
-    description:
-      'Route, classify, or score known outcomes with a small decision model that reports confidence.',
-    actionLabel: 'Explore the models',
-    actionAriaLabel: 'Explore the Strands Decider models',
+    description: 'Route, classify, and score with confidence.',
+    actionLabel: 'Explore Strands Decider',
+    actionAriaLabel: 'Explore Strands Decider',
     expanded: {
-      viewMoreHref: pathWithBase('/docs/labs/strands-decider/overview/'),
+      viewMoreHref: pathWithBase('/decider/'),
       code: {
         language: 'shell',
         rows: [
           { lineNo: 1, tokens: [t('strands-decider ask \\')] },
-          { lineNo: 2, tokens: [t('  StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 \\')] },
-          { lineNo: 3, tokens: [t('  --state '), str('"Help! My payouts have been failing for 3 days."'), t(' \\')] },
-          {
-            lineNo: 4,
-            tokens: [t('  --choice '), str('"Which team should handle this?=billing,technical,sales"')],
-          },
+          { lineNo: 2, tokens: [t(`  ${DECIDER_DEFAULT_MODEL} \\`)] },
+          { lineNo: 3, tokens: [t('  --state '), str(`"${DECIDER_RECORDED_EXAMPLE.state}"`), t(' \\')] },
+          { lineNo: 4, tokens: [t('  --choice '), str(`"${deciderChoiceArgument}"`)] },
         ],
       },
     },
