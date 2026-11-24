@@ -1,8 +1,5 @@
-import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-
-import { saveTemporaryRunRecord } from '../../../src/dev/temporary-evals-fork/background-runs.js'
 
 import { temporaryDevCommands } from '../../../src/dev/temporary-evals-fork/command.js'
 import { temporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
@@ -120,63 +117,20 @@ describe('TEMPORARY dev commands', () => {
     expect(commands.map(({ jobs }) => jobs?.snapshot())).toEqual([[], [], undefined])
   })
 
-  it('shouldShowATestThatFinishedWhileStrandsDevWasClosedWhenTheChatAttaches', async () => {
+  it('shouldResumeTheEvaluationsAndStartTheEvalsUiWhenTheChatAttachesAndKeepTheChatWorkingWhenItCannotStart', async () => {
     const { workspace, project } = await fixture()
-    const experiment = join(workspace.directory!, 'experiments/capital/capital.json')
-    const run = join(workspace.directory!, 'experiments/capital/runs/20261116-090000')
-    const report = join(run, 'report.json')
-    await mkdir(dirname(experiment), { recursive: true })
-    await mkdir(run, { recursive: true })
-    await writeFile(
-      experiment,
-      JSON.stringify({
-        cases: [{ name: 'c0', input: 'question' }],
-        evaluators: [{ evaluator_type: 'OutputEvaluator' }],
-      })
-    )
-    await writeFile(
-      report,
-      JSON.stringify({
-        overall_score: 1,
-        scores: [1],
-        test_passes: [true],
-        reasons: ['matches'],
-        cases: [{ name: 'c0', input: 'question', actual_output: 'Paris', evaluator: 'OutputEvaluator' }],
-        detailed_results: [[{ score: 1, test_pass: true, reason: 'matches', label: null }]],
-      })
-    )
-    await saveTemporaryRunRecord({
-      version: 1,
-      experiment,
-      cases: experiment,
-      rerun: false,
-      report,
-      log: join(run, 'run.log'),
-      store: join(run, '.state/cases'),
-      startedAt: Date.now(),
-    })
     const announced = vi.fn(() => ({ update: vi.fn() }))
+    const sessions = temporaryDevSessions({ workspace, agent: () => ({}) })
+    const resume = vi.spyOn(sessions.test, 'resume')
 
     temporaryDevCommands(workspace, project)[0]!.attach?.({ ...context, report: announced })
 
-    await vi.waitFor(() =>
-      expect(announced).toHaveBeenCalledWith(
-        'success',
-        `evaluate · capital · 1 of 1 case passed · report in ${join(workspace.directory!, 'experiments', 'capital', 'capital.report.json')}`
-      )
-    )
-  })
-
-  it('shouldStartTheEvalsUiWhenTheChatAttachesAndKeepTheChatWorkingWhenItCannotStart', async () => {
-    const { workspace, project } = await fixture()
-    const announced = vi.fn(() => ({ update: vi.fn() }))
-
-    temporaryDevCommands(workspace, project)[0]!.attach?.({ ...context, report: announced })
-
+    // What a resumed evaluation shows is checked on the session itself, in sessions.test.ts.
+    expect(resume).toHaveBeenCalledOnce()
     await vi.waitFor(() =>
       expect(announced).toHaveBeenCalledWith('error', expect.stringContaining('evals UI unavailable · '))
     )
-    expect(temporaryDevSessions({ workspace, agent: () => ({}) }).ui.snapshot().status).toBe('unavailable')
+    expect(sessions.ui.snapshot().status).toBe('unavailable')
   })
 
   it('shouldRunEachEvalsCommandAsItsSkillWithoutAPanel', async () => {
