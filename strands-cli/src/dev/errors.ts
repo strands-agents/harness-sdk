@@ -1,11 +1,4 @@
-import { sanitizeTerminalText } from '../terminal/text.js'
-
-export type DevOperation = 'open' | 'load' | 'install' | 'build' | 'reload'
-
-export interface DevFailureContext {
-  operation: DevOperation
-  path?: string | undefined
-}
+import { errorMessage, sanitizeTerminalText } from '../terminal/text.js'
 
 export class DevFailure extends Error {
   constructor(message: string, cause: unknown) {
@@ -49,9 +42,7 @@ const field = (error: unknown, name: string): string | undefined => {
 }
 
 const reason = (errors: unknown[]): string => {
-  const lines = errors.flatMap((error) =>
-    sanitizeTerminalText(error instanceof Error ? error.message : String(error)).split('\n')
-  )
+  const lines = errors.flatMap((error) => errorMessage(error).split('\n'))
   const diagnostic = lines.find((line) =>
     /^(?:SyntaxError|ModuleNotFoundError|ImportError|Error \[ERR_MODULE_NOT_FOUND\]|error TS\d+|npm (?:error|ERR!))/u.test(
       line.trim()
@@ -62,7 +53,10 @@ const reason = (errors: unknown[]): string => {
   return selected.trim().slice(0, 300)
 }
 
-export const devFailure = (error: unknown, context: DevFailureContext): DevFailure => {
+export const devFailure = (
+  error: unknown,
+  context: { operation: 'open' | 'load' | 'install' | 'build' | 'reload'; path?: string | undefined }
+): DevFailure => {
   if (error instanceof DevFailure && context.operation !== 'reload') return error
   const chain = causes(error)
   const code = chain.map((item) => field(item, 'code')).find(Boolean)

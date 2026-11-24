@@ -16,7 +16,7 @@ import type { CliConfigStore } from '../config/store.js'
 import type { StartupScreen } from '../ui/run.js'
 import type { WorkspaceAction } from '../agent/configuration.js'
 import type { PreparedDevRun } from '../dev/prepare.js'
-import type { DevChat } from '../dev/model-provider.js'
+import type { DevChat } from '../dev/project-setup.js'
 
 export { runPlainChat, runTurn, TurnRenderer } from './console.js'
 
@@ -295,7 +295,7 @@ async function runInteractive(
     const prepare =
       args.dev && !suppliedConfig
         ? async (screen: StartupScreen): Promise<boolean> => {
-            const { openDevRun } = await import('../dev/open.js')
+            const { openDevRun } = await import('../dev/prepare.js')
             const prepared = await openDevRun({
               args: requestedArgs,
               config,
@@ -339,7 +339,7 @@ async function runInteractive(
         const devWorkspace = args.dev?.workspace
         const openProjectChat = async <Chat extends DevChat>(create: () => Promise<Chat>): Promise<Chat> => {
           if (!devWorkspace) return create()
-          const { openDevChat } = await import('../dev/model-provider.js')
+          const { openDevChat } = await import('../dev/project-setup.js')
           return openDevChat(
             {
               workspace: devWorkspace,
@@ -454,7 +454,7 @@ async function runInteractive(
         ...(args.dev
           ? {
               onWorkspaceAction: async (_action: WorkspaceAction, screen: StartupScreen): Promise<void> => {
-                const { openWorkspaceConfiguration } = await import('../dev/manage.js')
+                const { openWorkspaceConfiguration } = await import('../dev/prepare.js')
                 await openWorkspaceConfiguration(args, screen)
               },
             }

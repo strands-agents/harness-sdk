@@ -1,14 +1,14 @@
 import { constants, type Stats } from 'node:fs'
-import { chmod, link, lstat, mkdir, mkdtemp, open, realpath, rm, rmdir, unlink } from 'node:fs/promises'
+import { link, lstat, mkdir, mkdtemp, open, realpath, rm, rmdir, unlink } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep, win32 } from 'node:path'
 
-import { containsPath, expandHome } from '../paths.js'
+import { canonicalParentPath, containsPath, expandHome } from '../paths.js'
 import { assertPortablePathComponent } from '../project/packaging.js'
 import { isRecord } from '../values.js'
-import { readWorkspaceBinding, restoreIgnoreLength, type BoundWorkspace } from './binding.js'
+import { editFile } from './file-edits.js'
 
-export type DevOrigin = { kind: 'cli' | 'discovered' | 'created'; source?: string; version?: string }
+type DevOrigin = { kind: 'cli' | 'discovered' | 'created'; source?: string; version?: string }
 
 export interface DevWorkspaceConfig {
   version: 1
@@ -27,9 +27,7 @@ export interface DevWorkspace {
 }
 
 const MAX_METADATA_BYTES = 64 * 1024
-const MAX_IGNORE_BYTES = 1024 * 1024
 const PRIVATE_DIRECTORIES = ['cases', 'state', 'reports']
-const IGNORED_PATHS = ['/.strands/state/', '/.strands/reports/']
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
 
 export const boundDevWorkspace = (workspace: BoundWorkspace): DevWorkspace => ({
@@ -88,7 +86,7 @@ async function isFolderOrMissing(path: string): Promise<boolean> {
 export async function readDevWorkspace(root: string): Promise<DevWorkspace | undefined> {
   const binding = await readWorkspaceBinding(root)
   if (binding) return boundDevWorkspace(binding)
-  const directory = await workspaceRoot(root, true)
+  const directory = await workspaceRoot(root)
   if (!directory) return undefined
   await validateMetadata(directory)
   const manifest = join(directory, '.strands', 'config.json')
@@ -96,7 +94,7 @@ export async function readDevWorkspace(root: string): Promise<DevWorkspace | und
   if (!details) return undefined
   let document: unknown
   try {
-    document = JSON.parse((await readRegularFile(manifest, details, MAX_METADATA_BYTES)).toString('utf8'))
+    document = JSON.parse((await readLegacyManifest(manifest, details)).toString('utf8'))
   } catch (error) {
     throw new Error(
       `Cannot read workspace configuration at ${manifest}: ${error instanceof Error ? error.message : String(error)}`,
@@ -121,74 +119,13 @@ export async function readDevWorkspace(root: string): Promise<DevWorkspace | und
   return resolveWorkspace(directory, config)
 }
 
-export async function initializeDevWorkspace(root: string, config: DevWorkspaceConfig): Promise<DevWorkspace> {
-  const requested = validateConfig(config, true)
-  const contents = `${JSON.stringify(requested, null, 2)}\n`
-  if (Buffer.byteLength(contents) > MAX_METADATA_BYTES) throw new Error('Workspace config exceeds 65536 bytes.')
-  const directory = await workspaceRoot(root)
-  const workspace = await resolveWorkspace(directory, requested)
-  const existing = await readDevWorkspace(directory)
-  if (existing) return matchingWorkspace(existing, workspace)
-  const ignore = await readIgnore(directory)
-  const created: string[] = []
-  const metadata = join(directory, '.strands')
-  const manifest = join(metadata, 'config.json')
-  let staging: string | undefined
-  let complete = false
-  try {
-    for (const path of [metadata, join(metadata, 'cases'), join(metadata, 'state')]) {
-      await privateDirectory(path, created)
-    }
-    staging = await mkdtemp(join(metadata, '.initialize-'))
-    const stagedManifest = join(staging, 'config.json')
-    const file = await open(stagedManifest, 'wx', 0o600)
-    try {
-      await file.writeFile(contents)
-      await file.sync()
-    } finally {
-      await file.close()
-    }
-    await validateMetadata(directory)
-    await resolveWorkspace(directory, requested)
-    try {
-      await link(stagedManifest, manifest)
-    } catch (error) {
-      if (!hasCode(error, 'EEXIST')) throw error
-      const winner = await readDevWorkspace(directory)
-      if (!winner) throw error
-      complete = true
-      return matchingWorkspace(winner, workspace)
-    }
-    try {
-      await appendIgnores(ignore)
-    } catch (error) {
-      if (sameFile(await lstat(stagedManifest), await optionalDetails(manifest))) await unlink(manifest)
-      throw error
-    }
-    complete = true
-    return workspace
-  } finally {
-    if (staging) await rm(staging, { recursive: true, force: true })
-    if (!complete) {
-      for (const path of created.reverse()) await rmdir(path).catch(() => undefined)
-    }
-  }
-}
-
-function matchingWorkspace(existing: DevWorkspace, requested: DevWorkspace): DevWorkspace {
-  if (existing.entrypoint !== requested.entrypoint) {
-    throw new Error(`Workspace ${existing.root} already selects a different entrypoint: ${existing.config.entrypoint}`)
-  }
-  return existing
-}
-
-function validateConfig(value: unknown, normalize = false): DevWorkspaceConfig {
+function validateConfig(value: unknown): DevWorkspaceConfig {
   if (!isRecord(value) || value.version !== 1) throw new Error('Workspace config version must be 1.')
   if (value.language !== 'typescript' && value.language !== 'python') {
     throw new Error('Workspace language must be typescript or python.')
   }
   const name = requiredText(value.name, 'name')
-  const entrypoint = relativePath(value.entrypoint, 'entrypoint', normalize)
+  const entrypoint = relativePath(value.entrypoint, 'entrypoint')
   const extension = value.language === 'python' ? /\.py$/u : /\.(?:ts|mts|js|mjs)$/u
   if (!extension.test(entrypoint)) throw new Error('Workspace entrypoint extension must match its language.')
   const originValue = value.origin
@@ -206,7 +143,7 @@ function validateConfig(value: unknown, normalize = false): DevWorkspaceConfig {
   if (value.harness !== undefined) {
     if (!isRecord(value.harness)) throw new Error('Workspace harness must contain path and version.')
     result.harness = {
-      path: relativePath(value.harness.path, 'harness.path', normalize),
+      path: relativePath(value.harness.path, 'harness.path'),
       version: requiredText(value.harness.version, 'harness.version'),
     }
   }
@@ -220,9 +157,8 @@ function requiredText(value: unknown, field: string): string {
   return value
 }
 
-function relativePath(value: unknown, field: string, normalize: boolean): string {
-  const text = requiredText(value, field)
-  const path = normalize ? text.replaceAll('\\', '/') : text
+function relativePath(value: unknown, field: string): string {
+  const path = requiredText(value, field)
   for (const component of path.split('/')) assertPortablePathComponent(component)
   if (path.split('/').some((component) => component.toLowerCase() === '.git')) {
     throw new Error(`Workspace ${field} cannot refer to .git.`)
@@ -251,14 +187,11 @@ async function containedPath(root: string, path: string, directory: boolean): Pr
   return physical
 }
 
-async function workspaceRoot(root: string): Promise<string>
-async function workspaceRoot(root: string, optional: true): Promise<string | undefined>
-async function workspaceRoot(root: string, optional = false): Promise<string | undefined> {
+async function workspaceRoot(root: string): Promise<string | undefined> {
   if (!root.trim()) throw new Error('Workspace root must not be empty.')
   const candidate = resolve(expandHome(root))
   const details = await optionalDetails(candidate)
-  if (!details && optional) return undefined
-  if (!details) throw new Error(`Workspace root does not exist: ${candidate}`)
+  if (!details) return undefined
   assertPathType(candidate, details, true)
   return realpath(candidate)
 }
@@ -284,7 +217,7 @@ function assertPathType(path: string, details: Stats, directory: boolean): void 
   }
 }
 
-async function optionalDetails(path: string): Promise<Stats | undefined> {
+export async function optionalDetails(path: string): Promise<Stats | undefined> {
   try {
     return await lstat(path)
   } catch (error) {
@@ -301,7 +234,7 @@ function sameFile(left: Stats, right: Stats | undefined): boolean {
   return right !== undefined && left.dev === right.dev && left.ino === right.ino
 }
 
-async function readRegularFile(path: string, expected: Stats, limit: number): Promise<Buffer> {
+async function readLegacyManifest(path: string, expected: Stats): Promise<Buffer> {
   assertPathType(path, expected, false)
   const file = await open(path, READ_FLAGS)
   try {
@@ -310,14 +243,260 @@ async function readRegularFile(path: string, expected: Stats, limit: number): Pr
     if (!sameFile(expected, details) || (await realpath(path)) !== path) {
       throw new Error(`Workspace file changed while opening it: ${path}`)
     }
-    return await readBounded(file, limit)
+    return await readBounded(file, MAX_METADATA_BYTES, `Workspace metadata exceeds ${MAX_METADATA_BYTES} bytes.`)
   } finally {
     await file.close()
   }
 }
 
-async function readBounded(file: FileHandle, limit: number): Promise<Buffer> {
-  if ((await file.stat()).size > limit) throw new Error(`Workspace metadata exceeds ${limit} bytes.`)
+export interface WorkspaceBinding {
+  version: 1
+  name: string
+  agent: { path: string; entrypoint: string; language: 'typescript' | 'python' }
+  origin: DevOrigin
+  harness?: { path: string; version: string }
+  cli?: Record<string, unknown>
+}
+
+interface BoundWorkspace {
+  directory: string
+  agentRoot: string
+  entrypoint: string
+  binding: WorkspaceBinding
+}
+
+const MAX_CONFIG_BYTES = 64 * 1024
+const MAX_IGNORE_BYTES = 1024 * 1024
+const WORKSPACE_IGNORES = ['/tmp/', '/.config', '/.strands/state/']
+
+export async function readWorkspaceBinding(directory: string): Promise<BoundWorkspace | undefined> {
+  const requested = resolve(expandHome(directory))
+  if (!(await optionalDetails(requested))) return undefined
+  const root = await canonicalParentPath(requested)
+  const path = join(root, '.config')
+  const details = await optionalDetails(path)
+  if (!details) return undefined
+  await assertDirectory(root)
+  await validateTmp(root)
+  const contents = await readRegularFile(path, details, MAX_CONFIG_BYTES)
+  return resolveBinding(root, parseBinding(contents.toString('utf8'), path))
+}
+
+function parseBinding(contents: string, path: string): WorkspaceBinding {
+  let document: unknown
+  try {
+    document = JSON.parse(contents)
+  } catch {
+    throw new Error(`Invalid JSON in workspace binding: ${path}`)
+  }
+  return validateBinding(document, path)
+}
+
+export async function bindWorkspace(directory: string, binding: WorkspaceBinding): Promise<BoundWorkspace> {
+  const root = await canonicalParentPath(directory)
+  const path = join(root, '.config')
+  const requested = validateBinding(binding, path)
+  await assertDirectory(root)
+  await validateTmp(root)
+  const resolved = await resolveBinding(root, requested)
+  const stored: WorkspaceBinding = {
+    ...requested,
+    agent: { ...requested.agent, path: storedAgentPath(root, resolved.agentRoot) },
+  }
+  const workspace = { ...resolved, binding: stored }
+  const contents = `${JSON.stringify(stored, null, 2)}\n`
+  if (Buffer.byteLength(contents) > MAX_CONFIG_BYTES) throw new Error(`Binding exceeds 65536 bytes: ${path}`)
+  const existing = await readWorkspaceBinding(root)
+  if (existing) return matchingBinding(existing, workspace)
+  const ignorePath = join(root, '.gitignore')
+  const ignoreDetails = await optionalDetails(ignorePath)
+  if (ignoreDetails && ignoreDetails.nlink !== 1) throw new Error(`Hard-linked metadata is not writable: ${ignorePath}`)
+  const ignore = ignoreDetails ? await readRegularFile(ignorePath, ignoreDetails, MAX_IGNORE_BYTES) : Buffer.alloc(0)
+  const tmp = join(root, 'tmp')
+  let createdTmp = false
+  let staging: string | undefined
+  let published: Stats | undefined
+  let complete = false
+  try {
+    try {
+      await mkdir(tmp, { mode: 0o700 })
+      createdTmp = true
+    } catch (error) {
+      if (!hasCode(error, 'EEXIST')) throw error
+    }
+    await assertDirectory(tmp)
+    staging = await mkdtemp(join(root, '.binding-'))
+    const stagedPath = join(staging, '.config')
+    const file = await open(stagedPath, 'wx', 0o600)
+    try {
+      await file.writeFile(contents)
+      await file.sync()
+    } finally {
+      await file.close()
+    }
+    await assertDirectory(root)
+    await validateTmp(root)
+    await resolveBinding(root, stored)
+    try {
+      await link(stagedPath, path)
+      published = await lstat(stagedPath)
+    } catch (error) {
+      if (!hasCode(error, 'EEXIST')) throw error
+      const concurrent = await readWorkspaceBinding(root)
+      if (!concurrent) throw new Error(`Workspace binding changed during creation: ${path}`, { cause: error })
+      return matchingBinding(concurrent, workspace)
+    }
+    const temporaryDirectory = await open(tmp, READ_FLAGS | constants.O_DIRECTORY)
+    try {
+      if (!sameFile(await temporaryDirectory.stat(), await lstat(tmp))) {
+        throw new Error(`Workspace temporary directory changed: ${tmp}`)
+      }
+      if (process.platform !== 'win32') await temporaryDirectory.chmod(0o700)
+    } finally {
+      await temporaryDirectory.close()
+    }
+    await appendIgnore(ignorePath, ignoreDetails, ignore)
+    complete = true
+    return workspace
+  } finally {
+    if (!complete && published && sameFile(published, await optionalDetails(path))) await unlink(path)
+    if (staging) await rm(staging, { recursive: true, force: true })
+    if (!complete && createdTmp && !(await optionalDetails(path))) await rmdir(tmp).catch(() => undefined)
+  }
+}
+
+const storedAgentPath = (directory: string, agentRoot: string): string =>
+  relative(directory, agentRoot).split(sep).join('/') || '.'
+
+function validateBinding(value: unknown, path: string): WorkspaceBinding {
+  const invalid = (message: string): never => {
+    throw new Error(`Invalid workspace binding ${path}: ${message}`)
+  }
+  const text = (input: unknown, field: string): string => {
+    if (typeof input !== 'string' || !input.trim() || /\p{Cc}/u.test(input)) {
+      return invalid(`${field} must be nonempty text without control characters.`)
+    }
+    return input
+  }
+  if (!isRecord(value)) return invalid('Expected an object.')
+  if (value.version !== 1) return invalid(`Unsupported version ${String(value.version)}; expected 1.`)
+  const name = text(value.name, 'name')
+  if (!isRecord(value.agent)) return invalid('agent must be an object.')
+  const agentPath = text(value.agent.path, 'agent.path')
+  const entrypoint = text(value.agent.entrypoint, 'agent.entrypoint')
+  if (isAbsolute(entrypoint) || win32.isAbsolute(entrypoint) || entrypoint.includes('\\')) {
+    return invalid('agent.entrypoint must be a relative path.')
+  }
+  const language = value.agent.language
+  if (language !== 'typescript' && language !== 'python') return invalid('agent.language must be typescript or python.')
+  if (!(language === 'python' ? /\.py$/u : /\.(?:ts|mts|js|mjs)$/u).test(entrypoint)) {
+    return invalid('agent.entrypoint extension must match agent.language.')
+  }
+  if (
+    !isRecord(value.origin) ||
+    typeof value.origin.kind !== 'string' ||
+    !['cli', 'discovered', 'created'].includes(value.origin.kind)
+  ) {
+    return invalid('origin.kind must be cli, discovered, or created.')
+  }
+  const origin: DevOrigin = { kind: value.origin.kind as DevOrigin['kind'] }
+  if (value.origin.source !== undefined) origin.source = text(value.origin.source, 'origin.source')
+  if (value.origin.version !== undefined) origin.version = text(value.origin.version, 'origin.version')
+  const result: WorkspaceBinding = { version: 1, name, agent: { path: agentPath, entrypoint, language }, origin }
+  if (value.harness !== undefined) {
+    if (!isRecord(value.harness)) return invalid('harness must be an object.')
+    result.harness = {
+      path: text(value.harness.path, 'harness.path'),
+      version: text(value.harness.version, 'harness.version'),
+    }
+  }
+  if (value.cli !== undefined) {
+    if (!isRecord(value.cli)) return invalid('cli must be an object.')
+    result.cli = value.cli
+  }
+  return result
+}
+
+export async function updateWorkspaceCli(directory: string, cli: Record<string, unknown>): Promise<void> {
+  const root = await canonicalParentPath(directory)
+  const path = join(root, '.config')
+  await editFile(root, path, (contents) => {
+    if (Buffer.byteLength(contents) > MAX_CONFIG_BYTES)
+      throw new Error(`File exceeds ${MAX_CONFIG_BYTES} bytes: ${path}`)
+    const { cli: _previous, ...binding } = parseBinding(contents, path)
+    const next = `${JSON.stringify(Object.keys(cli).length ? { ...binding, cli } : binding, null, 2)}\n`
+    if (Buffer.byteLength(next) > MAX_CONFIG_BYTES) throw new Error(`Binding exceeds 65536 bytes: ${path}`)
+    return next
+  })
+}
+
+async function resolveBinding(directory: string, binding: WorkspaceBinding): Promise<BoundWorkspace> {
+  const requestedRoot = resolve(directory, binding.agent.path)
+  const requestedEntrypoint = resolve(requestedRoot, binding.agent.entrypoint)
+  const tmp = join(directory, 'tmp')
+  if (containsPath(tmp, requestedRoot) || containsPath(tmp, requestedEntrypoint)) {
+    throw new Error(`Workspace binding cannot target temporary files under ${tmp}`)
+  }
+  if (!containsPath(requestedRoot, requestedEntrypoint))
+    throw new Error(`Agent entrypoint must stay inside ${requestedRoot}: ${requestedEntrypoint}`)
+  await assertDirectory(requestedRoot)
+  const agentRoot = await realpath(requestedRoot)
+  const entrypoint = resolve(agentRoot, binding.agent.entrypoint)
+  await assertDirectory(parse(entrypoint).dir)
+  assertType(entrypoint, await lstat(entrypoint), false)
+  if ((await realpath(entrypoint)) !== entrypoint) throw new Error(`Agent entrypoint path changed: ${entrypoint}`)
+  return { directory, agentRoot, entrypoint, binding }
+}
+
+function matchingBinding(existing: BoundWorkspace, requested: BoundWorkspace): BoundWorkspace {
+  if (
+    existing.agentRoot !== requested.agentRoot ||
+    existing.entrypoint !== requested.entrypoint ||
+    existing.binding.agent.language !== requested.binding.agent.language
+  ) {
+    throw new Error(`Workspace already binds a different agent: ${join(existing.directory, '.config')}`)
+  }
+  return existing
+}
+
+async function assertDirectory(path: string): Promise<void> {
+  let current = parse(path).root
+  for (const component of path.slice(current.length).split(sep).filter(Boolean)) {
+    current = join(current, component)
+    assertType(current, await lstat(current), true)
+  }
+}
+
+async function validateTmp(root: string): Promise<void> {
+  const path = join(root, 'tmp')
+  const details = await optionalDetails(path)
+  if (details) assertType(path, details, true)
+}
+
+function assertType(path: string, details: Stats, directory: boolean): void {
+  if (details.isSymbolicLink() || !(directory ? details.isDirectory() : details.isFile())) {
+    throw new Error(`Expected a regular ${directory ? 'directory' : 'file'}, not a symbolic link: ${path}`)
+  }
+}
+
+async function readRegularFile(path: string, expected: Stats, limit: number): Promise<Buffer> {
+  assertType(path, expected, false)
+  const file = await open(path, READ_FLAGS)
+  try {
+    assertType(path, await file.stat(), false)
+    if (!sameFile(expected, await file.stat()) || (await realpath(path)) !== path) {
+      throw new Error(`Workspace metadata changed: ${path}`)
+    }
+    return await readBounded(file, limit, fileTooLarge(limit, path))
+  } finally {
+    await file.close()
+  }
+}
+
+const fileTooLarge = (limit: number, path: string): string => `File exceeds ${limit} bytes: ${path}`
+
+export async function readBounded(file: FileHandle, limit: number, tooLarge: string): Promise<Buffer> {
+  if ((await file.stat()).size > limit) throw new Error(tooLarge)
   const buffer = Buffer.alloc(limit + 1)
   let length = 0
   while (length < buffer.length) {
@@ -325,78 +504,63 @@ async function readBounded(file: FileHandle, limit: number): Promise<Buffer> {
     if (!bytesRead) break
     length += bytesRead
   }
-  if (length > limit) throw new Error(`Workspace metadata exceeds ${limit} bytes.`)
+  if (length > limit) throw new Error(tooLarge)
   return buffer.subarray(0, length)
 }
 
-async function privateDirectory(path: string, created: string[]): Promise<void> {
+const restoreIgnoreLength = async (file: FileHandle, path: string, length: number): Promise<void> => {
+  if (process.platform !== 'win32') return file.truncate(length)
+  const writable = await open(path, constants.O_RDWR)
   try {
-    await mkdir(path, { mode: 0o700 })
-    created.push(path)
-  } catch (error) {
-    if (!hasCode(error, 'EEXIST')) throw error
+    if (!sameFile(await file.stat(), await writable.stat())) {
+      throw new Error(`The .gitignore changed during workspace initialization: ${path}`)
+    }
+    await writable.truncate(length)
+  } finally {
+    await writable.close()
   }
-  assertPathType(path, await lstat(path), true)
-  if ((await realpath(path)) !== path) throw new Error(`Workspace directory changed: ${path}`)
-  await chmod(path, 0o700)
 }
 
-interface IgnoreSnapshot {
-  path: string
-  contents: Buffer
-  details: Stats | undefined
-}
-
-async function readIgnore(root: string): Promise<IgnoreSnapshot> {
-  const path = join(root, '.gitignore')
-  const details = await optionalDetails(path)
-  if (details && details.nlink !== 1) throw new Error(`Refusing to modify a hard-linked .gitignore: ${path}`)
-  const contents = details ? await readRegularFile(path, details, MAX_IGNORE_BYTES) : Buffer.alloc(0)
-  return { path, contents, details }
-}
-
-async function appendIgnores(snapshot: IgnoreSnapshot): Promise<void> {
-  const text = snapshot.contents.toString('utf8')
-  const missing = IGNORED_PATHS.filter((path) => !text.split(/\r?\n/u).includes(path))
+async function appendIgnore(path: string, expected: Stats | undefined, contents: Buffer): Promise<void> {
+  const text = contents.toString('utf8')
+  const lines = new Set(text.split(/\r?\n/u))
+  const missing = WORKSPACE_IGNORES.filter((line) => !lines.has(line))
   if (!missing.length) return
   const newline = text.includes('\r\n') ? '\r\n' : '\n'
-  const separator = text && !text.endsWith('\n') ? newline : ''
-  const addition = Buffer.from(`${separator}${missing.join(newline)}${newline}`)
-  const creation = snapshot.details ? 0 : constants.O_CREAT | constants.O_EXCL
+  const addition = Buffer.from(`${text && !text.endsWith('\n') ? newline : ''}${missing.join(newline)}${newline}`)
+  const creation = expected ? 0 : constants.O_CREAT | constants.O_EXCL
   const file = await open(
-    snapshot.path,
+    path,
     constants.O_RDWR | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK | creation,
     0o644
   )
   let writing = false
   try {
     const details = await file.stat()
-    assertPathType(snapshot.path, details, false)
+    assertType(path, details, false)
     if (
       details.nlink !== 1 ||
-      (snapshot.details && !sameFile(snapshot.details, details)) ||
-      (await realpath(snapshot.path)) !== snapshot.path ||
-      !(await readBounded(file, MAX_IGNORE_BYTES)).equals(snapshot.contents)
+      (expected && !sameFile(expected, details)) ||
+      (await realpath(path)) !== path ||
+      !(await readBounded(file, MAX_IGNORE_BYTES, fileTooLarge(MAX_IGNORE_BYTES, path))).equals(contents)
     ) {
-      throw new Error(`The .gitignore changed during workspace initialization: ${snapshot.path}`)
+      throw new Error(`Workspace ignore file changed: ${path}`)
     }
     writing = true
     await file.writeFile(addition)
     await file.sync()
   } catch (error) {
     if (writing) {
-      const contents = await readBounded(file, MAX_IGNORE_BYTES + addition.length)
-      const appended = contents.subarray(snapshot.contents.length)
+      const limit = MAX_IGNORE_BYTES + addition.length
+      const current = await readBounded(file, limit, fileTooLarge(limit, path))
       if (
-        contents.subarray(0, snapshot.contents.length).equals(snapshot.contents) &&
-        addition.subarray(0, appended.length).equals(appended)
+        current.subarray(0, contents.length).equals(contents) &&
+        addition.subarray(0, current.length - contents.length).equals(current.subarray(contents.length))
       ) {
-        await restoreIgnoreLength(file, snapshot.path, snapshot.contents.length)
-        if (!snapshot.details && sameFile(await file.stat(), await optionalDetails(snapshot.path))) {
-          await unlink(snapshot.path)
-        }
+        await restoreIgnoreLength(file, path, contents.length)
       }
     }
+    if (!expected && sameFile(await file.stat(), await optionalDetails(path))) await unlink(path)
     throw error
   } finally {
     await file.close()

@@ -1,21 +1,37 @@
-import { constants } from 'node:fs'
-import { chmod, link, lstat, mkdir, open, readFile, readdir, realpath, symlink, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { join, sep } from 'node:path'
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  initializeDevWorkspace,
+  bindWorkspace,
   findDevWorkspace,
   readDevWorkspace,
+  readWorkspaceBinding,
+  updateWorkspaceCli,
   workspaceFolder,
   type DevWorkspaceConfig,
+  type WorkspaceBinding,
 } from '../../src/dev/workspace.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 
 vi.mock('node:fs/promises', async (original) => {
   const fs = await original<typeof import('node:fs/promises')>()
-  return { ...fs, link: vi.fn(fs.link), lstat: vi.fn(fs.lstat), open: vi.fn(fs.open) }
+  return { ...fs, lstat: vi.fn(fs.lstat) }
 })
 
 const actualFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
@@ -44,52 +60,31 @@ async function manifest(root: string, document: unknown) {
 
 afterEach(() => {
   vi.restoreAllMocks()
-  vi.mocked(link).mockReset()
   vi.mocked(lstat).mockReset()
-  vi.mocked(open).mockReset()
 })
 
-describe('initializeDevWorkspace', () => {
+describe('readDevWorkspace', () => {
+  it('should return undefined When only the manifest is missing', async () => {
+    const root = await project()
+
+    expect(await readDevWorkspace(root)).toBeUndefined()
+    expect(await readDevWorkspace(join(root, 'missing'))).toBeUndefined()
+  })
+
   it.each([
     ['typescript', 'agent.ts'],
     ['typescript', 'agent.mts'],
     ['typescript', 'agent.js'],
     ['typescript', 'agent.mjs'],
     ['python', 'agent.py'],
-  ] as const)('should persist portable metadata When the %s entrypoint is %s', async (language, entrypoint) => {
+  ] as const)('should read the stored metadata When the %s entrypoint is %s', async (language, entrypoint) => {
     const root = await project(entrypoint)
     await mkdir(join(root, 'vendor', 'harness'), { recursive: true })
-    const input = config({ language, entrypoint, harness: { path: 'vendor\\harness', version: '0.3.4' } })
+    const input = config({ language, entrypoint, harness: { path: 'vendor/harness', version: '0.3.4' } })
+    await manifest(root, input)
 
-    const workspace = await initializeDevWorkspace(root, input)
-
-    expect(workspace).toEqual({
-      root,
-      entrypoint: join(root, entrypoint),
-      config: { ...input, harness: { path: 'vendor/harness', version: '0.3.4' } },
-    })
-    expect(await readDevWorkspace(root)).toEqual(workspace)
-    expect(JSON.parse(await readFile(join(root, '.strands', 'config.json'), 'utf8'))).toEqual(workspace.config)
+    expect(await readDevWorkspace(root)).toEqual({ root, entrypoint: join(root, entrypoint), config: input })
     expect(await readFile(join(root, entrypoint), 'utf8')).toBe('unexecuted source')
-    expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('/.strands/state/\n/.strands/reports/\n')
-    expect(await readdir(join(root, '.strands'))).toEqual(['cases', 'config.json', 'state'])
-    if (process.platform !== 'win32') {
-      for (const path of ['.strands', '.strands/cases', '.strands/state']) {
-        expect((await lstat(join(root, path))).mode & 0o777).toBe(0o700)
-      }
-      expect((await lstat(join(root, '.strands/config.json'))).mode & 0o777).toBe(0o600)
-    }
-  })
-
-  it('should normalize nested entrypoints When the caller supplies portable Windows separators', async () => {
-    const root = await project()
-    await mkdir(join(root, 'src'))
-    await writeFile(join(root, 'src', 'agent.ts'), 'source')
-
-    expect(await initializeDevWorkspace(root, config({ entrypoint: 'src\\agent.ts' }))).toMatchObject({
-      entrypoint: join(root, 'src', 'agent.ts'),
-      config: { entrypoint: 'src/agent.ts' },
-    })
   })
 
   it.each(['cli', 'created', 'discovered'] as const)(
@@ -97,61 +92,18 @@ describe('initializeDevWorkspace', () => {
     async (kind) => {
       const root = await project()
       const origin = { kind, source: '@strands-agents/harness', version: '0.3.4' }
+      await manifest(root, config({ origin }))
 
-      expect((await initializeDevWorkspace(root, config({ origin }))).config.origin).toEqual(origin)
+      expect((await readDevWorkspace(root))?.config.origin).toEqual(origin)
     }
   )
 
-  it.each([
-    ['existing\n', 'existing\n/.strands/state/\n/.strands/reports/\n'],
-    ['existing', 'existing\n/.strands/state/\n/.strands/reports/\n'],
-    ['existing\r\n/.strands/state/\r\n', 'existing\r\n/.strands/state/\r\n/.strands/reports/\r\n'],
-    ['/.strands/reports/\n/.strands/state/\n', '/.strands/reports/\n/.strands/state/\n'],
-    ['custom-ü\n', 'custom-ü\n/.strands/state/\n/.strands/reports/\n'],
-  ])('should preserve existing ignore bytes When .gitignore contains %j', async (before, after) => {
-    const root = await project()
-    await writeFile(join(root, '.gitignore'), before)
-
-    await initializeDevWorkspace(root, config())
-
-    expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe(after)
-  })
-
-  it('should return the saved workspace without changes When its entrypoint matches', async () => {
-    const root = await project()
-    const saved = await initializeDevWorkspace(root, config())
-    const before = await readFile(join(root, '.strands', 'config.json'))
-    await writeFile(join(root, '.strands', 'cases', 'case.json'), 'existing case')
-    vi.mocked(link).mockClear()
-
-    const reopened = await initializeDevWorkspace(root, config({ name: 'Not saved', origin: { kind: 'cli' } }))
-
-    expect(reopened).toEqual(saved)
-    expect(await readFile(join(root, '.strands', 'config.json'))).toEqual(before)
-    expect(await readFile(join(root, '.strands', 'cases', 'case.json'), 'utf8')).toBe('existing case')
-    expect(link).not.toHaveBeenCalled()
-  })
-
-  it('should reject without overwriting metadata When another entrypoint is already selected', async () => {
-    const root = await project()
-    await initializeDevWorkspace(root, config())
-    await writeFile(join(root, 'other.ts'), 'other source')
-    const before = await readFile(join(root, '.strands', 'config.json'))
-
-    await expect(initializeDevWorkspace(root, config({ entrypoint: 'other.ts' }))).rejects.toThrow(
-      'different entrypoint'
-    )
-
-    expect(await readFile(join(root, '.strands', 'config.json'))).toEqual(before)
-    expect(await readFile(join(root, 'other.ts'), 'utf8')).toBe('other source')
-  })
-
-  it('should keep malformed metadata untouched When initialization encounters an existing manifest', async () => {
+  it('should keep malformed metadata untouched When the manifest is not JSON', async () => {
     const root = await project()
     await mkdir(join(root, '.strands'))
     await writeFile(join(root, '.strands', 'config.json'), '{unfinished')
 
-    await expect(initializeDevWorkspace(root, config())).rejects.toThrow()
+    await expect(readDevWorkspace(root)).rejects.toThrow()
 
     expect(await readFile(join(root, '.strands', 'config.json'), 'utf8')).toBe('{unfinished')
     expect(await readdir(root)).toEqual(['.strands', 'agent.ts'])
@@ -168,18 +120,16 @@ describe('initializeDevWorkspace', () => {
     ['origin', { origin: null }],
     ['origin kind', { origin: { kind: 'other' } }],
     ['origin kind array', { origin: { kind: ['cli'] } }],
-    ['oversized name', { name: 'x'.repeat(65536) }],
     ['origin source', { origin: { kind: 'cli', source: false } }],
     ['origin version', { origin: { kind: 'cli', version: '' } }],
     ['harness', { harness: [] }],
     ['harness version', { harness: { path: 'vendor', version: 1 } }],
     ['harness path', { harness: { path: '../vendor', version: '1' } }],
-  ])('should reject before making changes When %s is invalid', async (_field, overrides) => {
+  ])('should reject malformed metadata When %s is invalid', async (_field, overrides) => {
     const root = await project()
+    await manifest(root, { ...config(), ...overrides })
 
-    await expect(initializeDevWorkspace(root, { ...config(), ...overrides } as DevWorkspaceConfig)).rejects.toThrow()
-
-    expect(await readdir(root)).toEqual(['agent.ts'])
+    await expect(readDevWorkspace(root)).rejects.toThrow()
   })
 
   it.each([
@@ -194,10 +144,9 @@ describe('initializeDevWorkspace', () => {
     'missing.ts',
   ])('should reject unsafe or absent entrypoints When the path is %j', async (entrypoint) => {
     const root = await project()
+    await manifest(root, config({ entrypoint }))
 
-    await expect(initializeDevWorkspace(root, config({ entrypoint }))).rejects.toThrow()
-
-    expect(await readdir(root)).toEqual(['agent.ts'])
+    await expect(readDevWorkspace(root)).rejects.toThrow()
   })
 
   it.each(['entrypoint', 'parent', 'harness'] as const)(
@@ -205,21 +154,21 @@ describe('initializeDevWorkspace', () => {
     async (kind) => {
       const root = await project()
       const outside = await project()
-      let input: DevWorkspaceConfig
       if (kind === 'entrypoint') {
         await symlink(join(outside, 'agent.ts'), join(root, 'linked.ts'), 'file')
-        input = config({ entrypoint: 'linked.ts' })
+        await manifest(root, config({ entrypoint: 'linked.ts' }))
       } else {
         await symlink(outside, join(root, 'linked'), 'dir')
-        input =
+        await manifest(
+          root,
           kind === 'parent'
             ? config({ entrypoint: 'linked/agent.ts' })
             : config({ harness: { path: 'linked', version: '1' } })
+        )
       }
 
-      await expect(initializeDevWorkspace(root, input)).rejects.toThrow('symbolic link')
+      await expect(readDevWorkspace(root)).rejects.toThrow('symbolic link')
 
-      await expect(lstat(join(root, '.strands'))).rejects.toMatchObject({ code: 'ENOENT' })
       expect(await readdir(outside)).toEqual(['agent.ts'])
     }
   )
@@ -227,200 +176,26 @@ describe('initializeDevWorkspace', () => {
   it('should reject internal symlinks When their target is still inside the root', async () => {
     const root = await project()
     await symlink(join(root, 'agent.ts'), join(root, 'linked.ts'), 'file')
+    await manifest(root, config({ entrypoint: 'linked.ts' }))
 
-    await expect(initializeDevWorkspace(root, config({ entrypoint: 'linked.ts' }))).rejects.toThrow('symbolic link')
+    await expect(readDevWorkspace(root)).rejects.toThrow('symbolic link')
   })
 
-  it.each(['.strands', '.strands/cases', '.strands/state', '.strands/reports', '.strands/config.json', '.gitignore'])(
+  it.each(['.strands', '.strands/cases', '.strands/state', '.strands/reports', '.strands/config.json'])(
     'should reject dangerous metadata links When %s is a symlink',
     async (path) => {
       const root = await project()
       const outside = await project()
-      const file = path.endsWith('json') || path === '.gitignore'
+      const file = path.endsWith('json')
       if (path.startsWith('.strands/')) await mkdir(join(root, '.strands'))
       await symlink(file ? join(outside, 'agent.ts') : outside, join(root, path), file ? 'file' : 'dir')
 
-      await expect(initializeDevWorkspace(root, config())).rejects.toThrow('symbolic link')
+      await expect(readDevWorkspace(root)).rejects.toThrow('symbolic link')
 
       expect(await readFile(join(outside, 'agent.ts'), 'utf8')).toBe('unexecuted source')
       expect(await readdir(outside)).toEqual(['agent.ts'])
     }
   )
-
-  it('should reject hard-linked ignore files When changes would affect another path', async () => {
-    const root = await project()
-    await actualFs.link(join(root, 'agent.ts'), join(root, '.gitignore'))
-
-    await expect(initializeDevWorkspace(root, config())).rejects.toThrow('hard-linked')
-
-    expect(await readFile(join(root, 'agent.ts'), 'utf8')).toBe('unexecuted source')
-    await expect(lstat(join(root, '.strands'))).rejects.toMatchObject({ code: 'ENOENT' })
-  })
-
-  it('should make preexisting metadata directories private When they are reused', async () => {
-    const root = await project()
-    for (const path of ['.strands', '.strands/cases', '.strands/state']) {
-      await mkdir(join(root, path))
-      await chmod(join(root, path), 0o755)
-    }
-
-    await initializeDevWorkspace(root, config())
-
-    if (process.platform !== 'win32') expect((await lstat(join(root, '.strands/state'))).mode & 0o777).toBe(0o700)
-  })
-
-  it('should remove staging and leave no manifest When a staged write fails after partial output', async () => {
-    const root = await project()
-    vi.mocked(open).mockImplementationOnce(async (...args) => {
-      const file = await actualFs.open(...args)
-      const write = file.writeFile.bind(file)
-      vi.spyOn(file, 'writeFile').mockImplementationOnce(async () => {
-        await write('{partial')
-        throw new Error('disk full')
-      })
-      return file
-    })
-
-    await expect(initializeDevWorkspace(root, config())).rejects.toThrow('disk full')
-
-    expect(await readdir(root)).toEqual(['agent.ts'])
-  })
-
-  it('should leave source and ignores unchanged When publishing the staged manifest fails', async () => {
-    const root = await project()
-    await writeFile(join(root, '.gitignore'), 'custom')
-    vi.mocked(link).mockRejectedValueOnce(new Error('publish denied'))
-
-    await expect(initializeDevWorkspace(root, config())).rejects.toThrow('publish denied')
-
-    expect(await readdir(root)).toEqual(['.gitignore', 'agent.ts'])
-    expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('custom')
-    expect(await readFile(join(root, 'agent.ts'), 'utf8')).toBe('unexecuted source')
-  })
-
-  it.each([false, true])(
-    'should roll back its manifest and ignore append When writing ignores fails with existing=%s',
-    async (existing) => {
-      const root = await project()
-      if (existing) await writeFile(join(root, '.gitignore'), 'custom-ü')
-      vi.mocked(open).mockImplementation(async (...args) => {
-        const file = await actualFs.open(...args)
-        if (String(args[0]).endsWith('.gitignore') && typeof args[1] === 'number' && args[1] & constants.O_RDWR) {
-          const write = file.writeFile.bind(file)
-          vi.spyOn(file, 'writeFile').mockImplementationOnce(async (contents) => {
-            await write(String(contents).slice(0, 8))
-            throw new Error('append failed')
-          })
-        }
-        return file
-      })
-
-      await expect(initializeDevWorkspace(root, config())).rejects.toThrow('append failed')
-
-      expect(await readdir(root)).toEqual(existing ? ['.gitignore', 'agent.ts'] : ['agent.ts'])
-      if (existing) expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('custom-ü')
-    }
-  )
-
-  it('shouldRollBackTheIgnoreAppendWhenTheAppendHandleCannotTruncateAsOnWindows', async () => {
-    const root = await project()
-    await writeFile(join(root, '.gitignore'), 'custom')
-    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
-    vi.mocked(open).mockImplementation(async (...args) => {
-      const file = await actualFs.open(...args)
-      if (String(args[0]).endsWith('.gitignore') && typeof args[1] === 'number' && args[1] & constants.O_APPEND) {
-        const write = file.writeFile.bind(file)
-        vi.spyOn(file, 'writeFile').mockImplementationOnce(async (contents) => {
-          await write(String(contents).slice(0, 8))
-          throw new Error('append failed')
-        })
-        vi.spyOn(file, 'truncate').mockRejectedValue(
-          Object.assign(new Error('EPERM: operation not permitted, ftruncate'), { code: 'EPERM' })
-        )
-      }
-      return file
-    })
-
-    await expect(initializeDevWorkspace(root, config())).rejects.toThrow('append failed')
-
-    expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('custom')
-  })
-
-  it.each([false, true])('should preserve raw ignore bytes When appending fails=%s', async (fails) => {
-    const root = await project()
-    const contents = Buffer.from([0xff, 0x80, 0x0a])
-    await writeFile(join(root, '.gitignore'), contents)
-    if (fails) {
-      vi.mocked(open).mockImplementation(async (...args) => {
-        const file = await actualFs.open(...args)
-        if (String(args[0]).endsWith('.gitignore') && typeof args[1] === 'number' && args[1] & constants.O_RDWR) {
-          const write = file.writeFile.bind(file)
-          vi.spyOn(file, 'writeFile').mockImplementationOnce(async (addition) => {
-            await write(Buffer.from(String(addition)).subarray(0, 7))
-            throw new Error('partial append')
-          })
-        }
-        return file
-      })
-      await expect(initializeDevWorkspace(root, config())).rejects.toThrow('partial append')
-    } else {
-      await initializeDevWorkspace(root, config())
-    }
-
-    const expected = fails ? contents : Buffer.concat([contents, Buffer.from('/.strands/state/\n/.strands/reports/\n')])
-    expect(await readFile(join(root, '.gitignore'))).toEqual(expected)
-  })
-
-  it('should preserve concurrent ignore edits When initialization detects changed contents', async () => {
-    const root = await project()
-    await writeFile(join(root, '.gitignore'), 'before\n')
-    vi.mocked(link).mockImplementationOnce(async (source, destination) => {
-      await actualFs.link(source, destination)
-      await writeFile(join(root, '.gitignore'), 'concurrent edit\n')
-    })
-
-    await expect(initializeDevWorkspace(root, config())).rejects.toThrow('changed during workspace initialization')
-
-    expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe('concurrent edit\n')
-    await expect(lstat(join(root, '.strands/config.json'))).rejects.toMatchObject({ code: 'ENOENT' })
-  })
-
-  it('should not overwrite a conflicting concurrent manifest When its entrypoint differs', async () => {
-    const root = await project()
-    await writeFile(join(root, 'other.ts'), 'other')
-    const winner = config({ entrypoint: 'other.ts' })
-    vi.mocked(link).mockImplementationOnce(async (_source, destination) => {
-      await writeFile(destination, JSON.stringify(winner), { flag: 'wx' })
-      throw Object.assign(new Error('already exists'), { code: 'EEXIST' })
-    })
-
-    await expect(initializeDevWorkspace(root, config())).rejects.toThrow('different entrypoint')
-
-    expect(JSON.parse(await readFile(join(root, '.strands/config.json'), 'utf8'))).toEqual(winner)
-    expect(await readdir(join(root, '.strands'))).toEqual(['cases', 'config.json', 'state'])
-  })
-
-  it('should not overwrite a competing manifest When another initializer wins publication', async () => {
-    const root = await project()
-    const winner = config({ name: 'Concurrent winner' })
-    vi.mocked(link).mockImplementationOnce(async (_source, destination) => {
-      await writeFile(destination, JSON.stringify(winner), { flag: 'wx' })
-      throw Object.assign(new Error('already exists'), { code: 'EEXIST' })
-    })
-
-    expect((await initializeDevWorkspace(root, config())).config).toEqual(winner)
-    expect(JSON.parse(await readFile(join(root, '.strands/config.json'), 'utf8'))).toEqual(winner)
-    expect(await readdir(join(root, '.strands'))).toEqual(['cases', 'config.json', 'state'])
-  })
-})
-
-describe('readDevWorkspace', () => {
-  it('should return undefined When only the manifest is missing', async () => {
-    const root = await project()
-
-    expect(await readDevWorkspace(root)).toBeUndefined()
-    expect(await readDevWorkspace(join(root, 'missing'))).toBeUndefined()
-  })
 
   it.each([null, [], {}, { version: 2 }, { agent: 'agent.ts' }, { model: 'example', tools: [] }])(
     'shouldIgnoreUnrelatedProjectConfigWhenTheDocumentIs%j',
@@ -434,17 +209,6 @@ describe('readDevWorkspace', () => {
       expect(await readFile(path)).toEqual(before)
     }
   )
-
-  it.each([
-    config({ version: 2 } as unknown as Partial<DevWorkspaceConfig>),
-    config({ name: '' }),
-    config({ entrypoint: '../agent.ts' }),
-  ])('should reject malformed metadata When the document is %j', async (document) => {
-    const root = await project()
-    await manifest(root, document)
-
-    await expect(readDevWorkspace(root)).rejects.toThrow()
-  })
 
   it('should reject nonportable stored paths When a manifest contains native separators', async () => {
     const root = await project()
@@ -473,14 +237,30 @@ describe('readDevWorkspace', () => {
     }
   )
 
-  it('should reject symbolic root directories When opening or initializing a workspace', async () => {
+  it('should reject symbolic root directories When opening a workspace', async () => {
     const parent = await temporaryDirectory()
     const root = await project()
     const path = join(parent, 'linked')
     await symlink(root, path, 'dir')
 
     await expect(readDevWorkspace(path)).rejects.toThrow('symbolic link')
-    await expect(initializeDevWorkspace(path, config())).rejects.toThrow('symbolic link')
+  })
+
+  it('shouldReportTheLegacyConfigPathWhenAGenuineWorkspaceVersionIsUnsupported', async () => {
+    const root = await project()
+    await mkdir(join(root, '.strands'))
+    const path = join(root, '.strands/config.json')
+    const original = JSON.stringify({
+      version: 2,
+      name: 'Old workspace',
+      language: 'typescript',
+      entrypoint: 'agent.ts',
+      origin: { kind: 'cli' },
+    })
+    await writeFile(path, original)
+
+    await expect(readDevWorkspace(root)).rejects.toThrow(path)
+    expect(await readFile(path, 'utf8')).toBe(original)
   })
 
   it('should report missing entrypoints When an existing workspace loses its source', async () => {
@@ -582,5 +362,490 @@ describe('workspaceFolder', () => {
     await manifest(root, config())
 
     expect(await workspaceFolder(root)).toBe(root)
+  })
+})
+
+describe('workspace binding file', () => {
+  let sandbox: string
+  let directory: string
+  let agentRoot: string
+  let binding: WorkspaceBinding
+
+  beforeEach(async () => {
+    sandbox = await temporaryDirectory()
+    directory = join(sandbox, 'workspace')
+    agentRoot = join(directory, 'agent')
+    await mkdir(agentRoot, { recursive: true })
+    await writeFile(join(agentRoot, 'agent.ts'), 'export const agent = {}\n')
+    binding = {
+      version: 1,
+      name: 'My agent',
+      agent: { path: 'agent', entrypoint: 'agent.ts', language: 'typescript' },
+      origin: { kind: 'created' },
+    }
+  })
+
+  async function store(document: unknown): Promise<void> {
+    await writeFile(join(directory, '.config'), JSON.stringify(document))
+  }
+
+  async function expectUnbound(): Promise<void> {
+    expect(await readdir(directory)).toEqual(['agent'])
+    expect(await readFile(join(agentRoot, 'agent.ts'), 'utf8')).toBe('export const agent = {}\n')
+  }
+
+  describe('workspace bindings', () => {
+    it('returns undefined without creating metadata when no binding exists', async () => {
+      expect(await readWorkspaceBinding(directory)).toBeUndefined()
+      expect(await readWorkspaceBinding(join(sandbox, 'missing'))).toBeUndefined()
+      await expectUnbound()
+      expect(await readdir(sandbox)).toEqual(['workspace'])
+    })
+
+    it('binds an internal project with a private temporary directory and stable schema', async () => {
+      binding.origin = { kind: 'cli', source: 'selected-agent', version: '1.2.3' }
+      binding.harness = { path: '../harness', version: '2.3.4' }
+      const result = await bindWorkspace(directory, binding)
+      expect(result).toEqual({ directory, agentRoot, entrypoint: join(agentRoot, 'agent.ts'), binding })
+      expect(await readWorkspaceBinding(directory)).toEqual(result)
+      expect(JSON.parse(await readFile(join(directory, '.config'), 'utf8'))).toEqual(binding)
+      if (process.platform !== 'win32') {
+        expect((await stat(join(directory, '.config'))).mode & 0o777).toBe(0o600)
+        expect((await stat(join(directory, 'tmp'))).mode & 0o777).toBe(0o700)
+      }
+      expect(await readFile(join(directory, '.gitignore'), 'utf8')).toBe('/tmp/\n/.config\n/.strands/state/\n')
+      expect(await readdir(directory)).toEqual(['.config', '.gitignore', 'agent', 'tmp'])
+      expect(await readdir(agentRoot)).toEqual(['agent.ts'])
+    })
+
+    it.each(['../external', 'absolute'])('binds an external project through %s without moving it', async (path) => {
+      const external = join(sandbox, 'external')
+      await mkdir(external)
+      await writeFile(join(external, 'agent.py'), 'agent = object()\n')
+      binding.agent = { path: path === 'absolute' ? external : path, entrypoint: 'agent.py', language: 'python' }
+      binding.origin = { kind: 'discovered', source: external }
+      const result = await bindWorkspace(directory, binding)
+      expect(result.agentRoot).toBe(external)
+      expect(result.entrypoint).toBe(join(external, 'agent.py'))
+      expect(await readWorkspaceBinding(directory)).toEqual(result)
+      expect(await readdir(external)).toEqual(['agent.py'])
+      expect(await readFile(join(external, 'agent.py'), 'utf8')).toBe('agent = object()\n')
+    })
+
+    it.each([
+      ['the agent folder inside the workspace', () => agentRoot, 'agent.ts', 'agent'],
+      ['an agent folder next to the workspace', () => join(sandbox, 'external'), 'agent.ts', '../external'],
+      ['the workspace folder itself', () => directory, 'agent/agent.ts', '.'],
+    ])(
+      'shouldStoreTheAgentPathRelativeToTheWorkspaceWhenTheCallerGivesAnAbsolutePathTo%s',
+      async (_case, target, entrypoint, stored) => {
+        await mkdir(join(sandbox, 'external'))
+        await writeFile(join(sandbox, 'external', 'agent.ts'), 'export const agent = {}\n')
+        binding.agent = { ...binding.agent, path: target(), entrypoint }
+
+        const bound = await bindWorkspace(directory, binding)
+
+        expect(JSON.parse(await readFile(join(directory, '.config'), 'utf8')).agent.path).toBe(stored)
+        expect(bound.agentRoot).toBe(target())
+        expect(await readWorkspaceBinding(directory)).toEqual(bound)
+      }
+    )
+
+    it('shouldOpenTheBindingWhenTheWorkspaceMovesWithItsAgent', async () => {
+      await bindWorkspace(directory, { ...binding, agent: { ...binding.agent, path: agentRoot } })
+      const moved = join(sandbox, 'moved')
+
+      await rename(directory, moved)
+
+      expect(await readWorkspaceBinding(moved)).toMatchObject({
+        directory: moved,
+        agentRoot: join(moved, 'agent'),
+        entrypoint: join(moved, 'agent', 'agent.ts'),
+      })
+    })
+
+    it('shouldOpenAnOldBindingWhenItStoresAnAbsoluteAgentPath', async () => {
+      await store({ ...binding, agent: { ...binding.agent, path: agentRoot } })
+
+      expect(await readWorkspaceBinding(directory)).toMatchObject({
+        agentRoot,
+        entrypoint: join(agentRoot, 'agent.ts'),
+      })
+    })
+
+    it.runIf(process.platform === 'win32')(
+      'shouldBindTheAgentFolderAsItIsOnDiskWhenThePathUsesOtherLetterCase',
+      async () => {
+        const external = join(sandbox, 'external')
+        await mkdir(external)
+        await writeFile(join(external, 'agent.py'), 'agent = object()\n')
+        binding.agent = { path: external.toUpperCase(), entrypoint: 'agent.py', language: 'python' }
+
+        const bound = await bindWorkspace(directory, binding)
+
+        expect(bound.agentRoot).toBe(external)
+        expect(bound.entrypoint).toBe(join(external, 'agent.py'))
+        expect(await readWorkspaceBinding(directory)).toEqual(bound)
+      }
+    )
+
+    it.each(['ts', 'mts', 'js', 'mjs'])(
+      'accepts supported TypeScript project entrypoints ending in %s',
+      async (extension) => {
+        binding.agent.entrypoint = `nested/main.${extension}`
+        await mkdir(join(agentRoot, 'nested'))
+        await writeFile(join(agentRoot, binding.agent.entrypoint), 'export const agent = {}')
+        expect((await bindWorkspace(directory, binding)).entrypoint).toBe(join(agentRoot, binding.agent.entrypoint))
+      }
+    )
+
+    it('allows the workspace itself to be the project root while keeping tmp off limits', async () => {
+      binding.agent.path = '.'
+      binding.agent.entrypoint = 'agent/agent.ts'
+      expect((await bindWorkspace(directory, binding)).agentRoot).toBe(directory)
+    })
+
+    it('reads existing metadata without creating tmp or gitignore', async () => {
+      await store(binding)
+      expect((await readWorkspaceBinding(directory))?.binding).toEqual(binding)
+      expect(await readdir(directory)).toEqual(['.config', 'agent'])
+    })
+
+    it('requires an existing workspace root', async () => {
+      const missing = join(sandbox, 'missing')
+      await expect(bindWorkspace(missing, binding)).rejects.toThrow(missing)
+      expect(await readdir(sandbox)).toEqual(['workspace'])
+    })
+
+    it.each([
+      ['logs/', 'logs/\n/tmp/\n/.config\n/.strands/state/\n'],
+      ['logs/\n', 'logs/\n/tmp/\n/.config\n/.strands/state/\n'],
+      ['logs/\r\n', 'logs/\r\n/tmp/\r\n/.config\r\n/.strands/state/\r\n'],
+      ['/tmp/\nlogs/\n', '/tmp/\nlogs/\n/.config\n/.strands/state/\n'],
+      ['/tmp/\n/.config\n/.strands/state/\n', '/tmp/\n/.config\n/.strands/state/\n'],
+    ])('preserves ignore contents %j and appends only when needed', async (contents, expected) => {
+      await writeFile(join(directory, '.gitignore'), contents)
+      await bindWorkspace(directory, binding)
+      expect(await readFile(join(directory, '.gitignore'), 'utf8')).toBe(expected)
+      await bindWorkspace(directory, binding)
+      expect(await readFile(join(directory, '.gitignore'), 'utf8')).toBe(expected)
+    })
+
+    it('keeps existing temporary files and makes the temporary directory private', async () => {
+      await mkdir(join(directory, 'tmp'))
+      await chmod(join(directory, 'tmp'), 0o755)
+      await writeFile(join(directory, 'tmp', 'keep'), 'kept')
+      await bindWorkspace(directory, binding)
+      expect(await readFile(join(directory, 'tmp', 'keep'), 'utf8')).toBe('kept')
+      if (process.platform !== 'win32') expect((await stat(join(directory, 'tmp'))).mode & 0o777).toBe(0o700)
+    })
+
+    it.skipIf(process.platform === 'win32')(
+      'shouldBindWithoutChangingTheTemporaryFolderModeWhenThePlatformIsWindows',
+      async () => {
+        await mkdir(join(directory, 'tmp'))
+        await chmod(join(directory, 'tmp'), 0o755)
+        vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+
+        const bound = await bindWorkspace(directory, binding)
+
+        expect(bound.entrypoint).toBe(join(agentRoot, 'agent.ts'))
+        expect((await stat(join(directory, 'tmp'))).mode & 0o777).toBe(0o755)
+      }
+    )
+
+    it('returns the existing binding unchanged when the resolved target matches', async () => {
+      await store(binding)
+      const before = await readFile(join(directory, '.config'))
+      const requested = { ...binding, name: 'Other name', agent: { ...binding.agent, path: agentRoot } }
+      expect((await bindWorkspace(directory, requested)).binding).toEqual(binding)
+      expect(await readFile(join(directory, '.config'))).toEqual(before)
+      expect(await readdir(directory)).toEqual(['.config', 'agent'])
+    })
+
+    it('refuses to replace an existing binding for a different target', async () => {
+      await store(binding)
+      await writeFile(join(agentRoot, 'other.ts'), 'other')
+      const before = await readFile(join(directory, '.config'))
+      binding.agent.entrypoint = 'other.ts'
+      await expect(bindWorkspace(directory, binding)).rejects.toThrow('already binds a different agent')
+      expect(await readFile(join(directory, '.config'))).toEqual(before)
+      expect(await readdir(directory)).toEqual(['.config', 'agent'])
+    })
+
+    it('publishes only one complete binding when different targets race', async () => {
+      await writeFile(join(agentRoot, 'other.ts'), 'other')
+      const other = { ...binding, agent: { ...binding.agent, entrypoint: 'other.ts' } }
+      const results = await Promise.allSettled([bindWorkspace(directory, binding), bindWorkspace(directory, other)])
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+      expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+      const winner = results.find((result) => result.status === 'fulfilled')
+      expect(await readWorkspaceBinding(directory)).toEqual(winner?.status === 'fulfilled' ? winner.value : undefined)
+      expect(await readdir(directory)).toEqual(['.config', '.gitignore', 'agent', 'tmp'])
+    })
+
+    it('handles simultaneous requests for the same target without overwriting the winner', async () => {
+      const results = await Promise.all([bindWorkspace(directory, binding), bindWorkspace(directory, binding)])
+      expect(results[0]).toEqual(results[1])
+      expect(await readFile(join(directory, '.gitignore'), 'utf8')).toBe('/tmp/\n/.config\n/.strands/state/\n')
+      expect(await readdir(directory)).toEqual(['.config', '.gitignore', 'agent', 'tmp'])
+    })
+  })
+
+  describe('invalid workspace bindings', () => {
+    it.each([
+      ['null', null],
+      ['array', []],
+      ['unknown version', { version: 2 }],
+      ['missing version', {}],
+      ['empty name', { name: ' ' }],
+      ['control in name', { name: 'agent\nname' }],
+      ['missing agent', { agent: undefined }],
+      ['empty agent path', { agent: { path: '', entrypoint: 'agent.ts', language: 'typescript' } }],
+      ['unknown language', { agent: { path: 'agent', entrypoint: 'agent.ts', language: 'ruby' } }],
+      ['wrong extension', { agent: { path: 'agent', entrypoint: 'agent.py', language: 'typescript' } }],
+      ['unsupported extension', { agent: { path: 'agent', entrypoint: 'agent.txt', language: 'typescript' } }],
+      ['absolute entrypoint', { agent: { path: 'agent', entrypoint: '/agent.ts', language: 'typescript' } }],
+      ['windows entrypoint', { agent: { path: 'agent', entrypoint: 'C:\\agent.ts', language: 'typescript' } }],
+      ['unknown origin', { origin: { kind: 'other' } }],
+      ['non-string origin', { origin: { kind: ['cli'] } }],
+      ['invalid source', { origin: { kind: 'cli', source: 42 } }],
+      ['invalid origin version', { origin: { kind: 'cli', version: '' } }],
+      ['invalid harness', { harness: null }],
+      ['missing harness version', { harness: { path: '../harness' } }],
+    ])('rejects %s in reads and writes without changing files', async (_name, patch) => {
+      const invalid = patch === null || Array.isArray(patch) ? patch : { ...binding, ...patch }
+      if (_name === 'missing version' && invalid && !Array.isArray(invalid))
+        delete (invalid as { version?: number }).version
+      await expect(bindWorkspace(directory, invalid as WorkspaceBinding)).rejects.toThrow(join(directory, '.config'))
+      await expectUnbound()
+      await store(invalid)
+      const before = await readFile(join(directory, '.config'))
+      await expect(readWorkspaceBinding(directory)).rejects.toThrow(join(directory, '.config'))
+      await expect(bindWorkspace(directory, binding)).rejects.toThrow(join(directory, '.config'))
+      expect(await readFile(join(directory, '.config'))).toEqual(before)
+      expect(await readdir(directory)).toEqual(['.config', 'agent'])
+    })
+
+    it('reports unsupported versions explicitly', async () => {
+      await store({ ...binding, version: 9 })
+      await expect(readWorkspaceBinding(directory)).rejects.toThrow('Unsupported version 9; expected 1')
+    })
+
+    it.each(['{', '', 'x'.repeat(65537)])('rejects malformed or oversized config text of length %i', async (text) => {
+      await writeFile(join(directory, '.config'), text)
+      await expect(readWorkspaceBinding(directory)).rejects.toThrow(join(directory, '.config'))
+      await expect(bindWorkspace(directory, binding)).rejects.toThrow(join(directory, '.config'))
+      expect(await readFile(join(directory, '.config'), 'utf8')).toBe(text)
+      expect(await readdir(directory)).toEqual(['.config', 'agent'])
+    })
+
+    it('rejects oversized bindings before creating files', async () => {
+      binding.name = 'x'.repeat(65536)
+      await expect(bindWorkspace(directory, binding)).rejects.toThrow('65536 bytes')
+      await expectUnbound()
+    })
+
+    it.each(['../outside.ts', 'missing.ts', 'folder.ts'])(
+      'rejects an escaping, missing or non-file entrypoint %s',
+      async (entrypoint) => {
+        await writeFile(join(directory, 'outside.ts'), 'outside')
+        await mkdir(join(agentRoot, 'folder.ts'))
+        binding.agent.entrypoint = entrypoint
+        await expect(bindWorkspace(directory, binding)).rejects.toThrow()
+        expect(await readdir(directory)).toEqual(['agent', 'outside.ts'])
+        await store(binding)
+        await expect(readWorkspaceBinding(directory)).rejects.toThrow()
+      }
+    )
+
+    it.each(['project', 'entrypoint'])('rejects a %s inside workspace tmp', async (target) => {
+      await mkdir(join(directory, 'tmp'))
+      await writeFile(join(directory, 'tmp', 'agent.ts'), 'temporary')
+      binding.agent =
+        target === 'project'
+          ? { ...binding.agent, path: 'tmp' }
+          : { ...binding.agent, path: '.', entrypoint: 'tmp/agent.ts' }
+      await expect(bindWorkspace(directory, binding)).rejects.toThrow('cannot target temporary files')
+      await store(binding)
+      await expect(readWorkspaceBinding(directory)).rejects.toThrow('cannot target temporary files')
+    })
+
+    it('allows projects whose directory name merely starts with tmp', async () => {
+      await mkdir(join(directory, 'tmp-agent'))
+      await writeFile(join(directory, 'tmp-agent', 'agent.ts'), 'persistent')
+      binding.agent.path = 'tmp-agent'
+      expect((await bindWorkspace(directory, binding)).agentRoot).toBe(join(directory, 'tmp-agent'))
+    })
+
+    it.each(['.config', 'tmp', '.gitignore'])('rejects a symlink at %s without changing its target', async (name) => {
+      const target = join(sandbox, 'untouched')
+      if (name === 'tmp') await mkdir(target)
+      else await writeFile(target, name === '.config' ? JSON.stringify(binding) : 'keep\n')
+      await symlink(target, join(directory, name))
+      await expect(bindWorkspace(directory, binding)).rejects.toThrow(join(directory, name))
+      if (name === '.config') await expect(readWorkspaceBinding(directory)).rejects.toThrow(join(directory, name))
+      if (name === 'tmp') {
+        expect(await readWorkspaceBinding(directory)).toBeUndefined()
+        await store(binding)
+        await expect(readWorkspaceBinding(directory)).rejects.toThrow(join(directory, name))
+        await rm(join(directory, '.config'))
+      }
+      expect((await lstat(join(directory, name))).isSymbolicLink()).toBe(true)
+      if (name === 'tmp') expect(await readdir(target)).toEqual([])
+      else expect(await readFile(target, 'utf8')).toBe(name === '.config' ? JSON.stringify(binding) : 'keep\n')
+      expect((await readdir(directory)).sort()).toEqual([name, 'agent'].sort())
+    })
+
+    it.each(['.config', 'tmp', '.gitignore'])('rejects the wrong metadata type at %s', async (name) => {
+      if (name === 'tmp') await writeFile(join(directory, name), 'keep')
+      else await mkdir(join(directory, name))
+      await expect(bindWorkspace(directory, binding)).rejects.toThrow(join(directory, name))
+      expect((await readdir(directory)).sort()).toEqual([name, 'agent'].sort())
+    })
+
+    it.skipIf(process.platform === 'win32')('rejects FIFO metadata without blocking', async () => {
+      execFileSync('mkfifo', [join(directory, '.config')])
+      await expect(readWorkspaceBinding(directory)).rejects.toThrow('regular file')
+      await expect(bindWorkspace(directory, binding)).rejects.toThrow('regular file')
+    })
+
+    it.each(['root', 'project', 'entrypoint', 'nested'])('rejects a symlink in the %s path', async (target) => {
+      let root = directory
+      if (target === 'root') {
+        root = join(sandbox, 'linked-workspace')
+        await symlink(directory, root)
+      } else if (target === 'project') {
+        await symlink(agentRoot, join(directory, 'alias'))
+        binding.agent.path = 'alias'
+      } else if (target === 'entrypoint') {
+        await symlink(join(agentRoot, 'agent.ts'), join(agentRoot, 'alias.ts'))
+        binding.agent.entrypoint = 'alias.ts'
+      } else {
+        await symlink(agentRoot, join(agentRoot, 'alias'))
+        binding.agent.entrypoint = 'alias/agent.ts'
+      }
+      await expect(bindWorkspace(root, binding)).rejects.toThrow('symbolic link')
+      await store(binding)
+      await expect(readWorkspaceBinding(root)).rejects.toThrow('symbolic link')
+      expect(await readdir(directory)).not.toContain('tmp')
+    })
+
+    it('shouldBindTheRealWorkspaceWhenAnAncestorDirectoryIsALinkSuchAsMacOsTmp', async () => {
+      await symlink(sandbox, join(sandbox, 'alias'))
+      const linked = join(sandbox, 'alias', 'workspace')
+
+      const bound = await bindWorkspace(linked, binding)
+
+      expect(bound.directory).toBe(directory)
+      expect(bound.entrypoint).toBe(join(agentRoot, 'agent.ts'))
+      expect(await readFile(join(directory, '.config'), 'utf8')).toContain('"version": 1')
+      await expect(readWorkspaceBinding(linked)).resolves.toMatchObject({ directory })
+      await expect(readWorkspaceBinding(directory)).resolves.toMatchObject({ directory })
+    })
+
+    it('shouldStillRefuseAnAgentOutsideTheWorkspaceWhenAnAncestorDirectoryIsALink', async () => {
+      await symlink(sandbox, join(sandbox, 'alias'))
+      await symlink(agentRoot, join(directory, 'escape'))
+
+      await expect(
+        bindWorkspace(join(sandbox, 'alias', 'workspace'), { ...binding, agent: { ...binding.agent, path: 'escape' } })
+      ).rejects.toThrow('symbolic link')
+      expect(await readdir(directory)).not.toContain('.config')
+    })
+
+    it('refuses to append to a hard-linked ignore file', async () => {
+      const external = join(sandbox, 'ignore')
+      await writeFile(external, 'keep\n')
+      await link(external, join(directory, '.gitignore'))
+      await expect(bindWorkspace(directory, binding)).rejects.toThrow('Hard-linked metadata')
+      expect(await readFile(external, 'utf8')).toBe('keep\n')
+      expect(await readdir(directory)).toEqual(['.gitignore', 'agent'])
+    })
+
+    it('removes published metadata and staging files when an ignore append fails', async () => {
+      const ignore = join(directory, '.gitignore')
+      await writeFile(ignore, 'preserved\n')
+      await chmod(ignore, 0o444)
+      try {
+        await expect(bindWorkspace(directory, binding)).rejects.toThrow()
+        expect(await readFile(ignore, 'utf8')).toBe('preserved\n')
+        expect(await readdir(directory)).toEqual(['.gitignore', 'agent'])
+        expect(await readWorkspaceBinding(directory)).toBeUndefined()
+      } finally {
+        await chmod(ignore, 0o644)
+      }
+    })
+
+    it('retains an existing temporary directory when binding fails after publication', async () => {
+      await mkdir(join(directory, 'tmp'))
+      await writeFile(join(directory, 'tmp', 'keep'), 'preserved')
+      const ignore = join(directory, '.gitignore')
+      await writeFile(ignore, 'preserved\n')
+      await chmod(ignore, 0o444)
+      try {
+        await expect(bindWorkspace(directory, binding)).rejects.toThrow()
+        expect(await readdir(directory)).toEqual(['.gitignore', 'agent', 'tmp'])
+        expect(await readFile(join(directory, 'tmp', 'keep'), 'utf8')).toBe('preserved')
+      } finally {
+        await chmod(ignore, 0o644)
+      }
+    })
+
+    it('reads a valid config exactly at the size limit', async () => {
+      const contents = JSON.stringify(binding).padEnd(65536, ' ')
+      await writeFile(join(directory, '.config'), contents)
+      expect((await readWorkspaceBinding(directory))?.binding).toEqual(binding)
+      expect(await readFile(join(directory, '.config'), 'utf8')).toBe(contents)
+    })
+
+    it('rejects an agent root that is not a directory', async () => {
+      binding.agent.path = 'agent/agent.ts'
+      await expect(bindWorkspace(directory, binding)).rejects.toThrow('regular directory')
+      await expectUnbound()
+    })
+
+    it('rejects oversized ignore files before creating metadata', async () => {
+      await writeFile(join(directory, '.gitignore'), 'x'.repeat(1024 * 1024 + 1))
+      await expect(bindWorkspace(directory, binding)).rejects.toThrow('1048576 bytes')
+      expect(await readdir(directory)).toEqual(['.gitignore', 'agent'])
+    })
+  })
+
+  describe('workspace CLI settings', () => {
+    it('shouldSaveTheCliSectionWithoutChangingTheRestOfTheBinding', async () => {
+      await bindWorkspace(directory, binding)
+
+      await updateWorkspaceCli(directory, { settings: { frogTheme: 'merlin' } })
+
+      const saved = await readWorkspaceBinding(directory)
+      expect(saved?.binding).toEqual({ ...binding, cli: { settings: { frogTheme: 'merlin' } } })
+      if (process.platform !== 'win32') expect((await stat(join(directory, '.config'))).mode & 0o777).toBe(0o600)
+    })
+
+    it('shouldRemoveTheCliSectionWhenNothingIsLeftToSave', async () => {
+      await bindWorkspace(directory, binding)
+      await updateWorkspaceCli(directory, { settings: { frogTheme: 'merlin' } })
+
+      await updateWorkspaceCli(directory, {})
+
+      expect(JSON.parse(await readFile(join(directory, '.config'), 'utf8'))).toEqual(binding)
+    })
+
+    it('shouldLeaveAValidBindingWhenTwoSessionsSaveAtTheSameTime', async () => {
+      await bindWorkspace(directory, binding)
+      const first = { settings: { frogTheme: 'merlin' } }
+      const second = { settings: { frogTheme: 'scarlet' } }
+
+      await Promise.all([updateWorkspaceCli(directory, first), updateWorkspaceCli(directory, second)])
+
+      expect([first, second]).toContainEqual((await readWorkspaceBinding(directory))?.binding.cli)
+    })
+
+    it('shouldRejectACliSectionThatIsNotAnObject', async () => {
+      await store({ ...binding, cli: 'theme=blue' })
+
+      await expect(readWorkspaceBinding(directory)).rejects.toThrow('cli must be an object.')
+    })
   })
 })

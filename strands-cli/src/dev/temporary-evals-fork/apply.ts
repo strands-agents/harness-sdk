@@ -2,8 +2,13 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import { extname, join, relative, resolve } from 'node:path'
 
 import { isRecord } from '../../values.js'
-import { agentChoicesProblem, saveAgentChoices, type AgentWorkspace } from '../agent-choices.js'
-import { agentOptionEditsProblem, editAgentOptions, type AgentOptionEdit } from '../agent-options.js'
+import { agentChoicesProblem, saveAgentChoices } from '../agent-choices.js'
+import {
+  agentOptionEditsProblem,
+  editAgentOptions,
+  type AgentOptionEdit,
+  type AgentWorkspace,
+} from '../agent-options.js'
 import { editFile } from '../file-edits.js'
 import type { ProfileEffort } from '../../config/store.js'
 import type { KnobKey } from '../panels/model.js'

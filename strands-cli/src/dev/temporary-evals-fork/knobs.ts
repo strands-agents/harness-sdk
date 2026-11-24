@@ -2,8 +2,13 @@ import { DEFAULT_HARNESS_AGENT_CONFIG, supportsWebSearch } from '@strands-agents
 
 import { effortOptions } from '../../model/selection.js'
 import { errorMessage } from '../../terminal/text.js'
-import { readAgentOptions, type AgentOptionEdit, type AgentOptionValue } from '../agent-options.js'
-import { projectPython, readPythonSource } from '../agent-source.js'
+import {
+  projectPython,
+  readAgentOptions,
+  readPythonSource,
+  type AgentOptionEdit,
+  type AgentOptionValue,
+} from '../agent-options.js'
 import type { Knob, KnobGroup, KnobKind } from '../panels/model.js'
 import type { DevWorkspace } from '../workspace.js'
 

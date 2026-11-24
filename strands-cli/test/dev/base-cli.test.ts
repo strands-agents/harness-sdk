@@ -13,7 +13,7 @@ import {
   refreshBaseCliView,
   saveBaseCliChoices,
 } from '../../src/dev/base-cli.js'
-import { readWorkspaceBinding, updateWorkspaceCli } from '../../src/dev/binding.js'
+import { readWorkspaceBinding, updateWorkspaceCli } from '../../src/dev/workspace.js'
 import { createDevWorkspace } from '../../src/dev/create.js'
 import * as installer from '../../src/project/archive.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
