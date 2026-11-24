@@ -62,7 +62,6 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── CODE_OF_CONDUCT.md
 ├── CONTRIBUTING.md
 ├── external-docs.config.json    # Upstream refs plus site-owned routes and navigation
-├── external-docs.lock.json      # Immutable upstream documentation revisions
 ├── SITE-ARCHITECTURE.md          # Detailed Astro/Starlight customizations
 ├── .build/
 │   ├── api-docs/                 # Generated Python and TypeScript API reference
@@ -128,8 +127,9 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── README.md
 ├── overrides/                    # Legacy MkDocs overrides (being migrated)
 ├── scripts/                      # Build and utility scripts
+│   ├── content-ref-overrides.ts  # Validate production source overrides and split them by importer
 │   ├── catalog/                  # Catalog stats refresh
-│   ├── external-docs/            # External Markdown import and lock updates
+│   ├── external-docs/            # External Markdown import
 │   └── samples/                  # Import samples metadata and guides at build time
 ├── test/                         # Test files
 └── test-snippets/                # TypeScript snippet test files

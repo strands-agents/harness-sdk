@@ -728,6 +728,7 @@ sidebar:
           - docs/user-guide/evals-sdk/cli/generate
           - docs/user-guide/evals-sdk/cli/diagnose
           - docs/user-guide/evals-sdk/cli/report
+          - docs/user-guide/evals-sdk/cli/ui
 
   - label: Contribute
     items:
