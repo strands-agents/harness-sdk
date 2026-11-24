@@ -988,6 +988,22 @@ projects).
 Turn it off with `STRANDS_CLI_TELEMETRY=off` (or `DO_NOT_TRACK=1`), the **Usage ping** toggle in `/settings`
 (takes effect at the next launch), or `telemetry = false` under `[settings]` in `~/.strands/cli.toml`.
 
+`strands dev` does not send the launch ping. It sends one ping for each step of the dev workflow to
+`https://telemetry.strandsagents.com/strands-dev/ping`, with the same off switches. The whole payload is:
+
+```json
+{
+  "v": 1,
+  "event": "step/1",
+  "context": { "cli_version": "0.1.0", "harness": "python" },
+  "data": { "step": "optimize_run_started" }
+}
+```
+
+`harness` is `base-cli`, `typescript`, or `python`. `step` is one of `dev_launch`, `ask_shown`, `ask_answered`,
+`ask_cancelled`, `optimize_run_started`, `optimize_run_finished`, `optimize_edits_applied`, `evals_ui_opened`,
+`experiment_created`, and `evaluation_started`. The ping has no names, paths, prompts, scores, or identifiers.
+
 ## Beyond the CLI
 
 For anything past these flags (custom tools, plugins, specialist subagents, interventions, a

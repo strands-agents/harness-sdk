@@ -12,7 +12,6 @@ import { configurationSource } from '../../config/source.js'
 import { agentPrivatePaths, exportAgentProject, exportSourceProject } from '../../project/export.js'
 import { type ChatConfigurationSource, type ChatConversation, type ChatConversations } from '../../agent/types.js'
 import { type ChatSettings } from '../../config/settings.js'
-import { telemetryEnabled } from '../../cli/telemetry.js'
 import { ChatController, type ChatControllerOptions } from './controller.js'
 import type { DevChatCommand, FailedTurnRecord } from './types.js'
 import { isUnresolvedBackgroundTask } from './state.js'
@@ -109,7 +108,7 @@ const loadDevChat = async (
   if (!workspace) return undefined
   const baseCli = await profileBaseCliChat(workspace)
   telemetry.configureDevTelemetry({
-    enabled: telemetryEnabled(config.snapshot().settings),
+    enabled: await telemetry.savedTelemetryChoice(config),
     harness: baseCli ? 'base-cli' : project.language,
   })
   telemetry.recordDevEvent('dev_launch')
