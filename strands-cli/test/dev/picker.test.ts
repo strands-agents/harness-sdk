@@ -271,19 +271,6 @@ describe('HarnessPicker', () => {
     expect(row('Create a workspace')).toBeGreaterThan(row(`Harness path: ${path}`))
   })
 
-  it('shouldLeaveOutTheSelectedProjectWhenANewHarnessNeedsAFolder', async () => {
-    const { input, text } = withFolder([])
-    await vi.waitFor(() => expect(text()).toContain('Select a harness'))
-    input.write('\u001b[B')
-    await vi.waitFor(() => expect(text()).toContain('› Create a new harness'))
-    input.write('\r')
-    await vi.waitFor(() => expect(text()).toContain('Tab language · Enter continue'))
-    input.write('\r')
-
-    await vi.waitFor(() => expect(text()).toContain('New project · new-harness'))
-    expect(text()).not.toContain('Selected project')
-  })
-
   it('shouldColorTheHeadingAndContextGreenWhenTheFolderStepIsShown', async () => {
     const level = chalk.level
     chalk.level = 3
@@ -313,7 +300,7 @@ describe('HarnessPicker', () => {
     }
   })
 
-  it('shouldAskForTheFolderAfterTheNewHarnessForm', async () => {
+  it('shouldAskForTheFolderWithoutASelectedProjectAfterTheNewHarnessForm', async () => {
     const { input, text, selected } = withFolder([])
     await vi.waitFor(() => expect(text()).toContain('Select a harness'))
     input.write('\u001b[B')
@@ -323,6 +310,7 @@ describe('HarnessPicker', () => {
     input.write('\r')
 
     await vi.waitFor(() => expect(text()).toContain('New project · new-harness'))
+    expect(text()).not.toContain('Selected project')
     input.write('\r')
 
     await vi.waitFor(() =>

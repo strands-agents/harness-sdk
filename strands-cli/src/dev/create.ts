@@ -95,14 +95,9 @@ interface ModuleFiles {
 }
 
 const optionalFile = async (path: string): Promise<boolean> => {
-  try {
-    const details = await lstat(path)
-    if (details.isSymbolicLink()) throw new Error(`A local module cannot use a symbolic link: ${path}`)
-    return details.isFile()
-  } catch (error) {
-    if (isRecord(error) && error.code === 'ENOENT') return false
-    throw error
-  }
+  const details = await optionalDetails(path)
+  if (details?.isSymbolicLink()) throw new Error(`A local module cannot use a symbolic link: ${path}`)
+  return details?.isFile() ?? false
 }
 
 const resolveSourceFile = async (path: string): Promise<string> => {

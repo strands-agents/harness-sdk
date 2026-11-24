@@ -279,13 +279,17 @@ export async function readWorkspaceBinding(directory: string): Promise<BoundWork
   await assertDirectory(root)
   await validateTmp(root)
   const contents = await readRegularFile(path, details, MAX_CONFIG_BYTES)
+  return resolveBinding(root, parseBinding(contents.toString('utf8'), path))
+}
+
+function parseBinding(contents: string, path: string): WorkspaceBinding {
   let document: unknown
   try {
-    document = JSON.parse(contents.toString('utf8'))
+    document = JSON.parse(contents)
   } catch {
     throw new Error(`Invalid JSON in workspace binding: ${path}`)
   }
-  return resolveBinding(root, validateBinding(document, path))
+  return validateBinding(document, path)
 }
 
 export async function bindWorkspace(directory: string, binding: WorkspaceBinding): Promise<BoundWorkspace> {
@@ -419,13 +423,7 @@ export async function updateWorkspaceCli(directory: string, cli: Record<string, 
   await editFile(root, path, (contents) => {
     if (Buffer.byteLength(contents) > MAX_CONFIG_BYTES)
       throw new Error(`File exceeds ${MAX_CONFIG_BYTES} bytes: ${path}`)
-    let document: unknown
-    try {
-      document = JSON.parse(contents)
-    } catch {
-      throw new Error(`Invalid JSON in workspace binding: ${path}`)
-    }
-    const { cli: _previous, ...binding } = validateBinding(document, path)
+    const { cli: _previous, ...binding } = parseBinding(contents, path)
     const next = `${JSON.stringify(Object.keys(cli).length ? { ...binding, cli } : binding, null, 2)}\n`
     if (Buffer.byteLength(next) > MAX_CONFIG_BYTES) throw new Error(`Binding exceeds 65536 bytes: ${path}`)
     return next

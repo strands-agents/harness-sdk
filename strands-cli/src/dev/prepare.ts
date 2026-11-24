@@ -33,7 +33,7 @@ import {
 } from './workspace.js'
 import type { StartupScreen } from '../ui/run.js'
 import type { FolderSuggestion, HarnessChoice } from './picker.js'
-import { discoverHarnesses, type DiscoveredHarness } from './search.js'
+import { comparePaths, discoverHarnesses, type DiscoveredHarness } from './search.js'
 import { initializeWorkspaceBinding } from './initialize.js'
 import type { ProjectSetupSession } from './project-setup.js'
 
@@ -108,9 +108,6 @@ const withPreparationStatus = async (harness: DiscoveredHarness): Promise<Discov
   }
 }
 
-const byEntrypoint = (left: DiscoveredHarness, right: DiscoveredHarness): number =>
-  left.entrypoint < right.entrypoint ? -1 : left.entrypoint > right.entrypoint ? 1 : 0
-
 export const discoverLocalHarnesses = async (
   cwd: string,
   searchRoots: readonly string[],
@@ -136,7 +133,7 @@ export const discoverLocalHarnesses = async (
   })
   discovery.harnesses.forEach(report)
   await reported
-  return { harnesses: [...kept.values()].sort(byEntrypoint) }
+  return { harnesses: [...kept.values()].sort((left, right) => comparePaths(left.entrypoint, right.entrypoint)) }
 }
 
 type Holds = (workspace: DevWorkspace, choice: HarnessChoice) => boolean

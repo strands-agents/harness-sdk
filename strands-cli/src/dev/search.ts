@@ -147,7 +147,7 @@ async function scanSource(path: string, details: Stats, state: DiscoveryState): 
   record(state, { name: inspection.name ?? basename(path), entrypoint: path, root, language })
 }
 
-function comparePaths(left: string, right: string): number {
+export function comparePaths(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
 }
 

@@ -443,9 +443,7 @@ describe('folderClaims', () => {
       expect(await readdir(locked)).toEqual(['strands-dev'])
     }
   )
-})
 
-describe('folderClaims', () => {
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
     'shouldStillRestoreAReplacedFolderWhenAnotherClaimCannotBeDeleted',
     async () => {
@@ -471,9 +469,7 @@ describe('folderClaims', () => {
       expect((await readdir(root)).sort()).toEqual(['locked', 'strands-dev'])
     }
   )
-})
 
-describe('folderClaims replacement', () => {
   it('shouldRefuseToReplaceAFolderThatHoldsTheAgentOfPlainStrands', async () => {
     const home = await temporaryDirectory()
     vi.stubEnv('HOME', home)
