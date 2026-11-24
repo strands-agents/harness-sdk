@@ -43,6 +43,9 @@ dependencies = [
     "botocore>=1.43.127,<2.0.0",
     "pydantic-monty==0.0.23",
     "pydantic>=2.5,<3",
+    # The language server context_manager="lsp" starts. A regular dependency on the benchmark branch, so a plain
+    # wheel install (no extras) can run it; the nodejs extra ships the Node runtime it runs on.
+    "pyright[nodejs]>=1.1.400",
 ]
 
 [project.optional-dependencies]
