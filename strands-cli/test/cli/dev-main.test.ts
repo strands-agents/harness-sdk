@@ -56,6 +56,53 @@ const workspaceFixture = async (): Promise<string> => {
   return root
 }
 
+const writeProject = async (root: string): Promise<void> => {
+  await writeFile(join(root, 'package.json'), '{"type":"module"}')
+  await writeFile(join(root, 'agent.ts'), 'export const agent = {}')
+}
+
+const bindToAnotherAgent = async (root: string): Promise<string> => {
+  const other = await temporaryDirectory()
+  await writeProject(other)
+  await bindExistingAgent(join(root, 'strands-dev'), join(other, 'agent.ts'))
+  return readFile(join(root, 'strands-dev/.config'), 'utf8')
+}
+
+const offerHarness = async (root: string, name: string, replace = false) => {
+  const harness = { name, entrypoint: join(root, 'agent.ts'), root, language: 'typescript' as const }
+  const configPath = join(await temporaryDirectory(), 'cli.toml')
+  await writeFile(configPath, '[profile]\nname = "Saved"\n')
+  vi.spyOn(CliConfigStore, 'load').mockResolvedValue(await CliConfigStore.load(configPath, { persist: false }))
+  vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [harness], warnings: [] })
+  const choose = vi
+    .spyOn(picker, 'chooseHarness')
+    .mockImplementationOnce(async (_options, screen, open) =>
+      replace
+        ? open({ kind: 'discovered', harness }, screen.signal, undefined, true)
+        : open({ kind: 'discovered', harness }, screen.signal)
+    )
+    .mockResolvedValueOnce(undefined)
+  return { choose, configPath }
+}
+
+const runDev = async (): Promise<void> => {
+  terminal(true)
+  const cwd = process.cwd()
+  process.chdir(await temporaryDirectory())
+  try {
+    await main(['dev'])
+  } finally {
+    process.chdir(cwd)
+  }
+}
+
+const runDevWithEmptyHome = async (): Promise<void> => {
+  const home = await temporaryDirectory()
+  vi.stubEnv('HOME', home)
+  vi.stubEnv('USERPROFILE', home)
+  await runDev().finally(() => vi.unstubAllEnvs())
+}
+
 describe('dev ingress', () => {
   it.each(['legacy', 'binding'] as const)(
     'shouldRouteTheDevSessionToItsPersistentAgentWith%sMetadata',
@@ -157,26 +204,12 @@ describe('dev ingress', () => {
     'shouldOfferTheSavedBaseCliAndDeleteTheFailedWorkspaceWhenTheUserGoesBackFrom%s',
     async (failure) => {
       const failed = await temporaryDirectory()
-      await writeFile(join(failed, 'package.json'), '{"type":"module"}')
-      await writeFile(join(failed, 'agent.ts'), 'export const agent = {}')
-      const harness = {
-        name: 'Failed',
-        entrypoint: join(failed, 'agent.ts'),
-        root: failed,
-        language: 'typescript' as const,
-      }
-      const configPath = join(await temporaryDirectory(), 'cli.toml')
-      await writeFile(configPath, '[profile]\nname = "Saved"\n')
-      vi.spyOn(CliConfigStore, 'load').mockResolvedValue(await CliConfigStore.load(configPath, { persist: false }))
+      await writeProject(failed)
+      const { choose, configPath } = await offerHarness(failed, 'Failed')
       vi.spyOn(projectSetup, 'projectSetupSession').mockReturnValue({
         prepare: vi.fn().mockResolvedValue(failure === 'Setup' ? 'back' : 'ready'),
         recover: vi.fn().mockResolvedValue('back'),
       })
-      vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [harness], warnings: [] })
-      const choose = vi
-        .spyOn(picker, 'chooseHarness')
-        .mockImplementationOnce(async (_options, screen, open) => open({ kind: 'discovered', harness }, screen.signal))
-        .mockResolvedValueOnce(undefined)
       ui.run.mockImplementation(async (_factory: unknown, options: Parameters<typeof runInkChat>[1]) => {
         const screen = { signal: new AbortController().signal, show: vi.fn() }
         await options?.prepare?.(screen)
@@ -186,18 +219,7 @@ describe('dev ingress', () => {
         }
         return 0
       })
-      const home = await temporaryDirectory()
-      vi.stubEnv('HOME', home)
-      vi.stubEnv('USERPROFILE', home)
-      terminal(true)
-      const cwd = process.cwd()
-      process.chdir(await temporaryDirectory())
-      try {
-        await main(['dev'])
-      } finally {
-        process.chdir(cwd)
-        vi.unstubAllEnvs()
-      }
+      await runDevWithEmptyHome()
 
       expect(choose).toHaveBeenCalledTimes(2)
       expect(choose.mock.calls[1]?.[0].cli).toEqual({ name: 'Saved', path: configPath })
@@ -207,22 +229,9 @@ describe('dev ingress', () => {
 
   it.each(['Back', 'Cancel'] as const)('shouldRestoreAReplacedWorkspaceWhenTheUser%s', async (action) => {
     const failed = await temporaryDirectory()
-    await writeFile(join(failed, 'package.json'), '{"type":"module"}')
-    await writeFile(join(failed, 'agent.ts'), 'export const agent = {}')
-    const other = await temporaryDirectory()
-    await writeFile(join(other, 'package.json'), '{"type":"module"}')
-    await writeFile(join(other, 'agent.ts'), 'export const agent = {}')
-    await bindExistingAgent(join(failed, 'strands-dev'), join(other, 'agent.ts'))
-    const before = await readFile(join(failed, 'strands-dev/.config'), 'utf8')
-    const harness = {
-      name: 'Failed',
-      entrypoint: join(failed, 'agent.ts'),
-      root: failed,
-      language: 'typescript' as const,
-    }
-    const configPath = join(await temporaryDirectory(), 'cli.toml')
-    await writeFile(configPath, '[profile]\nname = "Saved"\n')
-    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(await CliConfigStore.load(configPath, { persist: false }))
+    await writeProject(failed)
+    const before = await bindToAnotherAgent(failed)
+    await offerHarness(failed, 'Failed', true)
     const setup = vi.fn(async () => {
       replaced = await readFile(join(failed, 'strands-dev/.config'), 'utf8')
       return action === 'Back' ? ('ready' as const) : ('cancel' as const)
@@ -231,12 +240,6 @@ describe('dev ingress', () => {
       prepare: setup,
       recover: vi.fn().mockResolvedValue('back'),
     })
-    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [harness], warnings: [] })
-    vi.spyOn(picker, 'chooseHarness')
-      .mockImplementationOnce(async (_options, screen, open) =>
-        open({ kind: 'discovered', harness }, screen.signal, undefined, true)
-      )
-      .mockResolvedValueOnce(undefined)
     let replaced = ''
     ui.run.mockImplementation(async (_factory: unknown, options: Parameters<typeof runInkChat>[1]) => {
       const screen = { signal: new AbortController().signal, show: vi.fn() }
@@ -245,18 +248,7 @@ describe('dev ingress', () => {
       await options?.prepare?.(screen)
       return 0
     })
-    const home = await temporaryDirectory()
-    vi.stubEnv('HOME', home)
-    vi.stubEnv('USERPROFILE', home)
-    terminal(true)
-    const cwd = process.cwd()
-    process.chdir(await temporaryDirectory())
-    try {
-      await main(['dev'])
-    } finally {
-      process.chdir(cwd)
-      vi.unstubAllEnvs()
-    }
+    await runDevWithEmptyHome()
 
     expect(replaced).not.toBe(before)
     expect(await readFile(join(failed, 'strands-dev/.config'), 'utf8')).toBe(before)
@@ -267,32 +259,13 @@ describe('dev ingress', () => {
     const parent = await temporaryDirectory()
     const project = join(parent, 'project')
     await mkdir(project)
-    await writeFile(join(project, 'package.json'), '{"type":"module"}')
-    await writeFile(join(project, 'agent.ts'), 'export const agent = {}')
-    const other = await temporaryDirectory()
-    await writeFile(join(other, 'package.json'), '{"type":"module"}')
-    await writeFile(join(other, 'agent.ts'), 'export const agent = {}')
-    await bindExistingAgent(join(project, 'strands-dev'), join(other, 'agent.ts'))
-    const before = await readFile(join(project, 'strands-dev/.config'), 'utf8')
-    const harness = {
-      name: 'Desk',
-      entrypoint: join(project, 'agent.ts'),
-      root: project,
-      language: 'typescript' as const,
-    }
-    const configPath = join(await temporaryDirectory(), 'cli.toml')
-    await writeFile(configPath, '[profile]\nname = "Saved"\n')
-    vi.spyOn(CliConfigStore, 'load').mockResolvedValue(await CliConfigStore.load(configPath, { persist: false }))
+    await writeProject(project)
+    const before = await bindToAnotherAgent(project)
+    await offerHarness(project, 'Desk', true)
     vi.spyOn(projectSetup, 'projectSetupSession').mockReturnValue({
       prepare: vi.fn().mockResolvedValue('ready'),
       recover: vi.fn().mockResolvedValue('back'),
     })
-    vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [harness], warnings: [] })
-    vi.spyOn(picker, 'chooseHarness')
-      .mockImplementationOnce(async (_options, screen, open) =>
-        open({ kind: 'discovered', harness }, screen.signal, undefined, true)
-      )
-      .mockResolvedValueOnce(undefined)
     const controller = new ChatController(idleBackend())
     if (outcome === 'Starts') ui.typescript.mockResolvedValueOnce(controller)
     else ui.typescript.mockRejectedValueOnce(new Error('load failed'))
@@ -324,15 +297,7 @@ describe('dev ingress', () => {
       }
     )
     vi.spyOn(process.stderr, 'write').mockReturnValue(true)
-    terminal(true)
-    const cwd = process.cwd()
-    process.chdir(await temporaryDirectory())
-    try {
-      await main(['dev'])
-    } finally {
-      process.chdir(cwd)
-      await controller.dispose()
-    }
+    await runDev().finally(() => controller.dispose())
 
     expect(beforeChat).toHaveLength(1)
     expect(afterChat).toEqual([])
