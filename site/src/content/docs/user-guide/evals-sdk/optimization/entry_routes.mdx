@@ -178,6 +178,12 @@ read plus edit:
 
 Each option is one whole set, not a subset search.
 
+A skill set works the same way. With `skills` written as a list of folders in the config,
+`--tune 'skills=[["./skills/returns"], ["./skills/returns", "./skills/shipping"]]'` chooses
+which skills load. It can't be combined with `--tune skills`, which rewrites the skills,
+because both name the same path. To choose skills and rewrite them in one run, use a
+[tunable factory](tunables.md#choose-which-skills-load).
+
 Pass `--no-tune-instructions` to leave the instructions alone. Every choice and range is
 checked against the harness's own schema before the run starts, so a value no trial could
 use is an error, not a wasted rollout. The diff lands on `agent.json` itself; the file is

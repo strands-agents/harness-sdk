@@ -97,10 +97,11 @@ def create_agent(system_prompt: str, greeting: str):
     return Agent(system_prompt=f"{system_prompt}\n\n{greeting}", callback_handler=None)
 ```
 
-The file's current text is the baseline. Your files are never written: each candidate gets
-its own copy of the folder around the file. If the agent needs a path rather than the text,
-pass `as_path=True` to `FileText` and the parameter receives the path of the candidate's
-copy.
+The file's current text is the baseline, so to change where the search starts, edit the
+file: a default on the parameter is ignored. Your files are never written: each candidate
+gets its own copy of the folder around the file. If the agent needs a path rather than the
+text, pass `as_path=True` to `FileText` and the parameter receives the path of the
+candidate's copy.
 
 Two settings guard every text marker:
 
