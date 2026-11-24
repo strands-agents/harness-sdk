@@ -47,6 +47,7 @@ Dev runs your agent from its own file or profile, and not from a copy. The optim
 ## What you need
 
 - Node.js 22.12 or later for the CLI.
+- Credentials for a model provider. The default model is on Amazon Bedrock. When a turn fails because no provider works, dev opens its model setup. You do not run plain `strands` first.
 - Python 3.10 or later, for experiments and optimization. Dev installs `strands-agents-evals` in a shared Python environment the first time that it needs it.
 - Access to AWS Bedrock for the generation of cases. Generation uses its own Bedrock connection, and not the model of your chat.
 
