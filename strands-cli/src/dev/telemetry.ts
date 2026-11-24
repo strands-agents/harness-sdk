@@ -14,11 +14,9 @@ type DevTelemetryEvent =
   | 'experiment_created'
   | 'evaluation_started'
 
-type DevHarnessKind = 'base-cli' | 'typescript' | 'python'
-
 interface DevTelemetryState {
   readonly enabled: boolean
-  readonly harness: DevHarnessKind
+  readonly harness: 'base-cli' | 'typescript' | 'python'
 }
 
 let state: DevTelemetryState | undefined

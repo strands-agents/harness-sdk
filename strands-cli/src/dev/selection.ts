@@ -1,5 +1,4 @@
 import { realpathSync } from 'node:fs'
-import { realpath } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 import type { CliConfigSnapshot } from '../config/store.js'
@@ -32,7 +31,7 @@ export const baseHarnessSelection = async (
   const source = project?.entrypoint ?? snapshot.path
   const workspace = destination ? resolve(cwd, destination) : strandsUserPath(WORKSPACE_FOLDER)
   const sameFile = (left: string, right: string): boolean =>
-    canonicalPathSync(resolve(cwd, expandHome(left))) === canonicalPathSync(resolve(cwd, expandHome(right)))
+    canonicalPath(resolve(cwd, expandHome(left))) === canonicalPath(resolve(cwd, expandHome(right)))
   const madeFromThisCli = ({ config, entrypoint }: DevWorkspace): boolean => {
     const { source: origin } = config.origin
     if (origin === undefined) return true
@@ -55,19 +54,10 @@ export const baseHarnessSelection = async (
   }
 }
 
-const canonicalPathSync = (path: string): string => {
-  try {
-    return realpathSync(path)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return path
-    throw error
-  }
-}
-
-const canonicalPath = async (path: string): Promise<string> => {
+const canonicalPath = (path: string): string => {
   const absolute = resolve(expandHome(path))
   try {
-    return await realpath(absolute)
+    return realpathSync(absolute)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return absolute
     throw error
@@ -83,11 +73,6 @@ const withPreparationStatus = async (harness: DiscoveredHarness): Promise<Discov
   }
 }
 
-interface LocalHarnessSearch {
-  signal?: AbortSignal
-  found?(harness: DiscoveredHarness): void | Promise<void>
-}
-
 export interface LocalHarnessDiscovery {
   harnesses: DiscoveredHarness[]
   skipped: SkippedHarness[]
@@ -100,15 +85,15 @@ export const discoverLocalHarnesses = async (
   cwd: string,
   searchRoots: readonly string[],
   excludedEntrypoints: readonly string[],
-  search: LocalHarnessSearch = {}
+  search: { signal?: AbortSignal; found?(harness: DiscoveredHarness): void | Promise<void> } = {}
 ): Promise<LocalHarnessDiscovery> => {
-  const excluded = new Set(await Promise.all(excludedEntrypoints.map(canonicalPath)))
+  const excluded = new Set(excludedEntrypoints.map(canonicalPath))
   const kept = new Map<string, DiscoveredHarness>()
   const skipped: SkippedHarness[] = []
   let reported = Promise.resolve()
   const report = (harness: DiscoveredHarness): void => {
     reported = reported.then(async () => {
-      const path = await canonicalPath(harness.entrypoint)
+      const path = canonicalPath(harness.entrypoint)
       const previous = kept.get(path)
       if (excluded.has(path) || (previous && (previous.workspace || !harness.workspace))) return
       const prepared = await withPreparationStatus(harness)

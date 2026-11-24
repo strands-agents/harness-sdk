@@ -248,8 +248,6 @@ const pickerWindow = (
   }
 }
 
-type FormField = 'name' | 'language'
-
 const otherLanguage = (current: 'typescript' | 'python'): 'typescript' | 'python' =>
   current === 'typescript' ? 'python' : 'typescript'
 
@@ -305,7 +303,7 @@ export const HarnessPicker = ({
   const [creating, setCreating] = useState(false)
   const [placing, setPlacing] = useState<HarnessChoice>()
   const [language, setLanguage] = useState<'typescript' | 'python'>('python')
-  const [field, setField] = useState<FormField>('name')
+  const [field, setField] = useState<'name' | 'language'>('name')
   const [nameField, setNameField] = useState<HarnessNameField>({ value: DEFAULT_NAME, cursor: DEFAULT_NAME.length })
   const name = nameField.value
   const [folder, setFolder] = useState({ value: '', cursor: 0, suggested: { path: '', detected: false } })

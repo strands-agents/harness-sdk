@@ -30,11 +30,6 @@ export interface SkippedHarness {
   expected: string
 }
 
-interface HarnessDiscovery {
-  harnesses: DiscoveredHarness[]
-  warnings: string[]
-}
-
 interface HarnessSearch {
   signal?: AbortSignal
   found?(harness: DiscoveredHarness): void
@@ -74,7 +69,7 @@ interface DiscoveryState {
 export async function discoverHarnesses(
   roots: readonly string[],
   search: HarnessSearch = {}
-): Promise<HarnessDiscovery> {
+): Promise<{ harnesses: DiscoveredHarness[]; warnings: string[] }> {
   const state: DiscoveryState = {
     harnesses: new Map(),
     warnings: new Set(),
@@ -345,11 +340,6 @@ interface PythonStatement {
   tokens: PythonToken[]
 }
 
-interface PythonCall {
-  callee: string[]
-  argumentsList: PythonToken[]
-}
-
 const pythonInspection = (path: string, source: string): SourceInspection => {
   const statements = pythonStatements(source)
   const topLevel = statements.filter((statement) => statement.indent === 0)
@@ -377,7 +367,9 @@ const pythonInspection = (path: string, source: string): SourceInspection => {
   return missedAgent(path, topLevel.some(callsConstructor))
 }
 
-const pythonAgentCall = (tokens: readonly PythonToken[]): PythonCall | undefined => {
+const pythonAgentCall = (
+  tokens: readonly PythonToken[]
+): { callee: string[]; argumentsList: PythonToken[] } | undefined => {
   if (tokens[0]?.kind !== 'word' || tokens[0].value !== 'agent') return undefined
   const assignment = tokens.findIndex((token) => token.value === '=')
   if (assignment < 0 || (assignment !== 1 && tokens[1]?.value !== ':')) return undefined

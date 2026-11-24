@@ -169,11 +169,6 @@ const initialCandidate = async (workspace: DevWorkspace): Promise<string | undef
   }
 }
 
-const withBoundAgent = async (workspace: DevWorkspace, directory: string): Promise<DevWorkspace> => {
-  const binding = await readWorkspaceBinding(directory)
-  return binding ? { ...boundDevWorkspace(binding), directory } : workspace
-}
-
 export const ensureInitialCandidate = async (
   workspace: DevWorkspace,
   signal?: AbortSignal,
@@ -181,7 +176,8 @@ export const ensureInitialCandidate = async (
 ): Promise<string> => {
   if (!workspace.directory) throw new Error('Initialize the workspace binding before creating its initial copy.')
   signal?.throwIfAborted()
-  const bound = await withBoundAgent(workspace, workspace.directory)
+  const binding = await readWorkspaceBinding(workspace.directory)
+  const bound = binding ? { ...boundDevWorkspace(binding), directory: workspace.directory } : workspace
   const existing = await initialCandidate(bound)
   if (existing) return existing
   const lock = join(workspace.directory, 'tmp', '.initializing')

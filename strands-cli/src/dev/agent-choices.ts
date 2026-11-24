@@ -47,12 +47,6 @@ type ModelReading = { readonly kind: 'option' } | { readonly kind: 'object'; rea
 
 type TypeScript = typeof import('typescript')
 
-interface LiteralLayout {
-  readonly python: boolean
-  readonly depth: number
-  readonly inline: boolean
-}
-
 const OPTION: ModelReading = { kind: 'option' }
 const TS_INDENT = 2
 const PYTHON_INDENT = 4
@@ -75,7 +69,10 @@ const textLeaves = (value: unknown): string[] =>
         ? [...Object.keys(value), ...Object.values(value).flatMap(textLeaves)]
         : []
 
-const fieldsLiteral = (fields: ReasoningFields, { python, depth, inline }: LiteralLayout): string => {
+const fieldsLiteral = (
+  fields: ReasoningFields,
+  { python, depth, inline }: { python: boolean; depth: number; inline: boolean }
+): string => {
   const text = sourceLiteral(fields, python, depth)
   if (!inline || textLeaves(fields).some((leaf) => /[\n,{}[\]]/u.test(leaf))) return text
   const inlined = text

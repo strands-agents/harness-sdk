@@ -4,11 +4,6 @@ import { join } from 'node:path'
 
 export type DevStateManager = 'session' | 'memory' | 'storage'
 
-interface IsolatedDevState {
-  readonly options: HarnessAgentOptions
-  readonly turnedOff: readonly DevStateManager[]
-}
-
 interface IsolatedOption<Config> {
   readonly option: Config | false
   readonly custom: boolean
@@ -42,7 +37,10 @@ const isolateMemory = ({ memory, memoryManager }: HarnessAgentOptions, root: str
   return { option: { ...(typeof memory === 'object' ? memory : {}), dir: devMemoryFolder(root) }, custom: false }
 }
 
-export const isolateDevState = (options: HarnessAgentOptions, root: string): IsolatedDevState => {
+export const isolateDevState = (
+  options: HarnessAgentOptions,
+  root: string
+): { options: HarnessAgentOptions; turnedOff: DevStateManager[] } => {
   const session = isolateSession(options, root)
   const memory = isolateMemory(options, root)
   const turnedOff: DevStateManager[] = [

@@ -1,12 +1,5 @@
 import { errorMessage, sanitizeTerminalText } from '../terminal/text.js'
 
-type DevOperation = 'open' | 'load' | 'install' | 'build' | 'reload'
-
-interface DevFailureContext {
-  operation: DevOperation
-  path?: string | undefined
-}
-
 export class DevFailure extends Error {
   constructor(message: string, cause: unknown) {
     super(message, { cause })
@@ -60,7 +53,10 @@ const reason = (errors: unknown[]): string => {
   return selected.trim().slice(0, 300)
 }
 
-export const devFailure = (error: unknown, context: DevFailureContext): DevFailure => {
+export const devFailure = (
+  error: unknown,
+  context: { operation: 'open' | 'load' | 'install' | 'build' | 'reload'; path?: string | undefined }
+): DevFailure => {
   if (error instanceof DevFailure && context.operation !== 'reload') return error
   const chain = causes(error)
   const code = chain.map((item) => field(item, 'code')).find(Boolean)

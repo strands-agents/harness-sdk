@@ -30,17 +30,12 @@ export class AgentOptionsNotEditable extends Error {}
 
 export class AgentOptionConflict extends Error {}
 
-interface AgentOptionItem {
-  readonly text: string
-  readonly literal?: string
-}
-
 export type AgentOptionValue =
   | { readonly kind: 'string'; readonly value: string }
   | { readonly kind: 'boolean'; readonly value: boolean }
   | { readonly kind: 'number'; readonly value: number }
   | { readonly kind: 'null' }
-  | { readonly kind: 'list'; readonly items: readonly AgentOptionItem[] }
+  | { readonly kind: 'list'; readonly items: readonly { readonly text: string; readonly literal?: string }[] }
   | { readonly kind: 'map'; readonly keys: readonly string[] }
   | { readonly kind: 'code' }
 

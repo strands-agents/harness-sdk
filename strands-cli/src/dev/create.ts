@@ -48,8 +48,6 @@ const PROJECT_FOLDER = 'strands-workspace'
 
 export const projectFolder = (parent: string): string => join(parent, PROJECT_FOLDER)
 
-type ProfileProject = Extract<ProjectInstallation, { profile: unknown }>
-
 const LANGUAGE_NAMES: Record<AgentProjectLanguage, string> = { typescript: 'TypeScript', python: 'Python' }
 
 const foreignModelModule = (snapshot: CliConfigSnapshot, language: AgentProjectLanguage): string | undefined => {
@@ -270,7 +268,7 @@ export const profileProject = async (
   snapshot: CliConfigSnapshot,
   cwd: string,
   language: AgentProjectLanguage
-): Promise<Omit<ProfileProject, 'destination'>> => {
+): Promise<Omit<Extract<ProjectInstallation, { profile: unknown }>, 'destination'>> => {
   const baseDir = snapshot.profileBaseDir ?? cwd
   const source = foreignModelModule(snapshot, language) ? { ...snapshot.profile, modelModule: null } : snapshot.profile
   const profile = await withDevModuleFiles(source, baseDir, language)
