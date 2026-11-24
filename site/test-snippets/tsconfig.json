@@ -13,9 +13,6 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
-    "paths": {
-      "@strands-agents/harness": ["../../harness-ts/src/index.ts"]
-    },
     "skipLibCheck": true,
     "preserveSymlinks": true,
     "resolveJsonModule": true,

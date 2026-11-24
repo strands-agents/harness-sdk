@@ -1,13 +1,10 @@
 ---
 title: Run work in the background
-description: >-
-  Configure background tasks in Strands harness: let subagents run while the
-  agent works, choose tool policies, and control when library and CLI calls return.
+description: "Strands harness runs its subagent tool in the background and lets the model run other tools there too. Tune or disable that with a background tasks policy."
 sourceLinks:
   - path: harness-py/src/strands_harness/agent.py
   - path: harness-ts/src/agent.ts
-  - path: strands-cli/src/tui/runtime.ts
-  - path: strands-cli/src/tui/chat/controller.ts
+  - path: strands-cli/src/agent/background.ts
 sidebar:
   label: "Run work in the background"
 ---
@@ -16,25 +13,24 @@ Background tasks let a tool run while the agent keeps working, instead of blocki
 agent loop until it finishes. Strands harness enables them by default. Configure them
 through <Syntax py="background_tasks" ts="backgroundTasks" /> when you create the harness.
 
-For the underlying SDK feature, including task lifecycle, cancellation, and result
-delivery, see [Background tasks](../../sdk/tools/background-tasks.md).
+This is a Strands Harness SDK capability. For task states, result delivery, and
+cancellation, see [run tools in the background](../../sdk/tools/background-tasks.md).
 
-## Understand the defaults
+## What runs in the background by default
 
-- The built-in [`subagent` tool](../subagents/) always runs in the background.
-- For other compatible tools, the model chooses foreground or background execution.
-- A library invocation waits for background results and continues with them before
-  returning, unless you change <Syntax py="wait_for_completion" ts="waitForCompletion" />.
+- The built-in [`subagent` tool](../subagents/), which runs the `generalist` delegate,
+  always runs in the background, so the main agent continues while the delegate works.
+- For any other compatible tool, the model chooses foreground or background execution.
+- An invocation waits for background results and continues with them before returning.
 
-The default policy allows model-selected background execution for all compatible tools
-with `agentic: ["*"]`, then adds `subagent` to `always`. The interactive CLI changes the
-return behavior, as described below.
+The default policy is `agentic: ["*"]`, to which the harness adds `subagent` as an
+`always` tool.
 
-## Choose which tools run in the background
+## Tune the policy
 
-Pass a policy object to control tools, concurrency, timeouts, and result delivery.
-For example, this configuration keeps other tools in the foreground and allows up to two
-background subagent tasks to execute at once:
+Pass a policy object to control which tools may run in the background, along with
+concurrency, timeouts, and whether invocations wait. This configuration keeps other
+tools in the foreground and lets two delegates run at once:
 
 <Tabs>
   <Tab label="Python">
@@ -51,27 +47,36 @@ background subagent tasks to execute at once:
   </Tab>
   <Tab label="TypeScript">
     ```typescript
-    --8<-- "user-guide/harness/configure/background-tasks_imports.ts:background_imports"
+    import { createHarness } from '@strands-agents/harness'
 
-    --8<-- "user-guide/harness/configure/background-tasks.ts:background_policy"
+    const agent = await createHarness({
+      backgroundTasks: {
+        never: ['*'],
+        maxConcurrency: 2,
+      },
+    })
     ```
   </Tab>
 </Tabs>
 
-The harness keeps `subagent` in `always` whenever background tasks are enabled. It removes
-explicit `subagent` entries from your `agentic` and `never` lists. A wildcard such as
-`never: ["*"]` stays in place, but the exact `subagent` rule takes precedence.
+With any policy, `subagent` still runs in the background. The harness adds it to
+`always` and removes it from your `agentic` and `never` lists. A wildcard such as
+`never: ["*"]` stays in place, and the exact `subagent` rule takes precedence over it.
 
-To let a library call return while work is still running, set
+To let an invocation return while work is still running, set
 <Syntax py="wait_for_completion" ts="waitForCompletion" /> to
-<Syntax py="False" ts="false" /> in the policy. Your application must invoke the same
-agent again to deliver results to its conversation. See
-[delivery](../../sdk/tools/background-tasks.md#return-while-tasks-are-still-running)
-for the full flow.
+<Syntax py="False" ts="false" /> in the policy. Your application then invokes the same
+agent again to deliver the results. See
+[return while tasks are still running](../../sdk/tools/background-tasks.md#return-while-tasks-are-still-running).
+
+An interrupt raised inside a backgrounded delegate fails that task instead of pausing
+the agent. That includes an [interventions](../interventions/) approval for one of the
+delegate's tool calls; approval for the `subagent` call itself still pauses the agent.
+If your delegates need to ask for approval, disable background tasks.
 
 ## Disable background tasks
 
-Pass <Syntax py="False" ts="false" /> to disable background execution for every tool,
+Pass <Syntax py="False" ts="false" /> to run every tool in the foreground,
 including `subagent`:
 
 <Tabs>
@@ -84,38 +89,47 @@ including `subagent`:
   </Tab>
   <Tab label="TypeScript">
     ```typescript
-    --8<-- "user-guide/harness/configure/background-tasks_imports.ts:background_imports"
+    import { createHarness } from '@strands-agents/harness'
 
-    --8<-- "user-guide/harness/configure/background-tasks.ts:background_disable"
+    const agent = await createHarness({ backgroundTasks: false })
     ```
   </Tab>
 </Tabs>
 
 ## Cancel background work
 
-`agent.cancel()` stops the current invocation but leaves background tasks running. To stop
-them too, pass `cancelBackgroundTasks`:
+`agent.cancel()` stops the current invocation but leaves background tasks running.
+To stop them too, ask for it in the same call:
 
-```typescript
-agent.cancel({ cancelBackgroundTasks: true })
-```
+<Tabs>
+  <Tab label="Python">
+    ```python
+    agent.cancel(cancel_background_tasks=True)
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    agent.cancel({ cancelBackgroundTasks: true })
+    ```
+  </Tab>
+</Tabs>
 
-If the invocation had already finished its turn and was only waiting for background tasks, it
-returns that turn's result, and the cancelled task results are delivered on the next invocation.
+If the invocation had already finished its turn and was only waiting for background
+tasks, it returns that turn's result, and the cancelled task results are delivered on
+the next invocation.
 
-## Use background tasks in the CLI
+## The CLI
 
-The interactive Ink CLI uses detached execution by default: the current turn can finish
-while background tasks keep running, and you can enter another prompt. When results are
-ready, the CLI starts a continuation turn to deliver them automatically.
+The Strands harness CLI runs on the TypeScript library, so `subagent` runs in the
+background there too. Its interactive terminal goes one step further and doesn't wait
+for background work: a turn can finish while tasks run, you can enter another prompt,
+and the CLI starts a new turn to deliver each result when it's ready. `/tasks` shows
+your todos and background tasks.
 
-Open `/tasks` to inspect tasks and live subagent progress. Its wait-mode switch rebuilds
-the agent with <Syntax py="wait_for_completion" ts="waitForCompletion" /> enabled, so
-invocations wait for background results before returning. You cannot switch modes while
-background tasks or undelivered results remain.
-
-Plain, print, and ACP server modes use the normal library wait behavior. To configure
-which tools run in the background, use the harness library's policy option.
+Print and plain modes wait for background work before they return. The CLI has no
+dedicated flag for the background-tasks policy. To turn background tasks off, use the
+setup wizard (`strands --setup`) or pass `--set agentConfig.backgroundTasks=false` for
+one run. Use the library when you need to tune the policy.
 
 For the full option list, see the
 [configuration reference](../../reference/configuration/).
