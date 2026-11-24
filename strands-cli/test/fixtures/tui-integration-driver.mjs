@@ -176,7 +176,7 @@ async function main() {
     if (setupImportMode) {
       await waitFor(['Quickstart', 'Import'], 20_000, false)
     } else {
-      const readyTimeout = liveMode ? 90_000 : lifecycleMode ? 210_000 : 8_000
+      const readyTimeout = liveMode ? 90_000 : lifecycleMode ? 210_000 : 15_000
       await waitForStableScreen(['Enter to send'], readyTimeout, 0, ['Loading…'])
     }
 

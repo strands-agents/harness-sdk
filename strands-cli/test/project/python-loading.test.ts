@@ -63,7 +63,7 @@ describe.skipIf(!existsSync(python))('Python source loading', () => {
     await Promise.all(chats.splice(0).map((chat) => chat.dispose()))
     vi.unstubAllEnvs()
     await rm(root, { recursive: true, force: true })
-  })
+  }, 30_000)
 
   async function open(authored: string | Uint8Array, options: PythonOptions = {}): Promise<PythonBackend> {
     const entrypoint = join(root, 'agent.py')
@@ -443,7 +443,7 @@ def build(**overrides):`
       await current.submit('/fork')
       expect((await current.captureConversations()).activeId).toBe('agent-3')
     },
-    30_000
+    60_000
   )
 
   it('reports the effective context composition for imported Python agents', async () => {

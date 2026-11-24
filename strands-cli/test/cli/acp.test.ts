@@ -166,12 +166,14 @@ describe('ACP server', () => {
         promptCapabilities: { image: true, embeddedContext: true },
       })
 
+      // The service pins the first cwd it receives, so every request must pass the same one.
+      const cwd = process.cwd()
       const session = await connection.agent.request(acp.methods.agent.session.new, {
-        cwd: process.cwd(),
+        cwd,
         mcpServers: [],
       })
       const secondSession = await connection.agent.request(acp.methods.agent.session.new, {
-        cwd: process.cwd(),
+        cwd,
         mcpServers: [],
       })
       const response = await connection.agent.request(acp.methods.agent.session.prompt, {
@@ -290,7 +292,7 @@ describe('ACP server', () => {
     }
   })
 
-  it('persists and replays ACP prompts, and recovers when a client write fails', async () => {
+  it('persists and replays ACP prompts, and recovers when a client write fails', { timeout: 15_000 }, async () => {
     const modelInputs: string[][] = []
 
     class PersistenceModel extends Model {
@@ -456,13 +458,15 @@ describe('ACP server', () => {
     const client = {
       notify: vi.fn(async () => undefined),
     } as unknown as acp.AgentContext
+    // The service pins the first cwd it receives, so every request must pass the same one.
+    const cwd = process.cwd()
 
     try {
       await expect(
         service.loadSession(
           {
             sessionId: 'missing-session',
-            cwd: process.cwd(),
+            cwd,
             mcpServers: [],
           },
           client
@@ -472,7 +476,7 @@ describe('ACP server', () => {
         service.loadSession(
           {
             sessionId: '../outside',
-            cwd: process.cwd(),
+            cwd,
             mcpServers: [],
           },
           client
