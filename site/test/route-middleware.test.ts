@@ -165,8 +165,8 @@ describe('Sidebar filtering with live navigation.yml data', () => {
             entries: [
               {
                 type: 'link',
-                label: 'Overview',
-                href: '/docs/labs/strands-decider/overview/',
+                label: 'Quickstart',
+                href: '/docs/labs/strands-decider/quickstart/',
                 isCurrent: false,
               },
               {
@@ -182,10 +182,10 @@ describe('Sidebar filtering with live navigation.yml data', () => {
     ]
 
     const labs = getAllLinks(filterSidebarByBasePath(labsSidebar as any, '/docs/labs/'))
-    expect(labs.map((link) => link.label)).toEqual(['Overview', 'Robots', 'Overview', 'Inference'])
+    expect(labs.map((link) => link.label)).toEqual(['Overview', 'Robots', 'Quickstart', 'Inference'])
 
     const decider = getAllLinks(filterSidebarByBasePath(labsSidebar as any, '/docs/labs/strands-decider/'))
-    expect(decider.map((link) => link.label)).toEqual(['Overview', 'Inference'])
+    expect(decider.map((link) => link.label)).toEqual(['Quickstart', 'Inference'])
   })
 
   it('has no doc-sidebar section for integrations (dynamic catalog sidebar)', () => {

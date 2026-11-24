@@ -44,9 +44,9 @@ const redirectCases: Array<{ description: string; input: string; expected: strin
     expected: 'examples',
   },
   {
-    description: 'Strands Decider root redirects to overview',
+    description: 'Strands Decider docs root redirects to the product landing page',
     input: 'docs/labs/strands-decider',
-    expected: 'docs/labs/strands-decider/overview',
+    expected: 'decider',
   },
   // Vanity URLs → external
   { description: '/discord redirects to Discord invite', input: 'discord', expected: 'https://discord.gg/strands' },

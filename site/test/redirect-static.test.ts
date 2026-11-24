@@ -199,6 +199,7 @@ describe('buildStaticRedirects', () => {
       '/docs/user-guide/box/guides/run-codex-cli': '/docs/user-guide/box/profiles/',
       '/docs/user-guide/box/guides/run-pi': '/docs/user-guide/box/profiles/',
       '/docs/user-guide/box/security/agent-and-tool-containment': '/docs/user-guide/box/security/',
+      '/docs/labs/strands-decider': '/decider/',
     })
     expect(Object.keys(redirects).length).toBeGreaterThan(0)
   })

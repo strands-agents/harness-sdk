@@ -56,7 +56,7 @@ navbar:
     basePath:
       - /docs/user-guide/evals-sdk/
   - label: Decider
-    href: /docs/labs/strands-decider/overview/
+    href: /decider/
     basePath:
       - /docs/labs/strands-decider/
   # Fallback: any /docs/user-guide/ page not matched by a product above still
@@ -201,14 +201,12 @@ products:
     name: Strands Decider
     slug: "/decider"
     href: /decider/
-    docsHref: /docs/labs/strands-decider/overview/
+    docsHref: /docs/labs/strands-decider/quickstart/
     description: Route, classify, and score with confidence.
     repository: https://github.com/strands-labs/strands-decider
     languages:
       - Python
     pages:
-      - label: Overview
-        href: /docs/labs/strands-decider/overview/
       - label: Quickstart
         href: /docs/labs/strands-decider/quickstart/
       - label: Introduction
