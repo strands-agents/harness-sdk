@@ -259,17 +259,12 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
     }
   }
 
-  private takenNames(except?: string): Set<string> {
-    return new Set([
-      ...this.saved.map(({ name }) => name),
-      ...[...this.jobs.values()]
-        .filter(({ generation }) => generation.id !== except)
-        .map(({ generation }) => generation.name),
-    ])
-  }
-
   private isTaken(name: string, except?: string): boolean {
-    return this.takenNames(except).has(name) || existsSync(join(this.folder(), name))
+    return (
+      this.saved.some((saved) => saved.name === name) ||
+      [...this.jobs.values()].some(({ generation }) => generation.id !== except && generation.name === name) ||
+      existsSync(join(this.folder(), name))
+    )
   }
 
   private freeName(): string {
