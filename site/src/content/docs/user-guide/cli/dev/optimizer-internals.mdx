@@ -1,0 +1,81 @@
+---
+title: Inside the optimizer
+description: "What strands dev runs when it optimizes an agent: the proposers, the model that ranks candidates, how the winner is picked and tested, and the files of a run."
+sourceLinks:
+  - path: strands-cli/src/dev/temporary-evals-fork/optimize.ts
+  - path: strands-cli/src/dev/evals-agent/strands_dev_evals/optimize.py
+---
+
+This page explains the parts of an optimization run below the questions of `/optimize`. Read [How optimization works](/docs/user-guide/cli/dev/optimization/) first.
+For the full reference, see [Optimization](https://strandsagents.com/docs/user-guide/evals-sdk/optimization/) in the Strands Evals docs.
+
+## What dev runs
+
+`/optimize` runs `strands-evals optimize run` of `strands-agents-evals`. Dev uses the route for an [exported agent file](https://strandsagents.com/docs/user-guide/evals-sdk/optimization/entry_routes/#an-exported-agent-file).
+On that route, the arguments of the `create_harness` or `createHarness` call are the baseline, and the knobs are those arguments.
+
+For each run, dev writes a `task.py` file in the folder of the run. That file loads your agent file for each trial.
+Dev gives each setting of the plan to the command:
+
+- The split, and the seed.
+- The steps, the candidates in each step, and the runs of each case.
+- The parallel trials, and the rollout cap.
+
+Each trial builds a new agent. Session and memory stay off, so no state goes from one case to the next.
+
+## How a candidate is made
+
+Each knob goes to a proposer by its kind. See [Customizing the search](https://strandsagents.com/docs/user-guide/evals-sdk/optimization/search/).
+
+- **Text**, such as the instructions, goes to the rewriter, `Reflection`. It reads the conversations of the agent, the reasons of the judge, and each earlier version with its scores. Then it writes a new version of the text.
+- **Choices and numbers**, such as the effort or the context manager, go to Bayesian optimization (`TPE`), which selects the values.
+
+A step starts from the best candidate so far and makes several new candidates from it. Each candidate runs on each train case.
+
+## How the candidates are ranked
+
+Each candidate runs on few cases, often one time. Thus the measured mean of a candidate is a noisy number.
+After each step, the optimizer fits a statistical model for each metric to all the results so far. The model ranks the candidates.
+
+The model pools the evidence of candidates that share an option. Thus the ranking is more reliable than the measured means, and the model can tell which options changed a metric. See [Reading the results](https://strandsagents.com/docs/user-guide/evals-sdk/optimization/results/).
+
+## How the winner is picked
+
+When the budget or the steps run out, the top finalists and your current agent run on the validation cases. The winner is the best candidate that meets each constraint, with 90% certainty by default.
+When no candidate is better than your current agent, your current agent wins. That result is correct, and it is not a failure.
+
+Then the winner and your current agent run on the test cases, case by case. The report gives the difference with a 90% interval. The report does not change the pick.
+
+## How failures count
+
+A trial that crashes gets the worst score of each evaluator by default. You can change this in the review.
+A trial that fails because of throttling, an outage, or expired credentials gets no score. The optimizer runs that trial again. See [Objectives, constraints, and budget](https://strandsagents.com/docs/user-guide/evals-sdk/optimization/objectives/).
+
+## The files of a run
+
+Each run has a folder in `strands-dev/experiments/<name>/optimizations/`. The `optimizer/` folder in it is the run folder of Strands Evals:
+
+- `best.diff` holds the text changes of the winner, and `best.values.json` holds its setting changes.
+- `result.json` holds the whole result, and `effects.json` holds what each option did to each metric.
+- `transcripts/` holds the conversation of each trial, and `events.jsonl` is the log that lets the run continue.
+
+The command of Strands Evals does not change your agent file. Dev reads the result, and it writes only the edits that you apply.
+When a run stops, for example after a restart, dev continues it at the next start with `strands-evals optimize resume`. The trials that finished before do not run again.
+
+The run folder holds the full transcripts of your validation and test cases. The `.gitignore` in `experiments/` keeps the `optimizations/` folders out of git.
+
+## Run optimization on a safe computer
+
+The rewriter works through a shell in a temporary folder. That shell is not a sandbox. It can get to the network, and it can read each file that you can read.
+Run optimization on a computer or container that has no credentials that the run does not need.
+
+## Run the same command from a shell
+
+`strands dev optimize <experiment>` runs the optimizer without a chat and prints the result. It does not change the agent file.
+The flags after `--` go to `strands-evals optimize run`, for example:
+
+```bash
+strands dev optimize refunds -- --max-iterations 2 --constraint 'tokens<=4000'
+```
+
+Dev sets the agent, the record folder, and the output format itself. Thus dev rejects the flags that set them, for example `--agent` and `--json`.

@@ -294,6 +294,7 @@ sidebar:
           - docs/user-guide/cli/dev/base-cli
           - docs/user-guide/cli/dev/harness
           - docs/user-guide/cli/dev/optimization
+          - docs/user-guide/cli/dev/optimizer-internals
           - docs/user-guide/cli/dev/auto-optimize
 
   - label: Harness SDK
