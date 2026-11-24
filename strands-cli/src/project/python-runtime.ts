@@ -186,13 +186,10 @@ export const preparePythonRuntime = async (
     timeout,
     ...(signal ? { signal } : {}),
   })
+  const ready = async (): Promise<boolean> =>
+    !options.validateEnvironment && (await exists(python)) && (await probe(run, request(python, ['-c', RUNTIME_PROBE])))
   try {
-    if (
-      !options.validateEnvironment &&
-      (await exists(python)) &&
-      (await probe(run, request(python, ['-c', RUNTIME_PROBE])))
-    )
-      return python
+    if (await ready()) return python
     if (await exists(environment)) {
       const details = await lstat(environment)
       if (!details.isDirectory() || details.isSymbolicLink())
@@ -206,12 +203,7 @@ export const preparePythonRuntime = async (
     ignoreStateFolder(state)
     const setUpEnvironment = async (): Promise<string> => {
       signal?.throwIfAborted()
-      if (
-        !options.validateEnvironment &&
-        (await exists(python)) &&
-        (await probe(run, request(python, ['-c', RUNTIME_PROBE])))
-      )
-        return python
+      if (await ready()) return python
       if (!(await exists(python))) {
         const interpreter =
           options.interpreter ?? process.env.PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3')

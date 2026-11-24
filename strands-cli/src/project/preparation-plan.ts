@@ -148,40 +148,19 @@ const pythonPlan = (
       commands: [command('dependencies', 'uv', ['sync', '--locked', '--inexact'])],
     }
   }
+  const pipInstall = (...args: string[]): PreparationCommand =>
+    command('dependencies', python, ['-I', '-m', 'pip', 'install', '--disable-pip-version-check', ...args])
   const commands: PreparationCommand[] = [command('runtime', python, ['Prepare a local Python runtime'])]
   const requirements = inputs.has('requirements.txt')
-  if (requirements)
-    commands.push(
-      command('dependencies', python, [
-        '-I',
-        '-m',
-        'pip',
-        'install',
-        '--disable-pip-version-check',
-        '-r',
-        'requirements.txt',
-      ])
-    )
+  if (requirements) commands.push(pipInstall('-r', 'requirements.txt'))
   const installable = isRecord(manifest['build-system'])
   if (installable) {
-    commands.push(
-      command('dependencies', python, ['-I', '-m', 'pip', 'install', '--disable-pip-version-check', '--editable', '.'])
-    )
+    commands.push(pipInstall('--editable', '.'))
   } else if (projectConfig && Array.isArray(projectConfig.dependencies) && !requirements) {
     const dependencies = projectConfig.dependencies
     if (dependencies.some((value) => typeof value !== 'string' || !value.trim() || value.startsWith('-')))
       throw new Error('pyproject.toml project.dependencies must contain package requirements, not command options.')
-    if (dependencies.length)
-      commands.push(
-        command('dependencies', python, [
-          '-I',
-          '-m',
-          'pip',
-          'install',
-          '--disable-pip-version-check',
-          ...(dependencies as string[]),
-        ])
-      )
+    if (dependencies.length) commands.push(pipInstall(...(dependencies as string[])))
   }
   const guidance =
     !installable && !requirements && !projectConfig
