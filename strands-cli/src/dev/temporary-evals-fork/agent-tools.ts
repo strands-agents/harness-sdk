@@ -12,9 +12,12 @@ import type {
   ExperimentSummary,
   Generation,
   Knob,
+  EvalsBrowser,
+  EvalsBrowserPlace,
   KnobKey,
   OptimizeObjective,
   OptimizeReview,
+  OptimizeRun,
   OptimizeState,
   OptimizeStep,
   ProposedEdit,
@@ -84,7 +87,7 @@ When an optimization run finishes, its edits appear on the developer's screen as
 
 Optimization can also run by itself. Auto-optimize every N turns makes an experiment from the chats of the developer with this agent every N chat turns and tunes the agent on it, in the background and outside this chat: you take no part in it, and a notice and the line below the chat input show it; Auto-accept optimization results writes the edits of a finished run without showing them. Both are in /settings under Strands dev workspace, and strands_dev_auto_optimize reads and sets them, so do not search files for how they work. When the developer asks for it, such as "optimize every 20 turns from my history", say what it does and that every automatic run is paid. A question whether you can is not yet a request: set it once they say to.
 
-Answer what was asked from tool output of this turn: call strands_dev_status again whenever the question is what exists, because runs and files change between turns. Ask the developer to choose or enter numbers with the strands_dev_ UI tools, and ask a free-form question in chat. When a question comes back interrupted, the developer wrote to you instead of answering: reply to that message and end the turn, and never take its unsubmitted draft as the answer.`
+Answer what was asked from tool output of this turn: call strands_dev_status again whenever the question is what exists, because runs and files change between turns. Ask the developer to choose or enter numbers with the strands_dev_ UI tools, and ask a free-form question in chat. When a question comes back interrupted, the developer wrote to you instead of answering: reply to that message and end the turn, and never take its unsubmitted draft as the answer. Never make up the evals UI address; pass on only what strands_dev_open_evals_ui returns, as a markdown link with a short label such as [open the run](url).`
 
 const reply = (value: unknown): string => JSON.stringify(value, null, 2)
 
@@ -376,6 +379,13 @@ const lastRun = (runs: readonly ExperimentRun[], path: string): object | undefin
   return found ? runStatus(found.run) : undefined
 }
 
+const EVALS_UI_OPENING = 'strands_dev_open_evals_ui opens an experiment, a report, or an optimization run.'
+
+const evalsUiStatus = (ui: EvalsBrowser): object => {
+  const { status, detail } = ui.snapshot()
+  return defined({ status, detail, open: status === 'ready' ? EVALS_UI_OPENING : undefined })
+}
+
 const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevChatTool => ({
   name: 'strands_dev_status',
   readOnly: true,
@@ -386,7 +396,7 @@ const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevCh
     'An answer from an earlier turn is stale, because files and runs change in between.',
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   run: async (): Promise<string> => {
-    const { experiments, test, optimize } = sessions()
+    const { experiments, test, optimize, ui } = sessions()
     await test.show()
     const [saved, pastChats] = await Promise.all([experiments.reload(), history.pastChats()])
     const { folder, generations } = experiments.snapshot()
@@ -398,11 +408,13 @@ const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevCh
           name,
           cases: caseCount,
           file: path,
+          evalsUi: ui.link?.({ view: 'experiment', experiment: path }),
           lastTest: lastRun(runs, path),
         })
       ),
       generations: generations.map(generationStatus),
       optimization: optimizationStatus(optimize.snapshot()),
+      evalsUi: evalsUiStatus(ui),
       newExperiment: {
         cases: experiments.suggested().cases,
         pastChats,
@@ -804,6 +816,61 @@ const stopBackgroundTool = (sessions: Sessions): DevChatTool => ({
   },
 })
 
+const runRecord = ({ record, state }: OptimizeRun): string | undefined =>
+  record ||
+  (state.step === 'running'
+    ? state.progress.record
+    : state.step === 'review'
+      ? state.review.record
+      : state.step === 'failed'
+        ? state.record
+        : undefined) ||
+  undefined
+
+// The newest optimization run of the experiment that has a record, else the list of optimization runs.
+const optimizationPlace = ({ runs = [] }: OptimizeState, experiment: string): EvalsBrowserPlace => {
+  const record = runs
+    .filter((run) => run.experiment === experiment)
+    .map(runRecord)
+    .find((found) => found !== undefined)
+  return record ? { view: 'optimization', record } : { view: 'opt-runs' }
+}
+
+const openEvalsUiTool = (sessions: Sessions): DevChatTool => ({
+  name: 'strands_dev_open_evals_ui',
+  readOnly: true,
+  description:
+    'Open the evals UI in the browser of the developer: an experiment with its cases, the last report of an experiment, ' +
+    'the latest optimization run of an experiment, or the list of runs when no experiment is given. ' +
+    'Returns what to tell the developer when it cannot open the browser.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      experiment: { type: 'string', description: 'A saved experiment name; omit to open the list of runs.' },
+      view: { type: 'string', enum: ['experiment', 'report', 'optimization'], description: 'Default experiment.' },
+      case: { type: 'string', description: 'A case name to open in the experiment or report view.' },
+    },
+    additionalProperties: false,
+  },
+  run: async (input): Promise<string> => {
+    const name = text(input, 'experiment')
+    const view = text(input, 'view')
+    const item = text(input, 'case')
+    const place = async (): Promise<EvalsBrowserPlace> => {
+      if (!name) return { view: view === 'optimization' ? 'opt-runs' : 'runs' }
+      const experiment = await findExperiment(sessions, name)
+      if (view === 'optimization') return optimizationPlace(sessions().optimize.snapshot(), experiment.name)
+      return {
+        view: view === 'report' ? 'report' : 'experiment',
+        experiment: experiment.path,
+        ...(item ? { case: item } : {}),
+      }
+    }
+    const notice = await sessions().ui.open(await place())
+    return reply(notice ? { opened: false, tell: notice.lines } : { opened: true })
+  },
+})
+
 const openFileTool = (sessions: Sessions): DevChatTool => ({
   name: 'strands_dev_open_file',
   readOnly: true,
@@ -831,7 +898,7 @@ const openFileTool = (sessions: Sessions): DevChatTool => ({
       return reply({
         opened: false,
         file: path,
-        detail: `${errorMessage(error)} Give the path and ask in chat what to change.`,
+        detail: `${errorMessage(error)} Give the path${experiment ? ', offer strands_dev_open_evals_ui,' : ''} and ask in chat what to change.`,
       })
     }
   },
@@ -1045,6 +1112,7 @@ export const temporaryDevChatPart = ({
     testResultsTool(sessions),
     backgroundTool(sessions),
     stopBackgroundTool(sessions),
+    openEvalsUiTool(sessions),
     openFileTool(sessions),
     planTool(sessions),
     ...uiTools(() => sessions().ask),

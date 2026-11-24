@@ -52,12 +52,14 @@ import {
   temporaryRunStamp,
 } from './layout.js'
 import { temporaryWorkspaceReady } from './layout-migration.js'
+import { TemporaryEvalsUi } from './evals-ui.js'
 import { readTemporaryExperimentFile, readTemporaryRunnableCases, temporaryCaseCount } from './experiment-files.js'
 import { TemporaryExperiments } from './experiments-session.js'
 import {
   announce,
   plural,
   absolutePath,
+  evalsLinkText,
   type TemporaryDevSettings,
   type TemporaryHost,
   type TemporarySessionHost,
@@ -111,6 +113,7 @@ import {
   readTemporaryStudy,
   readTemporaryUsageProfile,
   tailTemporaryRun,
+  temporaryRunFolder,
   temporaryStudyReader,
   type TemporaryUsageProfile,
   type TemporaryMeasurement,
@@ -144,6 +147,7 @@ export interface TemporaryDevSessions {
   readonly setSettings: (update: Partial<ChatSettings>) => Promise<void>
   /** The settings of the workspace as they are now. */
   readonly settings: () => TemporaryDevSettings | undefined
+  readonly ui: TemporaryEvalsUi
   readonly ask: WizardBroker
   /** Opens a file in the developer's editor through the chat screen; a relative path is from the agent folder. */
   readonly openFile: (path: string) => Promise<void>
@@ -462,7 +466,8 @@ export class TemporaryTest extends Store<TestState> {
       ? `${run.cases.filter((item) => item.passed).length} of ${plural(run.cases.length, 'rerun case')} passed · `
       : ''
     const shown = absolutePath(results.report)
-    announce(this.host(), 'success', `evaluate · ${experiment.name} · ${rerun}${total} · report in ${shown}`)
+    const link = evalsLinkText(this.host(), { view: 'report', experiment: experiment.path })
+    announce(this.host(), 'success', `evaluate · ${experiment.name} · ${rerun}${total} · report in ${shown}${link}`)
   }
 
   // A run without a report points at its log, or gives the error when it never started one.
@@ -1287,7 +1292,9 @@ export class TemporaryOptimize extends Store<OptimizeState> {
           : auto
             ? `auto-accept is on · applying ${plural(ready, 'edit')}`
             : `showing ${plural(ready, 'edit')}`
-      announce(this.host(), 'success', `optimize · run ${name} finished · ${ending}`)
+      const folder = await temporaryRunFolder(record).catch(() => undefined)
+      const link = evalsLinkText(this.host(), { view: 'optimization', record }, folder)
+      announce(this.host(), 'success', `optimize · run ${name} finished · ${ending}${link}`)
     } catch (error) {
       if (cancelled) return this.reportCancelled(entry, plan, record)
       this.updateRun(entry, { step: 'failed', message: errorMessage(error), record })
@@ -1524,6 +1531,7 @@ export const temporaryDevSessions = (host: TemporarySessionHost): TemporaryDevSe
       if (!(await set(update))) throw new Error('The setting could not be saved.')
     },
     settings: (): TemporaryDevSettings | undefined => latest.settings?.(),
+    ui: new TemporaryEvalsUi(current, host.evalsUi),
     ask: new WizardBroker((event) =>
       recordDevEvent(event === 'shown' ? 'ask_shown' : event === 'answered' ? 'ask_answered' : 'ask_cancelled')
     ),
@@ -1533,6 +1541,7 @@ export const temporaryDevSessions = (host: TemporarySessionHost): TemporaryDevSe
       await open(resolve(latest.workspace.root, path))
     },
   }
+  latest = { ...latest, evalsLink: (place, runFolder): string | undefined => sessions.ui.link(place, runFolder) }
   sessions.optimize.onReview = (id): void => void reviewOptimizeRun(sessions, id)
   sessions.optimize.onSettled = (id): void => sessions.ask.withdraw(id)
   registry.set(key, {

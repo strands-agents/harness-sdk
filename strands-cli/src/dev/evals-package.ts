@@ -1,4 +1,4 @@
-export const STRANDS_EVALS_VERSION = '1.12.0'
+export const STRANDS_EVALS_VERSION = '1.12.1'
 
 export const STRANDS_EVALS_REQUIREMENT = `strands-agents-evals[optimization]==${STRANDS_EVALS_VERSION}`
 

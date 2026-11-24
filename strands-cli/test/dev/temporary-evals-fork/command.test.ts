@@ -181,6 +181,18 @@ describe('TEMPORARY dev commands', () => {
     )
   })
 
+  it('shouldStartTheEvalsUiWhenTheChatAttachesAndKeepTheChatWorkingWhenItCannotStart', async () => {
+    const { workspace, project } = await fixture()
+    const announced = vi.fn(() => ({ update: vi.fn() }))
+
+    temporaryDevCommands(workspace, project)[0]!.attach?.({ ...context, report: announced })
+
+    await vi.waitFor(() =>
+      expect(announced).toHaveBeenCalledWith('error', expect.stringContaining('evals UI unavailable · '))
+    )
+    expect(temporaryDevSessions({ workspace, agent: () => ({}) }).ui.snapshot().status).toBe('unavailable')
+  })
+
   it('shouldRunEachEvalsCommandAsItsSkillWithoutAPanel', async () => {
     const { workspace, project } = await fixture()
 

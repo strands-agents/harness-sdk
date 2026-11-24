@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { DevChatTool } from '../../../src/dev/chat-extension.js'
 import type {
+  EvalsBrowserState,
   ExperimentsState,
   ExperimentSummary,
   GenerationSettings,
@@ -152,6 +153,7 @@ const fakeSessions = () => {
   })
   const test = state<TestState>({ runs: [] })
   const optimize = state<OptimizeState>({ step: 'pick' })
+  const ui = state<EvalsBrowserState>({ status: 'ready' })
   const settings = { autoAcceptOptimizationResults: false, autoOptimize: 0 }
   const finishRun = (run: OptimizeRunState): void =>
     optimize.set({ ...run, runs: [{ id: 'run-1', experiment: 'refunds', startedAt: 0, state: run }] })
@@ -208,6 +210,7 @@ const fakeSessions = () => {
           setTimeout(() => finishRun({ step: 'review', review: { ...current.review, applied: ['agent.py'] } }), 0)
       }),
     },
+    ui: { ...ui, open: vi.fn() },
     openFile: vi.fn(async (_path: string): Promise<void> => {}),
     auto: {
       status: vi.fn(async (): Promise<AutoOptimizeStatus> => ({ everyTurns: settings.autoOptimize, turnsSince: 3 })),
@@ -219,7 +222,7 @@ const fakeSessions = () => {
       Object.assign(settings, update)
     }),
   }
-  return { sessions, experiments, test, optimize, finishRun }
+  return { sessions, experiments, test, optimize, ui, finishRun }
 }
 
 const generationSettings = (overrides: Partial<GenerationSettings> = {}): GenerationSettings => ({
@@ -373,6 +376,7 @@ describe('TEMPORARY dev chat part', () => {
       ['strands_dev_evaluation_results', true],
       ['strands_dev_run_background', false],
       ['strands_dev_stop_background', false],
+      ['strands_dev_open_evals_ui', true],
       ['strands_dev_open_file', true],
       ['strands_dev_optimization_plan', false],
       ['strands_dev_single_select', false],
@@ -413,7 +417,26 @@ describe('TEMPORARY dev chat part', () => {
       ],
       generations: [],
       optimization: { step: 'idle' },
+      evalsUi: {
+        status: 'ready',
+        open: expect.stringContaining(
+          'strands_dev_open_evals_ui opens an experiment, a report, or an optimization run'
+        ),
+      },
     })
+  })
+
+  it.each([
+    [{ status: 'starting' as const, detail: 'Installing strands-agents-evals' }],
+    [{ status: 'unavailable' as const, detail: 'the page server exited with code 1' }],
+  ])('shouldSayWhyTheEvalsUiCannotOpenYetWhenTheStatusShowsIt %o', async (shown) => {
+    const { call, ui } = setup()
+    ui.set(shown)
+
+    const status = await call('strands_dev_status')
+
+    expect(status).toMatchObject({ evalsUi: shown })
+    expect(JSON.stringify(status)).not.toContain('127.0.0.1')
   })
 
   it('shouldGiveTheLastResultFromAnEarlierSessionWhenTheStatusFollowsARestart', async () => {
@@ -485,11 +508,50 @@ describe('TEMPORARY dev chat part', () => {
     expect(await call('strands_dev_open_file', { experiment: 'refunds' })).toEqual({
       opened: false,
       file: REFUNDS.path,
-      detail: 'This terminal cannot open an editor. Give the path and ask in chat what to change.',
+      detail:
+        'This terminal cannot open an editor. Give the path, offer strands_dev_open_evals_ui, and ask in chat what to change.',
     })
     expect(await call('strands_dev_open_file', { path: 'agent.ts' })).toEqual({ opened: true, file: 'agent.ts' })
     await expect(tool('strands_dev_open_file').run({})).rejects.toThrow('Give experiment or path, one of them.')
     expect(sessions.openFile.mock.calls).toEqual([[REFUNDS.path], [REFUNDS.path], ['agent.ts']])
+  })
+
+  it('shouldOpenTheReportTheRunsOrAnOptimizationAndPassOnTheLinesWhenNoBrowserOpens', async () => {
+    const { call, sessions, optimize } = setup()
+    sessions.ui.open.mockResolvedValueOnce({ tone: 'normal', lines: ['Open this link in a browser:', 'http://x'] })
+
+    expect(await call('strands_dev_open_evals_ui', { experiment: 'refunds', view: 'report', case: 'c0' })).toEqual({
+      opened: false,
+      tell: ['Open this link in a browser:', 'http://x'],
+    })
+    expect(await call('strands_dev_open_evals_ui')).toEqual({ opened: true })
+    await call('strands_dev_open_evals_ui', { view: 'optimization' })
+    await call('strands_dev_open_evals_ui', { experiment: 'refunds', view: 'optimization' })
+    await call('strands_dev_open_evals_ui', { experiment: 'refunds' })
+    const run = { id: 'run-1', experiment: 'refunds', startedAt: 0 }
+    for (const state of [
+      { step: 'running', progress: { ...progress(), record: '/w/running' } },
+      { step: 'review', review: { ...review(), record: '/w/review' } },
+      { step: 'failed', message: 'x', record: '/w/failed' },
+      { step: 'cancelled', experiment: 'refunds' },
+    ] as const) {
+      optimize.set({
+        step: 'pick',
+        runs: [
+          { ...run, state },
+          { ...run, record: '/w/listed', state },
+        ],
+      })
+      await call('strands_dev_open_evals_ui', { experiment: 'refunds', view: 'optimization' })
+    }
+    expect(sessions.ui.open.mock.calls).toEqual([
+      [{ view: 'report', experiment: REFUNDS.path, case: 'c0' }],
+      [{ view: 'runs' }],
+      [{ view: 'opt-runs' }],
+      [{ view: 'opt-runs' }],
+      [{ view: 'experiment', experiment: REFUNDS.path }],
+      ...['/w/running', '/w/review', '/w/failed', '/w/listed'].map((record) => [{ view: 'optimization', record }]),
+    ])
   })
 
   it('shouldReadSavedTestDetailsWithoutRerunning', async () => {

@@ -22,7 +22,7 @@ describe('background-evals skill', () => {
 describe('skill command workflows', () => {
   it.each(Object.entries(temporaryCommandWorkflows))('shouldKeepThe%sPromptShortAndDevSpecific', (_, workflow) => {
     expect(workflow).toContain('strands-dev/experiments/<name>/<name>.json')
-    expect(workflow).not.toContain('strands_dev_open_evals_ui')
+    expect(workflow).toContain('strands_dev_open_evals_ui')
     expect(workflow).toContain('with the strands_dev_ UI tools, one question per call')
     expect(workflow).toContain('A cancelled question is a no.')
     expect(workflow).toContain('through the background-evals skill')
@@ -73,7 +73,7 @@ describe('/experiment runs and reports', () => {
     expect(experiment).toContain('Leave it out while its lastTest is running')
     expect(experiment).toContain('"Edit its cases" (value edit)')
     expect(experiment).toContain('read it with strands_dev_evaluation_results')
-    expect(experiment).not.toContain('strands_dev_open_evals_ui')
+    expect(experiment).toContain('strands_dev_open_evals_ui with the report view')
   })
 
   it('shouldStartAPickedRunWithoutAskingAgainInChat', () => {

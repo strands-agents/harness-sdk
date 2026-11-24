@@ -361,7 +361,7 @@ At startup, dev moves experiments from the old `tmp/experiments/`, `tmp/reports/
 
 ### Optimization runs
 
-`/optimize` runs the `strands-evals optimize run` command of strands-agents-evals 1.12.0.
+`/optimize` runs the `strands-evals optimize run` command of strands-agents-evals 1.12.1.
 For each run, dev writes `.state/task.py` in the folder of the run. The `--agent` and `--rollout` flags of the command refer to this file.
 The file imports `strands_dev_evals`, a Python package that the CLI includes. Then the file calls `optimize_task` with the agent file, the experiment, and the space file.
 
@@ -394,21 +394,32 @@ When the search stops on a proposer error, the command writes the error and exit
 **Limits:**
 
 - Dev tunes only what its space file declares: `createHarness` options as text, choices, and switches, plus the instructions and the effort. Dev does not tune model parameters at this time, for example the temperature.
-- **TEMPORARY:** `/evaluate` and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. In strands-agents-evals 1.12.0, `optimize run` can run a TypeScript agent file, but `run` cannot. Thus dev keeps its runner for the two commands at this time.
+- **TEMPORARY:** `/evaluate` and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. In strands-agents-evals 1.12.1, `optimize run` can run a TypeScript agent file, but `run` cannot. Thus dev keeps its runner for the two commands at this time.
 - Dev applies the champion itself, in the Apply step of `/optimize`. The upstream CLI only writes the champion to `best.diff` and `best.values.json`.
 
 ### Evals UI
 
-strands-agents-evals 1.12.0 does not include the evals UI. Thus strands dev does not have the evals UI at this time.
+strands-agents-evals 1.12.1 includes the evals UI. When a dev chat starts, dev starts `strands-evals ui` for `strands-dev/experiments/`.
+The evals UI is a local web page. It shows experiments, reports, and optimization runs.
+When the page server is ready, a notice in the chat gives the link.
+Ask the agent to open an experiment, its last report, or an optimization run. The agent uses the `strands_dev_open_evals_ui` tool.
+The notices for a saved experiment, a completed evaluation, and a completed optimization also have a link.
+
+The page server listens on `127.0.0.1` only, on a free port. Each start makes a new random token.
+The link contains the token. The server rejects each request that does not have the token.
+When dev runs on a remote computer over SSH, dev does not open a browser. Instead, dev shows an `ssh -N -L` command and the link.
+
+You can edit cases on the page, and the page saves them to the experiment file. When the file changes, dev reads it again.
+If the evals UI cannot start, the chat continues to work. A message gives the cause. Then ask the chat to try again.
 
 The experiment skill, workspace instructions, and `strands_dev_*` tools are injected only into the dev chat at runtime. They are not added to the base harness, saved profile, or exported agent source. Exports preserve authored files; they do not remove dev instructions that someone explicitly writes into those files.
 
-**Evals dependency:** the evaluation workflow installs `strands-agents-evals[optimization]==1.12.0` from PyPI in a separate Python environment on first use.
+**Evals dependency:** the evaluation workflow installs `strands-agents-evals[optimization]==1.12.1` from PyPI in a separate Python environment on first use.
 Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. Python 3.10 or later, access to your package index, and model credentials for the run are necessary.
 
 Dev installs strands-agents-evals one time for each release and Python version, in `~/.strands/temporary-evals/`. All workspaces share that environment.
 Dev deletes an environment that no workspace used for 7 days. The install uses the package index settings of your pip configuration.
-The `session-converter` skill comes from the installed package. Dev loads the `strands-evals` and `optimize` skills from the `v1.12.0` tag of strands-agents/evals.
+The `session-converter` skill comes from the installed package. Dev loads the `strands-evals` and `optimize` skills from the `v1.12.1` tag of strands-agents/evals.
 
 The checkout command `strands-dev` is separate: use `strands-dev dev` to run this workflow from a source checkout.
 
