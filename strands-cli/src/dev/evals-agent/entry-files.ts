@@ -21,8 +21,6 @@ export interface EvalsOptimizeEntry extends EvalsRunEntry {
   readonly finalPick?: EvalsFinalPick
 }
 
-export type EvalsCommand = 'generate' | 'evaluators'
-
 const PACKAGE_FOLDER = dirname(fileURLToPath(import.meta.url))
 const OPTIMIZE_TASK = '_task'
 const OPTIMIZE_EXPORTS = ['agent', 'rollout', 'search'] as const
@@ -68,17 +66,6 @@ const finalPickLines = ({ finalists, lowerBound }: EvalsFinalPick): string[] => 
   'from strands_evals.optimization import FinalPick, LowerBound',
   '',
   `${FINAL_PICK} = FinalPick(n_finalists=${finalists}, rule=LowerBound(q=${lowerBound}))`,
-]
-
-export const evalsCommandArguments = (command: EvalsCommand, flags: readonly string[] = []): string[] => [
-  '-c',
-  [
-    'import sys',
-    `sys.path.insert(0, ${pythonText(PACKAGE_FOLDER)})`,
-    `from strands_dev_evals.${command} import main`,
-    'sys.exit(main(sys.argv[1:]))',
-  ].join('; '),
-  ...flags,
 ]
 
 const writeEntry = async (file: string, lines: readonly string[]): Promise<string> => {

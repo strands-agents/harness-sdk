@@ -5,7 +5,6 @@ import { dirname, join } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
 import { isRecord } from '../../values.js'
-import { evalsCommandArguments } from '../evals-agent/entry-files.js'
 import type { GenerationError, GenerationSettings } from '../panels/model.js'
 import type { DevWorkspace, DevWorkspaceConfig } from '../workspace.js'
 import { temporaryDropIncompleteCases } from './experiment-files.js'
@@ -83,29 +82,31 @@ export const temporaryGenerateArguments = (
   context: string,
   files: TemporaryGenerationFiles,
   language: DevWorkspaceConfig['language']
-): string[] =>
-  evalsCommandArguments('generate', [
-    '--context',
-    context,
-    '--task-description',
-    settings.task,
-    '--num-cases',
-    String(settings.cases),
-    ...(settings.topics > 0 ? ['--num-topics', String(settings.topics)] : []),
-    ...temporaryEvaluatorArguments(settings.evaluators),
-    '--agent-language',
-    language,
-    ...(settings.model.trim() ? ['--model', generatorModelId(settings.model)] : []),
-    '--max-parallel-num-cases',
-    String(settings.parallel),
-    ...(settings.expectedTrajectory ? ['--expected-trajectory'] : []),
-    ...(settings.expectedInteractions ? ['--expected-interactions'] : []),
-    ...(settings.metadata ? ['--metadata'] : []),
-    '--progress',
-    files.progress,
-    '--output',
-    files.draft,
-  ])
+): string[] => [
+  '-m',
+  'strands_evals.cli',
+  'generate',
+  '--context',
+  context,
+  '--task-description',
+  settings.task,
+  '--num-cases',
+  String(settings.cases),
+  ...(settings.topics > 0 ? ['--num-topics', String(settings.topics)] : []),
+  ...temporaryEvaluatorArguments(settings.evaluators),
+  '--temporary-agent-language',
+  language,
+  ...(settings.model.trim() ? ['--model', generatorModelId(settings.model)] : []),
+  '--max-parallel-num-cases',
+  String(settings.parallel),
+  ...(settings.expectedTrajectory ? ['--expected-trajectory'] : []),
+  ...(settings.expectedInteractions ? ['--expected-interactions'] : []),
+  ...(settings.metadata ? ['--metadata'] : []),
+  '--temporary-progress',
+  files.progress,
+  '--output',
+  files.draft,
+]
 
 const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
 

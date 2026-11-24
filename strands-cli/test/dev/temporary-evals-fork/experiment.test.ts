@@ -3,7 +3,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import { evalsCommandArguments } from '../../../src/dev/evals-agent/entry-files.js'
 import type { GenerationSettings } from '../../../src/dev/panels/model.js'
 import {
   prepareTemporaryOptimizerEnvironment,
@@ -76,7 +75,10 @@ const completeCases = (count: number) =>
 
 const generating = (cases: readonly object[], events: readonly object[] = []) =>
   vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-    await writeFileAt(flagValue(args, '--progress'), events.map((event) => `${JSON.stringify(event)}\n`).join(''))
+    await writeFileAt(
+      flagValue(args, '--temporary-progress'),
+      events.map((event) => `${JSON.stringify(event)}\n`).join('')
+    )
     await writeFileAt(flagValue(args, '--output'), JSON.stringify({ cases }))
     return { code: 0, stdout: '', stderrTail: [] }
   })
@@ -131,33 +133,34 @@ describe('TEMPORARY experiment generation', () => {
       'python'
     )
 
-    expect(args).toEqual(
-      evalsCommandArguments('generate', [
-        '--context',
-        'An agent for refunds',
-        '--task-description',
-        'Answer refund questions',
-        '--num-cases',
-        '3',
-        '--num-topics',
-        '3',
-        '--evaluator',
-        'TrajectoryEvaluator',
-        '--agent-language',
-        'python',
-        '--model',
-        'us.anthropic.claude-sonnet',
-        '--max-parallel-num-cases',
-        '2',
-        '--expected-trajectory',
-        '--expected-interactions',
-        '--metadata',
-        '--progress',
-        '/d/refunds.progress.jsonl',
-        '--output',
-        '/d/refunds.json',
-      ])
-    )
+    expect(args).toEqual([
+      '-m',
+      'strands_evals.cli',
+      'generate',
+      '--context',
+      'An agent for refunds',
+      '--task-description',
+      'Answer refund questions',
+      '--num-cases',
+      '3',
+      '--num-topics',
+      '3',
+      '--evaluator',
+      'TrajectoryEvaluator',
+      '--temporary-agent-language',
+      'python',
+      '--model',
+      'us.anthropic.claude-sonnet',
+      '--max-parallel-num-cases',
+      '2',
+      '--expected-trajectory',
+      '--expected-interactions',
+      '--metadata',
+      '--temporary-progress',
+      '/d/refunds.progress.jsonl',
+      '--output',
+      '/d/refunds.json',
+    ])
   })
 
   it('shouldLeaveOptionalFlagsOutWhenTheDefaultsAreUsed', () => {
@@ -191,7 +194,7 @@ describe('TEMPORARY experiment generation', () => {
       JSON.stringify({ tool_name: 'lookup_order', evaluator_type: 'ToolCalled' }),
       JSON.stringify({ value: 'refund', case_sensitive: false, name: 'says refund', evaluator_type: 'Contains' }),
     ])
-    expect(flagValue(args, '--agent-language')).toBe('typescript')
+    expect(flagValue(args, '--temporary-agent-language')).toBe('typescript')
   })
 
   it('shouldNameTheEvaluatorTypeFromTheChoiceWhenItsSettingsAlsoNameOne', () => {
@@ -287,7 +290,7 @@ describe('TEMPORARY experiment generation', () => {
     expect(existsSync(files.draft)).toBe(false)
   })
 
-  it('shouldGiveTheEvaluatorErrorAndANextStepWhenGenerateRejectsAnEvaluator', async () => {
+  it('shouldGiveTheEvaluatorErrorOfTheForkAndANextStepWhenGenerateRejectsAnEvaluator', async () => {
     const workspace = await workspaceFixture()
     const rejected = vi.fn(async (_process: TemporaryEvalsProcess) => ({
       code: 2,
@@ -312,7 +315,7 @@ describe('TEMPORARY experiment generation', () => {
       'strands-evals generate stopped with exit code 2: argument --evaluator: ToolCalled needs tool_name.\n' +
         'Change the evaluator or the setting that the error names, then try again.'
     )
-    expect(flagValue(rejected.mock.calls[0]![0].args, '--agent-language')).toBe('python')
+    expect(flagValue(rejected.mock.calls[0]![0].args, '--temporary-agent-language')).toBe('python')
   })
 
   it('shouldNotStartTheGeneratorWhenItWasCancelledDuringSetup', async () => {

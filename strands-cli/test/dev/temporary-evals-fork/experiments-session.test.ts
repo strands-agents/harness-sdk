@@ -75,7 +75,7 @@ const controlledGenerator = () => {
           args,
           ...(signal ? { signal } : {}),
           progress: async (event) => {
-            const path = flagValue(args, '--progress')
+            const path = flagValue(args, '--temporary-progress')
             await mkdir(dirname(path), { recursive: true })
             await appendFile(path, `${JSON.stringify(event)}\n`)
           },
