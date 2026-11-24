@@ -4,7 +4,7 @@ import { getCollection } from 'astro:content'
 import { parse } from 'node-html-parser'
 import { describe, expect, it } from 'vitest'
 
-import { DECIDER_DEFAULT_MODEL } from '../src/config/decider-landing'
+import { DECIDER_DEFAULT_MODEL, DECIDER_RECORDED_EXAMPLE } from '../src/config/decider-landing'
 import { bannerHrefs, homepageBanner, homepageCommunityPost } from '../src/util/announcements'
 
 function configuredPathWithBase(value: string): string {
@@ -335,7 +335,13 @@ describe('homepage machine-readable metadata', () => {
       },
     ])
     expect(cards).toHaveLength(3)
-    expect(toolsSection?.querySelector('[data-toolkit-product="decider"]')?.text).toContain(DECIDER_DEFAULT_MODEL)
+    const deciderCardText = toolsSection?.querySelector('[data-toolkit-product="decider"]')?.text
+    const deciderChoiceArgument = `${DECIDER_RECORDED_EXAMPLE.choice.question}=${DECIDER_RECORDED_EXAMPLE.choice.criteria
+      .map(({ label }) => label)
+      .join(',')}`
+    expect(deciderCardText).toContain(DECIDER_DEFAULT_MODEL)
+    expect(deciderCardText).toContain(DECIDER_RECORDED_EXAMPLE.state)
+    expect(deciderCardText).toContain(deciderChoiceArgument)
     expect(toolsSection?.querySelectorAll('[data-install]')).toHaveLength(0)
     expect(toolsSection?.querySelectorAll('.toolkit__card.is-open')).toHaveLength(0)
     expect(

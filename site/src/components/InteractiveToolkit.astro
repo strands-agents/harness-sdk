@@ -1,6 +1,6 @@
 ---
 import arrow from '../assets/banner/arrow.svg?raw';
-import { DECIDER_DEFAULT_MODEL } from '../config/decider-landing';
+import { DECIDER_DEFAULT_MODEL, DECIDER_RECORDED_EXAMPLE } from '../config/decider-landing';
 import { pathWithBase } from '../util/links';
 import InstallCommand from './InstallCommand.astro';
 import ToolkitTerminal from './ToolkitTerminal.astro';
@@ -11,6 +11,9 @@ import ToolkitTerminal from './ToolkitTerminal.astro';
 const kw = (text: string) => ({ text, color: 'var(--code-keyword)' });
 const str = (text: string) => ({ text, color: 'var(--code-string)' });
 const t = (text: string) => ({ text });
+const deciderChoiceArgument = `${DECIDER_RECORDED_EXAMPLE.choice.question}=${DECIDER_RECORDED_EXAMPLE.choice.criteria
+  .map(({ label }) => label)
+  .join(',')}`;
 
 interface CodeRow {
   lineNo: number;
@@ -150,11 +153,8 @@ const cards: ToolkitCard[] = [
         rows: [
           { lineNo: 1, tokens: [t('strands-decider ask \\')] },
           { lineNo: 2, tokens: [t(`  ${DECIDER_DEFAULT_MODEL} \\`)] },
-          { lineNo: 3, tokens: [t('  --state '), str('"Help! My payouts have been failing for 3 days."'), t(' \\')] },
-          {
-            lineNo: 4,
-            tokens: [t('  --choice '), str('"Which team should handle this?=billing,technical,sales"')],
-          },
+          { lineNo: 3, tokens: [t('  --state '), str(`"${DECIDER_RECORDED_EXAMPLE.state}"`), t(' \\')] },
+          { lineNo: 4, tokens: [t('  --choice '), str(`"${deciderChoiceArgument}"`)] },
         ],
       },
     },

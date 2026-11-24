@@ -9,40 +9,30 @@ import {
   type ProductContentItem,
   type ProductContentProject,
 } from '../src/config/product-content'
-import { formatDate } from '../src/util/blog'
+import { formatDate, getPostsByTag } from '../src/util/blog'
 import { siteLink } from '../src/util/links'
 
 const projects = Object.keys(PRODUCT_CONTENT_PROJECTS) as ProductContentProject[]
-const expectedFeaturedArticles = {
-  box: ['article-strands-box-cli', 'article-strands-box-linux-sandbox'],
-  decider: [
-    'article-introducing-strands-decider-v2',
-    'article-amazon-saves-millions-replacing-sonnet-with-strands-decider',
-  ],
-} satisfies Record<ProductContentProject, string[]>
-const expectedTaggedArticles = {
-  box: [...expectedFeaturedArticles.box, 'article-strands-box-the-big-picture'],
-  decider: [
-    ...expectedFeaturedArticles.decider,
-    'article-strands-decider-gemma-4-models',
-    'article-introducing-strands-decider',
-  ],
-} satisfies Record<ProductContentProject, string[]>
 
 describe('product content', () => {
   it('filters, sorts, and limits content by project', async () => {
-    for (const project of projects) {
-      const items = await getProductContent(project)
+    const limit = 3
 
-      expect(items).toHaveLength(3)
+    for (const project of projects) {
+      const allItems = await getProductContent(project, Number.MAX_SAFE_INTEGER)
+      const items = await getProductContent(project, limit)
+
+      expect(items).toHaveLength(Math.min(limit, allItems.length))
       expect(items.every((item) => item.projects.includes(project))).toBe(true)
       expect(new Set(items.map((item) => item.id)).size).toBe(items.length)
-      expect(items.filter((item) => item.kind === 'article').map((item) => item.id)).toEqual(
-        expectedFeaturedArticles[project]
-      )
 
       for (let index = 1; index < items.length; index += 1) {
         expect(items[index - 1]!.date.getTime()).toBeGreaterThanOrEqual(items[index]!.date.getTime())
+      }
+
+      if (allItems.some((item) => item.kind === 'video') && allItems.some((item) => item.kind === 'article')) {
+        expect(items.some((item) => item.kind === 'video')).toBe(true)
+        expect(items.some((item) => item.kind === 'article')).toBe(true)
       }
     }
 
@@ -51,21 +41,17 @@ describe('product content', () => {
 
   it('uses the project blog tag to load articles', async () => {
     for (const project of projects) {
-      const articles = (await getProductContent(project, 10))
-        .filter((item) => item.kind === 'article')
-        .map((item) => item.id)
+      const expectedIds = new Set(
+        (await getPostsByTag(PRODUCT_CONTENT_PROJECTS[project].blogTag)).map((post) => `article-${post.id}`)
+      )
+      const articles = (await getProductContent(project, Number.MAX_SAFE_INTEGER)).filter(
+        (item) => item.kind === 'article'
+      )
 
-      expect(new Set(articles)).toEqual(new Set(expectedTaggedArticles[project]))
-    }
-  })
-
-  it('keeps each project isolated while supporting mixed content types', async () => {
-    const box = await getProductContent('box')
-    const decider = await getProductContent('decider')
-
-    for (const items of [box, decider]) {
-      expect(items.filter((item) => item.kind === 'video')).toHaveLength(1)
-      expect(items.filter((item) => item.kind === 'article')).toHaveLength(2)
+      expect(new Set(articles.map((item) => item.id))).toEqual(expectedIds)
+      expect(articles.every((item) => item.projects.length === 1 && item.projects[0] === project)).toBe(true)
+      expect(articles.every((item) => item.source === 'Strands Blog')).toBe(true)
+      expect(articles.every((item) => !item.external && /^\/blog\/[^/]+\/$/.test(item.href))).toBe(true)
     }
   })
 
@@ -95,12 +81,12 @@ describe('product content', () => {
       })),
     ]
 
-    expect(selectProductContent(items, 3).map((item) => item.kind)).toContain('video')
-    expect(selectProductContent(items, 3).map((item) => item.kind)).toContain('article')
+    expect(selectProductContent(items, 3).map((item) => item.id)).toEqual(['article-2', 'article-1', 'video'])
   })
 
   it('uses official AWS Developers videos with valid metadata', () => {
-    expect(PRODUCT_VIDEOS).toHaveLength(2)
+    expect(PRODUCT_VIDEOS.length).toBeGreaterThan(0)
+    expect(new Set(PRODUCT_VIDEOS.map((video) => video.id)).size).toBe(PRODUCT_VIDEOS.length)
 
     for (const video of PRODUCT_VIDEOS) {
       expect(video.id).toMatch(/^[\w-]{11}$/)

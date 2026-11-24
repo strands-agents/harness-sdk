@@ -45,6 +45,7 @@ const DEFAULT_PRODUCT_CONTENT_LIMIT = 3
 const YOUTUBE_WATCH_URL = 'https://www.youtube.com/watch?v='
 const YOUTUBE_THUMBNAIL_URL = 'https://i.ytimg.com/vi'
 
+// Site maintainers add official AWS Developers videos here when they should appear on a product landing page.
 export const PRODUCT_VIDEOS: readonly ProductVideo[] = [
   {
     id: 'Z18kFF3uhSA',
