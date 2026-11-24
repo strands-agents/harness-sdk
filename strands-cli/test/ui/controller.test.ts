@@ -3,12 +3,8 @@ import { setImmediate } from 'node:timers'
 import type { ContentBlockData } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
-import {
-  ChatController,
-  type DevChatCommand,
-  type DevChatCommandContext,
-  type DevChatPanelView,
-} from '../../src/ui/chat/controller.js'
+import { ChatController } from '../../src/ui/chat/controller.js'
+import type { DevChatCommand, DevChatCommandContext, DevChatPanelView } from '../../src/ui/chat/controller.js'
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
 import type { DevChatJob, DevChatJobs } from '../../src/ui/chat/types.js'
 import {
