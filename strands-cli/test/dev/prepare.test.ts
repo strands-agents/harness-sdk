@@ -18,18 +18,39 @@ import {
   bindWorkspace,
   readWorkspaceBinding,
   updateWorkspaceCli,
-  readDevWorkspace,
-  type DevWorkspace,
   type DevWorkspaceConfig,
+  type WorkspaceBinding,
 } from '../../src/dev/workspace.js'
 import * as installer from '../../src/project/archive.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 
-const legacyWorkspace = async (root: string, config: DevWorkspaceConfig): Promise<DevWorkspace> => {
+const legacyWorkspace = async (root: string, overrides: Partial<DevWorkspaceConfig> = {}): Promise<void> => {
+  const config = {
+    version: 1,
+    name: 'Local',
+    language: 'typescript',
+    entrypoint: 'agent.ts',
+    origin: { kind: 'discovered' },
+  }
   await mkdir(join(root, '.strands'), { recursive: true })
-  await writeFile(join(root, '.strands/config.json'), JSON.stringify(config))
-  return (await readDevWorkspace(root))!
+  await writeFile(join(root, '.strands/config.json'), JSON.stringify({ ...config, ...overrides }))
 }
+
+const bind = async (folder: string, root: string, origin: WorkspaceBinding['origin'], name = 'Saved CLI') => {
+  await mkdir(folder, { recursive: true })
+  await bindWorkspace(folder, {
+    version: 1,
+    name,
+    agent: { path: root, entrypoint: 'agent.ts', language: 'typescript' },
+    origin,
+  })
+}
+
+const terminalScreen = () => ({ signal: new AbortController().signal, show: vi.fn() })
+
+/** Runs `strands dev` in a terminal, where the harness picker can open. */
+const devInTerminal = (...flags: string[]): ReturnType<typeof prepareDevRun> =>
+  prepareDevRun(parseArgs(['dev', ...flags]), { screen: terminalScreen(), deferPreparation: true })
 
 const fixture = async (parent?: string): Promise<string> => {
   const root = parent ? join(parent, 'project') : await temporaryDirectory()
@@ -102,19 +123,13 @@ describe('prepareDevRun', () => {
     await writeFile(join(root, 'package.json'), '{"type":"module"}')
     await writeFile(join(root, 'src/agent.ts'), 'export const agent = {}')
     await writeFile(join(root, '.strands-entrypoint'), './src/agent.ts\n')
-    await legacyWorkspace(root, {
-      version: 1,
-      name: 'Legacy base',
-      language: 'typescript',
-      entrypoint: 'src/agent.ts',
-      origin: { kind: 'cli' },
-    })
+    await legacyWorkspace(root, { name: 'Legacy base', entrypoint: 'src/agent.ts', origin: { kind: 'cli' } })
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
     vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, screen, open) =>
       open({ kind: 'cli' }, screen.signal, join(launch, 'strands-dev'))
     )
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
+    const screen = terminalScreen()
 
     const prepared = await prepareDevRun(parseArgs(['dev', 'init']), { screen })
 
@@ -164,13 +179,7 @@ describe('prepareDevRun', () => {
 
   it('shouldUseTheWorkspaceEntrypointWhenTheGlobalDefaultDiffers', async () => {
     const root = await fixture()
-    await legacyWorkspace(root, {
-      version: 1,
-      name: 'Local',
-      language: 'typescript',
-      entrypoint: 'agent.ts',
-      origin: { kind: 'discovered' },
-    })
+    await legacyWorkspace(root)
     const saved = config()
     await saved.useAgentProject('/global/default.ts')
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(saved)
@@ -188,13 +197,7 @@ describe('prepareDevRun', () => {
   it('shouldLeaveTheManifestUnchangedWhenAgentOverridesOneLaunch', async () => {
     const root = await fixture()
     await writeFile(join(root, 'other.ts'), 'export const agent = null')
-    await legacyWorkspace(root, {
-      version: 1,
-      name: 'Local',
-      language: 'typescript',
-      entrypoint: 'agent.ts',
-      origin: { kind: 'discovered' },
-    })
+    await legacyWorkspace(root)
     const before = await readFile(join(root, '.strands/config.json'), 'utf8')
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
 
@@ -256,7 +259,7 @@ describe('prepareDevRun', () => {
       await options.search?.((found) => reported.push(found), _screen.signal)
       return open({ kind: 'discovered', harness }, _screen.signal)
     })
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
+    const screen = terminalScreen()
 
     const prepared = await prepareDevRun(parseArgs(['dev', '--search-root', '../other']), { screen })
 
@@ -292,7 +295,7 @@ describe('prepareDevRun', () => {
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
 
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
+    const screen = terminalScreen()
     expect(await prepareDevRun(parseArgs(['dev']), { screen })).toBeUndefined()
     await expect(readFile(join(cwd, '.strands/config.json'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
@@ -356,9 +359,8 @@ describe('workspace path option', () => {
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
 
-    await prepareDevRun(parseArgs(['dev', 'init', ...flags]), { screen, deferPreparation: true })
+    await devInTerminal('init', ...flags)
 
     expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].folderFor?.({ kind: 'cli' })).toEqual({
       path: expected(launch),
@@ -394,8 +396,7 @@ describe('default workspace placement', () => {
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses, warnings: [] })
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
-    await prepareDevRun(parseArgs(['dev', ...flags]), { screen, deferPreparation: true })
+    await devInTerminal(...flags)
     const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
     await options.search?.(() => {}, new AbortController().signal)
     return options
@@ -455,10 +456,9 @@ describe('default workspace placement', () => {
     vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, screen, open) =>
       open(createChoice, screen.signal)
     )
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
 
-    const first = await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
-    const second = await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
+    const first = await devInTerminal()
+    const second = await devInTerminal()
 
     const project = join(launch, 'strands-workspace')
     expect(first?.workspace.root).toBe(project)
@@ -479,13 +479,10 @@ describe('default workspace placement', () => {
       .mockImplementationOnce(async (_options, screen, open) => open(createChoice, screen.signal))
       .mockImplementationOnce(async (_options, screen, open) => open(other, screen.signal))
       .mockImplementationOnce(async (_options, screen, open) => open(other, screen.signal, undefined, true))
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
 
-    await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
-    await expect(prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })).rejects.toThrow(
-      'Workspace folder is in use.'
-    )
-    const replaced = await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
+    await devInTerminal()
+    await expect(devInTerminal()).rejects.toThrow('Workspace folder is in use.')
+    const replaced = await devInTerminal()
     await replaced!.keep()
 
     expect(replaced?.workspace.root).toBe(join(launch, 'strands-workspace'))
@@ -510,9 +507,8 @@ describe('default workspace placement', () => {
     await writeFile(join(launch, 'exported/agent/agent.py'), harness)
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
 
-    await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
+    await devInTerminal()
 
     const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
     const harnesses = (await options.search?.(() => {}, new AbortController().signal))?.harnesses ?? []
@@ -606,13 +602,7 @@ describe('default workspace placement', () => {
     await mkdir(root)
     await writeFile(join(root, 'package.json'), '{"type":"module"}')
     await writeFile(join(root, 'agent.ts'), 'export const agent = {}')
-    await legacyWorkspace(root, {
-      version: 1,
-      name: 'Legacy',
-      language: 'typescript',
-      entrypoint: 'agent.ts',
-      origin: { kind: 'discovered' },
-    })
+    await legacyWorkspace(root, { name: 'Legacy' })
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
 
     const prepared = await prepareDevRun(parseArgs(['dev', 'init']), { deferPreparation: true })
@@ -657,8 +647,7 @@ describe('workspace folder selection', () => {
     vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, screen, open) =>
       open(choice(harnessRoot), screen.signal, folder, replace)
     )
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
-    return prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
+    return devInTerminal()
   }
   const discovered = (root: string): HarnessChoice => ({
     kind: 'discovered',
@@ -730,9 +719,8 @@ describe('workspace folder selection', () => {
     vi.spyOn(picker, 'chooseHarness').mockImplementation(async (_options, screen, open) =>
       open({ kind: 'create', language: 'typescript', name: 'fresh' }, screen.signal, folder)
     )
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
 
-    const prepared = await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
+    const prepared = await devInTerminal()
 
     const source = await readFile(prepared!.workspace.entrypoint, 'utf8')
     expect(source).toContain("name: 'fresh'")
@@ -827,9 +815,8 @@ describe('workspace folder selection', () => {
       expect(await readFile(join(folder, '.config'), 'utf8')).toBe(before)
       return open({ kind: 'create', language: 'typescript', name: 'fresh' }, screen.signal, 'other')
     })
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
 
-    const prepared = await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
+    const prepared = await devInTerminal()
     await prepared!.keep()
 
     expect(prepared?.workspace.directory).toBe(join(process.cwd(), 'other/strands-dev'))
@@ -887,13 +874,7 @@ describe('workspace folder selection', () => {
   ])('shouldReuseTheFolderWhenItHoldsAWorkspaceFor%s', async (_case, kind, choice) => {
     const root = await fixture()
     const folder = join(process.cwd(), 'existing')
-    await mkdir(folder)
-    await bindWorkspace(folder, {
-      version: 1,
-      name: 'fresh',
-      agent: { path: root, entrypoint: 'agent.ts', language: 'typescript' },
-      origin: { kind },
-    })
+    await bind(folder, root, { kind }, 'fresh')
     const before = await readFile(join(folder, '.config'), 'utf8')
 
     const prepared = await selectInFolder(() => choice, folder)
@@ -932,14 +913,13 @@ describe('workspace folder selection', () => {
     [
       'a Base CLI workspace made from another agent',
       async () => {
-        await mkdir(strandsUserPath('strands-dev'), { recursive: true })
         const other = await fixture()
-        await bindWorkspace(strandsUserPath('strands-dev'), {
-          version: 1,
-          name: 'Strands harness',
-          agent: { path: other, entrypoint: 'agent.ts', language: 'typescript' },
-          origin: { kind: 'cli', source: join(other, 'agent.ts') },
-        })
+        await bind(
+          strandsUserPath('strands-dev'),
+          other,
+          { kind: 'cli', source: join(other, 'agent.ts') },
+          'Strands harness'
+        )
       },
       { detected: false, occupiedBy: expect.stringContaining('Strands harness') },
     ],
@@ -948,9 +928,8 @@ describe('workspace folder selection', () => {
     await arrange()
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
-    const screen = { signal: new AbortController().signal, show: vi.fn() }
 
-    await prepareDevRun(parseArgs(['dev']), { screen, deferPreparation: true })
+    await devInTerminal()
 
     expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].folderFor?.({ kind: 'cli' })).toEqual({
       path: strandsUserPath('strands-dev'),
@@ -993,23 +972,15 @@ describe('workspace folder selection', () => {
       join(real, 'cli.toml'),
       `${project ? `agentProject = ${JSON.stringify(other)}\n` : ''}[profile]\nname = "Saved"\n`
     )
-    await mkdir(strandsUserPath('strands-dev'), { recursive: true })
-    await bindWorkspace(strandsUserPath('strands-dev'), {
-      version: 1,
-      name: 'Saved',
-      agent: { path: other, entrypoint: 'agent.ts', language: 'typescript' },
-      origin: { kind: 'cli', source: project ? join(other, 'agent.ts') : join(real, 'cli.toml') },
-    })
+    const source = project ? join(other, 'agent.ts') : join(real, 'cli.toml')
+    await bind(strandsUserPath('strands-dev'), other, { kind: 'cli', source }, 'Saved')
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(
       await CliConfigStore.load(join(linked, 'cli.toml'), { persist: false })
     )
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
 
-    await prepareDevRun(parseArgs(['dev']), {
-      screen: { signal: new AbortController().signal, show: vi.fn() },
-      deferPreparation: true,
-    })
+    await devInTerminal()
 
     expect(vi.mocked(picker.chooseHarness).mock.calls[0]?.[0].folderFor?.({ kind: 'cli' })).toEqual({
       path: strandsUserPath('strands-dev'),
@@ -1019,22 +990,18 @@ describe('workspace folder selection', () => {
 
   it('shouldListTheAgentOfAStaleBaseCliWorkspaceAsADiscoveredProject', async () => {
     const other = await fixture()
-    await mkdir(strandsUserPath('strands-dev'), { recursive: true })
-    await bindWorkspace(strandsUserPath('strands-dev'), {
-      version: 1,
-      name: 'Strands harness',
-      agent: { path: other, entrypoint: 'agent.ts', language: 'typescript' },
-      origin: { kind: 'cli', source: join(other, 'agent.ts') },
-    })
+    await bind(
+      strandsUserPath('strands-dev'),
+      other,
+      { kind: 'cli', source: join(other, 'agent.ts') },
+      'Strands harness'
+    )
     const harness = { name: 'Other', entrypoint: join(other, 'agent.ts'), root: other, language: 'typescript' as const }
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [harness], warnings: [] })
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
 
-    await prepareDevRun(parseArgs(['dev']), {
-      screen: { signal: new AbortController().signal, show: vi.fn() },
-      deferPreparation: true,
-    })
+    await devInTerminal()
 
     const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
     const listed = (await options.search?.(() => {}, new AbortController().signal))?.harnesses ?? []
@@ -1078,10 +1045,7 @@ describe('new harness model', () => {
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
 
-    await prepareDevRun(parseArgs(['dev']), {
-      screen: { signal: new AbortController().signal, show: vi.fn() },
-      deferPreparation: true,
-    })
+    await devInTerminal()
 
     const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
     expect(options.modelNotice?.('python')).toBe(
@@ -1101,7 +1065,6 @@ describe('selection after the user goes back', () => {
       () => true,
       () => false
     )
-  const screen = () => ({ signal: new AbortController().signal, show: vi.fn() })
   interface Reselection {
     first: HarnessChoice
     second?: HarnessChoice
@@ -1119,7 +1082,7 @@ describe('selection after the user goes back', () => {
       .mockImplementationOnce(async (_options, screen, open) => open(first, screen.signal, folder))
       .mockImplementationOnce(async (_options, screen, open) => (second ? open(second, screen.signal) : undefined))
     const args = parseArgs(['dev', ...flags])
-    const options = { config: store, savedConfig, screen: screen(), deferPreparation: true }
+    const options = { config: store, savedConfig, screen: terminalScreen(), deferPreparation: true }
     const rejected = (await prepareDevRun(args, options))!
     const prepared = await prepareDevRun(args, { ...options, rejected })
     const picked = vi.mocked(picker.chooseHarness).mock.calls[1]![0]
@@ -1197,7 +1160,7 @@ describe('selection after the user goes back', () => {
     vi.spyOn(picker, 'chooseHarness')
       .mockImplementationOnce(async (_options, screen, open) => open({ kind: 'cli' }, screen.signal))
       .mockResolvedValueOnce(undefined)
-    const options = { config: store, savedConfig: store.snapshot(), screen: screen(), deferPreparation: true }
+    const options = { config: store, savedConfig: store.snapshot(), screen: terminalScreen(), deferPreparation: true }
     const rejected = (await prepareDevRun(parseArgs(['dev']), options))!
     await writeFile(strandsUserPath('cli.toml'), '[profile]\n')
 
@@ -1211,7 +1174,7 @@ describe('selection after the user goes back', () => {
     const failed = await failedHarness()
     const store = config()
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
-    const options = { config: store, savedConfig: store.snapshot(), screen: screen(), deferPreparation: true }
+    const options = { config: store, savedConfig: store.snapshot(), screen: terminalScreen(), deferPreparation: true }
 
     const rejected = await prepareDevRun(parseArgs(['dev', '--agent', failed.entrypoint]), options)
     await prepareDevRun(parseArgs(['dev']), { ...options, rejected: rejected! })
@@ -1276,7 +1239,7 @@ describe('selection after the user goes back', () => {
         return open(discovered, screen.signal)
       })
       .mockResolvedValueOnce(undefined)
-    const options = { config: store, savedConfig: store.snapshot(), screen: screen(), deferPreparation: true }
+    const options = { config: store, savedConfig: store.snapshot(), screen: terminalScreen(), deferPreparation: true }
 
     const first = (await prepareDevRun(parseArgs(['dev']), options))!
     const second = (await prepareDevRun(parseArgs(['dev']), { ...options, rejected: first }))!
@@ -1291,14 +1254,7 @@ describe('selection after the user goes back', () => {
   })
 
   it('shouldSuggestTheKeptBaseCliWorkspaceAgainAfterItWasRejected', async () => {
-    await mkdir(strandsUserPath(), { recursive: true })
-    await mkdir(strandsUserPath('strands-dev'))
-    await bindWorkspace(strandsUserPath('strands-dev'), {
-      version: 1,
-      name: 'Saved CLI',
-      agent: { path: await fixture(), entrypoint: 'agent.ts', language: 'typescript' },
-      origin: { kind: 'cli' },
-    })
+    await bind(strandsUserPath('strands-dev'), await fixture(), { kind: 'cli' })
     await mkdir(strandsUserPath('strands-dev-2'))
     await writeFile(strandsUserPath('strands-dev-2/notes.txt'), 'notes')
 
@@ -1310,13 +1266,7 @@ describe('selection after the user goes back', () => {
   })
 
   it('shouldReuseTheBaseCliWorkspaceWhenAnotherHarnessWasRejected', async () => {
-    await mkdir(strandsUserPath('strands-dev'), { recursive: true })
-    await bindWorkspace(strandsUserPath('strands-dev'), {
-      version: 1,
-      name: 'Saved CLI',
-      agent: { path: await fixture(), entrypoint: 'agent.ts', language: 'typescript' },
-      origin: { kind: 'cli' },
-    })
+    await bind(strandsUserPath('strands-dev'), await fixture(), { kind: 'cli' })
     const failed = await failedHarness()
 
     const { picked } = await selectTwice(config(), failed, { first: { kind: 'discovered', harness: failed } })
@@ -1333,7 +1283,7 @@ describe('selection after the user goes back', () => {
         open({ kind: 'discovered', harness: failed }, screen.signal)
       )
       .mockResolvedValueOnce(undefined)
-    const options = { config: store, savedConfig: store.snapshot(), screen: screen(), deferPreparation: true }
+    const options = { config: store, savedConfig: store.snapshot(), screen: terminalScreen(), deferPreparation: true }
     const rejected = (await prepareDevRun(parseArgs(['dev']), options))!
 
     await prepareDevRun(parseArgs(['dev']), {
@@ -1357,10 +1307,6 @@ describe('workspace with a missing agent', () => {
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
     return { root, folder, binding: await readFile(join(folder, '.config'), 'utf8') }
   }
-  const terminalScreen = (): { signal: AbortSignal; show: () => void } => ({
-    signal: new AbortController().signal,
-    show: vi.fn(),
-  })
 
   it.each<[string, string[], boolean]>([
     ['DevInATerminal', ['dev'], true],
@@ -1397,13 +1343,7 @@ describe('workspace with a missing agent', () => {
   it('shouldOfferTheBaseCliFolderForReplacementWhenItsAgentIsMissing', async () => {
     const project = await fixture()
     const folder = strandsUserPath('strands-dev')
-    await mkdir(folder, { recursive: true })
-    await bindWorkspace(folder, {
-      version: 1,
-      name: 'Saved CLI',
-      agent: { path: project, entrypoint: 'agent.ts', language: 'typescript' },
-      origin: { kind: 'cli' },
-    })
+    await bind(folder, project, { kind: 'cli' })
     const binding = await readFile(join(folder, '.config'), 'utf8')
     await rm(project, { recursive: true, force: true })
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
@@ -1413,7 +1353,7 @@ describe('workspace with a missing agent', () => {
       return undefined
     })
 
-    await prepareDevRun(parseArgs(['dev']), { screen: terminalScreen(), deferPreparation: true })
+    await devInTerminal()
 
     const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
     expect(options.cli).toEqual({ name: 'Saved CLI', path: 'in-memory' })
@@ -1438,10 +1378,7 @@ describe('workspace with a missing agent', () => {
       return open(choice, screen.signal, root, true)
     })
 
-    const prepared = await prepareDevRun(parseArgs(['dev', 'init']), {
-      screen: terminalScreen(),
-      deferPreparation: true,
-    })
+    const prepared = await devInTerminal('init')
     await prepared!.keep()
 
     const options = vi.mocked(picker.chooseHarness).mock.calls[0]![0]
@@ -1459,13 +1396,7 @@ describe('workspace opening', () => {
       const root = await fixture()
       const launch = await temporaryDirectory()
       const directory = location === 'child-directory' ? join(launch, 'strands-dev') : launch
-      await mkdir(directory, { recursive: true })
-      await bindWorkspace(directory, {
-        version: 1,
-        name: 'Configured agent',
-        agent: { path: root, entrypoint: 'agent.ts', language: 'typescript' },
-        origin: { kind: 'discovered' },
-      })
+      await bind(directory, root, { kind: 'discovered' }, 'Configured agent')
       vi.spyOn(process, 'cwd').mockReturnValue(launch)
       vi.spyOn(CliConfigStore, 'load').mockResolvedValue(CliConfigStore.memory())
       const scan = vi.spyOn(search, 'discoverHarnesses')
@@ -1485,12 +1416,6 @@ describe('workspace opening', () => {
 })
 
 describe('workspace configuration from Settings', () => {
-  const screen = (openProject?: () => Promise<void>) => ({
-    signal: new AbortController().signal,
-    show: vi.fn(),
-    ...(openProject ? { openProject } : {}),
-  })
-
   it('shouldOpenTheConfigOfTheActiveWorkspaceWhenEditIsChosen', async () => {
     const launch = await temporaryDirectory()
     const directory = join(launch, 'strands-dev')
@@ -1498,13 +1423,13 @@ describe('workspace configuration from Settings', () => {
     await bindExistingAgent(directory, join(await fixture(launch), 'agent.ts'))
     const openProject = vi.fn(async () => undefined)
 
-    await openWorkspaceConfiguration(parseArgs(['dev', '--workspace', directory]), screen(openProject))
+    await openWorkspaceConfiguration(parseArgs(['dev', '--workspace', directory]), { ...terminalScreen(), openProject })
 
     expect(openProject).toHaveBeenCalledExactlyOnceWith({ root: directory, entrypoint: join(directory, '.config') })
   })
 
   it('shouldRefuseToEditWhenNoDevWorkspaceIsActive', async () => {
-    await expect(openWorkspaceConfiguration(parseArgs(['dev']), screen())).rejects.toThrow(
+    await expect(openWorkspaceConfiguration(parseArgs(['dev']), terminalScreen())).rejects.toThrow(
       'No dev workspace is active.'
     )
   })
