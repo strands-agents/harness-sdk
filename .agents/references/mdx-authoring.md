@@ -155,8 +155,7 @@ Use it sparingly, for a block that clearly benefits:
 
 Don't wrap prose, callouts, or a `<Diagram>`: diagrams are drawn 720px wide for the
 column, so a wider box only scales them up. Wrap a single block; everything inside the
-wrapper widens. Readers can already click any image to zoom it to full size, so a wide
-screenshot is for one readers need to read in place.
+wrapper widens.
 
 Put `:::wide` at the top level of the page. Inside an aside or a `<TabItem>` it stays
 column width; to widen tabbed code, wrap the whole `<Tabs>` instead. `:::wide{#id}` sets an
