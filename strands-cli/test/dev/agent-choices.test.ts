@@ -228,3 +228,74 @@ model = BedrockModel(
     )
   })
 })
+
+describe('replacing the effort that an agent sets as an option', () => {
+  it.each([
+    {
+      form: 'TypeScriptSingleQuotes',
+      source: (level: string) =>
+        `export const agent = await createHarness({ model: 'bedrock/model', effort: '${level}' })\n`,
+    },
+    {
+      form: 'SpacedDoubleQuotes',
+      source: (level: string) =>
+        `export const agent = await createHarness({ model: 'bedrock/model', effort : "${level}" })\n`,
+    },
+  ])('shouldReplaceOnlyTheEffortWhenTheEntrypointUses$form', async ({ source }) => {
+    const workspace = await agent('typescript', source('auto'))
+
+    await saveAgentChoices(workspace, { effort: 'high' }, { effort: 'auto' })
+
+    expect(await readFile(workspace.entrypoint, 'utf8')).toBe(source('high').replace('"high"', "'high'"))
+  })
+
+  it('shouldReplaceTheCodeEffortWhenATypeScriptCommentAlsoMentionsIt', async () => {
+    const source = (level: string) =>
+      `// effort: 'auto' was slow\nexport const agent = createHarness({ effort: '${level}' })\n`
+    const workspace = await agent('typescript', source('auto'))
+
+    await saveAgentChoices(workspace, { effort: 'high' }, { effort: 'auto' })
+
+    expect(await readFile(workspace.entrypoint, 'utf8')).toBe(source('high'))
+  })
+
+  it('shouldNameTheProblemWhenTheEffortIsSetInCode', async () => {
+    const source = 'export const agent = await createHarness({ effort: EFFORT })\n'
+    const workspace = await agent('typescript', source)
+
+    await expect(saveAgentChoices(workspace, { effort: 'high' }, { effort: 'auto' })).rejects.toThrow(
+      'agent.ts sets effort in code. Set it to "high" there yourself.'
+    )
+    expect(await readFile(workspace.entrypoint, 'utf8')).toBe(source)
+  })
+
+  describe.skipIf(!existsSync(pythonExecutable))('in a Python agent', () => {
+    beforeEach(() => {
+      vi.stubEnv('PYTHON', pythonExecutable)
+    })
+
+    it.each([
+      { form: 'PythonDoubleQuotes', setting: (level: string) => `effort="${level}"` },
+      { form: 'PythonSingleQuotes', setting: (level: string) => `effort='${level}'` },
+    ])('shouldReplaceOnlyTheEffortWhenTheEntrypointUses$form', async ({ setting }) => {
+      const source = (level: string) =>
+        `agent = create_harness(model="bedrock/model", reasoning_effort="auto", ${setting(level)})\n`
+      const workspace = await agent('python', source('auto'))
+
+      await saveAgentChoices(workspace, { effort: 'high' }, { effort: 'auto' })
+
+      expect(await readFile(workspace.entrypoint, 'utf8')).toBe(
+        'agent = create_harness(model="bedrock/model", reasoning_effort="auto", effort="high")\n'
+      )
+    })
+
+    it('shouldReplaceTheCodeEffortWhenAPythonCommentAlsoMentionsIt', async () => {
+      const source = (level: string) => `# effort="auto" was slow\nagent = create_harness(effort="${level}")\n`
+      const workspace = await agent('python', source('auto'))
+
+      await saveAgentChoices(workspace, { effort: 'high' }, { effort: 'auto' })
+
+      expect(await readFile(workspace.entrypoint, 'utf8')).toBe(source('high'))
+    })
+  })
+})

@@ -1349,7 +1349,6 @@ export class TemporaryOptimize extends Store<OptimizeState> {
       return locateTemporaryEdit({
         root: workspace.root,
         entrypoint: workspace.entrypoint,
-        knob: 'instructions',
         before: change.before,
         after: change.after,
       })
