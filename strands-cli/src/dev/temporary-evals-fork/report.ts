@@ -8,11 +8,6 @@ import type { CaseResult, EvaluatorVerdict, TestResults } from '../panels/model.
 import { temporaryCaseExpected, temporaryCaseName, temporaryCaseText, type TemporaryRawCase } from './experiment.js'
 import { pruneTemporaryTestRuns, temporaryLatestRecord, temporaryLatestReport, temporaryTestRunOf } from './layout.js'
 
-interface TemporaryTestRun {
-  readonly experiment: string
-  readonly seconds: number
-}
-
 interface ReportRow {
   readonly evaluator: string
   readonly testCase: TemporaryRawCase
@@ -62,14 +57,16 @@ const parseReport = (path: string, document: unknown): Report => {
   return { overall, rows }
 }
 
-const readReport = async (path: string): Promise<Report> => {
+type ReportDocument = Record<string, unknown>
+
+const readDocument = async (path: string): Promise<{ document: ReportDocument; report: Report }> => {
   let document: unknown
   try {
     document = JSON.parse(await readFile(path, 'utf8'))
   } catch (error) {
     throw unusableReport(path, errorMessage(error), error)
   }
-  return parseReport(path, document)
+  return { report: parseReport(path, document), document: document as ReportDocument }
 }
 
 const groupByCase = (rows: readonly ReportRow[]): Map<string, CaseGroup> => {
@@ -101,9 +98,9 @@ const caseResult = (name: string, { testCase, verdicts }: CaseGroup): CaseResult
 
 export const readTemporaryTestResults = async (
   path: string,
-  { experiment, seconds }: TemporaryTestRun
+  { experiment, seconds }: Pick<TestResults, 'experiment' | 'seconds'>
 ): Promise<TestResults> => {
-  const { overall, rows } = await readReport(path)
+  const { overall, rows } = (await readDocument(path)).report
   return {
     experiment,
     cases: [...groupByCase(rows)].map(([name, group]) => caseResult(name, group)),
@@ -129,19 +126,7 @@ const REPORT_ROW_FIELDS = [
   'recommendations',
 ] as const
 
-type ReportDocument = Record<string, unknown>
 type ReportRowFields = Partial<Record<(typeof REPORT_ROW_FIELDS)[number], unknown>>
-
-const readDocument = async (path: string): Promise<ReportDocument> => {
-  let document: unknown
-  try {
-    document = JSON.parse(await readFile(path, 'utf8'))
-  } catch (error) {
-    throw unusableReport(path, errorMessage(error), error)
-  }
-  parseReport(path, document)
-  return document as ReportDocument
-}
 
 const documentRows = (document: ReportDocument): ReportRowFields[] => {
   const cases = Array.isArray(document.cases) ? document.cases : []
@@ -223,7 +208,8 @@ const writeLatest = async (
   const staging = `${latest}.${process.pid}.tmp`
   await mkdir(dirname(latest), { recursive: true })
   if (only && existsSync(latest)) {
-    const merged = mergedDocument(await readDocument(latest), await readDocument(results.report), new Set(only))
+    const [previous, rerun] = [await readDocument(latest), await readDocument(results.report)]
+    const merged = mergedDocument(previous.document, rerun.document, new Set(only))
     await writeFile(staging, `${JSON.stringify(merged, null, 2)}\n`)
   } else await copyFile(results.report, staging)
   await rename(staging, latest)

@@ -3,10 +3,34 @@ import { dirname, join } from 'node:path'
 import { vi } from 'vitest'
 
 import { temporaryVenvPython, type TemporaryCommandRequest } from '../../src/dev/temporary-evals-fork/environment.js'
+import type { DevWorkspace } from '../../src/dev/workspace.js'
+import { temporaryDirectory } from './tempdir.js'
 
 export const writeFileAt = async (path: string, text: string): Promise<void> => {
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, text)
+}
+
+export const EXPERIMENT = JSON.stringify({ cases: [{ name: 'a' }, { name: 'b' }], evaluators: [] })
+
+export const experimentFile = (directory: string, name: string): string =>
+  join(directory, 'experiments', name, `${name}.json`)
+
+/** A dev workspace with a project interpreter and an experiment file for each name. */
+export const workspaceFixture = async (
+  experiments: string[] = ['support'],
+  language: 'python' | 'typescript' = 'python'
+): Promise<DevWorkspace> => {
+  const root = await temporaryDirectory()
+  const directory = join(root, 'strands-dev')
+  await writeFileAt(temporaryVenvPython(join(root, '.venv')), 'fixture interpreter')
+  await Promise.all(experiments.map((name) => writeFileAt(experimentFile(directory, name), EXPERIMENT)))
+  return {
+    directory,
+    root,
+    entrypoint: join(root, language === 'python' ? 'agent.py' : 'agent.ts'),
+    config: { version: 1, name: 'desk', language, entrypoint: 'agent.py', origin: { kind: 'discovered' } },
+  }
 }
 
 /** The commands that prepare the evals environment, answered without a Python. */

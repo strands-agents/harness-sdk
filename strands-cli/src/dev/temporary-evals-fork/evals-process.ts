@@ -41,13 +41,11 @@ const ERROR_LINE = /^strands-evals(?: [a-z-]+)*: error: /u
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 
-const temporaryTypescriptRunnerCommand = (): string => {
+export const temporaryTypescriptRunnerOf = ({ config }: DevWorkspace): TemporaryTypescriptRunner => {
+  if (config.language !== 'typescript') return {}
   const runner = fileURLToPath(new URL('./typescript-runner-main.js', import.meta.url))
-  return `${shellQuote(process.execPath)} ${shellQuote(runner)}`
+  return { temporaryTypescriptRunner: `${shellQuote(process.execPath)} ${shellQuote(runner)}` }
 }
-
-export const temporaryTypescriptRunnerOf = ({ config }: DevWorkspace): TemporaryTypescriptRunner =>
-  config.language === 'typescript' ? { temporaryTypescriptRunner: temporaryTypescriptRunnerCommand() } : {}
 
 export const temporaryWorkspaceDirectory = ({ directory, entrypoint }: DevWorkspace): string => {
   if (!directory)
@@ -101,10 +99,6 @@ export const temporaryEvalsFailure = (
       environment
     )
   )
-
-const releaseEventLoop = (streams: readonly unknown[]): void => {
-  for (const stream of streams) (stream as Partial<Pick<Socket, 'unref'>>).unref?.()
-}
 
 const readTemporaryLogTail = async (path: string, count = STDERR_TAIL_LINES): Promise<string[]> => {
   const handle = await open(path, 'r')
@@ -203,7 +197,7 @@ const spawnAttachedEvals: TemporaryEvalsSpawner = ({
     process.once('exit', abort)
     if (background) {
       child.unref()
-      releaseEventLoop([child.stdout, child.stderr])
+      for (const stream of [child.stdout, child.stderr]) (stream as Partial<Pick<Socket, 'unref'>>).unref?.()
     }
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => stdout.push(chunk))
     createInterface({ input: child.stderr }).on('line', (line) => {
@@ -219,4 +213,37 @@ const spawnAttachedEvals: TemporaryEvalsSpawner = ({
       output?.end()
       resolveExit({ code: code ?? 1, stdout: stdout.join(''), stderrTail })
     })
+  })
+
+/** What a request for an evaluation and for an optimization share. */
+export interface TemporaryEvalsRequest extends Pick<
+  TemporaryEvalsProcess,
+  'signal' | 'background' | 'detached' | 'onSpawn'
+> {
+  workspace: DevWorkspace
+  experiment?: string
+  forkArguments?: readonly string[]
+  onProgress?: (line: string) => void
+  prepare?: () => Promise<void>
+  now?: () => Date
+}
+
+/** Runs the optimizer environment's interpreter in the project, with the process options of the request. */
+export const runTemporaryEvals = (
+  spawnEvals: TemporaryEvalsSpawner = spawnTemporaryEvals,
+  { workspace, signal, background, detached, onSpawn }: TemporaryEvalsRequest,
+  { python, args, log }: { python: string; args: string[]; log: string },
+  onLine: (line: string) => void
+): Promise<TemporaryEvalsExit> =>
+  spawnEvals({
+    command: python,
+    args,
+    cwd: workspace.root,
+    env: temporaryEvalsEnvironment(python, process.env),
+    ...(signal ? { signal } : {}),
+    ...(background ? { background: true } : {}),
+    ...(detached ? { detached: true } : {}),
+    ...(onSpawn ? { onSpawn } : {}),
+    log,
+    onLine,
   })

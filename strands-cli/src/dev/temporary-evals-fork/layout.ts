@@ -96,8 +96,6 @@ export const temporaryEvalsEnvironmentFolder = (workspaceDirectory: string): str
 export const temporaryExperimentFile = (workspaceDirectory: string, name: string): string =>
   join(temporaryExperimentsFolder(workspaceDirectory), name, `${name}${EXPERIMENT_SUFFIX}`)
 
-const temporaryExperimentName = (experimentFile: string): string => basename(experimentFile, EXPERIMENT_SUFFIX)
-
 const outsideHomes = (workspaceDirectory: string): string =>
   join(temporaryStateFolder(workspaceDirectory), OUTSIDE_FOLDER)
 
@@ -106,7 +104,7 @@ export const temporaryOutsideExperimentHome = (workspaceDirectory: string, name:
 
 export const temporaryExperimentHome = (workspaceDirectory: string, experimentFile: string): string => {
   const file = resolve(experimentFile)
-  const name = temporaryExperimentName(file)
+  const name = basename(file, EXPERIMENT_SUFFIX)
   const inside = file === resolve(temporaryExperimentFile(workspaceDirectory, name))
   return inside ? dirname(file) : temporaryOutsideExperimentHome(workspaceDirectory, name)
 }

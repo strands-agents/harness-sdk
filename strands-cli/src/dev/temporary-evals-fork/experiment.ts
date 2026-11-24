@@ -16,8 +16,7 @@ import {
 import type { DevWorkspace } from '../workspace.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment, type TemporaryCommandRunner } from './environment.js'
 import {
-  spawnTemporaryEvals,
-  temporaryEvalsEnvironment,
+  runTemporaryEvals,
   temporaryEvalsFailure,
   temporaryWorkspaceDirectory,
   type TemporaryEvalsSpawner,
@@ -412,16 +411,12 @@ export const generateTemporaryExperiment = async (
   signal?.throwIfAborted()
   await mkdir(dirname(files.draft), { recursive: true })
   request.onGenerating?.()
-  const exit = await (dependencies.spawnGenerator ?? spawnTemporaryEvals)({
-    command: python,
-    args: temporaryGenerateArguments(settings, context, files),
-    cwd: workspace.root,
-    env: temporaryEvalsEnvironment(python, process.env),
-    ...(signal ? { signal } : {}),
-    ...(request.background ? { background: true } : {}),
-    log: files.log,
-    onLine: ignoreProgress,
-  })
+  const exit = await runTemporaryEvals(
+    dependencies.spawnGenerator,
+    request,
+    { python, args: temporaryGenerateArguments(settings, context, files), log: files.log },
+    ignoreProgress
+  )
   if (exit.code !== 0)
     throw temporaryEvalsFailure('strands-evals generate', exit, process.env, generatorNextStep(exit.code))
   if (!existsSync(files.draft)) throw new Error(`strands-evals generate finished without writing ${files.draft}.`)

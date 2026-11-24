@@ -4,10 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { GenerationSettings } from '../../../src/dev/panels/model.js'
-import {
-  prepareTemporaryOptimizerEnvironment,
-  temporaryVenvPython,
-} from '../../../src/dev/temporary-evals-fork/environment.js'
+import { prepareTemporaryOptimizerEnvironment } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import {
   createTemporaryExperimentCases,
@@ -26,8 +23,7 @@ import {
   writeTemporaryExperimentFile,
   type TemporaryRawCase,
 } from '../../../src/dev/temporary-evals-fork/experiment.js'
-import type { DevWorkspace } from '../../../src/dev/workspace.js'
-import { environmentRunner, writeFileAt } from '../../fixtures/optimizer-run.js'
+import { environmentRunner, workspaceFixture, writeFileAt } from '../../fixtures/optimizer-run.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const settings = (overrides: Partial<GenerationSettings> = {}): GenerationSettings => ({
@@ -39,17 +35,6 @@ const settings = (overrides: Partial<GenerationSettings> = {}): GenerationSettin
   model: '',
   ...overrides,
 })
-
-const workspaceFixture = async (): Promise<DevWorkspace> => {
-  const root = await temporaryDirectory()
-  await writeFileAt(temporaryVenvPython(join(root, '.venv')), 'fixture interpreter')
-  return {
-    directory: join(root, 'strands-dev'),
-    root,
-    entrypoint: join(root, 'agent.py'),
-    config: { version: 1, name: 'desk', language: 'python', entrypoint: 'agent.py', origin: { kind: 'discovered' } },
-  }
-}
 
 const flagValue = (args: readonly string[], flag: string): string => args[args.indexOf(flag) + 1]!
 
@@ -70,7 +55,7 @@ const NOW = new Date('2026-11-12T15:30:12Z')
 
 describe('TEMPORARY experiment generation', () => {
   it('shouldRejectAnUnsupportedConnectionBeforePreparingTheEnvironment', async () => {
-    const workspace = await workspaceFixture()
+    const workspace = await workspaceFixture([])
     const run = vi.fn()
     const spawn = vi.fn()
     await expect(
@@ -144,7 +129,7 @@ describe('TEMPORARY experiment generation', () => {
   })
 
   it('shouldSayThatItWritesCasesAndReturnTheDraftWhenGenerationSucceeds', async () => {
-    const workspace = await workspaceFixture()
+    const workspace = await workspaceFixture([])
     const files = temporaryGenerationFiles(workspace.directory!, 'refunds', NOW)
     const onGenerating = vi.fn()
 
@@ -158,7 +143,7 @@ describe('TEMPORARY experiment generation', () => {
   })
 
   it('shouldDeleteTheDraftAndSayWhyWhenEveryCaseFails', async () => {
-    const workspace = await workspaceFixture()
+    const workspace = await workspaceFixture([])
     const files = temporaryGenerationFiles(workspace.directory!, 'refunds', NOW)
 
     await expect(
@@ -172,7 +157,7 @@ describe('TEMPORARY experiment generation', () => {
   })
 
   it('shouldLeaveOutTheCasesWithABlankInputOrExpectedAnswerWhenTheGeneratorWritesThem', async () => {
-    const workspace = await workspaceFixture()
+    const workspace = await workspaceFixture([])
     const files = temporaryGenerationFiles(workspace.directory!, 'refunds', NOW)
     const complete = { name: 'c0', input: 'question 0', expected_output: 'answer 0' }
     const written = [
@@ -192,7 +177,7 @@ describe('TEMPORARY experiment generation', () => {
   })
 
   it('shouldDeleteTheDraftAndSayWhyWhenEveryGeneratedCaseHasABlankInputOrExpectedAnswer', async () => {
-    const workspace = await workspaceFixture()
+    const workspace = await workspaceFixture([])
     const files = temporaryGenerationFiles(workspace.directory!, 'refunds', NOW)
 
     await expect(
@@ -209,7 +194,7 @@ describe('TEMPORARY experiment generation', () => {
   })
 
   it('shouldGiveTheFlagErrorAndANextStepWhenGenerateRejectsASetting', async () => {
-    const workspace = await workspaceFixture()
+    const workspace = await workspaceFixture([])
     const rejected = vi.fn(async (_process: TemporaryEvalsProcess) => ({
       code: 2,
       stdout: '',
@@ -236,7 +221,7 @@ describe('TEMPORARY experiment generation', () => {
   })
 
   it('shouldNotStartTheGeneratorWhenItWasCancelledDuringSetup', async () => {
-    const workspace = await workspaceFixture()
+    const workspace = await workspaceFixture([])
     const abort = new AbortController()
     abort.abort()
     const spawnGenerator = generating(completeCases(1))

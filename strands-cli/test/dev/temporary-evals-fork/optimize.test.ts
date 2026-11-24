@@ -11,7 +11,9 @@ import type { OptimizeDecision } from '../../../src/dev/panels/model.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import {
   environmentRunner,
+  experimentFile,
   optimizerProposerError,
+  workspaceFixture,
   writeFileAt,
   writeOptimizerRun,
 } from '../../fixtures/optimizer-run.js'
@@ -20,28 +22,6 @@ import { temporaryDirectory } from '../../fixtures/tempdir.js'
 const NOW = new Date('2026-11-11T15:04:05Z')
 const STAMP = '20261111-150405'
 const EVALS_AGENT_FOLDER = fileURLToPath(new URL('../../../src/dev/evals-agent', import.meta.url))
-
-const experimentFile = (directory: string, name: string): string => join(directory, 'experiments', name, `${name}.json`)
-
-const workspaceFixture = async (
-  experiments: string[] = ['support'],
-  language: 'python' | 'typescript' = 'python'
-): Promise<DevWorkspace> => {
-  const root = await temporaryDirectory()
-  const directory = join(root, 'strands-dev')
-  await writeFileAt(temporaryVenvPython(join(root, '.venv')), 'fixture interpreter')
-  await Promise.all(
-    experiments.map((name) =>
-      writeFileAt(experimentFile(directory, name), JSON.stringify({ cases: [{ name: 'greeting', input: 'Hello' }] }))
-    )
-  )
-  return {
-    directory,
-    root,
-    entrypoint: join(root, 'agent.py'),
-    config: { version: 1, name: 'desk', language, entrypoint: 'agent.py', origin: { kind: 'discovered' } },
-  }
-}
 
 const evalsEnvironment = (workspace: DevWorkspace): string => join(workspace.directory!, 'tmp/.state/evals-env')
 
@@ -53,6 +33,27 @@ const succeeding = (stdout = 'ships candidate 3\nrecord: somewhere\n') =>
     process.onLine('candidate  0 baseline complete n=4 Contains 0.5')
     return { code: 0, stdout, stderrTail: [] }
   })
+
+const TASK = '.state/task.py'
+
+const spawnedWith = async (
+  request: Partial<Parameters<typeof runTemporaryOptimization>[0]> = {},
+  given?: DevWorkspace
+): Promise<{ workspace: DevWorkspace; args: string[]; task: string }> => {
+  const workspace = given ?? (await workspaceFixture())
+  const spawnOptimizer = succeeding()
+  await runTemporaryOptimization(
+    { workspace, now: () => NOW, ...request },
+    { run: environmentRunner(), spawnOptimizer }
+  )
+  return {
+    workspace,
+    args: spawnOptimizer.mock.calls[0]![0].args,
+    task: await readFile(optimizationFile(workspace, TASK), 'utf8'),
+  }
+}
+
+const afterTheDefaults = (args: readonly string[]): string[] => args.slice(args.indexOf('--seed') + 2)
 
 describe('TEMPORARY dev optimization', () => {
   it('shouldRunOptimizeRunWithATaskFileForTheWorkspaceAgentWhenOneExperimentExists', async () => {
@@ -72,7 +73,7 @@ describe('TEMPORARY dev optimization', () => {
 
     const experiment = experimentFile(workspace.directory!, 'support')
     const record = optimizationFile(workspace, 'optimizer')
-    const task = optimizationFile(workspace, '.state/task.py')
+    const task = optimizationFile(workspace, TASK)
     const [{ command, args, cwd, env, log }] = spawnOptimizer.mock.calls[0]!
     expect(command).toBe(temporaryVenvPython(evalsEnvironment(workspace)))
     expect(args).toEqual([
@@ -117,14 +118,9 @@ describe('TEMPORARY dev optimization', () => {
   })
 
   it('shouldWriteATaskFileThatImportsTheShippedPackageWithAbsolutePathsWhenANewRunStarts', async () => {
-    const workspace = await workspaceFixture()
+    const { workspace, task } = await spawnedWith()
 
-    await runTemporaryOptimization(
-      { workspace, now: () => NOW },
-      { run: environmentRunner(), spawnOptimizer: succeeding() }
-    )
-
-    expect(await readFile(optimizationFile(workspace, '.state/task.py'), 'utf8')).toBe(
+    expect(task).toBe(
       [
         'import sys',
         '',
@@ -149,20 +145,16 @@ describe('TEMPORARY dev optimization', () => {
   it('shouldGiveTheOptimizerTheSettingsObjectiveAndSpaceOfTheRequestWhenTheSessionStartsARun', async () => {
     const workspace = await workspaceFixture()
     const space = optimizationFile(workspace, '.state/space.json')
-    const spawnOptimizer = succeeding()
 
-    await runTemporaryOptimization(
+    const { args, task } = await spawnedWith(
       {
-        workspace,
         settings: { iterations: 2, split: [0.6, 0.2, 0.2], width: 3, repetitions: 2 },
         objective: { expression: 'Minimize(tokens)', constraints: 'Contains >= 0.8' },
         space,
-        now: () => NOW,
       },
-      { run: environmentRunner(), spawnOptimizer }
+      workspace
     )
 
-    const { args } = spawnOptimizer.mock.calls[0]![0]
     expect(args.slice(args.indexOf('--split'))).toEqual([
       '--split',
       '0.6,0.2,0.2',
@@ -183,9 +175,7 @@ describe('TEMPORARY dev optimization', () => {
       '--constraint',
       'Contains>=0.8',
     ])
-    expect(await readFile(optimizationFile(workspace, '.state/task.py'), 'utf8')).toContain(
-      `    space_file=${JSON.stringify(space)},\n`
-    )
+    expect(task).toContain(`    space_file=${JSON.stringify(space)},\n`)
   })
 
   it.each<[string, Partial<OptimizeDecision>, readonly string[]]>([
@@ -194,37 +184,23 @@ describe('TEMPORARY dev optimization', () => {
     ['NoDataForACrash', { crashScore: 'none' }, ['--agent-failure-score', 'none']],
     ['TheFinalists', { finalists: 5 }, ['--n-finalists', '5']],
   ])('shouldGiveTheOptimizer%sOfTheDecisionWhenARunStarts', async (_case, change, flags) => {
-    const workspace = await workspaceFixture()
-    const spawnOptimizer = succeeding()
+    const { args } = await spawnedWith({ settings: { decision: { ...TEMPORARY_DECISION_DEFAULTS, ...change } } })
 
-    await runTemporaryOptimization(
-      { workspace, settings: { decision: { ...TEMPORARY_DECISION_DEFAULTS, ...change } }, now: () => NOW },
-      { run: environmentRunner(), spawnOptimizer }
-    )
-
-    const { args } = spawnOptimizer.mock.calls[0]![0]
-    expect(args.slice(args.indexOf('--seed') + 2)).toEqual(flags)
+    expect(afterTheDefaults(args)).toEqual(flags)
     expect(args).not.toContain('--final-pick')
   })
 
   it('shouldDefineTheFinalPickInTheTaskFileAndGiveItInsteadOfTheFinalistsWhenThePickIsALowerBound', async () => {
-    const workspace = await workspaceFixture()
-    const spawnOptimizer = succeeding()
     const decision: OptimizeDecision = { ...TEMPORARY_DECISION_DEFAULTS, pickRule: 'lower-bound-10', finalists: 2 }
 
-    await runTemporaryOptimization(
-      { workspace, settings: { decision }, now: () => NOW },
-      { run: environmentRunner(), spawnOptimizer }
-    )
+    const { workspace, args, task } = await spawnedWith({ settings: { decision } })
 
-    const { args } = spawnOptimizer.mock.calls[0]![0]
-    const task = optimizationFile(workspace, '.state/task.py')
     expect(args.slice(args.indexOf('--final-pick'), args.indexOf('--final-pick') + 2)).toEqual([
       '--final-pick',
-      `${task}:final_pick`,
+      `${optimizationFile(workspace, TASK)}:final_pick`,
     ])
     expect(args).not.toContain('--n-finalists')
-    expect(await readFile(task, 'utf8')).toContain(
+    expect(task).toContain(
       [
         'search = _task.search',
         '',
@@ -237,42 +213,18 @@ describe('TEMPORARY dev optimization', () => {
   })
 
   it('shouldMeasureOnlyTheBaselineWithTheSearchOfTheTaskWhenTheRunHasNoIterations', async () => {
-    const workspace = await workspaceFixture()
-    const spawnOptimizer = succeeding()
+    const { workspace, args, task } = await spawnedWith({ settings: { iterations: 0 } })
 
-    await runTemporaryOptimization(
-      { workspace, settings: { iterations: 0 }, now: () => NOW },
-      { run: environmentRunner(), spawnOptimizer }
-    )
-
-    const task = optimizationFile(workspace, '.state/task.py')
-    const { args } = spawnOptimizer.mock.calls[0]![0]
+    const file = optimizationFile(workspace, TASK)
     expect(args.slice(args.indexOf('--rollout'), args.indexOf('--base-dir'))).toEqual([
       '--rollout',
-      `${task}:rollout`,
+      `${file}:rollout`,
       '--search',
-      `${task}:search`,
+      `${file}:search`,
     ])
     expect(args).not.toContain('--max-iterations')
-    expect(await readFile(task, 'utf8')).toContain('    baseline_only=True,\n')
+    expect(task).toContain('    baseline_only=True,\n')
   })
-
-  const spawnedWith = async (
-    request: Partial<Parameters<typeof runTemporaryOptimization>[0]> = {}
-  ): Promise<{ args: string[]; task: string }> => {
-    const workspace = await workspaceFixture()
-    const spawnOptimizer = succeeding()
-    await runTemporaryOptimization(
-      { workspace, now: () => NOW, ...request },
-      { run: environmentRunner(), spawnOptimizer }
-    )
-    return {
-      args: spawnOptimizer.mock.calls[0]![0].args,
-      task: await readFile(optimizationFile(workspace, '.state/task.py'), 'utf8'),
-    }
-  }
-
-  const afterTheDefaults = (args: readonly string[]): string[] => args.slice(args.indexOf('--seed') + 2)
 
   it.each([
     { given: ['--width', '2'], passed: ['--proposals-per-iteration', '2'] },
@@ -373,12 +325,11 @@ describe('TEMPORARY dev optimization', () => {
       ],
     })
     await writeFile(experiment, original)
-    const spawnOptimizer = succeeding()
 
-    await runTemporaryOptimization({ workspace, now: () => NOW }, { run: environmentRunner(), spawnOptimizer })
+    const { args } = await spawnedWith({}, workspace)
 
     const copy = optimizationFile(workspace, '.state/experiment.json')
-    expect(spawnOptimizer.mock.calls[0]![0].args[4]).toBe(copy)
+    expect(args[4]).toBe(copy)
     const named = JSON.parse(await readFile(copy, 'utf8')) as { cases: { name: string; input: string }[] }
     expect(named.cases.map(({ name, input }) => [name, input])).toEqual([
       ['greeting', 'Hello'],
@@ -474,24 +425,13 @@ describe('TEMPORARY dev optimization', () => {
     const workspace = await workspaceFixture()
     const record = optimizationFile(workspace, 'optimizer')
     const runFolder = join(record, '20261111-150406-abc123')
-    const task = optimizationFile(workspace, '.state/task.py')
+    const task = optimizationFile(workspace, TASK)
     await writeFileAt(join(runFolder, 'events.jsonl'), '')
     await writeFileAt(task, 'the task of the first run\n')
-    const spawnOptimizer = succeeding()
 
-    await runTemporaryOptimization(
-      { workspace, continuing: record, settings: { iterations: 8 }, now: () => NOW },
-      { run: environmentRunner(), spawnOptimizer }
-    )
+    const { args } = await spawnedWith({ continuing: record, settings: { iterations: 8 } }, workspace)
 
-    expect(spawnOptimizer.mock.calls[0]![0].args).toEqual([
-      '-m',
-      'strands_evals.cli',
-      'optimize',
-      'resume',
-      runFolder,
-      '--rich',
-    ])
+    expect(args).toEqual(['-m', 'strands_evals.cli', 'optimize', 'resume', runFolder, '--rich'])
     expect(await readFile(task, 'utf8')).toContain('optimize_task(')
   })
 
@@ -499,14 +439,9 @@ describe('TEMPORARY dev optimization', () => {
     const workspace = await workspaceFixture()
     const record = optimizationFile(workspace, 'optimizer')
     await mkdir(record, { recursive: true })
-    const spawnOptimizer = succeeding()
 
-    await runTemporaryOptimization(
-      { workspace, continuing: record, now: () => NOW },
-      { run: environmentRunner(), spawnOptimizer }
-    )
+    const { args } = await spawnedWith({ continuing: record }, workspace)
 
-    const { args } = spawnOptimizer.mock.calls[0]![0]
     expect(args.slice(3, 4)).toEqual(['run'])
     expect(args.slice(args.indexOf('--base-dir'), args.indexOf('--base-dir') + 2)).toEqual(['--base-dir', record])
   })
@@ -624,12 +559,13 @@ describe('TEMPORARY dev optimization', () => {
   ])('shouldSetTheDefaultRegionLikeTheDevWorkerWhenTheEnvironmentIs$given', async ({ given, expected }) => {
     const workspace = await workspaceFixture()
     const spawnOptimizer = succeeding()
-    const environment = { PATH: '/usr/bin', ...given }
+    for (const name of ['AWS_REGION', 'AWS_DEFAULT_REGION'] as const) vi.stubEnv(name, given[name])
 
-    await runTemporaryOptimization({ workspace, environment }, { run: environmentRunner(), spawnOptimizer })
+    await runTemporaryOptimization({ workspace }, { run: environmentRunner(), spawnOptimizer })
 
     expect(spawnOptimizer.mock.calls[0]![0].env.AWS_DEFAULT_REGION).toBe(expected)
-    expect(environment).toEqual({ PATH: '/usr/bin', ...given })
+    expect(process.env.AWS_DEFAULT_REGION).toBe(given.AWS_DEFAULT_REGION)
+    vi.unstubAllEnvs()
   })
 
   it('shouldPrepareTheProjectAfterTheChecksPassAndBeforeTheOptimizerRuns', async () => {

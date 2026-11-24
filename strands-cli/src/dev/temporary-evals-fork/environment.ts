@@ -109,20 +109,9 @@ const readMarker = async (path: string): Promise<string | undefined> => {
   }
 }
 
-const projectSitePackages = async (
-  run: TemporaryCommandRunner,
-  python: string,
-  cwd: string,
-  signal: AbortSignal | undefined
-): Promise<ProjectPython> => {
-  const output = await run({
-    command: python,
-    args: ['-c', PROJECT_SITE_PROBE],
-    cwd,
-    timeout: PROBE_TIMEOUT_MS,
-    ...(signal ? { signal } : {}),
-  })
-  return JSON.parse(output) as ProjectPython
+const projectSitePackages = async (build: Build, python: string, cwd: string): Promise<ProjectPython> => {
+  const probe = commandRequest(build, cwd)(python, ['-c', PROJECT_SITE_PROBE], PROBE_TIMEOUT_MS)
+  return JSON.parse(await build.run(probe)) as ProjectPython
 }
 
 interface TemporaryOptimizerTarget {
@@ -246,18 +235,6 @@ const readySharedPackages = async (folder: string, tag: string): Promise<string 
   return existsSync(sitePackages) ? sitePackages : undefined
 }
 
-const pipConfigList = async (
-  build: Build,
-  request: ReturnType<typeof commandRequest>,
-  python: string
-): Promise<string> => {
-  try {
-    return await build.run(request(python, [...PIP_CONFIG_LIST_ARGUMENTS], PROBE_TIMEOUT_MS))
-  } catch {
-    return ''
-  }
-}
-
 const settle = async (building: string, folder: string, tag: string): Promise<void> => {
   try {
     await rename(building, folder)
@@ -308,7 +285,7 @@ const buildSharedPackages = async (build: Build, projectPython: string, tag: str
   const sitePackages = (
     await step(build.run(request(python, ['-c', OPTIMIZER_SITE_PROBE], PROBE_TIMEOUT_MS)), cannotCreate)
   ).trim()
-  const configured = await pipConfigList(build, request, python)
+  const configured = await build.run(request(python, [...PIP_CONFIG_LIST_ARGUMENTS], PROBE_TIMEOUT_MS)).catch(() => '')
   build.onProgress(`Installing ${STRANDS_EVALS_LABEL}. This takes about a minute, once for each version.`)
   await step(
     build.run(
@@ -350,7 +327,7 @@ const prepareEnvironment = async (
   const build: Build = { run, signal, onProgress }
   const projectPython = basePython(target)
   const probed = await step(
-    projectSitePackages(run, projectPython, projectRoot, signal),
+    projectSitePackages(build, projectPython, projectRoot),
     (detail) => `Could not start ${projectPython}:\n${detail}\n${PYTHON_START_HINT[language]}`
   )
   assertSupportedPython(projectPython, probed.version, language)

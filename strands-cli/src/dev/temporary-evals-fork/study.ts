@@ -36,10 +36,6 @@ interface TemporaryStudyBaseline {
   readonly score?: number
 }
 
-interface TemporaryStudyBest extends TemporaryStudyBaseline {
-  readonly number: number
-}
-
 export interface TemporaryStudyOutcome {
   readonly metric: string
   readonly measure?: ObjectiveMeasure
@@ -47,7 +43,7 @@ export interface TemporaryStudyOutcome {
   readonly error?: string
   readonly measuredOn: TemporaryMeasurement
   readonly baseline: TemporaryStudyBaseline
-  readonly best?: TemporaryStudyBest
+  readonly best?: TemporaryStudyBaseline & { readonly number: number }
   readonly test?: TemporaryTestDifference
 }
 
@@ -286,7 +282,7 @@ class RunState {
     ['propose', (event): void => this.readPropose(event)],
     ['trial', (event): void => this.readTrial(event)],
     ['score', (event): void => this.readScore(event)],
-    ['iteration_end', (event): void => this.readIterationEnd(event)],
+    ['iteration_end', ({ best_after }): void => void (this.bestAfter = texts(best_after))],
     ['finalists', ({ candidate_ids }): void => void (this.finalists = texts(candidate_ids))],
     ['proposer_error', (event): void => this.readProposerError(event)],
     ['resume', (): void => this.readResume()],
@@ -531,16 +527,12 @@ class RunState {
 
   private readScore({ candidate_id, split, objective_by_run, statuses }: Event): void {
     const id = text(candidate_id)
-    if (id === undefined || (split !== 'train' && split !== 'validation' && split !== 'test')) return
+    if (id === undefined || !isSplit(split)) return
     const value = objectiveMean(objective_by_run)
     const byId = this.scores.get(id) ?? new Map<Split, number>()
     if (value !== undefined) byId.set(split, value)
     this.scores.set(id, byId)
     if (split === 'train') this.completed.set(id, isRecord(statuses) ? (finite(statuses.completed) ?? 0) : 0)
-  }
-
-  private readIterationEnd({ best_after }: Event): void {
-    this.bestAfter = texts(best_after)
   }
 
   private readStop({ reason, message }: Event): void {
@@ -750,18 +742,13 @@ const readRunUsage = async (record: string): Promise<TemporaryRunUsage | undefin
   return runUsage(lines.map(parseEvent).filter((event) => event !== undefined))
 }
 
-const newestRecords = async (
-  workspaceDirectory: string
-): Promise<{ readonly record: string; readonly experiment: string }[]> =>
-  (await listTemporaryOptimizations(workspaceDirectory).catch(() => []))
-    .map(({ home, name, stamp }) => ({ record: temporaryOptimizationFiles(home, stamp).record, experiment: name }))
-    .reverse()
-
 export const readTemporaryUsageProfile = async (
   workspaceDirectory: string,
   experiment: string
 ): Promise<TemporaryUsageProfile | undefined> => {
-  const records = await newestRecords(workspaceDirectory)
+  const records = (await listTemporaryOptimizations(workspaceDirectory).catch(() => []))
+    .map(({ home, name, stamp }) => ({ record: temporaryOptimizationFiles(home, stamp).record, experiment: name }))
+    .reverse()
   const same = records.filter((run) => run.experiment === experiment).slice(0, USAGE_RUNS)
   const runs = (await Promise.all(same.map(({ record }) => readRunUsage(record)))).filter((run) => run !== undefined)
   if (runs.length > 0) return { experiment, runs }

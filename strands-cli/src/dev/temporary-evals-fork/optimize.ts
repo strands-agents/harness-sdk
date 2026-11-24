@@ -5,7 +5,6 @@ import { resolve } from 'node:path'
 import { isRecord } from '../../values.js'
 import { writeEvalsOptimizeEntry, type EvalsFinalPick, type EvalsOptimizeEntry } from '../evals-agent/entry-files.js'
 import type { OptimizeDecision, OptimizeObjective } from '../panels/model.js'
-import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryHarnessDefaultsReader } from './knobs.js'
 import { readTemporaryProposerFailure, temporaryRunFolder } from './study.js'
 import { resolveTemporaryExperiment, temporaryRunnableExperiment } from './experiment.js'
@@ -13,13 +12,13 @@ import { ignoreProgress, prepareTemporaryOptimizerEnvironment } from './environm
 import type { TemporaryCommandRunner } from './environment.js'
 import {
   assertTemporaryForkArguments,
-  spawnTemporaryEvals,
-  temporaryEvalsEnvironment,
+  runTemporaryEvals,
   temporaryEvalsFailure,
   temporaryEvalsHeadline,
   temporaryTypescriptRunnerOf,
   temporaryWorkspaceDirectory,
   type TemporaryEvalsExit,
+  type TemporaryEvalsRequest,
   type TemporaryEvalsSpawner,
 } from './evals-process.js'
 import {
@@ -38,22 +37,11 @@ import {
   type TemporaryOptimizeSettings,
 } from './plan.js'
 
-interface TemporaryOptimizationRequest {
-  workspace: DevWorkspace
-  experiment?: string
+interface TemporaryOptimizationRequest extends TemporaryEvalsRequest {
   settings?: Partial<TemporaryOptimizeSettings>
   objective?: OptimizeObjective
   space?: string
-  forkArguments?: readonly string[]
-  environment?: NodeJS.ProcessEnv
-  signal?: AbortSignal
-  onProgress?: (line: string) => void
-  prepare?: () => Promise<void>
-  now?: () => Date
   onStart?: (record: string) => void
-  background?: boolean
-  detached?: boolean
-  onSpawn?: (pid: number) => void
   continuing?: string
 }
 
@@ -198,9 +186,6 @@ const readTemporaryOptimizeFlags = (forkArguments: readonly string[]): Temporary
   return read
 }
 
-const summaryLines = ({ stdout }: TemporaryEvalsExit): string[] =>
-  stdout.split('\n').filter((line) => line.trim().length > 0)
-
 const isBaselineOnly = ({ iterations }: TemporaryOptimizeSettings): boolean => iterations === 0
 
 const decisionArguments = ({ feasibility, crashScore, pickRule, finalists }: OptimizeDecision): string[] => {
@@ -335,31 +320,11 @@ const failureNextStep = (exit: TemporaryEvalsExit, log: string): string => {
   return [advice, `The full optimizer output is in ${log}.`].filter(Boolean).join(' ')
 }
 
-const spawnOptimizer = (
-  request: TemporaryOptimizationRequest,
-  dependencies: TemporaryOptimizationDependencies,
-  { python, args, log }: { python: string; args: readonly string[]; log: string }
-): Promise<TemporaryEvalsExit> => {
-  const { workspace, environment = process.env, signal, onProgress = ignoreProgress } = request
-  return (dependencies.spawnOptimizer ?? spawnTemporaryEvals)({
-    command: python,
-    args: ['-m', 'strands_evals.cli', 'optimize', ...args],
-    cwd: workspace.root,
-    env: temporaryEvalsEnvironment(python, environment),
-    ...(signal ? { signal } : {}),
-    ...(request.background ? { background: true } : {}),
-    ...(request.detached ? { detached: true } : {}),
-    ...(request.onSpawn ? { onSpawn: request.onSpawn } : {}),
-    log,
-    onLine: onProgress,
-  })
-}
-
 export const runTemporaryOptimization = async (
   request: TemporaryOptimizationRequest,
   dependencies: TemporaryOptimizationDependencies = {}
 ): Promise<TemporaryOptimizationOutcome> => {
-  const { workspace, forkArguments = [], environment = process.env, signal, onProgress = ignoreProgress } = request
+  const { workspace, forkArguments = [], signal, onProgress = ignoreProgress } = request
   const directory = temporaryWorkspaceDirectory(workspace)
   const passed = readTemporaryOptimizeFlags(forkArguments)
   const experiment = await resolveTemporaryExperiment(
@@ -383,15 +348,21 @@ export const runTemporaryOptimization = async (
   onProgress(`Record: ${record}`)
   onProgress(runFolder ? CONTINUING : STARTING)
   request.onStart?.(record)
-  const exit = await spawnOptimizer(request, dependencies, { python, args, log })
+  const exit = await runTemporaryEvals(
+    dependencies.spawnOptimizer,
+    request,
+    { python, args: ['-m', 'strands_evals.cli', 'optimize', ...args], log },
+    onProgress
+  )
   const proposerFailure =
     exit.code === SEARCH_STOPPED_EXIT ? await readTemporaryProposerFailure(record).catch(() => undefined) : undefined
   if (exit.code !== 0 && proposerFailure === undefined)
     throw temporaryEvalsFailure(
       `strands-evals optimize ${runFolder ? 'resume' : 'run'}`,
       exit,
-      environment,
+      process.env,
       failureNextStep(exit, log)
     )
-  return { experiment, record, summary: summaryLines(exit), ...(proposerFailure ? { proposerFailure } : {}) }
+  const summary = exit.stdout.split('\n').filter((line) => line.trim().length > 0)
+  return { experiment, record, summary, ...(proposerFailure ? { proposerFailure } : {}) }
 }

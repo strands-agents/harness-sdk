@@ -7,12 +7,12 @@ import type { DevWorkspace } from '../workspace.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment, type TemporaryCommandRunner } from './environment.js'
 import {
   assertTemporaryForkArguments,
-  spawnTemporaryEvals,
-  temporaryEvalsEnvironment,
+  runTemporaryEvals,
   temporaryEvalsFailure,
   temporaryFlagValues,
   temporaryTypescriptRunnerOf,
   temporaryWorkspaceDirectory,
+  type TemporaryEvalsRequest,
   type TemporaryEvalsSpawner,
 } from './evals-process.js'
 import {
@@ -38,18 +38,8 @@ interface TemporaryTestFiles {
   readonly store: string
 }
 
-interface TemporaryTestRequest {
-  workspace: DevWorkspace
-  experiment?: string
-  forkArguments?: readonly string[]
-  signal?: AbortSignal
-  onProgress?: (line: string) => void
-  prepare?: () => Promise<void>
-  now?: () => Date
+interface TemporaryTestRequest extends TemporaryEvalsRequest {
   onStart?: (files: TemporaryTestFiles) => void | Promise<void>
-  onSpawn?: (pid: number) => void
-  background?: boolean
-  detached?: boolean
   resume?: TemporaryTestFiles
   only?: readonly string[]
   startedAt?: number
@@ -107,14 +97,6 @@ const testNextStep = (code: number, log: string): string =>
       `evaluation again. The full output is in ${log}.`
     : `Fix the error above, then run the evaluation again. The full output is in ${log}.`
 
-const assertCases = (experiment: string, cases: number): void => {
-  if (cases === 0)
-    throw new Error(
-      `${experiment} has no cases, so there is nothing to evaluate. Add cases to it, or draft cases with ` +
-        '/experiment, then run the evaluation again.'
-    )
-}
-
 const onlyCases = async (experiment: string, copy: string, names: readonly string[]): Promise<string> => {
   const { raw } = await readTemporaryExperimentFile(experiment)
   await writeTemporaryExperimentFile(copy, temporaryNamedExperiment(raw), names)
@@ -150,14 +132,6 @@ const writeRunEntry = (
     ...temporaryTypescriptRunnerOf(workspace),
   })
 
-const assertChecked = (experiment: string, report: string, checks: number): void => {
-  if (checks === 0)
-    throw new Error(
-      `strands-evals run checked nothing: ${report} has no results. Check that ${experiment} lists evaluators, ` +
-        'then run the evaluation again.'
-    )
-}
-
 export const runTemporaryTest = async (
   request: TemporaryTestRequest,
   dependencies: TemporaryTestDependencies = {}
@@ -171,7 +145,11 @@ export const runTemporaryTest = async (
     'evaluate'
   )
   const cases = await temporaryCaseCount(experiment)
-  assertCases(experiment, cases)
+  if (cases === 0)
+    throw new Error(
+      `${experiment} has no cases, so there is nothing to evaluate. Add cases to it, or draft cases with ` +
+        '/experiment, then run the evaluation again.'
+    )
   await request.prepare?.()
   const python = await prepareTemporaryOptimizerEnvironment(
     { workspaceDirectory: directory, projectRoot: workspace.root, language: workspace.config.language },
@@ -186,38 +164,40 @@ export const runTemporaryTest = async (
   onProgress(`Report: ${report}`)
   onProgress('Running the cases. The summary appears when every case has finished.')
   await request.onStart?.(files)
-  const exit = await (dependencies.spawnTests ?? spawnTemporaryEvals)({
-    command: python,
-    args: [
-      '-m',
-      'strands_evals.cli',
-      'run',
-      files.cases,
-      ...task,
-      '--output',
-      report,
-      '--fail-on',
-      'none',
-      '--data-store',
-      files.store,
-      '--max-workers',
-      String(TEST_WORKERS),
-      ...forkArguments,
-    ],
-    cwd: workspace.root,
-    env: temporaryEvalsEnvironment(python, process.env),
-    ...(signal ? { signal } : {}),
-    ...(request.background ? { background: true } : {}),
-    ...(request.detached ? { detached: true } : {}),
-    ...(request.onSpawn ? { onSpawn: request.onSpawn } : {}),
-    log,
-    onLine: onProgress,
-  })
+  const exit = await runTemporaryEvals(
+    dependencies.spawnTests,
+    request,
+    {
+      python,
+      args: [
+        '-m',
+        'strands_evals.cli',
+        'run',
+        files.cases,
+        ...task,
+        '--output',
+        report,
+        '--fail-on',
+        'none',
+        '--data-store',
+        files.store,
+        '--max-workers',
+        String(TEST_WORKERS),
+        ...forkArguments,
+      ],
+      log,
+    },
+    onProgress
+  )
   if (exit.code !== 0) throw temporaryEvalsFailure('strands-evals run', exit, process.env, testNextStep(exit.code, log))
   if (!existsSync(report))
     throw new Error(`strands-evals run finished without writing ${report}. The full output is in ${log}.`)
   const scores = await readScores(report)
-  assertChecked(experiment, report, scores.checks)
+  if (scores.checks === 0)
+    throw new Error(
+      `strands-evals run checked nothing: ${report} has no results. Check that ${experiment} lists evaluators, ` +
+        'then run the evaluation again.'
+    )
   const name = home === dirname(experiment) ? basename(experiment, '.json') : experiment
   return { experiment, name, home, report, seconds: (Date.now() - startedAt) / MILLISECONDS_PER_SECOND, ...scores }
 }
