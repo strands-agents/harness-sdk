@@ -7,13 +7,17 @@ can't start, the harness falls back to ``"auto"`` and says so, rather than faili
 
 from __future__ import annotations
 
-import atexit
 import logging
+import shutil
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
 from strands.experimental.context_manager import ContextManager, ContextStrategy, Offload
+from strands.sandbox import Sandbox
+from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 
 logger = logging.getLogger(__name__)
 
@@ -38,23 +42,29 @@ class LspContext:
         context_manager: The context manager to pass to the agent: the language server pipeline, or ``"auto"``.
         tools: Tools the pipeline adds; its ``retrieve_context`` replaces the built-in one.
         status: What ran, for ``agent.state``: ``{"requested": "lsp", "active": "lsp" | "auto", "reason": ...}``.
+        close: Shuts the language server down, or None when none started.
     """
 
     context_manager: ContextManager | Literal["auto"]
     tools: list[Any] = field(default_factory=list)
     status: dict[str, str] = field(default_factory=dict)
+    close: Callable[[], None] | None = None
 
 
-def resolve_lsp_context(root: Path | str, read_tool: str = "read") -> LspContext:
+def resolve_lsp_context(root: Path | str, read_tool: str = "read", sandbox: Sandbox | None = None) -> LspContext:
     """Start the language server in ``root`` and build the context pipeline around it, or fall back to ``"auto"``.
 
     Args:
         root: Workspace root the language server indexes.
         read_tool: Name of the tool that reads files, through ``path``, ``offset`` and ``limit`` inputs.
+        sandbox: The agent's sandbox. The language server reads the local filesystem, so any sandbox other than the
+            local environment falls back to ``"auto"``.
 
     Returns:
         The context manager and tools to use, and a record of which one is active.
     """
+    if sandbox is not None and not isinstance(sandbox, NotASandboxLocalEnvironment):
+        return _fallback(f"the language server reads local files, but the agent runs in {type(sandbox).__name__}")
     try:
         from strands.vended_plugins.language_server import (
             LspStrategy,
@@ -66,11 +76,11 @@ def resolve_lsp_context(root: Path | str, read_tool: str = "read") -> LspContext
     except ImportError as error:
         return _fallback(f"the installed strands-agents has no language server support ({error})")
 
+    command = _server_command(LSP_COMMAND)
     try:
-        client = StdioLspClient(LSP_COMMAND, root)
+        client = StdioLspClient(command, root)
     except Exception as error:
         return _fallback(f"{type(error).__name__}: {error}")
-    atexit.register(client.close)
 
     strategies: list[ContextStrategy | str] = [
         SkeletonStrategy(client, root, read_tools=(read_tool,), symbol_lookup=True),
@@ -78,12 +88,23 @@ def resolve_lsp_context(root: Path | str, read_tool: str = "read") -> LspContext
         *_auto_strategies(),
     ]
     manager = ContextManager(strategies=strategies, stash={"retrieval_tool": False})
-    logger.info("root=<%s>, command=<%s> | language server context manager active", root, LSP_COMMAND[0])
+    logger.info("root=<%s>, command=<%s> | language server context manager active", root, command[0])
     return LspContext(
         context_manager=manager,
         tools=[workspace_retrieval_tool(manager, WorkspaceSearch(client, root))],
         status={"requested": "lsp", "active": "lsp"},
+        close=client.close,
     )
+
+
+def _server_command(command: list[str]) -> list[str]:
+    """``command`` with its binary found on PATH, or next to this interpreter when its environment isn't activated."""
+    if shutil.which(command[0]) is not None:
+        return command
+    beside_interpreter = Path(sys.executable).parent / command[0]
+    if shutil.which(beside_interpreter) is not None:
+        return [str(beside_interpreter), *command[1:]]
+    return command
 
 
 def _auto_strategies() -> list[ContextStrategy]:

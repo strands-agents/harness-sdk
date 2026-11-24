@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+import weakref
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
@@ -473,7 +474,7 @@ def create_harness(
     context_enabled = context_manager is not None and context_manager is not False
     lsp_context: LspContext | None = None
     if context_manager == "lsp":
-        lsp_context = resolve_lsp_context(os.getcwd())
+        lsp_context = resolve_lsp_context(os.getcwd(), sandbox=agent_kwargs.get("sandbox"))
         agent_kwargs["context_manager"] = lsp_context.context_manager
     # The SDK's Agent rejects a bare config dict; build the instance from it here.
     elif isinstance(context_manager, Mapping):
@@ -553,4 +554,6 @@ def create_harness(
     _drop_sandbox_tools(agent)
     if lsp_context is not None:
         agent.state.set(STATE_KEY, lsp_context.status)
+        if lsp_context.close is not None:
+            weakref.finalize(agent, lsp_context.close)
     return agent

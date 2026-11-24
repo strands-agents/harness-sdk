@@ -1,3 +1,4 @@
+import gc
 import logging
 import shutil
 from pathlib import Path
@@ -58,7 +59,8 @@ def _strategies(agent) -> list[Any]:
 def test_lsp_builds_skeletons_relevance_and_auto_with_a_workspace_retrieve_context(workdir, fake_server):
     agent = create_harness(context_manager="lsp")
 
-    assert fake_server.started == [(["pyright-langserver", "--stdio"], str(workdir))]
+    [(command, root)] = fake_server.started
+    assert (Path(command[0]).name, command[1:], root) == ("pyright-langserver", ["--stdio"], str(workdir))
     names = [strategy.name for strategy in _strategies(agent)]
     assert names == [
         "offload:skeleton",
@@ -134,10 +136,53 @@ def test_a_subagent_of_an_lsp_harness_runs_auto(workdir, fake_server):
     ]
 
 
-@pytest.mark.skipif(shutil.which("pyright-langserver") is None, reason="pyright-langserver is not on PATH")
+@pytest.mark.skipif(
+    shutil.which(lsp_module._server_command(lsp_module.LSP_COMMAND)[0]) is None,
+    reason="pyright-langserver is not installed",
+)
 def test_lsp_starts_pyright(workdir):
     (workdir / "app.py").write_text("def main() -> int:\n    return 1\n")
 
     agent = create_harness(context_manager="lsp")
 
     assert agent.state.get("context_manager") == {"requested": "lsp", "active": "lsp"}
+
+
+def test_lsp_finds_the_server_next_to_the_interpreter_when_it_is_not_on_path(workdir, fake_server, monkeypatch):
+    bin_dir = workdir / "venv-bin"
+    bin_dir.mkdir()
+    server = bin_dir / "pyright-langserver"
+    server.write_text("#!/bin/sh\n")
+    server.chmod(0o755)
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setattr(lsp_module.sys, "executable", str(bin_dir / "python"))
+
+    create_harness(context_manager="lsp")
+
+    assert fake_server.started == [([str(server), "--stdio"], str(workdir))]
+
+
+def test_lsp_falls_back_to_auto_in_a_non_local_sandbox(workdir, fake_server):
+    from strands.sandbox import PosixShellSandbox
+
+    class RemoteSandbox(PosixShellSandbox):
+        async def execute_streaming(self, command, *, timeout=None, cwd=None, env=None, **kwargs):
+            raise NotImplementedError
+            yield
+
+    status = create_harness(context_manager="lsp", sandbox=RemoteSandbox()).state.get("context_manager")
+
+    assert fake_server.started == []
+    assert status["active"] == "auto"
+    assert "RemoteSandbox" in status["reason"]
+
+
+def test_lsp_shuts_the_server_down_with_the_agent(workdir, fake_server, monkeypatch):
+    closed: list[bool] = []
+    monkeypatch.setattr(FakeStdioLspClient, "close", lambda self: closed.append(True))
+    agent = create_harness(context_manager="lsp")
+
+    del agent
+    gc.collect()
+
+    assert closed == [True]
