@@ -365,6 +365,14 @@ const recordingOptimizer = () => {
   return { optimizing, recorded: (): unknown => seen }
 }
 
+/** A finished run with its first edit on the developer's screen as a question. */
+const reviewOnScreen = async (optimizing = optimizingProcess(), host?: Pick<TemporarySessionHost, 'settings'>) => {
+  const made = await plannedSessions({ spawnOptimizer: optimizing }, host ? { host } : {})
+  const run = made.sessions.optimize.start()!
+  await vi.waitFor(() => expect(made.sessions.ask.pending()).toBeDefined())
+  return { ...made, optimizing, run }
+}
+
 const devCommand = (workspace: DevWorkspace, name: string) =>
   temporaryDevCommands(workspace, {
     root: workspace.root,
@@ -1394,11 +1402,7 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldShowTheEditsOnScreenWhenARunFinishesRatherThanOnlySayingSoInTheChat', async () => {
-    const optimizing = optimizingProcess()
-    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
-
-    sessions.optimize.start()
-    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    const { sessions } = await reviewOnScreen()
 
     const question = sessions.ask.pending()!
     expect(question.steps[0]?.fields.map(({ kind }) => kind)).toEqual(['select', 'diff'])
@@ -1406,10 +1410,7 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldApplyOnlyWhatTheDeveloperAcceptsInThatQuestion', async () => {
-    const optimizing = optimizingProcess()
-    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
-    sessions.optimize.start()
-    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    const { sessions } = await reviewOnScreen()
 
     sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'reject' })
 
@@ -1652,10 +1653,7 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldKeepTheReviewWaitingWhenTheDeveloperSendsAChatMessageInstead', async () => {
-    const optimizing = optimizingProcess()
-    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
-    sessions.optimize.start()
-    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    const { sessions } = await reviewOnScreen()
     const question = sessions.ask.pending()!
 
     expect(sessions.ask.dropForTurn()).toBe(false)
@@ -1667,9 +1665,7 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   const closedOnAReview = async (optimizing = optimizingProcess()) => {
-    const { workspace, sessions } = await plannedSessions({ spawnOptimizer: optimizing })
-    const run = sessions.optimize.start()!
-    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    const { workspace, sessions, run } = await reviewOnScreen(optimizing)
     const record = recordOf(optimizing.mock.calls[0]![0].args)
     await vi.waitFor(async () =>
       expect(JSON.parse(await readFile(resumeRecordOf(record), 'utf8'))).toMatchObject({ awaitsReview: true })
@@ -1885,10 +1881,7 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldDropTheJobLineOnceAnAcceptedEditIsWritten', async () => {
-    const optimizing = optimizingProcess()
-    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
-    sessions.optimize.start()
-    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    const { sessions } = await reviewOnScreen()
 
     sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'accept' })
 
@@ -1899,10 +1892,7 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldSayWhatWasAppliedAgainInTheChatThatTheReloadOpens', async () => {
-    const optimizing = optimizingProcess()
-    const { workspace, sessions } = await plannedSessions({ spawnOptimizer: optimizing })
-    sessions.optimize.start()
-    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    const { workspace, sessions } = await reviewOnScreen()
     sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'accept' })
     await vi.waitFor(() =>
       expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
@@ -1923,10 +1913,7 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldNotSayWhatWasAppliedToAChatThatOpensLongAfterTheWrite', async () => {
-    const optimizing = optimizingProcess()
-    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
-    sessions.optimize.start()
-    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    const { sessions } = await reviewOnScreen()
     sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'accept' })
     await vi.waitFor(() =>
       expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
@@ -2078,9 +2065,7 @@ describe('TEMPORARY dev sessions', () => {
     })
 
     it('shouldWaitUntilTheEditsOfAFinishedRunHaveTheirAnswer', async () => {
-      const { sessions } = await plannedSessions({ spawnOptimizer: optimizingProcess() }, { host: everyFive })
-      sessions.optimize.start()
-      await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+      const { sessions } = await reviewOnScreen(optimizingProcess(), everyFive)
       const work = vi.fn<AutoOptimizeRun>(async () => ({ experiment: 'history-20261123-1502', cases: 4 }))
 
       for (const prompt of ['optimize every 5 turns', ...FIVE]) await sessions.auto.turnEnded({ prompt }, work)
