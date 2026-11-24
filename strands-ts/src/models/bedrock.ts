@@ -1335,8 +1335,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @returns True when the point was kept, possibly relocated. False when nothing cacheable precedes
    *   it, or, on a model that takes a cache point only after text, no text precedes it, so the point was
    *   removed: Bedrock rejects a cache point with no content ahead of it ("There is nothing available
-   *   to cache"). The caller then retries automatic placement, which lands a point only if the
-   *   remaining content allows one - for a leading document it declines too.
+   *   to cache"). The caller then retries automatic placement, except after a leading document,
+   *   where the blocks after the point are per-call content and no position ahead of them is legal.
    */
   private _honorPlacedCachePoint(
     content: BedrockContentBlock[],
@@ -1502,6 +1502,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
             // Removing the point emptied the message, so there is nothing left to cache and
             // re-adding one would rebuild the request Bedrock just refused.
             logger.debug(`msg_idx=<${lastUserIdx}> | no content left to cache`)
+            return
+          }
+          if (placedIdx > 0 && !this._limitsCachePoints()) {
+            // Only leading documents preceded the point, and the blocks after it are per-call content.
+            logger.debug(`msg_idx=<${lastUserIdx}> | no position ahead of the caller's boundary`)
             return
           }
           // The point could not legally stay, so fall through to automatic placement below.

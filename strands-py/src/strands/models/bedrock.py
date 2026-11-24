@@ -866,9 +866,9 @@ class BedrockModel(Model):
             True when the point was kept, possibly relocated. False when nothing cacheable precedes it,
             or, on a model that takes a cache point only after text, no text precedes it, so the point was
             removed: Bedrock rejects a cache point with no content ahead of it ("There
-            is nothing available to cache"). The caller then retries automatic placement, which lands a
-            point only if the remaining content allows one - for a leading document it declines too, so
-            the message ends up with no cache point at all.
+            is nothing available to cache"). The caller then retries automatic placement, except after a
+            leading document, where the blocks after the point are per-call content and no position ahead
+            of them is legal, so the message ends up with no cache point at all.
         """
         placed = content[placed_idx]
 
@@ -1000,6 +1000,10 @@ class BedrockModel(Model):
                     # re-adding one would rebuild the request Bedrock just refused. Bedrock rejects an
                     # empty message too, exactly as the pre-existing strip path already did.
                     logger.debug("msg_idx=<%s> | no content left to cache", last_user_idx)
+                    return
+                if placed_idxs[0] > 0 and not self._limits_cache_points:
+                    # Only leading documents preceded the point, and the blocks after it are per-call content.
+                    logger.debug("msg_idx=<%s> | no position ahead of the caller's boundary", last_user_idx)
                     return
                 # The point could not legally stay, so fall through to automatic placement below.
 

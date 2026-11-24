@@ -3383,6 +3383,29 @@ describe('BedrockModel', () => {
       ])
     })
 
+    it('places no fallback cache point after one dropped behind a leading document', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new DocumentBlock({ name: 'readme', format: 'md', source: { bytes: new Uint8Array([1]) } }),
+            new CachePointBlock({ cacheType: 'default' }),
+            new TextBlock('per-call'),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      // The blocks after a caller-placed point are per-call content, so no fallback point lands after them.
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { document: { name: 'readme', format: 'md', source: { bytes: new Uint8Array([1]) } } },
+        { text: 'per-call' },
+      ])
+    })
+
     describe('cache sections', () => {
       const toolSpecs = [{ name: 'calculator', description: 'Calculate', inputSchema: { type: 'object' as const } }]
       const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
@@ -4211,7 +4234,7 @@ describe('BedrockModel', () => {
       })
     })
 
-    it('inserts cache point before a non-PDF document block', async () => {
+    it('inserts cache point before a trailing non-PDF document', async () => {
       const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
       const messages = [
         new Message({
@@ -4255,7 +4278,7 @@ describe('BedrockModel', () => {
       ])
     })
 
-    it('inserts cache point before the first non-PDF document in mixed content', async () => {
+    it('inserts cache point before the trailing non-PDF documents, after a PDF', async () => {
       const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
       const messages = [
         new Message({
@@ -4279,7 +4302,7 @@ describe('BedrockModel', () => {
       ])
     })
 
-    it('inserts cache point before the first of several non-PDF documents', async () => {
+    it('inserts cache point before a trailing run of non-PDF documents', async () => {
       const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
       const messages = [
         new Message({

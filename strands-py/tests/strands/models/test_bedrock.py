@@ -5551,6 +5551,20 @@ def test_inject_cache_point_drops_an_honored_point_when_a_document_leads_the_mes
     assert tru_content == exp_content
 
 
+def test_inject_cache_point_places_no_fallback_after_a_point_dropped_behind_a_leading_document(bedrock_client):
+    """The blocks after a caller-placed point are per-call content, so no fallback point lands after them."""
+    _ = bedrock_client
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
+    document = {"document": {"format": "csv", "name": "d", "source": {"bytes": b"x"}}}
+    cleaned_messages = [
+        {"role": "user", "content": [document, {"cachePoint": {"type": "default"}}, {"text": "per-call"}]}
+    ]
+
+    model._inject_cache_point(cleaned_messages)
+
+    assert cleaned_messages[0]["content"] == [document, {"text": "per-call"}]
+
+
 def test_inject_cache_point_adds_to_last_user(bedrock_client):
     """Test that _inject_cache_point adds cache point to last user message."""
     model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
@@ -5672,8 +5686,8 @@ def test_inject_cache_point_strips_existing_cache_points(bedrock_client):
     assert "cachePoint" in cleaned_messages[2]["content"][-1]
 
 
-def test_inject_cache_point_before_non_pdf_document(bedrock_client):
-    """Test that cache point is inserted before non-PDF document blocks."""
+def test_inject_cache_point_before_a_trailing_non_pdf_document(bedrock_client):
+    """A cache point goes ahead of a trailing non-PDF document."""
     model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     cleaned_messages = [
@@ -5719,7 +5733,7 @@ def test_inject_cache_point_after_pdf_document(bedrock_client):
 
 
 def test_inject_cache_point_mixed_pdf_and_non_pdf_documents(bedrock_client):
-    """Test that cache point is inserted before the first non-PDF document in mixed content."""
+    """A cache point goes ahead of the trailing run of non-PDF documents, after any PDF."""
     model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     cleaned_messages = [
@@ -5743,7 +5757,7 @@ def test_inject_cache_point_mixed_pdf_and_non_pdf_documents(bedrock_client):
     ]
 
 
-def test_inject_cache_point_before_the_first_of_several_non_pdf_documents(bedrock_client):
+def test_inject_cache_point_before_a_trailing_run_of_non_pdf_documents(bedrock_client):
     """A cache point after any of them would be directly preceded by a document, which Bedrock rejects."""
     _ = bedrock_client
     model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
