@@ -26,7 +26,6 @@ export const SDK_META: Record<Sdk, { label: string; languages: Language[] }> = {
  */
 export const PRODUCT_RELEASE_STREAM: Record<string, Sdk | null> = {
   Harness: 'harness',
-  CLI: 'cli',
   'Harness SDK': 'sdk',
   Shell: 'shell',
   Box: 'box',
