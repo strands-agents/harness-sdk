@@ -186,9 +186,6 @@ const readTemporaryOptimizeFlags = (forkArguments: readonly string[]): Temporary
   return read
 }
 
-const summaryLines = ({ stdout }: TemporaryEvalsExit): string[] =>
-  stdout.split('\n').filter((line) => line.trim().length > 0)
-
 const isBaselineOnly = ({ iterations }: TemporaryOptimizeSettings): boolean => iterations === 0
 
 const decisionArguments = ({ feasibility, crashScore, pickRule, finalists }: OptimizeDecision): string[] => {
@@ -366,5 +363,6 @@ export const runTemporaryOptimization = async (
       process.env,
       failureNextStep(exit, log)
     )
-  return { experiment, record, summary: summaryLines(exit), ...(proposerFailure ? { proposerFailure } : {}) }
+  const summary = exit.stdout.split('\n').filter((line) => line.trim().length > 0)
+  return { experiment, record, summary, ...(proposerFailure ? { proposerFailure } : {}) }
 }

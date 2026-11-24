@@ -97,14 +97,6 @@ const testNextStep = (code: number, log: string): string =>
       `evaluation again. The full output is in ${log}.`
     : `Fix the error above, then run the evaluation again. The full output is in ${log}.`
 
-const assertCases = (experiment: string, cases: number): void => {
-  if (cases === 0)
-    throw new Error(
-      `${experiment} has no cases, so there is nothing to evaluate. Add cases to it, or draft cases with ` +
-        '/experiment, then run the evaluation again.'
-    )
-}
-
 const onlyCases = async (experiment: string, copy: string, names: readonly string[]): Promise<string> => {
   const { raw } = await readTemporaryExperimentFile(experiment)
   await writeTemporaryExperimentFile(copy, temporaryNamedExperiment(raw), names)
@@ -140,14 +132,6 @@ const writeRunEntry = (
     ...temporaryTypescriptRunnerOf(workspace),
   })
 
-const assertChecked = (experiment: string, report: string, checks: number): void => {
-  if (checks === 0)
-    throw new Error(
-      `strands-evals run checked nothing: ${report} has no results. Check that ${experiment} lists evaluators, ` +
-        'then run the evaluation again.'
-    )
-}
-
 export const runTemporaryTest = async (
   request: TemporaryTestRequest,
   dependencies: TemporaryTestDependencies = {}
@@ -161,7 +145,11 @@ export const runTemporaryTest = async (
     'evaluate'
   )
   const cases = await temporaryCaseCount(experiment)
-  assertCases(experiment, cases)
+  if (cases === 0)
+    throw new Error(
+      `${experiment} has no cases, so there is nothing to evaluate. Add cases to it, or draft cases with ` +
+        '/experiment, then run the evaluation again.'
+    )
   await request.prepare?.()
   const python = await prepareTemporaryOptimizerEnvironment(
     { workspaceDirectory: directory, projectRoot: workspace.root, language: workspace.config.language },
@@ -205,7 +193,11 @@ export const runTemporaryTest = async (
   if (!existsSync(report))
     throw new Error(`strands-evals run finished without writing ${report}. The full output is in ${log}.`)
   const scores = await readScores(report)
-  assertChecked(experiment, report, scores.checks)
+  if (scores.checks === 0)
+    throw new Error(
+      `strands-evals run checked nothing: ${report} has no results. Check that ${experiment} lists evaluators, ` +
+        'then run the evaluation again.'
+    )
   const name = home === dirname(experiment) ? basename(experiment, '.json') : experiment
   return { experiment, name, home, report, seconds: (Date.now() - startedAt) / MILLISECONDS_PER_SECOND, ...scores }
 }

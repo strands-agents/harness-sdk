@@ -742,18 +742,13 @@ const readRunUsage = async (record: string): Promise<TemporaryRunUsage | undefin
   return runUsage(lines.map(parseEvent).filter((event) => event !== undefined))
 }
 
-const newestRecords = async (
-  workspaceDirectory: string
-): Promise<{ readonly record: string; readonly experiment: string }[]> =>
-  (await listTemporaryOptimizations(workspaceDirectory).catch(() => []))
-    .map(({ home, name, stamp }) => ({ record: temporaryOptimizationFiles(home, stamp).record, experiment: name }))
-    .reverse()
-
 export const readTemporaryUsageProfile = async (
   workspaceDirectory: string,
   experiment: string
 ): Promise<TemporaryUsageProfile | undefined> => {
-  const records = await newestRecords(workspaceDirectory)
+  const records = (await listTemporaryOptimizations(workspaceDirectory).catch(() => []))
+    .map(({ home, name, stamp }) => ({ record: temporaryOptimizationFiles(home, stamp).record, experiment: name }))
+    .reverse()
   const same = records.filter((run) => run.experiment === experiment).slice(0, USAGE_RUNS)
   const runs = (await Promise.all(same.map(({ record }) => readRunUsage(record)))).filter((run) => run !== undefined)
   if (runs.length > 0) return { experiment, runs }
