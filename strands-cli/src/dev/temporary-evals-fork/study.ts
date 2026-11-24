@@ -36,10 +36,6 @@ interface TemporaryStudyBaseline {
   readonly score?: number
 }
 
-interface TemporaryStudyBest extends TemporaryStudyBaseline {
-  readonly number: number
-}
-
 export interface TemporaryStudyOutcome {
   readonly metric: string
   readonly measure?: ObjectiveMeasure
@@ -47,7 +43,7 @@ export interface TemporaryStudyOutcome {
   readonly error?: string
   readonly measuredOn: TemporaryMeasurement
   readonly baseline: TemporaryStudyBaseline
-  readonly best?: TemporaryStudyBest
+  readonly best?: TemporaryStudyBaseline & { readonly number: number }
   readonly test?: TemporaryTestDifference
 }
 

@@ -8,11 +8,6 @@ import type { CaseResult, EvaluatorVerdict, TestResults } from '../panels/model.
 import { temporaryCaseExpected, temporaryCaseName, temporaryCaseText, type TemporaryRawCase } from './experiment.js'
 import { pruneTemporaryTestRuns, temporaryLatestRecord, temporaryLatestReport, temporaryTestRunOf } from './layout.js'
 
-interface TemporaryTestRun {
-  readonly experiment: string
-  readonly seconds: number
-}
-
 interface ReportRow {
   readonly evaluator: string
   readonly testCase: TemporaryRawCase
@@ -103,7 +98,7 @@ const caseResult = (name: string, { testCase, verdicts }: CaseGroup): CaseResult
 
 export const readTemporaryTestResults = async (
   path: string,
-  { experiment, seconds }: TemporaryTestRun
+  { experiment, seconds }: Pick<TestResults, 'experiment' | 'seconds'>
 ): Promise<TestResults> => {
   const { overall, rows } = (await readDocument(path)).report
   return {
