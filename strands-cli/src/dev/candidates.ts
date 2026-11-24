@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 
 import { containsPath } from '../paths.js'
@@ -56,17 +55,6 @@ const digestTree = async (root: string): Promise<string> => {
   return hash.digest('hex')
 }
 
-const exportBaseline = async (workspace: DevWorkspace, destination: string): Promise<void> => {
-  await exportSourceProject(
-    { root: workspace.root, entrypoint: workspace.entrypoint, language: workspace.config.language },
-    workspace.config.name,
-    workspace.config.language,
-    exclusions(workspace),
-    destination,
-    'directory'
-  )
-}
-
 export const createCandidate = async (
   workspace: DevWorkspace,
   signal?: AbortSignal,
@@ -83,7 +71,14 @@ export const createCandidate = async (
   await mkdir(destination, { mode: 0o700 })
   try {
     const baseline = join(destination, 'baseline')
-    await exportBaseline(workspace, baseline)
+    await exportSourceProject(
+      { root: workspace.root, entrypoint: workspace.entrypoint, language: workspace.config.language },
+      workspace.config.name,
+      workspace.config.language,
+      exclusions(workspace),
+      baseline,
+      'directory'
+    )
     const baselineDigest = await digestTree(baseline)
     signal?.throwIfAborted()
     const project = await installAgentProject({
@@ -113,21 +108,5 @@ export const createCandidate = async (
   } catch (error) {
     await rm(destination, { recursive: true, force: true })
     throw error
-  }
-}
-
-export const assertCandidateCurrent = async (workspace: DevWorkspace, candidate: Candidate): Promise<void> => {
-  if (candidate.source.root !== workspace.root || candidate.source.entrypoint !== workspace.entrypoint)
-    throw new Error('Candidate belongs to a different agent.')
-  const directory = await mkdtemp(join(tmpdir(), 'strands-candidate-check-'))
-  try {
-    const baseline = join(directory, 'baseline')
-    await exportBaseline(workspace, baseline)
-    if ((await digestTree(baseline)) !== candidate.baselineDigest)
-      throw new Error(
-        'The main agent changed after this candidate was created. Create a new candidate before applying changes.'
-      )
-  } finally {
-    await rm(directory, { recursive: true, force: true })
   }
 }

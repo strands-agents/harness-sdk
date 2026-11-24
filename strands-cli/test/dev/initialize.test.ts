@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bindExistingAgent } from '../../src/dev/create.js'
 import { ensureInitialCandidate, ensureInitialCopy, initializeWorkspaceBinding } from '../../src/dev/initialize.js'
-import { initializeDevWorkspace, readDevWorkspace } from '../../src/dev/workspace.js'
+import { readDevWorkspace } from '../../src/dev/workspace.js'
 import * as installer from '../../src/project/archive.js'
 import * as preparation from '../../src/project/preparation.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
@@ -17,14 +17,18 @@ const legacy = async () => {
   await writeFile(join(root, 'package.json'), '{"name":"legacy","version":"1.0.0","type":"module"}')
   await writeFile(join(root, 'src/agent.ts'), 'export const agent = {name:"original"}')
   await writeFile(join(root, '.strands-entrypoint'), './src/agent.ts\n')
-  const workspace = await initializeDevWorkspace(root, {
-    version: 1,
-    name: 'Base CLI',
-    language: 'typescript',
-    entrypoint: 'src/agent.ts',
-    origin: { kind: 'cli' },
-  })
-  return { launch, workspace }
+  await mkdir(join(root, '.strands'))
+  await writeFile(
+    join(root, '.strands/config.json'),
+    JSON.stringify({
+      version: 1,
+      name: 'Base CLI',
+      language: 'typescript',
+      entrypoint: 'src/agent.ts',
+      origin: { kind: 'cli' },
+    })
+  )
+  return { launch, workspace: (await readDevWorkspace(root))! }
 }
 
 describe('workspace initialization', () => {

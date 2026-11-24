@@ -284,7 +284,7 @@ async function readBounded(file: FileHandle, limit: number, path: string): Promi
   return buffer.subarray(0, length)
 }
 
-export const restoreIgnoreLength = async (file: FileHandle, path: string, length: number): Promise<void> => {
+const restoreIgnoreLength = async (file: FileHandle, path: string, length: number): Promise<void> => {
   if (process.platform !== 'win32') return file.truncate(length)
   const writable = await open(path, constants.O_RDWR)
   try {

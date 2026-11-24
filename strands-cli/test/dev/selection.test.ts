@@ -1,9 +1,8 @@
-import { mkdir, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../../src/config/store.js'
-import { baseHarnessSelection, discoverLocalHarnesses, distinctHarnesses } from '../../src/dev/selection.js'
-import { initializeDevWorkspace } from '../../src/dev/workspace.js'
+import { baseHarnessSelection, discoverLocalHarnesses } from '../../src/dev/selection.js'
 import { strandsUserPath } from '../../src/paths.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 
@@ -41,24 +40,26 @@ describe('base harness selection', () => {
     const root = await temporaryDirectory()
     const original = await project(join(root, 'original'))
     const copy = await project(strandsUserPath('strands-dev'))
-    const other = await project(join(root, 'other'))
-    await initializeDevWorkspace(copy.root, {
-      version: 1,
-      name: 'CLI copy',
-      language: 'typescript',
-      entrypoint: 'agent.ts',
-      origin: { kind: 'cli' },
-    })
+    await mkdir(join(copy.root, '.strands'))
+    await writeFile(
+      join(copy.root, '.strands/config.json'),
+      JSON.stringify({
+        version: 1,
+        name: 'CLI copy',
+        language: 'typescript',
+        entrypoint: 'agent.ts',
+        origin: { kind: 'cli' },
+      })
+    )
     const snapshot = CliConfigStore.memory().snapshot()
     snapshot.agentProject = original.root
 
     const base = await baseHarnessSelection(snapshot, root)
-    const found = await distinctHarnesses([original, copy, other, other], base.excludedEntrypoints)
 
     expect(base.source).toBe(original.entrypoint)
     expect(base.name).toBe('CLI copy')
     expect(base.workspace).toBe(strandsUserPath('strands-dev'))
-    expect(found).toEqual([other])
+    expect(base.excludedEntrypoints).toEqual([original.entrypoint, copy.entrypoint])
   })
 
   it.each([
@@ -84,23 +85,6 @@ describe('base harness selection', () => {
     const base = await baseHarnessSelection(CliConfigStore.memory().snapshot(), launch, 'chosen/strands-dev')
 
     expect(base.workspace).toBe(join(launch, 'chosen/strands-dev'))
-  })
-
-  it('shouldDeduplicatePhysicalPathsWhenAnAliasPointsToTheBaseSource', async () => {
-    const root = await temporaryDirectory()
-    const original = await project(join(root, 'original'))
-    const alias = join(root, 'alias.ts')
-    await symlink(original.entrypoint, alias)
-
-    expect(await distinctHarnesses([{ ...original, entrypoint: alias }], [original.entrypoint])).toEqual([])
-  })
-
-  it('shouldKeepDifferentSourcesWhenTheirNamesMatch', async () => {
-    const root = await temporaryDirectory()
-    const first = await project(join(root, 'first'))
-    const second = await project(join(root, 'second'))
-
-    expect(await distinctHarnesses([first, second], [])).toEqual([first, second])
   })
 })
 

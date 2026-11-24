@@ -16,15 +16,6 @@ export type DevTelemetryEvent =
 
 export type DevHarnessKind = 'base-cli' | 'typescript' | 'python'
 
-/** Enum-shaped on purpose, like the launch ping: the collector drops anything else. */
-export interface DevTelemetryPing {
-  v: 1
-  kind: 'dev'
-  event: DevTelemetryEvent
-  cli_version: string
-  harness: DevHarnessKind
-}
-
 interface DevTelemetryState {
   readonly enabled: boolean
   readonly harness: DevHarnessKind

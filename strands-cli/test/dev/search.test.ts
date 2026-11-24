@@ -5,9 +5,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { bindWorkspace } from '../../src/dev/binding.js'
 import { discoverHarnesses, type SkippedHarness } from '../../src/dev/search.js'
-import { initializeDevWorkspace } from '../../src/dev/workspace.js'
+import { readDevWorkspace, type DevWorkspace, type DevWorkspaceConfig } from '../../src/dev/workspace.js'
 import { importAgentProject } from '../../src/project/import.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
+
+const legacyWorkspace = async (root: string, config: DevWorkspaceConfig): Promise<DevWorkspace> => {
+  await mkdir(join(root, '.strands'), { recursive: true })
+  await writeFile(join(root, '.strands/config.json'), JSON.stringify(config))
+  return (await readDevWorkspace(root))!
+}
 
 vi.mock('../../src/project/import.js', () => ({
   importAgentProject: vi.fn((path: string) => ({
@@ -327,7 +333,7 @@ describe('discoverHarnesses', () => {
       'agent.ts',
       "import { createHarness } from '@strands-agents/harness'\nexport const other = createHarness()"
     )
-    await initializeDevWorkspace(root, {
+    await legacyWorkspace(root, {
       version: 1,
       name: 'Bound workspace',
       language: 'typescript',
@@ -444,7 +450,7 @@ describe('discoverHarnesses', () => {
     const root = await directory()
     const outerEntry = await sourceFile(root, 'agent.ts', 'not a statically detectable harness')
     await sourceFile(root, 'vendor/harness/example.ts')
-    const outer = await initializeDevWorkspace(root, {
+    const outer = await legacyWorkspace(root, {
       version: 1,
       name: 'Outer workspace',
       language: 'typescript',
@@ -453,7 +459,7 @@ describe('discoverHarnesses', () => {
       harness: { path: 'vendor/harness', version: '0.3.4' },
     })
     const innerEntry = await sourceFile(root, 'nested/agent.py', pythonSource)
-    const inner = await initializeDevWorkspace(dirname(innerEntry), {
+    const inner = await legacyWorkspace(dirname(innerEntry), {
       version: 1,
       name: 'Nested workspace',
       language: 'python',

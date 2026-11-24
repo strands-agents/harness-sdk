@@ -2,7 +2,6 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CliConfigStore } from '../../src/config/store.js'
-import { initializeDevWorkspace } from '../../src/dev/workspace.js'
 import * as installer from '../../src/project/archive.js'
 import { bindExistingAgent } from '../../src/dev/create.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
@@ -46,13 +45,17 @@ const workspaceFixture = async (): Promise<string> => {
   await mkdir(join(root, 'src'))
   await writeFile(join(root, 'package.json'), '{"type":"module"}')
   await writeFile(join(root, 'src/agent.ts'), 'throw new Error("the mocked UI must not execute this")')
-  await initializeDevWorkspace(root, {
-    version: 1,
-    name: 'Selected local harness',
-    language: 'typescript',
-    entrypoint: 'src/agent.ts',
-    origin: { kind: 'discovered' },
-  })
+  await mkdir(join(root, '.strands'), { recursive: true })
+  await writeFile(
+    join(root, '.strands/config.json'),
+    JSON.stringify({
+      version: 1,
+      name: 'Selected local harness',
+      language: 'typescript',
+      entrypoint: 'src/agent.ts',
+      origin: { kind: 'discovered' },
+    })
+  )
   return root
 }
 

@@ -75,21 +75,6 @@ const canonicalPath = async (path: string): Promise<string> => {
   }
 }
 
-export const distinctHarnesses = async (
-  harnesses: readonly DiscoveredHarness[],
-  excludedEntrypoints: readonly string[]
-): Promise<DiscoveredHarness[]> => {
-  const seen = new Set(await Promise.all(excludedEntrypoints.map(canonicalPath)))
-  const result: DiscoveredHarness[] = []
-  for (const harness of harnesses) {
-    const path = await canonicalPath(harness.entrypoint)
-    if (seen.has(path)) continue
-    seen.add(path)
-    result.push(harness)
-  }
-  return result
-}
-
 const withPreparationStatus = async (harness: DiscoveredHarness): Promise<DiscoveredHarness> => {
   try {
     const plan = await planProjectPreparation(harness)

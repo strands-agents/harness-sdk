@@ -15,9 +15,15 @@ import { prepareDevRun } from '../../src/dev/prepare.js'
 import * as search from '../../src/dev/search.js'
 import type { DiscoveredHarness } from '../../src/dev/search.js'
 import * as picker from '../../src/dev/picker.js'
-import { initializeDevWorkspace } from '../../src/dev/workspace.js'
+import { readDevWorkspace, type DevWorkspace, type DevWorkspaceConfig } from '../../src/dev/workspace.js'
 import * as installer from '../../src/project/archive.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
+
+const legacyWorkspace = async (root: string, config: DevWorkspaceConfig): Promise<DevWorkspace> => {
+  await mkdir(join(root, '.strands'), { recursive: true })
+  await writeFile(join(root, '.strands/config.json'), JSON.stringify(config))
+  return (await readDevWorkspace(root))!
+}
 
 const fixture = async (parent?: string): Promise<string> => {
   const root = parent ? join(parent, 'project') : await temporaryDirectory()
@@ -90,7 +96,7 @@ describe('prepareDevRun', () => {
     await writeFile(join(root, 'package.json'), '{"type":"module"}')
     await writeFile(join(root, 'src/agent.ts'), 'export const agent = {}')
     await writeFile(join(root, '.strands-entrypoint'), './src/agent.ts\n')
-    await initializeDevWorkspace(root, {
+    await legacyWorkspace(root, {
       version: 1,
       name: 'Legacy base',
       language: 'typescript',
@@ -154,7 +160,7 @@ describe('prepareDevRun', () => {
 
   it('shouldUseTheWorkspaceEntrypointWhenTheGlobalDefaultDiffers', async () => {
     const root = await fixture()
-    await initializeDevWorkspace(root, {
+    await legacyWorkspace(root, {
       version: 1,
       name: 'Local',
       language: 'typescript',
@@ -179,7 +185,7 @@ describe('prepareDevRun', () => {
   it('shouldLeaveTheManifestUnchangedWhenAgentOverridesOneLaunch', async () => {
     const root = await fixture()
     await writeFile(join(root, 'other.ts'), 'export const agent = null')
-    await initializeDevWorkspace(root, {
+    await legacyWorkspace(root, {
       version: 1,
       name: 'Local',
       language: 'typescript',
@@ -607,7 +613,7 @@ describe('default workspace placement', () => {
     await mkdir(root)
     await writeFile(join(root, 'package.json'), '{"type":"module"}')
     await writeFile(join(root, 'agent.ts'), 'export const agent = {}')
-    await initializeDevWorkspace(root, {
+    await legacyWorkspace(root, {
       version: 1,
       name: 'Legacy',
       language: 'typescript',

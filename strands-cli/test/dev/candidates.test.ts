@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bindExistingAgent } from '../../src/dev/create.js'
-import { createCandidate, assertCandidateCurrent } from '../../src/dev/candidates.js'
+import { createCandidate } from '../../src/dev/candidates.js'
 import * as installer from '../../src/project/archive.js'
 import { readDevWorkspace } from '../../src/dev/workspace.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
@@ -42,17 +42,6 @@ describe('candidate projects', () => {
     expect(await readFile(second.entrypoint, 'utf8')).toBe(original)
     expect(await readFile(join(workspace.directory!, '.config'), 'utf8')).toBe(binding)
     expect((await readDevWorkspace(workspace.directory!))?.entrypoint).toBe(workspace.entrypoint)
-  })
-
-  it('shouldRejectStaleCandidatesWhenTheMainAgentChanges', async () => {
-    const workspace = await fixture()
-    vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
-    const candidate = await createCandidate(workspace)
-
-    await expect(assertCandidateCurrent(workspace, candidate)).resolves.toBeUndefined()
-    await writeFile(workspace.entrypoint, 'main changed')
-
-    await expect(assertCandidateCurrent(workspace, candidate)).rejects.toThrow('main agent changed')
   })
 
   it('shouldRemoveOnlyFailedCandidateWhenDependencyInstallationFails', async () => {

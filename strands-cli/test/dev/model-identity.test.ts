@@ -6,7 +6,6 @@ import { fileURLToPath, URL } from 'node:url'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 
-import { initializeDevWorkspace } from '../../src/dev/workspace.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 
 const run = promisify(execFile)
@@ -56,14 +55,18 @@ const options = await harnessAgentOptionsFromConfig(defineHarnessAgentConfig({ m
 export const agent = await createHarness(options)
 `
   )
-  await initializeDevWorkspace(root, {
-    version: 1,
-    name: 'Custom model',
-    language: 'typescript',
-    entrypoint: 'agent.ts',
-    origin: { kind: 'cli' },
-    harness: { path: 'harness', version: manifest.version },
-  })
+  await mkdir(join(root, '.strands'), { recursive: true })
+  await writeFile(
+    join(root, '.strands/config.json'),
+    JSON.stringify({
+      version: 1,
+      name: 'Custom model',
+      language: 'typescript',
+      entrypoint: 'agent.ts',
+      origin: { kind: 'cli' },
+      harness: { path: 'harness', version: manifest.version },
+    })
+  )
   return root
 }
 

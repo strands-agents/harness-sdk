@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { URL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { initializeDevWorkspace } from '../../src/dev/workspace.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 
 const run = promisify(execFile)
@@ -32,14 +31,18 @@ export const createHarness = async (options = {}) => new Agent({ ...options, nam
 export const agent = await createHarness({ model: 'unused' })
 `
   )
-  await initializeDevWorkspace(root, {
-    version: 1,
-    name: 'fixture',
-    language: 'typescript',
-    entrypoint: 'agent.ts',
-    origin: { kind: 'cli' },
-    harness: { path: 'harness', version: '0.3.4' },
-  })
+  await mkdir(join(root, '.strands'), { recursive: true })
+  await writeFile(
+    join(root, '.strands/config.json'),
+    JSON.stringify({
+      version: 1,
+      name: 'fixture',
+      language: 'typescript',
+      entrypoint: 'agent.ts',
+      origin: { kind: 'cli' },
+      harness: { path: 'harness', version: '0.3.4' },
+    })
+  )
   return root
 }
 
