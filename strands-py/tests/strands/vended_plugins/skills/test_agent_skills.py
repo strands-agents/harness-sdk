@@ -446,6 +446,25 @@ class TestSystemPromptInjection:
         assert first_prompt == second_prompt
 
     @pytest.mark.asyncio
+    async def test_state_reset_does_not_accumulate_skill_blocks(self):
+        """Test that resetting agent state between calls does not duplicate the skills block."""
+        plugin = AgentSkills(skills=[_make_skill()])
+        agent = _mock_agent()
+        event = BeforeInvocationEvent(agent=agent)
+
+        await plugin._on_before_invocation(event)
+        first_prompt = agent.system_prompt
+
+        # A state reset drops the plugin's bookkeeping but leaves the injected block in the prompt.
+        agent.state = MagicMock()
+        agent.state.get = MagicMock(return_value=None)
+
+        await plugin._on_before_invocation(event)
+
+        assert agent.system_prompt == first_prompt
+        assert sum("<available_skills>" in block["text"] for block in agent.system_prompt_content) == 1
+
+    @pytest.mark.asyncio
     async def test_no_skills_injects_empty_message(self):
         """Test that a 'no skills available' message is injected when no skills are loaded."""
         plugin = AgentSkills(skills=[])
