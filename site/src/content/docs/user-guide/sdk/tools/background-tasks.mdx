@@ -96,7 +96,7 @@ the defaults apply when you pass <Syntax py="True" ts="true" /> or an empty obje
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `agentic` | `["*"]`\* | The model chooses foreground or background execution for matching tools. |
+| `agentic` | `["*"]` (see note below) | The model chooses foreground or background execution for matching tools. |
 | `always` | `[]` | Matching tools run in the background. |
 | `never` | `[]` | Matching tools run in the foreground. |
 | <Syntax py="wait_for_completion" ts="waitForCompletion" /> | <Syntax py="True" ts="true" /> | Wait for outstanding tasks before returning. |
@@ -104,10 +104,17 @@ the defaults apply when you pass <Syntax py="True" ts="true" /> or an empty obje
 | `timeout` | No limit | Per-execution limit: seconds in Python, milliseconds in TypeScript. |
 | <Syntax py="manage_tool_name" ts="manageToolName" /> | `strands_manage_background_task` | [Management tool](#receive-and-inspect-results) name. |
 
-\* If you omit `agentic`, it defaults to `["*"]`, unless `always` or `never` contains
-`"*"`. If you provide `agentic`, only its selectors apply, and tools that no policy
-matches stay in the foreground. An empty `agentic` list therefore turns off
-model-selected background execution.
+:::note[Omitted and empty lists behave differently]
+
+- **Omit `agentic`:** the model can choose for all compatible tools (`["*"]`).
+  If `always` or `never` contains `"*"`, `agentic` defaults to `[]` instead.
+- **Set `agentic` to a non-empty list:** only matching tools can use model-selected
+  background execution.
+- **Set `agentic` to `[]`:** disables model-selected background execution.
+
+`always` and `never` still apply. Tools that no policy matches run in the foreground.
+
+:::
 
 Each policy accepts tool instances, registered tool names, or the wildcard `"*"`.
 Exact matches take precedence over a wildcard. For example, `always` containing
