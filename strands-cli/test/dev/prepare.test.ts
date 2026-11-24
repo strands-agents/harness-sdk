@@ -57,6 +57,7 @@ beforeEach(async () => {
   vi.stubEnv('HOME', home)
   vi.stubEnv('USERPROFILE', home)
   vi.spyOn(installer, 'prepareWorkspaceDependencies').mockResolvedValue()
+  vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 })
 
 afterEach(() => {
@@ -75,7 +76,6 @@ describe('prepareDevRun', () => {
     const saved = config()
     const original = await readFile(join(source, 'agent.ts'), 'utf8')
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(saved)
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     const first = await prepareDevRun(parseArgs(['dev', 'init', '--agent', join(source, 'agent.ts')]))
 
@@ -138,7 +138,6 @@ describe('prepareDevRun', () => {
       snapshot: (await CliConfigStore.load(path, { persist: false })).snapshot(),
     })
     await writeFile(path, profile('Answer in full sentences.'))
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     const prepared = await prepareDevRun(parseArgs(['dev', '--workspace', dirname(path)]), {
       deferPreparation: true,
@@ -153,7 +152,6 @@ describe('prepareDevRun', () => {
     const saved = config()
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(saved)
     const discover = vi.spyOn(search, 'discoverHarnesses')
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     const prepared = await prepareDevRun(parseArgs(['dev', '--agent', join(root, 'agent.ts')]))
 
@@ -176,7 +174,6 @@ describe('prepareDevRun', () => {
     const saved = config()
     await saved.useAgentProject('/global/default.ts')
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(saved)
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     const prepared = await prepareDevRun(parseArgs(['dev', '--workspace', root]))
 
@@ -200,7 +197,6 @@ describe('prepareDevRun', () => {
     })
     const before = await readFile(join(root, '.strands/config.json'), 'utf8')
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     const prepared = await prepareDevRun(parseArgs(['dev', '--agent', join(root, 'other.ts')]))
 
@@ -215,7 +211,6 @@ describe('prepareDevRun', () => {
     const initial = await ensureInitialCandidate(await bindExistingAgent(folder, join(root, 'agent.ts')))
     const before = await readFile(join(folder, '.config'), 'utf8')
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     const prepared = await prepareDevRun(parseArgs(['dev', '--agent', join(root, 'other.ts')]), {
       deferPreparation: true,
@@ -251,7 +246,6 @@ describe('prepareDevRun', () => {
     vi.spyOn(process, 'cwd').mockReturnValue(cwd)
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
     terminal(true)
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
     const harness = { name: 'Found', entrypoint: join(root, 'agent.ts'), root, language: 'typescript' as const }
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({
       harnesses: [{ ...harness, preparationStatus: 'Needs setup' }],
@@ -318,7 +312,6 @@ describe('workspace path option', () => {
     const parent = join(process.cwd(), 'chosen')
     await arrange(parent)
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     const created = await prepareDevRun(parseArgs(['dev', 'init', '--create', 'typescript', '--workspace', parent]), {
       deferPreparation: true,
@@ -334,7 +327,6 @@ describe('workspace path option', () => {
     const parent = join(process.cwd(), 'chosen')
     const source = await fixture()
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     const prepared = await prepareDevRun(
       parseArgs(['dev', 'init', '--agent', join(source, 'agent.ts'), '--workspace', parent]),
@@ -540,7 +532,6 @@ describe('default workspace placement', () => {
     await bindExistingAgent(join(root, 'strands-dev'), join(await fixture(), 'agent.ts'))
     const before = await readFile(join(root, 'strands-dev/.config'), 'utf8')
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     await expect(
       prepareDevRun(parseArgs(['dev', 'init', '--agent', join(root, 'agent.ts')]), { deferPreparation: true })
@@ -555,7 +546,6 @@ describe('default workspace placement', () => {
     await writeFile(join(root, 'package.json'), '{"type":"module"}')
     await writeFile(join(root, 'src/agent.ts'), 'export const agent = {}')
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     const prepared = await prepareDevRun(parseArgs(['dev', 'init', '--agent', join(root, 'src/agent.ts')]), {
       deferPreparation: true,
@@ -576,7 +566,6 @@ describe('default workspace placement', () => {
       })
     )
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     const prepared = await prepareDevRun(parseArgs(['dev', 'init', '--agent', archive]), { deferPreparation: true })
 
@@ -592,7 +581,6 @@ describe('default workspace placement', () => {
     const saved = config()
     if (project) await saved.useAgentProject(join(project, 'agent.ts'))
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(saved)
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     const prepared = await prepareDevRun(parseArgs(['dev', 'init', '--create', 'cli']), { deferPreparation: true })
 
@@ -602,7 +590,6 @@ describe('default workspace placement', () => {
   it('shouldReopenTheCreatedProjectWhenTheSameHarnessIsCreatedAgain', async () => {
     const launch = process.cwd()
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
     const create = (): ReturnType<typeof prepareDevRun> =>
       prepareDevRun(parseArgs(['dev', 'init', '--create', 'python']), { deferPreparation: true })
 
@@ -627,7 +614,6 @@ describe('default workspace placement', () => {
       origin: { kind: 'discovered' },
     })
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     const prepared = await prepareDevRun(parseArgs(['dev', 'init']), { deferPreparation: true })
 
@@ -640,7 +626,6 @@ describe('default workspace placement', () => {
     async (language) => {
       const launch = process.cwd()
       vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-      vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
       const prepared = await prepareDevRun(parseArgs(['dev', 'init', '--create', language]), {
         deferPreparation: true,
@@ -960,7 +945,6 @@ describe('workspace folder selection', () => {
     ],
   ])('shouldReportWhetherTheBaseCliFolderHolds%s', async (_case, arrange, expected) => {
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
     await arrange()
     vi.spyOn(search, 'discoverHarnesses').mockResolvedValue({ harnesses: [], warnings: [] })
     vi.spyOn(picker, 'chooseHarness').mockResolvedValue(undefined)
@@ -978,7 +962,6 @@ describe('workspace folder selection', () => {
     await mkdir(strandsUserPath('strands-dev'), { recursive: true })
     await writeFile(strandsUserPath('strands-dev/.config'), '{')
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     const prepared = await prepareDevRun(parseArgs(['dev', 'init', '--create', 'typescript']), {
       deferPreparation: true,
@@ -990,7 +973,6 @@ describe('workspace folder selection', () => {
   it('shouldCreateTheNewHarnessInAnEmptyStrandsWorkspaceFolder', async () => {
     await mkdir(join(process.cwd(), 'strands-workspace'))
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
-    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     const prepared = await prepareDevRun(parseArgs(['dev', 'init', '--create', 'typescript']), {
       deferPreparation: true,
@@ -1486,7 +1468,6 @@ describe('workspace opening', () => {
       })
       vi.spyOn(process, 'cwd').mockReturnValue(launch)
       vi.spyOn(CliConfigStore, 'load').mockResolvedValue(CliConfigStore.memory())
-      vi.spyOn(process.stderr, 'write').mockReturnValue(true)
       const scan = vi.spyOn(search, 'discoverHarnesses')
       const select = vi.spyOn(picker, 'chooseHarness')
       const before = await readFile(join(directory, '.config'), 'utf8')
