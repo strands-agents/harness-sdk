@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
+import { STRANDS_EVALS_LABEL } from '../../../src/dev/evals-package.js'
 import { saveTemporaryRunRecord } from '../../../src/dev/temporary-evals-fork/background-runs.js'
 
 import { temporaryDevCommands } from '../../../src/dev/temporary-evals-fork/command.js'
@@ -82,7 +83,9 @@ describe('TEMPORARY dev commands', () => {
     ])
     expect(details[0]).toContain('strands-dev/experiments/<name>/runs/')
     expect(details[0]).toContain('the latest as <name>.report.json')
-    expect(details.slice(0, 2).every((text) => text.includes('Experimental: a fork of strands-evals'))).toBe(true)
+    expect(details.slice(0, 2).every((text) => text.includes(`Experimental: strands dev`))).toBe(true)
+    expect(details.slice(0, 2).every((text) => text.includes(STRANDS_EVALS_LABEL))).toBe(true)
+    expect(details.some((text) => text.includes('fork'))).toBe(false)
     expect(details.some((text) => text.includes('TEMPORARY'))).toBe(false)
   })
 

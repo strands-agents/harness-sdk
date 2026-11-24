@@ -321,28 +321,33 @@ Creating or editing candidates never switches the dev chat away from the bound a
 
 ### Experiments, evaluations, and optimization
 
-Inside a `strands dev` chat:
+Inside a `strands dev` chat, two commands start the evaluation workflow: `/experiment` and `/optimize`.
+In each command, the agent asks one question at a time on screen. Add words after the command to skip questions, for example `/experiment refunds` or `/optimize refunds for fewer tokens`.
 
-- `/experiment` creates and reviews sets of test cases. **Create a new experiment** starts a conversation about what to test, rather than running generation immediately.
-- `/evaluate` selects saved experiments, runs the agent on their cases, and shows results and reports. It runs four cases at once. To stop a run, open it and press `s`. A run continues after strands dev closes. When strands dev opens the workspace again, it follows a run that is still active and shows the results of a run that finished. It also resumes a run that stopped, for example after a restart. Cases that finished before are not run again.
-- `/optimize` tunes supported settings against an experiment and presents changes for review. Changes are applied to the agent source only after approval, unless **Auto-accept optimization results** (`autoAcceptOptimizationResults`) is on in the **Strands dev workspace** section of `/settings`. With it on, a run that finishes writes its edits to the agent source without a review, and dev says what it applied. It is off by default. A run that you stop early still shows its edits for review, and so does a review that was already waiting when you turned the setting on. While a diff is on screen, a chat message goes to the agent with what the diff shows, so you can answer it in the chat: “approve this” or “leave it” picks that choice of the diff on screen, and any other message leaves the diff where it is.
+- `/experiment` makes, runs, and reviews experiments. An experiment is a set of test cases for the agent. Its evaluators give each answer a score.
+  - The agent lists the saved experiments, **Run several experiments**, and **Create a new experiment**. For a saved experiment, you can view its last report, run it, or edit its cases.
+  - For a new experiment, the agent asks what to test. You can also say "past chats". After your approval, `strands-evals generate` makes the cases with an AWS Bedrock model. Dev saves them in `strands-dev/experiments/<name>/<name>.json`.
+  - **Run it** starts the evaluation at once, because the selection is the approval. The report gives the passed and failed cases and the reason for each failure.
+  - A run continues when you cancel the chat turn or close strands dev. Dev continues a stopped run at the next start. Cases that finished before do not run again.
+  - From a shell, `strands dev evaluate <experiment>` runs the same evaluation and prints the result.
+- `/optimize` tunes the agent against an experiment.
+  - The agent asks which experiment to use, which knobs to tune, what the run must improve, what must stay true, and the budget. Then it prints a review in the chat. Reply to change a row, or approve the review to start the run.
+  - The run continues in the background. When it finishes, its proposed edits show on screen as a diff, one edit at a time. Select **Apply this change** or **Leave it as it is**. You can also write "approve this" or "leave it" in the chat.
+  - The agent source changes only with the edits that you apply. When **Auto-accept optimization results** (`autoAcceptOptimizationResults`) is on, a run that finishes writes its edits without a review. This setting is in the **Strands dev workspace** section of `/settings`, and it is off by default. A run that you stop early still shows its edits for review.
+  - From a shell, `strands dev optimize <experiment>` runs the optimizer and prints the result. It does not change the agent source.
 - **Auto-optimize every N turns** (`autoOptimize`, in the same section) starts an optimization by itself: every 5, 10, 20, 50, or 100 chat turns, dev makes an experiment from your chats with the agent and tunes the agent on that experiment. This happens in the background and not in your chat: the agent of the workspace makes the experiment in a process of its own, which keeps no session, and dev then starts the optimizer with the defaults of the plan. You are asked nothing. One notice in the chat says that it began and then what it started, or why it started nothing, and the line below the chat input shows the work. The process writes its log to `strands-dev/tmp/.state/auto-optimize/`, and it stops when dev closes or when you turn the setting off. Work that dev closed on starts again at your next turn. Each of these runs is paid. It is off by default. The count of turns is kept when dev closes, and it starts again when you change the number. A run that is due waits while another optimization runs or its edits wait for your answer. You can also ask for it in the chat, for example “optimize every 20 turns from my history”. When the optimization finishes, its edits wait for your review as those of any run do; with **Auto-accept optimization results** on as well, they are written without a review.
-  The list shows each experiment with its number of runs. Select an experiment to start a new run, or to open one of its runs.
-  The setup has five tabs: Tune, Goal, Cases, Budget, and Review. Tab goes to the next tab, and Shift+Tab goes to the previous tab. Start is on each tab.
-  Tune selects the knobs. Goal sets the objective, the constraints, how sure a candidate must be to meet them, what a crashed run scores, and the pick rule.
-  Cases sets the train share and how the other cases divide between validation and test. Budget sets the steps, the candidates of each step, the runs of each case, the finalists, and the parallel trials.
-  Review shows the whole run. A `!` marks a tab with a problem. A problem that stops the run shows on each tab.
-  Start is not available when the plan needs more rollouts than one run can use (500). Then lower the steps, the candidates, or the runs.
-  Effort tuning works for a model id string, and for a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object. For a model object, each trial sets the reasoning fields of that level on a copy of the object. An accepted change writes those fields into the object.
+- Effort tuning works for a model id string, and for a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object. For a model object, each trial sets the reasoning fields of that level on a copy of the object. An accepted change writes those fields into the object.
 
-In the panels, a paid run starts only after a confirm step. The confirm step shows the case count and the model. For `/optimize`, the confirm step also shows the token and time estimate when strands dev has one. When the run tunes a text knob, the confirm step tells you that the proposer runs shell commands that can use your credentials. Enter starts the run, and Esc cancels it.
+You can also ask in plain words, for example "show my experiments", "rerun the failures", or "optimize the refund harness".
+Dev adds only two slash commands for this workflow: `/experiment` and `/optimize`. Reading cases or past results does not start a run.
+On request, the agent stops an optimization or discards its pending edits.
 
-You can also ask in plain language: “show my experiments,” “explain the refund cases,” “run refunds and checkout,” “rerun the failures,” or “optimize the refund harness.” Dev-only skills (`manage-experiments`, `run-evaluations`, and `optimize-harness`, alongside `create-experiment`) use the same sessions as the panels. These skills are not slash commands: dev adds only `/experiment`, `/evaluate`, and `/optimize`. Reading cases or past results does not start a new run. An evaluation can run one or several experiments. An optimization returns proposed edits, and dev applies only the edits that you accept, or every edit of a finished run when auto-accept is on. On request, the agent stops an optimization or discards its pending proposals.
-
-Generation, evaluation, and optimization call models and can incur charges. Review and approve the proposed run before it starts.
+Generation, evaluation, and optimization call models and can incur charges. Dev starts a paid run only after your approval.
 Running jobs show below the chat input in one row, one job at a time, as background tasks do.
-With an empty input, ↓ selects the first background task or job. ←→ selects the next one, Enter opens its progress, and Esc goes back.
-A click on the row opens the job that the row shows. Dev keeps each experiment and its history in one folder:
+With an empty input, ↓ selects the first background task or job, and ←→ selects the next one.
+Enter or a click on a job asks the agent about that job. For an optimization with edits to review, the diff shows again.
+
+Dev keeps each experiment and its history in one folder:
 
 ```text
 strands-dev/
@@ -396,7 +401,7 @@ When the search stops on a proposer error, the command writes the error and exit
 **Limits:**
 
 - Dev tunes only what its space file declares: `createHarness` options as text, choices, and switches, plus the instructions and the effort. Dev does not tune model parameters at this time, for example the temperature.
-- **TEMPORARY:** `/evaluate` and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. In strands-agents-evals 1.12.1, `optimize run` can run a TypeScript agent file, but `run` cannot. Thus dev keeps its runner for the two commands at this time.
+- **TEMPORARY:** Evaluation runs and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. In strands-agents-evals 1.12.1, `optimize run` can run a TypeScript agent file, but `run` cannot. Thus dev keeps its runner for the two commands at this time.
 - Dev applies the champion itself, in the Apply step of `/optimize`. The upstream CLI only writes the champion to `best.diff` and `best.values.json`.
 
 ### Evals UI
