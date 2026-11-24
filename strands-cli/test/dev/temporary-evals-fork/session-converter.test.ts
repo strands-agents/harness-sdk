@@ -1,11 +1,12 @@
 import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { STRANDS_EVALS_VERSION } from '../../../src/dev/evals-package.js'
 import type { TemporaryAgentFacts } from '../../../src/dev/temporary-evals-fork/host.js'
 import { temporarySessionHistory } from '../../../src/dev/temporary-evals-fork/session-converter.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
+import { writeFileAt } from '../../fixtures/optimizer-run.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const CURRENT = '20261117t101500z-current'
@@ -26,11 +27,6 @@ const SKILL_FILES: ReadonlyMap<string, string> = new Map([
   ['scripts/synthesize_cases.py', 'print("cases")'],
   ['scripts/__pycache__/synthesize_cases.cpython-312.pyc', 'compiled'],
 ])
-
-const writeFileAt = async (path: string, text: string): Promise<void> => {
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, text)
-}
 
 const installedSkill = async (): Promise<string> => {
   const folder = join(await temporaryDirectory(), 'strands_evals', '.agents', 'skills', 'session-converter')

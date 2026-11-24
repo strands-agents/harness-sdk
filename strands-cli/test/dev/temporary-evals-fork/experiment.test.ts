@@ -1,13 +1,12 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { readdir, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { GenerationSettings } from '../../../src/dev/panels/model.js'
 import {
   prepareTemporaryOptimizerEnvironment,
   temporaryVenvPython,
-  type TemporaryCommandRequest,
 } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import {
@@ -28,12 +27,8 @@ import {
   type TemporaryRawCase,
 } from '../../../src/dev/temporary-evals-fork/experiment.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
+import { environmentRunner, writeFileAt } from '../../fixtures/optimizer-run.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
-
-const writeFileAt = async (path: string, text: string): Promise<void> => {
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, text)
-}
 
 const settings = (overrides: Partial<GenerationSettings> = {}): GenerationSettings => ({
   name: 'refunds',
@@ -55,18 +50,6 @@ const workspaceFixture = async (): Promise<DevWorkspace> => {
     config: { version: 1, name: 'desk', language: 'python', entrypoint: 'agent.py', origin: { kind: 'discovered' } },
   }
 }
-
-const environmentRunner = () =>
-  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
-    if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
-    if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
-    if (args[1]?.includes('site.getsitepackages()[0]')) {
-      const sitePackages = join(dirname(dirname(command)), 'lib/site-packages')
-      await mkdir(sitePackages, { recursive: true })
-      return sitePackages
-    }
-    return ''
-  })
 
 const flagValue = (args: readonly string[], flag: string): string => args[args.indexOf(flag) + 1]!
 

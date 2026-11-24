@@ -1,10 +1,10 @@
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { GenerationSettings } from '../../../src/dev/panels/model.js'
-import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
+import { temporaryVenvPython } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsExit, TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import {
   temporaryAgentContext,
@@ -13,14 +13,10 @@ import {
 import { temporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import type { ChatNotice, DevChatCommandContext } from '../../../src/ui/chat/types.js'
+import { environmentRunner, writeFileAt } from '../../fixtures/optimizer-run.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const LIVE = { timeout: 4000 }
-
-const writeFileAt = async (path: string, text: string): Promise<void> => {
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, text)
-}
 
 const flagValue = (args: readonly string[], flag: string): string => args[args.indexOf(flag) + 1]!
 
@@ -47,18 +43,6 @@ const workspaceFixture = async (): Promise<DevWorkspace> => {
     config: { version: 1, name: 'desk', language: 'python', entrypoint: 'agent.py', origin: { kind: 'discovered' } },
   }
 }
-
-const environmentRunner = () =>
-  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
-    if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
-    if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
-    if (args[1]?.includes('site.getsitepackages()[0]')) {
-      const sitePackages = join(dirname(dirname(command)), 'lib/site-packages')
-      await mkdir(sitePackages, { recursive: true })
-      return sitePackages
-    }
-    return ''
-  })
 
 interface ControlledRun {
   readonly args: readonly string[]

@@ -3,23 +3,23 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 
-import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
+import { temporaryVenvPython } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import { runTemporaryOptimization } from '../../../src/dev/temporary-evals-fork/optimize.js'
 import { TEMPORARY_DECISION_DEFAULTS } from '../../../src/dev/temporary-evals-fork/plan.js'
 import type { OptimizeDecision } from '../../../src/dev/panels/model.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
-import { optimizerProposerError, writeOptimizerRun } from '../../fixtures/optimizer-run.js'
+import {
+  environmentRunner,
+  optimizerProposerError,
+  writeFileAt,
+  writeOptimizerRun,
+} from '../../fixtures/optimizer-run.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const NOW = new Date('2026-11-11T15:04:05Z')
 const STAMP = '20261111-150405'
 const EVALS_AGENT_FOLDER = fileURLToPath(new URL('../../../src/dev/evals-agent', import.meta.url))
-
-const writeFileAt = async (path: string, text = '{}'): Promise<void> => {
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, text)
-}
 
 const experimentFile = (directory: string, name: string): string => join(directory, 'experiments', name, `${name}.json`)
 
@@ -47,20 +47,6 @@ const evalsEnvironment = (workspace: DevWorkspace): string => join(workspace.dir
 
 const optimizationFile = (workspace: DevWorkspace, file: string): string =>
   join(workspace.directory!, 'experiments/support/optimizations', STAMP, file)
-
-const sitePackagesOf = (python: string): string => join(dirname(dirname(python)), 'lib', 'site-packages')
-
-const environmentRunner = () =>
-  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
-    if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
-    if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
-    if (args[1]?.includes('site.getsitepackages()[0]')) {
-      const sitePackages = sitePackagesOf(command)
-      await mkdir(sitePackages, { recursive: true })
-      return sitePackages
-    }
-    return ''
-  })
 
 const succeeding = (stdout = 'ships candidate 3\nrecord: somewhere\n') =>
   vi.fn(async (process: TemporaryEvalsProcess) => {

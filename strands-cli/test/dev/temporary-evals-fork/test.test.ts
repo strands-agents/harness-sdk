@@ -1,23 +1,19 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 
-import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
+import { temporaryVenvPython } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import { runTemporaryTest } from '../../../src/dev/temporary-evals-fork/test.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
+import { environmentRunner, writeFileAt } from '../../fixtures/optimizer-run.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const NOW = new Date('2026-11-11T15:04:05Z')
 const STAMP = '20261111-150405'
 const EXPERIMENT = JSON.stringify({ cases: [{ name: 'a' }, { name: 'b' }], evaluators: [] })
 const EVALS_AGENT_FOLDER = fileURLToPath(new URL('../../../src/dev/evals-agent', import.meta.url))
-
-const writeFileAt = async (path: string, text = EXPERIMENT): Promise<void> => {
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, text)
-}
 
 const experimentFile = (directory: string, name: string): string => join(directory, 'experiments', name, `${name}.json`)
 
@@ -28,7 +24,7 @@ const workspaceFixture = async (
   const root = await temporaryDirectory()
   const directory = join(root, 'strands-dev')
   await writeFileAt(temporaryVenvPython(join(root, '.venv')), 'fixture interpreter')
-  await Promise.all(experiments.map((name) => writeFileAt(experimentFile(directory, name))))
+  await Promise.all(experiments.map((name) => writeFileAt(experimentFile(directory, name), EXPERIMENT)))
   return {
     directory,
     root,
@@ -41,20 +37,6 @@ const supportHome = (workspace: DevWorkspace): string => join(workspace.director
 
 const runFile = (workspace: DevWorkspace, file: string, stamp = STAMP): string =>
   join(supportHome(workspace), 'runs', stamp, file)
-
-const sitePackagesOf = (python: string): string => join(dirname(dirname(python)), 'lib', 'site-packages')
-
-const environmentRunner = () =>
-  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
-    if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
-    if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
-    if (args[1]?.includes('site.getsitepackages()[0]')) {
-      const sitePackages = sitePackagesOf(command)
-      await mkdir(sitePackages, { recursive: true })
-      return sitePackages
-    }
-    return ''
-  })
 
 const reporting = (passes: boolean[], overall: number) =>
   vi.fn(async ({ args }: TemporaryEvalsProcess) => {
@@ -253,7 +235,7 @@ describe('TEMPORARY /evaluate', () => {
   it('shouldKeepTheRunInAnOutsideHomeWhenTheExperimentIsOutsideTheFolder', async () => {
     const workspace = await workspaceFixture([])
     const experiment = join(workspace.root, 'cases', 'refunds.json')
-    await writeFileAt(experiment)
+    await writeFileAt(experiment, EXPERIMENT)
     const spawnTests = reporting([true, true], 1)
 
     const outcome = await runTemporaryTest(

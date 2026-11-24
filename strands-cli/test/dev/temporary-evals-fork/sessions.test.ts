@@ -16,7 +16,7 @@ import {
   saveTemporaryRunRecord,
   type TemporaryTestRecord,
 } from '../../../src/dev/temporary-evals-fork/background-runs.js'
-import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
+import { temporaryVenvPython } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsExit, TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import type { TemporarySessionDependencies } from '../../../src/dev/temporary-evals-fork/host.js'
 import { temporaryDevChatPart, temporaryDevCommands } from '../../../src/dev/temporary-evals-fork/command.js'
@@ -42,6 +42,7 @@ import type { ChatNotice, DevChatCommandContext } from '../../../src/ui/chat/typ
 import { pythonExecutable } from '../../fixtures/python-runtime.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 import {
+  environmentRunner,
   OPTIMIZER_RUN_FOLDER,
   optimizerCandidate,
   optimizerConfig,
@@ -50,16 +51,12 @@ import {
   optimizerStop,
   optimizerTested,
   optimizerTrial,
+  writeFileAt,
   writeOptimizerRun,
 } from '../../fixtures/optimizer-run.js'
 
 const BASELINE = 'Answer in one word.'
 const WINNER = 'Answer in one word.\nName the capital city.'
-
-const writeFileAt = async (path: string, text: string): Promise<void> => {
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, text)
-}
 
 const workspaceFixture = async (): Promise<DevWorkspace> => {
   const root = await temporaryDirectory()
@@ -76,18 +73,6 @@ const workspaceFixture = async (): Promise<DevWorkspace> => {
     config: { version: 1, name: 'desk', language: 'python', entrypoint: 'agent.py', origin: { kind: 'discovered' } },
   }
 }
-
-const environmentRunner = () =>
-  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
-    if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
-    if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
-    if (args[1]?.includes('site.getsitepackages()[0]')) {
-      const sitePackages = join(dirname(dirname(command)), 'lib/site-packages')
-      await mkdir(sitePackages, { recursive: true })
-      return sitePackages
-    }
-    return ''
-  })
 
 const experimentDocument = (names: readonly string[], evaluators: readonly string[] = ['OutputEvaluator']) => ({
   cases: names.map((name) => ({

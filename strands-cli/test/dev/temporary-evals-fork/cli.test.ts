@@ -1,21 +1,21 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 
 import { parseArgs } from '../../../src/cli/arguments.js'
 import { runTemporaryDevCommand } from '../../../src/dev/temporary-evals-fork/cli.js'
-import { temporaryVenvPython, type TemporaryCommandRequest } from '../../../src/dev/temporary-evals-fork/environment.js'
+import { temporaryVenvPython } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { PreparedDevRun } from '../../../src/dev/prepare.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
-import { optimizerProposerError, writeOptimizerRun } from '../../fixtures/optimizer-run.js'
+import {
+  environmentRunner,
+  optimizerProposerError,
+  writeFileAt,
+  writeOptimizerRun,
+} from '../../fixtures/optimizer-run.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
-
-const writeFileAt = async (path: string, text = '{}'): Promise<void> => {
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, text)
-}
 
 const workspaceFixture = async (language: 'python' | 'typescript' = 'python'): Promise<DevWorkspace> => {
   const root = await temporaryDirectory()
@@ -29,20 +29,6 @@ const workspaceFixture = async (language: 'python' | 'typescript' = 'python'): P
     config: { version: 1, name: 'desk', language, entrypoint: 'agent.py', origin: { kind: 'discovered' } },
   }
 }
-
-const sitePackagesOf = (python: string): string => join(dirname(dirname(python)), 'lib', 'site-packages')
-
-const run = () =>
-  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
-    if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
-    if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
-    if (args[1]?.includes('site.getsitepackages()[0]')) {
-      const sitePackages = sitePackagesOf(command)
-      await mkdir(sitePackages, { recursive: true })
-      return sitePackages
-    }
-    return ''
-  })
 
 const reportingTests = (report: unknown) =>
   vi.fn(async ({ args }: { args: string[] }) => {
@@ -74,7 +60,7 @@ describe('TEMPORARY strands dev optimize command', () => {
     const code = await runTemporaryDevCommand(
       parseArgs(['dev', 'optimize', 'support']),
       { stdout: stdout.stream, stderr: stderr.stream },
-      { openWorkspace: async () => opened(workspace), prepareProject, run: run(), spawnOptimizer }
+      { openWorkspace: async () => opened(workspace), prepareProject, run: environmentRunner(), spawnOptimizer }
     )
 
     expect(code).toBe(0)
@@ -99,7 +85,7 @@ describe('TEMPORARY strands dev optimize command', () => {
       {
         openWorkspace: async () => opened(workspace),
         prepareProject: vi.fn(async () => {}),
-        run: run(),
+        run: environmentRunner(),
         spawnOptimizer,
       }
     )
@@ -141,7 +127,7 @@ describe('TEMPORARY strands dev optimize command', () => {
       {
         openWorkspace: async () => opened(workspace),
         prepareProject: vi.fn(async () => {}),
-        run: run(),
+        run: environmentRunner(),
         spawnTests,
       }
     )
@@ -165,7 +151,7 @@ describe('TEMPORARY strands dev optimize command', () => {
       {
         openWorkspace: async () => opened(workspace),
         prepareProject: vi.fn(async () => {}),
-        run: run(),
+        run: environmentRunner(),
         spawnTests,
       }
     )
@@ -190,7 +176,7 @@ describe('TEMPORARY strands dev optimize command', () => {
       {
         openWorkspace: async () => opened(workspace),
         prepareProject: vi.fn(async () => {}),
-        run: run(),
+        run: environmentRunner(),
         spawnTests: reportingTests(report),
       }
     )
@@ -217,7 +203,7 @@ describe('TEMPORARY strands dev optimize command', () => {
       {
         openWorkspace: async () => opened(workspace),
         prepareProject: vi.fn(async () => {}),
-        run: run(),
+        run: environmentRunner(),
         spawnTests: reportingTests({ overall_score: 1, test_passes: [true] }),
       }
     )

@@ -11,6 +11,7 @@ import {
   temporaryVenvPython,
   type TemporaryCommandRequest,
 } from '../../../src/dev/temporary-evals-fork/environment.js'
+import { writeFileAt } from '../../fixtures/optimizer-run.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 interface Layout {
@@ -27,11 +28,6 @@ interface FakePython {
 const DAY_MS = 24 * 60 * 60 * 1000
 const PACKAGES_FILE = 'temporary_strands_dev_packages.pth'
 const MARKER_FILE = 'temporary-evals-fork.json'
-
-const writeFileAt = async (path: string, text: string): Promise<void> => {
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, text)
-}
 
 const writeExecutable = async (path: string): Promise<void> => {
   await mkdir(dirname(path), { recursive: true })

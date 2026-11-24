@@ -1,5 +1,26 @@
 import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { vi } from 'vitest'
+
+import { temporaryVenvPython, type TemporaryCommandRequest } from '../../src/dev/temporary-evals-fork/environment.js'
+
+export const writeFileAt = async (path: string, text: string): Promise<void> => {
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, text)
+}
+
+/** The commands that prepare the evals environment, answered without a Python. */
+export const environmentRunner = () =>
+  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
+    if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
+    if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
+    if (args[1]?.includes('site.getsitepackages()[0]')) {
+      const sitePackages = join(dirname(dirname(command)), 'lib', 'site-packages')
+      await mkdir(sitePackages, { recursive: true })
+      return sitePackages
+    }
+    return ''
+  })
 
 export const OPTIMIZER_RUN_FOLDER = '20261111-150405-abc123'
 

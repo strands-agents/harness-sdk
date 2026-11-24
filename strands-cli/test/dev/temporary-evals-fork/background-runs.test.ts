@@ -20,6 +20,7 @@ import {
   type TemporaryOptimizeRecord,
   type TemporaryTestRecord,
 } from '../../../src/dev/temporary-evals-fork/background-runs.js'
+import { writeFileAt } from '../../fixtures/optimizer-run.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 vi.mock('node:fs/promises', async (original) => {
@@ -84,11 +85,6 @@ const optimizeRecordIn = (
 
 const optimizeRecordFile = (workspace: string, home = INSIDE_HOME): string =>
   join(workspace, home, 'optimizations', STAMP, '.state/record.json')
-
-const writeFileAt = async (path: string, text: string): Promise<void> => {
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, text)
-}
 
 const running = async (...args: string[]) => {
   const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)', ...args], {
