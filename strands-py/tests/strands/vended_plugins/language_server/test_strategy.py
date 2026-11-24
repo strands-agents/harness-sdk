@@ -10,6 +10,7 @@ import pytest
 from strands import Agent
 from strands._context_manager.retrieval_tool import RETRIEVAL_TOOL_NAME
 from strands._context_manager.stash import Stash
+from strands._context_manager.strategies.offload.conditions import parse_condition
 from strands.experimental.context_manager import ContextManager
 from strands.storage import InMemoryStorage, LocalFileStorage
 from strands.types.content import Message, Messages
@@ -244,9 +245,9 @@ async def test_waits_for_context_utilization_unless_the_context_overflowed(works
 def test_defaults_gate_on_utilization_and_size(workspace):
     strategy = LspStrategy(FakeLspClient(workspace), workspace)
 
-    assert strategy._conditions.context_utilization.value == 60
-    assert strategy._conditions.block_threshold.value == 500
-    assert strategy._preserve_recent.value == 5
+    assert strategy._conditions.context_utilization == parse_condition("context_utilization", "85%")
+    assert strategy._conditions.block_threshold == parse_condition("block_threshold", 500)
+    assert strategy._preserve_recent == parse_condition("preserve_recent", 5)
     assert strategy.name == "offload:lsp"
 
 

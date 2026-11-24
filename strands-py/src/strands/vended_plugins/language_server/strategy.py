@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,6 +48,7 @@ class LspPassReport:
         offloaded: ``(toolUseId, files it mentioned)`` for each result replaced, relative to the root.
         kept: Results with file or symbol evidence that stayed.
         queries: LSP requests made.
+        lsp_seconds: Time spent waiting on the language server.
         skipped_reason: Why the pass stopped early, if it did.
     """
 
@@ -56,7 +58,13 @@ class LspPassReport:
     offloaded: list[tuple[str, list[str]]] = field(default_factory=list)
     kept: int = 0
     queries: int = 0
+    lsp_seconds: float = 0.0
     skipped_reason: str | None = None
+
+    @property
+    def fired(self) -> bool:
+        """Whether the pass offloaded anything."""
+        return bool(self.offloaded)
 
 
 class _QueryBudgetExceededError(Exception):
@@ -74,6 +82,7 @@ class _Queries:
         self.client = client
         self.limit = limit
         self.used = 0
+        self.seconds = 0.0
         self.cache: dict[tuple[Any, ...], Any] = {}
 
     async def get(self, key: tuple[Any, ...], request: Callable[[], Awaitable[T]]) -> T:
@@ -83,10 +92,13 @@ class _Queries:
         if self.used >= self.limit:
             raise _QueryBudgetExceededError
         self.used += 1
+        started = time.monotonic()
         try:
             answer = await request()
         except Exception as error:
             raise _LspQueryError from error
+        finally:
+            self.seconds += time.monotonic() - started
         self.cache[key] = answer
         return answer
 
@@ -100,7 +112,10 @@ class LspStrategy:
     ``toolUseId`` and status. Results with no file or symbol evidence are left alone. The strategy adds no tools.
 
     It does nothing without a stash, below ``context_utilization`` (unless the context overflowed), or when a language
-    server query fails, so the strategies after it still run.
+    server query fails, so the strategies after it still run. A pass decides every result before it edits history, so
+    it breaks the prompt cache at most once.
+
+    This strategy is experimental: no agent-loop evaluation has exercised it yet.
 
     Example:
         ```python
@@ -121,7 +136,7 @@ class LspStrategy:
         root: Path | str,
         *,
         preserve_recent: int | str = 5,
-        context_utilization: int | str | None = "60%",
+        context_utilization: int | str | None = "85%",
         block_threshold: int | str | None = 500,
         max_queries: int = 200,
         max_defining_files: int = 2,
@@ -134,9 +149,11 @@ class LspStrategy:
             root: Workspace root; only files under it count as evidence.
             preserve_recent: Newest messages never offloaded, which define the working set: a count, or ``"N%"`` of
                 the messages.
-            context_utilization: Context usage at or above which the strategy runs: ``"60%"`` of the context window, or
+            context_utilization: Context usage at or above which the strategy runs: ``"85%"`` of the context window, or
                 a whole number of input tokens; None to run on every pass. Each offload rewrites history and breaks the
-                prompt cache from that point on, so the default waits until the window is filling up.
+                prompt cache from that point on; it pays back only after about ``11.5 * P / R`` more model calls at
+                Claude cache prices, for ``P`` tokens after the edit and ``R`` tokens removed, so the default waits
+                until the window is nearly full.
             block_threshold: Tool results this size or smaller are left alone: a token count, or ``"N%"`` of the
                 context window; None for no size check.
             max_queries: Cap on language server requests per pass; results not yet decided are kept.
@@ -218,8 +235,19 @@ class LspStrategy:
             report.skipped_reason = "lsp error"
             return False
         finally:
-            report.queries = queries.used
-        return await self._offload(context, unrelated, report)
+            report.queries, report.lsp_seconds = queries.used, queries.seconds
+        acted = await self._offload(context, unrelated, report)
+        logger.info(
+            "strategy=<%s>, offloaded=<%d>, kept=<%d>, queries=<%d>, lsp_seconds=<%.2f>, skipped_reason=<%s>"
+            " | pass done",
+            self.name,
+            len(report.offloaded),
+            report.kept,
+            report.queries,
+            report.lsp_seconds,
+            report.skipped_reason,
+        )
+        return acted
 
     def _skip_reason(self, context: ContextState) -> str | None:
         if context.stash is None:
