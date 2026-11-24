@@ -1,4 +1,5 @@
 import { siteLink } from '../util/links'
+import { buildProductContentMarkdown, type ProductContentItem } from './product-content'
 
 export const DECIDER_HERO_TITLE = 'A model built to decide.'
 export const DECIDER_HERO_DESCRIPTION = 'Route, classify, and score known outcomes without generating text.'
@@ -163,7 +164,10 @@ function probability(value: number): string {
   return value.toFixed(3)
 }
 
-export function buildDeciderLandingMarkdown(headingLevel = 1): string {
+export function buildDeciderLandingMarkdown(
+  headingLevel = 1,
+  productContent: readonly ProductContentItem[] = []
+): string {
   const root = Math.min(Math.max(Math.trunc(headingLevel), 1), 3)
   const lines = [
     heading(root, 'Strands Decider'),
@@ -213,6 +217,7 @@ export function buildDeciderLandingMarkdown(headingLevel = 1): string {
     `- [Use bounded decisions with the Strands SDK](${landingLink(DECIDER_LINKS.sdk)})`,
     `- [Browse model weights](${DECIDER_HUGGING_FACE_URL})`,
     '',
+    ...buildProductContentMarkdown(productContent, root + 1),
   ]
 
   return lines.join('\n')

@@ -2,6 +2,7 @@
 import BoxGettingStarted from '../components/box/BoxGettingStarted.astro'
 import BoxHero from '../components/box/BoxHero.astro'
 import NextSteps from '../components/NextSteps.astro'
+import ProductContent from '../components/ProductContent.astro'
 import { products } from '../config/navbar'
 import {
   BOX_LANDING_DESCRIPTION,
@@ -29,6 +30,7 @@ const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
   <div class="box-main">
     <BoxHero />
     <BoxGettingStarted />
+    <ProductContent project="box" />
   </div>
   <NextSteps
     title="Start with Box"

@@ -325,7 +325,7 @@ describe('homepage machine-readable metadata', () => {
           tag: 'H4',
           text: '/decider',
         },
-        description: 'Route, classify, and score known outcomes. Get typed answers with confidence.',
+        description: 'Route, classify, and score with confidence.',
         action: {
           text: 'Explore Strands Decider',
           href: configuredPathWithBase('/decider/'),

@@ -16,6 +16,7 @@ import {
   DECIDER_REPOSITORY_URL,
   buildDeciderLandingMarkdown,
 } from '../src/config/decider-landing'
+import { getProductContent } from '../src/config/product-content'
 
 function configuredPathWithBase(value: string): string {
   const base = (process.env.ASTRO_BASE_PATH ?? '/').replace(/\/$/, '')
@@ -203,13 +204,40 @@ describe('Decider landing page', () => {
     })
   })
 
-  it('publishes the configured product story as Markdown', () => {
+  it('publishes the configured product story as Markdown', async () => {
     const markdown = readFileSync(new URL('../dist/decider/index.md', import.meta.url), 'utf8')
+    const content = await getProductContent('decider')
 
-    expect(markdown).toBe(buildDeciderLandingMarkdown())
+    expect(markdown).toBe(buildDeciderLandingMarkdown(1, content))
     expect(markdown).not.toContain('staging-')
     expect(markdown).toContain('--noul "Does this convey urgency?"')
     expect(markdown).toContain('--score "How frustrated is the writer?=calm,frustrated,depressed"')
     expect(markdown).toContain('- Score: `1.03` (confidence `0.509`)')
+  })
+
+  it('renders content filtered to Decider', async () => {
+    const content = await getProductContent('decider')
+    const section = page.querySelector('[data-product-content="decider"]')
+    const links = section?.querySelectorAll('[data-product-content-link]') ?? []
+
+    expect(section).not.toBeNull()
+    expect(section?.querySelector('h2')?.text.trim()).toBe('Decider content')
+    expect(section?.querySelector('h2')?.getAttribute('class')).toContain('product-content__visually-hidden')
+    expect(section?.querySelector('[data-product-content-label]')?.text.trim()).toBe('Watch and read')
+    expect(links).toHaveLength(content.length)
+    expect(section?.querySelectorAll('[data-product-content-placeholder]')).toHaveLength(
+      content.filter((item) => item.kind === 'article' && !item.image).length
+    )
+
+    for (const item of content) {
+      const link = section?.querySelector(`[data-product-content-link="${item.id}"]`)
+      const href = item.external ? item.href : configuredPathWithBase(item.href)
+
+      expect(link?.getAttribute('href')).toBe(href)
+      expect(link?.text).toContain(item.title)
+      expect(link?.closest('[data-content-kind]')?.getAttribute('data-content-kind')).toBe(item.kind)
+      expect(link?.getAttribute('target')).toBe(item.external ? '_blank' : undefined)
+      expect(link?.getAttribute('rel')).toBe(item.external ? 'noopener' : undefined)
+    }
   })
 })

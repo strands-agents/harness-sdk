@@ -2,6 +2,7 @@
 import DeciderHero from '../components/decider/DeciderHero.astro'
 import DeciderOverview from '../components/decider/DeciderOverview.astro'
 import NextSteps from '../components/NextSteps.astro'
+import ProductContent from '../components/ProductContent.astro'
 import {
   DECIDER_LANDING_DESCRIPTION,
   DECIDER_LANDING_TITLE,
@@ -28,6 +29,7 @@ const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
 >
   <DeciderHero />
   <DeciderOverview />
+  <ProductContent project="decider" />
   <NextSteps
     title="Start with Decider"
     ctas={[

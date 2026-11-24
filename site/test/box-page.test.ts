@@ -15,6 +15,7 @@ import {
   BOX_REPOSITORY_URL,
   buildBoxLandingMarkdown,
 } from '../src/config/box-landing'
+import { getProductContent } from '../src/config/product-content'
 
 function configuredPathWithBase(value: string): string {
   const base = (process.env.ASTRO_BASE_PATH ?? '/').replace(/\/$/, '')
@@ -152,10 +153,36 @@ describe('Box landing page', () => {
     })
   })
 
-  it('publishes the configured product story as Markdown', () => {
+  it('publishes the configured product story as Markdown', async () => {
     const markdown = readFileSync(new URL('../dist/box/index.md', import.meta.url), 'utf8')
+    const content = await getProductContent('box')
 
-    expect(markdown).toBe(buildBoxLandingMarkdown())
+    expect(markdown).toBe(buildBoxLandingMarkdown(1, content))
     expect(markdown).not.toContain('staging-')
+  })
+
+  it('renders content filtered to Box', async () => {
+    const content = await getProductContent('box')
+    const section = page.querySelector('[data-product-content="box"]')
+    const links = section?.querySelectorAll('[data-product-content-link]') ?? []
+
+    expect(section).not.toBeNull()
+    expect(section?.querySelector('h2')?.text.trim()).toBe('Box content')
+    expect(section?.querySelector('h2')?.getAttribute('class')).toContain('product-content__visually-hidden')
+    expect(section?.querySelector('[data-product-content-label]')?.text.trim()).toBe('Watch and read')
+    expect(links).toHaveLength(content.length)
+    expect(section?.querySelectorAll('[data-product-content-placeholder]')).toHaveLength(
+      content.filter((item) => item.kind === 'article' && !item.image).length
+    )
+
+    for (const item of content) {
+      const link = section?.querySelector(`[data-product-content-link="${item.id}"]`)
+
+      expect(link?.getAttribute('href')).toBe(configuredHref(item.href))
+      expect(link?.text).toContain(item.title)
+      expect(link?.closest('[data-content-kind]')?.getAttribute('data-content-kind')).toBe(item.kind)
+      expect(link?.getAttribute('target')).toBe(item.external ? '_blank' : undefined)
+      expect(link?.getAttribute('rel')).toBe(item.external ? 'noopener' : undefined)
+    }
   })
 })

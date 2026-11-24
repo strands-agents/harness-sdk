@@ -14,11 +14,13 @@ import {
 } from '../config/faq'
 import { buildBoxLandingMarkdown } from '../config/box-landing'
 import { buildDeciderLandingMarkdown } from '../config/decider-landing'
+import { getProductContent } from '../config/product-content'
 
 export const GET: APIRoute = async () => {
   const allDocs = await getCollection('docs', ({ data }) => !data.draft && data.externalDocs?.status !== 'preview')
   // Exclude API documentation from full content
   const docs = allDocs.filter((doc) => !doc.id.startsWith('docs/api/'))
+  const [boxContent, deciderContent] = await Promise.all([getProductContent('box'), getProductContent('decider')])
   const lines: string[] = []
 
   lines.push('# Strands Agents')
@@ -28,14 +30,14 @@ export const GET: APIRoute = async () => {
   )
   lines.push('')
 
-  lines.push(buildBoxLandingMarkdown(2).trim())
+  lines.push(buildBoxLandingMarkdown(2, boxContent).trim())
   lines.push('')
   lines.push(`Source: ${siteLink('/box/index.md')}`)
   lines.push('')
   lines.push('---')
   lines.push('')
 
-  lines.push(buildDeciderLandingMarkdown(2).trim())
+  lines.push(buildDeciderLandingMarkdown(2, deciderContent).trim())
   lines.push('')
   lines.push(`Source: ${siteLink('/decider/index.md')}`)
   lines.push('')

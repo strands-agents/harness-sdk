@@ -202,7 +202,7 @@ products:
     slug: "/decider"
     href: /decider/
     docsHref: /docs/labs/strands-decider/overview/
-    description: Route, classify, and score known outcomes. Get typed answers with confidence.
+    description: Route, classify, and score with confidence.
     repository: https://github.com/strands-labs/strands-decider
     languages:
       - Python
