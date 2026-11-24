@@ -3,35 +3,20 @@ import { join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 
-import { temporaryVenvPython } from '../../../src/dev/temporary-evals-fork/environment.js'
 import type { TemporaryEvalsProcess } from '../../../src/dev/temporary-evals-fork/evals-process.js'
 import { runTemporaryTest } from '../../../src/dev/temporary-evals-fork/test.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
-import { environmentRunner, writeFileAt } from '../../fixtures/optimizer-run.js'
-import { temporaryDirectory } from '../../fixtures/tempdir.js'
+import {
+  environmentRunner,
+  EXPERIMENT,
+  experimentFile,
+  workspaceFixture,
+  writeFileAt,
+} from '../../fixtures/optimizer-run.js'
 
 const NOW = new Date('2026-11-11T15:04:05Z')
 const STAMP = '20261111-150405'
-const EXPERIMENT = JSON.stringify({ cases: [{ name: 'a' }, { name: 'b' }], evaluators: [] })
 const EVALS_AGENT_FOLDER = fileURLToPath(new URL('../../../src/dev/evals-agent', import.meta.url))
-
-const experimentFile = (directory: string, name: string): string => join(directory, 'experiments', name, `${name}.json`)
-
-const workspaceFixture = async (
-  experiments: string[] = ['support'],
-  language: 'python' | 'typescript' = 'python'
-): Promise<DevWorkspace> => {
-  const root = await temporaryDirectory()
-  const directory = join(root, 'strands-dev')
-  await writeFileAt(temporaryVenvPython(join(root, '.venv')), 'fixture interpreter')
-  await Promise.all(experiments.map((name) => writeFileAt(experimentFile(directory, name), EXPERIMENT)))
-  return {
-    directory,
-    root,
-    entrypoint: join(root, language === 'python' ? 'agent.py' : 'agent.ts'),
-    config: { version: 1, name: 'desk', language, entrypoint: 'agent.py', origin: { kind: 'discovered' } },
-  }
-}
 
 const supportHome = (workspace: DevWorkspace): string => join(workspace.directory!, 'experiments/support')
 
