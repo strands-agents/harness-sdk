@@ -331,6 +331,70 @@ const strictTestingProcess = (failing: ReadonlySet<string>) =>
     return exit
   })
 
+const CASES = ['c0', 'c1', 'c2', 'c3']
+const TWENTY_CASES = Array.from({ length: 20 }, (_, index) => `c${index}`)
+
+/** The sessions of a workspace with a saved experiment whose optimize plan is open. */
+const plannedSessions = async (
+  dependencies: Partial<TemporarySessionDependencies> = {},
+  {
+    names = CASES,
+    evaluators,
+    host,
+  }: { names?: readonly string[]; evaluators?: readonly string[]; host?: Pick<TemporarySessionHost, 'settings'> } = {}
+) => {
+  const made = await sessionsFor(dependencies, host)
+  const experiment = await savedExperiment(made.workspace, names, 'capital', evaluators)
+  made.sessions.optimize.plan(experiment)
+  await vi.waitFor(() => expect(made.sessions.optimize.snapshot().step).toBe('setup'))
+  return { ...made, experiment }
+}
+
+/** An optimizer that finishes once its record holds its process, with what the record said then. */
+const recordingOptimizer = () => {
+  let seen: unknown
+  const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
+    process.onSpawn?.(4242)
+    await vi.waitFor(async () => {
+      seen = JSON.parse(await readFile(resumeRecordOf(recordOf(process.args)), 'utf8'))
+      expect(seen).toMatchObject({ pid: 4242 })
+    })
+    await writeOptimizerRun(recordOf(process.args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
+    return exit
+  })
+  return { optimizing, recorded: (): unknown => seen }
+}
+
+const devCommand = (workspace: DevWorkspace, name: string) =>
+  temporaryDevCommands(workspace, {
+    root: workspace.root,
+    entrypoint: workspace.entrypoint,
+    language: 'python',
+  }).find(({ spec }) => spec.name === name)!
+
+/** The files of a run that strands dev closed on: its search space and the record it resumes from. */
+const interruptedRun = async (workspace: DevWorkspace, experiment: ExperimentSummary, recorded: object = {}) => {
+  const files = optimizationFiles(workspace)
+  await writeFileAt(
+    files.space,
+    JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions' }] })
+  )
+  await writeFileAt(
+    files.resume,
+    JSON.stringify({
+      version: 1,
+      experiment: experiment.path,
+      record: files.record,
+      space: files.space,
+      iterations: 4,
+      startedAt: 1,
+      pid: 999999,
+      ...recorded,
+    })
+  )
+  return files
+}
+
 describe('TEMPORARY dev sessions', () => {
   it('shouldShareTheSessionsWhenTheSameWorkspaceOpensAgain', async () => {
     const { workspace, sessions } = await sessionsFor()
@@ -480,14 +544,7 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldPlanTheSplitAndUpdateTheEstimateWhenTheBudgetChanges', async () => {
-    const { workspace, sessions } = await sessionsFor()
-    const experiment = await savedExperiment(
-      workspace,
-      Array.from({ length: 20 }, (_, index) => `c${index}`)
-    )
-
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({}, { names: TWENTY_CASES })
     const before = sessions.optimize.snapshot()
     sessions.optimize.setIterations(2)
 
@@ -523,10 +580,7 @@ describe('TEMPORARY dev sessions', () => {
       ])
       return exit
     })
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { workspace, sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     sessions.optimize.toggleKnob('backgroundTasks')
 
     sessions.optimize.start()
@@ -669,20 +723,8 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldKeepARecordWhileTheRunIsActiveAndUntilItsEditIsAnswered', async () => {
-    let recorded: unknown
-    const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
-      process.onSpawn?.(4242)
-      await vi.waitFor(async () => {
-        recorded = JSON.parse(await readFile(resumeRecordOf(recordOf(process.args)), 'utf8'))
-        expect(recorded).toMatchObject({ pid: 4242 })
-      })
-      await writeOptimizerRun(recordOf(process.args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
-      return exit
-    })
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { optimizing, recorded } = recordingOptimizer()
+    const { workspace, sessions, experiment } = await plannedSessions({ spawnOptimizer: optimizing })
 
     sessions.optimize.start()
 
@@ -692,7 +734,7 @@ describe('TEMPORARY dev sessions', () => {
     expect(optimizing.mock.calls[0]![0]).toMatchObject({ detached: true })
     expect(stamp).toMatch(/^\d{8}-\d{6}$/u)
     expect(record).toBe(join(experimentHome(workspace), 'optimizations', stamp, 'optimizer'))
-    expect(recorded).toMatchObject({
+    expect(recorded()).toMatchObject({
       version: 1,
       experiment: experiment.path,
       record,
@@ -723,27 +765,11 @@ describe('TEMPORARY dev sessions', () => {
     })
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    const { record, space, resume } = optimizationFiles(workspace)
-    await writeFileAt(
-      space,
-      JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions', about: '' }] })
-    )
+    const { record, resume } = await interruptedRun(workspace, experiment)
     await writeOptimizerRun(
       record,
       finished ? [...studyLines(0.9), optimizerStop(), optimizerPicked('win')] : studyLines(0.6),
       finished ? { baseline_id: 'base', validation: { champion_id: 'win' } } : undefined
-    )
-    await writeFileAt(
-      resume,
-      JSON.stringify({
-        version: 1,
-        experiment: experiment.path,
-        record,
-        space,
-        iterations: 4,
-        startedAt: 1,
-        pid: 999999,
-      })
     )
 
     await sessions.optimize.resume()
@@ -779,30 +805,10 @@ describe('TEMPORARY dev sessions', () => {
     ['TheSplitOfTheFirstRun', [0.7, 0.15, 0.15], ['--split', '0.7,0.15,0.15']],
     ['TheDefaultSplitWhenTheRecordIsFromBeforeTheSplit', undefined, ['--split', '0.5,0.25,0.25']],
   ])('shouldStartARunThatStoppedBeforeItsRunFolderAgainWith%s', async (_case, split, flags) => {
-    const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-      await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
-      return exit
-    })
+    const continuing = optimizingProcess()
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    const { record, space, resume } = optimizationFiles(workspace)
-    await writeFileAt(
-      space,
-      JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions' }] })
-    )
-    await writeFileAt(
-      resume,
-      JSON.stringify({
-        version: 1,
-        experiment: experiment.path,
-        record,
-        space,
-        iterations: 4,
-        ...(split ? { split } : {}),
-        startedAt: 1,
-        pid: 999999,
-      })
-    )
+    await interruptedRun(workspace, experiment, { split })
 
     await sessions.optimize.resume()
 
@@ -813,33 +819,15 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldResumeAStoppedRunWithTheParallelTrialsOfTheFirstRunWhenItsFolderHoldsTheRestOfThePlan', async () => {
-    const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-      await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
-      return exit
-    })
+    const continuing = optimizingProcess()
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    const { record, space, resume } = optimizationFiles(workspace)
-    await writeFileAt(
-      space,
-      JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions' }] })
-    )
+    const { record } = await interruptedRun(workspace, experiment, {
+      width: 6,
+      repetitions: 3,
+      workers: 2,
+    })
     await writeOptimizerRun(record, studyLines(0.6))
-    await writeFileAt(
-      resume,
-      JSON.stringify({
-        version: 1,
-        experiment: experiment.path,
-        record,
-        space,
-        iterations: 4,
-        width: 6,
-        repetitions: 3,
-        workers: 2,
-        startedAt: 1,
-        pid: 999999,
-      })
-    )
 
     await sessions.optimize.resume()
 
@@ -851,37 +839,19 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldGiveTheOptimizerTheSplitAndRecordItWhenARunStartsSoThatItCanResumeWithIt', async () => {
-    let recorded: unknown
-    const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
-      process.onSpawn?.(4242)
-      await vi.waitFor(async () => {
-        recorded = JSON.parse(await readFile(resumeRecordOf(recordOf(process.args)), 'utf8'))
-        expect(recorded).toMatchObject({ pid: 4242 })
-      })
-      await writeOptimizerRun(recordOf(process.args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
-      return exit
-    })
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(
-      workspace,
-      Array.from({ length: 20 }, (_, index) => `c${index}`)
-    )
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { optimizing, recorded } = recordingOptimizer()
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing }, { names: TWENTY_CASES })
 
     sessions.optimize.start()
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
-    expect(recorded).toMatchObject({ split: [0.5, 0.25, 0.25] })
+    expect(recorded()).toMatchObject({ split: [0.5, 0.25, 0.25] })
     expect(flagValue(optimizing.mock.calls[0]![0].args, '--split')).toBe('0.5,0.25,0.25')
   })
 
   it('shouldGiveTheOptimizerTheBudgetOfThePlanWhenTheRunStarts', async () => {
     const optimizing = optimizingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     sessions.optimize.setIterations(2)
 
     sessions.optimize.start()
@@ -895,10 +865,7 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldGiveTheOptimizerTheRunsPerCaseTheCandidatesPerStepAndTheParallelTrialsWhenTheRunStarts', async () => {
     const optimizing = optimizingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     sessions.optimize.setRepetitions(3)
     sessions.optimize.setWidth(7)
     sessions.optimize.setWorkers(6)
@@ -916,10 +883,7 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldCountTheRunsPerCaseAndTheCandidatesPerStepInTheEstimate', async () => {
-    const { workspace, sessions } = await sessionsFor()
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions()
     const rollouts = (): number => {
       const state = sessions.optimize.snapshot()
       if (state.step !== 'setup') throw new Error('the plan closed')
@@ -937,13 +901,7 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldRefuseToStartAndSayWhyWhenThePlanNeedsMoreRolloutsThanOneRunCanUse', async () => {
     const optimizing = optimizingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(
-      workspace,
-      Array.from({ length: 20 }, (_, index) => `c${index}`)
-    )
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing }, { names: TWENTY_CASES })
     sessions.optimize.setRepetitions(5)
     sessions.optimize.setWidth(8)
     sessions.optimize.setIterations(8)
@@ -961,10 +919,7 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldChangeADecisionSettingOnlyToOneOfItsChoicesAndCountTheFinalistsInTheEstimate', async () => {
-    const { workspace, sessions } = await sessionsFor()
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions()
     const before = setupPlan(sessions).rollouts
 
     sessions.optimize.setDecision('finalists', 5)
@@ -978,10 +933,7 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldCountTheParetoEndPhaseInTheEstimateWhenTheObjectiveIsAParetoFront', async () => {
-    const { workspace, sessions } = await sessionsFor()
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({}, { evaluators: ['Contains', 'Equals'] })
     const before = setupPlan(sessions).rollouts
 
     sessions.optimize.setObjective({
@@ -993,20 +945,8 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldGiveTheOptimizerTheDecisionAndRecordItWhenTheRunStarts', async () => {
-    let recorded: unknown
-    const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
-      process.onSpawn?.(4242)
-      await vi.waitFor(async () => {
-        recorded = JSON.parse(await readFile(resumeRecordOf(recordOf(process.args)), 'utf8'))
-        expect(recorded).toMatchObject({ pid: 4242 })
-      })
-      await writeOptimizerRun(recordOf(process.args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
-      return exit
-    })
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { optimizing, recorded } = recordingOptimizer()
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     sessions.optimize.setDecision('feasibility', 0.95)
     sessions.optimize.setDecision('crashScore', 'none')
 
@@ -1018,18 +958,13 @@ describe('TEMPORARY dev sessions', () => {
       '0.95',
       'none',
     ])
-    expect(recorded).toMatchObject({
+    expect(recorded()).toMatchObject({
       decision: { feasibility: 0.95, crashScore: 'none', pickRule: 'mean', finalists: 3 },
     })
   })
 
   it('shouldStartFromTheMeanOfEveryEvaluatorAndOfferPresetsAndEveryMetric', async () => {
-    const { workspace, sessions } = await sessionsFor()
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
-
-    sessions.optimize.plan(experiment)
-
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({}, { evaluators: ['Contains', 'Equals'] })
     const state = sessions.optimize.snapshot()
     if (state.step !== 'setup') throw new Error('expected the setup')
     expect(state.plan.objective).toEqual({ expression: '', constraints: '' })
@@ -1047,10 +982,7 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldNameTheProblemAndNotStartWhenTheObjectiveDoesNotFitTheExperiment', async () => {
     const optimizing = optimizingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing }, { evaluators: ['Contains', 'Equals'] })
 
     sessions.optimize.setObjective({ expression: 'Maximize(Helpfulness)', constraints: '' })
     const started = sessions.optimize.start()
@@ -1073,10 +1005,7 @@ describe('TEMPORARY dev sessions', () => {
     ['NoObjectiveFlagForTheMeanOfEveryEvaluator', undefined, []],
   ])('shouldGiveTheOptimizer%sWhenTheRunStarts', async (_case, objective, flags) => {
     const optimizing = optimizingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing }, { evaluators: ['Contains', 'Equals'] })
     if (objective) sessions.optimize.setObjective(objective)
 
     sessions.optimize.start()
@@ -1086,26 +1015,14 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldRecordTheObjectiveWhenARunStartsSoThatItCanResumeWithIt', async () => {
-    let recorded: unknown
-    const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
-      process.onSpawn?.(4242)
-      await vi.waitFor(async () => {
-        recorded = JSON.parse(await readFile(resumeRecordOf(recordOf(process.args)), 'utf8'))
-        expect(recorded).toMatchObject({ pid: 4242 })
-      })
-      await writeOptimizerRun(recordOf(process.args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
-      return exit
-    })
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { optimizing, recorded } = recordingOptimizer()
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing }, { evaluators: ['Contains', 'Equals'] })
     sessions.optimize.setObjective({ expression: 'Maximize(Contains)', constraints: 'tokens <= 4000' })
 
     sessions.optimize.start()
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
-    expect(recorded).toMatchObject({ objective: { expression: 'Maximize(Contains)', constraints: 'tokens <= 4000' } })
+    expect(recorded()).toMatchObject({ objective: { expression: 'Maximize(Contains)', constraints: 'tokens <= 4000' } })
   })
 
   it.each<[string, unknown, readonly string[]]>([
@@ -1121,30 +1038,10 @@ describe('TEMPORARY dev sessions', () => {
     ],
     ['NoObjectiveFlagWhenTheRecordIsFromBeforeTheObjective', undefined, []],
   ])('shouldStartARunThatStoppedBeforeItsRunFolderAgainWith%s', async (_case, objective, flags) => {
-    const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-      await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
-      return exit
-    })
+    const continuing = optimizingProcess()
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
-    const { record, space, resume } = optimizationFiles(workspace)
-    await writeFileAt(
-      space,
-      JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions' }] })
-    )
-    await writeFileAt(
-      resume,
-      JSON.stringify({
-        version: 1,
-        experiment: experiment.path,
-        record,
-        space,
-        iterations: 4,
-        ...(objective ? { objective } : {}),
-        startedAt: 1,
-        pid: 999999,
-      })
-    )
+    await interruptedRun(workspace, experiment, { objective })
 
     await sessions.optimize.resume()
 
@@ -1153,30 +1050,12 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldStartARunThatStoppedBeforeItsRunFolderAgainWithTheDecisionOfTheFirstRun', async () => {
-    const continuing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
-      await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
-      return exit
-    })
+    const continuing = optimizingProcess()
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', ['Contains', 'Equals'])
-    const { record, space, resume } = optimizationFiles(workspace)
-    await writeFileAt(
-      space,
-      JSON.stringify({ variables: [{ key: 'instructions', kind: 'text', option: 'instructions' }] })
-    )
-    await writeFileAt(
-      resume,
-      JSON.stringify({
-        version: 1,
-        experiment: experiment.path,
-        record,
-        space,
-        iterations: 4,
-        decision: { feasibility: 0.8, crashScore: 'worst', pickRule: 'mean', finalists: 1 },
-        startedAt: 1,
-        pid: 999999,
-      })
-    )
+    await interruptedRun(workspace, experiment, {
+      decision: { feasibility: 0.8, crashScore: 'worst', pickRule: 'mean', finalists: 1 },
+    })
 
     await sessions.optimize.resume()
 
@@ -1193,10 +1072,7 @@ describe('TEMPORARY dev sessions', () => {
       await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
       return exit
     })
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     const started = sessions.optimize.start()
     await vi.waitFor(() => expect(optimizing).toHaveBeenCalledTimes(1))
 
@@ -1221,10 +1097,7 @@ describe('TEMPORARY dev sessions', () => {
       )
       return proposerStopped
     })
-    const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: failing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions, notices } = await plannedSessions({ spawnOptimizer: failing })
 
     sessions.optimize.start()
 
@@ -1253,10 +1126,7 @@ describe('TEMPORARY dev sessions', () => {
       )
       return proposerStopped
     })
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: failing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({ spawnOptimizer: failing })
 
     sessions.optimize.start()
 
@@ -1282,10 +1152,7 @@ describe('TEMPORARY dev sessions', () => {
       order.push('optimizer')
       return { code: 1, stdout: '', stderrTail: ['stopped'] }
     })
-    const { workspace, sessions } = await sessionsFor({ initialCopy, spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { workspace, sessions } = await plannedSessions({ initialCopy, spawnOptimizer: optimizing })
 
     sessions.optimize.start()
 
@@ -1296,15 +1163,12 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldStopBeforeTheOptimizerAndSayWhyWhenTheInitialCopyCannotBeMade', async () => {
     const optimizing = vi.fn()
-    const { workspace, sessions } = await sessionsFor({
+    const { sessions } = await plannedSessions({
       initialCopy: async () => {
         throw new Error('npm install failed in the initial copy')
       },
       spawnOptimizer: optimizing,
     })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
 
     sessions.optimize.start()
 
@@ -1321,12 +1185,7 @@ describe('TEMPORARY dev sessions', () => {
     ['AnEvaluatorThatAsksAModel', ['OutputEvaluator'], 1],
     ['OnlyChecksThatAskNoModel', ['Equals', 'Contains'], 0],
   ])('shouldCountTheJudgeCallsOfTheEvaluatorsWhenTheExperimentHas%s', async (_case, evaluators, perRollout) => {
-    const { workspace, sessions } = await sessionsFor()
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'], 'capital', evaluators)
-
-    sessions.optimize.plan(experiment)
-
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({}, { evaluators })
     const state = sessions.optimize.snapshot()
     if (state.step !== 'setup') throw new Error('the plan did not open')
     expect(state.plan.judgeCalls).toBe(state.plan.rollouts * perRollout)
@@ -1342,10 +1201,7 @@ describe('TEMPORARY dev sessions', () => {
       )
       return { code: 1, stdout: '', stderrTail: ['strands-evals optimize: error: the agent file did not load'] }
     })
-    const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: failing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { workspace, sessions, notices } = await plannedSessions({ spawnOptimizer: failing })
     sessions.optimize.start()
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('failed'))
     const restarted = restartedOptimize(workspace, { run: environmentRunner(), spawnOptimizer: failing })
@@ -1444,11 +1300,7 @@ describe('TEMPORARY dev sessions', () => {
     await vi.waitFor(() =>
       expect(sessions.optimize.snapshot().runs?.map(({ state }) => state.step)).toEqual(['review', 'review'])
     )
-    const optimize = temporaryDevCommands(workspace, {
-      root: workspace.root,
-      entrypoint: workspace.entrypoint,
-      language: 'python',
-    }).find(({ spec }) => spec.name === 'optimize')!
+    const optimize = devCommand(workspace, 'optimize')
     const { context } = chat()
 
     expect(optimize.openJob?.(context, second!)).toBe(true)
@@ -1466,17 +1318,10 @@ describe('TEMPORARY dev sessions', () => {
       await writeOptimizerRun(recordOf(args), [...studyLines(0.9), optimizerStop(), optimizerPicked('win')])
       return exit
     })
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { workspace, sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     const running = sessions.optimize.start()
     await vi.waitFor(() => expect(optimizing).toHaveBeenCalledOnce())
-    const optimize = temporaryDevCommands(workspace, {
-      root: workspace.root,
-      entrypoint: workspace.entrypoint,
-      language: 'python',
-    }).find(({ spec }) => spec.name === 'optimize')!
+    const optimize = devCommand(workspace, 'optimize')
     const { context } = chat()
 
     expect(optimize.openJob?.(context, running!)).toBe(false)
@@ -1538,10 +1383,7 @@ describe('TEMPORARY dev sessions', () => {
       ])
       return exit
     })
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: tested })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({ spawnOptimizer: tested })
 
     sessions.optimize.start()
 
@@ -1553,10 +1395,7 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldShowTheEditsOnScreenWhenARunFinishesRatherThanOnlySayingSoInTheChat', async () => {
     const optimizing = optimizingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
 
     sessions.optimize.start()
     await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
@@ -1568,10 +1407,7 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldApplyOnlyWhatTheDeveloperAcceptsInThatQuestion', async () => {
     const optimizing = optimizingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     sessions.optimize.start()
     await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
 
@@ -1596,10 +1432,7 @@ describe('TEMPORARY dev sessions', () => {
         ])
         return exit
       })
-      const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-      const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-      sessions.optimize.plan(experiment)
-      await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+      const { workspace, sessions } = await plannedSessions({ spawnOptimizer: optimizing })
       sessions.optimize.toggleKnob('effort')
       sessions.optimize.start()
       await vi.waitFor(() => expect(sessions.ask.pending()?.question).toBe('Apply this change to instructions?'))
@@ -1626,11 +1459,7 @@ describe('TEMPORARY dev sessions', () => {
       expect(context).toContain(
         `call strands_dev_answer_review with run "${run}", edit 0, and answer "apply" or "leave"`
       )
-      const ask = temporaryDevCommands(workspace, {
-        root: workspace.root,
-        entrypoint: workspace.entrypoint,
-        language: 'python',
-      }).find(({ spec }) => spec.name === 'ask')!
+      const ask = devCommand(workspace, 'ask')
       expect(ask.screenContext?.()).toBe(context)
     })
 
@@ -1824,10 +1653,7 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldKeepTheReviewWaitingWhenTheDeveloperSendsAChatMessageInstead', async () => {
     const optimizing = optimizingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     sessions.optimize.start()
     await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
     const question = sessions.ask.pending()!
@@ -1841,10 +1667,7 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   const closedOnAReview = async (optimizing = optimizingProcess()) => {
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { workspace, sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     const run = sessions.optimize.start()!
     await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
     const record = recordOf(optimizing.mock.calls[0]![0].args)
@@ -1898,10 +1721,7 @@ describe('TEMPORARY dev sessions', () => {
       })
       return exit
     })
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { workspace, sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     sessions.optimize.start()
     await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
     const record = recordOf(optimizing.mock.calls[0]![0].args)
@@ -1976,11 +1796,7 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldKeepTheRunWaitingWhenTheDeveloperClosesItsQuestionWithoutAnAnswer', async () => {
     const { workspace, sessions, run, record } = await closedOnAReview()
-    const optimize = temporaryDevCommands(workspace, {
-      root: workspace.root,
-      entrypoint: workspace.entrypoint,
-      language: 'python',
-    }).find(({ spec }) => spec.name === 'optimize')!
+    const optimize = devCommand(workspace, 'optimize')
     const { context } = chat()
 
     sessions.ask.respond(sessions.ask.pending()!.id, undefined)
@@ -2013,10 +1829,7 @@ describe('TEMPORARY dev sessions', () => {
       ])
       return exit
     })
-    const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { workspace, sessions, notices } = await plannedSessions({ spawnOptimizer: optimizing })
     sessions.optimize.toggleKnob('effort')
     const run = sessions.optimize.start()!
     await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
@@ -2042,11 +1855,7 @@ describe('TEMPORARY dev sessions', () => {
       text: `optimize · run ${optimizationName(record)} · 1 of 2 edits answered · nothing is written until all are · ↓ Enter`,
     })
 
-    const optimize = temporaryDevCommands(workspace, {
-      root: workspace.root,
-      entrypoint: workspace.entrypoint,
-      language: 'python',
-    }).find(({ spec }) => spec.name === 'optimize')!
+    const optimize = devCommand(workspace, 'optimize')
     expect(optimize.openJob?.(chat().context, run)).toBe(true)
     expect(asking()).toEqual(['edit 2 of 2', 'Apply this change to effort?'])
     sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'reject' })
@@ -2077,10 +1886,7 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldDropTheJobLineOnceAnAcceptedEditIsWritten', async () => {
     const optimizing = optimizingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     sessions.optimize.start()
     await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
 
@@ -2094,21 +1900,14 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldSayWhatWasAppliedAgainInTheChatThatTheReloadOpens', async () => {
     const optimizing = optimizingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { workspace, sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     sessions.optimize.start()
     await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
     sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'accept' })
     await vi.waitFor(() =>
       expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
     )
-    const optimize = temporaryDevCommands(workspace, {
-      root: workspace.root,
-      entrypoint: workspace.entrypoint,
-      language: 'python',
-    }).find(({ spec }) => spec.name === 'optimize')!
+    const optimize = devCommand(workspace, 'optimize')
     const reloaded = chat()
     const later = chat()
 
@@ -2125,10 +1924,7 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldNotSayWhatWasAppliedToAChatThatOpensLongAfterTheWrite', async () => {
     const optimizing = optimizingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     sessions.optimize.start()
     await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
     sessions.ask.respond(sessions.ask.pending()!.id, { verdict: 'accept' })
@@ -2146,10 +1942,7 @@ describe('TEMPORARY dev sessions', () => {
 
   it('shouldTellTheReloadedAgentWhatApplyChangedInIt', async () => {
     const optimizing = optimizingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { workspace, sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     sessions.optimize.start()
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
     const before = sessions.optimize.appliedChanges()
@@ -2192,10 +1985,7 @@ describe('TEMPORARY dev sessions', () => {
       await writeOptimizerRun(recordOf(args), [...searched, optimizerPicked('win')])
       return exit
     })
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing })
     const plan = setupPlan(sessions)
     const job = (): object | undefined => temporaryOptimizeJobs(sessions.optimize.snapshot())[0]
 
@@ -2219,10 +2009,7 @@ describe('TEMPORARY dev sessions', () => {
       await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }))
       return { code: 143, stdout: '', stderrTail: ['terminated'] }
     })
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: stopped })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { workspace, sessions } = await plannedSessions({ spawnOptimizer: stopped })
     sessions.optimize.start()
     await vi.waitFor(() => expect(stopped).toHaveBeenCalled())
     await vi.waitFor(
@@ -2291,10 +2078,7 @@ describe('TEMPORARY dev sessions', () => {
     })
 
     it('shouldWaitUntilTheEditsOfAFinishedRunHaveTheirAnswer', async () => {
-      const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizingProcess() }, everyFive)
-      const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-      sessions.optimize.plan(experiment)
-      await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+      const { sessions } = await plannedSessions({ spawnOptimizer: optimizingProcess() }, { host: everyFive })
       sessions.optimize.start()
       await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
       const work = vi.fn<AutoOptimizeRun>(async () => ({ experiment: 'history-20261123-1502', cases: 4 }))
@@ -2457,11 +2241,7 @@ describe('TEMPORARY dev sessions', () => {
       await vi.waitFor(() =>
         expect(sessions.optimize.snapshot()).toMatchObject({ review: { applied: ['instructions.md'] } })
       )
-      const optimize = temporaryDevCommands(workspace, {
-        root: workspace.root,
-        entrypoint: workspace.entrypoint,
-        language: 'python',
-      }).find(({ spec }) => spec.name === 'optimize')!
+      const optimize = devCommand(workspace, 'optimize')
       const opened = chat()
       const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + after)
       optimize.attach?.(opened.context)
@@ -2620,10 +2400,7 @@ describe('TEMPORARY dev sessions', () => {
       await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }))
       return { code: 143, stdout: '', stderrTail: ['terminated'] }
     })
-    const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: neverScored })
-    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.optimize.plan(experiment)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
+    const { sessions, notices, experiment } = await plannedSessions({ spawnOptimizer: neverScored })
     sessions.optimize.start()
     await vi.waitFor(() => expect(neverScored).toHaveBeenCalled())
 
@@ -2886,13 +2663,10 @@ describe('TEMPORARY dev sessions on open', () => {
         ])
         return exit
       })
-      const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: optimizing })
+      const { workspace, sessions, notices } = await plannedSessions({ spawnOptimizer: optimizing })
       const projectPython = temporaryVenvPython(join(workspace.root, '.venv'))
       await rm(projectPython)
       await symlink(pythonExecutable, projectPython)
-      const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-      sessions.optimize.plan(experiment)
-      await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
       sessions.optimize.toggleKnob('effort')
       sessions.optimize.start()
       await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
