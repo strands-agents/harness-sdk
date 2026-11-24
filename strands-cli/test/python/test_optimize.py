@@ -300,52 +300,31 @@ def test_should_maximize_every_evaluator_when_no_metric_is_given(harness, tmp_pa
     assert config_of(tmp_path)["objective"] == "WeightedSum(Maximize(Contains), Maximize(Equals))"
 
 
-def test_should_use_the_given_goals_when_maximize_and_at_most_are_given(harness, tmp_path):
+@pytest.mark.parametrize(
+    ("goals", "objective", "constraints"),
+    [
+        (("--maximize", "Equals", "--at-most", "tokens=500"), "Maximize(Equals)", ["tokens <= 500"]),
+        (
+            ("--objective", "minimize:tokens", "--at-least", "Contains=0.8", "--at-most", "seconds=30"),
+            "Minimize(tokens)",
+            ["Contains >= 0.8", "seconds <= 30"],
+        ),
+    ],
+    ids=["maximize_and_at_most", "objective_at_least_and_at_most"],
+)
+def test_should_use_the_given_goals_and_keep_every_constraint_in_order_when_goals_are_given(
+    harness, tmp_path, goals, objective, constraints
+):
     evaluators = [Contains(value="effort high"), Equals(value="effort high")]
 
     code = optimize_harness(
-        tmp_path,
-        DIRECT_HARNESS,
-        "--tune",
-        "effort",
-        "--maximize",
-        "Equals",
-        "--at-most",
-        "tokens=500",
-        "--iterations",
-        "0",
-        evaluators=evaluators,
+        tmp_path, DIRECT_HARNESS, "--tune", "effort", *goals, "--iterations", "0", evaluators=evaluators
     )
 
     assert code == 0
     config = config_of(tmp_path)
-    assert config["objective"] == "Maximize(Equals)"
-    assert config["constraints"] == ["tokens <= 500"]
-
-
-def test_should_keep_every_constraint_in_order_when_at_least_and_at_most_are_given(harness, tmp_path):
-    evaluators = [Contains(value="effort high"), Equals(value="effort high")]
-
-    code = optimize_harness(
-        tmp_path,
-        DIRECT_HARNESS,
-        "--tune",
-        "effort",
-        "--objective",
-        "minimize:tokens",
-        "--at-least",
-        "Contains=0.8",
-        "--at-most",
-        "seconds=30",
-        "--iterations",
-        "0",
-        evaluators=evaluators,
-    )
-
-    assert code == 0
-    config = config_of(tmp_path)
-    assert config["objective"] == "Minimize(tokens)"
-    assert config["constraints"] == ["Contains >= 0.8", "seconds <= 30"]
+    assert config["objective"] == objective
+    assert config["constraints"] == constraints
 
 
 def test_should_rewrite_instructions_with_the_given_model_when_rewriter_model_is_given(
