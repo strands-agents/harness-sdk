@@ -167,7 +167,7 @@ class MemoryConfig(TypedDict, total=False):
     stores: list[MemoryStore]
 
 
-ContextManagerStrategy = Literal["auto", "agentic"]
+ContextManagerStrategy = Literal["auto", "agentic", "lsp"]
 """Named context-management strategies.
 
 Defined locally because the SDK moves this alias between modules across releases
@@ -178,7 +178,7 @@ values are the stable contract.
 ContextManagerOption = ContextManagerStrategy | ContextManagerConfig | ContextManager | Literal[False] | None
 """What ``context_manager=`` accepts.
 
-A strategy name (``"auto"`` or ``"agentic"``), a :class:`ContextManagerConfig` mapping
+A strategy name (``"auto"``, ``"agentic"``, or the experimental ``"lsp"``), a :class:`ContextManagerConfig` mapping
 (``ContextManager(**config)``), a ready ``ContextManager`` instance, or ``False``/``None`` to
 turn context management off.
 """

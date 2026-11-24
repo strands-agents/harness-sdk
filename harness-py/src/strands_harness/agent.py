@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+import weakref
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
@@ -22,6 +23,7 @@ from strands.vended_tools import make_shell
 
 from strands_harness import defaults
 from strands_harness.interventions import InterventionsOption, resolve_interventions
+from strands_harness.lsp import STATE_KEY, LspContext, resolve_lsp_context
 from strands_harness.memory import resolve_memory
 from strands_harness.models import (
     _supports_media,
@@ -343,8 +345,13 @@ def create_harness(
             ``Model`` instance it is ignored with a warning (configure it on the instance). Any other
             value raises.
         context_manager: The SDK's ``Agent(context_manager=)`` option: ``"auto"`` (the default) or
-            ``"agentic"`` for an SDK preset, a ``ContextManagerConfig`` dict or a ``ContextManager``
-            instance for a custom pipeline, or ``False``/``None`` to disable it. The presets offload
+            ``"agentic"`` for an SDK preset, ``"lsp"`` (experimental) for ``"auto"`` plus language server
+            context: large ``read`` results of code files arrive as skeletons, ``retrieve_context`` also finds
+            definitions and greps the workspace, and old reads of unrelated files are offloaded near a full
+            window. ``"lsp"`` starts ``pyright-langserver`` in the working directory (install
+            ``strands-harness[lsp]``); when it can't, it logs a warning and runs ``"auto"``, and
+            ``agent.state["context_manager"]`` records which ran. Or pass a ``ContextManagerConfig`` dict or a
+            ``ContextManager`` instance for a custom pipeline, or ``False``/``None`` to disable it. The presets offload
             large tool results out of context (a preview and reference are kept) so the agent can run
             longer before compacting; the model reads a result back with ``retrieve_context``.
         session: File-backed conversation persistence, on by default. ``True`` (or ``{}``) snapshots
@@ -465,8 +472,12 @@ def create_harness(
         {**enabled_tools, "web_search": web_search in ("exa", "agentcore")}, _builtin_tools(parent_config, web_search)
     )
     context_enabled = context_manager is not None and context_manager is not False
+    lsp_context: LspContext | None = None
+    if context_manager == "lsp":
+        lsp_context = resolve_lsp_context(os.getcwd(), sandbox=agent_kwargs.get("sandbox"))
+        agent_kwargs["context_manager"] = lsp_context.context_manager
     # The SDK's Agent rejects a bare config dict; build the instance from it here.
-    if isinstance(context_manager, Mapping):
+    elif isinstance(context_manager, Mapping):
         agent_kwargs["context_manager"] = ContextManager(**context_manager)
     else:
         agent_kwargs["context_manager"] = context_manager if context_enabled else False
@@ -520,7 +531,7 @@ def create_harness(
     # MCP tool names are only known once a client connects, so the pre-flight above skips them. They are
     # namespaced by server (prefix_with_server_name) so cross-server names don't clash, but a server keyed
     # to a built-in name (e.g. ``web`` exposing ``fetch`` -> ``web_fetch``) still can.
-    agent_tools = [*builtin, *consumer]
+    agent_tools = [*builtin, *consumer, *(lsp_context.tools if lsp_context else [])]
     resolved_background_tasks = _resolve_background_tasks(
         background_tasks,
         [
@@ -541,4 +552,8 @@ def create_harness(
         **agent_kwargs,
     )
     _drop_sandbox_tools(agent)
+    if lsp_context is not None:
+        agent.state.set(STATE_KEY, lsp_context.status)
+        if lsp_context.close is not None:
+            weakref.finalize(agent, lsp_context.close)
     return agent

@@ -417,8 +417,8 @@ class _HarnessAgentConfig(_Model):
     )
     caching: bool
     context_manager: _one_of(
-        "Input should be one of 'auto', 'agentic', 'off'; false; or a config object",
-        (str, Annotated[Literal["auto", "agentic", "off"], AfterValidator(_off_is_false)]),
+        "Input should be one of 'auto', 'agentic', 'lsp', 'off'; false; or a config object",
+        (str, Annotated[Literal["auto", "agentic", "lsp", "off"], AfterValidator(_off_is_false)]),
         (lambda value: value is False, Literal[False]),
         (dict, _JsonObject),
     )
