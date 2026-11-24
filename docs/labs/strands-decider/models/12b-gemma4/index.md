@@ -20,7 +20,7 @@ The dense Gemma 4 12B v1 checkpoint: a LoRA adapter on `google/gemma-4-12B-it` p
 | Held-out code tasks (n=1,996) | 0.870 |
 | HotpotQA, never trained on (n=959) | 0.911 |
 
-Full per-task table in the [model card](https://huggingface.co/StrandsAgents/strands-decider-12B-gemma4-v1-2610) and in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/evaluation/results.md).
+Full per-task table in the [model card](https://huggingface.co/StrandsAgents/strands-decider-12B-gemma4-v1-2610) and in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/evaluation/results.md).
 
 ## Run it
 

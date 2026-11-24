@@ -1,10 +1,10 @@
 An `[egress.<name>]` table in `box.toml` binds a credential to a set of destinations. The box’s egress gateway adds the credential to each request to those destinations. Policy decides whether each request goes out.
 
-Audience: an operator with a working box from [getting started](/docs/user-guide/box/core/quickstart/index.md) who gives the agent a credential for a service. For how the gateway decides and forwards each request, read [how Box controls outbound traffic](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/egress.md).
+Audience: an operator with a working box from [getting started](/docs/user-guide/box/core/quickstart/index.md) who gives the agent a credential for a service. For how the gateway decides and forwards each request, read [how Box controls outbound traffic](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/design/egress.md).
 
 A tool or local MCP server with `network.contain_egress = false` can connect directly, outside gateway policy. On Linux, this includes IPv4 access to reachable private networks, loopback services, and instance metadata endpoints. See [server network settings](/docs/user-guide/box/guides/add-an-mcp-server/index.md#network).
 
-Such a program connects as it would on the host. Box sets no proxy variable and no CA file for it, so it uses its own defaults and verifies the real server’s certificate. Its table’s `env` may set `HTTPS_PROXY`, `SSL_CERT_FILE`, `GIT_SSL_CAINFO` and the other proxy and CA names, for a company proxy or CA bundle; add a `read_file` entry for a file it names. On macOS, the program may ask the system’s certificate services (`trustd` and `SecurityServer`), and keychain files stay unreadable. On Linux, if the default bundle is a link outside `/etc/ssl`, such as into `/etc/pki`, add a `read` entry for it. The startup report shows a `native trust:` line for the program. See [a native-egress process keeps its own proxy and trust settings](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/decisions.md#a-native-egress-process-keeps-its-own-proxy-and-trust-settings).
+Such a program connects as it would on the host. Box sets no proxy variable and no CA file for it, so it uses its own defaults and verifies the real server’s certificate. Its table’s `env` may set `HTTPS_PROXY`, `SSL_CERT_FILE`, `GIT_SSL_CAINFO` and the other proxy and CA names, for a company proxy or CA bundle; add a `read_file` entry for a file it names. On macOS, the program may ask the system’s certificate services (`trustd` and `SecurityServer`), and keychain files stay unreadable. On Linux, if the default bundle is a link outside `/etc/ssl`, such as into `/etc/pki`, add a `read` entry for it. The startup report shows a `native trust:` line for the program. See [a native-egress process keeps its own proxy and trust settings](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/design/decisions.md#a-native-egress-process-keeps-its-own-proxy-and-trust-settings).
 
 ## Example
 
@@ -22,7 +22,7 @@ secret.ref   = "aws://my-profile"
 
 `box run` reads `GITHUB_TOKEN` from its own environment. The agent gets a placeholder in `GITHUB_TOKEN`, and sends it as it would send the token. The gateway replaces the placeholder with the real token on each request to `api.github.com`.
 
-> **Every process in the box can use every route.** The agent, each tool, each stdio MCP server, and the Shell that runs the agent’s commands get the same placeholders, and the gateway adds the real credential to a request from any of them. The gateway can’t tell which process sent a request, so no setting limits a route to one process. To keep a credential away from a tool or a server, run it in a separate box. [The box is the credential boundary](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/decisions.md#the-box-is-the-credential-boundary) explains why.
+> **Every process in the box can use every route.** The agent, each tool, each stdio MCP server, and the Shell that runs the agent’s commands get the same placeholders, and the gateway adds the real credential to a request from any of them. The gateway can’t tell which process sent a request, so no setting limits a route to one process. To keep a credential away from a tool or a server, run it in a separate box. [The box is the credential boundary](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/design/decisions.md#the-box-is-the-credential-boundary) explains why.
 
 To let the requests out, permit them in `policy.dw`:
 
@@ -268,6 +268,17 @@ Except for `effect interceptor unavailable`, policy permitted the request, so it
 
 A 502 with no `x-strands-box-egress` header answers a `CONNECT`, or a plain `http://` request, that the gateway couldn’t resolve or connect to. Any other 502 without the header comes from the server.
 
+A WebSocket needs `wss://`, so it rides a `CONNECT`. The handshake is decided as [`websocket:connect`](/docs/user-guide/box/reference/policy-actions/index.md#network), and the gateway adds the credential to it and redacts the credential in the `101`, as for any request. After the `101`, the gateway copies bytes both ways, unchanged, and asks policy nothing more. It doesn’t redact a credential in a WebSocket message. The handshake can be refused:
+
+| Response | Cause |
+| --- | --- |
+| 400 `malformed WebSocket handshake` | The handshake isn’t an HTTP/1.1 `GET` with `Connection: upgrade`, `Sec-WebSocket-Version: 13`, one `Sec-WebSocket-Key`, and no body. |
+| 403 `WebSocket requires TLS` | A plain `ws://` handshake, including to a host in `upgrade_http`. |
+| 403 `WebSocket refused for an MCP server` | The handshake went to an HTTP MCP server’s host. |
+| 502 | The server’s `101` doesn’t name `websocket` as its `Upgrade`, or doesn’t carry the `Sec-WebSocket-Accept` for the handshake’s key. A reply other than `101` that has no `Content-Length` and isn’t chunked also gets 502. |
+
+The gateway ends both connections, with no Close frame, when no byte moves for 300 seconds.
+
 Responses arrive progressively, including on credentialed routes. Credential redaction retains a short tail until more bytes arrive or the response completes cleanly. Requests and HTTP MCP `tools/list` responses retain the default 16 MiB cap. The gateway’s 300-second upstream deadline covers complete response receipt; expiry or a later transfer error closes an unfinished response.
 
 While the workload runs, Ctrl-C sends it an interrupt. After the workload stops, `strands-box run` restores the terminal before waiting for cleanup. While Box waits for upstream exchanges or other work that produces policy records, Ctrl-C or the termination signal `SIGTERM` ends `strands-box` immediately. This interruption path also applies during the final history flush. The hangup signal `SIGHUP` also ends it, unless Box inherited that signal as ignored, such as under `nohup`. Forced termination can lose pending history. The later telemetry drain has a separate ten-second timeout and runs after Box restores the signal handlers saved before these stages.
@@ -276,5 +287,5 @@ Without forced termination, Box waits for active upstream exchanges and other wo
 
 ## See also
 
--   [How Box controls outbound traffic](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/egress.md): routing, the connect and request decisions, and how the gateway adds a credential.
+-   [How Box controls outbound traffic](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/design/egress.md): routing, the connect and request decisions, and how the gateway adds a credential.
 -   [The `[mcp.<name>]` table](/docs/user-guide/box/guides/add-an-mcp-server/index.md): a credential for an http MCP server.

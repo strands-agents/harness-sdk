@@ -21,7 +21,9 @@ A command receives at most `[limits.shell] max_stdin` bytes of this input, 1 MiB
 
 This limit applies only to input piped into the alias from outside the Shell, such as a hook’s event or a program that starts `bash` with input. A pipe inside a command, such as `cat big.json | jq .`, is not affected.
 
-Only commands that the Shell runs itself, such as `cat`, `read`, or `jq`, receive the input. A program that the Shell starts in its own sandbox gets no input. Text that a command reads from its input is still data: when a command runs it, as in `eval "$(cat)"`, or opens a file it names, policy decides that command or file.
+Commands that the Shell runs itself, such as `cat`, `read`, or `jq`, receive the input. So does a program that the Shell starts in its own sandbox, such as a hook binary run as `zsh -c ~/src/project/hooks/pre-tool-use`. The box copies the input to the program while it runs. When the command has no input, as when the alias gets a terminal or `/dev/null`, the program gets `/dev/null`, so a tool such as `rg` searches its folder rather than an empty input. Input that the program does not read is dropped when it exits. The commands after it in the same invocation read no input.
+
+Text that a command reads from its input is still data: when a command runs it, as in `eval "$(cat)"`, or opens a file it names, policy decides that command or file.
 
 A Lua script that the Shell runs does not read the input piped into the alias: it reads it as empty and never waits for it. A pipe inside one command, such as `echo x | lua -e 'print(io.read())'`, still reaches the script.
 
@@ -231,7 +233,7 @@ A name changes only which file runs. The spawn still needs a `shell:spawn` permi
 
 ## `curl`
 
-`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/egress.md)). A request the gateway refuses makes `curl` exit `1` and print the reason, even with `-s`. A request the gateway doesn’t refuse but can’t complete makes `curl` exit `6` and print `curl: (6)` and the reason, unless `-s` hides errors.
+`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/design/egress.md)). A request the gateway refuses makes `curl` exit `1` and print the reason, even with `-s`. A request the gateway doesn’t refuse but can’t complete makes `curl` exit `6` and print `curl: (6)` and the reason, unless `-s` hides errors.
 
 A response body is at most [`limits.shell.max_output`](/docs/user-guide/box/reference/configuration/index.md#limits) bytes, 1 MiB by default. Past it, `curl` exits with status `6`, writes none of the body, and prints `curl: (6) response body too large` unless `-s` hides errors. The request was already sent, so its effect at the server stays.
 
@@ -263,6 +265,6 @@ A response body is at most [`limits.shell.max_output`](/docs/user-guide/box/refe
 ## See also
 
 -   [Write policy for shell commands](/docs/user-guide/box/guides/write-shell-policy/index.md): rules for commands, programs, and paths.
--   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
--   [A tool’s sandbox](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
+-   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
+-   [A tool’s sandbox](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
 -   [The `[egress.<name>]` table](/docs/user-guide/box/guides/network-and-credentials/index.md): credentials for the requests `curl` sends.

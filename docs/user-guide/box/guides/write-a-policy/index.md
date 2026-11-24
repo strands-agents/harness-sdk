@@ -1,6 +1,6 @@
 A policy is a `policy.dw` file of `permit` and `forbid` rules. The box reads it when it starts, and asks it about each command, file operation, network request, and MCP call that goes through the box. By the end of this page you have a policy that permits the project and the model, one `forbid` on a file, and a decision log you can read with `jq`.
 
-Audience: an operator who has run [getting started](/docs/user-guide/box/core/quickstart/index.md) and wants to write a policy by hand. [Policy](/docs/user-guide/box/reference/policy/index.md) names each part of a rule and the ten actions, and [the action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md) lists every field a rule can read.
+Audience: an operator who has run [getting started](/docs/user-guide/box/core/quickstart/index.md) and wants to write a policy by hand. [Policy](/docs/user-guide/box/reference/policy/index.md) names each part of a rule and the eleven actions, and [the action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md) lists every field a rule can read.
 
 ## Before you start
 

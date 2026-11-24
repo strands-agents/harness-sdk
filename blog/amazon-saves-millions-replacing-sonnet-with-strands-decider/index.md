@@ -2,7 +2,7 @@
 title: "Amazon saves millions by replacing Sonnet 4.6 with Strands Decider"
 date: 2026-11-09T00:00:00.000Z
 description: "Two Amazon engineers swapped Claude Sonnet 4.6 for a decision model in one of the world's biggest internal ticketing systems."
-tags: ["Use Cases", "Strands Labs", "Optimization"]
+tags: ["Use Cases", "Strands Labs", "Optimization", "Strands Decider"]
 ---
 For a while, Amazon and AWS teams relied on Claude Sonnet 4.6 to label tickets in an internal system without breaking the bank.
 

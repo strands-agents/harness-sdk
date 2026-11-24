@@ -80,6 +80,8 @@ While the agent runs, a one-line banner below it shows the profile, your project
 
 Click **Config File** or **Policy File** in the banner to copy that file’s path. An edit to a folder or a program the agent can use takes effect on the next run.
 
+The full view’s table shortens long reasons and shows only the latest rows. Its bottom edge shows the [`box runs history`](#box-runs-history) command for this run, which lists every decision in full, even while the run goes on. Click the command to copy it, and run it in another terminal. When `BOX_HOME` moves the box home, the command starts with `BOX_HOME=<path>`, so it works in a terminal that doesn’t set it.
+
 The banner’s display doesn’t pass through clipboard reads or terminal graphics, so turn it off for an agent that needs them: add `--no-banner` for one run, set [`[banner] enabled = false`](/docs/user-guide/box/profiles/index.md#what-a-profile-holds) in a profile for its runs, or set it in [`config.toml`](/docs/user-guide/box/reference/box-config/index.md#banner) for every profile.
 
 ### Run a profile file
@@ -422,7 +424,7 @@ TIME (UTC)  RESULT  ACTION  RESOURCE  RULE  REASON
 
 ## box telemetry
 
-Turn usage telemetry on or off. [Usage telemetry](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/CLI_TELEMETRY.md) says what `box` sends.
+Turn usage telemetry on or off. [Usage telemetry](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/CLI_TELEMETRY.md) says what `box` sends.
 
 ```sh
 box telemetry off

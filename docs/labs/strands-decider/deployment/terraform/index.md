@@ -17,7 +17,7 @@ CMD ["strands-decider", "serve", \
      "--port", "8000"]
 ```
 
-Build `--platform linux/amd64` for most cloud hosts; use a GPU-capable base and host for the Gemma 4 12B / 26B-A4B models ([designs/inference](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/inference.md#environments-for-serving)).
+Build `--platform linux/amd64` for most cloud hosts; use a GPU-capable base and host for the Gemma 4 12B / 26B-A4B models ([designs/inference](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/designs/inference.md#environments-for-serving)).
 
 ## AWS ECS / Fargate
 

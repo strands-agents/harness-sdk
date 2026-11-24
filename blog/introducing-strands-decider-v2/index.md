@@ -2,7 +2,7 @@
 title: "Introducing Strands Decider v2: open, calibrated system one models"
 date: 2026-11-23T00:00:00.000Z
 description: "Strands Decider v2 launches with higher accuracy and better-calibrated confidence for making judgements with agents."
-tags: ["Open Source", "Announcement", "Strands Labs"]
+tags: ["Open Source", "Announcement", "Strands Labs", "Strands Decider"]
 ---
 Today, we’re releasing Strands Decider v2: five system one models built on Gemma 4, from E2B to 31B, under Apache-2.0. The weights are on [Hugging Face](https://huggingface.co/StrandsAgents), and v2 support is in the open-source [Strands Decider repository](https://github.com/strands-labs/strands-decider).
 

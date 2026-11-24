@@ -294,7 +294,7 @@ The name is the profile’s name, and because it matches the `claude` starter, t
 
 Press Enter to keep the default. The lines that start with `!` under a question say what a yes lets the box do, so read them before you turn a setting on. On **Review**, choose **Save profile**. Then **Before running** names the variable the box reads your key from: set it in the terminal you run `box run` from. When a [plugin](/docs/user-guide/box/plugins/index.md) reads the key from your vault, it says that instead, and it names a plugin’s program that your machine doesn’t have.
 
-To make a second profile from the same starter, pick a new name and pass the starter to `--with`, as in `box profile create claude-east --with claude`. Each agent’s README in [Packs](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/cli/README.md#packs) says what its starter asks, and any step the agent needs on your machine first.
+To make a second profile from the same starter, pick a new name and pass the starter to `--with`, as in `box profile create claude-east --with claude`. Each agent’s README in [Packs](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/cli/README.md#packs) says what its starter asks, and any step the agent needs on your machine first.
 
 ### Start from the agent’s settings
 
@@ -313,7 +313,7 @@ Your flags win over what it found, and at a terminal, **Review or change setting
 
 The policy question picks the policy starter that a new profile begins with. It sets two things: the rules that `box` copies into the profile’s `policy.dw`, and the profile’s starting [`[project] access`](/docs/user-guide/box/reference/profiles/index.md#project-access). The packs and the profile then build on that start. A route, a tool, an MCP server, a filesystem grant, or storage lets the agent reach more, and a rule or a `deny` entry of yours takes something away ([Policies](/docs/user-guide/box/policies/index.md) explains how they combine). So the policy you pick is where the profile starts, and you change it by editing the profile.
 
-Box ships a few policy starters, and the menu shows each one’s label and description. The [policy starters folder](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/resources/policies/) holds each one, with a README that lists its rules and its limits. To offer a policy of your own, or make Enter pick another, see [Policy starters](#policy-starters).
+Box ships a few policy starters, and the menu shows each one’s label and description. The [policy starters folder](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/resources/policies/) holds each one, with a README that lists its rules and its limits. To offer a policy of your own, or make Enter pick another, see [Policy starters](#policy-starters).
 
 The policy question comes after the agent starter’s own questions, and the menu shows each policy’s `label` and `description`. `--policy` names a policy by its folder name, such as `team`, a shipped one by its short name, such as `scoped`, and one from a collection by its full name, such as `@acme/team`. `--policy` picks the policy of a new profile, or of one that `--force` replaces. To move a profile you already have to another policy, see [Switch a profile to another policy](/docs/user-guide/box/policies/index.md#switch-a-profile-to-another-policy).
 

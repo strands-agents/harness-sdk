@@ -1,4 +1,4 @@
-![Strands Decider](https://raw.githubusercontent.com/strands-labs/strands-decider/ecdb331493761f889351d3ca4936a9ef4e758b33/docs/assets/strands-decider-logo.png)
+![Strands Decider](https://raw.githubusercontent.com/strands-labs/strands-decider/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/docs/assets/strands-decider-logo.png)
 
 Strands Decider is a System One model built by the Strands Agents team at AWS. It’s a small, fast decision model you can drop into your agentic applications today.
 

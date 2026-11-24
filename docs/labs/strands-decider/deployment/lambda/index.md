@@ -1,4 +1,4 @@
-Serverless: no GPU, no instance to reserve, nothing standing between requests. The SDK’s [`deploy/lambda/`](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/lambda) CDK stack builds an arm64 image with the 2B Qwen3.5 Decider baked in (LoRA merged into the torso, quantized to Q8\_0 for [llama.cpp](https://github.com/ggml-org/llama.cpp)) and creates one Lambda function behind an IAM-authenticated Function URL. Requests take seconds.
+Serverless: no GPU, no instance to reserve, nothing standing between requests. The SDK’s [`deploy/lambda/`](https://github.com/strands-labs/strands-decider/tree/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/deploy/lambda) CDK stack builds an arm64 image with the 2B Qwen3.5 Decider baked in (LoRA merged into the torso, quantized to Q8\_0 for [llama.cpp](https://github.com/ggml-org/llama.cpp)) and creates one Lambda function behind an IAM-authenticated Function URL. Requests take seconds.
 
 -   **When to pick it:** triage, moderation, routing queues, batch scoring, pre-action checks — decisions that can wait seconds, at volumes where a GPU would sit idle. For a per-tool-call guard inside an agent loop, serve on a GPU instead.
 
@@ -59,7 +59,7 @@ Removes the function, versions, snapshots, log group, ECR repo, CodeBuild projec
 
 ## Lambda Managed Instances (GPU)
 
-A separate CDK stack at [`deploy/lambda-gpu/`](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/lambda-gpu) serves the same `POST /v1/systemone` API on a CUDA GPU under [Lambda Managed Instances](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-gpu.html). Same torch + CUDA code path as [SageMaker](/docs/labs/strands-decider/deployment/sagemaker/index.md), so the engine sees the model’s full weights and the GPU does the forward pass. The stack defaults to T4 (`g4dn`) for availability; switch to L4 with `-c instance_types=g6.xlarge,g6.2xlarge -c accelerator_memory_gb=24`.
+A separate CDK stack at [`deploy/lambda-gpu/`](https://github.com/strands-labs/strands-decider/tree/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/deploy/lambda-gpu) serves the same `POST /v1/systemone` API on a CUDA GPU under [Lambda Managed Instances](https://docs.aws.amazon.com/lambda/latest/dg/lambda-managed-instances-gpu.html). Same torch + CUDA code path as [SageMaker](/docs/labs/strands-decider/deployment/sagemaker/index.md), so the engine sees the model’s full weights and the GPU does the forward pass. The stack defaults to T4 (`g4dn`) for availability; switch to L4 with `-c instance_types=g6.xlarge,g6.2xlarge -c accelerator_memory_gb=24`.
 
 -   **When to pick it:** Low-latency agent-loop guards, per-tool-call checks, and moderate-throughput classifiers behind SQS / EventBridge / direct `Invoke`. Requires an EC2 GPU vCPU quota; Event Functions only — no Function URL, no synchronous HTTP.
 
@@ -105,5 +105,5 @@ Removes the function, capacity provider, VPC, ECR repository, CodeBuild project,
 
 ## See also
 
--   **CPU stack:** [`deploy/lambda/`](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/lambda) — [full README](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/lambda/README.md). Exhaustive measurements, precision notes, image-size tradeoffs, cost breakdown, and debugging.
--   **GPU stack:** [`deploy/lambda-gpu/`](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/lambda-gpu) — [full README](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/lambda-gpu/README.md). CDK context knobs, capacity-provider wiring, image-build caveats.
+-   **CPU stack:** [`deploy/lambda/`](https://github.com/strands-labs/strands-decider/tree/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/deploy/lambda) — [full README](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/deploy/lambda/README.md). Exhaustive measurements, precision notes, image-size tradeoffs, cost breakdown, and debugging.
+-   **GPU stack:** [`deploy/lambda-gpu/`](https://github.com/strands-labs/strands-decider/tree/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/deploy/lambda-gpu) — [full README](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/deploy/lambda-gpu/README.md). CDK context knobs, capacity-provider wiring, image-build caveats.

@@ -1,0 +1,1100 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Strands Decider | A model built to decide</title><meta name="description" content="Strands Decider routes, classifies, and scores known outcomes with a decision model that returns typed answers and probability signals without generating text."><link rel="canonical" href="https://strandsagents.com/decider/"><link rel="alternate" type="text/markdown" href="/decider/index.md"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><meta property="og:type" content="website"><meta property="og:url" content="https://strandsagents.com/decider/"><meta property="og:title" content="Strands Decider | A model built to decide"><meta property="og:description" content="Strands Decider routes, classifies, and scores known outcomes with a decision model that returns typed answers and probability signals without generating text."><meta property="og:image" content="https://strandsagents.com/og-image.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="Strands Decider: a model built to decide"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Strands Decider | A model built to decide"><meta name="twitter:description" content="Strands Decider routes, classifies, and scores known outcomes with a decision model that returns typed answers and probability signals without generating text."><meta name="twitter:image" content="https://strandsagents.com/og-image.png"><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Organization","@id":"https://strandsagents.com/#organization","name":"Strands Agents","url":"https://strandsagents.com","logo":"https://strandsagents.com/favicon.svg","sameAs":["https://github.com/strands-agents"],"parentOrganization":{"@type":"Organization","name":"Amazon Web Services","url":"https://aws.amazon.com"}},{"@type":"WebSite","@id":"https://strandsagents.com/#website","name":"Strands Agents","url":"https://strandsagents.com","publisher":{"@id":"https://strandsagents.com/#organization"}},{"@type":"SoftwareApplication","@id":"https://strandsagents.com/decider/#software","name":"Strands Decider","description":"Route, classify, and score with confidence.","url":"https://strandsagents.com/decider/","applicationCategory":"DeveloperApplication","license":"https://www.apache.org/licenses/LICENSE-2.0","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"publisher":{"@id":"https://strandsagents.com/#organization"},"isBasedOn":{"@type":"SoftwareSourceCode","codeRepository":"https://github.com/strands-labs/strands-decider","programmingLanguage":["Python"]}}]}</script><script>
+  ;(function () {
+    try {
+      var saved = localStorage.getItem('starlight-theme')
+      var theme =
+        saved === 'dark' || saved === 'light'
+          ? saved
+          : matchMedia('(prefers-color-scheme: dark)').matches
+            ? 'dark'
+            : 'light'
+      document.documentElement.dataset.theme = theme
+    } catch (_) {}
+  })()
+</script><!-- Web fonts: preconnect + a direct stylesheet link, rather than a CSS @import in
+     custom.css, which would chain the fetch (the font CSS request couldn't start until
+     the bundled stylesheet was parsed). Render-blocking deliberately, to avoid FOUT. --><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap"><link rel="preconnect" href="https://prod.assets.shortbread.aws.dev" crossorigin><link rel="stylesheet" href="https://prod.assets.shortbread.aws.dev/shortbread.css"><script defer src="https://prod.assets.shortbread.aws.dev/shortbread.js"></script><script>
+  /**
+   * Shortbread Cookie Consent and AWS Analytics WebSDK Initialization
+   * CRITICAL: Site must operate even if Shortbread is unavailable.
+   */
+  ;(function () {
+    'use strict'
+
+    function initShortbread() {
+      // The /integrations drawer embeds pages with `?embed`. Consent is handled
+      // by the top-level page, so skip the banner inside the iframe — otherwise
+      // it renders over the drawer's content.
+      if (new URLSearchParams(window.location.search).has('embed')) return
+
+      const hostname = window.location.hostname
+      const isLocal = hostname === 'localhost' || hostname === '127.0.0.1'
+      const isCloudFrontPreview = hostname === 'd3ehv1nix5p99z.cloudfront.net'
+      const isProduction = hostname.endsWith('.strandsagents.com') || hostname === 'strandsagents.com'
+
+      const domain = isLocal || isCloudFrontPreview ? hostname : '.strandsagents.com'
+
+      let webSdkStage, webSdkDomain
+      if (isProduction) {
+        webSdkStage = 'prod'
+        webSdkDomain = 'https://d0.m.awsstatic.com'
+      } else if (isLocal) {
+        webSdkStage = 'alpha'
+        webSdkDomain = 'https://da0.m.awsstatic.com'
+      } else {
+        webSdkStage = 'gamma'
+        webSdkDomain = 'https://dg0.m.awsstatic.com'
+      }
+
+      if (typeof AWSCShortbread === 'undefined') {
+        console.warn('Shortbread unavailable. Using essential cookies only.')
+        return
+      }
+
+      try {
+        const existingShortbreadEl = document.getElementById('awsccc-sb-ux-c')
+        if (existingShortbreadEl) existingShortbreadEl.remove()
+
+        const shortbread = AWSCShortbread({
+          domain,
+          registry: {
+            GitHubRepoCache: { category: 'essential' },
+          },
+          language: AWSCShortbread.Locale?.getLocaleIdShortbread(
+            AWSCShortbread.Locale.getCurrentLocale()
+          ),
+        })
+
+        shortbread.checkForCookieConsent()
+        window.strandsShortbread = shortbread
+
+        document.addEventListener('click', function (e) {
+          if (e.target.id === 'cookie-preferences') {
+            e.preventDefault()
+            shortbread.customizeCookies()
+          }
+        })
+
+        loadWebSDK(webSdkStage, webSdkDomain)
+      } catch (error) {
+        console.error('Shortbread error:', error)
+      }
+    }
+
+    function loadWebSDK(stage, sdkDomain) {
+      try {
+        const script = document.createElement('script')
+        script.type = 'module'
+        script.id = 'awsm-csa'
+        script.src = sdkDomain + '/awsm-acslibs/1.0.3/bundle/slim/wsdk.js'
+        script.setAttribute('data-awsm-csa-meta', JSON.stringify({ env: { stage } }))
+        document.head.appendChild(script)
+      } catch (error) {
+        console.error('WebSDK loading error:', error)
+      }
+    }
+
+    // shortbread.js loads with `defer`, so AWSCShortbread is not defined at parse time.
+    // Deferred scripts are guaranteed to execute before DOMContentLoaded fires.
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initShortbread)
+    } else {
+      initShortbread()
+    }
+  })()
+</script><!--
+  Restyle the AWS Shortbread cookie consent UI to match the Strands site.
+  Content, layout, and button behavior stay Shortbread's — these rules only
+  change color, font, border, and radius so the banner and its Customize modal
+  don't read as stock AWS console chrome.
+
+  The selectors are intentionally broad (every `.awsccc-u-btn`, the shared
+  `#awsccc-cb-c` container, the modal) so the same styling also covers the
+  confirmation banner Shortbread shows after Accept/Decline and the Customize
+  save flow — all of which reuse these same elements.
+
+  Site tokens are theme-aware, so the banner follows the site's light/dark
+  toggle. `!important` + the full ID chain are required to win over
+  Shortbread's own stylesheet, which ships its own OS-preference dark mode.
+--><script>
+;(function () {
+  'use strict'
+
+  // Guard against this inline script running more than once on a page.
+  if (window.__strandsAnalyticsInit) return
+  window.__strandsAnalyticsInit = true
+
+  // The AWS WebSDK listens on this single event name and reads event content from the
+  // XDM `_aws` namespace (detail.xdm._aws.<namespace>). Events sent in any other shape are
+  // rejected by its validators and silently dropped. Values verified against the upstream
+  // source: AWSMarketingAdobeWebSDKHelpers (constants + helpers/*-event.ts).
+  var ANALYTICS_EVENT_LISTENER = 'custom-awsm-acs-event-listener'
+
+  var scrollData = { initial: 0, max: 0, latest: 0 }
+  var scrollSent = false
+
+  // --- Helpers ---
+
+  // Pipe-delimited page hierarchy from the URL path, used to label code-copy events.
+  // Anchors on the 'docs' segment and takes everything after it, so any leading base
+  // path (e.g. a "/pr-xxxx/" preview deploy) is ignored:
+  // /pr-x/docs/user-guide/quickstart/ -> "user-guide|quickstart".
+  function pageHierarchy(pathname) {
+    var segments = pathname.replace(/^\/|\/$/g, '').split('/').filter(Boolean)
+    var docsIndex = segments.indexOf('docs')
+    var start = docsIndex >= 0 ? docsIndex + 1 : 0
+    return segments.slice(start).join('|') || 'home'
+  }
+
+  // First line of copied text, for code-copy labels — enough to tell an
+  // `npm install …` from a `pip install …` or a `from strands import …` without
+  // logging an entire snippet. Expressive Code stores its code in a data-code
+  // attribute with newlines encoded as U+007F; normalize those first. Capped so
+  // a long first line can't bloat the analytics label.
+  function firstLine(text) {
+    if (!text) return ''
+    var line = String(text).replace(/\u007f/g, '\n').split('\n')[0].trim()
+    return line.length > 120 ? line.slice(0, 119) + '…' : line
+  }
+
+  // Consent is enforced by the WebSDK listener itself - events dispatched here
+  // are silently dropped if the user has not accepted performance cookies via Shortbread.
+  function dispatchXdmEvent(eventType, awsContent, useBeacon) {
+    var detail = {
+      eventType: eventType,
+      xdm: { _aws: awsContent },
+      useBeacon: !!useBeacon,
+    }
+    window.dispatchEvent(new CustomEvent(ANALYTICS_EVENT_LISTENER, { detail: detail }))
+  }
+
+  // navigates: pass true for clicks that take the user to another page (links, toggles that
+  // redirect). Those are dispatched via beacon so the request isn't cancelled on unload - the
+  // same reason scroll depth uses the beacon path. In-page clicks (tabs, copy) pass false.
+  function dispatchCTAClick(name, type, navigates) {
+    // Collapse whitespace so labels stay clean regardless of the source (textContent from
+    // elements with icons/SVG/newlines, hrefs, etc.) - keeps every caller consistent.
+    var cleanName = String(name).replace(/\s+/g, ' ').trim()
+    dispatchXdmEvent(
+      'web.awsm.customCTAClick',
+      {
+        pageInteraction: {
+          click: { name: cleanName, type: type || 'customClick' },
+        },
+      },
+      !!navigates
+    )
+  }
+
+  function dispatchSearchEvent(searchTerm, resultCount) {
+    dispatchXdmEvent('web.awsm.search', {
+      searchOperations: {
+        searchTerm: searchTerm,
+        searchFilter: [],
+        resultCount: resultCount,
+      },
+    })
+  }
+
+  // --- 1. Click Tracking (anchors, nav tabs, code copy, outbound, UI controls) ---
+
+  function setupClickTracking() {
+    document.addEventListener('click', function (e) {
+      if (!e.target || !e.target.closest) return
+
+      // Anchor / TOC clicks
+      var anchorLink = e.target.closest('a[href^="#"]')
+      if (anchorLink) {
+        var anchor = anchorLink.getAttribute('href').replace('#', '')
+        if (!anchor) return
+        var isToc = !!anchorLink.closest('nav.right-sidebar, [class*="toc"], starlight-toc')
+        var prefix = isToc ? 'toc-click' : 'anchor-click'
+        dispatchCTAClick(prefix + ':' + anchor, 'linkClick')
+        return
+      }
+
+      // Nav tab clicks
+      var navTab = e.target.closest('.nav-tab, .mobile-nav-link')
+      if (navTab) {
+        var label = navTab.textContent.trim().replace(/\s*↗$/, '')
+        dispatchCTAClick('nav-tab:' + label, 'click', true)
+        return
+      }
+
+      // Language toggle (Python / TypeScript) - language-toggle > button.lang-option[data-lang]
+      var langControl = e.target.closest('.language-toggle .lang-option')
+      if (langControl) {
+        var lang = (langControl.getAttribute('data-lang') || '').trim()
+        // The toggle navigates to the paired page in the other language, so beacon it.
+        dispatchCTAClick('lang-toggle:' + lang, 'click', true)
+        return
+      }
+
+      // GitHub dropdown menu links (.github-dropdown .github-link, label in .github-link-text)
+      var ghLink = e.target.closest('.github-dropdown a.github-link')
+      if (ghLink) {
+        var ghTextEl = ghLink.querySelector('.github-link-text')
+        var ghLabel = (ghTextEl ? ghTextEl.textContent : ghLink.textContent).trim().replace(/\s*↗$/, '')
+        dispatchCTAClick('github-menu:' + ghLabel, 'linkClick', true)
+        return
+      }
+
+      // Sidebar collapsible group expand/collapse (nav.sidebar > details > summary).
+      // Skip the inner group-link anchor so its navigation is tracked as a normal link, not an expand.
+      var sidebarSummary = e.target.closest('nav.sidebar summary')
+      if (sidebarSummary && !e.target.closest('.group-link')) {
+        var groupLabelEl = sidebarSummary.querySelector('.group-label, .section-label')
+        var groupLabel = (groupLabelEl ? groupLabelEl.textContent : sidebarSummary.textContent).trim()
+        dispatchCTAClick('sidebar-expand:' + groupLabel, 'click')
+        return
+      }
+
+      // Tab clicks (npm/yarn, OS, etc.). AutoSyncTabs hides the Python/TypeScript language
+      // tablists (display:none) and routes language switching through the header toggle, so a
+      // real click only lands on a visible tablist - which excludes those redundant language tabs.
+      var tab = e.target.closest('[role="tab"]')
+      if (tab) {
+        dispatchCTAClick('tab:' + tab.textContent.trim(), 'click')
+        return
+      }
+
+      // Landing page CTAs. Buttons have short text labels; the Labs/Evals cards wrap a
+      // large block of text, so use their href (stable, concise) instead of textContent.
+      var homeCta = e.target.closest('a.cta-button, a.le-card')
+      if (homeCta) {
+        var ctaLabel = homeCta.matches('a.le-card') ? homeCta.getAttribute('href') : homeCta.textContent
+        dispatchCTAClick('home-cta:' + ctaLabel, 'linkClick', true)
+        return
+      }
+
+      // Blog post cards and navigation
+      var blogCard = e.target.closest('a.blog-card')
+      if (blogCard) {
+        dispatchCTAClick('blog-card:' + blogCard.getAttribute('href'), 'linkClick', true)
+        return
+      }
+      var blogNav = e.target.closest('a.blog-post-author, a.blog-back-link')
+      if (blogNav) {
+        dispatchCTAClick('blog-nav:' + blogNav.textContent.trim(), 'linkClick', true)
+        return
+      }
+
+      // Code copy button (docs Starlight + landing CodeBlock + install commands)
+      var copyBtn = e.target.closest(
+        '.copy button, button.copy, [data-code] button, button.copy-button, button.copy-button-floating, button.install-copy'
+      )
+      if (copyBtn) {
+        var copyLabel
+        var copyText = ''
+        if (copyBtn.matches('button.install-copy')) {
+          var installEl = copyBtn.closest('[data-copy]')
+          var cmd = installEl && installEl.getAttribute('data-copy')
+          copyLabel = cmd ? 'install:' + cmd : 'install'
+          copyText = cmd || ''
+        } else {
+          copyLabel = pageHierarchy(window.location.pathname)
+          // Expressive Code stores the block's raw code on the copy button's
+          // data-code attribute; fall back to the rendered <code> text.
+          copyText = copyBtn.getAttribute('data-code') || ''
+          if (!copyText) {
+            var pre = copyBtn.closest('figure, .expressive-code, pre')
+            var codeEl = pre && pre.querySelector('code')
+            copyText = codeEl ? codeEl.textContent : ''
+          }
+        }
+        var snippet = firstLine(copyText)
+        dispatchCTAClick('code-copy:' + copyLabel + (snippet ? ' | ' + snippet : ''), 'customClick')
+        return
+      }
+
+      // Outbound links
+      var link = e.target.closest('a[href]')
+      if (link && link.hostname && link.hostname !== window.location.hostname) {
+        dispatchCTAClick('outbound:' + link.hostname + link.pathname, 'linkClick', true)
+        return
+      }
+    })
+  }
+
+  // --- 2. Search Events ---
+
+  function setupSearchTracking() {
+    var searchTimeout = null
+
+    document.addEventListener('input', function (e) {
+      var input = e.target
+      if (!input || !input.matches || !input.matches('[data-pagefind-ui] input')) return
+
+      clearTimeout(searchTimeout)
+      // 800ms debounce captures user intent; result count may lag if Pagefind
+      // hasn't responded yet, but this is acceptable for analytics purposes.
+      searchTimeout = setTimeout(function () {
+        var term = input.value
+        if (!term) return
+        var results = document.querySelectorAll('[data-pagefind-ui] .pagefind-ui__result')
+        dispatchSearchEvent(term, results.length)
+      }, 800)
+    })
+  }
+
+  // --- 3. Scroll Depth ---
+
+  function updateScroll() {
+    var scrollTop = window.scrollY || document.documentElement.scrollTop
+    var docHeight = document.documentElement.scrollHeight - window.innerHeight
+    var depth = docHeight > 0 ? Math.round((scrollTop / docHeight) * 100) : 0
+    scrollData.latest = depth
+    if (depth > scrollData.max) scrollData.max = depth
+  }
+
+  function sendScrollDepth() {
+    if (scrollSent) return
+    scrollSent = true
+    updateScroll()
+    dispatchXdmEvent(
+      'web.awsm.pageInteraction',
+      {
+        pageInteraction: {
+          name: 'scroll',
+          scrollDepths: {
+            initial: scrollData.initial,
+            max: scrollData.max,
+            latest: scrollData.latest,
+          },
+        },
+      },
+      true
+    )
+  }
+
+  function setupScrollTracking() {
+    var debounceTimer
+    window.addEventListener('scroll', function () {
+      clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(updateScroll, 200)
+    }, { passive: true })
+
+    window.addEventListener('beforeunload', sendScrollDepth)
+
+    // visibilitychange is more reliable on mobile (iOS Safari doesn't always fire beforeunload)
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') {
+        sendScrollDepth()
+      }
+    })
+  }
+
+  function resetScrollData() {
+    scrollData.initial = 0
+    scrollData.max = 0
+    scrollData.latest = 0
+    scrollSent = false
+    setTimeout(function () {
+      updateScroll()
+      scrollData.initial = scrollData.latest
+    }, 500)
+  }
+
+  // --- 4. Setup ---
+  // The WebSDK auto-fires the standard page view (web.webpagedetails.pageViews) and derives
+  // Base URL, entry/exit, and section data from the URL server-side, so no page-view event is
+  // sent here. Each full page load re-runs this IIFE, so setup below runs fresh per page.
+  setupClickTracking()
+  setupSearchTracking()
+  setupScrollTracking()
+
+  // Copy-to-clipboard events from the shared helper (src/util/clipboard.ts fires
+  // `strands:copy` with detail.label, e.g. 'install:pip', 'install:npm',
+  // 'code:use-cases:Python', and detail.text with the exact copied string).
+  // Routed through the one consent-gated pipeline; the first line of the text is
+  // appended so we can tell which command/snippet a reader copied.
+  window.addEventListener('strands:copy', function (e) {
+    var detail = (e && e.detail) || {}
+    if (!detail.label) return
+    var snippet = firstLine(detail.text)
+    dispatchCTAClick('code-copy:' + detail.label + (snippet ? ' | ' + snippet : ''), 'customClick')
+  })
+
+  // If view transitions (ClientRouter) are enabled later, navigations won't reload the page,
+  // so reset the per-page scroll baseline on astro:page-load. No-op while full reloads are used.
+  document.addEventListener('astro:page-load', resetScrollData)
+})()
+</script><link rel="stylesheet" href="/_astro/ProductLandingLayout.DXi8eIiA.css"><link rel="stylesheet" href="/_astro/decider.Bvt1Sq7B.css"><link rel="stylesheet" href="/_astro/SiteHead.ywsFQKqo.css"><style>@layer starlight.components{svg:where(.astro-hkc32dio){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em;overflow:visible}}
+</style><link rel="stylesheet" href="/_astro/Search.9AXC84sJ.css"><script type="module" src="/_astro/page.cNngjUgL.js"></script></head><body><aside class="announcement astro-mpls5b2o" aria-label="Announcement" data-expires="2026-12-06"><div class="announcement__links astro-mpls5b2o" role="group" aria-label="Introducing Strands Decider v2, and Strands Box now supports Claude Code, Codex, and Kiro"><span class="announcement__frog astro-mpls5b2o" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M32 15.2402H30.48V25.9102H32V15.2402Z" fill="currentColor"/>
+<path d="M30.4802 25.9102H28.9502V27.4302H30.4802V25.9102Z" fill="currentColor"/>
+<path d="M30.4802 12.1899H28.9502V15.2399H30.4802V12.1899Z" fill="currentColor"/>
+<path d="M28.9502 27.4302H27.4302V28.9602H28.9502V27.4302Z" fill="currentColor"/>
+<path d="M28.9502 9.1499H27.4302V12.1899H28.9502V9.1499Z" fill="currentColor"/>
+<path d="M27.4302 28.96H25.9102V30.48H27.4302V28.96Z" fill="currentColor"/>
+<path d="M27.4302 7.62012H25.9102V9.15012H27.4302V7.62012Z" fill="currentColor"/>
+<path d="M25.9099 3.0498H24.3799V7.6198H25.9099V3.0498Z" fill="currentColor"/>
+<path d="M16.7601 30.4802V28.9602H19.8101V27.4302H15.2401V28.9602H7.62012V30.4802H15.2401V32.0002H25.9101V30.4802H16.7601Z" fill="currentColor"/>
+<path d="M24.3799 1.52979H22.8599V3.04979H24.3799V1.52979Z" fill="currentColor"/>
+<path d="M22.8601 15.2402H19.8101V16.7602H22.8601V15.2402Z" fill="currentColor"/>
+<path d="M21.3401 25.9102H19.8101V27.4302H21.3401V25.9102Z" fill="currentColor"/>
+<path d="M22.86 0H18.29V1.53H22.86V0Z" fill="currentColor"/>
+<path d="M19.81 24.3799H18.29V25.9099H19.81V24.3799Z" fill="currentColor"/>
+<path d="M19.81 16.7598H18.29V18.2898H19.81V16.7598Z" fill="currentColor"/>
+<path d="M21.34 3.0498H18.29V6.0998H21.34V3.0498Z" fill="currentColor"/>
+<path d="M18.2898 18.29H16.7598V24.38H18.2898V18.29Z" fill="currentColor"/>
+<path d="M18.2898 1.52979H16.7598V3.04979H18.2898V1.52979Z" fill="currentColor"/>
+<path d="M16.7602 3.0498H15.2402V6.0998H16.7602V3.0498Z" fill="currentColor"/>
+<path d="M15.2402 25.9102H13.7202V27.4302H15.2402V25.9102Z" fill="currentColor"/>
+<path d="M13.7199 21.3398H12.1899V25.9098H13.7199V21.3398Z" fill="currentColor"/>
+<path d="M15.2399 6.1001H12.1899V7.6201H15.2399V6.1001Z" fill="currentColor"/>
+<path d="M12.1899 19.8101H10.6699V21.3401H12.1899V19.8101Z" fill="currentColor"/>
+<path d="M12.1899 9.1499H10.6699V10.6699H12.1899V9.1499Z" fill="currentColor"/>
+<path d="M12.1899 3.0498H10.6699V6.0998H12.1899V3.0498Z" fill="currentColor"/>
+<path d="M10.6699 1.52979H9.1499V3.04979H10.6699V1.52979Z" fill="currentColor"/>
+<path d="M10.6701 10.6699H6.1001V12.1899H10.6701V10.6699Z" fill="currentColor"/>
+<path d="M7.6201 27.4302H6.1001V28.9602H7.6201V27.4302Z" fill="currentColor"/>
+<path d="M9.14982 0H4.56982V1.53H9.14982V0Z" fill="currentColor"/>
+<path d="M1.53 30.48V28.96H0V32H7.62V30.48H1.53Z" fill="currentColor"/>
+<path d="M10.6698 18.29H3.0498V19.81H10.6698V18.29Z" fill="currentColor"/>
+<path d="M7.61982 3.0498H4.56982V6.0998H7.61982V3.0498Z" fill="currentColor"/>
+<path d="M4.56979 27.4302H6.09978V25.9102H3.04979V27.4302H1.52979V28.9602H4.56979V27.4302Z" fill="currentColor"/>
+<path d="M4.5698 7.62012H3.0498V10.6701H4.5698V7.62012Z" fill="currentColor"/>
+<path d="M4.5698 1.52979H3.0498V3.04979H4.5698V1.52979Z" fill="currentColor"/>
+<path d="M3.04979 24.3799H1.52979V25.9099H3.04979V24.3799Z" fill="currentColor"/>
+<path d="M3.04979 10.6699H1.52979V13.7199H3.04979V10.6699Z" fill="currentColor"/>
+<path d="M3.04979 3.0498H1.52979V7.6198H3.04979V3.0498Z" fill="currentColor"/>
+<path d="M3.05 21.3402V19.8102H1.53V13.7202H0V24.3802H1.53V21.3402H3.05Z" fill="currentColor"/>
+</svg>
+</span><a class="announcement__item astro-mpls5b2o" href="/blog/introducing-strands-decider-v2/">Introducing Strands Decider v2<span class="announcement__arrow astro-mpls5b2o" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 9" fill="none" aria-hidden="true">
+  <path d="M5.77722 0.178969C6.02991 -0.0596564 6.44035 -0.0596564 6.69304 0.178969L10.8105 4.06798C11.0632 4.3066 11.0632 4.6934 10.8105 4.93202L6.69304 8.82103C6.44035 9.05966 6.02991 9.05966 5.77722 8.82103C5.52452 8.5824 5.52452 8.19481 5.77722 7.95619L8.79094 5.11104H0V3.88896H8.79094L5.77722 1.04381C5.52452 0.805186 5.52452 0.417595 5.77722 0.178969Z" fill="currentColor"/>
+</svg>
+</span></a><span class="announcement__sep astro-mpls5b2o" aria-hidden="true">·</span><a class="announcement__item astro-mpls5b2o" href="/blog/strands-box-cli/">Strands Box now supports Claude Code, Codex, and Kiro<span class="announcement__arrow astro-mpls5b2o" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 9" fill="none" aria-hidden="true">
+  <path d="M5.77722 0.178969C6.02991 -0.0596564 6.44035 -0.0596564 6.69304 0.178969L10.8105 4.06798C11.0632 4.3066 11.0632 4.6934 10.8105 4.93202L6.69304 8.82103C6.44035 9.05966 6.02991 9.05966 5.77722 8.82103C5.52452 8.5824 5.52452 8.19481 5.77722 7.95619L8.79094 5.11104H0V3.88896H8.79094L5.77722 1.04381C5.52452 0.805186 5.52452 0.417595 5.77722 0.178969Z" fill="currentColor"/>
+</svg>
+</span></a></div><template class="announcement__fallback astro-mpls5b2o"><a class="announcement__link astro-mpls5b2o" href="/blog/introducing-strands-decider-v2/"><span class="announcement__frog astro-mpls5b2o" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M32 15.2402H30.48V25.9102H32V15.2402Z" fill="currentColor"/>
+<path d="M30.4802 25.9102H28.9502V27.4302H30.4802V25.9102Z" fill="currentColor"/>
+<path d="M30.4802 12.1899H28.9502V15.2399H30.4802V12.1899Z" fill="currentColor"/>
+<path d="M28.9502 27.4302H27.4302V28.9602H28.9502V27.4302Z" fill="currentColor"/>
+<path d="M28.9502 9.1499H27.4302V12.1899H28.9502V9.1499Z" fill="currentColor"/>
+<path d="M27.4302 28.96H25.9102V30.48H27.4302V28.96Z" fill="currentColor"/>
+<path d="M27.4302 7.62012H25.9102V9.15012H27.4302V7.62012Z" fill="currentColor"/>
+<path d="M25.9099 3.0498H24.3799V7.6198H25.9099V3.0498Z" fill="currentColor"/>
+<path d="M16.7601 30.4802V28.9602H19.8101V27.4302H15.2401V28.9602H7.62012V30.4802H15.2401V32.0002H25.9101V30.4802H16.7601Z" fill="currentColor"/>
+<path d="M24.3799 1.52979H22.8599V3.04979H24.3799V1.52979Z" fill="currentColor"/>
+<path d="M22.8601 15.2402H19.8101V16.7602H22.8601V15.2402Z" fill="currentColor"/>
+<path d="M21.3401 25.9102H19.8101V27.4302H21.3401V25.9102Z" fill="currentColor"/>
+<path d="M22.86 0H18.29V1.53H22.86V0Z" fill="currentColor"/>
+<path d="M19.81 24.3799H18.29V25.9099H19.81V24.3799Z" fill="currentColor"/>
+<path d="M19.81 16.7598H18.29V18.2898H19.81V16.7598Z" fill="currentColor"/>
+<path d="M21.34 3.0498H18.29V6.0998H21.34V3.0498Z" fill="currentColor"/>
+<path d="M18.2898 18.29H16.7598V24.38H18.2898V18.29Z" fill="currentColor"/>
+<path d="M18.2898 1.52979H16.7598V3.04979H18.2898V1.52979Z" fill="currentColor"/>
+<path d="M16.7602 3.0498H15.2402V6.0998H16.7602V3.0498Z" fill="currentColor"/>
+<path d="M15.2402 25.9102H13.7202V27.4302H15.2402V25.9102Z" fill="currentColor"/>
+<path d="M13.7199 21.3398H12.1899V25.9098H13.7199V21.3398Z" fill="currentColor"/>
+<path d="M15.2399 6.1001H12.1899V7.6201H15.2399V6.1001Z" fill="currentColor"/>
+<path d="M12.1899 19.8101H10.6699V21.3401H12.1899V19.8101Z" fill="currentColor"/>
+<path d="M12.1899 9.1499H10.6699V10.6699H12.1899V9.1499Z" fill="currentColor"/>
+<path d="M12.1899 3.0498H10.6699V6.0998H12.1899V3.0498Z" fill="currentColor"/>
+<path d="M10.6699 1.52979H9.1499V3.04979H10.6699V1.52979Z" fill="currentColor"/>
+<path d="M10.6701 10.6699H6.1001V12.1899H10.6701V10.6699Z" fill="currentColor"/>
+<path d="M7.6201 27.4302H6.1001V28.9602H7.6201V27.4302Z" fill="currentColor"/>
+<path d="M9.14982 0H4.56982V1.53H9.14982V0Z" fill="currentColor"/>
+<path d="M1.53 30.48V28.96H0V32H7.62V30.48H1.53Z" fill="currentColor"/>
+<path d="M10.6698 18.29H3.0498V19.81H10.6698V18.29Z" fill="currentColor"/>
+<path d="M7.61982 3.0498H4.56982V6.0998H7.61982V3.0498Z" fill="currentColor"/>
+<path d="M4.56979 27.4302H6.09978V25.9102H3.04979V27.4302H1.52979V28.9602H4.56979V27.4302Z" fill="currentColor"/>
+<path d="M4.5698 7.62012H3.0498V10.6701H4.5698V7.62012Z" fill="currentColor"/>
+<path d="M4.5698 1.52979H3.0498V3.04979H4.5698V1.52979Z" fill="currentColor"/>
+<path d="M3.04979 24.3799H1.52979V25.9099H3.04979V24.3799Z" fill="currentColor"/>
+<path d="M3.04979 10.6699H1.52979V13.7199H3.04979V10.6699Z" fill="currentColor"/>
+<path d="M3.04979 3.0498H1.52979V7.6198H3.04979V3.0498Z" fill="currentColor"/>
+<path d="M3.05 21.3402V19.8102H1.53V13.7202H0V24.3802H1.53V21.3402H3.05Z" fill="currentColor"/>
+</svg>
+</span><span class="announcement__title astro-mpls5b2o">Introducing Strands Decider v2: open, calibrated system one models</span><span class="announcement__cta astro-mpls5b2o">Read the post<span class="announcement__arrow astro-mpls5b2o" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 9" fill="none" aria-hidden="true">
+  <path d="M5.77722 0.178969C6.02991 -0.0596564 6.44035 -0.0596564 6.69304 0.178969L10.8105 4.06798C11.0632 4.3066 11.0632 4.6934 10.8105 4.93202L6.69304 8.82103C6.44035 9.05966 6.02991 9.05966 5.77722 8.82103C5.52452 8.5824 5.52452 8.19481 5.77722 7.95619L8.79094 5.11104H0V3.88896H8.79094L5.77722 1.04381C5.52452 0.805186 5.52452 0.417595 5.77722 0.178969Z" fill="currentColor"/>
+</svg>
+</span></span></a></template></aside><script type="module">function e(e,t){let n=e.querySelector(`.announcement[data-expires]`);if(!n||n.dataset.expires>=t)return;let r=n.querySelector(`.announcement__fallback`);r?(n.removeAttribute(`data-expires`),n.replaceChildren(r.content.cloneNode(!0))):n.remove()}e(document,new Date().toISOString().slice(0,10));</script><nav class="strands-nav astro-yxete6jp" aria-label="Primary"><div class="strands-nav__inner astro-yxete6jp"><div class="strands-nav__left astro-yxete6jp"><a href="/" class="strands-nav__logo astro-yxete6jp" aria-label="Strands home"><span class="strands-nav__wordmark astro-yxete6jp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1512 217" fill="currentColor" role="img" aria-label="STRANDS">
+  <!-- Each glyph is shifted right by 30px * its index to widen the inter-letter
+       spacing (the raw paths sit ~37px apart, which reads as squished at nav
+       size). Bump the 30 to loosen further, or the viewBox width with it. -->
+  <g transform="translate(0 0)"><path d="M30.2558 216.833V186.914H0V148.926H36.9794V179.182H121.023V127.075H30.2558V97.1548H0V29.9197H30.2558V0H127.747V29.9197H158.339V67.5714H121.023V37.9879H36.9794V89.759H127.747V119.006H158.339V186.914H127.747V216.833H30.2558Z"/></g>
+  <g transform="translate(30 0)"><path d="M252.894 216.833V37.9879H229.361V67.5714H192.382V29.9197H222.638V0H320.129V29.9197H350.721V67.5714H313.405V37.9879H289.873V216.833H252.894Z"/></g>
+  <g transform="translate(60 0)"><path d="M377.87 216.833V29.9197H408.125V0H505.617V29.9197H536.208V127.075H505.617V156.994H490.825V179.182H520.744V216.833H484.101V186.914H453.509V156.994H414.849V216.833H377.87ZM414.849 119.006H498.893V37.9879H414.849V119.006Z"/></g>
+  <g transform="translate(90 0)"><path d="M576.818 216.833V59.5031H607.073V29.9197H637.329V0H674.309V29.9197H704.564V59.5031H735.156V216.833H697.841V156.994H613.797V216.833H576.818ZM613.797 119.006H697.841V67.5714H667.921V37.9879H643.717V67.5714H613.797V119.006Z"/></g>
+  <g transform="translate(120 0)"><path d="M775.765 216.833V0H812.745V29.9197H842.664V59.5031H873.256V148.926H896.789V0H934.104V216.833H896.789V186.914H866.869V156.994H836.277V67.5714H812.745V216.833H775.765Z"/></g>
+  <g transform="translate(150 0)"><path d="M974.713 216.833V0H1072.2V29.9197H1102.46V59.5031H1133.05V156.994H1102.46V186.914H1072.2V216.833H974.713ZM1011.69 179.182H1065.82V148.926H1095.74V67.5714H1065.82V37.9879H1011.69V179.182Z"/></g>
+  <g transform="translate(180 0)"><path d="M1203.92 216.833V186.914H1173.66V148.926H1210.64V179.182H1294.68V127.075H1203.92V97.1548H1173.66V29.9197H1203.92V0H1301.41V29.9197H1332V67.5714H1294.68V37.9879H1210.64V89.759H1301.41V119.006H1332V186.914H1301.41V216.833H1203.92Z"/></g>
+</svg>
+</span></a><ul class="strands-nav__links astro-yxete6jp" role="list"><li class="strands-nav__item astro-yxete6jp" data-menu-trigger="docs"><button type="button" class="strands-nav__trigger astro-yxete6jp" aria-haspopup="true">Docs</button><div class="nav-menu astro-ksnnumvq" data-nav-menu="docs" role="group" aria-label="Menu"><a class="nav-menu__cat astro-ksnnumvq" data-accent="orange" href="/docs/user-guide/harness/"><span class="nav-menu__cat-title astro-ksnnumvq">/harness</span><span class="nav-menu__cat-desc astro-ksnnumvq">Strands harness is a state-of-the-art, fully assembled agent harness.</span></a><a class="nav-menu__cat astro-ksnnumvq" data-accent="teal" href="/docs/user-guide/sdk/"><span class="nav-menu__cat-title astro-ksnnumvq">/harness-sdk</span><span class="nav-menu__cat-desc astro-ksnnumvq">The Strands Harness SDK for building an agent harness from the ground up.</span></a><a class="nav-menu__cat astro-ksnnumvq" data-accent="purple" href="/box/"><span class="nav-menu__cat-title astro-ksnnumvq">/box</span><span class="nav-menu__cat-desc astro-ksnnumvq">Run AI agents in a sandbox with controlled access.</span></a><a class="nav-menu__cat astro-ksnnumvq" data-accent="yellow" href="/docs/user-guide/shell/"><span class="nav-menu__cat-title astro-ksnnumvq">/shell</span><span class="nav-menu__cat-desc astro-ksnnumvq">A virtual shell designed for AI agents to use safely.</span></a><a class="nav-menu__cat astro-ksnnumvq" data-accent="pink" href="/docs/user-guide/evals-sdk/"><span class="nav-menu__cat-title astro-ksnnumvq">/evals</span><span class="nav-menu__cat-desc astro-ksnnumvq">Validate your agent before you ship.</span></a><a class="nav-menu__cat astro-ksnnumvq" data-accent="red" href="/decider/"><span class="nav-menu__cat-title astro-ksnnumvq">/decider</span><span class="nav-menu__cat-desc astro-ksnnumvq">Route, classify, and score with confidence.</span></a><a class="nav-menu__cat astro-ksnnumvq" data-accent="blue" href="/docs/labs/"><span class="nav-menu__cat-title astro-ksnnumvq">/labs</span><span class="nav-menu__cat-desc astro-ksnnumvq">Experimental projects pushing the boundaries of what agents can do.</span></a></div><script type="module" src="/_astro/NavMenu.astro_astro_type_script_index_0_lang.BXywjzwY.js"></script></li><li class="strands-nav__item astro-yxete6jp" data-menu-trigger="learn"><button type="button" class="strands-nav__trigger astro-yxete6jp" aria-haspopup="true">Learn</button><div class="nav-menu astro-ksnnumvq" data-nav-menu="learn" role="group" aria-label="Menu"><a class="nav-menu__cat astro-ksnnumvq" href="/docs/learning/how-agents-really-work/"><span class="nav-menu__cat-title astro-ksnnumvq">Courses</span><span class="nav-menu__cat-desc astro-ksnnumvq">Guided lessons from your first agent to multi-agent systems.</span></a><a class="nav-menu__cat astro-ksnnumvq" href="/examples/"><span class="nav-menu__cat-title astro-ksnnumvq">Examples</span><span class="nav-menu__cat-desc astro-ksnnumvq">Runnable samples you can drop into your own project.</span></a></div></li><li class="astro-yxete6jp"><a href="/integrations/" class="astro-yxete6jp">Integrations</a></li><li class="astro-yxete6jp"><a href="/docs/contribute/" class="astro-yxete6jp">Contribute</a></li><li class="astro-yxete6jp"><a href="/blog/" class="astro-yxete6jp">Blog</a></li></ul></div><div class="strands-nav__right astro-yxete6jp"><button type="button" class="strands-nav__search astro-yxete6jp" data-nav-search aria-label="Search"><svg class="strands-nav__search-icon astro-yxete6jp" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7" class="astro-yxete6jp"></circle><path d="M21 21l-4.3-4.3" stroke-linecap="round" class="astro-yxete6jp"></path></svg><span class="strands-nav__search-label astro-yxete6jp">Search</span></button><div class="strands-nav__lang astro-yxete6jp"><language-toggle class="language-toggle astro-ra2rg4ph" role="radiogroup" aria-label="Preferred language"><button class="lang-option astro-ra2rg4ph" role="radio" aria-checked="false" aria-label="TypeScript" data-lang="TypeScript"><span class="lang-icon astro-ra2rg4ph"><svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">
+  <rect x="1.25" y="1.25" width="29.5" height="29.5" rx="6" fill="none" stroke="currentColor" stroke-width="2" />
+  <text x="16.5" y="22.5" text-anchor="middle" font-family="ui-monospace, 'JetBrains Mono', monospace" font-weight="700" font-size="14" letter-spacing="-0.5" fill="currentColor">TS</text>
+</svg>
+</span><span class="lang-label astro-ra2rg4ph">TypeScript</span></button><button class="lang-option astro-ra2rg4ph" role="radio" aria-checked="false" aria-label="Python" data-lang="Python"><span class="lang-icon astro-ra2rg4ph"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">
+  <path fill="currentColor" d="M11.914 0C5.82 0 6.2 2.656 6.2 2.656l.007 2.752h5.814v.826H3.9S0 5.789 0 11.969c0 6.18 3.403 5.96 3.403 5.96h2.03v-2.867s-.109-3.42 3.35-3.42h5.766s3.24.052 3.24-3.148V3.202S18.28 0 11.914 0zM8.708 1.85a1.06 1.06 0 110 2.12 1.06 1.06 0 010-2.12z" />
+  <path fill="currentColor" d="M12.086 24c6.094 0 5.714-2.656 5.714-2.656l-.007-2.752H11.98v-.826h8.121S24 18.211 24 12.031c0-6.18-3.403-5.96-3.403-5.96h-2.03v2.867s.109 3.42-3.35 3.42H9.451s-3.24-.052-3.24 3.148v5.292S5.72 24 12.086 24zm3.206-1.85a1.06 1.06 0 110-2.12 1.06 1.06 0 010 2.12z" />
+</svg>
+</span><span class="lang-label astro-ra2rg4ph">Python</span></button></language-toggle><script>(function(){const STORAGE_KEY = "starlight-synced-tabs__jarkqt";
+const DEFAULT_LANG = "TypeScript";
+const PAGE_LANGUAGE = undefined;
+
+  (function () {
+    // Idempotency guard: multiple instances on one page, run logic once.
+    if (window.__strandsLanguageToggleInit) return;
+    window.__strandsLanguageToggleInit = true;
+    // STORAGE_KEY + DEFAULT_LANG injected via define:vars from language-preference.ts.
+
+    function getPreference() {
+      try {
+        return localStorage.getItem(STORAGE_KEY) || DEFAULT_LANG;
+      } catch (e) {
+        if (typeof console !== 'undefined') console.debug('[LanguageToggle] localStorage read error:', e);
+        return DEFAULT_LANG;
+      }
+    }
+
+    function setPreference(lang) {
+      try {
+        localStorage.setItem(STORAGE_KEY, lang);
+      } catch (e) {
+        if (typeof console !== 'undefined') console.debug('[LanguageToggle] localStorage write error:', e);
+      }
+    }
+
+    /** Sync Starlight tab groups by clicking the matching tab. */
+    function syncStarlightTabs(lang) {
+      document.querySelectorAll('starlight-tabs').forEach(function (tabGroup) {
+        var tabs = tabGroup.querySelectorAll('[role="tab"]');
+        tabs.forEach(function (tab) {
+          if (tab.textContent.trim() === lang && tab.getAttribute('aria-selected') !== 'true') {
+            tab.click();
+          }
+        });
+      });
+    }
+
+    /** Sample routes win; other single-language pages resolve to their available language. */
+    function effectiveLanguage(lang) {
+      if (PAGE_LANGUAGE) return PAGE_LANGUAGE;
+      var enabled = Array.prototype.filter.call(
+        document.querySelectorAll('language-toggle .lang-option'),
+        function (btn) { return !btn.disabled; }
+      );
+      // No toggle rendered on this page: the preference stands.
+      if (enabled.length === 0) return lang;
+      var match = enabled.some(function (btn) { return btn.dataset.lang === lang; });
+      return match ? lang : enabled[0].dataset.lang;
+    }
+
+    function updateToggle(lang) {
+      // Exactly one radio is always checked: `lang` is already the effective
+      // language, so it always names an enabled button when one exists.
+      document.querySelectorAll('language-toggle .lang-option').forEach(function (btn) {
+        if (btn.disabled) return;
+        btn.setAttribute('aria-checked', btn.dataset.lang === lang ? 'true' : 'false');
+      });
+    }
+
+    /** Full UI sync: toggle state + inline tabs. */
+    function syncAll(lang) {
+      var effective = effectiveLanguage(lang);
+      updateToggle(effective);
+      syncStarlightTabs(effective);
+    }
+
+    // Guard against feedback loops.
+    var applying = false;
+
+    function applyLanguage(lang, notify) {
+      if (applying) return;
+      applying = true;
+      setPreference(lang);
+      syncAll(lang);
+      if (notify) {
+        window.dispatchEvent(new CustomEvent('lang-change', { detail: lang }));
+        window.dispatchEvent(new CustomEvent('lang-preference-changed', { detail: { lang: lang } }));
+      }
+      applying = false;
+    }
+
+    var current = PAGE_LANGUAGE || getPreference();
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { applyLanguage(current, false); });
+    } else {
+      applyLanguage(current, false);
+    }
+
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('.lang-option');
+      if (!btn || btn.disabled) return;
+      var lang = btn.dataset.lang;
+      if (!lang) return;
+      applyLanguage(lang, true);
+
+      var switchHref = btn.dataset.switchHref;
+      if (switchHref) {
+        window.location.href = switchHref;
+      }
+    });
+
+    window.addEventListener('storage', function (e) {
+      if (e.key === STORAGE_KEY && e.newValue) {
+        applyLanguage(e.newValue, false);
+      }
+    });
+
+    window.addEventListener('lang-change', function (e) {
+      var lang = e && e.detail;
+      if (lang) applyLanguage(lang, false);
+    });
+    window.addEventListener('lang-preference-changed', function (e) {
+      var lang = e && e.detail && e.detail.lang;
+      if (lang) applyLanguage(lang, false);
+    });
+  })();
+})();</script></div><div class="strands-nav__socials astro-yxete6jp"><a href="https://github.com/strands-agents" class="strands-nav__icon-link strands-nav__github astro-yxete6jp" aria-label="GitHub" target="_blank" rel="noopener"><span class="strands-nav__github-icon astro-yxete6jp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 31.0442 29.9737" fill="none" aria-hidden="true">
+  <path fill="currentColor" d="M13.1271 21.9088C9.12527 21.4253 6.30585 18.5545 6.30585 14.8376C6.30585 13.3266 6.85154 11.6948 7.76104 10.6069C7.36691 9.60966 7.42754 7.49433 7.88231 6.61799C9.09497 6.46688 10.7321 7.1015 11.7022 7.97783C12.8542 7.61521 14.0669 7.43389 15.5524 7.43389C17.0379 7.43389 18.2506 7.61521 19.342 7.94763C20.2818 7.1015 21.9492 6.46688 23.1619 6.61799C23.5863 7.43389 23.6469 9.54923 23.2528 10.5767C24.2229 11.725 24.7383 13.2662 24.7383 14.8376C24.7383 18.5545 21.9189 21.3649 17.8564 21.8786C18.8872 22.5434 19.5845 23.9939 19.5845 25.656V28.7989C19.5845 29.7053 20.3424 30.2191 21.2519 29.8564C26.7392 27.7712 31.0442 22.3017 31.0442 15.5326C31.0442 6.98062 24.0714 0 15.4917 0C6.91218 0 0 6.98059 0 15.5326C0 22.2412 4.27462 27.8015 10.0348 29.8867C10.8533 30.1888 11.6416 29.645 11.6416 28.8292V26.4115C11.2171 26.5928 10.6714 26.7137 10.1864 26.7137C8.18547 26.7137 7.00311 25.6258 6.15425 23.6011C5.82078 22.7852 5.45698 22.3017 4.75968 22.211C4.39589 22.1808 4.27462 22.0297 4.27462 21.8484C4.27462 21.4858 4.88095 21.2138 5.48728 21.2138C6.36648 21.2138 7.12438 21.7577 7.91261 22.8759C8.51894 23.7522 9.1556 24.1451 9.9135 24.1451C10.6714 24.1451 11.1565 23.8731 11.8538 23.178C12.3692 22.6643 12.7633 22.211 13.1271 21.9088Z"/>
+</svg>
+</span></a><a href="https://discord.gg/strands" class="strands-nav__icon-link astro-yxete6jp" aria-label="Discord" target="_blank" rel="noopener"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 39.286 29.8956" fill="none" aria-hidden="true">
+  <path fill="currentColor" d="M35.1149 5.76135C33.8847 3.50928 31.842 1.80737 29.4003 1.00026C27.9512 0.477106 26.441 0.140955 24.9064 0L23.9029 2.04384C20.9179 1.58746 17.8805 1.58746 14.8954 2.04384C14.5888 1.34561 14.2466 0.663443 13.8702 0C12.3848 0.161461 10.9211 0.490287 9.50871 0.978604C7.05026 1.78951 4.99741 3.50894 3.77229 5.78301C0.53898 11.6107 -0.780368 18.302 -0.00046875 24.916C2.9722 27.1183 6.29851 28.8015 9.83661 29.8937C10.8389 28.9221 11.5876 27.7209 12.0174 26.3947C10.9507 25.997 9.92352 25.5087 8.9418 24.9377C8.766 24.6974 9.44351 24.3076 9.66081 24.2406C12.7633 25.69 16.1477 26.4413 19.574 26.4413C22.9994 26.4413 26.3841 25.69 29.4869 24.2406C29.6844 24.2406 30.3817 24.6974 30.2059 24.9377C29.3348 25.6111 27.393 26.0895 27.0651 26.568C27.6367 27.7714 28.3712 28.8911 29.2479 29.8956C32.7922 28.802 36.125 27.1176 39.1047 24.914C39.8155 18.271 38.4201 11.573 35.1146 5.76135ZM12.9534 20.2632C11.9392 20.2513 10.9711 19.8397 10.2604 19.1184C9.5498 18.3971 9.15436 17.4247 9.16072 16.4138C9.17764 15.4182 9.58328 14.4684 10.2914 13.7662C10.9996 13.0639 11.9545 12.6646 12.9534 12.6529C13.4595 12.6552 13.9601 12.7574 14.4265 12.9534C14.8928 13.1494 15.3156 13.4355 15.6706 13.7952C16.0255 14.1548 16.3055 14.5809 16.4945 15.0489C16.6835 15.5169 16.7777 16.0176 16.7717 16.5221C16.7496 17.5186 16.3381 18.4672 15.625 19.1659C14.9119 19.8646 13.9533 20.2583 12.9534 20.2632ZM26.0399 20.2632C25.0254 20.2575 24.0545 19.8516 23.3393 19.1343C22.6242 18.417 22.223 17.4467 22.2236 16.4354C22.228 15.9357 22.3311 15.4418 22.527 14.9818C22.7229 14.5218 23.0078 14.1048 23.3654 13.7546C23.723 13.4044 24.1463 13.1278 24.6111 12.9406C25.0759 12.7535 25.5732 12.6594 26.0745 12.6638C26.5758 12.6682 27.0713 12.7709 27.5328 12.9662C27.9942 13.1615 28.4126 13.4455 28.764 13.8019C29.1153 14.1584 29.3927 14.5803 29.5805 15.0437C29.7683 15.507 29.8626 16.0027 29.8582 16.5024C29.8411 17.5003 29.4312 18.4516 28.7170 19.1511C28.0027 19.8506 27.0412 20.2422 26.0399 20.2415V20.2632Z"/>
+</svg>
+</a></div><button type="button" class="strands-nav__theme-toggle astro-yxete6jp" data-theme-toggle aria-label="Toggle color theme"><span class="strands-nav__theme-icon strands-nav__theme-icon--sun astro-yxete6jp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <circle cx="12" cy="12" r="4" />
+  <path d="M12 2v2" />
+  <path d="M12 20v2" />
+  <path d="m4.93 4.93 1.41 1.41" />
+  <path d="m17.66 17.66 1.41 1.41" />
+  <path d="M2 12h2" />
+  <path d="M20 12h2" />
+  <path d="m6.34 17.66-1.41 1.41" />
+  <path d="m19.07 4.93-1.41 1.41" />
+</svg>
+</span><span class="strands-nav__theme-icon strands-nav__theme-icon--moon astro-yxete6jp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+</svg>
+</span></button></div><div class="strands-nav__collapsed astro-yxete6jp"><div class="strands-nav__lang strands-nav__collapsed-lang astro-yxete6jp"><language-toggle class="language-toggle astro-ra2rg4ph" role="radiogroup" aria-label="Preferred language"><button class="lang-option astro-ra2rg4ph" role="radio" aria-checked="false" aria-label="TypeScript" data-lang="TypeScript"><span class="lang-icon astro-ra2rg4ph"><svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">
+  <rect x="1.25" y="1.25" width="29.5" height="29.5" rx="6" fill="none" stroke="currentColor" stroke-width="2" />
+  <text x="16.5" y="22.5" text-anchor="middle" font-family="ui-monospace, 'JetBrains Mono', monospace" font-weight="700" font-size="14" letter-spacing="-0.5" fill="currentColor">TS</text>
+</svg>
+</span><span class="lang-label astro-ra2rg4ph">TypeScript</span></button><button class="lang-option astro-ra2rg4ph" role="radio" aria-checked="false" aria-label="Python" data-lang="Python"><span class="lang-icon astro-ra2rg4ph"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">
+  <path fill="currentColor" d="M11.914 0C5.82 0 6.2 2.656 6.2 2.656l.007 2.752h5.814v.826H3.9S0 5.789 0 11.969c0 6.18 3.403 5.96 3.403 5.96h2.03v-2.867s-.109-3.42 3.35-3.42h5.766s3.24.052 3.24-3.148V3.202S18.28 0 11.914 0zM8.708 1.85a1.06 1.06 0 110 2.12 1.06 1.06 0 010-2.12z" />
+  <path fill="currentColor" d="M12.086 24c6.094 0 5.714-2.656 5.714-2.656l-.007-2.752H11.98v-.826h8.121S24 18.211 24 12.031c0-6.18-3.403-5.96-3.403-5.96h-2.03v2.867s.109 3.42-3.35 3.42H9.451s-3.24-.052-3.24 3.148v5.292S5.72 24 12.086 24zm3.206-1.85a1.06 1.06 0 110-2.12 1.06 1.06 0 010 2.12z" />
+</svg>
+</span><span class="lang-label astro-ra2rg4ph">Python</span></button></language-toggle><script>(function(){const STORAGE_KEY = "starlight-synced-tabs__jarkqt";
+const DEFAULT_LANG = "TypeScript";
+const PAGE_LANGUAGE = undefined;
+
+  (function () {
+    // Idempotency guard: multiple instances on one page, run logic once.
+    if (window.__strandsLanguageToggleInit) return;
+    window.__strandsLanguageToggleInit = true;
+    // STORAGE_KEY + DEFAULT_LANG injected via define:vars from language-preference.ts.
+
+    function getPreference() {
+      try {
+        return localStorage.getItem(STORAGE_KEY) || DEFAULT_LANG;
+      } catch (e) {
+        if (typeof console !== 'undefined') console.debug('[LanguageToggle] localStorage read error:', e);
+        return DEFAULT_LANG;
+      }
+    }
+
+    function setPreference(lang) {
+      try {
+        localStorage.setItem(STORAGE_KEY, lang);
+      } catch (e) {
+        if (typeof console !== 'undefined') console.debug('[LanguageToggle] localStorage write error:', e);
+      }
+    }
+
+    /** Sync Starlight tab groups by clicking the matching tab. */
+    function syncStarlightTabs(lang) {
+      document.querySelectorAll('starlight-tabs').forEach(function (tabGroup) {
+        var tabs = tabGroup.querySelectorAll('[role="tab"]');
+        tabs.forEach(function (tab) {
+          if (tab.textContent.trim() === lang && tab.getAttribute('aria-selected') !== 'true') {
+            tab.click();
+          }
+        });
+      });
+    }
+
+    /** Sample routes win; other single-language pages resolve to their available language. */
+    function effectiveLanguage(lang) {
+      if (PAGE_LANGUAGE) return PAGE_LANGUAGE;
+      var enabled = Array.prototype.filter.call(
+        document.querySelectorAll('language-toggle .lang-option'),
+        function (btn) { return !btn.disabled; }
+      );
+      // No toggle rendered on this page: the preference stands.
+      if (enabled.length === 0) return lang;
+      var match = enabled.some(function (btn) { return btn.dataset.lang === lang; });
+      return match ? lang : enabled[0].dataset.lang;
+    }
+
+    function updateToggle(lang) {
+      // Exactly one radio is always checked: `lang` is already the effective
+      // language, so it always names an enabled button when one exists.
+      document.querySelectorAll('language-toggle .lang-option').forEach(function (btn) {
+        if (btn.disabled) return;
+        btn.setAttribute('aria-checked', btn.dataset.lang === lang ? 'true' : 'false');
+      });
+    }
+
+    /** Full UI sync: toggle state + inline tabs. */
+    function syncAll(lang) {
+      var effective = effectiveLanguage(lang);
+      updateToggle(effective);
+      syncStarlightTabs(effective);
+    }
+
+    // Guard against feedback loops.
+    var applying = false;
+
+    function applyLanguage(lang, notify) {
+      if (applying) return;
+      applying = true;
+      setPreference(lang);
+      syncAll(lang);
+      if (notify) {
+        window.dispatchEvent(new CustomEvent('lang-change', { detail: lang }));
+        window.dispatchEvent(new CustomEvent('lang-preference-changed', { detail: { lang: lang } }));
+      }
+      applying = false;
+    }
+
+    var current = PAGE_LANGUAGE || getPreference();
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { applyLanguage(current, false); });
+    } else {
+      applyLanguage(current, false);
+    }
+
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('.lang-option');
+      if (!btn || btn.disabled) return;
+      var lang = btn.dataset.lang;
+      if (!lang) return;
+      applyLanguage(lang, true);
+
+      var switchHref = btn.dataset.switchHref;
+      if (switchHref) {
+        window.location.href = switchHref;
+      }
+    });
+
+    window.addEventListener('storage', function (e) {
+      if (e.key === STORAGE_KEY && e.newValue) {
+        applyLanguage(e.newValue, false);
+      }
+    });
+
+    window.addEventListener('lang-change', function (e) {
+      var lang = e && e.detail;
+      if (lang) applyLanguage(lang, false);
+    });
+    window.addEventListener('lang-preference-changed', function (e) {
+      var lang = e && e.detail && e.detail.lang;
+      if (lang) applyLanguage(lang, false);
+    });
+  })();
+})();</script></div><button type="button" class="strands-nav__collapsed-search astro-yxete6jp" data-nav-search aria-label="Search"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" class="astro-yxete6jp"><circle cx="11" cy="11" r="7" class="astro-yxete6jp"></circle><path d="M21 21l-4.3-4.3" stroke-linecap="round" class="astro-yxete6jp"></path></svg></button><button type="button" class="strands-nav__hamburger astro-yxete6jp" aria-label="Open menu" aria-expanded="false" data-hamburger><span class="strands-nav__hamburger-icon astro-yxete6jp"><svg
+  aria-hidden="true"
+  focusable="false"
+  width="32"
+  height="24"
+  viewBox="0 0 32 24"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <path
+    d="M3 4H29M3 12H29M3 20H29"
+    stroke="currentColor"
+    stroke-width="2.5"
+    stroke-linecap="square"
+  />
+</svg>
+</span><span class="strands-nav__hamburger-icon strands-nav__close-icon astro-yxete6jp"><svg aria-hidden="true" focusable="false" width="32" height="24" viewBox="0 0 32 24" fill="none" class="astro-yxete6jp"><path d="M8 4L24 20M24 4L8 20" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" class="astro-yxete6jp"></path></svg></span></button></div></div><!-- Mobile menu panel (Figma 745:13162): Docs / Learn accordions of
+       categories + page links, then plain Integrations / Blog links. --><div class="strands-nav__mobile astro-yxete6jp" data-mobile-menu><div class="mobile-menu__section astro-yxete6jp" data-mobile-section><button type="button" class="mobile-menu__section-title astro-yxete6jp" data-section-toggle aria-expanded="false">Docs</button><div class="mobile-menu__section-body astro-yxete6jp"><div class="mobile-menu__cat astro-yxete6jp" data-mobile-cat><div class="mobile-menu__cat-head astro-yxete6jp"><a class="mobile-menu__cat-link astro-yxete6jp" href="/docs/user-guide/harness/"><span class="mobile-menu__cat-title astro-yxete6jp">/harness</span><span class="mobile-menu__cat-desc astro-yxete6jp">Strands harness is a state-of-the-art, fully assembled agent harness.</span></a><button type="button" class="mobile-menu__cat-expand astro-yxete6jp" data-cat-toggle aria-expanded="false" aria-label="Show /harness pages"><svg viewBox="0 0 12 8" width="12" height="8" aria-hidden="true" class="astro-yxete6jp"><path d="M1 1.5L6 6.5L11 1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" class="astro-yxete6jp"></path></svg></button></div><div class="mobile-menu__pages astro-yxete6jp"><ul class="mnav astro-rnuc3b65" role="list"><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Get started</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/quickstart/" class="mnav__link astro-rnuc3b65">Quickstart</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/composing-with-sdk/" class="mnav__link astro-rnuc3b65">Compose with the Strands Harness SDK</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Configure the agent</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/configure/model/" class="mnav__link astro-rnuc3b65">Choose a model and reasoning</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/configure/tools-and-instructions/" class="mnav__link astro-rnuc3b65">Add tools and instructions</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/configure/subagents/" class="mnav__link astro-rnuc3b65">Delegate to subagents</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/configure/skills/" class="mnav__link astro-rnuc3b65">Load agent skills</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/configure/sessions/" class="mnav__link astro-rnuc3b65">Persist sessions</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/configure/memory/" class="mnav__link astro-rnuc3b65">Give long-term memory</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/configure/checkpoints-and-memory/" class="mnav__link astro-rnuc3b65">Checkpoints vs memory</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/configure/context-and-caching/" class="mnav__link astro-rnuc3b65">Manage context and caching</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/configure/interventions/" class="mnav__link astro-rnuc3b65">Gate tool calls with interventions</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/configure/mcp-servers/" class="mnav__link astro-rnuc3b65">Connect MCP servers</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/configure/background-tasks/" class="mnav__link astro-rnuc3b65">Run work in the background</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Built-in tools</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/tools/shell-and-files/" class="mnav__link astro-rnuc3b65">Shell and file tools</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/tools/web-access/" class="mnav__link astro-rnuc3b65">Web access</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/tools/programmatic-tool-calling/" class="mnav__link astro-rnuc3b65">Programmatic tool calling</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/tools/todos-and-environment/" class="mnav__link astro-rnuc3b65">Task tracking and environment</a></li></ul></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/production/" class="mnav__link astro-rnuc3b65">Take Strands harness to production</a></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Reference</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/reference/configuration/" class="mnav__link astro-rnuc3b65">Configuration reference</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/harness/versioning/" class="mnav__link astro-rnuc3b65">Versioning &amp; Support</a></li></ul></li></ul></div></div><div class="mobile-menu__cat astro-yxete6jp" data-mobile-cat><div class="mobile-menu__cat-head astro-yxete6jp"><a class="mobile-menu__cat-link astro-yxete6jp" href="/docs/user-guide/sdk/"><span class="mobile-menu__cat-title astro-yxete6jp">/harness-sdk</span><span class="mobile-menu__cat-desc astro-yxete6jp">The Strands Harness SDK for building an agent harness from the ground up.</span></a><button type="button" class="mobile-menu__cat-expand astro-yxete6jp" data-cat-toggle aria-expanded="false" aria-label="Show /harness-sdk pages"><svg viewBox="0 0 12 8" width="12" height="8" aria-hidden="true" class="astro-yxete6jp"><path d="M1 1.5L6 6.5L11 1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" class="astro-yxete6jp"></path></svg></button></div><div class="mobile-menu__pages astro-yxete6jp"><ul class="mnav astro-rnuc3b65" role="list"><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Get started</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/quickstart/python/" class="mnav__link astro-rnuc3b65">Quickstart</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/quickstart/typescript/" class="mnav__link astro-rnuc3b65">Quickstart</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/build-with-ai/" class="mnav__link astro-rnuc3b65">AI coding agents</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Migrate</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/migrate/choosing-an-agent-foundation/" class="mnav__link astro-rnuc3b65">Choosing an agent foundation</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/migrate/langgraph/" class="mnav__link astro-rnuc3b65">Migrate from LangGraph</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/migrate/openai/" class="mnav__link astro-rnuc3b65">Migrate from OpenAI</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/migrate/strands-agents-tools/" class="mnav__link astro-rnuc3b65">Migrate from strands-agents-tools</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Build guides</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Tools</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/using-tools/" class="mnav__link astro-rnuc3b65">Attach and invoke tools</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/mcp-tools/" class="mnav__link astro-rnuc3b65">Use MCP tools</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/custom-tools/" class="mnav__link astro-rnuc3b65">Create custom tools</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Sessions</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/session-management/" class="mnav__link astro-rnuc3b65">Persist state across sessions</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Memory</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/memory/overview/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/memory/managing-memory/" class="mnav__link astro-rnuc3b65">Control what the agent remembers</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Responses</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/structured-output/" class="mnav__link astro-rnuc3b65">Return structured output</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/streaming/" class="mnav__link astro-rnuc3b65">Stream responses</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/streaming/streaming-to-the-browser-guide/" class="mnav__link astro-rnuc3b65">Stream to the browser</a></li></ul></details></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/context-management/" class="mnav__link astro-rnuc3b65">Manage the context window</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/approve-before-acting/" class="mnav__link astro-rnuc3b65">Approve before your agent acts</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/multi-agent/multi-agent-patterns/" class="mnav__link astro-rnuc3b65">Choose a multi-agent pattern</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Run guides</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Deploy to production</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/operating-agents-in-production/" class="mnav__link astro-rnuc3b65">Operating Agents in Production</a></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Amazon Bedrock AgentCore</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/deploy_to_bedrock_agentcore/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/deploy_to_bedrock_agentcore/python/" class="mnav__link astro-rnuc3b65">Python</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/deploy_to_bedrock_agentcore/typescript/" class="mnav__link astro-rnuc3b65">TypeScript</a></li></ul></details></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/deploy_to_aws_lambda/" class="mnav__link astro-rnuc3b65">AWS Lambda</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/deploy_to_aws_fargate/" class="mnav__link astro-rnuc3b65">AWS Fargate</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/deploy_to_aws_apprunner/" class="mnav__link astro-rnuc3b65">AWS App Runner</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/deploy_to_amazon_eks/" class="mnav__link astro-rnuc3b65">Amazon EKS</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/deploy_to_amazon_ec2/" class="mnav__link astro-rnuc3b65">Amazon EC2</a></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Docker</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/deploy_to_docker/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/deploy_to_docker/python/" class="mnav__link astro-rnuc3b65">Python</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/deploy_to_docker/typescript/" class="mnav__link astro-rnuc3b65">TypeScript</a></li></ul></details></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/deploy_to_kubernetes/" class="mnav__link astro-rnuc3b65">Kubernetes</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/deploy_to_terraform/" class="mnav__link astro-rnuc3b65">Terraform</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/deploy/deploy_with_nx_plugin_for_aws/" class="mnav__link astro-rnuc3b65">Nx Plugin for AWS</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Observe your agent</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/observability-evaluation/observability/" class="mnav__link astro-rnuc3b65">Observability</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/observability-evaluation/metrics/" class="mnav__link astro-rnuc3b65">Metrics</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/observability-evaluation/traces/" class="mnav__link astro-rnuc3b65">Traces</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/observability-evaluation/logs/" class="mnav__link astro-rnuc3b65">Logs</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Secure for production</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/safety-security/responsible-ai/" class="mnav__link astro-rnuc3b65">Responsible AI</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/safety-security/guardrails/" class="mnav__link astro-rnuc3b65">Guardrails</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/safety-security/prompt-engineering/" class="mnav__link astro-rnuc3b65">Prompt Engineering</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/safety-security/trusted-message-history/" class="mnav__link astro-rnuc3b65">Trusted Message History</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/safety-security/pii-redaction/" class="mnav__link astro-rnuc3b65">PII Redaction</a></li></ul></details></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Components</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/agent-loop/" class="mnav__link astro-rnuc3b65">Agent loop</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/lifecycle-controls/" class="mnav__link astro-rnuc3b65">Production lifecycle controls</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/state/" class="mnav__link astro-rnuc3b65">State</a></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Storage</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/storage/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/storage/search-strategies/" class="mnav__link astro-rnuc3b65">Search Strategies</a></li></ul></details></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/snapshots/" class="mnav__link astro-rnuc3b65">Snapshots</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/prompts/" class="mnav__link astro-rnuc3b65">Prompts</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/hooks/" class="mnav__link astro-rnuc3b65">Hooks</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/hooks-events/" class="mnav__link astro-rnuc3b65">Hook events</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/middleware/" class="mnav__link astro-rnuc3b65">Middleware</a></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Context management</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/context-management/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/context-management/built-in-modes/" class="mnav__link astro-rnuc3b65">Built-in Modes</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/context-management/custom-strategies/" class="mnav__link astro-rnuc3b65">Custom Strategies</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/context-management/presets/" class="mnav__link astro-rnuc3b65">Strategy Presets</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/context-management/context-estimation/" class="mnav__link astro-rnuc3b65">Context Estimation</a></li></ul></details></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/retry-strategies/" class="mnav__link astro-rnuc3b65">Retry strategies</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/structured-output-behavior/" class="mnav__link astro-rnuc3b65">Structured output</a></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Interrupts</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/interrupts/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/interrupts-multi-agent/" class="mnav__link astro-rnuc3b65">Interrupts in Multi-Agent Systems</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Models</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/model-routing/" class="mnav__link astro-rnuc3b65">Model Routing</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/prompt-caching/" class="mnav__link astro-rnuc3b65">Prompt caching</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/amazon-bedrock/" class="mnav__link astro-rnuc3b65">Amazon Bedrock</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/amazon-bedrock-prompt-caching/" class="mnav__link astro-rnuc3b65">Bedrock Prompt Caching</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/amazon-nova/" class="mnav__link astro-rnuc3b65">Amazon Nova</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/anthropic/" class="mnav__link astro-rnuc3b65">Anthropic</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/google/" class="mnav__link astro-rnuc3b65">Google</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/litellm/" class="mnav__link astro-rnuc3b65">LiteLLM</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/llamacpp/" class="mnav__link astro-rnuc3b65">llama.cpp</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/llamaapi/" class="mnav__link astro-rnuc3b65">LlamaAPI</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/mistral/" class="mnav__link astro-rnuc3b65">MistralAI</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/ollama/" class="mnav__link astro-rnuc3b65">Ollama</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/openai/" class="mnav__link astro-rnuc3b65">OpenAI</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/openai-responses/" class="mnav__link astro-rnuc3b65">OpenAI Responses API</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/sagemaker/" class="mnav__link astro-rnuc3b65">SageMaker</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/vercel/" class="mnav__link astro-rnuc3b65">Vercel</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/writer/" class="mnav__link astro-rnuc3b65">Writer</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/model-providers/custom_model_provider/" class="mnav__link astro-rnuc3b65">Custom Providers</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Decision models</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/decision-models/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/decision-models/quickstart/" class="mnav__link astro-rnuc3b65">Quickstart</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/decision-models/questions/" class="mnav__link astro-rnuc3b65">Questions and answers</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/decision-models/agents/" class="mnav__link astro-rnuc3b65">Decisions in an agent</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/decision-models/observability/" class="mnav__link astro-rnuc3b65">Observability</a></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Models</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/decision-models/models/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/decision-models/models/llm/" class="mnav__link astro-rnuc3b65">LLM decision model</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/decision-models/models/typesafe/" class="mnav__link astro-rnuc3b65">TypeSafe Jev</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/decision-models/models/decisions-api/" class="mnav__link astro-rnuc3b65">Decisions API</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/decision-models/models/sagemaker/" class="mnav__link astro-rnuc3b65">Amazon SageMaker AI</a></li></ul></details></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Tools</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/tool-results/" class="mnav__link astro-rnuc3b65">Tool result format</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/mcp-transports/" class="mnav__link astro-rnuc3b65">MCP Transports</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/executors/" class="mnav__link astro-rnuc3b65">Executors</a></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Vended Tools</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/edit/" class="mnav__link astro-rnuc3b65">Edit</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/file-editor/" class="mnav__link astro-rnuc3b65">File editor</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/read/" class="mnav__link astro-rnuc3b65">Read</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/write/" class="mnav__link astro-rnuc3b65">Write</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/http-request/" class="mnav__link astro-rnuc3b65">HTTP request</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/notebook/" class="mnav__link astro-rnuc3b65">Notebook</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/shell/" class="mnav__link astro-rnuc3b65">Bash / shell</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/mcp-router/" class="mnav__link astro-rnuc3b65">MCP Router</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/sleep/" class="mnav__link astro-rnuc3b65">Sleep</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/handoff-to-user/" class="mnav__link astro-rnuc3b65">Handoff to User</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/stop/" class="mnav__link astro-rnuc3b65">Stop</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/web-fetch/" class="mnav__link astro-rnuc3b65">Web fetch</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/a2a-client/" class="mnav__link astro-rnuc3b65">A2A Client</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/python-repl/" class="mnav__link astro-rnuc3b65">Python REPL</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/subagent/" class="mnav__link astro-rnuc3b65">Subagent</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/swarm/" class="mnav__link astro-rnuc3b65">Swarm</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/tools/vended-tools/graph/" class="mnav__link astro-rnuc3b65">Graph</a></li></ul></details></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Memory</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/memory/test-memory-store/" class="mnav__link astro-rnuc3b65">Test Store</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/memory/file-memory-store/" class="mnav__link astro-rnuc3b65">File Store</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/memory/bedrock-knowledge-base/" class="mnav__link astro-rnuc3b65">Bedrock Knowledge Base</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Plugins</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/plugins/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/plugins/skills/" class="mnav__link astro-rnuc3b65">Skills</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/plugins/context-offloader/" class="mnav__link astro-rnuc3b65">Context Offloader</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/plugins/context-injector/" class="mnav__link astro-rnuc3b65">Context Injector</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/plugins/todos/" class="mnav__link astro-rnuc3b65">Todos</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/plugins/goal-loop/" class="mnav__link astro-rnuc3b65">GoalLoop</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/plugins/genai-prices-estimator/" class="mnav__link astro-rnuc3b65">GenAI Prices Estimator</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/plugins/custom-plugins/" class="mnav__link astro-rnuc3b65">Build a custom plugin</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Interventions</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/interventions/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/interventions/human-in-the-loop/" class="mnav__link astro-rnuc3b65">Human in the loop</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/interventions/cedar-authorization/" class="mnav__link astro-rnuc3b65">Cedar Authorization</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/interventions/dogwood-authorization/" class="mnav__link astro-rnuc3b65">Dogwood Authorization</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/interventions/steering/" class="mnav__link astro-rnuc3b65">Steering</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Sandbox</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/sandbox/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/sandbox/available-sandboxes/" class="mnav__link astro-rnuc3b65">Available Sandboxes</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/sandbox/custom-sandbox/" class="mnav__link astro-rnuc3b65">Building a Custom Sandbox</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Multi-agent</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/multi-agent/agent-to-agent/" class="mnav__link astro-rnuc3b65">Agent2Agent (A2A)</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/multi-agent/a2a-server-configuration/" class="mnav__link astro-rnuc3b65">A2A server configuration</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/multi-agent/agents-as-tools/" class="mnav__link astro-rnuc3b65">Agents as Tools</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/multi-agent/swarm/" class="mnav__link astro-rnuc3b65">Swarm</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/multi-agent/graph/" class="mnav__link astro-rnuc3b65">Graph</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/multi-agent/graph-components/" class="mnav__link astro-rnuc3b65">Graph components</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/multi-agent/workflow/" class="mnav__link astro-rnuc3b65">Workflow</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Streaming</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/streaming/async-iterators/" class="mnav__link astro-rnuc3b65">Async Iterators</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/streaming/callback-handlers/" class="mnav__link astro-rnuc3b65">Callback Handlers</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/streaming/events/" class="mnav__link astro-rnuc3b65">Event types</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Voice</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/quickstart/" class="mnav__link astro-rnuc3b65">Quickstart</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/agent/" class="mnav__link astro-rnuc3b65">BidiAgent</a></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Models</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/models/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/models/bedrock/" class="mnav__link astro-rnuc3b65">Bedrock Nova Sonic</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/models/google/" class="mnav__link astro-rnuc3b65">Google Gemini Live</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/models/openai/realtime/" class="mnav__link astro-rnuc3b65">OpenAI Realtime</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/models/openai/live/" class="mnav__link astro-rnuc3b65">OpenAI Live</a></li></ul></details></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/tools/" class="mnav__link astro-rnuc3b65">Tools</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/io/" class="mnav__link astro-rnuc3b65">I/O</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/content/" class="mnav__link astro-rnuc3b65">Input Content</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/events/" class="mnav__link astro-rnuc3b65">Stream Events</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/hooks/" class="mnav__link astro-rnuc3b65">Hooks</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/session-management/" class="mnav__link astro-rnuc3b65">Session Management</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/interrupts/" class="mnav__link astro-rnuc3b65">Interrupts</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/bidi/observability/" class="mnav__link astro-rnuc3b65">Observability</a></li></ul></details></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/agents/conversation-management/" class="mnav__link astro-rnuc3b65">Conversation management</a></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Experimental</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/experimental/agent-config/" class="mnav__link astro-rnuc3b65">AgentConfig</a></li></ul></details></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Reference</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/sdk/versioning-and-support/" class="mnav__link astro-rnuc3b65">Versioning &amp; Support</a></li><li class="astro-rnuc3b65"><a href="/docs/api/python/" class="mnav__link astro-rnuc3b65">API reference</a></li><li class="astro-rnuc3b65"><a href="/docs/api/typescript/" class="mnav__link astro-rnuc3b65">API reference</a></li></ul></li></ul></div></div><div class="mobile-menu__cat astro-yxete6jp" data-mobile-cat><div class="mobile-menu__cat-head astro-yxete6jp"><a class="mobile-menu__cat-link astro-yxete6jp" href="/box/"><span class="mobile-menu__cat-title astro-yxete6jp">/box</span><span class="mobile-menu__cat-desc astro-yxete6jp">Run AI agents in a sandbox with controlled access.</span></a><button type="button" class="mobile-menu__cat-expand astro-yxete6jp" data-cat-toggle aria-expanded="false" aria-label="Show /box pages"><svg viewBox="0 0 12 8" width="12" height="8" aria-hidden="true" class="astro-yxete6jp"><path d="M1 1.5L6 6.5L11 1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" class="astro-yxete6jp"></path></svg></button></div><div class="mobile-menu__pages astro-yxete6jp"><ul class="mnav astro-rnuc3b65" role="list"><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Get started</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/quickstart/" class="mnav__link astro-rnuc3b65">Get started with Box</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/install/" class="mnav__link astro-rnuc3b65">Install Box</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/how-box-works/" class="mnav__link astro-rnuc3b65">How Box works</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Use Box</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/profiles/" class="mnav__link astro-rnuc3b65">Profiles</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/packs/" class="mnav__link astro-rnuc3b65">Packs</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/policies/" class="mnav__link astro-rnuc3b65">Policies</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/starters/" class="mnav__link astro-rnuc3b65">Starters</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/plugins/" class="mnav__link astro-rnuc3b65">Box plugins</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Help</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/troubleshooting/" class="mnav__link astro-rnuc3b65">Troubleshooting</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/limitations/" class="mnav__link astro-rnuc3b65">What a box does not protect</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/file-rules/" class="mnav__link astro-rnuc3b65">Where file rules apply</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Reference</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/cli/" class="mnav__link astro-rnuc3b65">box command reference</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/profiles/" class="mnav__link astro-rnuc3b65">Profile reference</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/packs/" class="mnav__link astro-rnuc3b65">Pack reference</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/starters/" class="mnav__link astro-rnuc3b65">Starter reference</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/plugins/" class="mnav__link astro-rnuc3b65">Plugin reference</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/policies/" class="mnav__link astro-rnuc3b65">Policy reference</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/box-config/" class="mnav__link astro-rnuc3b65">Box config reference</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/files/" class="mnav__link astro-rnuc3b65">Where Box keeps its files</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/policy/" class="mnav__link astro-rnuc3b65">Policy language</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/policy-actions/" class="mnav__link astro-rnuc3b65">Policy action reference</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/shell/" class="mnav__link astro-rnuc3b65">Strands Shell reference</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/python/" class="mnav__link astro-rnuc3b65">Python in a box</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/macos-requirements/" class="mnav__link astro-rnuc3b65">macOS requirements</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/linux-requirements/" class="mnav__link astro-rnuc3b65">Linux requirements</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Box Core</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/core/quickstart/" class="mnav__link astro-rnuc3b65">Run an agent with box.toml</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/configuration/" class="mnav__link astro-rnuc3b65">box.toml configuration reference</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/security/" class="mnav__link astro-rnuc3b65">Security: what Box governs, and what you own</a></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Guides</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/guides/write-a-policy/" class="mnav__link astro-rnuc3b65">Write a policy and read what it decided</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/guides/write-shell-policy/" class="mnav__link astro-rnuc3b65">Write policy for shell commands</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/guides/add-an-mcp-server/" class="mnav__link astro-rnuc3b65">MCP server configuration</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/guides/write-mcp-policy/" class="mnav__link astro-rnuc3b65">Write policy for an MCP server</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/guides/network-and-credentials/" class="mnav__link astro-rnuc3b65">Egress credential configuration</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/guides/record-telemetry/" class="mnav__link astro-rnuc3b65">Telemetry</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/guides/tool-grammars/" class="mnav__link astro-rnuc3b65">Tool grammars</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/security/native-filesystem-policy/" class="mnav__link astro-rnuc3b65">Experimental native filesystem policy</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Deploy</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/guides/run-strands-harness/" class="mnav__link astro-rnuc3b65">Run a Strands Agents SDK agent in a box</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/guides/strands-cli-telemetry/" class="mnav__link astro-rnuc3b65">Collect the Strands CLI&#39;s traces and metrics</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/guides/deploy-to-eks/" class="mnav__link astro-rnuc3b65">Run Box on Amazon EKS</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/guides/deploy-to-agentcore-runtime/" class="mnav__link astro-rnuc3b65">Run a Box shipment agent on AgentCore Runtime</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/guides/deploy-to-google-cloud/" class="mnav__link astro-rnuc3b65">Run Strands Box on Google Cloud</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/box/reference/cloud-deployments/" class="mnav__link astro-rnuc3b65">Cloud deployment profiles</a></li></ul></details></li></ul></li></ul></div></div><div class="mobile-menu__cat astro-yxete6jp" data-mobile-cat><div class="mobile-menu__cat-head astro-yxete6jp"><a class="mobile-menu__cat-link astro-yxete6jp" href="/docs/user-guide/shell/"><span class="mobile-menu__cat-title astro-yxete6jp">/shell</span><span class="mobile-menu__cat-desc astro-yxete6jp">A virtual shell designed for AI agents to use safely.</span></a><button type="button" class="mobile-menu__cat-expand astro-yxete6jp" data-cat-toggle aria-expanded="false" aria-label="Show /shell pages"><svg viewBox="0 0 12 8" width="12" height="8" aria-hidden="true" class="astro-yxete6jp"><path d="M1 1.5L6 6.5L11 1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" class="astro-yxete6jp"></path></svg></button></div><div class="mobile-menu__pages astro-yxete6jp"><ul class="mnav astro-rnuc3b65" role="list"><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Get started</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/shell/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/shell/quickstart/" class="mnav__link astro-rnuc3b65">Quickstart</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/shell/how-it-works/" class="mnav__link astro-rnuc3b65">How it works</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Guides</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/shell/configuration/" class="mnav__link astro-rnuc3b65">Configure the sandbox</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/shell/mcp-server/" class="mnav__link astro-rnuc3b65">Run the MCP server</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/shell/inspecting-configuration/" class="mnav__link astro-rnuc3b65">Inspect the configuration</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Components</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/shell/commands/" class="mnav__link astro-rnuc3b65">Commands</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/shell/shell-language/" class="mnav__link astro-rnuc3b65">Shell language and builtins</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/shell/lua-scripting/" class="mnav__link astro-rnuc3b65">Lua scripting</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Security</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/shell/security/" class="mnav__link astro-rnuc3b65">Security model</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Reference</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/shell/reference/" class="mnav__link astro-rnuc3b65">Reference</a></li></ul></li></ul></div></div><div class="mobile-menu__cat astro-yxete6jp" data-mobile-cat><div class="mobile-menu__cat-head astro-yxete6jp"><a class="mobile-menu__cat-link astro-yxete6jp" href="/docs/user-guide/evals-sdk/"><span class="mobile-menu__cat-title astro-yxete6jp">/evals</span><span class="mobile-menu__cat-desc astro-yxete6jp">Validate your agent before you ship.</span></a><button type="button" class="mobile-menu__cat-expand astro-yxete6jp" data-cat-toggle aria-expanded="false" aria-label="Show /evals pages"><svg viewBox="0 0 12 8" width="12" height="8" aria-hidden="true" class="astro-yxete6jp"><path d="M1 1.5L6 6.5L11 1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" class="astro-yxete6jp"></path></svg></button></div><div class="mobile-menu__pages astro-yxete6jp"><ul class="mnav astro-rnuc3b65" role="list"><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Get started</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/quickstart/" class="mnav__link astro-rnuc3b65">Quickstart</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/how-evaluation-works/" class="mnav__link astro-rnuc3b65">How evaluation works</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/eval-sop/" class="mnav__link astro-rnuc3b65">Evaluate with AI</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Build guides</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/experiment_generator/" class="mnav__link astro-rnuc3b65">Generate test cases</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/topic_planning/" class="mnav__link astro-rnuc3b65">Plan topic coverage</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Run guides</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/how-to/eval_task/" class="mnav__link astro-rnuc3b65">Task decorator</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/how-to/result_caching/" class="mnav__link astro-rnuc3b65">Result caching</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/how-to/experiment_management/" class="mnav__link astro-rnuc3b65">Experiment management</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/how-to/serialization/" class="mnav__link astro-rnuc3b65">Serialization</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/how-to/trace_providers/" class="mnav__link astro-rnuc3b65">Evaluating remote traces</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/how-to/agentcore_evaluation_dashboard/" class="mnav__link astro-rnuc3b65">AgentCore evaluations</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Components</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Evaluators</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Quality</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/output_evaluator/" class="mnav__link astro-rnuc3b65">Output</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/trajectory_evaluator/" class="mnav__link astro-rnuc3b65">Trajectory</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/interactions_evaluator/" class="mnav__link astro-rnuc3b65">Interactions</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/helpfulness_evaluator/" class="mnav__link astro-rnuc3b65">Helpfulness</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/faithfulness_evaluator/" class="mnav__link astro-rnuc3b65">Faithfulness</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/correctness_evaluator/" class="mnav__link astro-rnuc3b65">Correctness</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/coherence_evaluator/" class="mnav__link astro-rnuc3b65">Coherence</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/conciseness_evaluator/" class="mnav__link astro-rnuc3b65">Conciseness</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/response_relevance_evaluator/" class="mnav__link astro-rnuc3b65">Response relevance</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Safety</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/harmfulness_evaluator/" class="mnav__link astro-rnuc3b65">Harmfulness</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/refusal_evaluator/" class="mnav__link astro-rnuc3b65">Refusal</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/stereotyping_evaluator/" class="mnav__link astro-rnuc3b65">Stereotyping</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Multimodal</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/multimodal_output_evaluator/" class="mnav__link astro-rnuc3b65">Multimodal output</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/multimodal_overall_quality_evaluator/" class="mnav__link astro-rnuc3b65">Multimodal overall quality</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/multimodal_correctness_evaluator/" class="mnav__link astro-rnuc3b65">Multimodal correctness</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/multimodal_faithfulness_evaluator/" class="mnav__link astro-rnuc3b65">Multimodal faithfulness</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/multimodal_instruction_following_evaluator/" class="mnav__link astro-rnuc3b65">Multimodal instruction following</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Agentic</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/instruction_following_evaluator/" class="mnav__link astro-rnuc3b65">Instruction following</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/goal_success_rate_evaluator/" class="mnav__link astro-rnuc3b65">Goal success rate</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/failure_communication_evaluator/" class="mnav__link astro-rnuc3b65">Failure communication</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/partial_completion_evaluator/" class="mnav__link astro-rnuc3b65">Partial completion</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/recovery_strategy_evaluator/" class="mnav__link astro-rnuc3b65">Recovery strategy</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/tool_selection_evaluator/" class="mnav__link astro-rnuc3b65">Tool selection accuracy</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/tool_parameter_evaluator/" class="mnav__link astro-rnuc3b65">Tool parameter accuracy</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Skill</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/skill_selection_accuracy_evaluator/" class="mnav__link astro-rnuc3b65">Skill selection accuracy</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/skill_instruction_following_evaluator/" class="mnav__link astro-rnuc3b65">Skill instruction following</a></li></ul></details></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/deterministic_evaluators/" class="mnav__link astro-rnuc3b65">Deterministic</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/structured_output_evaluator/" class="mnav__link astro-rnuc3b65">Structured output similarity</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/typed_rubric_evaluator/" class="mnav__link astro-rnuc3b65">Typed rubric</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/evaluators/custom_evaluator/" class="mnav__link astro-rnuc3b65">Custom</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Detectors</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/detectors/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/detectors/failure_detection/" class="mnav__link astro-rnuc3b65">Failure detection</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/detectors/root_cause_analysis/" class="mnav__link astro-rnuc3b65">Root cause analysis</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/detectors/diagnosis/" class="mnav__link astro-rnuc3b65">Session diagnosis</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Simulators</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/simulators/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/simulators/user_simulation/" class="mnav__link astro-rnuc3b65">User simulation</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/simulators/customize_user_simulation/" class="mnav__link astro-rnuc3b65">Customizing user simulation</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/simulators/tool_simulation/" class="mnav__link astro-rnuc3b65">Tool simulation</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">Red teaming</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/red-teaming/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/red-teaming/quickstart/" class="mnav__link astro-rnuc3b65">Quickstart</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/red-teaming/strategies/" class="mnav__link astro-rnuc3b65">Attack strategies</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/red-teaming/custom_cases/" class="mnav__link astro-rnuc3b65">Writing custom cases</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/red-teaming/custom_task/" class="mnav__link astro-rnuc3b65">Writing a custom task</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/red-teaming/evaluators/" class="mnav__link astro-rnuc3b65">Scoring attacks</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/red-teaming/reading_the_report/" class="mnav__link astro-rnuc3b65">Reading the report</a></li></ul></details></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/chaos_testing/" class="mnav__link astro-rnuc3b65">Chaos testing</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">CLI</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/cli/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/cli/run/" class="mnav__link astro-rnuc3b65">run</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/cli/generate/" class="mnav__link astro-rnuc3b65">generate</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/cli/diagnose/" class="mnav__link astro-rnuc3b65">diagnose &amp; fetch</a></li><li class="astro-rnuc3b65"><a href="/docs/user-guide/evals-sdk/cli/report/" class="mnav__link astro-rnuc3b65">report &amp; validate</a></li></ul></li></ul></div></div><div class="mobile-menu__cat astro-yxete6jp" data-mobile-cat><div class="mobile-menu__cat-head astro-yxete6jp"><a class="mobile-menu__cat-link astro-yxete6jp" href="/decider/"><span class="mobile-menu__cat-title astro-yxete6jp">/decider</span><span class="mobile-menu__cat-desc astro-yxete6jp">Route, classify, and score with confidence.</span></a><button type="button" class="mobile-menu__cat-expand astro-yxete6jp" data-cat-toggle aria-expanded="false" aria-label="Show /decider pages"><svg viewBox="0 0 12 8" width="12" height="8" aria-hidden="true" class="astro-yxete6jp"><path d="M1 1.5L6 6.5L11 1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" class="astro-yxete6jp"></path></svg></button></div><div class="mobile-menu__pages astro-yxete6jp"><ul class="mnav astro-rnuc3b65" role="list"><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Get started</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/overview/" class="mnav__link astro-rnuc3b65">Overview</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/quickstart/" class="mnav__link astro-rnuc3b65">Quickstart</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/introduction/" class="mnav__link astro-rnuc3b65">Introduction</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Models</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/inference/" class="mnav__link astro-rnuc3b65">Inference server</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/models/" class="mnav__link astro-rnuc3b65">Models</a></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">V2 Models</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/models/e2b-gemma4-v2/" class="mnav__link astro-rnuc3b65">E2B-gemma4 v2</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/models/e4b-gemma4-v2/" class="mnav__link astro-rnuc3b65">E4B-gemma4 v2</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/models/12b-gemma4-v2/" class="mnav__link astro-rnuc3b65">12B-gemma4 v2</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/models/26b-a4b-gemma4-v2/" class="mnav__link astro-rnuc3b65">26B-A4B-gemma4 v2</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/models/31b-gemma4-v2/" class="mnav__link astro-rnuc3b65">31B-gemma4 v2</a></li></ul></details></li><li class="astro-rnuc3b65"><details class="mnav__group astro-rnuc3b65"><summary class="mnav__link mnav__summary astro-rnuc3b65">V1 Models</summary><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/models/2b-qwen3-5/" class="mnav__link astro-rnuc3b65">2B-qwen3.5</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/models/e2b-gemma4/" class="mnav__link astro-rnuc3b65">E2B-gemma4</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/models/e4b-gemma4/" class="mnav__link astro-rnuc3b65">E4B-gemma4</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/models/12b-gemma4/" class="mnav__link astro-rnuc3b65">12B-gemma4</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/models/26b-a4b-gemma4/" class="mnav__link astro-rnuc3b65">26B-A4B-gemma4</a></li></ul></details></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Deployment</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/deployment/local/" class="mnav__link astro-rnuc3b65">Local</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/deployment/sagemaker/" class="mnav__link astro-rnuc3b65">SageMaker</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/deployment/lambda/" class="mnav__link astro-rnuc3b65">Lambda</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/deployment/terraform/" class="mnav__link astro-rnuc3b65">Terraform</a></li></ul></li><li class="mnav__band astro-rnuc3b65"><span class="mnav__band-label astro-rnuc3b65">Training</span><ul class="mnav astro-rnuc3b65" role="list"><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/understanding/" class="mnav__link astro-rnuc3b65">Understanding Strands Decider</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/training/" class="mnav__link astro-rnuc3b65">Train a model</a></li><li class="astro-rnuc3b65"><a href="/docs/labs/strands-decider/data-card/" class="mnav__link astro-rnuc3b65">Data card</a></li></ul></li></ul></div></div><a class="mobile-menu__cat mobile-menu__cat--link astro-yxete6jp" href="/docs/labs/"><span class="mobile-menu__cat-title astro-yxete6jp">/labs</span><span class="mobile-menu__cat-desc astro-yxete6jp">Experimental projects pushing the boundaries of what agents can do.</span></a></div></div><div class="mobile-menu__section astro-yxete6jp" data-mobile-section><button type="button" class="mobile-menu__section-title astro-yxete6jp" data-section-toggle aria-expanded="false">Learn</button><div class="mobile-menu__section-body astro-yxete6jp"><a class="mobile-menu__cat mobile-menu__cat--link astro-yxete6jp" href="/docs/learning/how-agents-really-work/"><span class="mobile-menu__cat-title astro-yxete6jp">Courses</span><span class="mobile-menu__cat-desc astro-yxete6jp">Guided lessons from your first agent to multi-agent systems.</span></a><a class="mobile-menu__cat mobile-menu__cat--link astro-yxete6jp" href="/examples/"><span class="mobile-menu__cat-title astro-yxete6jp">Examples</span><span class="mobile-menu__cat-desc astro-yxete6jp">Runnable samples you can drop into your own project.</span></a></div></div><a href="/integrations/" class="mobile-menu__section-title astro-yxete6jp">Integrations</a><a href="/docs/contribute/" class="mobile-menu__section-title astro-yxete6jp">Contribute</a><a href="/blog/" class="mobile-menu__section-title mobile-menu__blog astro-yxete6jp">Blog</a><!-- Controls at the foot of the menu. The desktop right cluster (language,
+         theme, socials) is hidden on mobile, so surface all of it here — as
+         labeled text rows rather than bare icon buttons, to match the menu. --><div class="mobile-menu__controls astro-yxete6jp"><div class="mobile-menu__control-lang astro-yxete6jp"><language-toggle class="language-toggle astro-ra2rg4ph" role="radiogroup" aria-label="Preferred language"><button class="lang-option astro-ra2rg4ph" role="radio" aria-checked="false" aria-label="TypeScript" data-lang="TypeScript"><span class="lang-icon astro-ra2rg4ph"><svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">
+  <rect x="1.25" y="1.25" width="29.5" height="29.5" rx="6" fill="none" stroke="currentColor" stroke-width="2" />
+  <text x="16.5" y="22.5" text-anchor="middle" font-family="ui-monospace, 'JetBrains Mono', monospace" font-weight="700" font-size="14" letter-spacing="-0.5" fill="currentColor">TS</text>
+</svg>
+</span><span class="lang-label astro-ra2rg4ph">TypeScript</span></button><button class="lang-option astro-ra2rg4ph" role="radio" aria-checked="false" aria-label="Python" data-lang="Python"><span class="lang-icon astro-ra2rg4ph"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">
+  <path fill="currentColor" d="M11.914 0C5.82 0 6.2 2.656 6.2 2.656l.007 2.752h5.814v.826H3.9S0 5.789 0 11.969c0 6.18 3.403 5.96 3.403 5.96h2.03v-2.867s-.109-3.42 3.35-3.42h5.766s3.24.052 3.24-3.148V3.202S18.28 0 11.914 0zM8.708 1.85a1.06 1.06 0 110 2.12 1.06 1.06 0 010-2.12z" />
+  <path fill="currentColor" d="M12.086 24c6.094 0 5.714-2.656 5.714-2.656l-.007-2.752H11.98v-.826h8.121S24 18.211 24 12.031c0-6.18-3.403-5.96-3.403-5.96h-2.03v2.867s.109 3.42-3.35 3.42H9.451s-3.24-.052-3.24 3.148v5.292S5.72 24 12.086 24zm3.206-1.85a1.06 1.06 0 110-2.12 1.06 1.06 0 010 2.12z" />
+</svg>
+</span><span class="lang-label astro-ra2rg4ph">Python</span></button></language-toggle><script>(function(){const STORAGE_KEY = "starlight-synced-tabs__jarkqt";
+const DEFAULT_LANG = "TypeScript";
+const PAGE_LANGUAGE = undefined;
+
+  (function () {
+    // Idempotency guard: multiple instances on one page, run logic once.
+    if (window.__strandsLanguageToggleInit) return;
+    window.__strandsLanguageToggleInit = true;
+    // STORAGE_KEY + DEFAULT_LANG injected via define:vars from language-preference.ts.
+
+    function getPreference() {
+      try {
+        return localStorage.getItem(STORAGE_KEY) || DEFAULT_LANG;
+      } catch (e) {
+        if (typeof console !== 'undefined') console.debug('[LanguageToggle] localStorage read error:', e);
+        return DEFAULT_LANG;
+      }
+    }
+
+    function setPreference(lang) {
+      try {
+        localStorage.setItem(STORAGE_KEY, lang);
+      } catch (e) {
+        if (typeof console !== 'undefined') console.debug('[LanguageToggle] localStorage write error:', e);
+      }
+    }
+
+    /** Sync Starlight tab groups by clicking the matching tab. */
+    function syncStarlightTabs(lang) {
+      document.querySelectorAll('starlight-tabs').forEach(function (tabGroup) {
+        var tabs = tabGroup.querySelectorAll('[role="tab"]');
+        tabs.forEach(function (tab) {
+          if (tab.textContent.trim() === lang && tab.getAttribute('aria-selected') !== 'true') {
+            tab.click();
+          }
+        });
+      });
+    }
+
+    /** Sample routes win; other single-language pages resolve to their available language. */
+    function effectiveLanguage(lang) {
+      if (PAGE_LANGUAGE) return PAGE_LANGUAGE;
+      var enabled = Array.prototype.filter.call(
+        document.querySelectorAll('language-toggle .lang-option'),
+        function (btn) { return !btn.disabled; }
+      );
+      // No toggle rendered on this page: the preference stands.
+      if (enabled.length === 0) return lang;
+      var match = enabled.some(function (btn) { return btn.dataset.lang === lang; });
+      return match ? lang : enabled[0].dataset.lang;
+    }
+
+    function updateToggle(lang) {
+      // Exactly one radio is always checked: `lang` is already the effective
+      // language, so it always names an enabled button when one exists.
+      document.querySelectorAll('language-toggle .lang-option').forEach(function (btn) {
+        if (btn.disabled) return;
+        btn.setAttribute('aria-checked', btn.dataset.lang === lang ? 'true' : 'false');
+      });
+    }
+
+    /** Full UI sync: toggle state + inline tabs. */
+    function syncAll(lang) {
+      var effective = effectiveLanguage(lang);
+      updateToggle(effective);
+      syncStarlightTabs(effective);
+    }
+
+    // Guard against feedback loops.
+    var applying = false;
+
+    function applyLanguage(lang, notify) {
+      if (applying) return;
+      applying = true;
+      setPreference(lang);
+      syncAll(lang);
+      if (notify) {
+        window.dispatchEvent(new CustomEvent('lang-change', { detail: lang }));
+        window.dispatchEvent(new CustomEvent('lang-preference-changed', { detail: { lang: lang } }));
+      }
+      applying = false;
+    }
+
+    var current = PAGE_LANGUAGE || getPreference();
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { applyLanguage(current, false); });
+    } else {
+      applyLanguage(current, false);
+    }
+
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('.lang-option');
+      if (!btn || btn.disabled) return;
+      var lang = btn.dataset.lang;
+      if (!lang) return;
+      applyLanguage(lang, true);
+
+      var switchHref = btn.dataset.switchHref;
+      if (switchHref) {
+        window.location.href = switchHref;
+      }
+    });
+
+    window.addEventListener('storage', function (e) {
+      if (e.key === STORAGE_KEY && e.newValue) {
+        applyLanguage(e.newValue, false);
+      }
+    });
+
+    window.addEventListener('lang-change', function (e) {
+      var lang = e && e.detail;
+      if (lang) applyLanguage(lang, false);
+    });
+    window.addEventListener('lang-preference-changed', function (e) {
+      var lang = e && e.detail && e.detail.lang;
+      if (lang) applyLanguage(lang, false);
+    });
+  })();
+})();</script></div><button type="button" class="mobile-menu__control-item astro-yxete6jp" data-nav-search><span class="mobile-menu__control-icon astro-yxete6jp" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="astro-yxete6jp"><circle cx="11" cy="11" r="7" class="astro-yxete6jp"></circle><path d="M21 21l-4.3-4.3" stroke-linecap="round" class="astro-yxete6jp"></path></svg></span><span class="astro-yxete6jp">Search</span></button><button type="button" class="mobile-menu__control-item astro-yxete6jp" data-theme-toggle aria-label="Toggle color theme"><span class="mobile-menu__control-icon astro-yxete6jp" aria-hidden="true"><span class="strands-nav__theme-icon strands-nav__theme-icon--sun astro-yxete6jp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <circle cx="12" cy="12" r="4" />
+  <path d="M12 2v2" />
+  <path d="M12 20v2" />
+  <path d="m4.93 4.93 1.41 1.41" />
+  <path d="m17.66 17.66 1.41 1.41" />
+  <path d="M2 12h2" />
+  <path d="M20 12h2" />
+  <path d="m6.34 17.66-1.41 1.41" />
+  <path d="m19.07 4.93-1.41 1.41" />
+</svg>
+</span><span class="strands-nav__theme-icon strands-nav__theme-icon--moon astro-yxete6jp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+</svg>
+</span></span><span class="astro-yxete6jp">Theme</span></button><a href="https://github.com/strands-agents" class="mobile-menu__control-item astro-yxete6jp" target="_blank" rel="noopener"><span class="mobile-menu__control-icon astro-yxete6jp" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 31.0442 29.9737" fill="none" aria-hidden="true">
+  <path fill="currentColor" d="M13.1271 21.9088C9.12527 21.4253 6.30585 18.5545 6.30585 14.8376C6.30585 13.3266 6.85154 11.6948 7.76104 10.6069C7.36691 9.60966 7.42754 7.49433 7.88231 6.61799C9.09497 6.46688 10.7321 7.1015 11.7022 7.97783C12.8542 7.61521 14.0669 7.43389 15.5524 7.43389C17.0379 7.43389 18.2506 7.61521 19.342 7.94763C20.2818 7.1015 21.9492 6.46688 23.1619 6.61799C23.5863 7.43389 23.6469 9.54923 23.2528 10.5767C24.2229 11.725 24.7383 13.2662 24.7383 14.8376C24.7383 18.5545 21.9189 21.3649 17.8564 21.8786C18.8872 22.5434 19.5845 23.9939 19.5845 25.656V28.7989C19.5845 29.7053 20.3424 30.2191 21.2519 29.8564C26.7392 27.7712 31.0442 22.3017 31.0442 15.5326C31.0442 6.98062 24.0714 0 15.4917 0C6.91218 0 0 6.98059 0 15.5326C0 22.2412 4.27462 27.8015 10.0348 29.8867C10.8533 30.1888 11.6416 29.645 11.6416 28.8292V26.4115C11.2171 26.5928 10.6714 26.7137 10.1864 26.7137C8.18547 26.7137 7.00311 25.6258 6.15425 23.6011C5.82078 22.7852 5.45698 22.3017 4.75968 22.211C4.39589 22.1808 4.27462 22.0297 4.27462 21.8484C4.27462 21.4858 4.88095 21.2138 5.48728 21.2138C6.36648 21.2138 7.12438 21.7577 7.91261 22.8759C8.51894 23.7522 9.1556 24.1451 9.9135 24.1451C10.6714 24.1451 11.1565 23.8731 11.8538 23.178C12.3692 22.6643 12.7633 22.211 13.1271 21.9088Z"/>
+</svg>
+</span><span class="astro-yxete6jp">GitHub</span></a><a href="https://discord.gg/strands" class="mobile-menu__control-item astro-yxete6jp" target="_blank" rel="noopener"><span class="mobile-menu__control-icon astro-yxete6jp" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 39.286 29.8956" fill="none" aria-hidden="true">
+  <path fill="currentColor" d="M35.1149 5.76135C33.8847 3.50928 31.842 1.80737 29.4003 1.00026C27.9512 0.477106 26.441 0.140955 24.9064 0L23.9029 2.04384C20.9179 1.58746 17.8805 1.58746 14.8954 2.04384C14.5888 1.34561 14.2466 0.663443 13.8702 0C12.3848 0.161461 10.9211 0.490287 9.50871 0.978604C7.05026 1.78951 4.99741 3.50894 3.77229 5.78301C0.53898 11.6107 -0.780368 18.302 -0.00046875 24.916C2.9722 27.1183 6.29851 28.8015 9.83661 29.8937C10.8389 28.9221 11.5876 27.7209 12.0174 26.3947C10.9507 25.997 9.92352 25.5087 8.9418 24.9377C8.766 24.6974 9.44351 24.3076 9.66081 24.2406C12.7633 25.69 16.1477 26.4413 19.574 26.4413C22.9994 26.4413 26.3841 25.69 29.4869 24.2406C29.6844 24.2406 30.3817 24.6974 30.2059 24.9377C29.3348 25.6111 27.393 26.0895 27.0651 26.568C27.6367 27.7714 28.3712 28.8911 29.2479 29.8956C32.7922 28.802 36.125 27.1176 39.1047 24.914C39.8155 18.271 38.4201 11.573 35.1146 5.76135ZM12.9534 20.2632C11.9392 20.2513 10.9711 19.8397 10.2604 19.1184C9.5498 18.3971 9.15436 17.4247 9.16072 16.4138C9.17764 15.4182 9.58328 14.4684 10.2914 13.7662C10.9996 13.0639 11.9545 12.6646 12.9534 12.6529C13.4595 12.6552 13.9601 12.7574 14.4265 12.9534C14.8928 13.1494 15.3156 13.4355 15.6706 13.7952C16.0255 14.1548 16.3055 14.5809 16.4945 15.0489C16.6835 15.5169 16.7777 16.0176 16.7717 16.5221C16.7496 17.5186 16.3381 18.4672 15.625 19.1659C14.9119 19.8646 13.9533 20.2583 12.9534 20.2632ZM26.0399 20.2632C25.0254 20.2575 24.0545 19.8516 23.3393 19.1343C22.6242 18.417 22.223 17.4467 22.2236 16.4354C22.228 15.9357 22.3311 15.4418 22.527 14.9818C22.7229 14.5218 23.0078 14.1048 23.3654 13.7546C23.723 13.4044 24.1463 13.1278 24.6111 12.9406C25.0759 12.7535 25.5732 12.6594 26.0745 12.6638C26.5758 12.6682 27.0713 12.7709 27.5328 12.9662C27.9942 13.1615 28.4126 13.4455 28.764 13.8019C29.1153 14.1584 29.3927 14.5803 29.5805 15.0437C29.7683 15.507 29.8626 16.0027 29.8582 16.5024C29.8411 17.5003 29.4312 18.4516 28.7170 19.1511C28.0027 19.8506 27.0412 20.2422 26.0399 20.2415V20.2632Z"/>
+</svg>
+</span><span class="astro-yxete6jp">Discord</span></a></div></div></nav><div class="frog-egg astro-yxete6jp" data-frog-egg aria-hidden="true"><div class="frog-egg__hop astro-yxete6jp"><svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M32 15.2402H30.48V25.9102H32V15.2402Z" fill="currentColor"/>
+<path d="M30.4802 25.9102H28.9502V27.4302H30.4802V25.9102Z" fill="currentColor"/>
+<path d="M30.4802 12.1899H28.9502V15.2399H30.4802V12.1899Z" fill="currentColor"/>
+<path d="M28.9502 27.4302H27.4302V28.9602H28.9502V27.4302Z" fill="currentColor"/>
+<path d="M28.9502 9.1499H27.4302V12.1899H28.9502V9.1499Z" fill="currentColor"/>
+<path d="M27.4302 28.96H25.9102V30.48H27.4302V28.96Z" fill="currentColor"/>
+<path d="M27.4302 7.62012H25.9102V9.15012H27.4302V7.62012Z" fill="currentColor"/>
+<path d="M25.9099 3.0498H24.3799V7.6198H25.9099V3.0498Z" fill="currentColor"/>
+<path d="M16.7601 30.4802V28.9602H19.8101V27.4302H15.2401V28.9602H7.62012V30.4802H15.2401V32.0002H25.9101V30.4802H16.7601Z" fill="currentColor"/>
+<path d="M24.3799 1.52979H22.8599V3.04979H24.3799V1.52979Z" fill="currentColor"/>
+<path d="M22.8601 15.2402H19.8101V16.7602H22.8601V15.2402Z" fill="currentColor"/>
+<path d="M21.3401 25.9102H19.8101V27.4302H21.3401V25.9102Z" fill="currentColor"/>
+<path d="M22.86 0H18.29V1.53H22.86V0Z" fill="currentColor"/>
+<path d="M19.81 24.3799H18.29V25.9099H19.81V24.3799Z" fill="currentColor"/>
+<path d="M19.81 16.7598H18.29V18.2898H19.81V16.7598Z" fill="currentColor"/>
+<path d="M21.34 3.0498H18.29V6.0998H21.34V3.0498Z" fill="currentColor"/>
+<path d="M18.2898 18.29H16.7598V24.38H18.2898V18.29Z" fill="currentColor"/>
+<path d="M18.2898 1.52979H16.7598V3.04979H18.2898V1.52979Z" fill="currentColor"/>
+<path d="M16.7602 3.0498H15.2402V6.0998H16.7602V3.0498Z" fill="currentColor"/>
+<path d="M15.2402 25.9102H13.7202V27.4302H15.2402V25.9102Z" fill="currentColor"/>
+<path d="M13.7199 21.3398H12.1899V25.9098H13.7199V21.3398Z" fill="currentColor"/>
+<path d="M15.2399 6.1001H12.1899V7.6201H15.2399V6.1001Z" fill="currentColor"/>
+<path d="M12.1899 19.8101H10.6699V21.3401H12.1899V19.8101Z" fill="currentColor"/>
+<path d="M12.1899 9.1499H10.6699V10.6699H12.1899V9.1499Z" fill="currentColor"/>
+<path d="M12.1899 3.0498H10.6699V6.0998H12.1899V3.0498Z" fill="currentColor"/>
+<path d="M10.6699 1.52979H9.1499V3.04979H10.6699V1.52979Z" fill="currentColor"/>
+<path d="M10.6701 10.6699H6.1001V12.1899H10.6701V10.6699Z" fill="currentColor"/>
+<path d="M7.6201 27.4302H6.1001V28.9602H7.6201V27.4302Z" fill="currentColor"/>
+<path d="M9.14982 0H4.56982V1.53H9.14982V0Z" fill="currentColor"/>
+<path d="M1.53 30.48V28.96H0V32H7.62V30.48H1.53Z" fill="currentColor"/>
+<path d="M10.6698 18.29H3.0498V19.81H10.6698V18.29Z" fill="currentColor"/>
+<path d="M7.61982 3.0498H4.56982V6.0998H7.61982V3.0498Z" fill="currentColor"/>
+<path d="M4.56979 27.4302H6.09978V25.9102H3.04979V27.4302H1.52979V28.9602H4.56979V27.4302Z" fill="currentColor"/>
+<path d="M4.5698 7.62012H3.0498V10.6701H4.5698V7.62012Z" fill="currentColor"/>
+<path d="M4.5698 1.52979H3.0498V3.04979H4.5698V1.52979Z" fill="currentColor"/>
+<path d="M3.04979 24.3799H1.52979V25.9099H3.04979V24.3799Z" fill="currentColor"/>
+<path d="M3.04979 10.6699H1.52979V13.7199H3.04979V10.6699Z" fill="currentColor"/>
+<path d="M3.04979 3.0498H1.52979V7.6198H3.04979V3.0498Z" fill="currentColor"/>
+<path d="M3.05 21.3402V19.8102H1.53V13.7202H0V24.3802H1.53V21.3402H3.05Z" fill="currentColor"/>
+</svg>
+</div></div><script type="module" src="/_astro/Navigation.astro_astro_type_script_index_0_lang.Dn4qUbsZ.js"></script><div class="site-search-host"><site-search class=" astro-b5kgnn7o" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-b5kgnn7o"><svg aria-hidden="true" class="astro-b5kgnn7o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-b5kgnn7o" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-b5kgnn7o" style="display: none;"><kbd class="astro-b5kgnn7o">Ctrl</kbd><kbd class="astro-b5kgnn7o">K</kbd></kbd></button><dialog style="padding:0" aria-label="Search" class="astro-b5kgnn7o"><div class="dialog-frame sl-flex astro-b5kgnn7o"><button data-close-modal class="sl-flex md:sl-hidden astro-b5kgnn7o">Cancel</button><div class="search-container astro-b5kgnn7o"><div id="starlight__search" class="astro-b5kgnn7o"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/_astro/Search.astro_astro_type_script_index_0_lang.DMKOaegy.js"></script></div><main data-pagefind-body><section class="decider-hero astro-pvvv4x6u" aria-labelledby="decider-hero-title"><div class="decider-hero__inner astro-pvvv4x6u"><div class="decider-hero__halftone astro-pvvv4x6u" aria-hidden="true"><div class="decider-hero__halftone-mask astro-pvvv4x6u" style="--decider-halftone-mask: url(&quot;/_astro/halftone.BiWiShsa.svg&quot;)"></div></div><div class="decider-hero__gradient astro-pvvv4x6u" aria-hidden="true"></div><div class="decider-hero__content astro-pvvv4x6u"><p class="decider-hero__product astro-pvvv4x6u">/decider</p><h1 id="decider-hero-title" class="decider-hero__title astro-pvvv4x6u">A model built to decide.</h1><p class="decider-hero__subtitle astro-pvvv4x6u">Route, classify, and score known outcomes without generating text.</p><div class="decider-hero__actions astro-pvvv4x6u"><div class="command-pill astro-rzhbczk2" data-command-pill data-command="pip install strands-decider" data-surface="install:decider"><code class="command-pill__command astro-rzhbczk2"><span class="command-pill__prompt astro-rzhbczk2" aria-hidden="true">$</span><span class="astro-rzhbczk2">pip install strands-decider</span></code><button type="button" class="command-pill__copy astro-rzhbczk2" data-command-copy aria-label="Copy the Decider install command"><span data-command-copy-label class="astro-rzhbczk2">copy</span></button></div><script type="module" src="/_astro/CommandPill.astro_astro_type_script_index_0_lang.BnGMP3am.js"></script><div class="decider-hero__links astro-pvvv4x6u"><a href="/docs/labs/strands-decider/quickstart/" class="decider-hero__link astro-pvvv4x6u">Run Decider<span class="decider-hero__arrow astro-pvvv4x6u"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 9" fill="none" aria-hidden="true">
+  <path d="M5.77722 0.178969C6.02991 -0.0596564 6.44035 -0.0596564 6.69304 0.178969L10.8105 4.06798C11.0632 4.3066 11.0632 4.6934 10.8105 4.93202L6.69304 8.82103C6.44035 9.05966 6.02991 9.05966 5.77722 8.82103C5.52452 8.5824 5.52452 8.19481 5.77722 7.95619L8.79094 5.11104H0V3.88896H8.79094L5.77722 1.04381C5.52452 0.805186 5.52452 0.417595 5.77722 0.178969Z" fill="currentColor"/>
+</svg>
+</span></a><a href="https://github.com/strands-labs/strands-decider" class="decider-hero__link decider-hero__link--github astro-pvvv4x6u" aria-label="View Strands Decider on GitHub" target="_blank" rel="noopener"><span class="decider-hero__github-icon astro-pvvv4x6u"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 31.0442 29.9737" fill="none" aria-hidden="true">
+  <path fill="currentColor" d="M13.1271 21.9088C9.12527 21.4253 6.30585 18.5545 6.30585 14.8376C6.30585 13.3266 6.85154 11.6948 7.76104 10.6069C7.36691 9.60966 7.42754 7.49433 7.88231 6.61799C9.09497 6.46688 10.7321 7.1015 11.7022 7.97783C12.8542 7.61521 14.0669 7.43389 15.5524 7.43389C17.0379 7.43389 18.2506 7.61521 19.342 7.94763C20.2818 7.1015 21.9492 6.46688 23.1619 6.61799C23.5863 7.43389 23.6469 9.54923 23.2528 10.5767C24.2229 11.725 24.7383 13.2662 24.7383 14.8376C24.7383 18.5545 21.9189 21.3649 17.8564 21.8786C18.8872 22.5434 19.5845 23.9939 19.5845 25.656V28.7989C19.5845 29.7053 20.3424 30.2191 21.2519 29.8564C26.7392 27.7712 31.0442 22.3017 31.0442 15.5326C31.0442 6.98062 24.0714 0 15.4917 0C6.91218 0 0 6.98059 0 15.5326C0 22.2412 4.27462 27.8015 10.0348 29.8867C10.8533 30.1888 11.6416 29.645 11.6416 28.8292V26.4115C11.2171 26.5928 10.6714 26.7137 10.1864 26.7137C8.18547 26.7137 7.00311 25.6258 6.15425 23.6011C5.82078 22.7852 5.45698 22.3017 4.75968 22.211C4.39589 22.1808 4.27462 22.0297 4.27462 21.8484C4.27462 21.4858 4.88095 21.2138 5.48728 21.2138C6.36648 21.2138 7.12438 21.7577 7.91261 22.8759C8.51894 23.7522 9.1556 24.1451 9.9135 24.1451C10.6714 24.1451 11.1565 23.8731 11.8538 23.178C12.3692 22.6643 12.7633 22.211 13.1271 21.9088Z"/>
+</svg>
+</span><span class="decider-hero__github-label astro-pvvv4x6u">GitHub</span></a></div><p class="decider-hero__meta astro-pvvv4x6u"><span class="astro-pvvv4x6u">Python 3.11+</span><span aria-hidden="true" class="astro-pvvv4x6u">·</span><span class="astro-pvvv4x6u">Choice</span><span aria-hidden="true" class="astro-pvvv4x6u">·</span><span class="astro-pvvv4x6u">Yes / no</span><span aria-hidden="true" class="astro-pvvv4x6u">·</span><span class="astro-pvvv4x6u">Score</span></p></div></div></div></section><section class="decider-overview astro-kmqf464m" data-decider-main-section aria-labelledby="decider-overview-title"><div class="decider-overview__inner astro-kmqf464m" data-decider-example-selector><div class="decider-shapes astro-kmqf464m" data-decider-answer-shapes><div class="decider-shapes__copy astro-kmqf464m"><h2 id="decider-overview-title" aria-label="How Strands Decider works" class="astro-kmqf464m">/decider</h2><p class="decider-shapes__summary astro-kmqf464m">Strands Decider is a System One model for repeated decisions. It scores a known output space (Choice, Yes / no, or Score) and returns a typed answer with calibrated confidence instead of generated text. These examples use recorded E2B output; results can vary slightly by device.</p><a href="/docs/labs/strands-decider/quickstart/" class="astro-kmqf464m">Run Decider<span aria-hidden="true" class="astro-kmqf464m"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 9" fill="none" aria-hidden="true">
+  <path d="M5.77722 0.178969C6.02991 -0.0596564 6.44035 -0.0596564 6.69304 0.178969L10.8105 4.06798C11.0632 4.3066 11.0632 4.6934 10.8105 4.93202L6.69304 8.82103C6.44035 9.05966 6.02991 9.05966 5.77722 8.82103C5.52452 8.5824 5.52452 8.19481 5.77722 7.95619L8.79094 5.11104H0V3.88896H8.79094L5.77722 1.04381C5.52452 0.805186 5.52452 0.417595 5.77722 0.178969Z" fill="currentColor"/>
+</svg>
+</span></a></div><div class="decider-shapes__panel astro-kmqf464m"><header class="decider-shapes__panel-header astro-kmqf464m"><span class="decider-shapes__terminal-dots astro-kmqf464m" aria-hidden="true"><span class="astro-kmqf464m"></span><span class="astro-kmqf464m"></span><span class="astro-kmqf464m"></span></span><span id="decider-answer-shapes-title" class="astro-kmqf464m">Answer shapes</span><span class="astro-kmqf464m">Known before the request</span></header><ul aria-labelledby="decider-answer-shapes-title" class="astro-kmqf464m"><li class="astro-kmqf464m"><a id="decider-shape-choice" href="#decider-example-choice" class="decider-shapes__row astro-kmqf464m" aria-controls="decider-example-choice" data-decider-question-type="choice" data-decider-shape-link="choice" data-decider-default="true"><span class="decider-shapes__identity astro-kmqf464m"><code class="astro-kmqf464m">choice</code><strong class="astro-kmqf464m">Choice</strong></span><span class="decider-shapes__title astro-kmqf464m">Choose one known path</span></a></li><li class="astro-kmqf464m"><a id="decider-shape-noul" href="#decider-example-noul" class="decider-shapes__row astro-kmqf464m" aria-controls="decider-example-noul" data-decider-question-type="noul" data-decider-shape-link="noul"><span class="decider-shapes__identity astro-kmqf464m"><code class="astro-kmqf464m">noul</code><strong class="astro-kmqf464m">Yes / no</strong></span><span class="decider-shapes__title astro-kmqf464m">Set an action threshold</span></a></li><li class="astro-kmqf464m"><a id="decider-shape-score" href="#decider-example-score" class="decider-shapes__row astro-kmqf464m" aria-controls="decider-example-score" data-decider-question-type="score" data-decider-shape-link="score"><span class="decider-shapes__identity astro-kmqf464m"><code class="astro-kmqf464m">score</code><strong class="astro-kmqf464m">Score</strong></span><span class="decider-shapes__title astro-kmqf464m">Place an item on a scale</span></a></li></ul></div></div><div class="decider-example-connectors astro-kmqf464m" data-decider-example-connectors aria-hidden="true"><span class="astro-kmqf464m"></span><span class="astro-kmqf464m"></span></div><div id="decider-example-choice" class="decider-example astro-kmqf464m" data-decider-example data-decider-example-type="choice" role="region" aria-labelledby="decider-shape-choice"><div class="decider-example__panel astro-kmqf464m"><p id="decider-request-label-choice" class="decider-example__panel-label astro-kmqf464m">Request<span class="decider-visually-hidden astro-kmqf464m">Available answers</span></p><article class="decider-request astro-kmqf464m" aria-labelledby="decider-request-label-choice" data-decider-example-state><div class="decider-request__body astro-kmqf464m"><div class="decider-request__field astro-kmqf464m"><blockquote class="astro-kmqf464m">Help! My payouts have been failing for 3 days!</blockquote></div><div class="decider-request__field astro-kmqf464m"><p class="astro-kmqf464m">choice</p><strong class="astro-kmqf464m">Which team should handle this?</strong><ul aria-label="Available answers" class="astro-kmqf464m"><li class="astro-kmqf464m"><strong class="astro-kmqf464m">billing</strong></li><li class="astro-kmqf464m"><strong class="astro-kmqf464m">sales</strong></li><li class="astro-kmqf464m"><strong class="astro-kmqf464m">retail</strong></li></ul></div></div></article></div><div class="decider-processor astro-kmqf464m" aria-hidden="true"><span class="decider-processor__line astro-kmqf464m"></span><span class="decider-processor__badge astro-kmqf464m">/decider</span></div><div class="decider-example__panel astro-kmqf464m"><p id="decider-response-label-choice" class="decider-example__panel-label astro-kmqf464m">Response<span class="decider-visually-hidden astro-kmqf464m">Choice result</span></p><article class="decider-response astro-kmqf464m" aria-labelledby="decider-response-label-choice" data-decider-example-answer="billing"><div class="decider-response__body astro-kmqf464m"><div class="decider-response__result astro-kmqf464m"><div class="decider-response__answer astro-kmqf464m"><p class="astro-kmqf464m">selected answer</p><strong class="astro-kmqf464m">billing</strong></div><div class="decider-response__confidence astro-kmqf464m"><span class="astro-kmqf464m">confidence</span><strong class="astro-kmqf464m">0.659</strong></div></div><ul class="decider-response__probabilities astro-kmqf464m" aria-label="Recorded answer probabilities"><li data-decider-probability="billing" aria-label="billing 77.30%" class="astro-kmqf464m"><span class="decider-response__probability-label astro-kmqf464m">billing</span><span class="decider-response__probability-track astro-kmqf464m" aria-hidden="true"><span class="decider-response__probability-fill astro-kmqf464m" style="--probability: 77.3%"></span></span><span class="decider-response__probability-value astro-kmqf464m">77.30%</span></li><li data-decider-probability="sales" aria-label="sales 12.10%" class="astro-kmqf464m"><span class="decider-response__probability-label astro-kmqf464m">sales</span><span class="decider-response__probability-track astro-kmqf464m" aria-hidden="true"><span class="decider-response__probability-fill astro-kmqf464m" style="--probability: 12.1%"></span></span><span class="decider-response__probability-value astro-kmqf464m">12.10%</span></li><li data-decider-probability="retail" aria-label="retail 10.60%" class="astro-kmqf464m"><span class="decider-response__probability-label astro-kmqf464m">retail</span><span class="decider-response__probability-track astro-kmqf464m" aria-hidden="true"><span class="decider-response__probability-fill astro-kmqf464m" style="--probability: 10.6%"></span></span><span class="decider-response__probability-value astro-kmqf464m">10.60%</span></li></ul></div></article></div></div><div id="decider-example-noul" class="decider-example astro-kmqf464m" data-decider-example data-decider-example-type="noul" role="region" aria-labelledby="decider-shape-noul"><div class="decider-example__panel astro-kmqf464m"><p id="decider-request-label-noul" class="decider-example__panel-label astro-kmqf464m">Request<span class="decider-visually-hidden astro-kmqf464m">Fixed yes / no space</span></p><article class="decider-request astro-kmqf464m" aria-labelledby="decider-request-label-noul" data-decider-example-state><div class="decider-request__body astro-kmqf464m"><div class="decider-request__field astro-kmqf464m"><blockquote class="astro-kmqf464m">Help! My payouts have been failing for 3 days!</blockquote></div><div class="decider-request__field astro-kmqf464m"><p class="astro-kmqf464m">noul</p><strong class="astro-kmqf464m">Does this convey urgency?</strong><ul aria-label="Fixed yes / no space" class="astro-kmqf464m"><li class="astro-kmqf464m"><strong class="astro-kmqf464m">no</strong><span class="astro-kmqf464m">0</span></li><li class="astro-kmqf464m"><strong class="astro-kmqf464m">yes</strong><span class="astro-kmqf464m">1</span></li></ul></div></div></article></div><div class="decider-processor astro-kmqf464m" aria-hidden="true"><span class="decider-processor__line astro-kmqf464m"></span><span class="decider-processor__badge astro-kmqf464m">/decider</span></div><div class="decider-example__panel astro-kmqf464m"><p id="decider-response-label-noul" class="decider-example__panel-label astro-kmqf464m">Response<span class="decider-visually-hidden astro-kmqf464m">Noul result</span></p><article class="decider-response astro-kmqf464m" aria-labelledby="decider-response-label-noul" data-decider-example-answer="0.858"><div class="decider-response__body astro-kmqf464m"><div class="decider-response__result astro-kmqf464m"><div class="decider-response__answer astro-kmqf464m"><p class="astro-kmqf464m">noul</p><strong class="astro-kmqf464m">0.858</strong></div><div class="decider-response__confidence astro-kmqf464m"><span class="astro-kmqf464m">at a 0.50 threshold</span><strong class="astro-kmqf464m">yes</strong></div></div><ul class="decider-response__probabilities astro-kmqf464m" aria-label="Probability that the answer is yes"><li data-decider-probability="yes" aria-label="yes 85.80%" class="astro-kmqf464m"><span class="decider-response__probability-label astro-kmqf464m">yes</span><span class="decider-response__probability-track astro-kmqf464m" aria-hidden="true"><span class="decider-response__probability-fill astro-kmqf464m" style="--probability: 85.8%"></span></span><span class="decider-response__probability-value astro-kmqf464m">85.80%</span></li></ul></div></article></div></div><div id="decider-example-score" class="decider-example astro-kmqf464m" data-decider-example data-decider-example-type="score" role="region" aria-labelledby="decider-shape-score"><div class="decider-example__panel astro-kmqf464m"><p id="decider-request-label-score" class="decider-example__panel-label astro-kmqf464m">Request<span class="decider-visually-hidden astro-kmqf464m">Ordered scale</span></p><article class="decider-request astro-kmqf464m" aria-labelledby="decider-request-label-score" data-decider-example-state><div class="decider-request__body astro-kmqf464m"><div class="decider-request__field astro-kmqf464m"><blockquote class="astro-kmqf464m">Help! My payouts have been failing for 3 days!</blockquote></div><div class="decider-request__field astro-kmqf464m"><p class="astro-kmqf464m">score</p><strong class="astro-kmqf464m">How frustrated is the writer?</strong><ul aria-label="Ordered scale" class="astro-kmqf464m"><li class="astro-kmqf464m"><strong class="astro-kmqf464m">calm</strong><span class="astro-kmqf464m">0</span></li><li class="astro-kmqf464m"><strong class="astro-kmqf464m">frustrated</strong><span class="astro-kmqf464m">1</span></li><li class="astro-kmqf464m"><strong class="astro-kmqf464m">depressed</strong><span class="astro-kmqf464m">2</span></li></ul></div></div></article></div><div class="decider-processor astro-kmqf464m" aria-hidden="true"><span class="decider-processor__line astro-kmqf464m"></span><span class="decider-processor__badge astro-kmqf464m">/decider</span></div><div class="decider-example__panel astro-kmqf464m"><p id="decider-response-label-score" class="decider-example__panel-label astro-kmqf464m">Response<span class="decider-visually-hidden astro-kmqf464m">Score result</span></p><article class="decider-response astro-kmqf464m" aria-labelledby="decider-response-label-score" data-decider-example-answer="1.03"><div class="decider-response__body astro-kmqf464m"><div class="decider-response__result astro-kmqf464m"><div class="decider-response__answer astro-kmqf464m"><p class="astro-kmqf464m">expected score</p><strong class="astro-kmqf464m">1.03</strong></div><div class="decider-response__confidence astro-kmqf464m"><span class="astro-kmqf464m">confidence</span><strong class="astro-kmqf464m">0.509</strong></div></div><ul class="decider-response__probabilities astro-kmqf464m" aria-label="Recorded level probabilities"><li data-decider-probability="calm" aria-label="calm 19.60%" class="astro-kmqf464m"><span class="decider-response__probability-label astro-kmqf464m">calm</span><span class="decider-response__probability-track astro-kmqf464m" aria-hidden="true"><span class="decider-response__probability-fill astro-kmqf464m" style="--probability: 19.6%"></span></span><span class="decider-response__probability-value astro-kmqf464m">19.60%</span></li><li data-decider-probability="frustrated" aria-label="frustrated 57.40%" class="astro-kmqf464m"><span class="decider-response__probability-label astro-kmqf464m">frustrated</span><span class="decider-response__probability-track astro-kmqf464m" aria-hidden="true"><span class="decider-response__probability-fill astro-kmqf464m" style="--probability: 57.4%"></span></span><span class="decider-response__probability-value astro-kmqf464m">57.40%</span></li><li data-decider-probability="depressed" aria-label="depressed 23.00%" class="astro-kmqf464m"><span class="decider-response__probability-label astro-kmqf464m">depressed</span><span class="decider-response__probability-track astro-kmqf464m" aria-hidden="true"><span class="decider-response__probability-fill astro-kmqf464m" style="--probability: 23%"></span></span><span class="decider-response__probability-value astro-kmqf464m">23.00%</span></li></ul></div></article></div></div></div></section><script type="module">function e(){document.querySelectorAll(`[data-decider-example-selector]`).forEach(e=>{if(e.dataset.enhanced===`true`)return;let t=Array.from(e.querySelectorAll(`[data-decider-shape-link]`)),n=Array.from(e.querySelectorAll(`[data-decider-example]`));if(t.length===0||t.length!==n.length)return;let r=e=>{let r=e.getAttribute(`aria-controls`);r&&n.some(e=>e.id===r)&&(t.forEach(t=>{t===e?t.setAttribute(`aria-current`,`true`):t.removeAttribute(`aria-current`)}),n.forEach(e=>{e.hidden=e.id!==r}))},i=window.location.hash.slice(1);r(t.find(e=>e.getAttribute(`aria-controls`)===i)??t.find(e=>e.dataset.deciderDefault===`true`)??t[0]),t.forEach(e=>{e.addEventListener(`click`,t=>{t.button!==0||t.metaKey||t.ctrlKey||t.shiftKey||t.altKey||(t.preventDefault(),r(e),window.history.replaceState(null,``,e.hash))})}),e.dataset.enhanced=`true`})}document.readyState===`loading`?document.addEventListener(`DOMContentLoaded`,e):e(),document.addEventListener(`astro:page-load`,e);</script><section class="product-content astro-ez3w4r2n" data-product-content="decider" data-accent="red" aria-labelledby="product-content-decider-title"><div class="product-content__inner astro-ez3w4r2n"><h2 id="product-content-decider-title" class="product-content__visually-hidden astro-ez3w4r2n">Decider content</h2><p class="product-content__label astro-ez3w4r2n" data-product-content-label>Watch and read</p><ul class="product-content__grid astro-ez3w4r2n"><li class="astro-ez3w4r2n"><article class="product-content__card astro-ez3w4r2n" data-content-kind="article"><a href="/blog/introducing-strands-decider-v2/" data-product-content-link="article-introducing-strands-decider-v2" class="astro-ez3w4r2n"><div class="product-content__media astro-ez3w4r2n" aria-hidden="true"><div class="product-content-placeholder astro-a5dyzimq" data-product-content-placeholder aria-hidden="true"><svg viewBox="0 0 720 405" focusable="false" class="astro-a5dyzimq"><rect class="placeholder-canvas astro-a5dyzimq" width="720" height="405" rx="24"></rect><g class="placeholder-dots astro-a5dyzimq"><circle cx="72" cy="70" r="5" class="astro-a5dyzimq"></circle><circle cx="104" cy="70" r="5" class="astro-a5dyzimq"></circle><circle cx="136" cy="70" r="5" class="astro-a5dyzimq"></circle><circle cx="584" cy="334" r="5" class="astro-a5dyzimq"></circle><circle cx="616" cy="334" r="5" class="astro-a5dyzimq"></circle><circle cx="648" cy="334" r="5" class="astro-a5dyzimq"></circle></g><rect class="placeholder-sheet placeholder-sheet--left astro-a5dyzimq" x="154" y="72" width="400" height="262" rx="18"></rect><rect class="placeholder-sheet placeholder-sheet--right astro-a5dyzimq" x="166" y="72" width="400" height="262" rx="18"></rect><g class="placeholder-page astro-a5dyzimq"><rect class="placeholder-page__surface astro-a5dyzimq" x="170" y="61" width="380" height="282" rx="18"></rect><rect class="placeholder-page__accent astro-a5dyzimq" x="198" y="91" width="82" height="10" rx="5"></rect><rect class="placeholder-page__line placeholder-page__line--title astro-a5dyzimq" x="198" y="124" width="242" height="18" rx="9"></rect><rect class="placeholder-page__line astro-a5dyzimq" x="198" y="154" width="164" height="10" rx="5"></rect><rect class="placeholder-page__panel astro-a5dyzimq" x="198" y="188" width="324" height="92" rx="12"></rect><circle class="placeholder-page__node placeholder-page__node--accent astro-a5dyzimq" cx="240" cy="234" r="14"></circle><circle class="placeholder-page__node astro-a5dyzimq" cx="360" cy="234" r="14"></circle><circle class="placeholder-page__node astro-a5dyzimq" cx="480" cy="234" r="14"></circle><path class="placeholder-page__connector astro-a5dyzimq" d="M255 234h89m31 0h89"></path><rect class="placeholder-page__line astro-a5dyzimq" x="198" y="307" width="174" height="9" rx="4.5"></rect><rect class="placeholder-page__line placeholder-page__line--short astro-a5dyzimq" x="388" y="307" width="134" height="9" rx="4.5"></rect></g></svg></div></div><div class="product-content__body astro-ez3w4r2n"><p class="product-content__source astro-ez3w4r2n"><span class="astro-ez3w4r2n">article</span><span aria-hidden="true" class="astro-ez3w4r2n">·</span><span class="astro-ez3w4r2n">Strands Blog</span></p><h3 class="astro-ez3w4r2n">Introducing Strands Decider v2: open, calibrated system one models</h3><p class="product-content__description astro-ez3w4r2n">Strands Decider v2 launches with higher accuracy and better-calibrated confidence for making judgements with agents.</p><p class="product-content__meta astro-ez3w4r2n"><time datetime="2026-11-23T00:00:00.000Z" class="astro-ez3w4r2n">November 23, 2026</time><span class="product-content__arrow astro-ez3w4r2n" aria-hidden="true">→</span></p></div></a></article></li><li class="astro-ez3w4r2n"><article class="product-content__card astro-ez3w4r2n" data-content-kind="video"><a href="https://www.youtube.com/watch?v=dIt_CFbBwjU" target="_blank" rel="noopener" data-product-content-link="youtube-dIt_CFbBwjU" class="astro-ez3w4r2n"><div class="product-content__media astro-ez3w4r2n" aria-hidden="true"><img src="https://i.ytimg.com/vi/dIt_CFbBwjU/hqdefault.jpg" alt="" loading="lazy" decoding="async" class="astro-ez3w4r2n"><span class="product-content__play astro-ez3w4r2n" aria-hidden="true">▶</span></div><div class="product-content__body astro-ez3w4r2n"><p class="product-content__source astro-ez3w4r2n"><span class="astro-ez3w4r2n">video</span><span aria-hidden="true" class="astro-ez3w4r2n">·</span><span class="astro-ez3w4r2n">AWS Developers</span></p><h3 class="astro-ez3w4r2n">Bidirectional Attention, System One: Jonathan Buck</h3><p class="product-content__description astro-ez3w4r2n">Hear how bidirectional attention and System One models support fast, focused decisions without generating open-ended text.</p><p class="product-content__meta astro-ez3w4r2n"><time datetime="2026-11-18T00:00:00.000Z" class="astro-ez3w4r2n">November 18, 2026</time><span class="astro-ez3w4r2n">39:07</span><span class="product-content__arrow astro-ez3w4r2n" aria-hidden="true">↗</span><span class="product-content__visually-hidden astro-ez3w4r2n">Opens in a new tab</span></p></div></a></article></li><li class="astro-ez3w4r2n"><article class="product-content__card astro-ez3w4r2n" data-content-kind="article"><a href="/blog/amazon-saves-millions-replacing-sonnet-with-strands-decider/" data-product-content-link="article-amazon-saves-millions-replacing-sonnet-with-strands-decider" class="astro-ez3w4r2n"><div class="product-content__media astro-ez3w4r2n" aria-hidden="true"><div class="product-content-placeholder astro-a5dyzimq" data-product-content-placeholder aria-hidden="true"><svg viewBox="0 0 720 405" focusable="false" class="astro-a5dyzimq"><rect class="placeholder-canvas astro-a5dyzimq" width="720" height="405" rx="24"></rect><g class="placeholder-dots astro-a5dyzimq"><circle cx="72" cy="70" r="5" class="astro-a5dyzimq"></circle><circle cx="104" cy="70" r="5" class="astro-a5dyzimq"></circle><circle cx="136" cy="70" r="5" class="astro-a5dyzimq"></circle><circle cx="584" cy="334" r="5" class="astro-a5dyzimq"></circle><circle cx="616" cy="334" r="5" class="astro-a5dyzimq"></circle><circle cx="648" cy="334" r="5" class="astro-a5dyzimq"></circle></g><rect class="placeholder-sheet placeholder-sheet--left astro-a5dyzimq" x="154" y="72" width="400" height="262" rx="18"></rect><rect class="placeholder-sheet placeholder-sheet--right astro-a5dyzimq" x="166" y="72" width="400" height="262" rx="18"></rect><g class="placeholder-page astro-a5dyzimq"><rect class="placeholder-page__surface astro-a5dyzimq" x="170" y="61" width="380" height="282" rx="18"></rect><rect class="placeholder-page__accent astro-a5dyzimq" x="198" y="91" width="82" height="10" rx="5"></rect><rect class="placeholder-page__line placeholder-page__line--title astro-a5dyzimq" x="198" y="124" width="242" height="18" rx="9"></rect><rect class="placeholder-page__line astro-a5dyzimq" x="198" y="154" width="164" height="10" rx="5"></rect><rect class="placeholder-page__panel astro-a5dyzimq" x="198" y="188" width="324" height="92" rx="12"></rect><circle class="placeholder-page__node placeholder-page__node--accent astro-a5dyzimq" cx="240" cy="234" r="14"></circle><circle class="placeholder-page__node astro-a5dyzimq" cx="360" cy="234" r="14"></circle><circle class="placeholder-page__node astro-a5dyzimq" cx="480" cy="234" r="14"></circle><path class="placeholder-page__connector astro-a5dyzimq" d="M255 234h89m31 0h89"></path><rect class="placeholder-page__line astro-a5dyzimq" x="198" y="307" width="174" height="9" rx="4.5"></rect><rect class="placeholder-page__line placeholder-page__line--short astro-a5dyzimq" x="388" y="307" width="134" height="9" rx="4.5"></rect></g></svg></div></div><div class="product-content__body astro-ez3w4r2n"><p class="product-content__source astro-ez3w4r2n"><span class="astro-ez3w4r2n">article</span><span aria-hidden="true" class="astro-ez3w4r2n">·</span><span class="astro-ez3w4r2n">Strands Blog</span></p><h3 class="astro-ez3w4r2n">Amazon saves millions by replacing Sonnet 4.6 with Strands Decider</h3><p class="product-content__description astro-ez3w4r2n">Two Amazon engineers swapped Claude Sonnet 4.6 for a decision model in one of the world&#39;s biggest internal ticketing systems.</p><p class="product-content__meta astro-ez3w4r2n"><time datetime="2026-11-09T00:00:00.000Z" class="astro-ez3w4r2n">November 9, 2026</time><span class="product-content__arrow astro-ez3w4r2n" aria-hidden="true">→</span></p></div></a></article></li></ul></div></section><section class="next-steps astro-zkuglizp" aria-label="Next steps"><div class="next-steps__shape next-steps__shape--desktop astro-zkuglizp" aria-hidden="true"><svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="1454" height="370" viewBox="0 0 1454 370" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Frame">
+<path id="Left" d="M268 369.855C265.311 369.855 259.903 370.181 252.807 369.855H0V0C45.8333 87.7538 143.8 274.466 169 319.285C192.8 361.614 230.872 368.848 252.807 369.855H268Z" fill="#00CC60"/>
+<path id="Right" d="M1186 369.855C1188.69 369.855 1194.1 370.181 1201.19 369.855H1454V0C1408.17 87.7538 1310.2 274.466 1285 319.285C1261.2 361.614 1223.13 368.848 1201.19 369.855H1186Z" fill="#00CC60"/>
+</g>
+</svg>
+</div><div class="next-steps__shape next-steps__shape--mobile astro-zkuglizp" aria-hidden="true"><svg width="440" height="112.228" viewBox="0 0 440 112.228" preserveAspectRatio="none" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Frame" clip-path="url(#clip0_0_47)">
+<path id="Vector 5120" d="M80.6043 112.184C79.7955 112.184 78.1691 112.283 76.0347 112.184H0V0C13.7849 26.6175 43.2496 83.251 50.8288 96.8454C57.9869 109.685 69.4374 111.879 76.0347 112.184H80.6043Z" fill="#00CC60"/>
+<path id="Vector 5121" d="M359.396 112.184C360.204 112.184 361.831 112.283 363.965 112.184H440V0C426.215 26.6175 396.75 83.251 389.171 96.8454C382.013 109.685 370.563 111.879 363.965 112.184H359.396Z" fill="#00CC60"/>
+</g>
+<defs>
+<clipPath id="clip0_0_47">
+<rect width="440" height="112.228" fill="white"/>
+</clipPath>
+</defs>
+</svg>
+</div><div class="next-steps__content astro-zkuglizp"><h2 class="next-steps__title astro-zkuglizp">Start with Decider</h2><div class="next-steps__ctas astro-zkuglizp"><a href="/docs/labs/strands-decider/quickstart/" class="next-steps__cta astro-zkuglizp"><span class="next-steps__cta-label astro-zkuglizp">Run the quickstart</span><span class="next-steps__cta-arrow astro-zkuglizp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 9" fill="none" aria-hidden="true">
+  <path d="M5.77722 0.178969C6.02991 -0.0596564 6.44035 -0.0596564 6.69304 0.178969L10.8105 4.06798C11.0632 4.3066 11.0632 4.6934 10.8105 4.93202L6.69304 8.82103C6.44035 9.05966 6.02991 9.05966 5.77722 8.82103C5.52452 8.5824 5.52452 8.19481 5.77722 7.95619L8.79094 5.11104H0V3.88896H8.79094L5.77722 1.04381C5.52452 0.805186 5.52452 0.417595 5.77722 0.178969Z" fill="currentColor"/>
+</svg>
+</span></a><a href="/docs/labs/strands-decider/models/" class="next-steps__cta astro-zkuglizp"><span class="next-steps__cta-label astro-zkuglizp">Compare models</span><span class="next-steps__cta-arrow astro-zkuglizp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 9" fill="none" aria-hidden="true">
+  <path d="M5.77722 0.178969C6.02991 -0.0596564 6.44035 -0.0596564 6.69304 0.178969L10.8105 4.06798C11.0632 4.3066 11.0632 4.6934 10.8105 4.93202L6.69304 8.82103C6.44035 9.05966 6.02991 9.05966 5.77722 8.82103C5.52452 8.5824 5.52452 8.19481 5.77722 7.95619L8.79094 5.11104H0V3.88896H8.79094L5.77722 1.04381C5.52452 0.805186 5.52452 0.417595 5.77722 0.178969Z" fill="currentColor"/>
+</svg>
+</span></a><a href="/docs/user-guide/sdk/decision-models/" class="next-steps__cta astro-zkuglizp"><span class="next-steps__cta-label astro-zkuglizp">Use it with Strands</span><span class="next-steps__cta-arrow astro-zkuglizp"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 9" fill="none" aria-hidden="true">
+  <path d="M5.77722 0.178969C6.02991 -0.0596564 6.44035 -0.0596564 6.69304 0.178969L10.8105 4.06798C11.0632 4.3066 11.0632 4.6934 10.8105 4.93202L6.69304 8.82103C6.44035 9.05966 6.02991 9.05966 5.77722 8.82103C5.52452 8.5824 5.52452 8.19481 5.77722 7.95619L8.79094 5.11104H0V3.88896H8.79094L5.77722 1.04381C5.52452 0.805186 5.52452 0.417595 5.77722 0.178969Z" fill="currentColor"/>
+</svg>
+</span></a></div></div></section></main><footer class="footer astro-jo6i4kqk"><div class="footer__inner astro-jo6i4kqk"><div class="footer__get-started astro-jo6i4kqk"><p class="footer__get-started-label astro-jo6i4kqk">Start building in seconds</p><div class="install astro-3qcmryn3" data-install><code class="install__cmd astro-3qcmryn3"><span class="install__prompt astro-3qcmryn3" aria-hidden="true">$</span><span class="install__text astro-3qcmryn3"><span class="install__variant astro-3qcmryn3" data-install-variant="Python" aria-hidden="true">pip install strands-agents</span><span class="install__variant astro-3qcmryn3" data-install-variant="TypeScript">npm install @strands-agents/sdk</span></span></code><button type="button" class="install__copy astro-3qcmryn3" data-install-copy aria-label="Copy install command"><span class="install__copy-label astro-3qcmryn3" data-install-copy-label>copy</span></button></div><script>(function(){const STORAGE_KEY = "starlight-synced-tabs__jarkqt";
+const DEFAULT_LANG = "TypeScript";
+
+  (function () {
+    var blocks = document.querySelectorAll('[data-install]');
+    if (!blocks.length) return;
+
+    function currentLang() {
+      try {
+        return localStorage.getItem(STORAGE_KEY) || DEFAULT_LANG;
+      } catch (e) {
+        return DEFAULT_LANG;
+      }
+    }
+
+    function render(lang) {
+      var active = lang === 'Python' ? 'Python' : 'TypeScript';
+      blocks.forEach(function (block) {
+        block.querySelectorAll('[data-install-variant]').forEach(function (variant) {
+          variant.setAttribute('aria-hidden', String(variant.dataset.installVariant !== active));
+        });
+      });
+    }
+
+    render(currentLang());
+
+    // Follow site-wide language changes (banner toggle, UseCases, docs tabs).
+    window.addEventListener('lang-change', function (e) {
+      if (e && e.detail) render(e.detail);
+    });
+  })();
+})();</script><script type="module" src="/_astro/InstallCommand.astro_astro_type_script_index_0_lang.5CakpTut.js"></script></div><div class="footer__columns astro-jo6i4kqk"><div class="footer__column astro-jo6i4kqk"><p class="footer__column-title astro-jo6i4kqk">Get Started</p><ul class="footer__column-links astro-jo6i4kqk" role="list"><li class="astro-jo6i4kqk"><a href="/docs/user-guide/harness/quickstart/" class="footer__link astro-jo6i4kqk">Quickstart</a></li><li class="astro-jo6i4kqk"><a href="/docs/user-guide/migrate/choosing-an-agent-foundation/" class="footer__link astro-jo6i4kqk">Migrate</a></li><li class="astro-jo6i4kqk"><a href="/examples/" class="footer__link astro-jo6i4kqk">Tutorials</a></li><li class="astro-jo6i4kqk"><a href="/docs/user-guide/sdk/" class="footer__link astro-jo6i4kqk">Guides</a></li></ul></div><div class="footer__column astro-jo6i4kqk"><p class="footer__column-title astro-jo6i4kqk">Build</p><ul class="footer__column-links astro-jo6i4kqk" role="list"><li class="astro-jo6i4kqk"><a href="/docs/user-guide/sdk/tools/" class="footer__link astro-jo6i4kqk">Tools</a></li><li class="astro-jo6i4kqk"><a href="/docs/user-guide/sdk/multi-agent/agents-as-tools/" class="footer__link astro-jo6i4kqk">Multi-agent</a></li><li class="astro-jo6i4kqk"><a href="/docs/user-guide/sdk/model-providers/" class="footer__link astro-jo6i4kqk">Models</a></li><li class="astro-jo6i4kqk"><a href="/docs/user-guide/sdk/memory/overview/" class="footer__link astro-jo6i4kqk">Memory</a></li></ul></div><div class="footer__column astro-jo6i4kqk"><p class="footer__column-title astro-jo6i4kqk">Operate</p><ul class="footer__column-links astro-jo6i4kqk" role="list"><li class="astro-jo6i4kqk"><a href="/docs/user-guide/evals-sdk/quickstart/" class="footer__link astro-jo6i4kqk">Evaluate</a></li><li class="astro-jo6i4kqk"><a href="/docs/user-guide/sdk/deploy/deploy_to_bedrock_agentcore/" class="footer__link astro-jo6i4kqk">Deploy</a></li><li class="astro-jo6i4kqk"><a href="/docs/user-guide/sdk/observability-evaluation/traces/" class="footer__link astro-jo6i4kqk">Observability</a></li><li class="astro-jo6i4kqk"><a href="/docs/user-guide/sdk/safety-security/guardrails/" class="footer__link astro-jo6i4kqk">Safety</a></li></ul></div><div class="footer__column astro-jo6i4kqk"><p class="footer__column-title astro-jo6i4kqk">Community</p><ul class="footer__column-links astro-jo6i4kqk" role="list"><li class="astro-jo6i4kqk"><a href="/blog/" class="footer__link astro-jo6i4kqk">Learn</a></li><li class="astro-jo6i4kqk"><a href="/docs/contribute/" class="footer__link astro-jo6i4kqk">Contribute</a></li><li class="astro-jo6i4kqk"><a href="/integrations/" class="footer__link astro-jo6i4kqk">Integrations</a></li><li class="astro-jo6i4kqk"><a href="https://github.com/strands-agents" class="footer__link astro-jo6i4kqk" target="_blank" rel="noopener">GitHub</a></li><li class="astro-jo6i4kqk"><a href="/docs/labs/" class="footer__link astro-jo6i4kqk">Labs</a></li><li class="astro-jo6i4kqk"><a href="https://discord.gg/strands" class="footer__link astro-jo6i4kqk" target="_blank" rel="noopener">Discord</a></li></ul></div><div class="footer__column astro-jo6i4kqk"><p class="footer__column-title astro-jo6i4kqk">Resources</p><ul class="footer__column-links astro-jo6i4kqk" role="list"><li class="astro-jo6i4kqk"><a href="/docs/user-guide/sdk/quickstart/overview/" class="footer__link astro-jo6i4kqk">Docs</a></li><li class="astro-jo6i4kqk"><a href="/faq/" class="footer__link astro-jo6i4kqk">FAQ</a></li><li class="astro-jo6i4kqk"><a href="/examples/" class="footer__link astro-jo6i4kqk">Examples</a></li><li class="astro-jo6i4kqk"><a href="/docs/api/python/" class="footer__link astro-jo6i4kqk">API References</a></li><li class="astro-jo6i4kqk"><a href="/changelog/" class="footer__link astro-jo6i4kqk">Changelog</a></li><li class="astro-jo6i4kqk"><a href="/blog/" class="footer__link astro-jo6i4kqk">Blog</a></li></ul></div><div class="footer__column astro-jo6i4kqk"><p class="footer__column-title astro-jo6i4kqk">Preferences</p><ul class="footer__column-links astro-jo6i4kqk" role="list"><li class="astro-jo6i4kqk"><span class="footer__pref astro-jo6i4kqk" data-footer-lang><button type="button" class="footer__pref-opt astro-jo6i4kqk" data-lang="Python">Python</button><span class="footer__pref-sep astro-jo6i4kqk">/</span><button type="button" class="footer__pref-opt astro-jo6i4kqk" data-lang="TypeScript">TypeScript</button></span></li><li class="astro-jo6i4kqk"><span class="footer__pref astro-jo6i4kqk" data-footer-theme><button type="button" class="footer__pref-opt astro-jo6i4kqk" data-theme-choice="light">Light</button><span class="footer__pref-sep astro-jo6i4kqk">/</span><button type="button" class="footer__pref-opt astro-jo6i4kqk" data-theme-choice="dark">Dark</button></span></li></ul></div></div><div class="footer__wordmark astro-jo6i4kqk" aria-hidden="true"><svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="1332" height="216.833" viewBox="0 0 1332 216.833" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="STRANDS">
+<path d="M30.2558 216.833V186.914H0V148.926H36.9794V179.182H121.023V127.075H30.2558V97.1548H0V29.9197H30.2558V0H127.747V29.9197H158.339V67.5714H121.023V37.9879H36.9794V89.759H127.747V119.006H158.339V186.914H127.747V216.833H30.2558Z" fill="black"/>
+<path d="M252.894 216.833V37.9879H229.361V67.5714H192.382V29.9197H222.638V0H320.129V29.9197H350.721V67.5714H313.405V37.9879H289.873V216.833H252.894Z" fill="black"/>
+<path d="M377.87 216.833V29.9197H408.125V0H505.617V29.9197H536.209V127.075H505.617V156.994H490.825V179.182H520.744V216.833H484.101V186.914H453.509V156.994H414.849V216.833H377.87ZM414.849 119.006H498.893V37.9879H414.849V119.006Z" fill="black"/>
+<path d="M576.818 216.833V59.5031H607.073V29.9197H637.329V0H674.309V29.9197H704.564V59.5031H735.156V216.833H697.841V156.994H613.797V216.833H576.818ZM613.797 119.006H697.841V67.5714H667.921V37.9879H643.717V67.5714H613.797V119.006Z" fill="black"/>
+<path d="M775.765 216.833V0H812.745V29.9197H842.664V59.5031H873.256V148.926H896.789V0H934.104V216.833H896.789V186.914H866.869V156.994H836.277V67.5714H812.745V216.833H775.765Z" fill="black"/>
+<path d="M974.713 216.833V0H1072.2V29.9197H1102.46V59.5031H1133.05V156.994H1102.46V186.914H1072.2V216.833H974.713ZM1011.69 179.182H1065.82V148.926H1095.74V67.5714H1065.82V37.9879H1011.69V179.182Z" fill="black"/>
+<path d="M1203.92 216.833V186.914H1173.66V148.926H1210.64V179.182H1294.68V127.075H1203.92V97.1548H1173.66V29.9197H1203.92V0H1301.41V29.9197H1332V67.5714H1294.68V37.9879H1210.64V89.759H1301.41V119.006H1332V186.914H1301.41V216.833H1203.92Z" fill="black"/>
+</g>
+</svg>
+</div><div class="footer__bottom astro-jo6i4kqk"><div class="footer__aws astro-jo6i4kqk" role="img" aria-label="AWS"><svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="50.7756" height="30.3636" viewBox="0 0 50.7756 30.3636" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Group">
+<path id="Vector" d="M14.309 11.0275C14.309 11.6523 14.3766 12.1589 14.4948 12.5305C14.6299 12.902 14.7988 13.3073 15.0352 13.7464C15.1196 13.8815 15.1534 14.0166 15.1534 14.1348C15.1534 14.3036 15.0521 14.4725 14.8326 14.6414L13.7687 15.3507C13.6167 15.452 13.4647 15.5026 13.3296 15.5026C13.1607 15.5026 12.9918 15.4182 12.823 15.2662C12.5865 15.0129 12.3839 14.7427 12.215 14.4725C12.0461 14.1854 11.8773 13.8646 11.6915 13.4762C10.3743 15.0298 8.71931 15.8066 6.7266 15.8066C5.30806 15.8066 4.1766 15.4013 3.34912 14.5907C2.52163 13.7801 2.09945 12.6993 2.09945 11.3483C2.09945 9.91291 2.60607 8.74768 3.6362 7.86954C4.66633 6.99139 6.03421 6.55232 7.77362 6.55232C8.34779 6.55232 8.93885 6.60298 9.56368 6.68742C10.1885 6.77185 10.8302 6.90695 11.5057 7.05894V5.82616C11.5057 4.54272 11.2355 3.64768 10.712 3.12417C10.1716 2.60066 9.25971 2.34735 7.95938 2.34735C7.36832 2.34735 6.76037 2.4149 6.13554 2.56689C5.5107 2.71887 4.90276 2.90464 4.3117 3.14106C4.0415 3.25927 3.83885 3.32682 3.72064 3.3606C3.60243 3.39437 3.51799 3.41126 3.45044 3.41126C3.21402 3.41126 3.0958 3.24238 3.0958 2.88775V2.06026C3.0958 1.79007 3.12958 1.58742 3.21402 1.46921C3.29845 1.35099 3.45044 1.23278 3.68686 1.11457C4.27792 0.810596 4.98719 0.557285 5.81468 0.354636C6.64216 0.135099 7.52031 0.0337748 8.44912 0.0337748C10.4587 0.0337748 11.9279 0.489735 12.8736 1.40166C13.8024 2.31358 14.2753 3.69834 14.2753 5.55596V11.0275H14.309ZM7.45276 13.5944C8.01004 13.5944 8.58421 13.493 9.19216 13.2904C9.80011 13.0877 10.3405 12.7162 10.7965 12.2096C11.0667 11.8887 11.2693 11.5341 11.3706 11.1288C11.472 10.7235 11.5395 10.2338 11.5395 9.6596V8.95033C11.0498 8.83212 10.5263 8.7308 9.98587 8.66325C9.44547 8.5957 8.92196 8.56192 8.39845 8.56192C7.267 8.56192 6.43951 8.78146 5.88223 9.23742C5.32494 9.69338 5.05474 10.3351 5.05474 11.1795C5.05474 11.9732 5.25739 12.5642 5.67958 12.9695C6.08488 13.3917 6.67594 13.5944 7.45276 13.5944ZM21.0134 15.4182C20.7094 15.4182 20.5067 15.3676 20.3716 15.2493C20.2365 15.148 20.1183 14.9116 20.017 14.5907L16.0485 1.53675C15.9471 1.19901 15.8965 0.97947 15.8965 0.861258C15.8965 0.59106 16.0316 0.439073 16.3018 0.439073H17.9567C18.2776 0.439073 18.4971 0.489735 18.6153 0.607947C18.7504 0.709272 18.8518 0.945695 18.9531 1.26656L21.7902 12.446L24.4246 1.26656C24.509 0.928808 24.6104 0.709272 24.7455 0.607947C24.8806 0.506623 25.117 0.439073 25.421 0.439073H26.772C27.0928 0.439073 27.3124 0.489735 27.4475 0.607947C27.5826 0.709272 27.7008 0.945695 27.7683 1.26656L30.4365 12.5811L33.3581 1.26656C33.4594 0.928808 33.5776 0.709272 33.6958 0.607947C33.8309 0.506623 34.0504 0.439073 34.3544 0.439073H35.9249C36.1951 0.439073 36.3471 0.574172 36.3471 0.861258C36.3471 0.945695 36.3302 1.03013 36.3134 1.13146C36.2965 1.23278 36.2627 1.36788 36.1951 1.55364L32.1253 14.6076C32.0239 14.9454 31.9057 15.1649 31.7706 15.2662C31.6355 15.3676 31.416 15.4351 31.1289 15.4351H29.6766C29.3557 15.4351 29.1362 15.3844 29.0011 15.2662C28.866 15.148 28.7478 14.9285 28.6802 14.5907L26.0627 3.69834L23.462 14.5738C23.3776 14.9116 23.2763 15.1311 23.1412 15.2493C23.0061 15.3676 22.7696 15.4182 22.4657 15.4182H21.0134ZM42.7137 15.8742C41.8355 15.8742 40.9574 15.7728 40.113 15.5702C39.2687 15.3676 38.61 15.148 38.171 14.8947C37.9008 14.7427 37.715 14.5738 37.6475 14.4219C37.5799 14.2699 37.5461 14.101 37.5461 13.949V13.0877C37.5461 12.7331 37.6812 12.5642 37.9345 12.5642C38.0359 12.5642 38.1372 12.5811 38.2385 12.6149C38.3398 12.6487 38.4918 12.7162 38.6607 12.7838C39.2349 13.0371 39.8597 13.2397 40.5183 13.3748C41.1938 13.5099 41.8524 13.5775 42.5279 13.5775C43.5918 13.5775 44.4193 13.3917 44.9935 13.0202C45.5677 12.6487 45.8716 12.1083 45.8716 11.4159C45.8716 10.943 45.7196 10.5546 45.4157 10.2338C45.1117 9.91291 44.5375 9.62583 43.71 9.35563L41.2614 8.5957C40.0286 8.20729 39.1167 7.63311 38.5594 6.87318C38.0021 6.13013 37.715 5.30265 37.715 4.4245C37.715 3.71523 37.867 3.0904 38.171 2.55C38.4749 2.0096 38.8802 1.53676 39.3869 1.16523C39.8935 0.776821 40.4677 0.489735 41.1432 0.287086C41.8187 0.0844371 42.5279 0 43.271 0C43.6425 0 44.0309 0.0168874 44.4024 0.0675497C44.7908 0.118212 45.1455 0.185762 45.5001 0.253311C45.8379 0.337748 46.1587 0.422185 46.4627 0.52351C46.7667 0.624834 47.0031 0.726159 47.172 0.827483C47.4084 0.962583 47.5773 1.09768 47.6786 1.24967C47.7799 1.38477 47.8306 1.57053 47.8306 1.80695V2.60066C47.8306 2.9553 47.6955 3.14106 47.4422 3.14106C47.3071 3.14106 47.0875 3.07351 46.8004 2.93841C45.8379 2.49934 44.7571 2.2798 43.5581 2.2798C42.5955 2.2798 41.8355 2.43179 41.312 2.75265C40.7885 3.07351 40.5183 3.56324 40.5183 4.25563C40.5183 4.72848 40.6872 5.13378 41.0249 5.45464C41.3627 5.7755 41.9875 6.09636 42.8826 6.38344L45.2806 7.14338C46.4965 7.53179 47.3746 8.07219 47.8981 8.76457C48.4216 9.45695 48.6749 10.2507 48.6749 11.1288C48.6749 11.855 48.523 12.5136 48.2359 13.0877C47.9319 13.6619 47.5266 14.1685 47.0031 14.5738C46.4796 14.996 45.8547 15.3 45.1286 15.5195C44.3687 15.756 43.5749 15.8742 42.7137 15.8742Z" fill="black"/>
+<path id="Vector_2" d="M45.9054 24.0815C40.3494 28.1851 32.2773 30.3636 25.3365 30.3636C15.6094 30.3636 6.84481 26.7666 0.224943 20.7884C-0.298567 20.3156 0.174281 19.6738 0.799115 20.0454C7.95938 24.1997 16.7915 26.7159 25.9276 26.7159C32.0915 26.7159 38.8634 25.4324 45.0948 22.798C46.0236 22.3758 46.8173 23.406 45.9054 24.0815Z" fill="black"/>
+<path id="Vector_3" d="M48.219 21.447C47.5097 20.5351 43.5243 21.0079 41.7173 21.2275C41.1769 21.295 41.0925 20.8222 41.5822 20.4675C44.7571 18.2384 49.9753 18.8801 50.5832 19.6232C51.1912 20.3831 50.4143 25.6013 47.4422 28.1007C46.9862 28.4891 46.5471 28.2864 46.7498 27.7798C47.4253 26.1079 48.9283 22.3421 48.219 21.447Z" fill="black"/>
+</g>
+</svg>
+</div><ul class="footer__legal astro-jo6i4kqk" role="list"><li class="astro-jo6i4kqk"><a href="https://aws.amazon.com/privacy/" class="footer__legal-link astro-jo6i4kqk" target="_blank" rel="noopener">Privacy</a></li><li class="astro-jo6i4kqk"><a href="https://aws.amazon.com/terms/" class="footer__legal-link astro-jo6i4kqk" target="_blank" rel="noopener">Site terms</a></li><li class="astro-jo6i4kqk"><a href="https://github.com/strands-agents/harness-sdk/blob/main/LICENSE.APACHE" class="footer__legal-link astro-jo6i4kqk" target="_blank" rel="noopener">License</a></li><li class="astro-jo6i4kqk"><a href="https://aws.amazon.com/legal/cookies/" class="footer__legal-link astro-jo6i4kqk" target="_blank" rel="noopener">Cookies</a></li><li class="astro-jo6i4kqk"><a href="#" class="footer__legal-link astro-jo6i4kqk" id="cookie-preferences">Preferences</a></li></ul></div><p class="footer__copyright astro-jo6i4kqk">&copy; 2026, Amazon Web Services, Inc. or its affiliates. All rights reserved.</p></div></footer><script type="module" src="/_astro/Footer.astro_astro_type_script_index_0_lang.CIDZPWtQ.js"></script></body></html>

@@ -9,6 +9,7 @@
 ## Product landing pages
 
 - [Strands Box](https://strandsagents.com/box/index.md): Strands Box runs AI agents in a sandbox that limits the files, programs, websites, and credentials they can access locally or in supported cloud deployments.
+- [Strands Decider](https://strandsagents.com/decider/index.md): Strands Decider routes, classifies, and scores known outcomes with a decision model that returns typed answers and probability signals without generating text.
 
 ## Harness
 

@@ -90,7 +90,7 @@ Each run has a folder in `~/.strands/box/r/`, named by its box ID, such as `b-5b
 
 A new run that fails before the box starts leaves no folder. Every other run folder stays until you clean it up, and storage stays until you delete it.
 
-Two more items in `~/.strands/box` need no edits. `installation.toml` holds the choice made with `box telemetry` and the random ID that [usage telemetry](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/CLI_TELEMETRY.md) sends. `packages/` holds each release that [the installer](/docs/user-guide/box/install/index.md#what-the-installer-adds) put on this computer. [Upgrade or choose a version](/docs/user-guide/box/install/index.md#upgrade-or-choose-a-version) says which old releases you can delete.
+Two more items in `~/.strands/box` need no edits. `installation.toml` holds the choice made with `box telemetry` and the random ID that [usage telemetry](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/CLI_TELEMETRY.md) sends. `packages/` holds each release that [the installer](/docs/user-guide/box/install/index.md#what-the-installer-adds) put on this computer. [Upgrade or choose a version](/docs/user-guide/box/install/index.md#upgrade-or-choose-a-version) says which old releases you can delete.
 
 ## Deleting files
 

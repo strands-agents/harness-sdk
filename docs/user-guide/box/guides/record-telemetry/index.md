@@ -238,11 +238,13 @@ A control-plane record states one change to the authority this box holds. The sc
 
 | Key | Value |
 | --- | --- |
-| `strands.box.control.operation` | `policy_installed`, `policy_refused`, `schema_installed`, `discovery_complete`, `box_started`, `box_stopped`, or `secret_fetched` |
+| `strands.box.control.operation` | `policy_installed`, `policy_refused`, `schema_installed`, `discovery_complete`, `box_started`, `workload_started`, `box_stopped`, or `secret_fetched` |
 | `strands.box.control.outcome` | `ok`, or `refused` |
 | `strands.box.control.subject` | what the operation was about |
 | `strands.box.control.reason` | why a refusal happened |
 | `strands.box.control.detail` | further text the operation carries |
+
+A `workload_started` record states that the box finished its setup and the workload is running inside its containment. The box writes `box_started` before it installs the policy and builds the sandbox, and `workload_started` once the workload’s `exec` succeeds. The subject is the box’s name. A run whose containment or `exec` fails has no `workload_started` record, and its `box_stopped` is `refused`.
 
 A `secret_fetched` record states one read of a secret through a [declared secret source](/docs/user-guide/box/reference/configuration/index.md#secret-sourcescheme), when the box starts. The subject is the entry that names the secret, such as `[egress.github] secret.ref`. The detail names the source, its program, and the reference with its name removed: ``source `op`, program /opt/homebrew/bin/op, reference op://[REDACTED]``. The outcome is `refused` when the program returned no secret. The reason then says only that, because the program’s own words go to stderr alone. Box reads the secret of a telemetry target before it opens its records, so a read that fails there is on stderr and in no record.
 
@@ -286,6 +288,7 @@ Example output:
 ```text
 box_started ok
 policy_installed ok
+workload_started ok
 discovery_complete ok
 box_stopped ok
 ```
@@ -335,4 +338,4 @@ Set `STRANDS_BOX_TELEMETRY_DEBUG` to also print each failed export as it happens
 ## See also
 
 -   [Getting started](/docs/user-guide/box/core/quickstart/index.md): install Box, then run Claude Code or Codex in a box.
--   [How telemetry works](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.

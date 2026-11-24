@@ -73,10 +73,10 @@ Three refusals look like a denial, and no `permit` lifts them:
 
 ## The actions
 
-The box ships ten actions in four categories, and generates one more for each MCP tool it discovers. Each experimental [tool grammar](/docs/user-guide/box/reference/configuration/index.md#toolnamegrammar) adds its own `Tool::<name>` actions. [The action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md) lists the fields of each one.
+The box ships eleven actions in four categories, and generates one more for each MCP tool it discovers. Each experimental [tool grammar](/docs/user-guide/box/reference/configuration/index.md#toolnamegrammar) adds its own `Tool::<name>` actions. [The action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md) lists the fields of each one.
 
 -   **[Filesystem](/docs/user-guide/box/reference/policy-actions/index.md#filesystem)**: a file operation in Strands Shell or Monty. `fs:read`, `fs:write`, `fs:delete`, `fs:move`, and the reserved `fs:other`.
--   **[Network](/docs/user-guide/box/reference/policy-actions/index.md#network)**: an outbound call through the egress gateway. Each call is two decisions: `net:connect` for the connection, before TLS, and `http:request` for each request inside it, after TLS on an HTTPS connection.
+-   **[Network](/docs/user-guide/box/reference/policy-actions/index.md#network)**: an outbound call through the egress gateway. Each call is two decisions: `net:connect` for the connection, before TLS, and `http:request` for each request inside it, after TLS on an HTTPS connection. A WebSocket handshake is `websocket:connect` in place of `http:request`.
 -   **[Shell](/docs/user-guide/box/reference/policy-actions/index.md#shell)**: a command line in Strands Shell, judged once after the shell resolves its first word to a program. `shell:exec` for a program the shell implements, such as `cat` or `grep`, and `shell:spawn` for a program of the surrounding OS, such as `git`, and for the start of each stdio MCP server `box.toml` declares.
 -   **[MCP](/docs/user-guide/box/reference/policy-actions/index.md#mcp)**: a request through a declared MCP server, with [host-based matching](/docs/user-guide/box/guides/add-an-mcp-server/index.md#remote-destination-matching) for remote servers. `mcp:call` decides each request except the protocol methods listed in the action reference. One generated `<server>::Action::"<tool>"` per discovered tool decides a `tools/call` after `mcp:call` permitted it.
 
@@ -804,4 +804,4 @@ Correct the system clock, or remove the box directory to start again, as [gettin
 -   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): a first policy, a denial, and the decision log.
 -   [The action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md): every action, its fields, and which part of the box raises it.
 -   [Security](/docs/user-guide/box/security/index.md): what `box.toml` governs, what `policy.dw` governs, and what a policy cannot do today.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/4bdcea8013143a36a34cd23f6565fd1f8dc18b1f/docs/design/policy.md): how one engine per box decides, and why.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/design/policy.md): how one engine per box decides, and why.

@@ -20,7 +20,7 @@ Trade-offs vs. CDK:
 
 ## CDK deploy
 
-For repeatable deploys with every tuning knob exposed, use the CDK stack in [`deploy/sagemaker/`](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/sagemaker) on the Decider repo. One stack copies the model to S3, picks (or builds) a serving image, and creates the endpoint; `cdk destroy` removes everything.
+For repeatable deploys with every tuning knob exposed, use the CDK stack in [`deploy/sagemaker/`](https://github.com/strands-labs/strands-decider/tree/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/deploy/sagemaker) on the Decider repo. One stack copies the model to S3, picks (or builds) a serving image, and creates the endpoint; `cdk destroy` removes everything.
 
 ### Deploy it
 
@@ -111,5 +111,5 @@ Callers need IAM `sagemaker:InvokeEndpoint` on the endpoint. The container has n
 
 ## See also
 
--   Source: [`deploy/sagemaker/`](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/sagemaker)
--   Full README: [`deploy/sagemaker/README.md`](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/deploy/sagemaker/README.md)
+-   Source: [`deploy/sagemaker/`](https://github.com/strands-labs/strands-decider/tree/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/deploy/sagemaker)
+-   Full README: [`deploy/sagemaker/README.md`](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/deploy/sagemaker/README.md)

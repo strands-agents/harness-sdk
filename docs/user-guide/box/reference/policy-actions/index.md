@@ -1,4 +1,4 @@
-A rule names one action. The action decides which `context.input` fields the rule can read. The box ships ten actions, and generates one more for each MCP tool it discovers. Each experimental [tool grammar](/docs/user-guide/box/reference/configuration/index.md#toolnamegrammar) adds its own `Tool::<name>` actions.
+A rule names one action. The action decides which `context.input` fields the rule can read. The box ships eleven actions, and generates one more for each MCP tool it discovers. Each experimental [tool grammar](/docs/user-guide/box/reference/configuration/index.md#toolnamegrammar) adds its own `Tool::<name>` actions.
 
 Audience: an operator writing a `policy.dw` who needs the exact action name, its `context.input` fields, and which part of the box raises it. [Policy](/docs/user-guide/box/reference/policy/index.md) introduces the rules, and [common rules](/docs/user-guide/box/reference/policy/index.md#common-rules) shows each field in use.
 
@@ -23,9 +23,9 @@ A field marked `?` below is optional. Read it behind a guard, as `context.input 
 
 Some field names mean different things on different actions. `path` is a file on `fs:read` and the path part of a URL on `http:request`. So a rule that checks `context.input` covers actions of one family: actions whose names start the same way before the `:`, such as `fs:read` and `fs:write`. Each MCP tool action is a family of its own. A rule that checks `context.input` for `fs:read` and `http:request` together refuses to load, so write one rule for each.
 
-## The ten actions
+## The eleven actions
 
-Ten actions in four categories, and one generated action per MCP tool:
+Eleven actions in four categories, and one generated action per MCP tool:
 
 -   **[Filesystem](#filesystem)**, raised by Strands Shell (the box’s shell) and by Monty (the box’s Python interpreter).
     -   `fs:read`: reading content or metadata, listing a directory, reading a symlink target, changing directory, and testing a file for execution.
@@ -36,6 +36,7 @@ Ten actions in four categories, and one generated action per MCP tool:
 -   **[Network](#network)**, raised by the egress gateway.
     -   `net:connect`: each connection, before TLS.
     -   `http:request`: each HTTP request inside the connection, after TLS on an HTTPS connection.
+    -   `websocket:connect`: each WebSocket handshake, in place of `http:request`.
 -   **[Shell](#shell)**, raised by Strands Shell.
     -   `shell:exec`: a command line that runs a program the shell implements, such as `cat` or `grep`.
     -   `shell:spawn`: a command line that runs a program of the surrounding OS, such as `git`. The box also raises it at startup, once for each stdio MCP server `box.toml` declares.
@@ -101,6 +102,10 @@ Compare either as a String behind its own guard, as `context.input has ip4 && co
 A rule on `path` has caveats for repeated slashes and `%2F`. [Forbid one URL path on a host](/docs/user-guide/box/reference/policy/index.md#forbid-one-url-path-on-a-host) lists them.
 
 `host.box.internal` is your machine’s loopback, decided as `ip4 = "127.0.0.1"`; see [reach a service on your machine](/docs/user-guide/box/reference/policy/index.md#reach-a-service-on-your-machine).
+
+**`websocket:connect`**, once per WebSocket, on its handshake, in place of `http:request`. Its fields are those of `http:request` without `body_bytes`, because a handshake has no body. The reply’s `status` is on `output`. It is 101 when the server answered 101, even if the gateway then refused that reply because it didn’t switch to WebSocket.
+
+A permit on `http:request` doesn’t admit a WebSocket. A permit on `websocket:connect` admits the whole WebSocket, because the gateway asks policy nothing after the `101`. A `forbid` on `http:request` doesn’t stop a handshake, so a guard that must stop all outbound traffic names both actions. A guard that reads `context.input` is one rule for each action, because the two are of different families. A guard or a budget can refuse the next handshake, but it cannot close a WebSocket that is open.
 
 Cloud metadata and link-local protection is two `forbid` rules on `net:connect`; [what Box always enforces](/docs/user-guide/box/security/index.md#what-box-always-enforces) lists them.
 

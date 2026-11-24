@@ -176,3 +176,9 @@ Expand the activity banner with `Ctrl+]` to watch denials. With the banner activ
 - [Understand the security model](https://strandsagents.com/docs/user-guide/box/security/)
 - [Configure profiles and MCP imports](https://strandsagents.com/docs/user-guide/box/profiles/#mcp-servers)
 - [Read the Box design story](https://strandsagents.com/blog/strands-box-the-big-picture/)
+
+## Content
+
+- [Sandbox Your AI Agents in One Command with Strands Box](https://www.youtube.com/watch?v=Z18kFF3uhSA) (Video from AWS Developers, November 23, 2026, 9:57): See how Box limits files, websites, tools, and credentials while Claude Code, Codex, or Kiro CLI runs in a local sandbox.
+- [Strands Box adds native support for Claude Code, Codex, and Kiro CLI](https://strandsagents.com/blog/strands-box-cli/) (Strands Blog, November 23, 2026): Run Claude Code, Codex, or Kiro CLI in YOLO mode inside Strands Box with one command. Profiles and packs set up the agent, credentials stay outside the box, and Dogwood rules decide what it can reach.
+- [Strands Box brings its open source sandbox to Linux](https://strandsagents.com/blog/strands-box-linux-sandbox/) (Strands Blog, November 5, 2026): Strands Box now supports Linux, bringing file and network controls, credential protection, and Dogwood policies to agents on Kubernetes, Amazon Bedrock AgentCore Runtime, and Linux hosts across cloud providers or your own infrastructure.

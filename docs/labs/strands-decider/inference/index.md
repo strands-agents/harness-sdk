@@ -50,7 +50,7 @@ The server picks a device automatically — `cuda`, then `mps`, then `cpu`. Pass
 
 ## Flags worth knowing
 
--   `--vision` loads the vision tower on the v1 Qwen3.5 checkpoint so requests may carry base64 `images`. v2 Gemma 4 models accept images without this flag. See [designs/images](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/images.md).
+-   `--vision` loads the vision tower on the v1 Qwen3.5 checkpoint so requests may carry base64 `images`. v2 Gemma 4 models accept images without this flag. See [designs/images](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/designs/images.md).
 -   `--max-concurrency N` caps in-flight requests. Each request runs to completion before another picks it up on the engine.
 -   `--max-batch N` sets the per-request question budget.
 -   `--device-map auto` splits a model across multiple GPUs when one is not enough.
@@ -61,5 +61,5 @@ Asking several questions about the same state is nearly free because the server 
 
 ## Deeper reading
 
--   [designs/inference](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/inference.md) — full operator reference, calibration notes, and Mac/MLX kernel details.
+-   [designs/inference](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/designs/inference.md) — full operator reference, calibration notes, and Mac/MLX kernel details.
 -   [Deployment](/docs/labs/strands-decider/deployment/local/index.md) — local, SageMaker, Lambda, and other hosting targets.

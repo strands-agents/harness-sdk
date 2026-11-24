@@ -2,7 +2,7 @@
 title: "Introducing Strands Decider 2B: a small, open source, decision model"
 date: 2026-10-01T00:00:00.000Z
 description: "Strands Decider 2B is a small, open source, decision model optimized for fast experimentation, local development, and innovation."
-tags: ["Open Source", "Announcement"]
+tags: ["Open Source", "Announcement", "Strands Decider"]
 ---
 Earlier this year, we announced [strands-labs](https://aws.amazon.com/blogs/opensource/introducing-strands-labs-get-hands-on-today-with-state-of-the-art-experimental-approaches-to-agentic-development/), a place to get hands-on with state-of-the-art approaches to agentic AI. Today, we’re excited to add Strands Decider 2B: a small decision model optimized for fast experimentation, local development, and innovation.
 

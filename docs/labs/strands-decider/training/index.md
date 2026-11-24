@@ -4,7 +4,7 @@ The v2 models on the [Models](/docs/labs/strands-decider/models/index.md) page c
 
 ## Which path to take
 
-**You have a decision in your application and some labelled examples.** Start with the [`customize-decider` skill](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/skills/customize-decider). It is a guide that an AI coding agent, or a person, follows step by step: build an evaluation set from your data, measure the released models on it, recalibrate the best one, and fine-tune it only if the measurement shows a gap that training can close. Recalibration needs no training run. This is the path for the rows of one application, whether you have hundreds of rows or hundreds of thousands. The skill works with the released models, and its result serves the same way as they do. For a v2 model it fine-tunes with `init_from`: a new LoRA adapter trains on the released weights, and the readout trains on from the released one.
+**You have a decision in your application and some labelled examples.** Start with the [`customize-decider` skill](https://github.com/strands-labs/strands-decider/tree/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/skills/customize-decider). It is a guide that an AI coding agent, or a person, follows step by step: build an evaluation set from your data, measure the released models on it, recalibrate the best one, and fine-tune it only if the measurement shows a gap that training can close. Recalibration needs no training run. This is the path for the rows of one application, whether you have hundreds of rows or hundreds of thousands. The skill works with the released models, and its result serves the same way as they do. For a v2 model it fine-tunes with `init_from`: a new LoRA adapter trains on the released weights, and the readout trains on from the released one.
 
 **You want to train a general model from the base model, on a broad data mix of millions of rows.** Use a v2 recipe. The rest of this page gives the steps.
 
@@ -42,7 +42,7 @@ The configs are sized for the v2 data mix of 17.48 million rows, which the [data
     pip install -e ".[train,dev]"
     ```
     
-    [Setup](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/training/README.md#setup) in the training guide has the notes on PyTorch versions.
+    [Setup](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/training/README.md#setup) in the training guide has the notes on PyTorch versions.
     
 -   Network access to Hugging Face for the Gemma 4 base model. Each config pins the revision of its base model.
     
@@ -107,7 +107,7 @@ The exported directory has the format of a released v2 model, so you run it the 
 strands-decider serve exports/E4B --port 8000
 ```
 
-See [The token readout](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/architecture.md#training-a-token-readout) for what the export checks.
+See [The token readout](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/designs/architecture.md#training-a-token-readout) for what the export checks.
 
 ## 4\. Evaluate and calibrate the export
 
@@ -122,15 +122,15 @@ python -m training.evaluate calibrate exports/E4B --data data/dev_examples.jsonl
 
 The version names: v19 is a research version from before the first release, and its models have `hobson` in their names. v1 and v2 are the first and the second release.
 
-**The v19 reference recipe.** `training/recipe.sh all` builds the data, trains one seed of the v19 reference model (Qwen3.5-2B-Base with a pointer head), calibrates and evaluates. It takes about 11 hours on one RTX 3090. [Usage](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/training/README.md#usage) in the training guide has the stages and what each one writes.
+**The v19 reference recipe.** `training/recipe.sh all` builds the data, trains one seed of the v19 reference model (Qwen3.5-2B-Base with a pointer head), calibrates and evaluates. It takes about 11 hours on one RTX 3090. [Usage](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/training/README.md#usage) in the training guide has the stages and what each one writes.
 
-**The released v1 models.** `configs/v1/` holds the training config of each released v1 model. Each release is an average of three runs of its config (a soup), calibrated after the average. Part of the v1 training data is built outside the repository, so `recipe.sh all` does not rebuild a v1 model. [The v1 release recipes](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/training/README.md#the-v1-release-recipes) says what each config reads.
+**The released v1 models.** `configs/v1/` holds the training config of each released v1 model. Each release is an average of three runs of its config (a soup), calibrated after the average. Part of the v1 training data is built outside the repository, so `recipe.sh all` does not rebuild a v1 model. [The v1 release recipes](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/training/README.md#the-v1-release-recipes) says what each config reads.
 
-**Fine-tuning a released v1 model.** A training config can start from a released model with `init_from` and train it on your rows. [Fine-tuning a released model](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/training/README.md#fine-tuning-a-released-model-with-init_from) has an example config, and the `customize-decider` skill covers the whole path.
+**Fine-tuning a released v1 model.** A training config can start from a released model with `init_from` and train it on your rows. [Fine-tuning a released model](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/training/README.md#fine-tuning-a-released-model-with-init_from) has an example config, and the `customize-decider` skill covers the whole path.
 
 ## Where to go next
 
--   [The `customize-decider` skill](https://github.com/strands-labs/strands-decider/tree/ecdb331493761f889351d3ca4936a9ef4e758b33/skills/customize-decider) — measure a released model on your data, and train only if the measurement says so.
--   [The v2 recipes](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/training/README.md#the-v2-recipes) — the three steps in the training guide.
--   [The token readout](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/designs/architecture.md#training-a-token-readout) — the design of the readout, the attention and the export.
--   [`training/hardware.md`](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/training/hardware.md) — memory, throughput, and length-grouped batching.
+-   [The `customize-decider` skill](https://github.com/strands-labs/strands-decider/tree/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/skills/customize-decider) — measure a released model on your data, and train only if the measurement says so.
+-   [The v2 recipes](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/training/README.md#the-v2-recipes) — the three steps in the training guide.
+-   [The token readout](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/designs/architecture.md#training-a-token-readout) — the design of the readout, the attention and the export.
+-   [`training/hardware.md`](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/training/hardware.md) — memory, throughput, and length-grouped batching.

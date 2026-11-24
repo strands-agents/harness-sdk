@@ -20,7 +20,7 @@ The largest v1 checkpoint. A mixture of experts: 26B total parameters with ~4B a
 | GPU memory (bf16) | ~51 GB |
 | Latency, H100 (median) | 245 ms |
 
-Full per-skill numbers (including 12 code sub-tasks ranging 0.562–0.989) are on the [Hugging Face card](https://huggingface.co/StrandsAgents/strands-decider-26B-A4B-gemma4-v1-2610#results) and in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/ecdb331493761f889351d3ca4936a9ef4e758b33/evaluation/results.md).
+Full per-skill numbers (including 12 code sub-tasks ranging 0.562–0.989) are on the [Hugging Face card](https://huggingface.co/StrandsAgents/strands-decider-26B-A4B-gemma4-v1-2610#results) and in [evaluation/results.md](https://github.com/strands-labs/strands-decider/blob/6d85079caf1f1906ebb0f1370b56ef28ba7aa93e/evaluation/results.md).
 
 ## Run it
 

@@ -2,7 +2,7 @@
 title: "Strands Decider adds four Gemma 4 models"
 date: 2026-10-15T00:00:00.000Z
 description: "Four new Strands Decider models built on Gemma 4 let developers compare sizes for routing, guardrails, evaluation, and other agent decisions."
-tags: ["Open Source", "Announcement"]
+tags: ["Open Source", "Announcement", "Strands Decider"]
 ---
 You’ve probably noticed a wave of smaller, purpose-built models appearing across the industry. That’s because not every agent decision needs a large, general-purpose LLM. For focused decisions like routing work, checking tool arguments, and applying guardrails, teams can choose a model size that fits their accuracy, latency, and deployment needs.
 
