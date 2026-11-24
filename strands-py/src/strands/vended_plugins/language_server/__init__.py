@@ -21,6 +21,7 @@ Example Usage:
 """
 
 from .client import LanguageServerError, LanguageServerNotFoundError, LspClient, Position, StdioLspClient
+from .code_offload import CodeSkeletonStrategy
 from .enrich import CodeFetchEnricher
 from .search import WorkspaceSearch, workspace_retrieval_tool
 from .skeleton import SkeletonStrategy
@@ -28,6 +29,7 @@ from .strategy import LspPassReport, LspStrategy
 
 __all__ = [
     "CodeFetchEnricher",
+    "CodeSkeletonStrategy",
     "LanguageServerError",
     "LanguageServerNotFoundError",
     "LspClient",

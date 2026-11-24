@@ -89,6 +89,27 @@ class WorkspaceSearch:
             return f"No file or directory {path} in the workspace."
         return await asyncio.to_thread(self._grep, pattern, scope)
 
+    async def read_lines(self, path: str, start: int, end: int) -> str:
+        """Lines ``start`` to ``end`` of a file under the root, numbered as ``read`` numbers them.
+
+        Args:
+            path: A file under the root.
+            start: First line, from 1.
+            end: Last line, inclusive.
+
+        Returns:
+            The numbered lines, or why there are none.
+        """
+        scope = self._scope(path)
+        if scope is None or not scope.is_file():
+            return f"No file {path} in the workspace."
+        lines = scope.read_text(encoding="utf-8", errors="replace").splitlines()
+        first, last = max(1, start), min(end, len(lines))
+        if first > last:
+            return f"{path} has {len(lines)} lines; L{start}-{end} is outside it."
+        body = [f"{number:6}\t{lines[number - 1]}" for number in range(first, last + 1)]
+        return self._cap("\n".join([f"{self._relative(scope)} L{first}-{last} of {len(lines)}:", *body]))
+
     async def _definitions(self, name: str, scope: Path) -> list[tuple[Path, dict[str, Any]]]:
         """The ``(file, DocumentSymbol)`` of each definition named ``name`` under ``scope``."""
         if scope.is_file():
@@ -186,11 +207,19 @@ def workspace_retrieval_tool(context_manager: ContextManager, search: WorkspaceS
                 return _result(tool_use_id, "No stash is configured, so there is nothing to retrieve by reference.")
             answer = _create_retrieval_tool(stash)._tool_func(tool_use)
             return await answer if inspect.isawaitable(answer) else answer
+        line_range = inputs.get("line_range")
+        if inputs.get("path") and isinstance(line_range, dict) and not inputs.get("symbol"):
+            start, end = int(line_range.get("start", 1)), int(line_range.get("end", 1))
+            return _result(tool_use_id, await search.read_lines(str(inputs["path"]), start, end))
         if inputs.get("symbol"):
             return _result(tool_use_id, await search.find_symbol(str(inputs["symbol"]), inputs.get("path")))
         if inputs.get("pattern"):
             return _result(tool_use_id, await search.grep(str(inputs["pattern"]), inputs.get("path")))
-        return _result(tool_use_id, "Pass reference= for offloaded content, symbol= for a definition, or pattern=.")
+        return _result(
+            tool_use_id,
+            "Pass reference= for offloaded content, path= with line_range= for exact lines, symbol= for a definition,"
+            " or pattern=.",
+        )
 
     _invoke.__name__ = RETRIEVAL_TOOL_NAME
     return PythonAgentTool(tool_name=RETRIEVAL_TOOL_NAME, tool_spec=_TOOL_SPEC, tool_func=_invoke)
@@ -204,11 +233,13 @@ _TOOL_SPEC = ToolSpec(
         "    or line_range to read part of it\n"
         "  - symbol: a class, function, method, or variable name, for its definition with line numbers; add path\n"
         "    (a file or directory) to narrow it. When no definition has the name, the workspace is searched for it\n"
-        "  - pattern without reference: a regex to search the workspace (or path) for, as path:line: text lines\n\n"
+        "  - pattern without reference: a regex to search the workspace (or path) for, as path:line: text lines\n"
+        "  - path with line_range: the exact current lines of a file, numbered\n\n"
         "Examples:\n"
         '  { reference: "toolu_abc", pattern: "error" }\n'
         '  { symbol: "Store", path: "pkg/store.py" }\n'
-        '  { pattern: "retry_limit", path: "pkg" }'
+        '  { pattern: "retry_limit", path: "pkg" }\n'
+        '  { path: "pkg/store.py", line_range: { start: 40, end: 80 } }'
     ),
     inputSchema={
         "type": "object",
@@ -219,7 +250,7 @@ _TOOL_SPEC = ToolSpec(
             "pattern": {"type": "string", "description": "Regex to search for."},
             "line_range": {
                 "type": "object",
-                "description": "With reference: return only this span of lines.",
+                "description": "With reference: only this span of lines. With path: these lines of the file.",
                 "properties": {"start": {"type": "integer", "minimum": 1}, "end": {"type": "integer", "minimum": 1}},
                 "required": ["start", "end"],
             },

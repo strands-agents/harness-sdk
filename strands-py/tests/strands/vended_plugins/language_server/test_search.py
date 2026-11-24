@@ -189,7 +189,11 @@ def test_the_tool_replaces_the_built_in_one_and_serves_references_symbols_and_pa
     assert "stashed text" in answers["c0"]
     assert answers["c1"].startswith("pkg/store.py L1-3 (Store):")
     assert answers["c2"] == "1 matching lines for 'RETRY_LIMIT':\npkg/config.py:1: RETRY_LIMIT = 3"
-    assert answers["c3"] == "Pass reference= for offloaded content, symbol= for a definition, or pattern=."
+    assert (
+        answers["c3"]
+        == "Pass reference= for offloaded content, path= with line_range= for exact lines, symbol= for a definition,"
+        " or pattern=."
+    )
 
 
 @pytest.mark.skipif(shutil.which("pyright-langserver") is None, reason="pyright-langserver is not on PATH")
