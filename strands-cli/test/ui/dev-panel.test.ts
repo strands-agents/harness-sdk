@@ -33,8 +33,7 @@ const mount = async (command: DevChatCommand | readonly DevChatCommand[], rows =
     return `${stringWidth(view.lines()[line]!.slice(0, view.lines()[line]!.indexOf(text))) + 1};${line + 1}`
   }
   const click = async (text: string): Promise<void> => {
-    await view.press(`\u001b[<0;${at(text)}M`)
-    await view.press(`\u001b[<0;${at(text)}m`)
+    await view.press(`\u001b[<0;${at(text)}M`, `\u001b[<0;${at(text)}m`)
   }
   return { ...view, at, click }
 }
@@ -116,8 +115,7 @@ describe('dev command panels', () => {
     await controller.submit('/probe')
     await instance.waitUntilRenderFlush()
 
-    await press('x')
-    await press('y')
+    await press('x', 'y')
 
     expect(screen()).toContain('probe panel keys:[xy]')
     await press('\u001b')
@@ -427,8 +425,7 @@ const askCommand = (dropPending?: () => boolean): DevChatCommand => {
 describe('a sticky question panel', () => {
   const openAsk = async (command = askCommand()) => {
     const view = await mount(command)
-    await view.press('/ask')
-    await view.press('\r')
+    await view.press('/ask', '\r')
     return view
   }
 
@@ -436,9 +433,7 @@ describe('a sticky question panel', () => {
     const { controller, press, screen } = await openAsk()
     expect(screen()).toContain('question keys:[]')
 
-    await press('\u001b[B')
-    await press('h')
-    await press('i')
+    await press('\u001b[B', 'h', 'i')
 
     expect(screen()).toContain('question keys:[]')
     expect(screen()).toContain('hi')
@@ -449,10 +444,7 @@ describe('a sticky question panel', () => {
     const { controller, press, screen } = await openAsk()
     await press('\u001b[B')
 
-    await press('h')
-    await press('e')
-    await press('y')
-    await press('\r')
+    await press('h', 'e', 'y', '\r')
 
     expect(screen()).toContain('question keys:[]')
     expect(controller.getSnapshot().panel?.kind).toBe('dev')
@@ -462,8 +454,7 @@ describe('a sticky question panel', () => {
   it('shouldLeaveTheQuestionOpenWhenTheDeveloperClicksTheInput', async () => {
     const { controller, press } = await openAsk()
 
-    await press('\u001b[<0;10;37M')
-    await press('\u001b[<0;10;37m')
+    await press('\u001b[<0;10;37M', '\u001b[<0;10;37m')
 
     expect(controller.getSnapshot().panel?.kind).toBe('dev')
   })
@@ -471,14 +462,11 @@ describe('a sticky question panel', () => {
   it('shouldMoveBetweenTheQuestionAndTheChatWithTheArrows', async () => {
     const { press, screen } = await openAsk()
 
-    await press('\u001b[B')
-    await press('h')
+    await press('\u001b[B', 'h')
     expect(screen()).toContain('question keys:[]')
     expect(screen()).toContain('h')
 
-    await press('\u007f')
-    await press('\u001b[A')
-    await press('z')
+    await press('\u007f', '\u001b[A', 'z')
 
     expect(screen()).toContain('question keys:[z]')
   })
@@ -489,15 +477,12 @@ describe('a sticky question panel', () => {
     await press('\u001b[B')
     expect(screen()).toContain('Enter view')
 
-    await press('\u001b[A')
-    await press('z')
+    await press('\u001b[A', 'z')
 
     expect(screen()).not.toContain('Enter view')
     expect(screen()).toContain('question keys:[]')
 
-    await press('\u007f')
-    await press('\u001b[A')
-    await press('z')
+    await press('\u007f', '\u001b[A', 'z')
 
     expect(screen()).toContain('question keys:[z]')
   })
@@ -508,9 +493,7 @@ describe('a sticky question panel', () => {
     const steer = vi.spyOn(controller, 'steer')
     await press('\u001b[B')
 
-    await press('h')
-    await press('i')
-    await press('\r')
+    await press('h', 'i', '\r')
 
     expect(dropped).toEqual([1])
     expect(steer).toHaveBeenCalledWith('hi')
@@ -522,9 +505,7 @@ describe('a sticky question panel', () => {
     const submit = vi.spyOn(controller, 'submit')
     await press('\u001b[B')
 
-    await press('h')
-    await press('i')
-    await press('\r')
+    await press('h', 'i', '\r')
 
     expect(steer).not.toHaveBeenCalled()
     expect(submit).toHaveBeenCalledWith('hi')
@@ -559,9 +540,7 @@ describe('a sticky question panel', () => {
         .join()
     const before = composer()
 
-    await press(`\u001b[<0;6;${row + 1}M`)
-    await press(`\u001b[<32;12;${row + 1}M`)
-    await press(`\u001b[<32;20;${row + 1}M`)
+    await press(`\u001b[<0;6;${row + 1}M`, `\u001b[<32;12;${row + 1}M`, `\u001b[<32;20;${row + 1}M`)
 
     expect(composer()).toBe(before)
   })
@@ -592,20 +571,16 @@ describe('a sticky question panel', () => {
     await press('x')
     expect(screen()).toContain('question keys:[]')
 
-    await press('\u007f')
-    await press('\u001b[A')
-    await press('x')
+    await press('\u007f', '\u001b[A', 'x')
 
     expect(screen()).toContain('question keys:[x]')
   })
 
   it('shouldKeepTheInputWhenUpArrivesWithTextTyped', async () => {
     const { press, screen } = await openAsk()
-    await press('\u001b[B')
-    await press('a')
+    await press('\u001b[B', 'a')
 
-    await press('\u001b[A')
-    await press('z')
+    await press('\u001b[A', 'z')
 
     expect(screen()).toContain('question keys:[]')
   })

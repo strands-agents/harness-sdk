@@ -1,4 +1,4 @@
-import { createElement, type ReactElement } from 'react'
+import { createElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { createDiffPreview } from '../../src/agent/file-changes.js'
@@ -13,9 +13,9 @@ import {
   type WizardFieldSpec,
   type WizardRequestSpec,
 } from '../../src/ui/panels/wizard-request.js'
-import { mountChat } from '../fixtures/chat-app.js'
+import { mountChat, mountElement } from '../fixtures/chat-app.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
-import { captureFrame, mouseInputSequence, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
+import { mouseInputSequence } from '../fixtures/terminal.js'
 
 const ENTER = '\r'
 const UP = '\u001b[A'
@@ -58,23 +58,22 @@ const budget: readonly WizardFieldSpec[] = [
   { kind: 'number', key: 'workers', label: 'parallel', value: 4, min: 1, max: 16 },
 ]
 
-const show = async (element: ReactElement, rows = 20) => {
-  const input = ttyInput()
-  const output = ttyOutput(100, rows)
-  const frame = captureFrame(output)
-  const instance = render(element, { stdin: input, stdout: output })
-  await instance.waitUntilRenderFlush()
-  const press = async (...keys: readonly string[]): Promise<void> => {
-    for (const key of keys) {
-      input.write(key)
-      await instance.waitUntilRenderFlush()
-    }
-  }
-  return { text: (): string => frame().join('\n'), press }
-}
+type PanelOptions = { width?: number; height?: number; active?: boolean; blur?: () => void }
 
-const panel = async (broker: WizardBroker, rows = 20, options: { active?: boolean; blur?: () => void } = {}) =>
-  show(createElement(WizardRequestPanel, { broker, width: 96, height: rows - 2, close: vi.fn(), ...options }), rows)
+const show = (broker: WizardBroker, { width = 96, height = 18, ...options }: PanelOptions = {}) =>
+  mountElement(
+    createElement(WizardRequestPanel, { broker, width, height, close: vi.fn(), ...options }),
+    100,
+    height + 2
+  )
+
+// A broker that asks `spec`, and its panel on screen.
+const panel = async (spec: WizardRequestSpec, options?: PanelOptions) => {
+  const broker = new WizardBroker()
+  const asked = broker.ask(spec)
+  const view = await show(broker, options)
+  return { ...view, broker, asked, lines: (): string[] => view.lines().map((line) => line.trimEnd()) }
+}
 
 describe('defaultAnswers', () => {
   it('shouldSeedEveryFieldFromItsSpecAndLeaveOutAnUnavailablePick', () => {
@@ -164,43 +163,37 @@ describe('WizardBroker', () => {
 
 describe('WizardRequestPanel', () => {
   it('shouldShowOneQuestionAndReturnEveryPickOfASelectManyButNotAnUnavailableOne', async () => {
-    const broker = new WizardBroker()
-    const asked = broker.ask(question([tune]))
-    const { text, press } = await panel(broker)
+    const { asked, screen, press } = await panel(question([tune]))
 
-    expect(text()).toContain('What should the run tune?')
-    expect(text()).toContain('☑ instructions')
-    expect(text()).toContain('☐ caching')
-    expect(text()).not.toContain('Tab next tab')
+    expect(screen()).toContain('What should the run tune?')
+    expect(screen()).toContain('☑ instructions')
+    expect(screen()).toContain('☐ caching')
+    expect(screen()).not.toContain('Tab next tab')
     await press(DOWN, ENTER, DOWN, ENTER)
-    expect(text()).toContain('not available')
+    expect(screen()).toContain('not available')
     await press(DOWN, ENTER)
 
     await expect(asked).resolves.toEqual({ tune: ['instructions', 'caching'] })
   })
 
   it('shouldEditTheInputRowInPlaceAndAnswerWithTheTypedTextWhenItIsPicked', async () => {
-    const broker = new WizardBroker()
-    const asked = broker.ask(question([objective]))
-    const { text, press } = await panel(broker)
+    const { asked, screen, press } = await panel(question([objective]))
 
-    expect(text()).toContain('◉ the mean of every evaluator')
+    expect(screen()).toContain('◉ the mean of every evaluator')
     await press(DOWN, ENTER, ...'tokens <= 4000')
-    const editing = text().split('\n')
+    const editing = screen().split('\n')
     expect(editing.find((line) => line.includes('something else'))).toContain('tokens <= 4000▏')
     expect(editing.filter((line) => line.includes('tokens <= 4000'))).toHaveLength(1)
     await press(ENTER)
-    expect(text()).toContain('◉ something else')
-    expect(text()).toContain('tokens <= 4000')
+    expect(screen()).toContain('◉ something else')
+    expect(screen()).toContain('tokens <= 4000')
     await press(DOWN, ENTER)
 
     await expect(asked).resolves.toEqual({ objective: 'tokens <= 4000' })
   })
 
   it('shouldUnpickTheInputRowWhenItsTextIsSavedEmpty', async () => {
-    const broker = new WizardBroker()
-    const asked = broker.ask(question([{ ...objective, selected: [] } as WizardFieldSpec]))
-    const { press } = await panel(broker)
+    const { asked, press } = await panel(question([{ ...objective, selected: [] } as WizardFieldSpec]))
 
     await press(DOWN, ENTER, ...'x', ENTER, ENTER, BACKSPACE, ENTER, DOWN, ENTER)
 
@@ -208,72 +201,61 @@ describe('WizardRequestPanel', () => {
   })
 
   it('shouldTakeDigitsOnlyAndBlockFinishingUntilEveryNumberFits', async () => {
-    const broker = new WizardBroker()
-    const asked = broker.ask(question(budget))
-    const { text, press } = await panel(broker)
+    const { asked, broker, screen, press } = await panel(question(budget))
 
-    expect(text()).toContain('4   rounds')
+    expect(screen()).toContain('4   rounds')
     await press(ENTER, BACKSPACE, ...'0x', ENTER)
-    expect(text()).toContain('steps must be at least 1.')
+    expect(screen()).toContain('steps must be at least 1.')
     await press(DOWN, DOWN, ENTER)
     expect(broker.pending()).toBeDefined()
     await press(ESCAPE)
     await expect(asked).resolves.toBeUndefined()
 
-    const fixed = broker.ask(question(budget))
-    const again = await panel(broker)
+    const again = await panel(question(budget))
     await again.press(DOWN, ENTER, BACKSPACE, ENTER)
-    expect(again.text()).toContain('parallel needs a whole number.')
+    expect(again.screen()).toContain('parallel needs a whole number.')
     await again.press(ENTER, ...'32', ENTER)
-    expect(again.text()).toContain('parallel must be at most 16.')
+    expect(again.screen()).toContain('parallel must be at most 16.')
     await again.press(ENTER, BACKSPACE, ENTER, DOWN, ENTER)
 
-    await expect(fixed).resolves.toEqual({ iterations: 4, workers: 3 })
+    await expect(again.asked).resolves.toEqual({ iterations: 4, workers: 3 })
   })
 
   it('shouldKeepAQuestionOnScreenAndOfferNoAutofillWhenTheUserPressesCtrlA', async () => {
-    const broker = new WizardBroker()
-    void broker.ask(question([tune]))
-    const { text, press } = await panel(broker)
+    const { broker, screen, press } = await panel(question([tune]))
 
-    expect(text()).not.toContain('autofill')
+    expect(screen()).not.toContain('autofill')
     await press(CTRL_A)
 
     expect(broker.pending()?.name).toBe('optimize')
-    expect(text()).toContain('instructions')
+    expect(screen()).toContain('instructions')
   })
 
   it('shouldTakeWhatIsTypedOnATextRowAsTheStartOfItsAnswer', async () => {
-    const broker = new WizardBroker()
-    const asked = broker.ask(question([{ kind: 'text', key: 'notes', label: 'notes' }]))
-    const { text, press } = await panel(broker)
+    const { asked, screen, press } = await panel(question([{ kind: 'text', key: 'notes', label: 'notes' }]))
 
     await press(...'1 step')
-    expect(text()).toContain('1 step▌')
+    expect(screen()).toContain('1 step▌')
     await press(ENTER, DOWN, ENTER)
 
     await expect(asked).resolves.toEqual({ notes: '1 step' })
   })
 
   it('shouldStayIdleWithoutACursorWhileTheChatInputHoldsTheKeyboard', async () => {
-    const broker = new WizardBroker()
-    void broker.ask(question([tune]))
-    const { text, press } = await panel(broker, 20, { active: false })
+    const { broker, screen, press } = await panel(question([tune]), { active: false })
 
     await press(ENTER, ESCAPE)
 
     expect(broker.pending()).toBeDefined()
-    expect(text()).toContain('↑ answer this')
-    expect(text()).not.toContain('›')
+    expect(screen()).toContain('↑ answer this')
+    expect(screen()).not.toContain('›')
   })
 
   it('shouldCarryOnIntoTheChatWhenDownPassesTheButtons', async () => {
-    const broker = new WizardBroker()
     const blur = vi.fn()
-    void broker.ask(question([tune]))
-    const { text, press } = await panel(broker, 20, { blur })
+    const { broker, screen, press } = await panel(question([tune]), { blur })
 
-    expect(text()).toContain('↓ chat')
+    expect(screen()).toContain('↓ chat')
     await press(DOWN, DOWN, DOWN)
     expect(blur).not.toHaveBeenCalled()
     await press(DOWN)
@@ -283,9 +265,9 @@ describe('WizardRequestPanel', () => {
   })
 
   it('shouldSayWhenNoQuestionIsWaiting', async () => {
-    const { text } = await panel(new WizardBroker())
+    const { screen } = await show(new WizardBroker())
 
-    expect(text()).toContain('No question is waiting.')
+    expect(screen()).toContain('No question is waiting.')
   })
 })
 
@@ -345,82 +327,68 @@ const review = (before = OLD_PROMPT, after = NEW_PROMPT): WizardRequestSpec => (
   ],
 })
 
-const reviewPanel = async (width: number, height: number, active = true) => {
-  const broker = new WizardBroker()
-  const asked = broker.ask(review())
-  const { text, press } = await show(
-    createElement(WizardRequestPanel, { broker, width, height, close: vi.fn(), active }),
-    height + 2
-  )
-  const lines = (): string[] =>
-    text()
-      .split('\n')
-      .map((line) => line.trimEnd())
-  return { asked, broker, press, lines, text }
-}
-
 describe('a question that shows a change to read', () => {
   it('shouldShowTheWholeChangeAboveBothChoicesAndTheButtonsWhenThePanelHasTheRoom', async () => {
-    const { lines, text } = await reviewPanel(76, 34)
+    const { lines, screen } = await panel(review(), { width: 76, height: 34 })
 
-    expect(text()).toContain('  agent.ts · +3 -1 lines')
+    expect(screen()).toContain('  agent.ts · +3 -1 lines')
     expect(lines()).toContain('  + 3. After the prefix, give the answer first, then at most one sentence of')
     expect(lines()).toContain('    - Do not add a sign-off.')
-    expect(text()).toContain('○ Apply this change')
-    expect(text()).toContain('○ Leave it as it is')
-    expect(text()).toContain('[ OK ]')
-    expect(text()).not.toMatch(/↓ \d+ more/u)
-    expect(text().indexOf('agent.ts ·')).toBeLessThan(text().indexOf('○ Apply this change'))
+    expect(screen()).toContain('○ Apply this change')
+    expect(screen()).toContain('○ Leave it as it is')
+    expect(screen()).toContain('[ OK ]')
+    expect(screen()).not.toMatch(/↓ \d+ more/u)
+    expect(screen().indexOf('agent.ts ·')).toBeLessThan(screen().indexOf('○ Apply this change'))
   })
 
   it.each([
     [76, 12],
     [56, 11],
   ])('shouldKeepTheChoicesAndScrollTheChangeAt%ix%i', async (width, height) => {
-    const { text } = await reviewPanel(width, height)
+    const { screen } = await panel(review(), { width, height })
 
-    expect(text()).toContain('○ Apply this change')
-    expect(text()).toContain('○ Leave it as it is')
-    expect(text()).toContain('@@ -1,5 +1,7 @@')
-    expect(text()).toMatch(/↓ \d+ more · PgUp\/PgDn scroll/u)
+    expect(screen()).toContain('○ Apply this change')
+    expect(screen()).toContain('○ Leave it as it is')
+    expect(screen()).toContain('@@ -1,5 +1,7 @@')
+    expect(screen()).toMatch(/↓ \d+ more · PgUp\/PgDn scroll/u)
   })
 
   it('shouldScrollWithPageDownAndPageUpAndLeaveTheChoiceWhereItIs', async () => {
-    const { asked, press, text } = await reviewPanel(76, 14)
-    expect(text()).not.toContain('Closing:')
+    const { asked, press, screen } = await panel(review(), { width: 76, height: 14 })
+    expect(screen()).not.toContain('Closing:')
 
     await press(DOWN, PAGE_DOWN, PAGE_DOWN, PAGE_DOWN, PAGE_DOWN)
-    expect(text()).toContain('- Do not add a sign-off.')
-    expect(text()).toMatch(/↑ \d+ previous · PgUp\/PgDn scroll/u)
+    expect(screen()).toContain('- Do not add a sign-off.')
+    expect(screen()).toMatch(/↑ \d+ previous · PgUp\/PgDn scroll/u)
     await press(PAGE_UP, PAGE_UP, PAGE_UP, PAGE_UP)
-    expect(text()).not.toContain('previous')
+    expect(screen()).not.toContain('previous')
     await press(ENTER, DOWN, ENTER)
 
     await expect(asked).resolves.toEqual({ verdict: 'reject' })
   })
 
   it('shouldNotScrollWithTheKeysWhileTheChatInputHoldsTheKeyboard', async () => {
-    const { press, text } = await reviewPanel(76, 14, false)
+    const { press, screen } = await panel(review(), { width: 76, height: 14, active: false })
 
     await press(PAGE_DOWN)
 
-    expect(text()).toContain('@@ -1,5 +1,7 @@')
-    expect(text()).not.toContain('PgUp/PgDn scroll')
+    expect(screen()).toContain('@@ -1,5 +1,7 @@')
+    expect(screen()).not.toContain('PgUp/PgDn scroll')
   })
 
   it('shouldKeepTheSpacingInsideALineAndWrapALongLineBetweenWords', async () => {
-    const wide = await reviewPanel(76, 34)
+    const wide = await panel(review(), { width: 76, height: 34 })
     expect(wide.lines()).toContain('        2. An indented   line   with   inner spacing.')
-    const narrow = await reviewPanel(52, 34)
+    const narrow = await panel(review(), { width: 52, height: 34 })
 
     expect(narrow.lines()).toContain('  + Required reply format (highest priority, applies')
     expect(narrow.lines()).toContain('    to every reply, including one-word answers):')
   })
 
   it('shouldCloseAStandingQuestionOnEscWithoutAnswer', async () => {
-    const { asked, press, text } = await reviewPanel(76, 34)
+    const { asked, press, screen } = await panel(review(), { width: 76, height: 34 })
 
-    expect(text()).toContain('Esc close')
+    expect(screen()).toContain('Esc close')
     await press(ESCAPE)
 
     await expect(asked).resolves.toBeUndefined()
@@ -495,8 +463,7 @@ describe('the panel around one question', () => {
     const broker = new WizardBroker()
     void broker.ask(spec)
     const view = await mountChat({ devCommands: [askCommand(broker)], columns: 110, rows })
-    await view.press('/ask')
-    await view.press(ENTER)
+    await view.press('/ask', ENTER)
     return view
   }
 
@@ -627,10 +594,7 @@ describe('a finished run’s review in the chat', () => {
     const { press, screen } = await mount(80, 24)
     expect(screen()).not.toContain('Rule 23 (last)')
 
-    await press(UP)
-    await press(PAGE_DOWN)
-    await press(PAGE_DOWN)
-    await press(PAGE_DOWN)
+    await press(UP, PAGE_DOWN, PAGE_DOWN, PAGE_DOWN)
 
     expect(screen()).toContain('+ Rule 23 (last): keep the answer short.')
     expect(screen()).toContain('› ○ Apply this change')

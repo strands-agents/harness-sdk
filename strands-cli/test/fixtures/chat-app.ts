@@ -1,4 +1,4 @@
-import { createElement } from 'react'
+import { createElement, type ReactElement } from 'react'
 import { type Instance } from 'ink'
 import { afterEach } from 'vitest'
 
@@ -18,7 +18,24 @@ afterEach(async () => {
   }
 })
 
-/** The chat on a terminal of `columns` by `rows`, with keys to press and the latest frame to read. */
+/** `element` on a terminal of `columns` by `rows`, with keys to press and the latest frame to read. */
+export async function mountElement(element: ReactElement, columns = 100, rows = 20) {
+  const input = ttyInput()
+  const output = ttyOutput(columns, rows)
+  const frame = captureFrame(output)
+  const instance = render(element, { stdin: input, stdout: output, stderr: output })
+  await instance.waitUntilRenderFlush()
+  const press = async (...keys: readonly string[]): Promise<void> => {
+    for (const key of keys) {
+      input.write(key)
+      await instance.waitUntilRenderFlush()
+    }
+  }
+  const row = (text: string): number => frame().findIndex((line) => line.includes(text))
+  return { instance, press, row, lines: frame, screen: (): string => frame().join('\n') }
+}
+
+/** The chat on a terminal of `columns` by `rows`. */
 export async function mountChat({
   devCommands = [],
   columns = 120,
@@ -30,18 +47,9 @@ export async function mountChat({
     runtime: { model: 'model-00', cwd: '/work' },
     devCommands,
   })
-  const input = ttyInput()
-  const output = ttyOutput(columns, rows)
-  const frame = captureFrame(output)
-  const instance = render(createElement(ChatApp, { controller }), { stdin: input, stdout: output, stderr: output })
-  mounted.push({ instance, controller })
-  await instance.waitUntilRenderFlush()
-  const press = async (key: string): Promise<void> => {
-    input.write(key)
-    await instance.waitUntilRenderFlush()
-  }
-  const row = (text: string): number => frame().findIndex((line) => line.includes(text))
-  return { controller, instance, press, row, lines: frame, screen: (): string => frame().join('\n') }
+  const view = await mountElement(createElement(ChatApp, { controller }), columns, rows)
+  mounted.push({ instance: view.instance, controller })
+  return { controller, ...view }
 }
 
 /** The jobs of a dev command, as a test sets them. */
