@@ -76,8 +76,15 @@ optimizer's space, so it stays at its baseline with no error.
 | `JsonChoice(*options)` | One of several JSON values, lists and objects included | TPE |
 | `choice(...)` of `component(...)` | A swap between constructed objects, each with its own tuned arguments | TPE |
 
-`Int`, `Float`, `OneOf`, and `TextValue` take their default from the parameter, so you
-write the baseline once. Pass `default=` only when there is no parameter default to read.
+Each marker's baseline, the value the search starts from, comes from one place:
+
+- **`Int`, `Float`, `TextValue`**: the parameter's default, so you write the baseline once.
+  Pass `default=` only when the parameter has none.
+- **`OneOf`, `JsonChoice`**: `default=` if you pass it, else the parameter's default, which
+  must be one of the options. With neither, the **first option** is the baseline.
+- **`choice()`**: always the **first alternative**. A default on the parameter is ignored,
+  even when you call the factory yourself, so list the alternative you run today first.
+- **File markers** (`FileText`, `JsonField`, `SkillLibrary`): the file's current text.
 
 ## Text values
 
