@@ -7,6 +7,10 @@ on:
         description: 'Deploy even if a published release has no changelog entry yet'
         type: boolean
         default: false
+      external_docs_ref_overrides:
+        description: 'Emergency only: product-id=<40-character SHA>, comma-separated'
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -71,6 +75,7 @@ jobs:
       - name: Build CMS
         run: npm run cms:build
         env:
+          EXTERNAL_DOCS_REF_OVERRIDES: ${{ inputs.external_docs_ref_overrides }}
           SAMPLES_SOURCE_DIR: ${{ github.workspace }}/samples-source
           SAMPLES_REQUIRE_SOURCE: '1'
           SITE_DOMAIN: https://strandsagents.com

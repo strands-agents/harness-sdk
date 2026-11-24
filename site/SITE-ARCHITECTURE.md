@@ -205,6 +205,19 @@ and linked assets all come from that checkout. Local builds, CI, pull request pr
 production deploys therefore use the latest `main` commit available when the build starts. A
 failed fetch fails the build instead of falling back to stale content.
 
+Manual production deploys accept an emergency-only `external_docs_ref_overrides` input. The value
+is a comma-separated list of product IDs and exact revisions, such as
+`strands-box=<40-character SHA>,strands-decider=<40-character SHA>`. Overrides apply only to that
+production run; the configured refs, CI, and pull request previews continue to follow `main`.
+
+If an external documentation product's `main` revision breaks generation or redirect validation:
+
+1. Copy the last known-good product revision from a successful deployment summary or `gh-pages`
+   commit message.
+2. Dispatch `Docs: Deploy to GitHub Pages` with that product and revision in
+   `external_docs_ref_overrides`.
+3. Repair the upstream repository, then leave the input empty on the next production deploy.
+
 The resolved commit SHA is recorded in generated page provenance, generated navigation, and the
 production deployment summary. It is a per-build record, not a committed input. It also keeps
 source and asset links internally consistent if the branch advances while a build is running.
@@ -266,8 +279,21 @@ from a local product checkout instead of the configured remote ref, set its sour
 variable:
 
 ```bash
-EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box npm run dev
+EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box \
+EXTERNAL_DOCS_STRANDS_DECIDER_SOURCE=/path/to/decider \
+npm run dev
 ```
+
+Remote generation replaces each cached checkout and requires network access. Set a local source
+for every configured product, as above, to start the development server offline.
+
+### 8. Image Zoom (`starlight-image-zoom`)
+
+**What it does:** The [starlight-image-zoom](https://github.com/HiDeoo/starlight-image-zoom) Starlight plugin wraps every Markdown image in a zoom control, so readers can click a shrunk screenshot to see it at full size. Add `data-zoom-off` to an `<img>` to opt out; images inside links are never zoomable.
+
+**Site wiring:** The plugin normally installs its own `MarkdownContent` override, but it skips that when one already exists. Our `src/components/overrides/MarkdownContent.astro` therefore renders the plugin's `<ImageZoom />` element itself. The plugin also adds `rehype-raw` to the Markdown pipeline so it can see images written as raw HTML.
+
+**Limits:** It only wraps `<img>` and `<picture>` in Markdown. `<Diagram>` SVGs are inlined by a component and aren't zoomable.
 
 ## Configuration (`astro.config.mjs`)
 

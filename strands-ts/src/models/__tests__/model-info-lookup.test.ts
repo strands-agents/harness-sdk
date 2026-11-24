@@ -22,6 +22,8 @@ describe('shared model info data', () => {
     expect(lookupModel('anthropic.claude-opus-5-5-20260401-v1:0')).toBe(lookupModel('claude-opus-5-5'))
     expect(lookupModel('claude-haiku-4-5@20251001')).toBe(lookupModel('claude-haiku-4-5'))
     expect(lookupModel('claude-3-5-haiku-20241022')?.limits?.contextWindow).toBe(200_000)
+    expect(lookupModel('gpt-5.4-2026-03-05')).toBe(lookupModel('gpt-5.4'))
+    expect(lookupModel('gpt-4o-mini-2024-07-18')).toBe(lookupModel('gpt-4o-mini'))
   })
 
   it('does not read inherited object keys', () => {

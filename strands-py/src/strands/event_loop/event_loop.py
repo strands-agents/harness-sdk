@@ -916,7 +916,7 @@ def _make_invoke_model_terminal(
         )
         with trace_api.use_span(model_invoke_span, end_on_exit=False):
             try:
-                async for event in ModelProxy(ctx.model).stream(
+                async for event in ModelProxy(ctx.model, agent).stream(
                     ctx.messages,
                     tool_specs,
                     system_prompt_str,

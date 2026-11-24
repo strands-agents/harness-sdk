@@ -67,13 +67,17 @@ describe('external docs workflows', () => {
     )
     const workflowDispatch = workflow.on?.workflow_dispatch as
       | {
-          inputs?: Record<string, { default?: unknown }>
+          inputs?: Record<string, { default?: unknown; type?: unknown }>
         }
       | undefined
     const deploySamplesRef = steps[samplesCheckoutIndexes[0]]?.with?.ref
 
     expect(Object.keys(workflow.on ?? {})).toEqual(['workflow_dispatch'])
     expect(workflowDispatch?.inputs?.content_snapshot).toBeUndefined()
+    expect(workflowDispatch?.inputs?.external_docs_ref_overrides).toMatchObject({
+      default: '',
+      type: 'string',
+    })
     expect(externalDocsRecordIndexes).toHaveLength(1)
     expect(summaryIndexes).toHaveLength(1)
     expect(samplesResolveIndexes).toHaveLength(1)
@@ -81,6 +85,7 @@ describe('external docs workflows', () => {
     expect(samplesCheckoutIndexes).toHaveLength(1)
     expect(deployIndexes).toHaveLength(1)
     expect(deploySamplesRef).toBe('main')
+    expect(steps[buildIndex]?.env?.EXTERNAL_DOCS_REF_OVERRIDES).toBe('${{ inputs.external_docs_ref_overrides }}')
     expect(steps[deployIndexes[0]].env?.CONTENT_SNAPSHOT).toBe('${{ steps.content_snapshot.outputs.snapshot }}')
     expect(buildIndex).toBeGreaterThan(-1)
     expect(samplesCheckoutIndexes[0]).toBeLessThan(samplesResolveIndexes[0])

@@ -31,6 +31,9 @@ export const STATIC_SLUG_REDIRECTS: Record<string, string> = {
   'docs/user-guide/box/getting-started': 'docs/user-guide/box/quickstart',
   'docs/user-guide/box/guides/add-a-tool': 'docs/user-guide/box/guides/add-an-mcp-server',
   'docs/user-guide/box/guides/grant-files': 'docs/user-guide/box/reference/configuration',
+  'docs/user-guide/box/guides/run-claude-code': 'docs/user-guide/box/quickstart',
+  'docs/user-guide/box/guides/run-codex-cli': 'docs/user-guide/box/profiles',
+  'docs/user-guide/box/guides/run-pi': 'docs/user-guide/box/profiles',
   'docs/user-guide/box/security/agent-and-tool-containment': 'docs/user-guide/box/security',
 
   // Preserve the product root as the short route to Decider's landing page.

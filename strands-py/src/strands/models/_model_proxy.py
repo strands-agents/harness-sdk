@@ -8,11 +8,15 @@ every other model gets its text. An ``injected`` block reaches a model whose ``t
 stored, and that provider sends it so the model reads it only until the next user message. Every other model, custom
 ones included, gets the latest user message's injected blocks as text and none of the earlier ones. An offload
 placeholder's ``offloaded`` bookkeeping reaches no model.
+
+A proxy for an agent's own model calls records the tools each call sends, which a summary replays to share the call's
+prompt cache.
 """
 
 import logging
 import threading
 import time
+import weakref
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -21,6 +25,7 @@ from pydantic import BaseModel
 from ..event_loop.streaming import _normalize_messages, process_stream
 from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
 from ..types.tools import ToolSpec
+from ._provider_name import _model_key
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
@@ -39,11 +44,14 @@ class ModelProxy:
 
     Args:
         model: The model to call.
+        agent: The agent whose own model calls these are, which records the tools each call sends; unset for
+            auxiliary calls.
     """
 
-    def __init__(self, model: "Model") -> None:
+    def __init__(self, model: "Model", agent: "Agent | None" = None) -> None:
         """Wrap ``model``."""
         self._model = model
+        self._agent = agent
 
     async def stream(
         self,
@@ -82,6 +90,8 @@ class ModelProxy:
             The stream events, ending with the reason for stopping, the final message and the usage metrics.
         """
         logger.debug("model=<%s> | streaming messages", self._model)
+        if self._agent is not None:
+            _latest_tools[self._agent] = list(tool_specs or [])
         messages = _normalize_messages(messages)
         # Only role and content reach the provider, so metadata and any future non-model fields never leak.
         messages = [Message(role=message["role"], content=message["content"]) for message in messages]
@@ -109,7 +119,8 @@ class ModelProxy:
             agent_metadata=agent_metadata,
             **optional_kwargs,
         )
-        async for event in process_stream(chunks, start_time, cancel_signal, invocation_context):
+        model_key = _model_key(self._model)
+        async for event in process_stream(chunks, start_time, cancel_signal, invocation_context, model_key):
             yield event
 
     def structured_output(
@@ -172,6 +183,22 @@ async def _count_request_tokens(agent: "Agent", messages: Messages) -> int:
         system_prompt=agent.system_prompt,
         system_prompt_content=agent.system_prompt_content,
     )
+
+
+_latest_tools: "weakref.WeakKeyDictionary[Agent, list[ToolSpec]]" = weakref.WeakKeyDictionary()
+"""Each agent's latest model call tool specs, as the call passed them."""
+
+
+def _latest_call_tools(agent: "Agent") -> list[ToolSpec] | None:
+    """The tool specs the agent's latest model call sent.
+
+    Args:
+        agent: The agent whose calls were recorded.
+
+    Returns:
+        The tool specs, or None before the agent's first model call.
+    """
+    return _latest_tools.get(agent)
 
 
 def _without_offload_marks(messages: Messages) -> Messages:
