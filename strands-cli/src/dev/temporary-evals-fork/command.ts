@@ -201,7 +201,7 @@ export const temporaryDevChatPart = (
 }
 
 /** The parts of an automatic optimization that a test puts its own in place of. */
-export type TemporaryAutoOptimizeParts = Partial<Pick<AutoOptimizeRunOptions, 'worker' | 'history' | 'now'>>
+type TemporaryAutoOptimizeParts = Partial<Pick<AutoOptimizeRunOptions, 'worker' | 'history' | 'now'>>
 
 export const temporaryDevCommands = (
   workspace: DevWorkspace,

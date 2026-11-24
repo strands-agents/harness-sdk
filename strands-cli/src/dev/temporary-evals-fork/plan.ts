@@ -22,7 +22,7 @@ export interface TemporaryOptimizeSettings {
   readonly decision: OptimizeDecision
 }
 
-export interface TemporaryRolloutPlan {
+interface TemporaryRolloutPlan {
   readonly split: CaseSplit
   readonly repetitions: number
   readonly iterations: number
@@ -33,7 +33,7 @@ export interface TemporaryRolloutPlan {
   readonly profile?: TemporaryUsageProfile
 }
 
-export interface TemporaryRolloutEstimate {
+interface TemporaryRolloutEstimate {
   readonly rollouts: number
   readonly judgeCalls: number
   readonly usage?: UsageEstimate
@@ -76,14 +76,14 @@ export type TemporaryBudgetSetting = keyof typeof TEMPORARY_BUDGET_MINIMUMS
 export const isTemporaryBudgetValue = (setting: TemporaryBudgetSetting, value: number): boolean =>
   Number.isSafeInteger(value) && value >= TEMPORARY_BUDGET_MINIMUMS[setting]
 
-export const TEMPORARY_ROLLOUT_CAP = 500
+const TEMPORARY_ROLLOUT_CAP = 500
 
 export const temporaryRolloutCapProblem = (rollouts: number): string | undefined =>
   rollouts > TEMPORARY_ROLLOUT_CAP
     ? `Needs about ${rollouts} rollouts, but one run can use ${TEMPORARY_ROLLOUT_CAP}. Lower the steps, candidates, or runs.`
     : undefined
 
-export const TEMPORARY_TRAIN_SHARES: readonly number[] = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+const TEMPORARY_TRAIN_SHARES: readonly number[] = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
 
 export const TEMPORARY_TEST_SHARES: readonly number[] = [1 / 2, 1 / 3, 0]
 

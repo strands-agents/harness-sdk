@@ -28,7 +28,7 @@ const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
 
 export const isTemporaryExperimentName = (name: string): boolean => NAME.test(name)
 
-export type TemporaryExperimentUse = 'optimize' | 'evaluate'
+type TemporaryExperimentUse = 'optimize' | 'evaluate'
 
 export type TemporaryRawCase = Readonly<Record<string, unknown>>
 
@@ -37,7 +37,7 @@ export interface TemporaryExperimentDocument {
   readonly [field: string]: unknown
 }
 
-export interface TemporaryExperimentFile {
+interface TemporaryExperimentFile {
   readonly experiment: Experiment
   readonly raw: TemporaryExperimentDocument
 }
@@ -261,19 +261,13 @@ export const temporaryRunnableExperiment = async (path: string, copy: string): P
   return copy
 }
 
-export const writeTemporaryExperimentCases = async (
-  path: string,
-  raw: TemporaryExperimentDocument,
-  cases: readonly TemporaryRawCase[]
-): Promise<void> => writeDocument(path, { ...raw, cases })
-
 export const temporaryDropIncompleteCases = async (
   path: string
 ): Promise<{ readonly complete: number; readonly dropped: number }> => {
   const { raw } = await readTemporaryExperimentFile(path)
   const complete = raw.cases.filter((rawCase, index) => !missingCaseField(evalCase(rawCase, index)))
   const dropped = raw.cases.length - complete.length
-  if (dropped > 0) await writeTemporaryExperimentCases(path, raw, complete)
+  if (dropped > 0) await writeDocument(path, { ...raw, cases: complete })
   return { complete: complete.length, dropped }
 }
 
@@ -331,7 +325,7 @@ export interface TemporaryGenerationFiles {
   readonly log: string
 }
 
-export interface TemporaryGenerationRequest {
+interface TemporaryGenerationRequest {
   readonly workspace: DevWorkspace
   readonly settings: GenerationSettings
   readonly context: string
@@ -343,7 +337,7 @@ export interface TemporaryGenerationRequest {
   readonly onStatus?: (line: string) => void
 }
 
-export interface TemporaryGenerationOutcome {
+interface TemporaryGenerationOutcome {
   readonly path: string
   readonly cases: number
   readonly dropped: number

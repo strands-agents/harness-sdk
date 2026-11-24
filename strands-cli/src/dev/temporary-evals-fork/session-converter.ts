@@ -32,7 +32,7 @@ export interface TemporarySessionHistory {
   unattendedConverter(conversion: UnattendedConversion): Promise<string>
 }
 
-export interface TemporarySessionHistoryOptions {
+interface TemporarySessionHistoryOptions {
   readonly workspace: DevWorkspace
   readonly agent: () => TemporaryAgentFacts
   readonly python?: () => Promise<string>

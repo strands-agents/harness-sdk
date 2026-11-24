@@ -38,7 +38,7 @@ import {
   type TemporaryOptimizeSettings,
 } from './plan.js'
 
-export interface TemporaryOptimizationRequest {
+interface TemporaryOptimizationRequest {
   workspace: DevWorkspace
   experiment?: string
   settings?: Partial<TemporaryOptimizeSettings>
@@ -57,7 +57,7 @@ export interface TemporaryOptimizationRequest {
   continuing?: string
 }
 
-export interface TemporaryOptimizationOutcome {
+interface TemporaryOptimizationOutcome {
   experiment: string
   record: string
   summary: string[]

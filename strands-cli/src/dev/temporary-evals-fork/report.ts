@@ -8,7 +8,7 @@ import type { CaseResult, EvaluatorVerdict, TestResults } from '../panels/model.
 import { temporaryCaseExpected, temporaryCaseName, temporaryCaseText, type TemporaryRawCase } from './experiment.js'
 import { pruneTemporaryTestRuns, temporaryLatestRecord, temporaryLatestReport, temporaryTestRunOf } from './layout.js'
 
-export interface TemporaryTestRun {
+interface TemporaryTestRun {
   readonly experiment: string
   readonly seconds: number
 }

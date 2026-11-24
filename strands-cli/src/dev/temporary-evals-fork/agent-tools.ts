@@ -56,7 +56,7 @@ import { temporaryEditsAwaitingAnswer, type TemporaryAppliedChange, type Tempora
 type Input = Readonly<Record<string, JSONValue>>
 type Sessions = () => TemporaryDevSessions
 
-export interface TemporaryDevChatHost {
+interface TemporaryDevChatHost {
   readonly sessions: Sessions
   readonly history: TemporarySessionHistory
   /** Puts a run's waiting edits on the developer's screen. Says whether it had any to show. */

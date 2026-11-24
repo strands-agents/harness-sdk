@@ -10,7 +10,7 @@ import { temporaryWorkspaceReady } from './layout-migration.js'
 import { readTemporaryTestResults, rememberTemporaryTestResults } from './report.js'
 import { runTemporaryTest, type TemporaryTestDependencies, type TemporaryTestOutcome } from './test.js'
 
-export interface TemporaryDevCommandDependencies extends TemporaryOptimizationDependencies, TemporaryTestDependencies {
+interface TemporaryDevCommandDependencies extends TemporaryOptimizationDependencies, TemporaryTestDependencies {
   openWorkspace?: (args: ParsedArgs) => Promise<PreparedDevRun | undefined>
   prepareProject?: (workspace: DevWorkspace) => Promise<void>
 }
@@ -29,7 +29,7 @@ interface Shared {
   prepare: () => Promise<void>
 }
 
-export const temporaryTestSummary = (outcome: TemporaryTestOutcome, optimize: string): string[] => [
+const temporaryTestSummary = (outcome: TemporaryTestOutcome, optimize: string): string[] => [
   `${outcome.passed} of ${outcome.checks} checks passed (overall score ${outcome.overall.toFixed(2)})`,
   `Report: ${outcome.report}`,
   outcome.passed < outcome.checks

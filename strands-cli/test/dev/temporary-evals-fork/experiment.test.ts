@@ -24,7 +24,6 @@ import {
   temporaryJudgeEvaluatorCount,
   temporaryNamedExperiment,
   temporaryRunnableExperiment,
-  writeTemporaryExperimentCases,
   writeTemporaryExperimentFile,
   type TemporaryRawCase,
 } from '../../../src/dev/temporary-evals-fork/experiment.js'
@@ -457,15 +456,6 @@ describe('TEMPORARY experiment files', () => {
     )
     expect(await readJson(path)).toEqual(experimentDocument(rawCase('c0')))
     expect(await readdir(folder)).toEqual(['refunds.json'])
-  })
-
-  it('shouldWriteTheGivenCasesAndKeepTheOtherFieldsWhenCasesAreWritten', async () => {
-    const path = join(await temporaryDirectory(), 'refunds.json')
-    const raw = experimentDocument(rawCase('c0'), rawCase('c1'))
-
-    await writeTemporaryExperimentCases(path, raw, [{ ...rawCase('c1'), expected_output: 'edited' }])
-
-    expect(await readJson(path)).toEqual(experimentDocument({ ...rawCase('c1'), expected_output: 'edited' }))
   })
 
   it('shouldRefuseToReplaceAFileWhenANewExperimentIsCreated', async () => {

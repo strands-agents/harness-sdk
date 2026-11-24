@@ -2,7 +2,7 @@ import { Command } from 'commander'
 
 export type TemporaryDevCommandName = 'optimize' | 'evaluate'
 
-export interface TemporaryDevCommandArguments {
+interface TemporaryDevCommandArguments {
   name: TemporaryDevCommandName
   experiment?: string
   workspace?: string

@@ -18,9 +18,9 @@ import { tailTemporaryLines, type TemporaryTail } from './jobs.js'
 import { listTemporaryOptimizations, temporaryOptimizationFiles } from './layout.js'
 import { TEMPORARY_USAGE_METRICS } from './objective.js'
 
-export type TemporaryStudyParams = Readonly<Record<string, unknown>>
+type TemporaryStudyParams = Readonly<Record<string, unknown>>
 
-export type TemporaryStudyEnd = 'finished' | 'stopped' | 'running'
+type TemporaryStudyEnd = 'finished' | 'stopped' | 'running'
 
 export type TemporaryMeasurement = 'search' | 'validation' | 'test'
 
@@ -31,12 +31,12 @@ export interface TemporaryTestDifference {
   readonly confidence: number
 }
 
-export interface TemporaryStudyBaseline {
+interface TemporaryStudyBaseline {
   readonly params: TemporaryStudyParams
   readonly score?: number
 }
 
-export interface TemporaryStudyBest extends TemporaryStudyBaseline {
+interface TemporaryStudyBest extends TemporaryStudyBaseline {
   readonly number: number
 }
 
@@ -58,7 +58,7 @@ export interface TemporaryRolloutPhases {
   readonly test: number
 }
 
-export interface TemporaryStudyRun {
+interface TemporaryStudyRun {
   readonly run: string
   readonly record: string
   readonly startedAt: number
@@ -68,7 +68,7 @@ export interface TemporaryStudyRun {
   readonly planned?: TemporaryRolloutPhases
 }
 
-export interface TemporaryStudyReader {
+interface TemporaryStudyReader {
   push(line: string): void
   progress(): OptimizeProgress
   outcome(): TemporaryStudyOutcome
@@ -704,7 +704,7 @@ export const readTemporaryStudy = async (record: string): Promise<TemporaryStudy
 export const readTemporaryProposerFailure = async (record: string): Promise<string | undefined> =>
   (await readRunState(record)).proposerFailure()
 
-export interface TemporaryRunUsage {
+interface TemporaryRunUsage {
   readonly rollouts: number
   readonly tokens: number
   readonly seconds: number

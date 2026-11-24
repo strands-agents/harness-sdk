@@ -121,7 +121,7 @@ const walkRun = async (sessions: TemporaryDevSessions, runId: string): Promise<v
   optimize.finishReview(runId)
 }
 
-export interface OptimizeReviewOnScreen {
+interface OptimizeReviewOnScreen {
   readonly runId: string
   readonly review: OptimizeReview
   /** The edit that the diff shows, as its index in the review. */
@@ -134,7 +134,7 @@ export interface OptimizeReviewOnScreen {
 }
 
 /** The diff of a finished run that is on the developer's screen with its question unanswered, when one is. */
-export const optimizeReviewOnScreen = (sessions: TemporaryDevSessions): OptimizeReviewOnScreen | undefined => {
+const optimizeReviewOnScreen = (sessions: TemporaryDevSessions): OptimizeReviewOnScreen | undefined => {
   const pending = sessions.ask.pending()
   if (!pending?.standing || pending.topic === undefined) return undefined
   const index = askingIn(sessions).get(pending.topic)

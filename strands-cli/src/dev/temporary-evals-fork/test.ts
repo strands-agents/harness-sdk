@@ -31,14 +31,14 @@ import {
   temporaryTestRunOf,
 } from './layout.js'
 
-export interface TemporaryTestFiles {
+interface TemporaryTestFiles {
   readonly cases: string
   readonly report: string
   readonly log: string
   readonly store: string
 }
 
-export interface TemporaryTestRequest {
+interface TemporaryTestRequest {
   workspace: DevWorkspace
   experiment?: string
   forkArguments?: readonly string[]

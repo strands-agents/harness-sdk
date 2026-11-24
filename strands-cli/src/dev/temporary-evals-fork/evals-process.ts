@@ -106,7 +106,7 @@ const releaseEventLoop = (streams: readonly unknown[]): void => {
   for (const stream of streams) (stream as Partial<Pick<Socket, 'unref'>>).unref?.()
 }
 
-export const readTemporaryLogTail = async (path: string, count = STDERR_TAIL_LINES): Promise<string[]> => {
+const readTemporaryLogTail = async (path: string, count = STDERR_TAIL_LINES): Promise<string[]> => {
   const handle = await open(path, 'r')
   try {
     const { size } = await handle.stat()

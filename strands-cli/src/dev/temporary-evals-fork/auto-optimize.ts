@@ -41,7 +41,7 @@ interface Count {
 const NOTHING_COUNTED: Count = { turns: 0, every: 0 }
 
 /** What stands in the way of a run that is due, if anything. */
-export interface AutoOptimizeGate {
+interface AutoOptimizeGate {
   /** An optimization is running, or the edits of a finished one wait for the developer's answer. */
   busy(): boolean
   /** Resolves once none is, and rejects when the signal aborts first. */
@@ -49,7 +49,7 @@ export interface AutoOptimizeGate {
 }
 
 /** What the background work shows of itself while it goes. */
-export interface AutoOptimizeActivity {
+interface AutoOptimizeActivity {
   /** The experiment that is being made from the chats, once it has a name. */
   readonly building?: string
   readonly log?: string
@@ -249,7 +249,7 @@ export interface AutoOptimizeWorkerRequest {
   readonly signal: AbortSignal
 }
 
-export interface AutoOptimizeWorkerExit {
+interface AutoOptimizeWorkerExit {
   readonly code: number
 }
 
@@ -335,7 +335,7 @@ export const autoOptimizeWorker =
     }
   }
 
-export const spawnAutoOptimizeWorker: AutoOptimizeWorker = autoOptimizeWorker()
+const spawnAutoOptimizeWorker: AutoOptimizeWorker = autoOptimizeWorker()
 
 /** With fewer cases the optimizer has nothing to train, validate, and test on. */
 const FEWEST_CASES = 3
@@ -367,7 +367,7 @@ const freshName = (directory: string, at: Date): string => {
   return name
 }
 
-export const autoOptimizeLog = (directory: string, experiment: string): string =>
+const autoOptimizeLog = (directory: string, experiment: string): string =>
   join(temporaryStateFolder(directory), 'auto-optimize', `${experiment}.log`)
 
 const casesOf = async (file: string): Promise<number | undefined> => {

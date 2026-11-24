@@ -19,7 +19,7 @@ import {
   temporaryTestRunFiles,
 } from './layout.js'
 
-export interface TemporaryMigration {
+interface TemporaryMigration {
   readonly moved: number
   readonly problems: readonly string[]
 }

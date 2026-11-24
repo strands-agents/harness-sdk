@@ -11,7 +11,7 @@ import {
 import { errorMessage } from '../../terminal/text.js'
 import { isRecord } from '../../values.js'
 
-export interface TemporaryRunnerProject {
+interface TemporaryRunnerProject {
   options: HarnessAgentOptions
   createAgent: (options: HarnessAgentOptions) => Promise<Agent>
 }

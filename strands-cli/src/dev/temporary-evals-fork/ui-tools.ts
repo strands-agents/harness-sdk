@@ -13,7 +13,7 @@ import type { DevChatTool } from '../chat-extension.js'
 
 type Input = Readonly<Record<string, JSONValue>>
 
-export interface UiToolsBroker {
+interface UiToolsBroker {
   ask(spec: WizardRequestSpec): Promise<WizardOutcome>
 }
 

@@ -28,7 +28,7 @@ const EXPERIMENTS_IGNORE_FILE = '.gitignore'
 const STAMP = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:-(\d+))?$/u
 const EXPERIMENT_CHANGE_DEBOUNCE_MS = 200
 
-export const TEMPORARY_KEPT_TEST_RUNS = 20
+const TEMPORARY_KEPT_TEST_RUNS = 20
 
 export interface TemporaryTestRunFiles {
   readonly folder: string
@@ -50,7 +50,7 @@ export interface TemporaryOptimizationFiles {
   readonly task: string
 }
 
-export interface TemporaryRunFolder {
+interface TemporaryRunFolder {
   readonly home: string
   readonly name: string
   readonly folder: string
@@ -96,7 +96,7 @@ export const temporaryEvalsEnvironmentFolder = (workspaceDirectory: string): str
 export const temporaryExperimentFile = (workspaceDirectory: string, name: string): string =>
   join(temporaryExperimentsFolder(workspaceDirectory), name, `${name}${EXPERIMENT_SUFFIX}`)
 
-export const temporaryExperimentName = (experimentFile: string): string => basename(experimentFile, EXPERIMENT_SUFFIX)
+const temporaryExperimentName = (experimentFile: string): string => basename(experimentFile, EXPERIMENT_SUFFIX)
 
 const outsideHomes = (workspaceDirectory: string): string =>
   join(temporaryStateFolder(workspaceDirectory), OUTSIDE_FOLDER)

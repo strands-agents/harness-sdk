@@ -10,7 +10,7 @@ export const TEMPORARY_USAGE_METRICS: readonly string[] = [
   'model_calls',
 ]
 
-export interface TemporaryObjectiveCheck {
+interface TemporaryObjectiveCheck {
   readonly problem?: string
   readonly warning?: string
 }

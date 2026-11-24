@@ -8,7 +8,7 @@ import { editFile } from '../file-edits.js'
 import type { ProfileEffort } from '../../config/store.js'
 import type { KnobKey } from '../panels/model.js'
 
-export interface TemporaryEditRequest {
+interface TemporaryEditRequest {
   readonly root: string
   readonly entrypoint: string
   readonly knob: KnobKey

@@ -125,7 +125,7 @@ const projectSitePackages = async (
   return JSON.parse(output) as ProjectPython
 }
 
-export interface TemporaryOptimizerTarget {
+interface TemporaryOptimizerTarget {
   workspaceDirectory: string
   projectRoot: string
   language?: 'python' | 'typescript'

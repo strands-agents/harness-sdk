@@ -7,9 +7,9 @@ import { projectPython, readPythonSource } from '../agent-source.js'
 import type { Knob, KnobGroup, KnobKind } from '../panels/model.js'
 import type { DevWorkspace } from '../workspace.js'
 
-export type TemporaryKnobValue = string | boolean | null
+type TemporaryKnobValue = string | boolean | null
 
-export type TemporarySwitchItem = { readonly index: number } | { readonly key: string } | { readonly name: string }
+type TemporarySwitchItem = { readonly index: number } | { readonly key: string } | { readonly name: string }
 
 export type TemporarySpaceVariable =
   | {
@@ -59,10 +59,10 @@ export interface TemporaryKnobChange {
 }
 
 /** The model of the call, for the harness's own default of built-in tools. */
-export type TemporaryModelReading =
+type TemporaryModelReading =
   { readonly kind: 'set'; readonly model: string } | { readonly kind: 'unset' } | { readonly kind: 'code' }
 
-export interface TemporaryHarnessDefaults {
+interface TemporaryHarnessDefaults {
   /** DEFAULT_HARNESS_AGENT_CONFIG of the harness in the agent's language, with camelCase keys. */
   readonly options: Readonly<Record<string, unknown>>
   /** Whether the call's model gets native web search, without which the harness leaves web_search off. */
