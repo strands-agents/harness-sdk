@@ -45,7 +45,7 @@ export const agent = await createHarness({ model: 'unused' })
 
 const loadName = async (root: string): Promise<string> => {
   const project = { root, entrypoint: join(root, 'agent.ts'), language: 'typescript' }
-  const script = `const { loadTypescriptProject } = await import(${JSON.stringify(loader)}); const project = await loadTypescriptProject(${JSON.stringify(project)}); const agent = await project.createAgent(project.options); console.log(agent.name); await agent.shutdown();`
+  const script = `const { loadTypescriptProject } = await import(${JSON.stringify(loader)}); const project = await loadTypescriptProject(${JSON.stringify(project)}, undefined, { devWorkspace: true }); const agent = await project.createAgent(project.options); console.log(agent.name); await agent.shutdown();`
   const result = await run(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
     cwd: process.cwd(),
     timeout: 30_000,

@@ -186,16 +186,22 @@ export class PythonBackend implements ChatBackend {
     const cwd = resolve(options.cwd ?? process.cwd())
     config.applyProviderEnvironment()
     const backend = new PythonBackend(
-      spawn(projectEnvironment ? python : 'python3', ['-u', worker, project.entrypoint, project.root], {
-        cwd,
-        env: {
-          ...process.env,
-          ...(projectEnvironment ? { PATH: [dirname(python), process.env.PATH].filter(Boolean).join(delimiter) } : {}),
-          ...(process.env.AWS_REGION ? { AWS_DEFAULT_REGION: process.env.AWS_REGION } : {}),
-        },
-        // Shell subprocesses must not inherit the worker's command input.
-        stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
-      }),
+      spawn(
+        projectEnvironment ? python : 'python3',
+        ['-u', worker, project.entrypoint, project.root, ...(options.devWorkspace ? [options.devWorkspace] : [])],
+        {
+          cwd,
+          env: {
+            ...process.env,
+            ...(projectEnvironment
+              ? { PATH: [dirname(python), process.env.PATH].filter(Boolean).join(delimiter) }
+              : {}),
+            ...(process.env.AWS_REGION ? { AWS_DEFAULT_REGION: process.env.AWS_REGION } : {}),
+          },
+          // Shell subprocesses must not inherit the worker's command input.
+          stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
+        }
+      ),
       project,
       config,
       cwd,

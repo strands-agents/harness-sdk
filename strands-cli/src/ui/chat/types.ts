@@ -30,8 +30,7 @@ import type { ChatSettings, SettingsCategory } from '../../config/settings.js'
 import type { ProfileEffort } from '../../config/store.js'
 import type { AgentProjectOutput } from '../../project/export.js'
 import type { ImportedAgentProject } from '../../project/import.js'
-import type { DevStateManager } from '../../dev/runtime.js'
-import type { ChatSessionRuntime, FailedTurn, ResumeSession } from '../../session/sessions.js'
+import type { ChatSessionRuntime, ResumeSession } from '../../session/sessions.js'
 import type { LocalCommandSpec } from './commands.js'
 import type { CommandAssistance } from './commands.js'
 import type { StreamPresentationOptions } from './stream-presentation.js'
@@ -225,6 +224,7 @@ export type NewChatPanel =
       kind: 'error'
       fixDirectory?: string
       modelSetup?: boolean
+      copyable?: boolean
     })
   | (ChatPanelBase & {
       kind: 'agents'
@@ -276,6 +276,7 @@ export type NewChatPanel =
       kind: 'detail' | 'help-detail'
       followTail?: boolean
       activity?: BackgroundAgentActivity
+      wrapWords?: boolean
     })
   | (ChatPanelBase & {
       kind: 'settings'
@@ -389,8 +390,7 @@ export interface ChatControllerOptions {
   mcp?: Omit<LoadedMcp, 'clients'>
   initialMessages?: readonly Message[]
   initialTurns?: readonly ChatTurn[]
-  failedTurns?: readonly FailedTurn[]
-  turnedOffState?: readonly DevStateManager[]
+  devStateNotice?: string
   initialConfigurationBaseline?: ChatConfigurationBaseline
   setSettings?: (settings: Partial<ChatSettings>) => Promise<void>
   requestSetup?: () => void

@@ -2,7 +2,6 @@ import type { ContentBlock, Message } from '@strands-agents/sdk'
 
 import { readPeerMessageMetadata } from '../../agent/messaging.js'
 import { visibleDesktopPrompt } from '../../session/desktop-profile.js'
-import type { FailedTurn } from '../../session/sessions.js'
 import { limitShellOutputChunk, SHELL_OUTPUT_LIMIT_NOTICE } from '../../terminal/shell-output.js'
 import { errorMessage, sanitizeTerminalText, sanitizeTerminalValue } from '../../terminal/text.js'
 import { projectMediaContent, projectS3Location, projectToolResultContent } from '../../agent/events.js'
@@ -21,8 +20,6 @@ import type {
 } from '../../agent/types.js'
 
 type MutableTextEntry = Extract<ChatEntry, { type: 'reasoning' | 'assistant' }>
-
-const RESTORED_FAILED_TURN_HINT = 'The conversation does not include this message. Send it again to retry.'
 
 interface MutableToolEntry extends Omit<Extract<ChatEntry, { type: 'tool' }>, 'result'> {
   result?: ChatToolResultContent[]
@@ -325,17 +322,6 @@ export class TurnProjector {
     return `${this._turn.id}:${this._turn.nextEntry++}`
   }
 }
-
-export const projectFailedTurns = (turns: readonly FailedTurn[], agentName: string): ChatTurn[] =>
-  turns.map(({ prompt, error }, index) => ({
-    id: `restored-failed-${index + 1}`,
-    prompt,
-    agentName: sanitizeTerminalText(agentName),
-    entries: [],
-    status: 'error',
-    error,
-    recoveryHint: RESTORED_FAILED_TURN_HINT,
-  }))
 
 export function projectMessages(messages: readonly Message[], agentName = 'Strands harness'): ChatTurn[] {
   const turns: ChatTurn[] = []

@@ -50,7 +50,6 @@ import { agentLaunchCommand } from '../../project/import.js'
 import { exportDirectoryName, type AgentProjectOutput } from '../../project/export.js'
 import {
   type ChatSessionRuntime,
-  type FailedTurn,
   type SessionTarget,
   sessionResumeCommand,
   type ResumeSession,
@@ -62,7 +61,6 @@ import { peerMessagePrompt, type PeerMessage } from '../../agent/messaging.js'
 import { modelDisplayName } from '../../model/metadata.js'
 import { modelControlErrorMessage, profileEffort } from '../../model/selection.js'
 import { isExpiredModelCredential, isModelCredentialFailure } from '../../model/credential-failure.js'
-import { devStateNotice } from '../../dev/runtime.js'
 import { presentChatStream, type StreamPresentationOptions } from './stream-presentation.js'
 import { SCREEN_CONTEXT_CLOSE, SCREEN_CONTEXT_OPEN } from '../../session/desktop-profile.js'
 import { errorMessage, sanitizeTerminalText } from '../../terminal/text.js'
@@ -79,7 +77,7 @@ import {
   readTaskValue,
   readyBackgroundGeneration,
 } from './state.js'
-import { TurnProjector, projectFailedTurns, projectMessages } from './projector.js'
+import { TurnProjector, projectMessages } from './projector.js'
 import {
   type ChatBackend,
   type ChatAttachment,
@@ -164,7 +162,6 @@ export class ChatController implements ChatControllerApi {
   readonly peerEndpointId: string | undefined
   private readonly _listeners = new Set<() => void>()
   private _completedTurns: ChatTurn[] = []
-  private _failedTurns: readonly FailedTurn[]
   private readonly _panelStack: ChatPanel[] = []
   private readonly _skillDetails = new Map<string, SkillInfo>()
   private readonly _sessions: ChatSessionRuntime | undefined
@@ -286,14 +283,10 @@ export class ChatController implements ChatControllerApi {
       tools: info?.tools ?? [],
       ...options.runtime,
     }
-    this._failedTurns = options.failedTurns ?? []
     if (options.initialTurns) {
       this._completedTurns = [...options.initialTurns]
-    } else {
-      this._completedTurns.push(
-        ...projectMessages(options.initialMessages ?? [], this.name),
-        ...projectFailedTurns(this._failedTurns, this.name)
-      )
+    } else if (options.initialMessages) {
+      this._completedTurns.push(...projectMessages(options.initialMessages, this.name))
     }
     this._nextTurn = this._completedTurns.length + 1
     this._context = { ...(backend.contextUsage?.() ?? {}) }
@@ -309,8 +302,7 @@ export class ChatController implements ChatControllerApi {
         status: 'success',
         text: `strands dev · ${backend.name}\nWorkspace: ${root}\nHarness: ${entrypoint} (${origin})\nModel, tools, and instructions come from this workspace.`,
       })
-      const stateNotice = devStateNotice(options.turnedOffState ?? [])
-      if (stateNotice) this._notices.push({ id: 'dev-state', status: 'error', text: stateNotice })
+      if (options.devStateNotice) this._notices.push({ id: 'dev-state', status: 'error', text: options.devStateNotice })
     }
     this._snapshot = this._createSnapshot()
     for (const command of this._devCommands) command.attach?.(this._devCommandContext())
@@ -885,7 +877,6 @@ export class ChatController implements ChatControllerApi {
       this._steeringDrain = undefined
       this._clearDeliveredBackgroundTaskNotices()
       this._emit()
-      if (finished && mode === 'model') await this._updateFailedTurns(finished)
       if (!this._closed) {
         await this._applyDeferredModelRestart()
         this._startBackgroundContinuation()
@@ -908,6 +899,7 @@ export class ChatController implements ChatControllerApi {
         title: 'Model provider needs setup',
         rows: [{ label: '', description: message, tone: 'danger' }],
         modelSetup: true,
+        copyable: true,
       })
       return
     }
@@ -921,22 +913,14 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _failureRecoveryHint(error: unknown): string {
-    const guidance = TURN_FAILURE_GUIDANCE[this._turnFailure(errorMessage(error))]
+    const message = errorMessage(error)
+    const guidance = this._runtime.devWorkspace
+      ? TURN_FAILURE_GUIDANCE[this._turnFailure(message)]
+      : /credentials?|expiredtoken|security token|sso.*expired/i.test(message)
+        ? 'Refresh your credentials, then resend your message.'
+        : 'Check your connection and provider, then resend your message.'
     const session = this.resumeSession
     return session ? `${guidance}\nTo resume after restarting: ${sessionResumeCommand(session)}` : guidance
-  }
-
-  private async _updateFailedTurns(turn: ChatTurn): Promise<void> {
-    if (turn.status === 'error' && turn.source) return
-    if (turn.status !== 'error' && this._failedTurns.length === 0) return
-    this._failedTurns =
-      turn.status === 'error' ? [...this._failedTurns, { prompt: turn.prompt, error: turn.error ?? '' }] : []
-    try {
-      await this._sessions?.saveFailedTurns?.(this._failedTurns)
-    } catch (error) {
-      this._addNotice('error', `The failed message could not be saved for a resume: ${errorMessage(error)}`)
-      this._emit()
-    }
   }
 
   private _watchTurnUsage(
@@ -2192,7 +2176,6 @@ export class ChatController implements ChatControllerApi {
       await this._backend.clear()
       this._stopWatchingUsage()
       this._completedTurns = []
-      this._failedTurns = []
       this._notices = []
       this._tasks = []
       this._context = {}
@@ -3329,7 +3312,11 @@ export class ChatController implements ChatControllerApi {
   }
 
   private _makePanel(input: NewChatPanel): ChatPanel {
-    return makePanel(`panel-${this._nextPanel++}`, input)
+    const shown =
+      (input.kind === 'detail' || input.kind === 'help-detail') && this._runtime.devWorkspace
+        ? { ...input, wrapWords: true }
+        : input
+    return makePanel(`panel-${this._nextPanel++}`, shown)
   }
 
   private _openError(title: string, label: string, description: string, fixDirectory?: string): void {
@@ -3338,6 +3325,7 @@ export class ChatController implements ChatControllerApi {
       title,
       rows: [{ label, description, tone: 'danger' }],
       ...(fixDirectory ? { fixDirectory } : {}),
+      ...(this._runtime.devWorkspace ? { copyable: true } : {}),
     })
   }
 }

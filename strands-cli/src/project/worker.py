@@ -1031,12 +1031,12 @@ class ProjectImports(importlib.abc.MetaPathFinder):
                 return spec
 
 
-def direct_harness_assignment(entrypoint):
+def direct_harness_assignment(entrypoint, aliases=False):
     with tokenize.open(entrypoint) as source:
         tree = ast.parse(source.read(), filename=str(entrypoint))
     constructors = {"create_harness"}
     namespaces = set()
-    for node in tree.body:
+    for node in tree.body if aliases else ():
         if isinstance(node, ast.ImportFrom) and node.module == "strands_harness" and not node.level:
             constructors.update(alias.asname or alias.name for alias in node.names if alias.name == "create_harness")
         elif isinstance(node, ast.Import):
@@ -1118,7 +1118,7 @@ def load_project(entrypoint, root, dev_root=None):
     packaged = bool(module_parts) and all(
         (root.joinpath(*module_parts[:index], "__init__.py")).is_file() for index in range(1, len(module_parts))
     )
-    installed_name = installed_project_module(entrypoint, root) if not packaged else None
+    installed_name = installed_project_module(entrypoint, root) if not packaged and dev_root is not None else None
     captured = []
     original_create_harness = strands_harness.create_harness
 
@@ -1154,7 +1154,9 @@ def load_project(entrypoint, root, dev_root=None):
     if construction is not None:
         module._strands_options = construction[1]
         module._strands_turned_off_state = construction[2]
-    if not callable(getattr(module, "create_agent", None)) and direct_harness_assignment(entrypoint):
+    if not callable(getattr(module, "create_agent", None)) and direct_harness_assignment(
+        entrypoint, aliases=dev_root is not None
+    ):
         if construction is not None:
             args, options, _ = construction
 
@@ -1166,9 +1168,9 @@ def load_project(entrypoint, root, dev_root=None):
 
 
 async def main():
-    command = json.loads(await asyncio.to_thread(commands.readline))
-    dev_root = Path(command["devWorkspace"]).resolve() if command.get("devWorkspace") else None
+    dev_root = Path(sys.argv[3]).resolve() if len(sys.argv) > 3 else None
     module = load_project(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve(), dev_root)
+    command = json.loads(await asyncio.to_thread(commands.readline))
     runtime = Runtime(module, command)
     await runtime.build(runtime.options, resume=command.get("resume", False))
     send({"type": "ready", "state": runtime.state()})

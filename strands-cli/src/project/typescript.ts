@@ -12,7 +12,6 @@ import { expandHome } from '../paths.js'
 import { initializeAgentDefinition } from '../session/agent-definition.js'
 import { prepareArchiveDependencies } from './archive.js'
 import type { ImportedAgentProject } from './import.js'
-import { findDevWorkspace } from '../dev/workspace.js'
 
 /** @internal */
 export type AgentFactory = (
@@ -25,7 +24,8 @@ let typescriptRegistered = false
 
 export async function loadTypescriptProject(
   project: ImportedAgentProject,
-  configureEnvironment?: () => void
+  configureEnvironment?: () => void,
+  { devWorkspace = false }: { devWorkspace?: boolean } = {}
 ): Promise<{
   options: HarnessAgentOptions
   createAgent: AgentFactory
@@ -34,7 +34,7 @@ export async function loadTypescriptProject(
   configureEnvironment?.()
   const root = realpathSync(project.root)
   const sourcePath = realpathSync(project.entrypoint)
-  const workspace = await findDevWorkspace(root)
+  const workspace = devWorkspace ? await (await import('../dev/workspace.js')).findDevWorkspace(root) : undefined
   const localHarness = workspace?.config.harness
     ? pathToFileURL(`${resolve(root, workspace.config.harness.path)}/`).href
     : undefined

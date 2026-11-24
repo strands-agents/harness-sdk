@@ -19,7 +19,9 @@ const loadRunner = async (): Promise<
   (request: TemporaryRunnerRequest) => Promise<TemporaryRunnerReply | undefined>
 > => {
   if (!entrypoint || !root) throw new Error('Usage: typescript-runner-main.js <agent file> <project root>')
-  const project = await loadTypescriptProject({ root, entrypoint, language: 'typescript' })
+  const project = await loadTypescriptProject({ root, entrypoint, language: 'typescript' }, undefined, {
+    devWorkspace: true,
+  })
   return createTemporaryTypescriptRunner(project)
 }
 

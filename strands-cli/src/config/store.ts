@@ -27,7 +27,13 @@ import { isMissingPathError, strandsUserPath } from '../paths.js'
 import { errorMessage, isControlCharacter } from '../terminal/text.js'
 import { withProcessLock, type LockBusyMessage } from '../process-lock.js'
 import { isRecord } from '../values.js'
-import { DEFAULT_CHAT_SETTINGS, migrateSavedSettings, parseSettings, type ChatSettings } from './settings.js'
+import {
+  DEFAULT_CHAT_SETTINGS,
+  migrateSavedSettings,
+  parseSettings,
+  WORKSPACE_SETTING_KEYS,
+  type ChatSettings,
+} from './settings.js'
 
 export {
   applyProviderEnvironmentValues,
@@ -115,32 +121,6 @@ export function userConfigPath(): string {
 
 const configBusy: LockBusyMessage = (holders) =>
   `Another strands process (${holders.join(', ')}) is still saving the CLI config. Try again when it finishes.`
-
-const mergeField = (mine: unknown, base: unknown, disk: unknown): unknown =>
-  isDeepStrictEqual(mine, base) ? disk : mine
-
-const mergeKeys = (
-  mine: ConfigDocument,
-  base: ConfigDocument,
-  disk: ConfigDocument,
-  merge: (mine: unknown, base: unknown, disk: unknown) => unknown
-): ConfigDocument => {
-  const merged: ConfigDocument = {}
-  for (const key of new Set([...Object.keys(mine), ...Object.keys(base), ...Object.keys(disk)])) {
-    const value = merge(mine[key], base[key], disk[key])
-    if (value !== undefined) merged[key] = value
-  }
-  return merged
-}
-
-const mergeSection = (mine: unknown, base: unknown, disk: unknown): unknown => {
-  if (isDeepStrictEqual(mine, base)) return disk
-  if (!isRecord(mine) || !isRecord(base) || !isRecord(disk)) return mine
-  return mergeKeys(mine, base, disk, mergeField)
-}
-
-const mergeConfigDocuments = (mine: ConfigDocument, base: ConfigDocument, disk: ConfigDocument): ConfigDocument =>
-  mergeKeys(mine, base, disk, mergeSection)
 
 const changedProfileFields = (
   raw: Record<string, unknown>,
@@ -555,10 +535,9 @@ export class CliConfigStore {
       return
     }
     if (!this._persistent) return
-    const base = this._diskDocument
-    const saved = await this._writeLocked((disk) => mergeConfigDocuments(document, base, disk))
-    for (const key of Object.keys(document)) delete document[key]
-    Object.assign(document, saved)
+    if (isRecord(document.settings)) document.settings = withoutWorkspaceSettings(document.settings)
+    await writeConfigDocument(this._path, document)
+    this._diskDocument = document
   }
 
   private async _writeLocked(produce: (disk: ConfigDocument) => ConfigDocument): Promise<ConfigDocument> {
@@ -615,6 +594,10 @@ export class CliConfigStore {
       this._permissions = next
     })
   }
+}
+
+function withoutWorkspaceSettings(settings: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(settings).filter(([key]) => !WORKSPACE_SETTING_KEYS.has(key)))
 }
 
 function layeredValues(base: LayeredValues, saved: unknown, source: string): LayeredValues {

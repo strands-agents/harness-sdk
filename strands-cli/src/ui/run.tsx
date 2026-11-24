@@ -1,6 +1,6 @@
 import { createElement, type ComponentProps, type ReactElement } from 'react'
 import { render, type Instance } from 'ink'
-import { useInput } from './input.js'
+import { useTerminalInput } from './input.js'
 
 import { ChatRoot, type ChatLaunch, type ProviderSetup, type SetupBridge, type McpTrustRequest } from './app.js'
 import type { ChatControllerApi } from './chat/controller.js'
@@ -20,7 +20,6 @@ import {
 import { observeTerminalColorMode } from '../terminal/theme-detection.js'
 import { sessionResumeCommand } from '../session/sessions.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
-import { devFailure } from '../dev/errors.js'
 
 const STARTUP_STATUS_DELAY_MS = 300
 
@@ -99,7 +98,7 @@ function ChatSession({
   onCancelStartup,
   ...props
 }: ComponentProps<typeof ChatRoot> & { onCancelStartup(): void }): ReactElement {
-  useInput(
+  useTerminalInput(
     (input, key) => {
       if (key.ctrl && input === 'c') onCancelStartup()
     },
@@ -258,6 +257,7 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
           }
           const { devWorkspace: workspace, cwd } = previousController.getSnapshot().runtime
           if (workspace) {
+            const { devFailure } = await import('../dev/errors.js')
             const failure = devFailure(error, { operation: 'reload', path: workspace.entrypoint })
             previousController.showError?.('Agent reload failed', failure.message, { fixDirectory: cwd })
           } else {

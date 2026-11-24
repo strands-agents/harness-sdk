@@ -3,10 +3,11 @@ import { extname, resolve } from 'node:path'
 
 import { containsPath } from '../paths.js'
 import type { ImportedAgentProject } from './import.js'
-import { IGNORED_DIRECTORIES } from './packaging.js'
+import { hasIgnoredDirectory, IGNORED_DIRECTORIES } from './packaging.js'
 import { PREPARATION_INPUTS } from './preparation-plan.js'
 
 const WATCH_IGNORED_DIRECTORIES = new Set([...IGNORED_DIRECTORIES, 'dist'])
+const PROJECT_IGNORED_DIRECTORIES = new Set([...WATCH_IGNORED_DIRECTORIES, '.agent'])
 const STATE_DIRECTORIES = new Set(['.agent', '.strands'])
 const SKILLS_DIRECTORY = 'skills'
 const MCP_CONFIG_SUFFIX = 'mcp.json'
@@ -36,11 +37,15 @@ export const isAgentSourceFile = (path: string): boolean => {
   )
 }
 
+/** Any project file outside dependency, build, and agent state folders. */
+export const isProjectFile = (path: string): boolean => !hasIgnoredDirectory(path, PROJECT_IGNORED_DIRECTORIES)
+
 export function watchAgentProject(
   project: ImportedAgentProject,
   onChange: (paths: readonly string[]) => void,
   onError: (error: Error) => void,
-  privatePaths: readonly string[] = []
+  privatePaths: readonly string[] = [],
+  watched: (path: string) => boolean = isProjectFile
 ): () => void {
   let watcher: FSWatcher
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -51,8 +56,7 @@ export function watchAgentProject(
       const path = filename?.toString()
       if (
         path &&
-        (!isAgentSourceFile(path) ||
-          ignoredPaths.some((privatePath) => containsPath(privatePath, resolve(project.root, path))))
+        (!watched(path) || ignoredPaths.some((privatePath) => containsPath(privatePath, resolve(project.root, path))))
       ) {
         return
       }

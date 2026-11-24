@@ -5,12 +5,22 @@ import {
   parseSettings,
   parseSettingUpdate,
   settingDescription,
+  settingValue,
   SETTING_DEFINITIONS,
 } from '../../src/config/settings.js'
 
+const effective = (saved: Record<string, unknown>) => {
+  const settings = parseSettings(saved)
+  return {
+    autoAcceptOptimizationResults: settingValue(settings, 'autoAcceptOptimizationResults'),
+    autoOptimize: settingValue(settings, 'autoOptimize'),
+  }
+}
+
 describe('autoAcceptOptimizationResults setting', () => {
-  it('shouldDefaultToOff', () => {
-    expect(DEFAULT_CHAT_SETTINGS.autoAcceptOptimizationResults).toBe(false)
+  it('shouldDefaultToOffWithoutAKeyInThePlainSettings', () => {
+    expect(DEFAULT_CHAT_SETTINGS).not.toHaveProperty('autoAcceptOptimizationResults')
+    expect(settingValue(DEFAULT_CHAT_SETTINGS, 'autoAcceptOptimizationResults')).toBe(false)
   })
 
   it('shouldAppearInTheWorkspaceSectionAsAToggle', () => {
@@ -31,21 +41,12 @@ describe('autoAcceptOptimizationResults setting', () => {
   })
 
   it('shouldTakeOverTheValueSavedUnderItsEarlierNameAutoOptimize', () => {
-    expect(parseSettings({ autoOptimize: true })).toMatchObject({
-      autoAcceptOptimizationResults: true,
-      autoOptimize: 0,
-    })
-    expect(parseSettings({ autoOptimize: false })).toMatchObject({
-      autoAcceptOptimizationResults: false,
-      autoOptimize: 0,
-    })
+    expect(effective({ autoOptimize: true })).toEqual({ autoAcceptOptimizationResults: true, autoOptimize: 0 })
+    expect(effective({ autoOptimize: false })).toEqual({ autoAcceptOptimizationResults: false, autoOptimize: 0 })
     expect(
       parseSettings({ autoOptimize: true, autoAcceptOptimizationResults: false }).autoAcceptOptimizationResults
     ).toBe(false)
-    expect(parseSettings({ autoOptimize: 20 })).toMatchObject({
-      autoAcceptOptimizationResults: false,
-      autoOptimize: 20,
-    })
+    expect(effective({ autoOptimize: 20 })).toEqual({ autoAcceptOptimizationResults: false, autoOptimize: 20 })
   })
 
   it('shouldFlipWhenTheRowIsActivated', () => {
@@ -64,8 +65,8 @@ describe('autoAcceptOptimizationResults setting', () => {
 
   it('shouldReadTheSavedValue', () => {
     expect(parseSettings({ autoAcceptOptimizationResults: true }).autoAcceptOptimizationResults).toBe(true)
-    expect(parseSettings({}).autoAcceptOptimizationResults).toBe(false)
-    expect(parseSettings({ autoAcceptOptimizationResults: 'yes' }).autoAcceptOptimizationResults).toBe(false)
+    expect(parseSettings({})).not.toHaveProperty('autoAcceptOptimizationResults')
+    expect(parseSettings({ autoAcceptOptimizationResults: 'yes' })).not.toHaveProperty('autoAcceptOptimizationResults')
   })
 
   it.each([

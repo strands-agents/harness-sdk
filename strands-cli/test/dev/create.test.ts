@@ -342,9 +342,7 @@ describe('createDevProject', () => {
           snapshot: discoverySnapshot(['./locked/skills']),
         })
 
-        await expect(creation).rejects.toThrow(
-          `Configured skill source "${join(locked, 'skills')}" cannot be read (EACCES).`
-        )
+        await expect(creation).rejects.toThrow(`Configured skill source "${join(locked, 'skills')}" cannot be read.`)
         expect(devFailure(await creation.catch((error: unknown) => error), { operation: 'open' }).message).toMatch(
           /^Workspace could not open\./u
         )

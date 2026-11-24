@@ -99,7 +99,7 @@ describe('StrandsChatBackend', () => {
           {
             status: 'error',
             error: expect.stringContaining('security token included in the request is expired'),
-            recoveryHint: 'Refresh your credentials, then restart Strands so that it loads them.',
+            recoveryHint: 'Refresh your credentials, then resend your message.',
           },
         ],
       })

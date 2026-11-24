@@ -1,8 +1,7 @@
-import { spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
-import fs, { realpathSync } from 'node:fs'
-import { syncBuiltinESMExports } from 'node:module'
+import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -57,31 +56,9 @@ function stubHome(home: string): void {
 afterEach(async () => {
   vi.useRealTimers()
   vi.restoreAllMocks()
-  syncBuiltinESMExports()
   vi.unstubAllEnvs()
   execute.mockReset()
   if (temporary) await rm(temporary, { recursive: true, force: true })
-})
-
-it.each([
-  [
-    'npm error code E401',
-    'npm error code E401\nnpm error Unable to authenticate, your authentication token seems to be invalid.',
-  ],
-  ['installer timed out after 180 seconds', 'python3 installer timed out after 180 seconds'],
-])('names the installer failure %s in the message it shows', async (shown, stderr) => {
-  temporary = await mkdtemp(join(tmpdir(), 'strands-archive-'))
-  stubHome(temporary)
-  const archive = join(temporary, 'agent.zip')
-  await writeFile(archive, zipSync({ 'agent.ts': strToU8(''), 'package.json': strToU8('{"private":true}') }))
-  const project = importAgentProject(archive)
-  execute.mockImplementation((_command, _args, _options, callback) => callback(new Error(stderr)))
-
-  const failure = await prepareArchiveDependencies(project.root, 'typescript').catch((error: unknown) => error)
-
-  expect((failure as Error).message).toContain("Could not install the agent's dependencies.")
-  expect((failure as Error).message).toContain(shown)
-  expect((failure as Error).message).toContain('then launch Strands again.')
 })
 
 // https://github.com/strands-agents/harness-sdk/pull/5194#discussion_r4488017925
@@ -188,33 +165,6 @@ it('reports live lock owners and safe recovery without removing their lock', asy
   await mkdir(join(project.root, 'node_modules'))
   execute.mockImplementation((_command, _args, _options, callback) => callback(null))
   await prepareArchiveDependencies(project.root, 'typescript')
-  expect(await readFile(join(project.root, '.strands-dependencies'), 'utf8')).toMatch(/^[a-f0-9]{64}$/u)
-  await expect(stat(lock)).rejects.toMatchObject({ code: 'ENOENT' })
-})
-
-it('shouldTakeOverAStoppedInstallLockWhenAnotherProcessRemovesTheLockFolderFirst', async () => {
-  temporary = await mkdtemp(join(tmpdir(), 'strands-archive-'))
-  stubHome(temporary)
-  const archive = join(temporary, 'agent.zip')
-  await writeFile(archive, zipSync({ 'agent.ts': strToU8(''), 'package.json': strToU8('{"private":true}') }))
-  const project = importAgentProject(archive)
-  const lock = `${project.root}.dependencies.lock`
-  await mkdir(lock)
-  await writeFile(join(lock, `${spawnSync(process.execPath, ['-e', '']).pid}-${randomUUID()}`), '')
-  await mkdir(join(project.root, 'node_modules'))
-  execute.mockImplementation((_command, _args, _options, callback) => callback(null))
-  const removeFolder = fs.rmdirSync
-  let raced = false
-  vi.spyOn(fs, 'rmdirSync').mockImplementation((path) => {
-    if (path !== lock || raced) return removeFolder(path)
-    raced = true
-    throw Object.assign(new Error(`EPERM: operation not permitted, rmdir '${lock}'`), { code: 'EPERM' })
-  })
-  syncBuiltinESMExports()
-
-  await prepareArchiveDependencies(project.root, 'typescript')
-
-  expect(raced).toBe(true)
   expect(await readFile(join(project.root, '.strands-dependencies'), 'utf8')).toMatch(/^[a-f0-9]{64}$/u)
   await expect(stat(lock)).rejects.toMatchObject({ code: 'ENOENT' })
 })

@@ -536,7 +536,12 @@ function ChatViewContent({
                 settings={snapshot.settings}
                 scrollOffset={transcriptScroll}
                 layoutKey={`${terminalWidth}:${terminalHeight}:${commandDeckHeight}:${transcriptReservedRightWidth}`}
-                coveredBottomRows={Math.max(0, expandedCommandDeckHeight - commandDeckHeight)}
+                {...(snapshot.runtime.devWorkspace
+                  ? {
+                      noticesAboveTurns: true,
+                      coveredBottomRows: Math.max(0, expandedCommandDeckHeight - commandDeckHeight),
+                    }
+                  : {})}
                 {...(expandedToolGroups ? { expandedToolGroups } : {})}
                 {...(onToolGroupElement ? { onToolGroupElement } : {})}
                 {...(onMaxTranscriptScroll ? { onMaxScrollChange: onMaxTranscriptScroll } : {})}

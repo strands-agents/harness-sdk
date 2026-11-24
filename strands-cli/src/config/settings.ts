@@ -104,12 +104,10 @@ export interface ChatSettings {
   updatePrompts: boolean
   /** Tool-result token cutoff for context offloading, or the selected context-manager preset's default. */
   contextOffloadThreshold: ContextOffloadThreshold
-  /** Apply model changes made in a strands dev session to existing saved sessions. */
-  sessionModelSync: boolean
   /** Write the edits of a finished strands dev optimization to the agent source without showing them for review. */
-  autoAcceptOptimizationResults: boolean
+  autoAcceptOptimizationResults?: boolean
   /** Start a strands dev optimization from the chat history every this many chat turns; 0 starts none. */
-  autoOptimize: AutoOptimizeCadence
+  autoOptimize?: AutoOptimizeCadence
 }
 
 export type ThemeSettings = Pick<ChatSettings, 'frogTheme'>
@@ -127,7 +125,11 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   telemetry: true,
   updatePrompts: true,
   contextOffloadThreshold: 'default',
-  sessionModelSync: false,
+}
+
+export const WORKSPACE_SETTING_DEFAULTS: Required<
+  Pick<ChatSettings, 'autoAcceptOptimizationResults' | 'autoOptimize'>
+> = {
   autoAcceptOptimizationResults: false,
   autoOptimize: 0,
 }
@@ -144,7 +146,6 @@ export type SettingKey =
   | 'telemetry'
   | 'updatePrompts'
   | 'contextOffloadThreshold'
-  | 'sessionModelSync'
   | 'autoAcceptOptimizationResults'
   | 'autoOptimize'
 
@@ -270,16 +271,6 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     ],
   },
   {
-    key: 'sessionModelSync',
-    label: 'Sync model to existing sessions',
-    section: 'Workspace',
-    control: 'toggle',
-    options: [
-      { label: 'On', value: true },
-      { label: 'Off', value: false },
-    ],
-  },
-  {
     key: 'telemetry',
     label: 'Send anonymous usage data',
     section: 'Telemetry',
@@ -290,6 +281,9 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     ],
   },
 ]
+
+export const settingValue = (settings: ChatSettings, key: SettingKey): ChatSettings[SettingKey] =>
+  ({ ...WORKSPACE_SETTING_DEFAULTS, ...settings })[key]
 
 export function settingDescription(settings: ChatSettings, key: SettingKey): string {
   switch (key) {
@@ -320,23 +314,24 @@ export function settingDescription(settings: ChatSettings, key: SettingKey): str
         ? 'on · asks before installing an available update'
         : 'off · available updates remain visible in the footer'
     case 'autoAcceptOptimizationResults':
-      return settings.autoAcceptOptimizationResults
+      return settingValue(settings, key)
         ? 'on · the edits of a finished optimization are written to the agent without a review'
         : 'off · a finished optimization shows its edits, and you apply or leave each one'
     case 'autoOptimize':
-      return settings.autoOptimize === 0
+      return settingValue(settings, key) === 0
         ? 'off · an optimization runs only when you start one'
         : `every ${settings.autoOptimize} chat turns · in the background, makes an experiment from your chats and optimizes on it · paid`
-    case 'sessionModelSync':
-      return settings.sessionModelSync
-        ? 'on · existing sessions use the current model configuration'
-        : 'off · existing sessions keep their saved model configuration'
     case 'contextOffloadThreshold':
       return `${CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value }) => value === settings.contextOffloadThreshold)!.label} · tool-result tokens · applies at next launch`
     default:
       return settings[key]
   }
 }
+
+/** Settings of a strands dev workspace, which its workspace layer saves and the user CLI config never holds. */
+export const WORKSPACE_SETTING_KEYS: ReadonlySet<string> = new Set(
+  SETTING_DEFINITIONS.filter(({ section }) => section === 'Workspace').map(({ key }) => key)
+)
 
 /**
  * Saved settings in today's names. Until the two were split, autoOptimize was the on/off of what is now
@@ -391,11 +386,19 @@ export function parseSettings(saved: unknown): ChatSettings {
     telemetry: booleanSetting('telemetry'),
     updatePrompts: booleanSetting('updatePrompts'),
     contextOffloadThreshold,
-    sessionModelSync: booleanSetting('sessionModelSync'),
-    autoAcceptOptimizationResults: booleanSetting('autoAcceptOptimizationResults'),
-    autoOptimize:
-      AUTO_OPTIMIZE_OPTIONS.find(({ value: option }) => option === value.autoOptimize)?.value ??
-      DEFAULT_CHAT_SETTINGS.autoOptimize,
+    ...savedWorkspaceSettings(value),
+  }
+}
+
+const savedWorkspaceSettings = (
+  value: Record<string, unknown>
+): Pick<ChatSettings, 'autoAcceptOptimizationResults' | 'autoOptimize'> => {
+  const autoOptimize = AUTO_OPTIMIZE_OPTIONS.find(({ value: option }) => option === value.autoOptimize)?.value
+  return {
+    ...(typeof value.autoAcceptOptimizationResults === 'boolean'
+      ? { autoAcceptOptimizationResults: value.autoAcceptOptimizationResults }
+      : {}),
+    ...(autoOptimize === undefined ? {} : { autoOptimize }),
   }
 }
 
@@ -419,7 +422,6 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     case 'agentMessaging':
     case 'telemetry':
     case 'updatePrompts':
-    case 'sessionModelSync':
     case 'autoAcceptOptimizationResults':
       return { [name]: !current[name] }
     case 'toolOutput':

@@ -981,17 +981,29 @@ agent = create_agent()`
     ['from strands_harness import create_harness as make_harness', 'make_harness'],
     ['import strands_harness as harness', 'harness.create_harness'],
     ['import strands_harness', 'strands_harness.create_harness'],
-  ])('shouldReconstructTheAgentWhenTheDirectCallUses %s', async (binding, callee) => {
+  ])('shouldReconstructTheAgentInADevChatWhenTheDirectCallUses %s', async (binding, callee) => {
     const authored = baseSource
       .replace('from strands_harness import create_harness', binding)
       .replace('def build(**overrides):', 'def build_options():')
       .replace('    options.update(overrides)\n    return create_harness(**options)', '    return options')
       .replace('agent = build()', `agent = ${callee}(**build_options())`)
-    const backend = await open(authored, { overrides: { name: 'Generated', session: false } })
+    const backend = await open(authored, { overrides: { name: 'Generated', session: false }, devWorkspace: root })
 
     expect(backend.reconstructable()).toBe(true)
     await backend.clear()
     expect(backend.name).toBe('Generated')
+  })
+
+  it('shouldNotReconstructAnAliasedDirectCallOutsideADevChat', async () => {
+    const authored = baseSource
+      .replace('from strands_harness import create_harness', 'import strands_harness as harness')
+      .replace('def build(**overrides):', 'def build_options():')
+      .replace('    options.update(overrides)\n    return create_harness(**options)', '    return options')
+      .replace('agent = build()', 'agent = harness.create_harness(**build_options())')
+
+    await expect(open(authored, { overrides: { name: 'Generated', session: false } })).rejects.toThrow(
+      'recreation controls are unavailable'
+    )
   })
 
   it.each(['bom-crlf', 'latin1-cookie'])('loads non-ASCII %s source without changing its bytes', async (encoding) => {

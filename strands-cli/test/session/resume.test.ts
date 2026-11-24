@@ -15,7 +15,7 @@ describe('session resume commands', () => {
           sessionDirectory: '/workspace/.agent/sessions',
           workspace: '/workspace',
         },
-        { cwd: '/workspace', platform: 'linux', command: 'strands' }
+        { cwd: '/workspace', platform: 'linux' }
       )
     ).toBe(`strands --session-id saved-session --set 'session.dir="/workspace/.agent/sessions"'`)
   })
@@ -28,7 +28,7 @@ describe('session resume commands', () => {
           sessionDirectory: '/home/user/.strands/sessions/workspace-0123456789ab',
           workspace: '/workspace',
         },
-        { cwd: '/workspace', platform: 'linux', command: 'strands' }
+        { cwd: '/workspace', platform: 'linux' }
       )
     ).toBe(
       `strands --session-id saved-session --set 'session.dir="/home/user/.strands/sessions/workspace-0123456789ab"'`
@@ -43,7 +43,7 @@ describe('session resume commands', () => {
           sessionDirectory: 'C:\\workspace\\.agent\\sessions',
           workspace: 'C:\\workspace',
         },
-        { cwd: 'C:\\workspace', platform: 'win32', command: 'strands' }
+        { cwd: 'C:\\workspace', platform: 'win32' }
       )
     ).toBe(`strands --session-id saved-session --set 'session.dir="C:\\\\workspace\\\\.agent\\\\sessions"'`)
   })
@@ -54,7 +54,7 @@ describe('session resume commands', () => {
     const agentProject = join(workspace, "agent's source.ts")
     const command = sessionResumeCommand(
       { sessionId: 'saved-session', sessionDirectory, workspace, agentProject },
-      { platform: 'darwin', command: 'strands' }
+      { platform: 'darwin' }
     )
     if (process.platform === 'win32') return
     const args = execFileSync('sh', ['-c', `strands() { printf '%s\\n' "$@"; }\n${command}`], { encoding: 'utf8' })
@@ -84,7 +84,7 @@ describe('session resume commands', () => {
           sessionDirectory: '/other workspace/.agent/sessions',
           workspace: "/other workspace/it's here",
         },
-        { cwd: '/current', platform: 'darwin', command: 'strands' }
+        { cwd: '/current', platform: 'darwin' }
       )
     ).toBe(
       `cd '/other workspace/it'\\''s here' && strands --session-id saved-session --set 'session.dir="/other workspace/.agent/sessions"'`
@@ -100,7 +100,7 @@ describe('session resume commands', () => {
           workspace: "C:\\work space\\it's here",
           agentProject: "C:\\work space\\it's here\\agent.py",
         },
-        { cwd: 'C:\\current', platform: 'win32', command: 'strands' }
+        { cwd: 'C:\\current', platform: 'win32' }
       )
     ).toBe(
       `Set-Location -LiteralPath 'C:\\work space\\it''s here' -ErrorAction Stop; strands --agent 'C:\\work space\\it''s here\\agent.py' --session-id saved-session --set 'session.dir="C:\\\\work space\\\\it''s here\\\\sessions"'`
@@ -116,7 +116,11 @@ describe('session resume commands', () => {
 
   it('shouldResumeADevSessionInItsDevWorkspaceWithTheCommandThatStartedIt', () => {
     expect(
-      sessionResumeCommand(devSession, { cwd: '/play/desk', platform: 'linux', command: 'strands-optimize' })
+      sessionResumeCommand(devSession, {
+        cwd: '/play/desk',
+        platform: 'linux',
+        entry: '/usr/local/bin/strands-optimize',
+      })
     ).toBe('strands-optimize dev --workspace /play/desk/strands-dev --session-id 20261112t151606z-0e6184d8')
   })
 
@@ -148,11 +152,20 @@ describe('session resume commands', () => {
     ).toMatch(/^strands dev --workspace /u)
   })
 
+  it('shouldResumeAPlainSessionWithStrandsWhenTheCliRanFromAScript', () => {
+    expect(
+      sessionResumeCommand(
+        { sessionId: devSession.sessionId, sessionDirectory: '/play/desk/.agent/sessions', workspace: '/play/desk' },
+        { cwd: '/play/desk', platform: 'linux', entry: '/home/me/harness-sdk/strands-cli/dist/src/main.js' }
+      )
+    ).toBe(`strands --session-id 20261112t151606z-0e6184d8 --set 'session.dir="/play/desk/.agent/sessions"'`)
+  })
+
   it('shouldKeepTheAgentWhenTheDevSessionRanAnotherEntrypoint', () => {
     expect(
       sessionResumeCommand(
         { ...devSession, agentProject: '/play/desk/other.ts' },
-        { cwd: '/play/desk', platform: 'linux', command: 'strands' }
+        { cwd: '/play/desk', platform: 'linux', entry: '/usr/local/bin/strands' }
       )
     ).toBe(
       'strands dev --workspace /play/desk/strands-dev --agent /play/desk/other.ts --session-id 20261112t151606z-0e6184d8'
@@ -164,7 +177,7 @@ describe('session resume commands', () => {
     const agentProject = join(process.cwd(), "dev space's/agent.ts")
     const command = sessionResumeCommand(
       { ...devSession, devWorkspace, agentProject, workspace: process.cwd() },
-      { platform: 'darwin', command: 'strands' }
+      { platform: 'darwin', entry: '/usr/local/bin/strands' }
     )
     if (process.platform === 'win32') return
     const args = execFileSync('sh', ['-c', `strands() { printf '%s\\n' "$@"; }\n${command}`], { encoding: 'utf8' })

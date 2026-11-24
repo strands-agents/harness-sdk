@@ -12,7 +12,7 @@ import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-m
 import { unzipSync } from 'fflate'
 import { ZipFile } from 'yazl'
 
-import { configuredSkillSources, resolveSkillPaths } from '../agent/skills.js'
+import { resolveSkillPaths } from '../agent/skills.js'
 import { webFetchModelId } from '../agent/tools.js'
 import { PROVIDER_PACKAGES } from '../model/packages.js'
 import { containsPath, expandHome } from '../paths.js'
@@ -39,10 +39,6 @@ import { agentProjectSource, type AgentEntrypointPlacement } from './source.js'
 
 export type AgentProjectOutput = 'zip' | 'directory'
 
-export class SkillSourceUnreadable extends Error {
-  readonly code = 'SKILL_SOURCE_UNREADABLE'
-}
-
 interface SkillPackage {
   id: string
   path: string
@@ -58,10 +54,7 @@ export function prepareAgentProject(
   const localSkillPaths = skillPaths
     .filter((path) => !path.startsWith('https://'))
     .map((path) => resolve(baseDir, path))
-  const configured = new Set(
-    configuredSkillSources(typeof profile.skills === 'object' ? [...profile.skills] : profile.skills, baseDir)
-  )
-  const optionalSkillPaths = new Set(localSkillPaths.filter((path) => !configured.has(path)))
+  const optionalSkillPaths = new Set(profile.skills === true ? [resolve(baseDir, '.agent', 'skills')] : [])
   const skills = discoverSkillPackages(localSkillPaths, optionalSkillPaths)
   const exportedSkillSources = portableSkillSources(skillPaths, skills.length > 0)
   const sources: PackagedSource[] = []
@@ -671,12 +664,8 @@ function discoverSkillPackages(paths: readonly string[], optionalPaths: Readonly
     try {
       details = lstatSync(path)
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (optionalPaths.has(path) && code === 'ENOENT') continue
-      throw new SkillSourceUnreadable(
-        `Configured skill source ${JSON.stringify(path)} cannot be read (${code ?? 'unknown error'}).`,
-        { cause: error }
-      )
+      if (optionalPaths.has(path) && (error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw new Error(`Configured skill source ${JSON.stringify(path)} cannot be read.`, { cause: error })
     }
     const candidates =
       details.isFile() && basename(path).toLowerCase() === 'skill.md'

@@ -22,7 +22,7 @@ import { errorMessage, sanitizeTerminalText } from '../../terminal/text.js'
 import type { AgentMessaging } from '../../agent/messaging.js'
 import type { ImportedAgentProject } from '../../project/import.js'
 import { watchConfigFile } from '../../config/watch.js'
-import { watchAgentProject } from '../../project/watch.js'
+import { isAgentSourceFile, watchAgentProject } from '../../project/watch.js'
 import { sessionWorkspaceLabel, type SessionTarget } from '../../session/sessions.js'
 import type { VoiceInput } from '../../agent/voice.js'
 
@@ -49,7 +49,9 @@ export interface ConversationManagerOptions {
   voice?: VoiceInput
   project?: ImportedAgentProject
   projectPrivatePaths?: readonly string[] | null
-  reloadProject?(conversationId: string, paths: readonly string[]): void
+  reloadProject?(conversationId: string): void
+  /** A dev chat's reload, which also names the files that changed. */
+  reloadProjectFiles?(conversationId: string, paths: readonly string[]): void
   /** `path` names the reload; `alsoWatch` files only re-run `changed`. */
   configWatch?: {
     path: string
@@ -71,6 +73,7 @@ export class ConversationManager implements ChatControllerApi {
   private readonly _stopAgentMessaging: (() => void) | undefined
   private readonly _voice: ConversationVoice
   private readonly _reloadProject: ConversationManagerOptions['reloadProject']
+  private readonly _reloadProjectFiles: ConversationManagerOptions['reloadProjectFiles']
   private readonly _stopProjectWatch: (() => void) | undefined
   private readonly _stopConfigWatch: (() => void) | undefined
   private _activeId: string
@@ -105,6 +108,7 @@ export class ConversationManager implements ChatControllerApi {
     this._disposeShared = options.dispose
     this._agentMessaging = options.agentMessaging
     this._reloadProject = options.reloadProject
+    this._reloadProjectFiles = options.reloadProjectFiles
     this._voice = new ConversationVoice(options.voice, () => this._active, {
       panel: (rows): void => {
         this._panel = rows ? this._makePanel({ kind: 'voice', title: 'Voice', rows }) : undefined
@@ -126,14 +130,17 @@ export class ConversationManager implements ChatControllerApi {
     }
     this._snapshot = this._buildSnapshot()
     const project = options.project
-    this._sourceWatching = Boolean(project && options.reloadProject && options.projectPrivatePaths !== null)
+    const reloads = Boolean(options.reloadProject ?? options.reloadProjectFiles)
+    this._sourceWatching = Boolean(project && reloads && options.projectPrivatePaths !== null)
     this._stopProjectWatch =
-      project && options.reloadProject && options.projectPrivatePaths !== null
+      project && reloads && options.projectPrivatePaths !== null
         ? watchAgentProject(
             project,
             (paths = []) => {
-              this.clearReloadStatus()
-              for (const path of paths) this._changedPaths.add(path)
+              if (this._reloadProjectFiles) {
+                this.clearReloadStatus()
+                for (const path of paths) this._changedPaths.add(path)
+              }
               for (const { controller } of this._conversations.values()) {
                 controller.refreshConfiguration()
               }
@@ -145,7 +152,8 @@ export class ConversationManager implements ChatControllerApi {
               this.clearReloadStatus()
               this._openError('live reload unavailable', project.root, errorMessage(error))
             },
-            options.projectPrivatePaths
+            options.projectPrivatePaths,
+            ...(this._reloadProjectFiles ? [isAgentSourceFile] : [])
           )
         : undefined
     const configWatch = options.configWatch
@@ -155,7 +163,7 @@ export class ConversationManager implements ChatControllerApi {
         )
       : undefined
     this._stopConfigWatch = stopWatches ? (): void => stopWatches.forEach((stop) => stop()) : undefined
-    if (project && options.reloadProject && options.projectPrivatePaths === null) {
+    if (project && reloads && options.projectPrivatePaths === null) {
       this._openError(
         'live reload unavailable',
         project.root,
@@ -723,7 +731,7 @@ export class ConversationManager implements ChatControllerApi {
   private _reloadProjectIfReady(): void {
     if (
       !this._projectReloadPending ||
-      !this._reloadProject ||
+      !(this._reloadProject ?? this._reloadProjectFiles) ||
       this._closed ||
       this._disposed ||
       this._opening ||
@@ -734,9 +742,13 @@ export class ConversationManager implements ChatControllerApi {
       return
     }
     this._projectReloadPending = false
+    if (!this._reloadProjectFiles) {
+      this._reloadProject?.(this._activeId)
+      return
+    }
     const paths = [...this._changedPaths]
     this._changedPaths.clear()
-    this._reloadProject(this._activeId, paths)
+    this._reloadProjectFiles(this._activeId, paths)
   }
 
   private _switchConversation(id: string): boolean {
@@ -814,6 +826,9 @@ export class ConversationManager implements ChatControllerApi {
       title,
       rows: [{ label, description, tone: 'danger' }],
       ...(fixDirectory ? { fixDirectory } : {}),
+      ...(this._conversations.get(this._activeId)?.controller.getSnapshot().runtime.devWorkspace
+        ? { copyable: true }
+        : {}),
     })
     this._emit()
   }

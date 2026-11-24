@@ -15,7 +15,6 @@ import { buildTelemetryPing, sendTelemetryPing, telemetryEnabled } from './telem
 import type { CliConfigStore } from '../config/store.js'
 import type { StartupScreen } from '../ui/run.js'
 import type { WorkspaceAction } from '../agent/configuration.js'
-import { devFailure } from '../dev/errors.js'
 import type { PreparedDevRun } from '../dev/prepare.js'
 import type { DevChat } from '../dev/model-provider.js'
 
@@ -80,6 +79,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         await runSession(prepared.args, prepared.config)
       }
     } catch (error) {
+      const { devFailure } = await import('../dev/errors.js')
       process.stderr.write(
         `error: ${devFailure(error, { operation: 'open', path: args.agent ?? args.dev?.workspace }).message}\n`
       )
@@ -90,6 +90,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return
   }
   await runSession(args)
+}
+
+const devLoadFailure = async (error: unknown, args: ParsedArgs): Promise<string> => {
+  const { devFailure } = await import('../dev/errors.js')
+  return devFailure(error, { operation: 'load', path: args.agent ?? args.dev?.workspace }).message
 }
 
 const runSession = async (args: ParsedArgs, suppliedConfig?: CliConfigStore): Promise<void> => {
@@ -236,9 +241,7 @@ async function runConsole(
       await runPlainChat(agent, request)
     }
   } catch (err) {
-    process.stderr.write(
-      `error: ${args.dev ? devFailure(err, { operation: 'load', path: args.agent ?? args.dev.workspace }).message : errorMessage(err)}\n`
-    )
+    process.stderr.write(`error: ${args.dev ? await devLoadFailure(err, args) : errorMessage(err)}\n`)
     process.exitCode = 1
   } finally {
     // Cleanup failure must not fail a completed turn or skip MCP teardown.
@@ -274,11 +277,6 @@ async function runInteractive(
       suppliedConfig ??
       (args.dev ? await CliConfigStore.load(undefined, { persist: false }) : await CliConfigStore.load())
     config.useEnvironmentFiles(args.envFiles)
-    // A look the Base CLI workspace still holds moves to cli.toml; a start that cannot move it still starts.
-    if (!args.dev && !suppliedConfig) {
-      const { adoptBaseCliWorkspaceLook } = await import('../dev/base-cli.js')
-      await adoptBaseCliWorkspaceLook(config).catch(() => undefined)
-    }
     const savedConfig = config.snapshot()
     let initialWorkspace = process.cwd()
     if (args.dev) await config.setSettings({ updatePrompts: false, telemetry: false })
@@ -474,9 +472,7 @@ async function runInteractive(
       process.exitCode = exitCode
     }
   } catch (err) {
-    process.stderr.write(
-      `error: ${args.dev ? devFailure(err, { operation: 'load', path: args.agent ?? args.dev.workspace }).message : errorMessage(err)}\n`
-    )
+    process.stderr.write(`error: ${args.dev ? await devLoadFailure(err, args) : errorMessage(err)}\n`)
     process.exitCode = 1
   }
 }

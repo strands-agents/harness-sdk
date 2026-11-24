@@ -13,10 +13,10 @@ import { agentPrivatePaths, exportAgentProject, exportSourceProject } from '../.
 import { type ChatConfigurationSource, type ChatConversation, type ChatConversations } from '../../agent/types.js'
 import { type ChatSettings } from '../../config/settings.js'
 import { telemetryEnabled } from '../../cli/telemetry.js'
-import { configureDevTelemetry, recordDevEvent } from '../../dev/telemetry.js'
 import { ChatController, type ChatControllerOptions } from './controller.js'
+import type { DevChatCommand } from './types.js'
 import { isUnresolvedBackgroundTask } from './state.js'
-import { ConversationManager, type ConversationManagerOptions, type InitialConversations } from './conversations.js'
+import { ConversationManager, type InitialConversations } from './conversations.js'
 import { CliConfigStore } from '../../config/store.js'
 import { AgentMessaging } from '../../agent/messaging.js'
 import { AgentModelRuntime } from '../../model/runtime.js'
@@ -37,29 +37,22 @@ import { importAgentProject, type ImportedAgentProject } from '../../project/imp
 import { PythonBackend, type PythonOptions } from '../../project/python.js'
 import { TypescriptBackend, type TypescriptInit } from '../../project/typescript-backend.js'
 import type { AgentExtensionHost } from '../../agent/extension.js'
-import { saveAgentChoices } from '../../dev/agent-choices.js'
-import {
-  baseCliWorkspaceConfigPath,
-  profileBaseCliChat,
-  savedProjectChoices,
-  sessionModelSyncEnabled,
-} from '../../dev/base-cli.js'
+import type { profileBaseCliChat } from '../../dev/base-cli.js'
 import type { AgentOptions } from '../../dev/agent-options.js'
-import { devChatExtension } from '../../dev/chat-extension.js'
 import type { TemporaryAgentFacts } from '../../dev/temporary-evals-fork/agent-context.js'
-import { temporaryDevChatPart, temporaryDevCommands } from '../../dev/temporary-evals-fork/command.js'
-import { readDevWorkspace, type DevWorkspace } from '../../dev/workspace.js'
+import type { DevWorkspace } from '../../dev/workspace.js'
+import type { DevStateManager } from '../../dev/runtime.js'
 import {
   createInteractiveRuntime,
   type CreateInteractiveRuntimeOptions,
   type RuntimeBackendRequest,
 } from '../../agent/runtime.js'
 
-async function restoreSessionRecord(
+async function restoreSessionNames(
   sessions: FileSessionRuntime,
   conversation?: ChatConversation
-): Promise<Pick<SessionTarget, 'name' | 'agentName' | 'failedTurns'>> {
-  const names: Pick<SessionTarget, 'name' | 'agentName' | 'failedTurns'> = sessions.current
+): Promise<Pick<SessionTarget, 'name' | 'agentName'>> {
+  const names: Pick<SessionTarget, 'name' | 'agentName'> = sessions.current
     ? await sessions.resolve(sessions.current)
     : {}
   if (!conversation?.agentName) return names
@@ -77,12 +70,63 @@ async function restoreSessionRecord(
   return { ...names, agentName: conversation.agentName }
 }
 
-const devExtension = (
-  workspace: DevWorkspace | undefined,
+interface DevChat {
+  readonly workspace: DevWorkspace
+  readonly baseCli: Awaited<ReturnType<typeof profileBaseCliChat>>
+  readonly extension: AgentExtensionHost
+  commands(agent: () => TemporaryAgentFacts, settings: () => ChatSettings): DevChatCommand[]
+  saveAgentOptions(change: AgentOptions): Promise<boolean>
+  stateNotice(turnedOff: readonly DevStateManager[]): string | undefined
+}
+
+const loadDevChat = async (
+  path: string,
   project: ImportedAgentProject,
+  config: CliConfigStore,
   agent: () => TemporaryAgentFacts
-): AgentExtensionHost | undefined =>
-  workspace ? devChatExtension(workspace, project, [temporaryDevChatPart(workspace, project, agent)]) : undefined
+): Promise<DevChat | undefined> => {
+  const [
+    { readDevWorkspace },
+    { profileBaseCliChat },
+    { devChatExtension },
+    { saveAgentChoices },
+    telemetry,
+    { devStateNotice },
+    { temporaryDevChatPart, temporaryDevCommands },
+  ] = await Promise.all([
+    import('../../dev/workspace.js'),
+    import('../../dev/base-cli.js'),
+    import('../../dev/chat-extension.js'),
+    import('../../dev/agent-choices.js'),
+    import('../../dev/telemetry.js'),
+    import('../../dev/runtime.js'),
+    import('../../dev/temporary-evals-fork/command.js'),
+  ])
+  const workspace = await readDevWorkspace(path)
+  if (!workspace) return undefined
+  const baseCli = await profileBaseCliChat(workspace)
+  telemetry.configureDevTelemetry({
+    enabled: telemetryEnabled(config.snapshot().settings),
+    harness: baseCli ? 'base-cli' : project.language,
+  })
+  telemetry.recordDevEvent('dev_launch')
+  return {
+    workspace,
+    baseCli,
+    extension: devChatExtension(workspace, project, [temporaryDevChatPart(workspace, project, agent)]),
+    commands: (info, settings) => temporaryDevCommands(workspace, project, info, settings),
+    saveAgentOptions: (change) => (baseCli ? baseCli.saveAgentOptions(change) : saveAgentChoices(workspace, change)),
+    stateNotice: devStateNotice,
+  }
+}
+
+const devStateNoticeOption = (
+  dev: DevChat | undefined,
+  turnedOff: readonly DevStateManager[]
+): { devStateNotice?: string } => {
+  const notice = dev?.stateNotice(turnedOff)
+  return notice ? { devStateNotice: notice } : {}
+}
 
 const nestedWorkspace = (project: ImportedAgentProject, workspace: DevWorkspace | undefined): string[] =>
   workspace?.directory && workspace.directory !== project.root && containsPath(project.root, workspace.directory)
@@ -99,17 +143,13 @@ export async function createTypescriptChat(
   conversationId = conversations?.activeId
 ): Promise<ConversationManager> {
   const project = importAgentProject(path)
-  const devWorkspace = options.args.dev?.workspace ? await readDevWorkspace(options.args.dev.workspace) : undefined
-  const baseCli = devWorkspace ? await profileBaseCliChat(devWorkspace) : undefined
-  if (devWorkspace) {
-    configureDevTelemetry({
-      enabled: telemetryEnabled(config.snapshot().settings),
-      harness: baseCli ? 'base-cli' : project.language,
-    })
-    recordDevEvent('dev_launch')
-  }
   let devAgent = (): TemporaryAgentFacts => ({})
-  const extension = devExtension(devWorkspace, project, () => devAgent())
+  const dev = options.args.dev?.workspace
+    ? await loadDevChat(options.args.dev.workspace, project, config, () => devAgent())
+    : undefined
+  const devWorkspace = dev?.workspace
+  const baseCli = dev?.baseCli
+  const extension = dev?.extension
   const messaging = new AgentMessaging()
   const catalog = await SessionRootCatalog.load(
     options.args.dev?.workspace ? resolve(options.args.dev.workspace, '.strands/state/catalog') : undefined
@@ -142,7 +182,7 @@ export async function createTypescriptChat(
         currentSessionResumable: backend.sessionIdentity !== undefined,
       })
       const conversation = initialOptions.conversation
-      const { name: sessionName, agentName, failedTurns } = await restoreSessionRecord(sessions, conversation)
+      const { name: sessionName, agentName } = await restoreSessionNames(sessions, conversation)
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
       const controller = new ChatController(backend, {
         runtime: {
@@ -165,8 +205,7 @@ export async function createTypescriptChat(
         settings: { ...config.snapshot().settings, ...settings },
         initialMessages: messages,
         ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
-        ...(failedTurns ? { failedTurns } : {}),
-        turnedOffState: backend.state.turnedOffState,
+        ...devStateNoticeOption(dev, backend.state.turnedOffState),
         ...(conversation?.configurationBaseline
           ? { initialConfigurationBaseline: conversation.configurationBaseline }
           : {}),
@@ -179,20 +218,17 @@ export async function createTypescriptChat(
           await backend.syncConfiguration()
         },
         requestSetup,
-        ...(devWorkspace
+        ...(dev
           ? {
               workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
-              devCommands: temporaryDevCommands(
-                devWorkspace,
-                project,
+              devCommands: dev.commands(
                 () => backend.info?.() ?? {},
                 () => config.snapshot().settings
               ),
-              skillsWithoutCommands: extension?.extension.skills.map(({ name }) => name) ?? [],
-              saveAgentOptions: (change: AgentOptions): Promise<boolean> =>
-                baseCli ? baseCli.saveAgentOptions(change) : saveAgentChoices(devWorkspace, change),
+              skillsWithoutCommands: dev.extension.extension.skills.map(({ name }) => name),
+              saveAgentOptions: dev.saveAgentOptions,
             }
-          : savedProjectChoices(config, project)),
+          : {}),
         awsProfile: awsProfileSelection(config, requestSetup, peerEndpointId, project.entrypoint),
         project,
         exportAgentProject: (language, destination, output): Promise<string | undefined> =>
@@ -333,8 +369,15 @@ export async function createTypescriptChat(
                 ...nestedWorkspace(project, devWorkspace),
               ].map((path) => resolve(backend.cwd, path))
             }),
-        reloadProject: (conversationId, paths): void =>
-          requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
+        ...(dev
+          ? {
+              reloadProjectFiles: (conversationId: string, paths: readonly string[]): void =>
+                requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
+            }
+          : {
+              reloadProject: (conversationId: string): void =>
+                requestSetup({ agentProject: project.entrypoint, conversationId }),
+            }),
         ...(baseCli
           ? {
               configWatch: {
@@ -364,17 +407,13 @@ export async function createPythonChat(
   conversationId = conversations?.activeId
 ): Promise<ConversationManager> {
   const project = importAgentProject(path)
-  const devWorkspace = options.devWorkspace ? await readDevWorkspace(options.devWorkspace) : undefined
-  const baseCli = devWorkspace ? await profileBaseCliChat(devWorkspace) : undefined
-  if (devWorkspace) {
-    configureDevTelemetry({
-      enabled: telemetryEnabled(config.snapshot().settings),
-      harness: baseCli ? 'base-cli' : project.language,
-    })
-    recordDevEvent('dev_launch')
-  }
   let devAgent = (): TemporaryAgentFacts => ({})
-  const extension = devExtension(devWorkspace, project, () => devAgent())
+  const dev = options.devWorkspace
+    ? await loadDevChat(options.devWorkspace, project, config, () => devAgent())
+    : undefined
+  const devWorkspace = dev?.workspace
+  const baseCli = dev?.baseCli
+  const extension = dev?.extension
   const createController = async (backend: PythonBackend, conversation?: ChatConversation): Promise<ChatController> => {
     devAgent = (): TemporaryAgentFacts => ({ ...backend.info?.(), sessionDirectory: backend.sessionDirectory })
     const snapshot = config.snapshot()
@@ -382,7 +421,7 @@ export async function createPythonChat(
       workspace: backend.cwd,
       currentSessionResumable: backend.sessionIdentity !== undefined,
     })
-    const { name: sessionName, agentName, failedTurns } = await restoreSessionRecord(sessions, conversation)
+    const { name: sessionName, agentName } = await restoreSessionNames(sessions, conversation)
     return new ChatController(backend, {
       runtime: {
         cwd: backend.cwd,
@@ -404,8 +443,7 @@ export async function createPythonChat(
       settings: snapshot.settings,
       initialMessages: backend.messages,
       ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
-      ...(failedTurns ? { failedTurns } : {}),
-      turnedOffState: backend.turnedOffState,
+      ...devStateNoticeOption(dev, backend.turnedOffState),
       ...(conversation?.configurationBaseline
         ? { initialConfigurationBaseline: conversation.configurationBaseline }
         : {}),
@@ -414,20 +452,17 @@ export async function createPythonChat(
       skillNames: backend.skills.map((skill) => skill.name),
       setSettings: (settings) => (baseCli ? baseCli.saveSettings(config, settings) : config.setSettings(settings)),
       requestSetup,
-      ...(devWorkspace
+      ...(dev
         ? {
             workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
-            devCommands: temporaryDevCommands(
-              devWorkspace,
-              project,
+            devCommands: dev.commands(
               () => backend.info?.() ?? {},
               () => config.snapshot().settings
             ),
-            skillsWithoutCommands: extension?.extension.skills.map(({ name }) => name) ?? [],
-            saveAgentOptions: (change: AgentOptions): Promise<boolean> =>
-              baseCli ? baseCli.saveAgentOptions(change) : saveAgentChoices(devWorkspace, change),
+            skillsWithoutCommands: dev.extension.extension.skills.map(({ name }) => name),
+            saveAgentOptions: dev.saveAgentOptions,
           }
-        : savedProjectChoices(config, project)),
+        : {}),
       awsProfile: awsProfileSelection(config, requestSetup, undefined, project.entrypoint),
       project,
       exportAgentProject: (language, destination, output): Promise<string | undefined> => {
@@ -519,8 +554,15 @@ export async function createPythonChat(
         project,
         projectPrivatePaths:
           privatePaths === null ? null : [...privatePaths, ...nestedWorkspace(project, devWorkspace)],
-        reloadProject: (conversationId, paths): void =>
-          requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
+        ...(dev
+          ? {
+              reloadProjectFiles: (conversationId: string, paths: readonly string[]): void =>
+                requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
+            }
+          : {
+              reloadProject: (conversationId: string): void =>
+                requestSetup({ agentProject: project.entrypoint, conversationId }),
+            }),
         ...(baseCli
           ? {
               configWatch: {
@@ -536,33 +578,6 @@ export async function createPythonChat(
   } catch (error) {
     await Promise.allSettled(entries.map(({ controller }) => controller.dispose()))
     throw error
-  }
-}
-
-const profileReload = (
-  config: CliConfigStore,
-  options: Pick<CreateInteractiveChatOptions, 'agentProfile' | 'requestSetup'>
-): Partial<Pick<ConversationManagerOptions, 'configWatch' | 'reloadProject'>> => {
-  const { path } = config.snapshot()
-  const requestSetup = options.requestSetup
-  if (!options.agentProfile || !requestSetup || path === 'in-memory') return {}
-  // A profile change seen while sessionModelSync is off stays pending until the toggle turns on.
-  let pending = false
-  const changed = async (): Promise<boolean> => {
-    pending = (await config.reload()) || pending
-    if (!pending || !(await sessionModelSyncEnabled(config.snapshot()))) return false
-    pending = false
-    return true
-  }
-  return {
-    configWatch: {
-      path,
-      alsoWatch: [baseCliWorkspaceConfigPath()],
-      changed,
-      settings: (): ChatSettings => config.snapshot().settings,
-    },
-    reloadProject: (conversationId: string, paths: readonly string[]): void =>
-      requestSetup({ profile: config.snapshot().profile, profileSaved: true, conversationId, reloadedFiles: paths }),
   }
 }
 
@@ -638,7 +653,7 @@ export async function createInteractiveChat(
       conversation
     )
     try {
-      const { name: sessionName, agentName, failedTurns } = await restoreSessionRecord(sessions, conversation)
+      const { name: sessionName, agentName } = await restoreSessionNames(sessions, conversation)
       const controller = new ChatController(backend, {
         runtime: {
           version: HARNESS_VERSION,
@@ -654,7 +669,6 @@ export async function createInteractiveChat(
         streamPresentation: DEFAULT_STREAM_PRESENTATION,
         initialMessages: runtime.agent.messages,
         ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
-        ...(failedTurns ? { failedTurns } : {}),
         ...(conversation?.configurationBaseline
           ? { initialConfigurationBaseline: conversation.configurationBaseline }
           : {}),
@@ -854,10 +868,10 @@ export async function createInteractiveChat(
                       (agentPrivatePaths(runtime.agent) ?? []).map((path) => resolve(initialWorkspace, path))
                     ),
                   ],
-              reloadProject: (conversationId: string, paths: readonly string[]): void =>
-                options.requestSetup?.({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
+              reloadProject: (conversationId: string): void =>
+                options.requestSetup?.({ agentProject: project.entrypoint, conversationId }),
             }
-          : profileReload(config, options)),
+          : {}),
       }
     )
   } catch (error) {

@@ -52,7 +52,7 @@ export function PanelHelpFooter({
   )
 }
 
-function errorPanelKeys(panel: Extract<ChatPanel, { kind: 'error' }>, width: number, scrollable: boolean): string {
+function devErrorPanelKeys(panel: Extract<ChatPanel, { kind: 'error' }>, width: number, scrollable: boolean): string {
   const narrow = width < 60
   const keys = !scrollable
     ? 'Ctrl+Y copy error · Esc close'
@@ -73,7 +73,12 @@ function panelHelpKeys(panel: ChatPanel, width: number, scrollable: boolean): st
         ? '↑↓←→ · Enter choose · Esc deny'
         : '↑↓←→ · Enter choose · PgUp/PgDn scroll · Esc deny once'
   }
-  if (panel.kind === 'error') return errorPanelKeys(panel, width, scrollable)
+  if (panel.kind === 'error' && (panel.copyable || panel.fixDirectory || panel.modelSetup)) {
+    return devErrorPanelKeys(panel, width, scrollable)
+  }
+  if (panel.kind === 'error' && scrollable) {
+    return width < 53 ? '↑↓ scroll · Esc close' : '↑↓ / PgUp / PgDn scroll · Esc close'
+  }
   if (panel.kind === 'detail' || panel.kind === 'help-detail') {
     return width < 53 ? '↑↓ scroll · Esc back' : '↑↓ / PgUp / PgDn scroll · Esc back'
   }

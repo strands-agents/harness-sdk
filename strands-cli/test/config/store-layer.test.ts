@@ -180,7 +180,8 @@ describe('CliConfigStore layer', () => {
       await config.useLayer(layer({ settings: { autoOptimize: true } }))
 
       // Merged over the CLI's own settings unmigrated, the old value was dropped and auto-accept read off.
-      expect(config.snapshot().settings).toMatchObject({ autoAcceptOptimizationResults: true, autoOptimize: 0 })
+      expect(config.snapshot().settings).toMatchObject({ autoAcceptOptimizationResults: true })
+      expect(config.snapshot().settings.autoOptimize).toBeUndefined()
     })
 
     it('shouldSaveItUnderTheNewNameOnceAnotherSettingChanges', async () => {
@@ -196,7 +197,8 @@ describe('CliConfigStore layer', () => {
     it('shouldReadTheOldOnOffFromTheCliFileToo', async () => {
       const { config } = await devStore('[settings]\nautoOptimize = true\n')
 
-      expect(config.snapshot().settings).toMatchObject({ autoAcceptOptimizationResults: true, autoOptimize: 0 })
+      expect(config.snapshot().settings).toMatchObject({ autoAcceptOptimizationResults: true })
+      expect(config.snapshot().settings.autoOptimize).toBeUndefined()
     })
   })
 

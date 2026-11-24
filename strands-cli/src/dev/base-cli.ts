@@ -6,11 +6,10 @@ import type { HarnessAgentConfig } from '@strands-agents/harness'
 
 import { parseSettings, SETTING_DEFINITIONS, type ChatSettings, type SettingKey } from '../config/settings.js'
 import { CliConfigStore, savedAgentProject, userConfigPath, type CliConfigSnapshot } from '../config/store.js'
-import { containsPath, strandsUserPath } from '../paths.js'
+import { containsPath } from '../paths.js'
 import { writeAgentProject } from '../project/export.js'
-import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
+import { importAgentProject } from '../project/import.js'
 import { installProjectDependencies } from '../project/install.js'
-import { saveAgentChoices } from './agent-choices.js'
 import {
   AgentOptionsNotEditable,
   agentOptionDefault,
@@ -18,9 +17,8 @@ import {
   type AgentOptionEdit,
   type AgentOptions,
 } from './agent-options.js'
-import { readWorkspaceBinding, updateWorkspaceCli } from './binding.js'
 import { profileProject } from './create.js'
-import { WORKSPACE_FOLDER, type DevWorkspace } from './workspace.js'
+import type { DevWorkspace } from './workspace.js'
 import { isRecord } from '../values.js'
 
 const VIEW_KEPT = new Set(['node_modules', 'package-lock.json', '.agent', '.strands', 'dist', '.venv', '__pycache__'])
@@ -39,7 +37,6 @@ const PROFILE_OPTIONS = new Set([
   'mcpServers',
 ])
 
-type SavedChoices = { saveAgentOptions?: (change: AgentOptions) => Promise<boolean> }
 type ProfileValues = Record<string, unknown>
 
 const samePath = (left: string, right: string): boolean => resolve(left) === resolve(right)
@@ -269,22 +266,6 @@ export const promoteBaseCliLook = async (
   path = userConfigPath()
 ): Promise<void> => saveBaseCliSettings(config, lookOf(isRecord(held) ? held.settings : undefined), path)
 
-/** The same move as plain strands starts; `config` is the saved CLI config, `directory` the Base CLI workspace. */
-export const adoptBaseCliWorkspaceLook = async (
-  config: CliConfigStore,
-  directory = dirname(baseCliWorkspaceConfigPath())
-): Promise<void> => {
-  const bound = await readWorkspaceBinding(directory).catch(() => undefined)
-  const cli = bound?.binding.cli
-  if (bound?.binding.origin.kind !== 'cli' || !isRecord(cli) || !isRecord(cli.settings)) return
-  const look = lookOf(cli.settings)
-  if (Object.keys(look).length === 0) return
-  await config.setSettings(look)
-  const { settings, ...others } = cli
-  const kept = Object.fromEntries(Object.entries(settings as object).filter(([key]) => !(key in look)))
-  await updateWorkspaceCli(directory, { ...others, ...(Object.keys(kept).length > 0 ? { settings: kept } : {}) })
-}
-
 export const profileBaseCliChat = async (
   workspace: DevWorkspace,
   path = userConfigPath()
@@ -302,22 +283,4 @@ export const profileBaseCliChat = async (
       },
     },
   }
-}
-
-export const savedProjectChoices = (config: CliConfigStore, project: ImportedAgentProject): SavedChoices => {
-  const saved = config.snapshot().agentProject
-  if (!saved || !samePath(saved, project.entrypoint)) return {}
-  const workspace = { root: project.root, entrypoint: project.entrypoint, config: { language: project.language } }
-  return { saveAgentOptions: (change: AgentOptions): Promise<boolean> => saveAgentChoices(workspace, change) }
-}
-
-/** The `.config` of the default Base CLI workspace, where dev saves its `/settings` changes. */
-export const baseCliWorkspaceConfigPath = (): string => join(strandsUserPath(WORKSPACE_FOLDER), '.config')
-
-/** Whether plain strands applies Base CLI profile changes to its open sessions; the dev workspace value wins. */
-export const sessionModelSyncEnabled = async (snapshot: CliConfigSnapshot): Promise<boolean> => {
-  const bound = await readWorkspaceBinding(dirname(baseCliWorkspaceConfigPath())).catch(() => undefined)
-  const settings = bound?.binding.cli?.settings
-  const saved = isRecord(settings) ? settings.sessionModelSync : undefined
-  return typeof saved === 'boolean' ? saved : snapshot.settings.sessionModelSync
 }

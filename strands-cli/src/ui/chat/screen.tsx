@@ -49,7 +49,6 @@ import {
   type ScreenSelectionSegment,
 } from '../../terminal/mouse-input.js'
 import { setTerminalMouseMotion } from '../../terminal/terminal.js'
-import { fixInNewTab } from '../../dev/fix-in-new-tab.js'
 import { isCopyShortcut, useClipboard } from '../clipboard.js'
 import { openExternalUrl } from '../../terminal/open-url.js'
 import { openAgentProject } from '../../terminal/open-editor.js'
@@ -173,10 +172,6 @@ export function ChatApp({
   const panelStartsIdle = snapshot.panel?.kind === 'dev' && snapshot.panel.sticky === true
   // A question opens beside the chat, not in front of it: the input keeps the keyboard until ↑ moves into it.
   useEffect(() => setPanelKeyboard(!panelStartsIdle), [panelId, panelStartsIdle])
-  // Counts renders, so a drag knows whether the screen moved under its captured lines.
-  useEffect(() => {
-    renderRevisionRef.current += 1
-  })
   const [panelQuery, setPanelQuery] = useState('')
   const [agentNameEditor, setAgentNameEditor] = useState<EditorState>(emptyEditor)
   const [panelFilter, setPanelFilter] = useState('all')
@@ -235,10 +230,9 @@ export function ChatApp({
   const nextFrogBrandAnimationId = useRef(0)
   const previousFrogVariant = useRef<FrogVariant | undefined>(undefined)
   const leftMouseDownRef = useRef(false)
-  const renderRevisionRef = useRef(0)
-  const selectionDragRef = useRef<
-    { anchor: Pick<MouseInput, 'column' | 'row'>; lines: readonly string[]; revision: number } | undefined
-  >(undefined)
+  const selectionDragRef = useRef<{ anchor: Pick<MouseInput, 'column' | 'row'>; lines: readonly string[] } | undefined>(
+    undefined
+  )
   const panelSliderDraggingRef = useRef(false)
   const panelSliderValueRef = useRef<string | undefined>(undefined)
   const mouseMoveStateRef = useRef<MouseMoveState>({
@@ -730,9 +724,9 @@ export function ChatApp({
     (report: string, directory: string): void => {
       const retry = controller.getSnapshot().runtime.sourceWatching ? 'reload' : 'restart'
       controller.dismissPanel()
-      void fixInNewTab({ report, directory, retry }, stdout).then(({ status, text }) =>
-        controller.notify?.(status, text)
-      )
+      void import('../../dev/fix-in-new-tab.js')
+        .then(({ fixInNewTab }) => fixInNewTab({ report, directory, retry }, stdout))
+        .then(({ status, text }) => controller.notify?.(status, text))
     },
     [controller, stdout]
   )
@@ -924,18 +918,6 @@ export function ChatApp({
       const { snapshot, terminalWidth, terminalHeight, suggestions, panelRows, composerHeight, party, dockLanguage } =
         viewPropsRef.current
       const currentEditor = editorRef.current
-      // The selection overlay paints these lines back on screen, so they must match what is there now.
-      const screenLines = (): readonly string[] =>
-        sanitizeTerminalText(
-          renderToString(
-            createElement(ChatView, {
-              ...viewPropsRef.current,
-              input: currentEditor.input,
-              cursor: currentEditor.cursor,
-            }),
-            { columns: terminalWidth }
-          )
-        ).split('\n')
       const button = mouse.button & 3
       const scroll = mouseScrollDirection(mouse)
       if (scroll !== undefined) {
@@ -1159,7 +1141,19 @@ export function ChatApp({
           devJobsHit ||
           jumpToBottomHit
             ? undefined
-            : { anchor: mouse, lines: screenLines(), revision: renderRevisionRef.current }
+            : {
+                anchor: mouse,
+                lines: sanitizeTerminalText(
+                  renderToString(
+                    createElement(ChatView, {
+                      ...viewPropsRef.current,
+                      input: currentEditor.input,
+                      cursor: currentEditor.cursor,
+                    }),
+                    { columns: terminalWidth }
+                  )
+                ).split('\n'),
+              }
         setPressedMetadata(metadataTarget)
         setPressedPanelFilter(panelFilterId)
         setPressedPanelRow(panelRowIndex)
@@ -1264,13 +1258,9 @@ export function ChatApp({
         return
       }
       if (mouse.action === 'move') {
-        const drag = selectionDragRef.current
-        if (!drag) return
-        // The overlay paints these lines back on screen, so a re-render since the press makes them stale.
-        const stale = drag.revision !== renderRevisionRef.current
-        const lines = stale ? screenLines() : drag.lines
-        if (stale) selectionDragRef.current = { anchor: drag.anchor, lines, revision: renderRevisionRef.current }
-        const selection = selectScreenText(lines, drag.anchor, mouse)
+        const selection = selectionDragRef.current
+          ? selectScreenText(selectionDragRef.current.lines, selectionDragRef.current.anchor, mouse)
+          : undefined
         if (selection) {
           resetPressed()
           setScreenSelection(selection.segments)
@@ -1485,7 +1475,7 @@ export function ChatApp({
             controller.dismissPanel()
             return
           }
-          if (snapshot.panel.kind === 'error' && isCopyShortcut(character, key)) {
+          if (snapshot.panel.kind === 'error' && snapshot.panel.copyable && isCopyShortcut(character, key)) {
             copyText(errorPanelText(snapshot.panel))
             return
           }

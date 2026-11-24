@@ -80,15 +80,16 @@ const startedProgram = (entry = process.argv[1]): readonly string[] => {
 
 export function sessionResumeCommand(
   session: ResumeSession,
-  options: { cwd?: string; platform?: NodeJS.Platform; command?: string; entry?: string } = {}
+  options: { cwd?: string; platform?: NodeJS.Platform; entry?: string } = {}
 ): string {
   const platform = options.platform ?? process.platform
   const paths = platform === 'win32' ? win32 : posix
   const workspace = paths.resolve(session.workspace)
   const directory = paths.resolve(workspace, session.sessionDirectory)
   const quote = (value: string): string => quoteArgument(value, platform)
-  const command = (options.command ? [options.command] : startedProgram(options.entry)).map(quote)
-  if (session.devWorkspace) command.push('dev', '--workspace', quote(paths.resolve(session.devWorkspace)))
+  const command = session.devWorkspace
+    ? [...startedProgram(options.entry).map(quote), 'dev', '--workspace', quote(paths.resolve(session.devWorkspace))]
+    : ['strands']
   if (session.agentProject) command.push('--agent', quote(session.agentProject))
   command.push('--session-id', quote(session.sessionId))
   if (!session.devWorkspace) command.push('--set', quote(`session.dir=${JSON.stringify(directory)}`))
@@ -110,8 +111,7 @@ export { SessionRootCatalog } from './catalog.js'
 
 const SESSION_REFERENCE_PREFIX = 'strands-session:'
 const SESSION_METADATA_FILE = 'cli-session.json'
-const sessionRecordWrites = new Map<string, Promise<void>>()
-const MAX_FAILED_TURNS = 10
+const sessionNameWrites = new Map<string, Promise<void>>()
 export const DEFAULT_SESSION_DIR = './.agent/sessions'
 
 interface SessionInfo extends Partial<SessionMetadata> {
@@ -123,16 +123,10 @@ interface SessionInfo extends Partial<SessionMetadata> {
   workspace?: string
 }
 
-export interface FailedTurn {
-  prompt: string
-  error: string
-}
-
 export interface SessionTarget {
   sessionId: string
   name?: string
   agentName?: string
-  failedTurns?: readonly FailedTurn[]
   sessionDirectory: string
   workspace: string
   active: boolean
@@ -146,7 +140,6 @@ export interface ChatSessionRuntime {
   resolve(reference: string): Promise<SessionTarget>
   renameCurrent?(name: string): Promise<{ sessionId: string; name: string }>
   renameAgent?(name: string): Promise<{ sessionId: string; name: string }>
-  saveFailedTurns?(turns: readonly FailedTurn[]): Promise<void>
 }
 
 interface SessionMetadata {
@@ -155,11 +148,10 @@ interface SessionMetadata {
   preview?: string
 }
 
-interface SessionRecord {
+interface SessionNameDocument {
   version: 1
   name?: string
   agentName?: string
-  failedTurns?: readonly FailedTurn[]
 }
 
 export class FileSessionRuntime implements ChatSessionRuntime {
@@ -243,12 +235,11 @@ export class FileSessionRuntime implements ChatSessionRuntime {
     if (!root) {
       throw new Error(`The workspace for session ${JSON.stringify(selected.id)} is no longer registered.`)
     }
-    const { name, agentName, failedTurns } = await readSessionRecord(join(root.directory, selected.id))
+    const { name, agentName } = await readSessionNames(join(root.directory, selected.id))
     return {
       sessionId: selected.id,
       ...(name ? { name } : {}),
       ...(agentName ? { agentName } : {}),
-      ...(failedTurns ? { failedTurns } : {}),
       sessionDirectory: selected.directory,
       workspace: root.workspace,
       active:
@@ -264,11 +255,6 @@ export class FileSessionRuntime implements ChatSessionRuntime {
     return this._rename('agentName', name)
   }
 
-  async saveFailedTurns(turns: readonly FailedTurn[]): Promise<void> {
-    if (!this._currentSessionResumable || !this._host.sessionId) return
-    await this._updateRecord(sanitizeSessionId(this._host.sessionId), { failedTurns: turns.slice(-MAX_FAILED_TURNS) })
-  }
-
   private async _rename(field: 'name' | 'agentName', name: string): Promise<{ sessionId: string; name: string }> {
     if (!this._host.sessionId) {
       throw new Error('The current session is not file-backed.')
@@ -278,24 +264,20 @@ export class FileSessionRuntime implements ChatSessionRuntime {
     if (!normalizedName) {
       throw new Error(`${field === 'name' ? 'Session' : 'Agent'} names cannot be empty.`)
     }
-    await this._updateRecord(sessionId, { [field]: normalizedName })
-    return {
-      sessionId: sanitizeTerminalText(sessionId),
-      name: normalizedName,
-    }
-  }
-
-  private async _updateRecord(sessionId: string, change: Omit<SessionRecord, 'version'>): Promise<void> {
     const directory = join(resolve(this._host.sessionDirectory), sessionId)
-    const writing = (sessionRecordWrites.get(directory) ?? Promise.resolve()).then(() =>
-      writeSessionRecord(directory, change)
+    const writing = (sessionNameWrites.get(directory) ?? Promise.resolve()).then(() =>
+      writeSessionNames(directory, { [field]: normalizedName })
     )
     const pending = writing.catch(() => undefined)
-    sessionRecordWrites.set(directory, pending)
+    sessionNameWrites.set(directory, pending)
     try {
       await writing
     } finally {
-      if (sessionRecordWrites.get(directory) === pending) sessionRecordWrites.delete(directory)
+      if (sessionNameWrites.get(directory) === pending) sessionNameWrites.delete(directory)
+    }
+    return {
+      sessionId: sanitizeTerminalText(sessionId),
+      name: normalizedName,
     }
   }
 }
@@ -369,7 +351,7 @@ async function readSession(directory: string, id: string, active: boolean): Prom
     }
   }
 
-  const [metadata, { name }] = await Promise.all([readSessionMetadata(path), readSessionRecord(path)])
+  const [metadata, { name }] = await Promise.all([readSessionMetadata(path), readSessionNames(path)])
   return {
     id: sanitizeTerminalText(id),
     ...(name ? { name } : {}),
@@ -378,16 +360,14 @@ async function readSession(directory: string, id: string, active: boolean): Prom
   }
 }
 
-async function readSessionRecord(sessionDirectory: string): Promise<SessionRecord> {
+async function readSessionNames(sessionDirectory: string): Promise<SessionNameDocument> {
   try {
     const document = JSON.parse(await fs.readFile(join(sessionDirectory, SESSION_METADATA_FILE), 'utf8')) as unknown
     if (isRecord(document) && document.version === 1) {
-      const failedTurns = readFailedTurns(document.failedTurns)
       return {
         version: 1,
         ...(typeof document.name === 'string' ? { name: normalizeSessionText(document.name) } : {}),
         ...(typeof document.agentName === 'string' ? { agentName: normalizeSessionText(document.agentName) } : {}),
-        ...(failedTurns.length > 0 ? { failedTurns } : {}),
       }
     }
   } catch {
@@ -396,20 +376,13 @@ async function readSessionRecord(sessionDirectory: string): Promise<SessionRecor
   return { version: 1 }
 }
 
-const readFailedTurns = (value: unknown): FailedTurn[] =>
-  (Array.isArray(value) ? value : [])
-    .flatMap((turn) =>
-      isRecord(turn) && typeof turn.prompt === 'string' && typeof turn.error === 'string'
-        ? [{ prompt: sanitizeTerminalText(turn.prompt), error: sanitizeTerminalText(turn.error) }]
-        : []
-    )
-    .slice(-MAX_FAILED_TURNS)
-
-async function writeSessionRecord(sessionDirectory: string, change: Omit<SessionRecord, 'version'>): Promise<void> {
+async function writeSessionNames(
+  sessionDirectory: string,
+  names: Pick<SessionNameDocument, 'name' | 'agentName'>
+): Promise<void> {
   await fs.mkdir(sessionDirectory, { recursive: true })
-  const { failedTurns, ...document } = { ...(await readSessionRecord(sessionDirectory)), ...change }
-  const record = failedTurns?.length ? { ...document, failedTurns } : document
-  await fs.writeFile(join(sessionDirectory, SESSION_METADATA_FILE), `${JSON.stringify(record, null, 2)}\n`, {
+  const document = { ...(await readSessionNames(sessionDirectory)), ...names }
+  await fs.writeFile(join(sessionDirectory, SESSION_METADATA_FILE), `${JSON.stringify(document, null, 2)}\n`, {
     mode: 0o600,
   })
 }

@@ -18,36 +18,6 @@ const configFile = async (toml = `${PROFILE}\n[settings]\nfrogTheme = "green"\n`
 const onDisk = async (path: string) => (await CliConfigStore.load(path, { persist: false })).snapshot()
 
 describe('CliConfigStore shared writes', () => {
-  it('shouldKeepAProfileChangeFromAnotherProcessWhenAnOlderStoreWritesASetting', async () => {
-    const path = await configFile()
-    const older = await CliConfigStore.load(path)
-    await (
-      await CliConfigStore.load(path)
-    ).updateProfile((profile) => ({ ...profile, instructions: 'Answer in full.' }))
-
-    await older.setSettings({ frogTheme: 'merlin' })
-
-    const saved = await onDisk(path)
-    expect([saved.profile.instructions, saved.settings.frogTheme]).toEqual(['Answer in full.', 'merlin'])
-  })
-
-  it('shouldMergeTheProfileFieldByFieldWhenTwoProcessesChangeDifferentFields', async () => {
-    const path = await configFile()
-    const older = await CliConfigStore.load(path)
-    await (
-      await CliConfigStore.load(path)
-    ).updateProfile((profile) => ({ ...profile, instructions: 'Answer in full.' }))
-
-    await older.setProfileModel('bedrock/second-model', 'low')
-
-    const { profile } = await onDisk(path)
-    expect([profile.instructions, profile.model, profile.effort]).toEqual([
-      'Answer in full.',
-      'bedrock/second-model',
-      'low',
-    ])
-  })
-
   it('shouldWriteOnlyTheChangedFieldWhenAProfileUpdateRuns', async () => {
     const path = await configFile()
 
@@ -56,17 +26,6 @@ describe('CliConfigStore shared writes', () => {
     expect(await readFile(path, 'utf8')).toBe(
       '[profile]\nname = "Base"\ninstructions = "Answer briefly."\nmodel = "bedrock/first-model"\neffort = "low"\n\n[settings]\nfrogTheme = "green"\n'
     )
-  })
-
-  it('shouldKeepAnAgentProjectThatAnotherProcessSavedWhenAnOlderStoreWrites', async () => {
-    const path = await configFile()
-    const older = await CliConfigStore.load(path)
-    const other = await CliConfigStore.load(path)
-    await other.useAgentProject(AGENT)
-
-    await older.setPermissionMode('bypassPermissions')
-
-    expect((await onDisk(path)).agentProject).toBe(AGENT)
   })
 
   it('shouldWriteTheValueThatTheStoreSetWithoutSavingWhenItLaterSavesSetup', async () => {

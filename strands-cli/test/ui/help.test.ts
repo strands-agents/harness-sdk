@@ -62,7 +62,10 @@ describe('help', () => {
     await controller.dispose()
   })
 
-  it('shouldBreakAHelpPageAtSpacesWhenTheTextIsWiderThanThePanel', () => {
+  it.each([
+    [true, ['Run this agent on', 'the cases of an', 'experiment.']],
+    [false, ['Run this agent on th', 'e cases of an experi', 'ment.']],
+  ])('shouldBreakAHelpPageAtSpacesOnlyWhenWrapWordsIs%s', (wrapWords, expected) => {
     const lines = detailLines(
       {
         id: 'help',
@@ -70,11 +73,39 @@ describe('help', () => {
         title: '/test',
         rows: [],
         body: 'Run this agent on the cases of an experiment.',
+        wrapWords,
       },
       20
     )
 
-    expect(lines.map(({ text }) => text)).toEqual(['Run this agent on', 'the cases of an', 'experiment.'])
+    expect(lines.map(({ text }) => text)).toEqual(expected)
+  })
+
+  it.each([
+    [
+      {
+        devWorkspace: {
+          root: '/dev',
+          entrypoint: '/dev/agent.ts',
+          boundEntrypoint: '/dev/agent.ts',
+          origin: 'discovered',
+        },
+      },
+      true,
+    ],
+    [{}, undefined],
+  ] as const)('shouldWrapHelpDetailsAtWordsOnlyInADevChat', async (runtime, wrapWords) => {
+    const controller = new ChatController(
+      idleBackend({ info: () => ({ tools: [{ name: 'custom_tool', description: 'Long tool documentation.' }] }) }),
+      { runtime }
+    )
+
+    await controller.submit('/help')
+    await controller.activatePanelRow(row(controller, 'custom_tool'))
+
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'help-detail' })
+    expect((controller.getSnapshot().panel as { wrapWords?: boolean }).wrapWords).toBe(wrapWords)
+    await controller.dispose()
   })
 
   it.each(['running', 'draining'] as const)(

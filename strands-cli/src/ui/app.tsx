@@ -1,6 +1,6 @@
 import { type ReactElement, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { Box, useStdout } from 'ink'
-import { useInput } from './input.js'
+import { useTerminalInput } from './input.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { pauseMouseReporting } from '../terminal/terminal.js'
 import { Text, useTheme, ThemeProvider } from './theme.js'
@@ -29,8 +29,7 @@ export interface McpTrustRequest {
 /** Asks inside Ink: a readline prompt would drop the raw mode Ink's input relies on. */
 export function McpTrustPrompt({ request }: { request: McpTrustRequest }): ReactElement {
   const { accent } = useTheme()
-  useInput((character, key) => {
-    if (key.ctrl || key.meta) return
+  useTerminalInput((character, key) => {
     const answer = character.toLowerCase()
     if (answer === 'y') request.resolve(true)
     else if (answer === 'n' || key.escape || key.return) request.resolve(false)
@@ -62,7 +61,7 @@ export interface SetupBridge {
   confirmMcp(workspace: string, paths: readonly string[]): Promise<boolean>
 }
 
-const StartupView = (props: Parameters<typeof ChatView>[0]): ReactElement => {
+const DevStartupView = (props: Parameters<typeof ChatView>[0]): ReactElement => {
   const { stdout } = useStdout()
   useEffect(() => pauseMouseReporting(stdout), [stdout])
   return <ChatView {...props} />
@@ -213,7 +212,7 @@ export function ChatRoot({
           ? { introStartedAt: introStartedAt.current }
           : {})}
         checkForUpdate={resolveUpdate}
-        providerOnly={providerSetup !== undefined}
+        {...(providerSetup ? { providerOnly: true } : {})}
         {...(providerSetupModel ? { initialModel: providerSetupModel } : {})}
         onComplete={(change) => finishSetup(0, true, change)}
         onCancel={(exitCode) => finishSetup(exitCode, false)}
@@ -234,12 +233,24 @@ export function ChatRoot({
   if (!controller) {
     placeholderEntranceFade.current ??= !deckShown.current
     deckShown.current = true
-    // A step with no content of its own shows where "Starting agent…" will, so the status never jumps.
+    if (startupContent !== undefined || startupStatus !== undefined) {
+      return (
+        <DevStartupView
+          snapshot={startupSnapshot(settings, config, startupContent ? undefined : startupStatus)}
+          {...(startupContent ? { startupContent } : {})}
+          quietFooter={startupContent === undefined && startupStatus !== undefined}
+          entranceFade={placeholderEntranceFade.current}
+          input=""
+          cursor={0}
+          terminalWidth={columns}
+          terminalHeight={rows}
+          {...(introStartedAt.current !== undefined ? { introStartedAt: introStartedAt.current } : {})}
+        />
+      )
+    }
     return (
-      <StartupView
-        snapshot={startupSnapshot(settings, config, startupContent ? undefined : startupStatus)}
-        {...(startupContent ? { startupContent } : {})}
-        quietFooter={startupContent === undefined && startupStatus !== undefined}
+      <ChatView
+        snapshot={startupSnapshot(settings, config)}
         entranceFade={placeholderEntranceFade.current}
         input=""
         cursor={0}

@@ -6,12 +6,16 @@ import {
   parseSettings,
   parseSettingUpdate,
   settingDescription,
+  settingValue,
   SETTING_DEFINITIONS,
 } from '../../src/config/settings.js'
 
+const cadence = (saved: Record<string, unknown>) => settingValue(parseSettings(saved), 'autoOptimize')
+
 describe('autoOptimize setting', () => {
-  it('shouldDefaultToOff', () => {
-    expect(DEFAULT_CHAT_SETTINGS.autoOptimize).toBe(0)
+  it('shouldDefaultToOffWithoutAKeyInThePlainSettings', () => {
+    expect(DEFAULT_CHAT_SETTINGS).not.toHaveProperty('autoOptimize')
+    expect(settingValue(DEFAULT_CHAT_SETTINGS, 'autoOptimize')).toBe(0)
   })
 
   it('shouldAppearInTheWorkspaceSectionAsAChoiceOfHowManyTurns', () => {
@@ -45,10 +49,10 @@ describe('autoOptimize setting', () => {
   })
 
   it('shouldReadTheSavedCadenceAndTakeAnythingElseAsOff', () => {
-    expect(parseSettings({ autoOptimize: 50 }).autoOptimize).toBe(50)
-    expect(parseSettings({}).autoOptimize).toBe(0)
-    expect(parseSettings({ autoOptimize: 7 }).autoOptimize).toBe(0)
-    expect(parseSettings({ autoOptimize: '20' }).autoOptimize).toBe(0)
+    expect(cadence({ autoOptimize: 50 })).toBe(50)
+    expect(cadence({})).toBe(0)
+    expect(cadence({ autoOptimize: 7 })).toBe(0)
+    expect(cadence({ autoOptimize: '20' })).toBe(0)
   })
 
   it('shouldSayThatItWorksInTheBackgroundAndIsPaidWhenItIsOn', () => {

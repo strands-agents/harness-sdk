@@ -31,7 +31,7 @@ import {
   type NewChatPanel,
   type SettingsCategory,
 } from './types.js'
-import { SETTINGS_CATEGORIES, SETTING_DEFINITIONS, settingDescription } from '../../config/settings.js'
+import { SETTINGS_CATEGORIES, SETTING_DEFINITIONS, settingDescription, settingValue } from '../../config/settings.js'
 
 export const SETTINGS_SETUP_ACTION = 'settings-action:setup'
 export const SETTINGS_UPDATE_ACTION = 'settings-action:update'
@@ -217,13 +217,13 @@ export function settingsRows(
       ...(category ? { filter: `settings:${category}` } : {}),
       control:
         control === 'toggle'
-          ? { kind: 'toggle', checked: settings[key] as boolean }
+          ? { kind: 'toggle', checked: settingValue(settings, key) as boolean }
           : {
               kind: 'segmented',
               options: options.map((option) => ({
                 label: option.label,
                 value: String(option.value),
-                ...(settings[key] === option.value ? { active: true } : {}),
+                ...(settingValue(settings, key) === option.value ? { active: true } : {}),
               })),
             },
     })

@@ -105,12 +105,21 @@ describe('MCP panel input', () => {
 })
 
 describe('error panel input', () => {
-  it('shouldCopyTheWholeErrorWhenControlYIsPressedInAScrollingErrorPanel', async () => {
+  const devRuntime = {
+    devWorkspace: {
+      root: '/project/strands-dev',
+      entrypoint: '/project/agent.ts',
+      boundEntrypoint: '/project/agent.ts',
+      origin: 'discovered',
+    },
+  }
+
+  it('shouldCopyTheWholeErrorWhenControlYIsPressedInAScrollingDevErrorPanel', async () => {
     const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
     const input = ttyInput()
     const output = ttyOutput(100, 24)
     const frame = captureFrame(output)
-    const controller = new ChatController(idleBackend(), { settings: { animations: false } })
+    const controller = new ChatController(idleBackend(), { settings: { animations: false }, runtime: devRuntime })
     const message = Array.from({ length: 30 }, (_, index) => `Trace ${index}: agent.ts failed`).join('\n')
     const instance = render(createElement(ChatApp, { controller }), {
       stdin: input,
@@ -132,6 +141,37 @@ describe('error panel input', () => {
       expect(copy.mock.calls[0]![0]).toBe(`Agent reload failed\n${message}`)
       expect(controller.getSnapshot().panel?.kind).toBe('error')
       await vi.waitFor(() => expect(frame().join('\n')).toContain('chars copied to clipboard'))
+    } finally {
+      instance.unmount()
+      await controller.dispose()
+    }
+  })
+
+  it('shouldNotCopyAnErrorWhenControlYIsPressedOutsideADevChat', async () => {
+    const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
+    const input = ttyInput()
+    const output = ttyOutput(100, 24)
+    const frame = captureFrame(output)
+    const controller = new ChatController(idleBackend(), { settings: { animations: false } })
+    const instance = render(createElement(ChatApp, { controller }), {
+      stdin: input,
+      stdout: output,
+      stderr: ttyOutput(100, 24),
+      exitOnCtrlC: false,
+      patchConsole: false,
+      interactive: true,
+    })
+    try {
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('/settings'))
+      controller.showError('Agent reload failed', 'agent.ts failed')
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Esc close'))
+      expect(frame().join('\n')).not.toContain('Ctrl+Y')
+
+      input.write('\u0019')
+      await instance.waitUntilRenderFlush()
+
+      expect(copy).not.toHaveBeenCalled()
+      expect(controller.getSnapshot().panel?.kind).toBe('error')
     } finally {
       instance.unmount()
       await controller.dispose()

@@ -88,7 +88,7 @@ describe('workspace Settings', () => {
     }
   })
 
-  it('shouldKeepTheWorkspaceRowsWhenTheSessionModelSyncToggleChanges', async () => {
+  it('shouldKeepTheWorkspaceRowsWhenTheAutoAcceptToggleChanges', async () => {
     const setSettings = vi.fn(async () => undefined)
     const dev = new ChatController(idleBackend(), {
       runtime: { devWorkspace: info },
@@ -98,12 +98,12 @@ describe('workspace Settings', () => {
     try {
       await dev.submit('/settings')
       await dev.activatePanelRow({ label: '', description: '', value: 'settings:Workspace' })
-      const toggle = () => dev.getSnapshot().panel?.rows.find(({ value }) => value === 'sessionModelSync')
-      expect(toggle()).toMatchObject({ label: 'Sync model to existing sessions', control: { checked: false } })
+      const toggle = () => dev.getSnapshot().panel?.rows.find(({ value }) => value === 'autoAcceptOptimizationResults')
+      expect(toggle()).toMatchObject({ label: 'Auto-accept optimization results', control: { checked: false } })
 
       await dev.activatePanelRow(toggle()!)
 
-      expect(setSettings).toHaveBeenCalledExactlyOnceWith({ sessionModelSync: true })
+      expect(setSettings).toHaveBeenCalledExactlyOnceWith({ autoAcceptOptimizationResults: true })
       expect(toggle()).toMatchObject({ control: { checked: true } })
       expect(dev.getSnapshot().panel?.rows).toContainEqual(expect.objectContaining({ value: 'workspace:edit' }))
     } finally {

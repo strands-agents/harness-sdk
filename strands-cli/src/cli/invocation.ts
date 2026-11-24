@@ -15,7 +15,7 @@ import { importAgentProject, type ImportedAgentProject } from '../project/import
 import type { AgentFactory } from '../project/typescript.js'
 import { isRecord } from '../values.js'
 import { agentConfig, projectConfigOverrides, type ParsedArgs } from './arguments.js'
-import { isolateDevState, type DevStateManager } from '../dev/runtime.js'
+import type { DevStateManager } from '../dev/runtime.js'
 
 interface InvocationAgent {
   profile?: HarnessAgentConfig
@@ -45,14 +45,16 @@ export async function invocationAgentForRun(
       throw new Error('Python agents must run with the Python runtime.')
     }
     const { loadTypescriptProject } = await import('../project/typescript.js')
-    const authored = await loadTypescriptProject(project, () => config.applyProviderEnvironment())
+    const authored = await loadTypescriptProject(project, () => config.applyProviderEnvironment(), {
+      devWorkspace: args.dev !== undefined,
+    })
     const configured = {
       ...authored.options,
       ...(await projectOverrides(args, cwd, authored.options)),
       printer: false,
     }
     const { options, turnedOff } = args.dev?.workspace
-      ? isolateDevState(configured, args.dev.workspace)
+      ? (await import('../dev/runtime.js')).isolateDevState(configured, args.dev.workspace)
       : { options: configured, turnedOff: [] }
     requireBedrockRegion(options.model)
     return {

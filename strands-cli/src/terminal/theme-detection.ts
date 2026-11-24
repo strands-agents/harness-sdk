@@ -2,7 +2,6 @@ import { Transform } from 'node:stream'
 import { StringDecoder } from 'node:string_decoder'
 
 import type { ResolvedColorMode } from '../ui/chat/types.js'
-import { splitUnfinishedMouseReport } from './mouse-input.js'
 import { restoreTerminalModes } from './terminal.js'
 
 const BACKGROUND_QUERY = '\u001b]11;?\u001b\\'
@@ -58,12 +57,10 @@ export function observeTerminalColorMode(
   const decoder = new StringDecoder('utf8')
   let pending = ''
   let pendingTimer: ReturnType<typeof setTimeout> | undefined
-  // The start of a mouse report whose end is in the next read. It goes on with that end, however late it comes.
-  let unfinishedReport = ''
   const filtered = new Transform({
     transform(chunk: Buffer, _encoding, callback): void {
       if (pendingTimer) clearTimeout(pendingTimer)
-      const result = readThemeResponses(pending + unfinishedReport + decoder.write(chunk), {
+      const result = readThemeResponses(pending + decoder.write(chunk), {
         background: (value) => {
           const canvas = parseBackgroundColor(value)
           if (canvas) {
@@ -74,9 +71,6 @@ export function observeTerminalColorMode(
         changed: () => output.write(BACKGROUND_QUERY),
       })
       pending = result.pending
-      // When the read ends in what may be a theme report, that is what waits: a mouse report before it has ended.
-      const reports = pending ? { finished: result.output, unfinished: '' } : splitUnfinishedMouseReport(result.output)
-      unfinishedReport = reports.unfinished
       if (pending) {
         pendingTimer = setTimeout(
           () => {
@@ -88,11 +82,11 @@ export function observeTerminalColorMode(
             : 10
         )
       }
-      callback(undefined, reports.finished)
+      callback(undefined, result.output)
     },
     flush(callback): void {
       if (pendingTimer) clearTimeout(pendingTimer)
-      callback(undefined, pending + unfinishedReport + decoder.end())
+      callback(undefined, pending + decoder.end())
     },
   }) as Transform & NodeJS.ReadStream
 

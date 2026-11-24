@@ -16,9 +16,9 @@ export type TemporarySessionDependencies = TemporaryExperimentDependencies &
 /** The settings of the workspace that the dev sessions go by. They are read when needed, so a change counts at once. */
 export interface TemporaryDevSettings {
   /** A finished optimization's edits are written without a review. */
-  readonly autoAcceptOptimizationResults: boolean
+  readonly autoAcceptOptimizationResults?: boolean
   /** An optimization starts by itself every this many chat turns; 0 starts none. */
-  readonly autoOptimize: number
+  readonly autoOptimize?: number
 }
 
 export interface TemporarySessionHost {
