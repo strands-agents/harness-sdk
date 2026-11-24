@@ -164,7 +164,6 @@ const AUTO_RELOAD_WINDOW_MS = 120_000
 const WIDTH = 4
 const REPETITIONS = 1
 const WORKERS = 4
-const MILLISECONDS = 1000
 
 type RunPlan = Pick<
   OptimizePlan,
@@ -358,15 +357,11 @@ export class TemporaryTest extends Store<TestState> {
     await Promise.all(records.map((record) => this.continueRun(record)))
   }
 
-  private async recordedExperiment(record: TemporaryTestRecord): Promise<ExperimentSummary> {
-    const caseCount = await temporaryCaseCount(record.experiment).catch(() => temporaryCaseCount(record.cases))
-    return { name: basename(record.experiment, '.json'), path: record.experiment, caseCount }
-  }
-
   private async continueRun(record: TemporaryTestRecord): Promise<void> {
     let experiment: ExperimentSummary | undefined
     try {
-      experiment = await this.recordedExperiment(record)
+      const caseCount = await temporaryCaseCount(record.experiment).catch(() => temporaryCaseCount(record.cases))
+      experiment = { name: basename(record.experiment, '.json'), path: record.experiment, caseCount }
       if (this.isRunning(experiment.path)) return
       if (await isTemporaryRunAlive(record)) return await this.follow(experiment, record)
       if (existsSync(record.report)) {
@@ -434,7 +429,7 @@ export class TemporaryTest extends Store<TestState> {
   ): Promise<void> {
     const run = await readTemporaryTestResults(report, {
       experiment: experiment.name,
-      seconds: (Date.now() - startedAt) / MILLISECONDS,
+      seconds: (Date.now() - startedAt) / 1000,
     })
     const results = await this.remember(experiment, run, only)
     this.update(experiment, { status: 'done', results })
@@ -1268,10 +1263,39 @@ export class TemporaryOptimize extends Store<OptimizeState> {
     knobs: readonly TemporaryKnob[],
     auto = false
   ): Promise<number> {
-    const { review, writers, changes } = await this.review(outcome, record, knobs)
+    const writers: RunEntry['writers'] = new Map()
+    const edits: ProposedEdit[] = []
+    const changes = temporaryKnobChanges(knobs, outcome.baseline.params, outcome.best?.params ?? {})
+    for (const change of changes) {
+      const located = await this.locate(change)
+      const writable = 'write' in located
+      if (writable) writers.set(edits.length, located.write)
+      edits.push({
+        knob: change.knob.key,
+        kind: change.kind,
+        label: change.knob.label,
+        before: change.before,
+        after: change.after,
+        accepted: writable,
+        ...(writable ? { target: located.target } : { unavailable: located.unavailable }),
+        ...(change.added ? { added: change.added } : {}),
+      })
+    }
+    const baseline = outcome.baseline.score ?? 0
+    const check = testCheck(outcome.test)
+    const review: OptimizeReview = {
+      run: temporaryOptimizationRunName(record),
+      record,
+      baseline,
+      best: outcome.best?.score ?? baseline,
+      ...(outcome.measure ? { measure: outcome.measure } : {}),
+      measuredOn: MEASURED_ON[outcome.measuredOn],
+      edits,
+      ...(check ? { testCheck: check } : {}),
+    }
     entry.writers = writers
     entry.changes = changes
-    const ready = review.edits.filter(({ unavailable }) => unavailable === undefined).length
+    const ready = edits.filter(({ unavailable }) => unavailable === undefined).length
     recordDevEvent('optimize_run_finished')
     this.updateRun(entry, { step: 'review', review: auto && ready > 0 ? autoAnswered(review) : review })
     this.watchSources(entry)
@@ -1336,44 +1360,6 @@ export class TemporaryOptimize extends Store<OptimizeState> {
         await editAgentOptions(workspace, [edit])
       },
     }
-  }
-
-  private async review(
-    outcome: TemporaryStudyOutcome,
-    record: string,
-    knobs: readonly TemporaryKnob[]
-  ): Promise<{ review: OptimizeReview; writers: RunEntry['writers']; changes: TemporaryKnobChange[] }> {
-    const writers: RunEntry['writers'] = new Map()
-    const edits: ProposedEdit[] = []
-    const changes = temporaryKnobChanges(knobs, outcome.baseline.params, outcome.best?.params ?? {})
-    for (const change of changes) {
-      const located = await this.locate(change)
-      const writable = 'write' in located
-      if (writable) writers.set(edits.length, located.write)
-      edits.push({
-        knob: change.knob.key,
-        kind: change.kind,
-        label: change.knob.label,
-        before: change.before,
-        after: change.after,
-        accepted: writable,
-        ...(writable ? { target: located.target } : { unavailable: located.unavailable }),
-        ...(change.added ? { added: change.added } : {}),
-      })
-    }
-    const baseline = outcome.baseline.score ?? 0
-    const check = testCheck(outcome.test)
-    const review: OptimizeReview = {
-      run: temporaryOptimizationRunName(record),
-      record,
-      baseline,
-      best: outcome.best?.score ?? baseline,
-      ...(outcome.measure ? { measure: outcome.measure } : {}),
-      measuredOn: MEASURED_ON[outcome.measuredOn],
-      edits,
-      ...(check ? { testCheck: check } : {}),
-    }
-    return { review, writers, changes }
   }
 
   private async applyAccepted(entry: RunEntry): Promise<void> {

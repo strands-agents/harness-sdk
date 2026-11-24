@@ -201,14 +201,12 @@ export const temporaryDevChatPart = (
 }
 
 /** The parts of an automatic optimization that a test puts its own in place of. */
-type TemporaryAutoOptimizeParts = Partial<Pick<AutoOptimizeRunOptions, 'worker' | 'history' | 'now'>>
-
 export const temporaryDevCommands = (
   workspace: DevWorkspace,
   project: ImportedAgentProject,
   agent: () => TemporaryAgentFacts = () => ({}),
   settings?: () => TemporaryDevSettings,
-  autoOptimize: TemporaryAutoOptimizeParts = {}
+  autoOptimize: Partial<Pick<AutoOptimizeRunOptions, 'worker' | 'history' | 'now'>> = {}
 ): DevChatCommand[] => {
   const target = targetWorkspace(workspace, project)
   const sessions: Sessions = (context) =>
