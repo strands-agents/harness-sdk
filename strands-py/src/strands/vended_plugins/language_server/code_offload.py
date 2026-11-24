@@ -61,9 +61,11 @@ class CodeSkeletonStrategy(BaseOffloadStrategy):
     """Offload the code in every code-reading tool result as it arrives; keep the skeleton of what it covered.
 
     A result is replaced when it holds at least one line of code from a file under ``root`` and its skeleton is
-    shorter than it. Results the strategy cannot map to file lines (a shell command that writes, runs code, or uses
-    a redirect), files without a listed extension, and language server failures arrive in full. It acts only on
-    arrival, so history the model has already read is never rewritten and the prompt cache is kept.
+    shorter than it. With ``targeted_lines`` set, only broad reads are: code from more than one file, all of one file,
+    or more than ``targeted_lines`` lines of one. A targeted read of part of one file, which an agent usually makes
+    to edit it, arrives in full. Results the strategy cannot map to file lines (a shell command that writes, runs
+    code, or uses a redirect), files without a listed extension, and language server failures arrive in full. It acts
+    only on arrival, so history the model has already read is never rewritten and the prompt cache is kept.
 
     Example:
         ```python
@@ -83,6 +85,7 @@ class CodeSkeletonStrategy(BaseOffloadStrategy):
         read_tools: Sequence[str] = ("read",),
         shell_tools: Sequence[str] = ("shell",),
         extensions: Sequence[str] = (".py",),
+        targeted_lines: int | None = None,
         conditions: OffloadConditions | None = None,
     ) -> None:
         """Configure the strategy.
@@ -93,6 +96,8 @@ class CodeSkeletonStrategy(BaseOffloadStrategy):
             read_tools: Tools that read files through ``path``, ``offset`` and ``limit`` and return ``cat -n`` lines.
             shell_tools: Shell tools that take a ``command`` and return ``{"output", "error", "exit_code"}`` JSON text.
             extensions: File extensions the language server understands.
+            targeted_lines: Most lines of one file a read may hold and still arrive in full, unless it holds all of
+                the file; None to offload every code result.
             conditions: When the strategy fires; defaults to every matching result on arrival (``block_threshold=1``).
 
         Raises:
@@ -100,6 +105,8 @@ class CodeSkeletonStrategy(BaseOffloadStrategy):
         """
         if not read_tools and not shell_tools:
             raise ValueError("read_tools and shell_tools are empty: name the tools that read code")
+        if targeted_lines is not None and targeted_lines < 1:
+            raise ValueError(f"targeted_lines={targeted_lines} is invalid: expected a whole number of at least 1")
         # Every result, stated as a 1-token threshold: the strategy means to act before the model reads the code.
         resolved = conditions if conditions is not None else OffloadConditions(block_threshold=1)
         super().__init__("skeleton", [*read_tools, *shell_tools], resolved)
@@ -108,6 +115,7 @@ class CodeSkeletonStrategy(BaseOffloadStrategy):
         self._read_tools = tuple(read_tools)
         self._shell_tools = tuple(shell_tools)
         self._extensions = tuple(extensions)
+        self._targeted_lines = targeted_lines
 
     def _with_conditions(self, conditions: OffloadConditions) -> CodeSkeletonStrategy:
         return CodeSkeletonStrategy(
@@ -116,6 +124,7 @@ class CodeSkeletonStrategy(BaseOffloadStrategy):
             read_tools=self._read_tools,
             shell_tools=self._shell_tools,
             extensions=self._extensions,
+            targeted_lines=self._targeted_lines,
             conditions=conditions,
         )
 
@@ -138,7 +147,7 @@ class CodeSkeletonStrategy(BaseOffloadStrategy):
         if text is None:
             return None
         coverage = self._coverage(tool_name, tool_input, text)
-        if coverage is None or not coverage.lines:
+        if coverage is None or not coverage.lines or self._is_targeted(coverage):
             return None
         try:
             skeleton = await self._render(coverage)
@@ -146,6 +155,14 @@ class CodeSkeletonStrategy(BaseOffloadStrategy):
             logger.warning("tool=<%s> | language server could not outline the result, keeping it", tool_name)
             return None
         return (skeleton, []) if len(skeleton) < len(text) else None
+
+    def _is_targeted(self, coverage: _Coverage) -> bool:
+        """Whether a result is a targeted read: part of one file, no more than ``targeted_lines`` lines of it."""
+        if self._targeted_lines is None or len(coverage.lines) != 1:
+            return False
+        [(path, numbers)] = coverage.lines.items()
+        code_lines = sum(1 for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
+        return len(numbers) <= self._targeted_lines and len(numbers) < code_lines
 
     def _coverage(self, tool_name: str | None, tool_input: dict[str, Any], text: str) -> _Coverage | None:
         if tool_name in self._read_tools:
@@ -178,7 +195,9 @@ class CodeSkeletonStrategy(BaseOffloadStrategy):
                 coverage.add(path, int(hit.group("line")))
                 return path, int(hit.group("line")) + 1
         if not line.strip() or line == "--":
-            return previous
+            # A blank line the file has here keeps the run of lines going; grep's "--" separator ends it.
+            blank_here = previous is not None and line != "--" and _line_is(index[previous[0]], previous[1], "")
+            return (previous[0], previous[1] + 1) if blank_here and previous is not None else previous
         if previous is not None and _line_is(index[previous[0]], previous[1], line):
             coverage.add(*previous)
             return previous[0], previous[1] + 1

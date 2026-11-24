@@ -112,7 +112,9 @@ def _tools(root: Path):
     return [run_shell, read_file]
 
 
-def _call(root: Path, name: str, tool_input: dict[str, Any], client: Any = None) -> tuple[Agent, dict[str, Any]]:
+def _call(
+    root: Path, name: str, tool_input: dict[str, Any], client: Any = None, targeted_lines: int | None = None
+) -> tuple[Agent, dict[str, Any]]:
     """Run an agent that makes one tool call and answers; return it and the tool result the model saw."""
     model = MockedModelProvider(
         [
@@ -120,7 +122,7 @@ def _call(root: Path, name: str, tool_input: dict[str, Any], client: Any = None)
             Message(role="assistant", content=[{"text": "Done."}]),
         ]
     )
-    strategy = CodeSkeletonStrategy(client or FakeOutlineClient(), root)
+    strategy = CodeSkeletonStrategy(client or FakeOutlineClient(), root, targeted_lines=targeted_lines)
     agent = Agent(
         model=model,
         tools=_tools(root),
@@ -236,3 +238,25 @@ def test_pyright_outlines_a_real_sed_range(code_root):
     text = result["content"][0]["text"]
     assert "L8-12 def get(self, key):" in text
     assert "L15-16 def run(store):" in text
+
+
+@pytest.mark.parametrize(
+    ("command", "offloaded"),
+    [
+        ("sed -n 8,9p pkg/store.py", False),  # part of one file, within targeted_lines
+        ("sed -n 8,12p pkg/store.py", True),  # more lines than targeted_lines
+        ("cat pkg/store.py", True),  # all of one file
+        ("cat pkg/store.py pkg/other.py", True),  # more than one file
+    ],
+)
+def test_with_targeted_lines_only_broad_reads_are_offloaded(code_root, command, offloaded):
+    (code_root / "pkg" / "other.py").write_text(SOURCE.replace("Store", "Other"))
+
+    _, result = _call(code_root, "shell", {"command": command}, targeted_lines=3)
+
+    assert result["content"][0]["text"].startswith("Code offloaded") is offloaded
+
+
+def test_rejects_targeted_lines_below_one(code_root):
+    with pytest.raises(ValueError, match="targeted_lines=0 is invalid"):
+        CodeSkeletonStrategy(FakeOutlineClient(), code_root, targeted_lines=0)
