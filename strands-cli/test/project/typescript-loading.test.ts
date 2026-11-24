@@ -39,9 +39,11 @@ let root: string
 beforeEach(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), 'strands-source-reload-')))
   await writeFile(join(root, 'package.json'), '{"type":"module"}')
+  vi.stubEnv('PYTHON', join(root, 'no-python'))
 })
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 })
 
