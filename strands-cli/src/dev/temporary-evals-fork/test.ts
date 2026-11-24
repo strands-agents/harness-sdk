@@ -7,8 +7,7 @@ import type { DevWorkspace } from '../workspace.js'
 import { ignoreProgress, prepareTemporaryOptimizerEnvironment, type TemporaryCommandRunner } from './environment.js'
 import {
   assertTemporaryForkArguments,
-  spawnTemporaryEvals,
-  temporaryEvalsEnvironment,
+  runTemporaryEvals,
   temporaryEvalsFailure,
   temporaryFlagValues,
   temporaryTypescriptRunnerOf,
@@ -186,33 +185,31 @@ export const runTemporaryTest = async (
   onProgress(`Report: ${report}`)
   onProgress('Running the cases. The summary appears when every case has finished.')
   await request.onStart?.(files)
-  const exit = await (dependencies.spawnTests ?? spawnTemporaryEvals)({
-    command: python,
-    args: [
-      '-m',
-      'strands_evals.cli',
-      'run',
-      files.cases,
-      ...task,
-      '--output',
-      report,
-      '--fail-on',
-      'none',
-      '--data-store',
-      files.store,
-      '--max-workers',
-      String(TEST_WORKERS),
-      ...forkArguments,
-    ],
-    cwd: workspace.root,
-    env: temporaryEvalsEnvironment(python, process.env),
-    ...(signal ? { signal } : {}),
-    ...(request.background ? { background: true } : {}),
-    ...(request.detached ? { detached: true } : {}),
-    ...(request.onSpawn ? { onSpawn: request.onSpawn } : {}),
-    log,
-    onLine: onProgress,
-  })
+  const exit = await runTemporaryEvals(
+    dependencies.spawnTests,
+    request,
+    {
+      python,
+      args: [
+        '-m',
+        'strands_evals.cli',
+        'run',
+        files.cases,
+        ...task,
+        '--output',
+        report,
+        '--fail-on',
+        'none',
+        '--data-store',
+        files.store,
+        '--max-workers',
+        String(TEST_WORKERS),
+        ...forkArguments,
+      ],
+      log,
+    },
+    onProgress
+  )
   if (exit.code !== 0) throw temporaryEvalsFailure('strands-evals run', exit, process.env, testNextStep(exit.code, log))
   if (!existsSync(report))
     throw new Error(`strands-evals run finished without writing ${report}. The full output is in ${log}.`)

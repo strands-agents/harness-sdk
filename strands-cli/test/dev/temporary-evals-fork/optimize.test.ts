@@ -624,12 +624,13 @@ describe('TEMPORARY dev optimization', () => {
   ])('shouldSetTheDefaultRegionLikeTheDevWorkerWhenTheEnvironmentIs$given', async ({ given, expected }) => {
     const workspace = await workspaceFixture()
     const spawnOptimizer = succeeding()
-    const environment = { PATH: '/usr/bin', ...given }
+    for (const name of ['AWS_REGION', 'AWS_DEFAULT_REGION'] as const) vi.stubEnv(name, given[name])
 
-    await runTemporaryOptimization({ workspace, environment }, { run: environmentRunner(), spawnOptimizer })
+    await runTemporaryOptimization({ workspace }, { run: environmentRunner(), spawnOptimizer })
 
     expect(spawnOptimizer.mock.calls[0]![0].env.AWS_DEFAULT_REGION).toBe(expected)
-    expect(environment).toEqual({ PATH: '/usr/bin', ...given })
+    expect(process.env.AWS_DEFAULT_REGION).toBe(given.AWS_DEFAULT_REGION)
+    vi.unstubAllEnvs()
   })
 
   it('shouldPrepareTheProjectAfterTheChecksPassAndBeforeTheOptimizerRuns', async () => {

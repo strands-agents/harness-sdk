@@ -220,3 +220,27 @@ const spawnAttachedEvals: TemporaryEvalsSpawner = ({
       resolveExit({ code: code ?? 1, stdout: stdout.join(''), stderrTail })
     })
   })
+
+type TemporaryEvalsRun = Pick<TemporaryEvalsProcess, 'signal' | 'background' | 'detached' | 'onSpawn'> & {
+  workspace: DevWorkspace
+}
+
+/** Runs the optimizer environment's interpreter in the project, with the process options of the request. */
+export const runTemporaryEvals = (
+  spawnEvals: TemporaryEvalsSpawner = spawnTemporaryEvals,
+  { workspace, signal, background, detached, onSpawn }: TemporaryEvalsRun,
+  { python, args, log }: { python: string; args: string[]; log: string },
+  onLine: (line: string) => void
+): Promise<TemporaryEvalsExit> =>
+  spawnEvals({
+    command: python,
+    args,
+    cwd: workspace.root,
+    env: temporaryEvalsEnvironment(python, process.env),
+    ...(signal ? { signal } : {}),
+    ...(background ? { background: true } : {}),
+    ...(detached ? { detached: true } : {}),
+    ...(onSpawn ? { onSpawn } : {}),
+    log,
+    onLine,
+  })
