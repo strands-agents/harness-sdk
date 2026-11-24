@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { Span, SpanAttributeValue } from '@opentelemetry/api'
-import { SpanStatusCode, trace, context } from '@opentelemetry/api'
+import { SpanKind, SpanStatusCode, trace, context } from '@opentelemetry/api'
 import { Tracer } from '../tracer.js'
 import {
   Message,
@@ -381,6 +381,17 @@ describe('Tracer', () => {
       const [, options] = getStartSpanCall()
       expect(options.attributes['session.id']).toBe('sess-1')
       expect(options.attributes['gen_ai.request.model']).toBe('override')
+    })
+
+    // Regression test for #6449: a model invocation is a client call to a remote
+    // provider, so the GenAI span conventions require the chat span kind CLIENT.
+    it('creates the chat span with CLIENT span kind', () => {
+      const tracer = new Tracer()
+
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hello')], modelId: 'claude-3' })
+
+      const [, options] = getStartSpanCall() as unknown as [string, { kind?: SpanKind }]
+      expect(options.kind).toBe(SpanKind.CLIENT)
     })
   })
 
