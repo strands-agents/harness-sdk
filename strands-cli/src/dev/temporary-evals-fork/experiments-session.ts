@@ -1,8 +1,8 @@
-import { recordDevEvent } from '../telemetry.js'
 import { existsSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readdir, readFile, rm } from 'node:fs/promises'
+import { dirname, extname, join, relative, resolve } from 'node:path'
 
+import type { ChatToolInfo } from '../../agent/types.js'
 import { errorMessage } from '../../terminal/text.js'
 import type { DevChatJob } from '../../ui/chat/types.js'
 import {
@@ -13,7 +13,8 @@ import {
   type GenerationPhase,
   type GenerationSettings,
 } from '../panels/model.js'
-import { temporaryAgentContext } from './agent-context.js'
+import { recordDevEvent } from '../telemetry.js'
+import type { DevWorkspace } from '../workspace.js'
 import {
   createTemporaryExperimentCases,
   generateTemporaryExperiment,
@@ -30,8 +31,82 @@ import {
 import { temporaryWorkspaceDirectory } from './evals-process.js'
 import { temporaryExperimentFile, temporaryExperimentsFolder, watchTemporaryExperiments } from './layout.js'
 import { temporaryWorkspaceReady } from './layout-migration.js'
-import { announce, plural, absolutePath, evalsLinkText, type TemporaryHost } from './host.js'
+import { announce, plural, evalsLinkText, type TemporaryAgentFacts, type TemporaryHost } from './host.js'
 import { Store } from './jobs.js'
+
+const SOURCE_LIMIT = 12_000
+const NOTE_LIMIT = 4_000
+const NOTE_COUNT = 4
+const NOTE_EXTENSIONS = new Set(['.md', '.txt'])
+
+const clip = (text: string, limit: number): string =>
+  text.length > limit ? `${text.slice(0, limit)}\n[cut at ${limit} characters]` : text
+
+const readText = async (path: string): Promise<string | undefined> => {
+  try {
+    return await readFile(path, 'utf8')
+  } catch {
+    return undefined
+  }
+}
+
+const noteFiles = async (folders: readonly string[]): Promise<string[]> => {
+  const found = await Promise.all(
+    [...new Set(folders)].map(async (folder) => {
+      try {
+        const entries = await readdir(folder, { withFileTypes: true })
+        return entries
+          .filter((entry) => entry.isFile() && NOTE_EXTENSIONS.has(extname(entry.name).toLowerCase()))
+          .map((entry) => join(folder, entry.name))
+      } catch {
+        return []
+      }
+    })
+  )
+  return found.flat().sort().slice(0, NOTE_COUNT)
+}
+
+const toolSection = (tools: readonly ChatToolInfo[]): string | undefined =>
+  tools.length > 0
+    ? ['Its tools:', ...tools.map(({ name, description }) => `- ${name}: ${description || 'no description'}`)].join(
+        '\n'
+      )
+    : undefined
+
+const summaryOf = (workspace: DevWorkspace, tools: readonly ChatToolInfo[], notes: readonly string[]): string =>
+  [
+    relative(workspace.root, workspace.entrypoint),
+    ...(tools.length > 0 ? [`${tools.length} tool${tools.length === 1 ? '' : 's'}`] : []),
+    ...notes.map((path) => relative(workspace.root, path)),
+  ].join(' · ')
+
+export const temporaryAgentContext = async (
+  workspace: DevWorkspace,
+  facts: TemporaryAgentFacts
+): Promise<{ text: string; summary: string }> => {
+  const source = await readText(workspace.entrypoint)
+  const notes = await noteFiles([dirname(workspace.entrypoint), workspace.root])
+  const tools = facts.tools ?? []
+  const noteSections = await Promise.all(
+    notes.map(async (path) => {
+      const text = await readText(path)
+      return text?.trim() ? `The file ${relative(workspace.root, path)}:\n${clip(text, NOTE_LIMIT)}` : undefined
+    })
+  )
+  const text = [
+    `This is an AI agent named ${workspace.config.name}.`,
+    facts.description ? `Its description: ${facts.description}` : undefined,
+    toolSection(tools),
+    source
+      ? `Its source file ${relative(workspace.root, workspace.entrypoint)}:\n${clip(source, SOURCE_LIMIT)}`
+      : undefined,
+    ...noteSections,
+    'Write realistic requests that users send to this agent, and the outcome that a good answer reaches.',
+  ]
+    .filter((section): section is string => Boolean(section))
+    .join('\n\n')
+  return { text, summary: summaryOf(workspace, tools, notes) }
+}
 
 const DEFAULT_CASES = 20
 const NAME_STEM = 'experiment'
@@ -158,7 +233,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
   }
 
   private cannotWatch(folder: string, error: unknown): string {
-    return `strands dev cannot watch ${absolutePath(folder)} for changes (${errorMessage(error)}).`
+    return `strands dev cannot watch ${resolve(folder)} for changes (${errorMessage(error)}).`
   }
 
   private folder(): string {
@@ -168,7 +243,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
   private publish(): void {
     this.set({
       loaded: this.loaded,
-      folder: absolutePath(this.folder()),
+      folder: resolve(this.folder()),
       saved: this.saved,
       generations: [...this.jobs.values()].map(({ generation }) => generation).reverse(),
       ...(this.error ? { error: this.error } : {}),
@@ -234,7 +309,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
         total: settings.cases,
         startedAt: Date.now(),
         status: 'Preparing the evals environment',
-        log: absolutePath(files.log),
+        log: resolve(files.log),
       },
       files,
       abort: new AbortController(),
@@ -323,9 +398,8 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
   private async saveDraft(job: Job, draft: TemporaryExperimentDocument): Promise<void> {
     const { name } = job.generation
     const path = temporaryExperimentFile(this.directory(), name)
-    const shown = absolutePath(path)
-    if (existsSync(path))
-      throw new Error(`${shown} exists already, so the cases stay in ${absolutePath(job.files.draft)}.`)
+    const shown = resolve(path)
+    if (existsSync(path)) throw new Error(`${shown} exists already, so the cases stay in ${resolve(job.files.draft)}.`)
     const names = temporaryUniqueCaseNames(draft.cases)
     const cases = draft.cases.map((item, index) => ({ ...item, name: names[index]! }))
     await createTemporaryExperimentCases(path, draft, cases)

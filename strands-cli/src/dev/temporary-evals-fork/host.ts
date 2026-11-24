@@ -1,14 +1,20 @@
-import { resolve } from 'node:path'
-
+import type { ChatToolInfo } from '../../agent/types.js'
 import { hyperlinkEscapes } from '../../terminal/terminal.js'
 import type { DevChatCommandContext } from '../../ui/chat/types.js'
 import type { EvalsBrowserPlace } from '../panels/model.js'
 import type { DevWorkspace } from '../workspace.js'
-import type { TemporaryAgentFacts } from './agent-context.js'
 import type { TemporaryUiDependencies } from './evals-ui.js'
 import type { TemporaryExperimentDependencies } from './experiment.js'
 import type { TemporaryOptimizationDependencies } from './optimize.js'
 import type { TemporaryTestDependencies } from './test.js'
+
+export interface TemporaryAgentFacts {
+  description?: string
+  model?: string
+  sessionId?: string
+  sessionDirectory?: string
+  tools?: readonly ChatToolInfo[]
+}
 
 export type TemporarySessionDependencies = TemporaryExperimentDependencies &
   TemporaryTestDependencies &
@@ -41,9 +47,6 @@ export const announce = (host: TemporarySessionHost, status: 'success' | 'error'
   host.context?.report(status, text)
 }
 
-// Generated files are shown with their absolute path, so the developer and the model can open them from anywhere.
-export const absolutePath = (path: string): string => resolve(path)
-
 // The evals UI address of a generated file for a notice, linked where the terminal supports it; empty until the UI is ready.
 export const evalsLinkText = (host: TemporarySessionHost, place: EvalsBrowserPlace, runFolder?: string): string => {
   const link = host.evalsLink?.(place, runFolder)
@@ -51,5 +54,11 @@ export const evalsLinkText = (host: TemporarySessionHost, place: EvalsBrowserPla
   const escapes = hyperlinkEscapes(link)
   return ` · evals UI ${escapes ? `${escapes.open}${link}${escapes.close}` : link}`
 }
+
+export const firstLine = (text: string): string =>
+  text
+    .split('\n')
+    .find((line) => line.trim())
+    ?.trim() ?? text
 
 export const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`

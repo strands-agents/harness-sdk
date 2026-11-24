@@ -39,7 +39,7 @@ import { TypescriptBackend, type TypescriptInit } from '../../project/typescript
 import type { AgentExtensionHost } from '../../agent/extension.js'
 import type { profileBaseCliChat } from '../../dev/base-cli.js'
 import type { AgentOptions } from '../../dev/agent-options.js'
-import type { TemporaryAgentFacts } from '../../dev/temporary-evals-fork/agent-context.js'
+import type { TemporaryAgentFacts } from '../../dev/temporary-evals-fork/host.js'
 import type { DevWorkspace } from '../../dev/workspace.js'
 import type { DevStateManager } from '../../dev/runtime.js'
 import {

@@ -69,8 +69,8 @@ import { TemporaryExperiments } from './experiments-session.js'
 import {
   announce,
   plural,
-  absolutePath,
   evalsLinkText,
+  firstLine,
   type TemporaryDevSettings,
   type TemporaryHost,
   type TemporarySessionHost,
@@ -288,12 +288,6 @@ const startingProgress = (plan: RunPlan, startedAt: number): OptimizeProgress =>
   }
 }
 
-const firstLine = (text: string): string =>
-  text
-    .split('\n')
-    .find((line) => line.trim())
-    ?.trim() ?? text
-
 const sentence = (text: string): string => (/[.!?]$/u.test(text.trim()) ? text.trim() : `${text.trim()}.`)
 
 const STOPPED_BY_USER = 'You stopped the run.'
@@ -467,14 +461,14 @@ export class TemporaryTest extends Store<TestState> {
     const rerun = only
       ? `${run.cases.filter((item) => item.passed).length} of ${plural(run.cases.length, 'rerun case')} passed · `
       : ''
-    const shown = absolutePath(results.report)
+    const shown = resolve(results.report)
     const link = evalsLinkText(this.host(), { view: 'report', experiment: experiment.path })
     announce(this.host(), 'success', `evaluate · ${experiment.name} · ${rerun}${total} · report in ${shown}${link}`)
   }
 
   // A run without a report points at its log, or gives the error when it never started one.
   private whereWhy(record: TemporaryTestRecord | undefined, error: unknown): string {
-    return record ? `run log in ${absolutePath(record.log)}` : firstLine(errorMessage(error))
+    return record ? `run log in ${resolve(record.log)}` : firstLine(errorMessage(error))
   }
 
   private isRunning(path: string): boolean {

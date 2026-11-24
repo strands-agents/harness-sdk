@@ -11,7 +11,7 @@ import { recordDevEvent } from '../telemetry.js'
 import type { EvalsBrowser, EvalsBrowserNotice, EvalsBrowserPlace, EvalsBrowserState } from '../panels/model.js'
 import { prepareTemporaryOptimizerEnvironment, type TemporaryEnvironmentOptions } from './environment.js'
 import { temporaryEvalsEnvironment, temporaryWorkspaceDirectory } from './evals-process.js'
-import { announce, type TemporaryHost } from './host.js'
+import { announce, firstLine, type TemporaryHost } from './host.js'
 import {
   ensureTemporaryExperimentsFolder,
   temporaryExperimentHome,
@@ -96,12 +96,6 @@ const segments = (id: string): string => id.split('/').map(encodeURIComponent).j
 
 const isRemote = (environment: NodeJS.ProcessEnv): boolean =>
   Boolean(environment.SSH_CONNECTION || environment.SSH_CLIENT || environment.SSH_TTY)
-
-const firstLine = (text: string): string =>
-  text
-    .split('\n')
-    .find((line) => line.trim())
-    ?.trim() ?? text
 
 export class TemporaryEvalsUi implements EvalsBrowser {
   private state: EvalsBrowserState = { status: 'off' }

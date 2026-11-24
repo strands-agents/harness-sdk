@@ -3,11 +3,13 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  mergedJobsFeed,
   Store,
   tailTemporaryLines,
   temporaryJobsFeed,
   watchTemporaryFileCount,
 } from '../../../src/dev/temporary-evals-fork/jobs.js'
+import type { DevChatJob, DevChatJobs } from '../../../src/ui/chat/types.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const POLLED = { timeout: 5000 }
@@ -120,5 +122,62 @@ describe('watchTemporaryFileCount', () => {
     stop()
 
     expect(counts).not.toContain(3)
+  })
+})
+
+const settableFeed = (initial: readonly DevChatJob[]) => {
+  let jobs = initial
+  const listeners = new Set<() => void>()
+  const jobsFeed: DevChatJobs = {
+    snapshot: () => jobs,
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+  }
+  const set = (next: readonly DevChatJob[]): void => {
+    jobs = next
+    listeners.forEach((listener) => listener())
+  }
+  return { jobsFeed, set, listeners }
+}
+
+describe('mergedJobsFeed', () => {
+  it('shouldListTheJobsOfEveryFeedInOrder', () => {
+    const generations = settableFeed([{ id: 'gen-1', label: 'refunds' }])
+    const evaluations = settableFeed([{ id: '/w/capital.json', label: 'capital', done: 1, total: 4 }])
+
+    const merged = mergedJobsFeed(generations.jobsFeed, evaluations.jobsFeed)
+
+    expect(merged.snapshot().map(({ id }) => id)).toEqual(['gen-1', '/w/capital.json'])
+  })
+
+  it('shouldKeepTheSnapshotIdentityUntilAPartChanges', () => {
+    const generations = settableFeed([])
+    const evaluations = settableFeed([])
+    const merged = mergedJobsFeed(generations.jobsFeed, evaluations.jobsFeed)
+
+    const first = merged.snapshot()
+    expect(merged.snapshot()).toBe(first)
+
+    evaluations.set([{ id: '/w/capital.json', label: 'capital' }])
+    expect(merged.snapshot()).not.toBe(first)
+  })
+
+  it('shouldHearEveryFeedAndStopHearingThemAll', () => {
+    const generations = settableFeed([])
+    const evaluations = settableFeed([])
+    const merged = mergedJobsFeed(generations.jobsFeed, evaluations.jobsFeed)
+    let heard = 0
+
+    const stop = merged.subscribe(() => {
+      heard += 1
+    })
+    generations.set([{ id: 'gen-1', label: 'refunds' }])
+    evaluations.set([{ id: '/w/capital.json', label: 'capital' }])
+    stop()
+
+    expect(heard).toBe(2)
+    expect(generations.listeners.size + evaluations.listeners.size).toBe(0)
   })
 })

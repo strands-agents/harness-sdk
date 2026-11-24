@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { STRANDS_EVALS_VERSION } from '../../../src/dev/evals-package.js'
-import type { TemporaryAgentFacts } from '../../../src/dev/temporary-evals-fork/agent-context.js'
+import type { TemporaryAgentFacts } from '../../../src/dev/temporary-evals-fork/host.js'
 import { temporarySessionHistory } from '../../../src/dev/temporary-evals-fork/session-converter.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'

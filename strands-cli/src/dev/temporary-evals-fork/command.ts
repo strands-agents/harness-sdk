@@ -8,7 +8,6 @@ import { wizardRequestHasDiff, wizardRequestRows } from '../../ui/panels/wizard-
 import type { DevChatPart } from '../chat-extension.js'
 import { evalsSkillUnavailable, STRANDS_EVALS_OPTIMIZE_SKILL, STRANDS_EVALS_SKILL } from '../evals-skill.js'
 import type { DevWorkspace } from '../workspace.js'
-import type { TemporaryAgentFacts } from './agent-context.js'
 import { startTemporaryOptimizationWithDefaults, temporaryDevChatPart as temporaryAgentTools } from './agent-tools.js'
 import {
   AUTO_OPTIMIZE_JOB,
@@ -18,7 +17,7 @@ import {
   type AutoOptimizeRunOptions,
 } from './auto-optimize.js'
 import { temporaryGenerationJobs } from './experiments-session.js'
-import type { TemporaryDevSettings } from './host.js'
+import type { TemporaryAgentFacts, TemporaryDevSettings } from './host.js'
 import { mergedJobsFeed, temporaryJobsFeed } from './jobs.js'
 import { optimizeReviewContext, showOptimizeReview } from './review-run.js'
 import { temporarySessionHistory } from './session-converter.js'
