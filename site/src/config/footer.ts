@@ -14,6 +14,7 @@ export const DEFAULT_ISSUE_REPOSITORY = 'harness-sdk'
  */
 export const PRODUCT_ISSUE_REPOSITORY: Record<string, string> = {
   Harness: 'harness-sdk',
+  CLI: 'harness-sdk',
   'Harness SDK': 'harness-sdk',
   Shell: 'shell',
   Box: 'box',

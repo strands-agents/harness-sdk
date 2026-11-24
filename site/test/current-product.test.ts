@@ -33,6 +33,7 @@ describe('product identity wiring', () => {
     }
     expect(PRODUCT_RELEASE_STREAM).toEqual({
       Harness: 'harness',
+      CLI: 'cli',
       'Harness SDK': 'sdk',
       Shell: 'shell',
       Box: 'box',
@@ -47,6 +48,7 @@ describe('product identity wiring', () => {
     }
     expect(PRODUCT_ISSUE_REPOSITORY).toEqual({
       Harness: 'harness-sdk',
+      CLI: 'harness-sdk',
       'Harness SDK': 'harness-sdk',
       Shell: 'shell',
       Box: 'box',
