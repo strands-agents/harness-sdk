@@ -60,6 +60,10 @@ jobs:
       - name: Re-link SDK types
         run: npm install
 
+      - name: Build TypeScript harness
+        run: npm ci && npm run build
+        working-directory: harness-ts
+
       - name: Typecheck snippets
         run: npm run typecheck:snippets
 

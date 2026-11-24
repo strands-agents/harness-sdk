@@ -21,7 +21,8 @@ cancellation, see [run tools in the background](../../sdk/tools/background-tasks
 - The built-in [`subagent` tool](../subagents/), which runs the `generalist` delegate,
   always runs in the background, so the main agent continues while the delegate works.
 - For any other compatible tool, the model chooses foreground or background execution.
-- An invocation waits for background results and continues with them before returning.
+- Invocations follow the SDK's
+  [waiting and result delivery behavior](../../sdk/tools/background-tasks.md#receive-and-inspect-results).
 
 The default policy is `agentic: ["*"]`, to which the harness adds `subagent` as an
 `always` tool.
@@ -47,14 +48,9 @@ tools in the foreground and lets two delegates run at once:
   </Tab>
   <Tab label="TypeScript">
     ```typescript
-    import { createHarness } from '@strands-agents/harness'
+    --8<-- "user-guide/harness/configure/background-tasks_imports.ts:tasks_tune_imports"
 
-    const agent = await createHarness({
-      backgroundTasks: {
-        never: ['*'],
-        maxConcurrency: 2,
-      },
-    })
+    --8<-- "user-guide/harness/configure/background-tasks.ts:tasks_tune"
     ```
   </Tab>
 </Tabs>
@@ -62,12 +58,6 @@ tools in the foreground and lets two delegates run at once:
 With any policy, `subagent` still runs in the background. The harness adds it to
 `always` and removes it from your `agentic` and `never` lists. A wildcard such as
 `never: ["*"]` stays in place, and the exact `subagent` rule takes precedence over it.
-
-To let an invocation return while work is still running, set
-<Syntax py="wait_for_completion" ts="waitForCompletion" /> to
-<Syntax py="False" ts="false" /> in the policy. Your application then invokes the same
-agent again to deliver the results. See
-[return while tasks are still running](../../sdk/tools/background-tasks.md#return-while-tasks-are-still-running).
 
 An interrupt raised inside a backgrounded delegate fails that task instead of pausing
 the agent. That includes an [interventions](../interventions/) approval for one of the
@@ -89,9 +79,9 @@ including `subagent`:
   </Tab>
   <Tab label="TypeScript">
     ```typescript
-    import { createHarness } from '@strands-agents/harness'
+    --8<-- "user-guide/harness/configure/background-tasks_imports.ts:tasks_off_imports"
 
-    const agent = await createHarness({ backgroundTasks: false })
+    --8<-- "user-guide/harness/configure/background-tasks.ts:tasks_off"
     ```
   </Tab>
 </Tabs>
@@ -99,20 +89,11 @@ including `subagent`:
 ## Cancel background work
 
 `agent.cancel()` stops the current invocation but leaves background tasks running.
-To stop them too, ask for it in the same call:
-
-<Tabs>
-  <Tab label="Python">
-    ```python
-    agent.cancel(cancel_background_tasks=True)
-    ```
-  </Tab>
-  <Tab label="TypeScript">
-    ```typescript
-    agent.cancel({ cancelBackgroundTasks: true })
-    ```
-  </Tab>
-</Tabs>
+To stop them too, call
+<Syntax
+  py="agent.cancel(cancel_background_tasks=True)"
+  ts="agent.cancel({ cancelBackgroundTasks: true })"
+/>.
 
 If the invocation had already finished its turn and was only waiting for background
 tasks, it returns that turn's result, and the cancelled task results are delivered on
@@ -123,13 +104,14 @@ the next invocation.
 The Strands harness CLI runs on the TypeScript library, so `subagent` runs in the
 background there too. Its interactive terminal goes one step further and doesn't wait
 for background work: a turn can finish while tasks run, you can enter another prompt,
-and the CLI starts a new turn to deliver each result when it's ready. `/tasks` shows
+and the CLI starts a new turn to deliver ready results. `/tasks` shows
 your todos and background tasks.
 
-Print and plain modes wait for background work before they return. The CLI has no
-dedicated flag for the background-tasks policy. To turn background tasks off, use the
-setup wizard (`strands --setup`) or pass `--set agentConfig.backgroundTasks=false` for
-one run. Use the library when you need to tune the policy.
+Print and plain modes wait for background work before returning by default.
+To turn background tasks off, use the setup wizard (`strands --setup`) or pass
+`--set agentConfig.backgroundTasks=false` for one run. The generic `--set key=value`
+flag also overrides individual options, such as
+`--set agentConfig.backgroundTasks.maxConcurrency=2`.
 
 For the full option list, see the
 [configuration reference](../../reference/configuration/).

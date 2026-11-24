@@ -15,7 +15,6 @@ import Diagram from '@components/Diagram.astro'
 
 Use background tasks when a tool takes time and the agent has other work it can do.
 The tool runs in the background, the agent receives a task ID, and its loop continues.
-When the result is ready, the SDK adds it to the conversation so the agent can use it.
 
 Background tasks are disabled by default in the SDK. Enable them with the
 <Syntax py="background_tasks" ts="backgroundTasks" /> option on `Agent`.
@@ -76,9 +75,6 @@ Amazon Bedrock provider.
 The model still decides whether to call a tool. An `always` policy controls how a
 tool call executes; it does not cause the call itself.
 
-By default, the invocation waits for outstanding background work before returning,
-so the final response can include the report.
-
 ### What happens during the call
 
 <Diagram
@@ -86,41 +82,37 @@ so the final response can include the report.
   alt="Background task dispatch and delivery, as a sequence between the model, the agent, and a background task. Dispatch: the model requests a tool call, the agent queues the tool as a background task, and returns a receipt with the task ID to the model. Continue: the agent makes its next model call while the tool runs in the background. Delivery: the task reports that its result is ready, and the agent delivers the result to the model before the next model call."
 />
 
-1. **Dispatch.** The model requests a tool call and the SDK applies the tool's execution
-   policy. A background call is queued, and the model receives a receipt with the task
-   ID, tool name, and status instead of the tool's result.
-2. **Continue.** The agent loop moves on. The tool starts when a background execution
-   slot is free.
-3. **Delivery.** Before a later model call, or when the invocation would otherwise
-   finish, the SDK adds ready results to the conversation and the agent continues.
-
 [Tool executors](executors.md) order the foreground tool calls in one model response.
 Background tasks use a separate queue, so the loop continues before those calls finish.
 Direct calls through `agent.tool` always execute in the foreground, even for a tool
 with an `always` policy.
 
-## Choose an execution policy
+## Configure background tasks
 
 Set <Syntax py="background_tasks=True" ts="backgroundTasks: true" /> to let the model
-choose background execution for all compatible tools. Pass a configuration object
-when you need finer control.
+choose background execution for all compatible tools. Pass a `BackgroundTasksConfig`
+object to choose tools, limits, and delivery behavior. Every option is optional;
+the defaults apply when you pass <Syntax py="True" ts="true" /> or an empty object.
 
-Each policy accepts tool instances, registered tool names, or the wildcard `"*"`:
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `agentic` | `["*"]`\* | The model chooses foreground or background execution for matching tools. |
+| `always` | `[]` | Matching tools run in the background. |
+| `never` | `[]` | Matching tools run in the foreground. |
+| <Syntax py="wait_for_completion" ts="waitForCompletion" /> | <Syntax py="True" ts="true" /> | Wait for outstanding tasks before returning. |
+| <Syntax py="max_concurrency" ts="maxConcurrency" /> | `4` | Maximum simultaneous executions; a positive integer. |
+| `timeout` | No limit | Per-execution limit: seconds in Python, milliseconds in TypeScript. |
+| <Syntax py="manage_tool_name" ts="manageToolName" /> | `strands_manage_background_task` | [Management tool](#receive-and-inspect-results) name. |
 
-| Policy | Behavior when the model calls a matching tool |
-| --- | --- |
-| `agentic` | The model chooses foreground or background execution. |
-| `always` | The tool runs in the background. |
-| `never` | The tool runs in the foreground. |
-
-Exact matches take precedence over a wildcard. For example, `always` containing
-`build_report` plus `never` containing `"*"` backgrounds only the report tool.
-Putting the same selector in two policies is an error.
-
-If you omit `agentic`, it defaults to `["*"]`, unless `always` or `never` contains
+\* If you omit `agentic`, it defaults to `["*"]`, unless `always` or `never` contains
 `"*"`. If you provide `agentic`, only its selectors apply, and tools that no policy
 matches stay in the foreground. An empty `agentic` list therefore turns off
 model-selected background execution.
+
+Each policy accepts tool instances, registered tool names, or the wildcard `"*"`.
+Exact matches take precedence over a wildcard. For example, `always` containing
+`build_report` plus `never` containing `"*"` backgrounds only the report tool.
+Putting the same selector in two policies is an error.
 
 ### Tools eligible for model-selected execution
 
@@ -137,20 +129,7 @@ structured-output tools, context-management tools, and agents configured with
 <Syntax py="delegate=True" ts="delegate: true" />. Don't name them in `agentic` or
 `always`. The SDK rejects that configuration, or returns an error result for the call.
 
-## Configure limits and options
-
-`BackgroundTasksConfig` describes the configuration object. Every option is optional;
-the defaults apply when you pass <Syntax py="True" ts="true" /> or an empty object.
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `agentic` | `["*"]` | Tools whose execution mode the model chooses. |
-| `always` | `[]` | Tools that run in the background. |
-| `never` | `[]` | Tools that run in the foreground. |
-| <Syntax py="wait_for_completion" ts="waitForCompletion" /> | on | Wait for background work before returning. |
-| <Syntax py="max_concurrency" ts="maxConcurrency" /> | `4` | Tasks that may execute at once. A positive integer. |
-| `timeout` | none | Limit for one execution: seconds in Python, milliseconds in TypeScript. |
-| <Syntax py="manage_tool_name" ts="manageToolName" /> | See below | Name of the [management tool](#receive-and-inspect-results). |
+### Concurrency and timeouts
 
 Tasks beyond the concurrency limit wait in submission order. The timeout starts when
 execution starts, so time spent queued does not count. A timed-out task becomes
@@ -163,9 +142,13 @@ JavaScript still blocks the event loop.
 
 ## Receive and inspect results
 
-When you enable background tasks, the SDK registers a management tool named
-`strands_manage_background_task`. The model can call it to list, inspect, or cancel
-tasks, and doesn't need to poll: the SDK delivers results automatically.
+Use the task ID, tool name, and status in the dispatch receipt to track background
+work. The SDK registers a management tool that the model can call to list, inspect,
+or cancel tasks.
+
+The SDK delivers ready results before model calls; the model does not need to poll.
+By default, if the agent finishes its turn with tasks outstanding, the invocation
+waits for them, delivers their results, and continues.
 
 A delivered result appears in the conversation as a call to the management tool with
 `mode: "get"`, followed by its result. The first content block holds the task
@@ -173,10 +156,25 @@ metadata; the tool's own output follows in its original content blocks, images
 included. Once delivered, the task leaves the management tool's list. The result
 stays in conversation history, subject to normal context management.
 
-To give the management tool another name, set
-<Syntax py="manage_tool_name" ts="manageToolName" />. The name must not match another
-tool on the agent. It's written into conversation history, so keep it stable for the
-life of a saved session.
+The management tool's name must not match another tool on the agent. It's written
+into conversation history, so keep it stable for the life of a saved session.
+
+### Return while tasks are still running
+
+Set <Syntax py="wait_for_completion" ts="waitForCompletion" /> to
+<Syntax py="False" ts="false" /> for detached execution. The invocation returns when
+the agent finishes its turn, even with work outstanding. Ready results are still
+delivered during the invocation.
+
+Task completion does not start another invocation. Invoke the same agent again,
+either with a new user request or with
+<Syntax py="await agent.invoke_async([])" ts="await agent.invoke([])" />.
+An empty invocation adds no user message. It delivers any ready results, then calls
+the model, whether or not a result was ready. Wait for the previous invocation to
+finish before starting another.
+
+Keep the process alive while tasks run. In an asynchronous Python application, also
+keep the event loop the tool started on: closing that loop cancels the task.
 
 ### Task states
 
@@ -198,31 +196,11 @@ Task metadata includes <Syntax py="task_id" ts="taskId" />,
 work and differs from the original tool-use ID.
 
 Failed tasks include an `error` with a `type` and `message`. The type is
-<Syntax py="tool_error" ts="toolError" /> for an error the tool returned,
-<Syntax py="execution_error" ts="executionError" /> for an exception during execution,
-and `timeout` for an expired timeout. Check the task's `status` and `error` rather than
-the tool result's status: a successful `get` can describe a failed task.
-
-## Return while tasks are still running
-
-Set <Syntax py="wait_for_completion" ts="waitForCompletion" /> to
-<Syntax py="False" ts="false" /> for detached execution. The invocation then returns
-when the agent finishes its turn, even with work outstanding. Results that are ready
-before then are still delivered during the invocation.
-
-The SDK does not invoke an idle agent when a detached task finishes. Your application
-invokes the same agent again, either with a new user request or with
-<Syntax py="await agent.invoke_async([])" ts="await agent.invoke([])" />.
-An empty invocation adds no user message. It delivers any ready results, then calls
-the model, whether or not a result was ready. Wait for the previous invocation to
-finish before starting another.
-
-Keep the process alive while tasks run. In an asynchronous Python application, also
-keep the event loop the tool started on: closing that loop cancels the task.
-
-With the default wait setting, the SDK delivers completed tasks between model calls.
-If the agent finishes its turn with tasks outstanding, the invocation waits for all of
-them, delivers the results, and continues.
+<Syntax py="tool_error" ts="toolError" /> for a tool error result, including exceptions
+raised by the tool. Exceptions that escape the tool executor, such as middleware
+failures, produce <Syntax py="execution_error" ts="executionError" />. An expired timeout
+produces `timeout`. Check the task's `status` and `error` rather than the tool result's
+status: a successful `get` can describe a failed task.
 
 ### List, inspect, and cancel from your application
 
