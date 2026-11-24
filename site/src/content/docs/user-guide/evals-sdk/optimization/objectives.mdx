@@ -94,10 +94,47 @@ from strands_evals.optimization import Budget
 budget = Budget(max_rollouts=300, max_iterations=20)
 ```
 
-The default is 500 rollouts and no iteration cap. Each search step costs about
-`proposals x train cases x runs per candidate` rollouts; with the default four proposals
-and 8 train cases, that's 32 per step. The minimum is what the baseline and the end phase
-need, and a budget below it fails at construction with the number required.
+The default is 500 rollouts and no iteration cap.
+
+### How many rollouts a run needs
+
+A run spends its budget in four parts. The two reserves are held back before the search
+starts, so the search can never spend them:
+
+```text
+baseline            num_train_cases x num_runs
+each search step    num_proposals x num_train_cases x num_runs
+validation reserve  (num_finalists + 1) x (num_validation_cases x num_runs + headroom)
+test reserve        2 x (num_test_cases x num_runs + headroom)
+
+headroom            num_rerun_passes x (5% x num_split_cases x num_runs, rounded up)
+```
+
+`num_runs` is the `Optimizer`'s `runs_per_candidate`, `num_proposals` its
+`proposals_per_iteration`, `num_finalists` its `FinalPick(n_finalists=...)`, and
+`num_rerun_passes` its `rerun_passes`. `num_split_cases` is the validation or test cases,
+for the reserve the headroom belongs to.
+
+The headroom is extra room, for each candidate scored in the end phase, to run a trial
+again when it fails on an outage. With 6 validation cases and 1 run, 5% is 0.3, which
+rounds up to 1, so the 2 default re-run passes add 2 rollouts per candidate.
+Under a `Pareto` objective, both reserves cover at least 5 finalists plus the baseline,
+because every member of the front is validated and tested.
+
+The quickstart's run works out like this, with 20 cases split 8 / 6 / 6 and the defaults
+(4 proposals, up to 3 finalists, 1 run per candidate, 2 re-run passes):
+
+| Part | Rollouts |
+|---|---|
+| Baseline | 8 |
+| Each search step | 4 x 8 = 32 |
+| Validation reserve | 4 x (6 + 2) = 32 |
+| Test reserve | 2 x (6 + 2) = 16 |
+
+The minimum budget is the baseline plus both reserves, 56 here, and a smaller budget fails
+at construction with that number. With `max_rollouts=120`, the search gets the other 64,
+which pays for two steps. The run then spent 108 of its 120 rollouts: it needed no re-runs,
+so the headroom went unused.
 
 Three costs aren't counted against the budget, and the result reports each one:
 
