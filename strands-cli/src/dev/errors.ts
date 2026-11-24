@@ -1,8 +1,8 @@
 import { errorMessage, sanitizeTerminalText } from '../terminal/text.js'
 
-export type DevOperation = 'open' | 'load' | 'install' | 'build' | 'reload'
+type DevOperation = 'open' | 'load' | 'install' | 'build' | 'reload'
 
-export interface DevFailureContext {
+interface DevFailureContext {
   operation: DevOperation
   path?: string | undefined
 }

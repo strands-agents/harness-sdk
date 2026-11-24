@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { copyTerminalText, type TerminalOutput } from '../terminal/terminal.js'
 import { errorMessage, sanitizeTerminalText } from '../terminal/text.js'
 
-export type FixRetry = 'setup' | 'reload' | 'restart'
+type FixRetry = 'setup' | 'reload' | 'restart'
 
 export interface FixRequest {
   report: string
@@ -18,7 +18,7 @@ export interface FixOutcome {
   text: string
 }
 
-export interface TerminalTab {
+interface TerminalTab {
   place: string
   command: string
   args: readonly string[]

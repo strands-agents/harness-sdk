@@ -7,8 +7,6 @@ import { isRecord } from '../values.js'
 
 const EDIT_ATTEMPTS = 3
 
-export type FileEdit = (content: string) => string | Promise<string>
-
 interface FileState {
   content: string
   details: Stats
@@ -66,7 +64,11 @@ const replaceUnchanged = async (owner: string, file: string, before: FileState, 
   }
 }
 
-export const editFile = async (owner: string, file: string, edit: FileEdit): Promise<boolean> =>
+export const editFile = async (
+  owner: string,
+  file: string,
+  edit: (content: string) => string | Promise<string>
+): Promise<boolean> =>
   withFolderLock(owner, async () => {
     for (let attempt = 0; attempt < EDIT_ATTEMPTS; attempt++) {
       const before = await readRegularFile(file)

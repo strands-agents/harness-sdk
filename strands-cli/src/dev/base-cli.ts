@@ -39,14 +39,10 @@ const PROFILE_OPTIONS = new Set([
 
 type ProfileValues = Record<string, unknown>
 
-const samePath = (left: string, right: string): boolean => resolve(left) === resolve(right)
-
-const portable = (path: string): string => path.split(sep).join('/')
-
 const isGeneratedView = (workspace: DevWorkspace): boolean =>
   workspace.directory !== undefined &&
-  samePath(workspace.root, join(workspace.directory, VIEW_FOLDER)) &&
-  VIEW_ENTRYPOINTS.has(portable(relative(workspace.root, workspace.entrypoint)))
+  resolve(workspace.root) === resolve(workspace.directory, VIEW_FOLDER) &&
+  VIEW_ENTRYPOINTS.has(relative(workspace.root, workspace.entrypoint).split(sep).join('/'))
 
 export const isProfileBaseCli = async (workspace: DevWorkspace, path = userConfigPath()): Promise<boolean> =>
   workspace.config.origin.kind === 'cli' && isGeneratedView(workspace) && (await savedAgentProject(path)) === undefined
@@ -112,12 +108,10 @@ const syncView = async (
   return { wanted, changed }
 }
 
-const profileFolder = (snapshot: CliConfigSnapshot): string => snapshot.profileBaseDir ?? dirname(snapshot.path)
-
 export const refreshBaseCliView = async (workspace: DevWorkspace, snapshot: CliConfigSnapshot): Promise<boolean> => {
   const staging = await mkdtemp(join(dirname(workspace.root), '.base-cli-view-'))
   try {
-    const input = await profileProject(snapshot, profileFolder(snapshot), workspace.config.language)
+    const input = await profileProject(snapshot, dirname(snapshot.path), workspace.config.language)
     const generated = join(staging, basename(workspace.root))
     await writeAgentProject(input.profile, input.language, input.skills, generated, input.baseDir, false, 'directory')
     const { wanted, changed } = await syncView(generated, workspace.root, await readManifest(workspace))
@@ -130,32 +124,20 @@ export const refreshBaseCliView = async (workspace: DevWorkspace, snapshot: CliC
   }
 }
 
-const updateBaseCli = async (
-  workspace: DevWorkspace,
-  update: (profile: HarnessAgentConfig) => HarnessAgentConfig,
-  path: string
-): Promise<void> => {
-  const store = await CliConfigStore.load(path)
-  await store.updateProfile(update)
-  await refreshBaseCliView(workspace, store.snapshot())
-}
-
 export const saveBaseCliChoices = async (
   workspace: DevWorkspace,
   change: AgentOptions,
   path = userConfigPath()
 ): Promise<boolean> => {
-  await updateBaseCli(
-    workspace,
-    (profile) => ({
-      ...profile,
-      ...(change.model !== undefined
-        ? { model: change.model, modelModule: change.model === profile.model ? profile.modelModule : null }
-        : {}),
-      ...(change.effort !== undefined ? { effort: change.effort } : {}),
-    }),
-    path
-  )
+  const store = await CliConfigStore.load(path)
+  await store.updateProfile((profile) => ({
+    ...profile,
+    ...(change.model !== undefined
+      ? { model: change.model, modelModule: change.model === profile.model ? profile.modelModule : null }
+      : {}),
+    ...(change.effort !== undefined ? { effort: change.effort } : {}),
+  }))
+  await refreshBaseCliView(workspace, store.snapshot())
   return true
 }
 
@@ -212,10 +194,10 @@ export const editBaseCliProfile = async (
   return true
 }
 
-export const refreshBaseCliFromDisk = async (workspace: DevWorkspace, path = userConfigPath()): Promise<boolean> =>
+const refreshBaseCliFromDisk = async (workspace: DevWorkspace, path = userConfigPath()): Promise<boolean> =>
   refreshBaseCliView(workspace, (await CliConfigStore.load(path, { persist: false })).snapshot())
 
-export interface ProfileBaseCliChat {
+interface ProfileBaseCliChat {
   saveAgentOptions(change: AgentOptions): Promise<boolean>
   /** Saves a settings change of the dev chat, whose settings are `config`. */
   saveSettings(config: CliConfigStore, change: Partial<ChatSettings>): Promise<void>
@@ -241,7 +223,7 @@ const lookOf = (saved: unknown): Partial<ChatSettings> => {
 }
 
 /** Saves a Base CLI dev chat's settings: the look goes to cli.toml, and the workspace keeps the rest. */
-export const saveBaseCliSettings = async (
+const saveBaseCliSettings = async (
   config: CliConfigStore,
   change: Partial<ChatSettings>,
   path = userConfigPath()
@@ -256,7 +238,7 @@ export const saveBaseCliSettings = async (
 }
 
 /** Takes the look that cli.toml holds now into the settings of the dev chat: plain strands, or a hand, changed it. */
-export const takeSavedBaseCliLook = async (config: CliConfigStore, path = userConfigPath()): Promise<void> =>
+const takeSavedBaseCliLook = async (config: CliConfigStore, path = userConfigPath()): Promise<void> =>
   config.adoptSavedSettings(lookOf((await CliConfigStore.load(path, { persist: false })).snapshot().settings))
 
 /** Moves a look the Base CLI workspace still holds into cli.toml as dev opens, since it is what dev showed. */

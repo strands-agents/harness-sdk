@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 export type DevStateManager = 'session' | 'memory' | 'storage'
 
-export interface IsolatedDevState {
+interface IsolatedDevState {
   readonly options: HarnessAgentOptions
   readonly turnedOff: readonly DevStateManager[]
 }

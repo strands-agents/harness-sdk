@@ -8,7 +8,7 @@ import { assertPortablePathComponent } from '../project/packaging.js'
 import { isRecord } from '../values.js'
 import { editFile } from './file-edits.js'
 
-export type DevOrigin = { kind: 'cli' | 'discovered' | 'created'; source?: string; version?: string }
+type DevOrigin = { kind: 'cli' | 'discovered' | 'created'; source?: string; version?: string }
 
 export interface DevWorkspaceConfig {
   version: 1
@@ -217,7 +217,7 @@ function assertPathType(path: string, details: Stats, directory: boolean): void 
   }
 }
 
-async function optionalDetails(path: string): Promise<Stats | undefined> {
+export async function optionalDetails(path: string): Promise<Stats | undefined> {
   try {
     return await lstat(path)
   } catch (error) {
@@ -243,16 +243,7 @@ async function readLegacyManifest(path: string, expected: Stats): Promise<Buffer
     if (!sameFile(expected, details) || (await realpath(path)) !== path) {
       throw new Error(`Workspace file changed while opening it: ${path}`)
     }
-    if (details.size > MAX_METADATA_BYTES) throw new Error(`Workspace metadata exceeds ${MAX_METADATA_BYTES} bytes.`)
-    const buffer = Buffer.alloc(MAX_METADATA_BYTES + 1)
-    let length = 0
-    while (length < buffer.length) {
-      const { bytesRead } = await file.read(buffer, length, buffer.length - length, length)
-      if (!bytesRead) break
-      length += bytesRead
-    }
-    if (length > MAX_METADATA_BYTES) throw new Error(`Workspace metadata exceeds ${MAX_METADATA_BYTES} bytes.`)
-    return buffer.subarray(0, length)
+    return await readBounded(file, MAX_METADATA_BYTES, `Workspace metadata exceeds ${MAX_METADATA_BYTES} bytes.`)
   } finally {
     await file.close()
   }
@@ -267,7 +258,7 @@ export interface WorkspaceBinding {
   cli?: Record<string, unknown>
 }
 
-export interface BoundWorkspace {
+interface BoundWorkspace {
   directory: string
   agentRoot: string
   entrypoint: string
@@ -498,14 +489,16 @@ async function readRegularFile(path: string, expected: Stats, limit: number): Pr
     if (!sameFile(expected, await file.stat()) || (await realpath(path)) !== path) {
       throw new Error(`Workspace metadata changed: ${path}`)
     }
-    return await readBounded(file, limit, path)
+    return await readBounded(file, limit, fileTooLarge(limit, path))
   } finally {
     await file.close()
   }
 }
 
-async function readBounded(file: FileHandle, limit: number, path: string): Promise<Buffer> {
-  if ((await file.stat()).size > limit) throw new Error(`File exceeds ${limit} bytes: ${path}`)
+const fileTooLarge = (limit: number, path: string): string => `File exceeds ${limit} bytes: ${path}`
+
+export async function readBounded(file: FileHandle, limit: number, tooLarge: string): Promise<Buffer> {
+  if ((await file.stat()).size > limit) throw new Error(tooLarge)
   const buffer = Buffer.alloc(limit + 1)
   let length = 0
   while (length < buffer.length) {
@@ -513,7 +506,7 @@ async function readBounded(file: FileHandle, limit: number, path: string): Promi
     if (!bytesRead) break
     length += bytesRead
   }
-  if (length > limit) throw new Error(`File exceeds ${limit} bytes: ${path}`)
+  if (length > limit) throw new Error(tooLarge)
   return buffer.subarray(0, length)
 }
 
@@ -551,7 +544,7 @@ async function appendIgnore(path: string, expected: Stats | undefined, contents:
       details.nlink !== 1 ||
       (expected && !sameFile(expected, details)) ||
       (await realpath(path)) !== path ||
-      !(await readBounded(file, MAX_IGNORE_BYTES, path)).equals(contents)
+      !(await readBounded(file, MAX_IGNORE_BYTES, fileTooLarge(MAX_IGNORE_BYTES, path))).equals(contents)
     ) {
       throw new Error(`Workspace ignore file changed: ${path}`)
     }
@@ -560,7 +553,8 @@ async function appendIgnore(path: string, expected: Stats | undefined, contents:
     await file.sync()
   } catch (error) {
     if (writing) {
-      const current = await readBounded(file, MAX_IGNORE_BYTES + addition.length, path)
+      const limit = MAX_IGNORE_BYTES + addition.length
+      const current = await readBounded(file, limit, fileTooLarge(limit, path))
       if (
         current.subarray(0, contents.length).equals(contents) &&
         addition.subarray(0, current.length - contents.length).equals(current.subarray(contents.length))

@@ -46,51 +46,6 @@ export interface PreparedDevRun {
 
 type Holds = (workspace: DevWorkspace, choice: HarnessChoice) => boolean
 
-interface CreationRequest {
-  kind: 'cli' | 'typescript' | 'python'
-  destination: string | undefined
-  cwd: string
-  snapshot: CliConfigSnapshot
-  claims: FolderClaims
-  signal: AbortSignal | undefined
-  deferDependencies: boolean
-}
-
-const createProject = async (
-  claims: FolderClaims,
-  options: Parameters<typeof createDevProject>[0]
-): Promise<DevWorkspace> => {
-  const created = await createDevProject(options)
-  claims.claimCreated(created.root)
-  return created
-}
-
-const createRequested = async ({
-  kind,
-  destination,
-  cwd,
-  snapshot,
-  claims,
-  signal,
-  deferDependencies,
-}: CreationRequest): Promise<DevWorkspace> => {
-  const base = kind === 'cli' ? await baseHarnessSelection(snapshot, cwd, destination) : undefined
-  const choice: HarnessChoice =
-    kind === 'cli' ? { kind: 'cli' } : { kind: 'create', language: kind, name: snapshot.profile.name }
-  const placement = {
-    cwd,
-    snapshot,
-    claims,
-    signal,
-    deferDependencies,
-    replace: false,
-    holds: holdsChoiceFor(base),
-  }
-  const directory = destination ?? base?.workspace
-  if (!directory) return createInLaunchFolder(choice, placement)
-  return placeHarness(choice, { ...placement, directory: resolve(cwd, directory) })
-}
-
 interface FolderDefaults {
   folderFor: (choice: HarnessChoice) => FolderSuggestion | undefined
   newProject?: string
@@ -162,8 +117,15 @@ const selectWorkspace = async (
   const cwd = process.cwd()
   const destination = dev.workspace ? await workspaceFolder(resolve(cwd, expandHome(dev.workspace))) : undefined
   const signal = screen?.signal
-  if (dev.create)
-    return createRequested({ kind: dev.create, destination, cwd, snapshot, claims, signal, deferDependencies })
+  if (dev.create) {
+    const base = dev.create === 'cli' ? await baseHarnessSelection(snapshot, cwd, destination) : undefined
+    const choice: HarnessChoice =
+      dev.create === 'cli' ? { kind: 'cli' } : { kind: 'create', language: dev.create, name: snapshot.profile.name }
+    const placement = { cwd, snapshot, claims, signal, deferDependencies, replace: false, holds: holdsChoiceFor(base) }
+    const directory = destination ?? base?.workspace
+    if (!directory) return createInLaunchFolder(choice, placement)
+    return placeHarness(choice, { ...placement, directory: resolve(cwd, directory) })
+  }
   if (args.agent) return openExplicitHarness(resolve(cwd, expandHome(args.agent)), { claims, folder: destination })
   const launch = reselecting ? undefined : await launchHolder(cwd, destination)
   if (launch && 'failure' in launch && !(dev.init && screen)) throw launch.failure
@@ -390,13 +352,15 @@ const createInLaunchFolder = async (
     throw folderUnavailable(root, 'The folder holds files that are not a strands dev project. Move or rename it first.')
   if (state.kind === 'occupied') await freeOccupiedFolder(root, state.holder, placement)
   else await removeEmptyFolder(root)
-  return createProject(claims, {
+  const created = await createDevProject({
     language: choice.language,
     snapshot: generalPurposeSnapshot(snapshot, choice.name),
     cwd,
     ...(signal ? { signal } : {}),
     ...(deferDependencies ? { deferDependencies: true } : {}),
   })
+  claims.claimCreated(created.root)
+  return created
 }
 
 const placeHarness = async (choice: HarnessChoice, placement: HarnessPlacement): Promise<DevWorkspace> => {
@@ -576,7 +540,7 @@ interface DevRunRequest {
   launchDirectory: string
   screen: StartupScreen
   setup: ProjectSetupSession
-  config?: CliConfigStore
+  config: CliConfigStore
   rejected?: PreparedDevRun
 }
 
@@ -591,7 +555,7 @@ export const openDevRun = async (request: DevRunRequest): Promise<PreparedDevRun
   for (;;) {
     process.chdir(launchDirectory)
     const prepared = await prepareDevRun(rejected ? pickerArgs(args) : args, {
-      ...(config ? { config } : {}),
+      config,
       savedConfig,
       screen,
       deferPreparation: true,

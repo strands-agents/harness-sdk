@@ -8,8 +8,13 @@ import ts from 'typescript'
 import { containsPath, expandHome } from '../paths.js'
 import { importAgentProject } from '../project/import.js'
 import { hasIgnoredDirectory } from '../project/packaging.js'
-import { isRecord } from '../values.js'
-import { insideWorkspaceFolder, readDevWorkspace, type DevWorkspace } from './workspace.js'
+import {
+  insideWorkspaceFolder,
+  optionalDetails,
+  readBounded,
+  readDevWorkspace,
+  type DevWorkspace,
+} from './workspace.js'
 
 export interface DiscoveredHarness {
   name: string
@@ -25,12 +30,12 @@ export interface SkippedHarness {
   expected: string
 }
 
-export interface HarnessDiscovery {
+interface HarnessDiscovery {
   harnesses: DiscoveredHarness[]
   warnings: string[]
 }
 
-export interface HarnessSearch {
+interface HarnessSearch {
   signal?: AbortSignal
   found?(harness: DiscoveredHarness): void
   skipped?(source: SkippedHarness): void
@@ -173,15 +178,6 @@ function warn(state: DiscoveryState, path: string, error: unknown): void {
   state.warnings.add(`${path || '(empty path)'}: ${error instanceof Error ? error.message : String(error)}`)
 }
 
-async function optionalDetails(path: string): Promise<Stats | undefined> {
-  try {
-    return await lstat(path)
-  } catch (error) {
-    if (isRecord(error) && error.code === 'ENOENT') return undefined
-    throw error
-  }
-}
-
 async function guardProjectMetadata(entrypoint: string): Promise<void> {
   const directory = dirname(entrypoint)
   const boundaries = await Promise.all([homedir(), tmpdir(), process.cwd()].map((path) => realpath(path)))
@@ -220,15 +216,7 @@ async function readSource(path: string, expected: Stats): Promise<string> {
     ) {
       throw new Error('Source changed or contains a symbolic link.')
     }
-    const buffer = Buffer.alloc(MAX_SOURCE_BYTES + 1)
-    let length = 0
-    while (length < buffer.length) {
-      const { bytesRead } = await file.read(buffer, length, buffer.length - length, length)
-      if (!bytesRead) break
-      length += bytesRead
-    }
-    if (length > MAX_SOURCE_BYTES) throw new Error(`Source exceeds ${MAX_SOURCE_BYTES} bytes.`)
-    return buffer.subarray(0, length).toString('utf8')
+    return (await readBounded(file, MAX_SOURCE_BYTES, `Source exceeds ${MAX_SOURCE_BYTES} bytes.`)).toString('utf8')
   } finally {
     await file.close()
   }

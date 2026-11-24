@@ -28,7 +28,7 @@ export interface FolderSuggestion {
   occupiedBy?: string
 }
 
-export interface BaseCliOption {
+interface BaseCliOption {
   name: string
   path?: string
 }
@@ -52,7 +52,7 @@ interface Replacement {
   holder: string
 }
 
-export type HarnessDiscoveryState = 'running' | 'done' | { failed: string }
+type HarnessDiscoveryState = 'running' | 'done' | { failed: string }
 
 interface PickerRow {
   key: string
@@ -723,7 +723,7 @@ export const HarnessPicker = ({
   )
 }
 
-export type HarnessSource = (
+type HarnessSource = (
   found: (harness: DiscoveredHarness) => void,
   signal: AbortSignal
 ) => Promise<LocalHarnessDiscovery>

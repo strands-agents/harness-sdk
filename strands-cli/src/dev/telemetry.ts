@@ -2,7 +2,7 @@ import { sendTelemetryPing } from '../cli/telemetry.js'
 import { readCliVersion } from '../package-version.js'
 
 /** Funnel steps only: which stages of the dev workflow get used, never what they contained. */
-export type DevTelemetryEvent =
+type DevTelemetryEvent =
   | 'dev_launch'
   | 'ask_shown'
   | 'ask_answered'
@@ -14,7 +14,7 @@ export type DevTelemetryEvent =
   | 'experiment_created'
   | 'evaluation_started'
 
-export type DevHarnessKind = 'base-cli' | 'typescript' | 'python'
+type DevHarnessKind = 'base-cli' | 'typescript' | 'python'
 
 interface DevTelemetryState {
   readonly enabled: boolean

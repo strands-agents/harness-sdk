@@ -21,6 +21,7 @@ import {
   harnessCalls,
   indentOf,
   insertion,
+  pythonInsertion,
   projectPython,
   propertyKey,
   readPythonAgent,
@@ -325,14 +326,8 @@ const pythonConstructor = (source: string, entry: string, call: PythonModelReadi
   if (fieldsKeyword?.code) throw notEditable(entry, `sets the ${className} ${key} in code.`)
   const close = call.close ?? source.length
   const last = keywords.map((item) => item.span ?? item.value_span).at(-1)
-  const trailing = last
-    ? source
-        .slice(last.end, close)
-        .replace(/#[^\r\n]*/gu, '')
-        .includes(',')
-    : false
   const extensible = (call.positional ?? 0) === 0 && keywords.every((item) => item.name !== null)
-  const add = insertion(source, { open: call.open ?? close, close }, last, trailing, '')
+  const add = pythonInsertion(source, { open: call.open ?? close, close }, last)
   const layout = {
     python: true,
     depth: depthAt(source, last?.start ?? close, true),

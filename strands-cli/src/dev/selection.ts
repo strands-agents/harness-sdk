@@ -18,9 +18,6 @@ export interface BaseHarnessSelection {
   runs(entrypoint: string): boolean
 }
 
-export const baseHarnessProject = (snapshot: CliConfigSnapshot, cwd: string): ImportedAgentProject | undefined =>
-  snapshot.agentProject ? importAgentProject(resolve(cwd, expandHome(snapshot.agentProject))) : undefined
-
 export const harnessFolder = (source: string, project: ImportedAgentProject): string =>
   dirname(/\.zip$/iu.test(source) ? resolve(expandHome(source)) : project.entrypoint)
 
@@ -29,7 +26,9 @@ export const baseHarnessSelection = async (
   cwd: string,
   destination?: string
 ): Promise<BaseHarnessSelection> => {
-  const project = baseHarnessProject(snapshot, cwd)
+  const project = snapshot.agentProject
+    ? importAgentProject(resolve(cwd, expandHome(snapshot.agentProject)))
+    : undefined
   const source = project?.entrypoint ?? snapshot.path
   const workspace = destination ? resolve(cwd, destination) : strandsUserPath(WORKSPACE_FOLDER)
   const sameFile = (left: string, right: string): boolean =>
@@ -84,7 +83,7 @@ const withPreparationStatus = async (harness: DiscoveredHarness): Promise<Discov
   }
 }
 
-export interface LocalHarnessSearch {
+interface LocalHarnessSearch {
   signal?: AbortSignal
   found?(harness: DiscoveredHarness): void | Promise<void>
 }

@@ -30,7 +30,7 @@ export class AgentOptionsNotEditable extends Error {}
 
 export class AgentOptionConflict extends Error {}
 
-export interface AgentOptionItem {
+interface AgentOptionItem {
   readonly text: string
   readonly literal?: string
 }
@@ -44,7 +44,7 @@ export type AgentOptionValue =
   | { readonly kind: 'map'; readonly keys: readonly string[] }
   | { readonly kind: 'code' }
 
-export type AgentOptionScalar = string | boolean | readonly string[]
+type AgentOptionScalar = string | boolean | readonly string[]
 
 export type AgentOptionEdit =
   | {
@@ -104,6 +104,15 @@ export const insertion =
     if (trailingComma) return at(close, each('', ', '))
     return at(last.end, each(`,\n${indent}`, ''))
   }
+
+export const pythonInsertion = (
+  source: string,
+  call: { open: number; close: number },
+  last: Span | undefined
+): ((entries: readonly string[]) => TextEdit) => {
+  const afterLast = last ? source.slice(last.end, call.close).replace(/#[^\r\n]*/gu, '') : ''
+  return insertion(source, call, last, afterLast.includes(','), '')
+}
 
 export const projectPython = (root: string): string => {
   const environment = join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
@@ -414,16 +423,10 @@ const pythonCall = async (source: string, entry: string, interpreter: string): P
   }
   const close = call.end - 1
   const last = [...call.arguments, ...call.keywords].sort((left, right) => left.end - right.end).at(-1)
-  const trailing = last
-    ? source
-        .slice(last.end, close)
-        .replace(/#[^\r\n]*/gu, '')
-        .includes(',')
-    : false
   return {
     values,
     extensible: call.arguments.length === 0 && call.keywords.every((keyword) => keyword.name !== null),
-    insert: insertion(source, { open: call.open, close }, last, trailing, ''),
+    insert: pythonInsertion(source, { open: call.open, close }, last),
   }
 }
 
@@ -602,33 +605,27 @@ const collectionEdit = (
       `${entry} does not set ${edit.option} as a ${wanted === 'list' ? 'list' : 'set of named entries'} that strands dev can edit. Change it there yourself.`
     )
   const parts = current.parts.map((part) => source.slice(part.start, part.end))
+  let removed: (index: number) => boolean
   if ('removeItems' in edit) {
     if (JSON.stringify(parts) !== JSON.stringify(edit.expectedItems))
       throw new AgentOptionConflict(`${entry} changed ${edit.option} since the run. Review the change again.`)
-    const removed = new Set(edit.removeItems)
-    return {
-      start: current.start,
-      end: current.end,
-      text: renderCollection(
-        source.slice(current.start, current.end),
-        current.open,
-        parts.filter((_, index) => !removed.has(index))
-      ),
-    }
+    removed = (index): boolean => edit.removeItems.includes(index)
+  } else {
+    const keys = current.value.kind === 'map' ? current.value.keys : []
+    const missing = edit.removeKeys.filter((key) => !keys.includes(key))
+    if (missing.length)
+      throw new AgentOptionConflict(
+        `${entry} no longer sets ${missing.join(', ')} in ${edit.option}. Review the change again.`
+      )
+    removed = (index): boolean => edit.removeKeys.includes(keys[index]!)
   }
-  const keys = current.value.kind === 'map' ? current.value.keys : []
-  const missing = edit.removeKeys.filter((key) => !keys.includes(key))
-  if (missing.length)
-    throw new AgentOptionConflict(
-      `${entry} no longer sets ${missing.join(', ')} in ${edit.option}. Review the change again.`
-    )
   return {
     start: current.start,
     end: current.end,
     text: renderCollection(
       source.slice(current.start, current.end),
       current.open,
-      parts.filter((_, index) => !edit.removeKeys.includes(keys[index]!))
+      parts.filter((_, index) => !removed(index))
     ),
   }
 }

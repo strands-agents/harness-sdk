@@ -31,7 +31,7 @@ const PANEL_FIXED_ROWS = 10
 const DETAILS_MIN_ROWS = 2
 const DETAILS_MAX_ROWS = 8
 
-export type SetupAction = 'validate' | 'back' | 'cancel' | 'retry' | 'model'
+type SetupAction = 'validate' | 'back' | 'cancel' | 'retry' | 'model'
 
 const MODEL_SETUP_ACTION = "The agent's model provider has no working credentials. Press s to set up a model."
 

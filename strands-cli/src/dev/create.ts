@@ -16,9 +16,16 @@ import { importAgentProject, type AgentProjectLanguage } from '../project/import
 import { installAgentProject, installProjectDependencies, type ProjectInstallation } from '../project/install.js'
 import { moduleLanguage } from '../project/portability.js'
 import { isRecord } from '../values.js'
-import { bindWorkspace, boundDevWorkspace, readDevWorkspace, WORKSPACE_FOLDER, type DevWorkspace } from './workspace.js'
+import {
+  bindWorkspace,
+  boundDevWorkspace,
+  optionalDetails,
+  readDevWorkspace,
+  WORKSPACE_FOLDER,
+  type DevWorkspace,
+} from './workspace.js'
 
-export interface CreateDevWorkspaceOptions {
+interface CreateDevWorkspaceOptions {
   destination: string
   kind: 'cli' | 'typescript' | 'python'
   snapshot: CliConfigSnapshot
@@ -27,7 +34,7 @@ export interface CreateDevWorkspaceOptions {
   deferDependencies?: boolean
 }
 
-export interface CreateDevProjectOptions {
+interface CreateDevProjectOptions {
   language: 'typescript' | 'python'
   snapshot: CliConfigSnapshot
   cwd: string
@@ -38,16 +45,6 @@ export interface CreateDevProjectOptions {
 type DestinationClaim = 'created' | 'empty'
 
 const PROJECT_FOLDER = 'strands-workspace'
-
-const isMissing = async (path: string): Promise<boolean> => {
-  try {
-    await lstat(path)
-    return false
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true
-    throw error
-  }
-}
 
 export const projectFolder = (parent: string): string => join(parent, PROJECT_FOLDER)
 
@@ -184,15 +181,20 @@ const sourceReferences = (source: string, path: string): string[] => {
   return [...references]
 }
 
-const includeModule = async (path: string, state: ModuleFiles): Promise<void> => {
+const addModuleFile = async (path: string, state: ModuleFiles): Promise<string | undefined> => {
   const sourcePath = await resolveSourceFile(path)
-  if (state.files.has(sourcePath)) return
+  if (state.files.has(sourcePath)) return undefined
   const details = await lstat(sourcePath)
   state.bytes += details.size
   if (state.files.size >= MAX_MODULE_FILES || state.bytes > MAX_MODULE_BYTES)
     throw new Error('Local module files exceed the workspace copy limit.')
   state.files.add(sourcePath)
-  if (!CODE_EXTENSION.test(sourcePath)) return
+  return sourcePath
+}
+
+const includeModule = async (path: string, state: ModuleFiles): Promise<void> => {
+  const sourcePath = await addModuleFile(path, state)
+  if (!sourcePath || !CODE_EXTENSION.test(sourcePath)) return
   for (const specifier of sourceReferences(await readFile(sourcePath, 'utf8'), sourcePath)) {
     if (specifier.startsWith('.')) {
       await includeModule(resolve(dirname(sourcePath), specifier), state)
@@ -208,13 +210,8 @@ const includeModule = async (path: string, state: ModuleFiles): Promise<void> =>
 }
 
 const pythonModuleFiles = async (path: string, state: ModuleFiles): Promise<void> => {
-  const sourcePath = await resolveSourceFile(path)
-  if (state.files.has(sourcePath)) return
-  const details = await lstat(sourcePath)
-  state.bytes += details.size
-  if (state.files.size >= MAX_MODULE_FILES || state.bytes > MAX_MODULE_BYTES)
-    throw new Error('Local module files exceed the workspace copy limit.')
-  state.files.add(sourcePath)
+  const sourcePath = await addModuleFile(path, state)
+  if (!sourcePath) return
   const source = await readFile(sourcePath, 'utf8')
   for (const match of source.matchAll(/^\s*from\s+(\.*)([\w.]+)\s+import\s/gmu)) {
     let directory = dirname(sourcePath)
@@ -286,10 +283,7 @@ export const profileProject = async (
 const portableEntrypoint = (root: string, entrypoint: string): string => relative(root, entrypoint).split(sep).join('/')
 
 const claimDestination = async (path: string): Promise<DestinationClaim> => {
-  const details = await lstat(path).catch((error: unknown) => {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-    throw error
-  })
+  const details = await optionalDetails(path)
   if (!details) {
     await mkdir(dirname(path), { recursive: true })
     await mkdir(path, { mode: 0o700 })
@@ -328,7 +322,11 @@ interface FolderClaim {
 
 const missingParents = async (path: string): Promise<string[]> => {
   const parents: string[] = []
-  for (let parent = dirname(path); parent !== dirname(parent) && (await isMissing(parent)); parent = dirname(parent))
+  for (
+    let parent = dirname(path);
+    parent !== dirname(parent) && !(await optionalDetails(parent));
+    parent = dirname(parent)
+  )
     parents.push(parent)
   return parents
 }
@@ -423,7 +421,7 @@ export const folderClaims = (): FolderClaims => {
   const restoreOnExit = (): void => restoreBeforeExit(replacements)
   return {
     claim: async (path): Promise<void> => {
-      if (await isMissing(path)) record({ path, claim: 'created', missingParents: await missingParents(path) })
+      if (!(await optionalDetails(path))) record({ path, claim: 'created', missingParents: await missingParents(path) })
       else if (await isEmptyFolder(path)) record({ path, claim: 'empty', missingParents: [] })
     },
     claimCreated: (path): void => record({ path, claim: 'created', missingParents: [] }),
