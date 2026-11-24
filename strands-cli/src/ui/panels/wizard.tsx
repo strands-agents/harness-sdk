@@ -8,7 +8,7 @@ import { EditableText } from '../text-input.js'
 import { Box, Text, useTheme } from '../theme.js'
 import { useDevPanelClicks } from './dev.js'
 
-export type Tone = 'success' | 'error' | 'warning' | 'muted'
+type Tone = 'success' | 'error' | 'warning' | 'muted'
 
 interface ListItem {
   readonly key: string
@@ -90,16 +90,6 @@ export const Line = ({
 }
 
 const Gap = (): ReactElement => <Box height={1} flexShrink={0} />
-
-const Fill = (): ReactElement => <Box flexGrow={1} flexShrink={1} />
-
-const KeyHints = ({ hints }: { hints: readonly string[] }): ReactElement => (
-  <Box height={1} flexShrink={0} overflow="hidden">
-    <Text dimColor wrap="truncate-end">
-      {hints.join(' · ')}
-    </Text>
-  </Box>
-)
 
 const listWindow = (selected: number, count: number, capacity: number): { start: number; end: number } => {
   if (count <= capacity) return { start: 0, end: count }
@@ -733,10 +723,10 @@ export const Wizard = ({
         onChoose={(button) => choose(firstButton + buttons.indexOf(button))}
         onHover={(button) => cursor.set(firstButton + buttons.indexOf(button))}
       />
-      <Fill />
-      <KeyHints
-        hints={
-          !active
+      <Box flexGrow={1} flexShrink={1} />
+      <Box height={1} flexShrink={0} overflow="hidden">
+        <Text dimColor wrap="truncate-end">
+          {(!active
             ? ['↑ answer this']
             : editor
               ? ['Enter save', 'Esc cancel']
@@ -746,8 +736,9 @@ export const Wizard = ({
                   leave: onLeave !== undefined,
                   escape: escapeHint,
                 })
-        }
-      />
+          ).join(' · ')}
+        </Text>
+      </Box>
     </>
   )
 }

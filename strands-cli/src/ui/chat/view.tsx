@@ -274,6 +274,12 @@ function ChatViewContent({
       ? openDevPanel
       : undefined
   const devPanel = dockedDevPanel ? undefined : openDevPanel
+  const devPanelFrame = {
+    active: panelKeyboard,
+    ...(onPanelElement ? { onElement: onPanelElement } : {}),
+    ...(onPanelBlur ? { blur: onPanelBlur } : {}),
+    ...(devPanelClicks ? { clicks: devPanelClicks } : {}),
+  }
   const maxEffort = composerPanel?.kind === 'effort' && isMaxEffort(composerPanel.slider)
   const composerPanelOutlined = isOutlinedComposerPanel(composerPanel)
   const showCommandPicker = resolvedCommandAssistance !== undefined && !snapshot.panel
@@ -564,10 +570,7 @@ function ChatViewContent({
               panel={dockedDevPanel}
               width={configDockWidth}
               height={dockAvailableHeight}
-              {...(onPanelElement ? { onElement: onPanelElement } : {})}
-              active={panelKeyboard}
-              {...(onPanelBlur ? { blur: onPanelBlur } : {})}
-              {...(devPanelClicks ? { clicks: devPanelClicks } : {})}
+              {...devPanelFrame}
             />
           </Box>
         ) : null}
@@ -623,15 +626,7 @@ function ChatViewContent({
         >
           <Box width="100%" flexShrink={0} flexDirection="column">
             {devPanel ? (
-              <DevPanelFrame
-                panel={devPanel}
-                width={editorWidth}
-                height={devPanelRows}
-                {...(onPanelElement ? { onElement: onPanelElement } : {})}
-                active={panelKeyboard}
-                {...(onPanelBlur ? { blur: onPanelBlur } : {})}
-                {...(devPanelClicks ? { clicks: devPanelClicks } : {})}
-              />
+              <DevPanelFrame panel={devPanel} width={editorWidth} height={devPanelRows} {...devPanelFrame} />
             ) : null}
             {statusLayout.maxScroll > 0 ? (
               <Box height={1} paddingX={1} flexShrink={0}>

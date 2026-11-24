@@ -36,6 +36,22 @@ const capture = (): { command: DevChatCommand; context: () => DevChatCommandCont
   return { command, context: () => received! }
 }
 
+// A chat that records what each turn sends to the agent.
+const chat = (commands: readonly DevChatCommand[], options?: ConstructorParameters<typeof ChatController>[1]) => {
+  const prompts: unknown[] = []
+  const controller = new ChatController(
+    idleBackend({
+      async *stream(prompt) {
+        prompts.push(prompt)
+        yield* []
+        return { stopReason: 'endTurn' }
+      },
+    }),
+    { devCommands: [...commands], ...options }
+  )
+  return { controller, prompts, shown: () => controller.getSnapshot().completedTurns.map(({ prompt }) => prompt) }
+}
+
 describe('dev chat commands', () => {
   it('shouldOpenTheDevCommandPanelWhenTheUserTypesIt', async () => {
     const stream = vi.fn()
@@ -141,23 +157,12 @@ describe('dev chat commands', () => {
   })
 
   it('shouldActivateTheSkillAndSendTheWorkflowWhenTheUserTypesASkillCommand', async () => {
-    const prompts: unknown[] = []
     const activate = vi.fn(async (name: string) =>
       name === 'strands-evals'
         ? { skill: { name, description: 'Evals', instructions: 'Use evals.', active: true }, content: 'Use evals.' }
         : undefined
     )
-    const command = skillCommand()
-    const controller = new ChatController(
-      idleBackend({
-        async *stream(prompt) {
-          prompts.push(prompt)
-          yield* []
-          return { stopReason: 'endTurn' }
-        },
-      }),
-      { devCommands: [command], skills: { list: async () => [], activate } }
-    )
+    const { controller, prompts } = chat([skillCommand()], { skills: { list: async () => [], activate } })
 
     await controller.submit('/evaluate refunds')
     controller.openDevCommand('evaluate', { job: 'refunds.json' })
@@ -286,18 +291,8 @@ describe('dev chat commands', () => {
   })
 
   it('shouldRunThePromptAsAUserTurnWhenTheDevCommandSubmitsIt', async () => {
-    const prompts: unknown[] = []
     const { command, context } = capture()
-    const controller = new ChatController(
-      idleBackend({
-        async *stream(prompt) {
-          prompts.push(prompt)
-          yield* []
-          return { stopReason: 'endTurn' }
-        },
-      }),
-      { devCommands: [command] }
-    )
+    const { controller, prompts } = chat([command])
     await controller.submit('/optimize')
 
     context().submit('Help me create an experiment')
@@ -552,21 +547,6 @@ describe('a message typed beside an open dev panel', () => {
     open: () => EmptyPanel,
     screenContext: shown,
   })
-
-  const chat = (commands: readonly DevChatCommand[], skills?: ConstructorParameters<typeof ChatController>[1]) => {
-    const prompts: unknown[] = []
-    const controller = new ChatController(
-      idleBackend({
-        async *stream(prompt) {
-          prompts.push(prompt)
-          yield* []
-          return { stopReason: 'endTurn' }
-        },
-      }),
-      { devCommands: [...commands], ...skills }
-    )
-    return { controller, prompts, shown: () => controller.getSnapshot().completedTurns.map(({ prompt }) => prompt) }
-  }
 
   it('shouldSendWhatThePanelShowsWithTheMessageAndShowOnlyTheMessageInTheChat', async () => {
     const { controller, prompts, shown } = chat([standingPanel(() => SHOWN)])
