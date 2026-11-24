@@ -13,11 +13,14 @@ Example:
     ```
 """
 
-from collections.abc import Callable
-from typing import Generic, cast, overload
+from collections.abc import Awaitable, Callable
+from typing import Generic, TypeVar, cast, overload
 
 from ..hooks._type_inference import infer_event_types
 from ..hooks.registry import HookCallback, TEvent
+
+# Bound to a plain Callable rather than HookCallback so methods, which also take self, are accepted.
+_HookCallableT = TypeVar("_HookCallableT", bound=Callable[..., None | Awaitable[None]])
 
 
 class _WrappedHookCallable(HookCallback, Generic[TEvent]):
@@ -28,17 +31,17 @@ class _WrappedHookCallable(HookCallback, Generic[TEvent]):
 
 # Handle @hook
 @overload
-def hook(__func: HookCallback) -> _WrappedHookCallable: ...
+def hook(__func: _HookCallableT) -> _HookCallableT: ...
 
 
 # Handle @hook()
 @overload
-def hook() -> Callable[[HookCallback], _WrappedHookCallable]: ...
+def hook() -> Callable[[_HookCallableT], _HookCallableT]: ...
 
 
 def hook(
-    func: HookCallback | None = None,
-) -> _WrappedHookCallable | Callable[[HookCallback], _WrappedHookCallable]:
+    func: _HookCallableT | None = None,
+) -> _HookCallableT | Callable[[_HookCallableT], _HookCallableT]:
     """Mark a method as a hook callback for automatic registration.
 
     Infers event type from the callback's type hint. Supports union types
@@ -54,15 +57,15 @@ def hook(
         ValueError: If event type cannot be inferred from type hints.
     """
 
-    def decorator(f: HookCallback[TEvent]) -> _WrappedHookCallable[TEvent]:
+    def decorator(f: _HookCallableT) -> _HookCallableT:
         # Infer event types from type hints
-        event_types: list[type[TEvent]] = infer_event_types(f)
+        event_types = infer_event_types(f)
 
         # Store hook metadata on the function
         f_wrapped = cast(_WrappedHookCallable, f)
         f_wrapped._hook_event_types = event_types
 
-        return f_wrapped
+        return f
 
     if func is None:
         return decorator

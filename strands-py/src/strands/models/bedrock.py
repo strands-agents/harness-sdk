@@ -26,7 +26,7 @@ from ..event_loop import streaming
 from ..tools import convert_pydantic_to_tool_spec
 from ..tools._tool_helpers import noop_tool
 from ..tools.structured_output._structured_output_context import json_object_from_message
-from ..types.content import CachePoint, ContentBlock, Messages, ReasoningContentBlock, SystemContentBlock
+from ..types.content import CachePoint, ContentBlock, Message, Messages, ReasoningContentBlock, SystemContentBlock
 from ..types.exceptions import (
     ContextWindowOverflowException,
     ModelThrottledException,
@@ -1063,6 +1063,10 @@ class BedrockModel(Model):
         Returns:
             Index of the last user message with text/image content, or None if not found
         """
+        # TODO: Remove these declarations when mypy keeps the element types through reversed().
+        # https://github.com/python/mypy/issues/22174
+        idx: int
+        msg: Message
         for idx, msg in reversed(list(enumerate(messages))):
             if msg["role"] == "user" and any("text" in cb or "image" in cb for cb in msg.get("content", [])):
                 return idx
