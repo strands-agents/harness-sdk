@@ -134,8 +134,8 @@ def test_render_skeleton_keeps_imports_and_lists_signatures():
 
     assert text.splitlines() == [
         "Skeleton of pkg/store.py (422 lines): imports and signatures, bodies omitted to save context."
-        " retrieve_context with the reference below returns the full file, or read a line range of"
-        ' "pkg/store.py".',
+        " retrieve_context with the reference below returns the full file, or"
+        ' read(path="pkg/store.py", offset=..., limit=...) reads a line range.',
         "imports:",
         "   1 | import os",
         "   2 | from typing import (",

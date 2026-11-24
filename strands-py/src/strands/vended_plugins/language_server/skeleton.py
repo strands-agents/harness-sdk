@@ -120,7 +120,8 @@ class SkeletonStrategy(BaseOffloadStrategy):
         except Exception:
             logger.warning("path=<%s> | language server could not outline the file, keeping the full read", path)
             return None
-        return render_skeleton(lines, symbols, str(path.relative_to(self._root)), self._symbol_lookup), []
+        relative_path = str(path.relative_to(self._root))
+        return render_skeleton(lines, symbols, relative_path, self._symbol_lookup, self._read_tools[0]), []
 
     def _whole_file_read(self, block: ContentBlock, agent: Agent) -> Path | None:
         """The code file a whole-file read in ``block`` returned, or None when it is not one to outline."""
@@ -141,7 +142,11 @@ class SkeletonStrategy(BaseOffloadStrategy):
 
 
 def render_skeleton(
-    lines: list[str], symbols: list[dict[str, Any]], relative_path: str, symbol_lookup: bool = False
+    lines: list[str],
+    symbols: list[dict[str, Any]],
+    relative_path: str,
+    symbol_lookup: bool = False,
+    read_tool: str = "read",
 ) -> str:
     """The skeleton of a file: a header, its imports verbatim, and each symbol's line range and declaration.
 
@@ -150,6 +155,7 @@ def render_skeleton(
         symbols: The file's ``DocumentSymbol`` tree from the language server.
         relative_path: The file's path as the model should name it.
         symbol_lookup: Whether to point at ``retrieve_context(symbol=..., path=...)`` for one definition.
+        read_tool: The tool the model reads a line range with, through its ``offset`` and ``limit`` inputs.
 
     Returns:
         The skeleton text.
@@ -162,7 +168,7 @@ def render_skeleton(
     out = [
         f"Skeleton of {relative_path} ({len(lines)} lines): imports and signatures, bodies omitted to save context."
         f" {lookup}retrieve_context with the reference below returns the full file,"
-        f' or read a line range of "{relative_path}".'
+        f' or {read_tool}(path="{relative_path}", offset=..., limit=...) reads a line range.'
     ]
     imports = _import_lines(lines, first_symbol_line)
     if imports:
