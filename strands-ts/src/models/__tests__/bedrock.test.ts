@@ -3558,8 +3558,8 @@ describe('BedrockModel', () => {
         it.each([
           ['meta.llama3-70b-instruct-v1:0', { ttl: '1h' } as const],
           ['mistral.ministral-3-3b-instruct', undefined],
-          ['us.openai.gpt-6-luna', undefined],
-          ['us.openai.gpt-6-luna', { strategy: 'auto' } as const],
+          ['us.openai.gpt-5.4', undefined],
+          ['us.openai.gpt-5.4', { strategy: 'auto' } as const],
         ])('drops the cache points placed for %s with cacheConfig %o', async (modelId, cacheConfig) => {
           const provider = new BedrockModel({ modelId, ...(cacheConfig && { cacheConfig }) })
 
@@ -3568,7 +3568,41 @@ describe('BedrockModel', () => {
           const call = mockConverseStreamCommand.mock.lastCall?.[0]
           expect(call?.system).toStrictEqual([{ text: 'durable system prompt' }])
           expect(call?.messages).toStrictEqual([{ role: 'user', content: [{ text: 'stable' }, { text: 'volatile' }] }])
+          expect(warnOnce).toHaveBeenCalledWith(
+            expect.anything(),
+            `model_id=<${modelId}> | model does not take cache points | skipping cachePoint blocks`
+          )
         })
+
+        it.each([
+          'arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc',
+          'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        ])('drops the cache points when modelInfo says %s does not cache', async (modelId) => {
+          const provider = new BedrockModel({ modelId, modelInfo: { capabilities: { promptCaching: 'unsupported' } } })
+
+          collectIterator(provider.stream(placed.slice(0, 1), { systemPrompt: systemPromptWith() }))
+
+          const call = mockConverseStreamCommand.mock.lastCall?.[0]
+          expect(call?.system).toStrictEqual([{ text: 'durable system prompt' }])
+          expect(call?.messages?.[0]?.content).toStrictEqual([{ text: 'stable' }, { text: 'volatile' }])
+        })
+
+        it.each(['us.openai.gpt-6-luna', 'us.openai.gpt-5.6-sol'])(
+          'keeps the caller-placed cache points for %s, which Converse honors',
+          async (modelId) => {
+            const provider = new BedrockModel({ modelId, cacheConfig: { strategy: 'auto' } })
+
+            collectIterator(provider.stream(placed.slice(0, 1), { systemPrompt: systemPromptWith() }))
+
+            const call = mockConverseStreamCommand.mock.lastCall?.[0]
+            expect(systemCachePoints()).toStrictEqual([{ type: 'default' }])
+            expect(call?.messages?.[0]?.content).toStrictEqual([
+              { text: 'stable' },
+              { cachePoint: { type: 'default' } },
+              { text: 'volatile' },
+            ])
+          }
+        )
 
         it("keeps the cache points under strategy: 'anthropic'", async () => {
           const provider = new BedrockModel({
@@ -3585,7 +3619,7 @@ describe('BedrockModel', () => {
 
         it('keeps the cache points for an ARN', async () => {
           const modelId = 'arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc'
-          const provider = new BedrockModel({ modelId })
+          const provider = new BedrockModel({ modelId, cacheConfig: { ttl: '1h' } })
 
           collectIterator(provider.stream(placed.slice(0, 1), { systemPrompt: systemPromptWith() }))
 

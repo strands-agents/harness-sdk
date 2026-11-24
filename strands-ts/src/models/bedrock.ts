@@ -63,7 +63,7 @@ import {
   resolveMaxTokens,
   type ResolvedCacheSection,
 } from '../models/model.js'
-import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from './model-info.js'
+import { SERVER_SIDE_SUMMARY_OFF, ModelInfo, lookupModelInfo } from './model-info.js'
 import { bedrockCacheModelInfo, bedrockLimitsCachePoints } from './bedrock-cache.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
@@ -678,13 +678,22 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * cache at cache points. `strategy: 'anthropic'` forces them on, and an ARN, whose base model the id does not show,
    * keeps them unless `modelInfo` says otherwise.
    *
+   * Converse caches the OpenAI models implicitly, but the ones the shared model info lists with cache points also
+   * honor a caller-placed point there, so those keep the caller's points while automatic placement stays off.
+   *
    * @returns True when cachePoint blocks are sent
    */
   private _takesCachePoints(): boolean {
     if (this._config.cacheConfig?.strategy === 'anthropic' || this._getCacheStrategy() === 'anthropic') {
       return true
     }
+    if (this._config.modelInfo?.capabilities?.promptCaching !== undefined) {
+      return false
+    }
     const modelId = this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId
+    if (lookupModelInfo(modelId).capabilities?.promptCaching === 'cachePoints') {
+      return true
+    }
     return this.modelInfo.capabilities?.promptCaching === undefined && modelId.startsWith('arn:')
   }
 
