@@ -160,8 +160,10 @@ class SkeletonStrategy(BaseOffloadStrategy):
 
     def _command_files(self, command: str) -> Iterable[Path | None]:
         """The code files under the root that ``command``'s words name, each resolved after the ``cd`` before it."""
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
         try:
-            words = list(shlex.shlex(command, posix=True, punctuation_chars=True))
+            words = list(lexer)
         except ValueError:
             return
         directory = self._root

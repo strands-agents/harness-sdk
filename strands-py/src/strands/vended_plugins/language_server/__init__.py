@@ -21,11 +21,13 @@ Example Usage:
 """
 
 from .client import LanguageServerError, LanguageServerNotFoundError, LspClient, Position, StdioLspClient
+from .enrich import CodeFetchEnricher
 from .search import WorkspaceSearch, workspace_retrieval_tool
 from .skeleton import SkeletonStrategy
 from .strategy import LspPassReport, LspStrategy
 
 __all__ = [
+    "CodeFetchEnricher",
     "LanguageServerError",
     "LanguageServerNotFoundError",
     "LspClient",
