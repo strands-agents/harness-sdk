@@ -155,12 +155,11 @@ const launcherSource = (node: string, cli: string, request: FixRequest): string 
 
 export const writeFixLauncher = async (
   request: FixRequest,
-  cli: string | undefined = process.argv[1],
-  node: string = process.execPath
+  cli: string | undefined = process.argv[1]
 ): Promise<string> => {
   if (!cli) throw new Error('Cannot find the Strands CLI that is running.')
   const launcher = join(await mkdtemp(join(tmpdir(), 'strands-fix-')), 'fix.mjs')
-  await writeFile(launcher, launcherSource(node, cli, request), { mode: 0o600 })
+  await writeFile(launcher, launcherSource(process.execPath, cli, request), { mode: 0o600 })
   return launcher
 }
 
