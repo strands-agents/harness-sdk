@@ -465,15 +465,11 @@ const optionCall = (workspace: AgentWorkspace, source: string): Promise<OptionCa
     : typescriptCall(source, entryOf(workspace))
 
 export const readAgentModel = async (workspace: AgentWorkspace): Promise<string | undefined> => {
-  const source = await readFile(workspace.entrypoint, 'utf8')
-  try {
-    const model = (await optionCall(workspace, source)).values.get('model')
-    if (!model) return modelIdentity(DEFAULT_HARNESS_AGENT_CONFIG.model)
-    return model.literal === undefined ? undefined : modelIdentity(model.literal)
-  } catch (error) {
-    if (error instanceof AgentOptionsNotEditable) return undefined
-    throw error
-  }
+  const options = await readAgentOptions(workspace)
+  if (!options) return undefined
+  const model = options.get('model')
+  if (!model) return modelIdentity(DEFAULT_HARNESS_AGENT_CONFIG.model)
+  return model.kind === 'string' ? modelIdentity(model.value) : undefined
 }
 
 export const saveAgentOptions = async (
