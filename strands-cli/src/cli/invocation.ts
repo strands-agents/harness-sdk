@@ -15,12 +15,14 @@ import { importAgentProject, type ImportedAgentProject } from '../project/import
 import type { AgentFactory } from '../project/typescript.js'
 import { isRecord } from '../values.js'
 import { agentConfig, projectConfigOverrides, type ParsedArgs } from './arguments.js'
+import { isolateDevState, type DevStateManager } from '../dev/runtime.js'
 
 interface InvocationAgent {
   profile?: HarnessAgentConfig
   options: HarnessAgentOptions
   buildAgent?: AgentFactory
   project?: ImportedAgentProject
+  turnedOffState?: readonly DevStateManager[]
 }
 
 interface InvocationConfigStore {
@@ -44,16 +46,20 @@ export async function invocationAgentForRun(
     }
     const { loadTypescriptProject } = await import('../project/typescript.js')
     const authored = await loadTypescriptProject(project, () => config.applyProviderEnvironment())
-    const options = {
+    const configured = {
       ...authored.options,
       ...(await projectOverrides(args, cwd, authored.options)),
       printer: false,
     }
+    const { options, turnedOff } = args.dev?.workspace
+      ? isolateDevState(configured, args.dev.workspace)
+      : { options: configured, turnedOff: [] }
     requireBedrockRegion(options.model)
     return {
       options,
       buildAgent: authored.createAgent,
       project,
+      turnedOffState: turnedOff,
     }
   }
   const baseDir = snapshot.profileBaseDir ?? cwd
@@ -177,6 +183,8 @@ export async function pythonInvocationOptions(
   })
   return {
     cwd,
+    ...(args.dev?.workspace ? { devWorkspace: args.dev.workspace } : {}),
+    ...(args.dev?.prepared ? { prepared: true } : {}),
     overrides: projectConfigOverrides({ ...args, session: undefined, memory: undefined, sessionId: undefined }),
     assignments: args.configSet,
     configFlags: { session: args.session, memory: args.memory, sessionId: args.sessionId },

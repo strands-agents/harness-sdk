@@ -18,6 +18,12 @@ export function isActiveTask(status: ChatTask['status']): boolean {
   return ['pending', 'queued', 'in_progress', 'working', 'paused'].includes(status)
 }
 
+/** The active background tasks that no jobs line already stands for, by the tool name each task carries. */
+export function listedBackgroundTasks({ tasks, devJobs = [] }: Pick<ChatSnapshot, 'tasks' | 'devJobs'>): ChatTask[] {
+  const covered = new Set(devJobs.flatMap(({ covers = [] }) => covers))
+  return tasks.filter((task) => task.source === 'background' && isActiveTask(task.status) && !covered.has(task.label))
+}
+
 export function cloneRuntime(runtime: ChatRuntimeInfo): ChatRuntimeInfo {
   return {
     agent: sanitizeTerminalText(runtime.agent),
@@ -29,6 +35,18 @@ export function cloneRuntime(runtime: ChatRuntimeInfo): ChatRuntimeInfo {
     session: sanitizeTerminalText(runtime.session),
     ...(runtime.sessionName !== undefined ? { sessionName: sanitizeTerminalText(runtime.sessionName) } : {}),
     cwd: runtime.cwd,
+    ...(runtime.reloadStatus ? { reloadStatus: sanitizeTerminalText(runtime.reloadStatus) } : {}),
+    ...(runtime.devWorkspace
+      ? {
+          devWorkspace: {
+            root: sanitizeTerminalText(runtime.devWorkspace.root),
+            entrypoint: sanitizeTerminalText(runtime.devWorkspace.entrypoint),
+            boundEntrypoint: sanitizeTerminalText(runtime.devWorkspace.boundEntrypoint),
+            origin: sanitizeTerminalText(runtime.devWorkspace.origin),
+          },
+        }
+      : {}),
+    ...(runtime.sourceWatching !== undefined ? { sourceWatching: runtime.sourceWatching } : {}),
     tools: runtime.tools.map((tool) => ({
       name: sanitizeTerminalText(tool.name),
       description: sanitizeTerminalText(tool.description),
@@ -73,6 +91,19 @@ export function isUnresolvedBackgroundTask(task: ChatTask): boolean {
 
 export function isConfigurationTool(name: string): boolean {
   return name.replaceAll('-', '_').toLowerCase() === 'strands_config'
+}
+
+/** The strands dev tools that put one question on screen and wait for its answer. */
+export const ON_SCREEN_QUESTION_TOOLS: ReadonlySet<string> = new Set([
+  'strands_dev_single_select',
+  'strands_dev_multi_select',
+  'strands_dev_number_input',
+  'strands_dev_confirm',
+])
+
+/** Its question is already a panel on screen, so the transcript does not preview it while it waits. */
+export function isOnScreenQuestionTool(name: string): boolean {
+  return ON_SCREEN_QUESTION_TOOLS.has(name.replaceAll('-', '_').toLowerCase())
 }
 
 export function readConversationValue(value: string | undefined): string | undefined {

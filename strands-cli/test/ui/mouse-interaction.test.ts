@@ -1,13 +1,15 @@
 import { createElement } from 'react'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { Text } from 'ink'
 import { describe, expect, it, vi } from 'vitest'
 import { Agent } from '@strands-agents/sdk'
 import { AgentSkills, Skill } from '@strands-agents/sdk/vended-plugins/skills'
 import { render, captureFrame, mouseInputSequence, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 
+import { ChatRoot } from '../../src/ui/app.js'
 import { ChatApp } from '../../src/ui/chat/screen.js'
-import { ChatController } from '../../src/ui/chat/controller.js'
+import { ChatController, type DevChatCommandContext } from '../../src/ui/chat/controller.js'
 import { type ChatPermissionRequest, type ChatTask } from '../../src/agent/types.js'
 import { AgentMessaging } from '../../src/agent/messaging.js'
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
@@ -123,6 +125,35 @@ describe('TUI mouse input', () => {
     await instance.waitUntilRenderFlush()
     expect(frame().join('\n')).toContain('create_harness')
     expect(controller.getSnapshot().panel?.kind).toBe('config')
+  })
+
+  it('opens a file that a dev tool asks for with the same opener as the project', async () => {
+    let context: DevChatCommandContext | undefined
+    const openProject = vi.fn(async () => {})
+    const controller = new ChatController(idleBackend(), {
+      settings: { animations: false },
+      devCommands: [
+        {
+          spec: { name: 'experiment', usage: '/experiment', description: 'Cases' },
+          attach: (received) => (context = received),
+        },
+      ],
+    })
+    await controller.start()
+    const instance = render(createElement(ChatApp, { controller, openProject }), {
+      stdin: ttyInput(),
+      stdout: ttyOutput(100, 24),
+      stderr: ttyOutput(100, 24),
+      exitOnCtrlC: false,
+      patchConsole: false,
+      interactive: true,
+    })
+    await instance.waitUntilRenderFlush()
+
+    await context!.openFile!('/w/cases.json')
+
+    expect(openProject).toHaveBeenCalledWith({ root: '/w/cases.json', entrypoint: '/w/cases.json' })
+    instance.unmount()
   })
 
   it('activates model and permission metadata and the Setup and Settings buttons from direct clicks', async () => {
@@ -1232,6 +1263,46 @@ describe('TUI mouse input', () => {
         'directory'
       )
     )
+  })
+})
+
+describe('startup screen mouse input', () => {
+  const mouseModes = (written: string): string[] =>
+    written.split('\u001b[?').flatMap((part) => /^100[23][hl]/.exec(part)?.[0] ?? [])
+
+  it('shouldLeaveDragSelectionToTheTerminalWhenAStartupScreenIsShown', async () => {
+    const input = ttyInput()
+    const output = ttyOutput(100, 30)
+    const frame = captureFrame(output)
+    let written = ''
+    output.on('data', (chunk: Buffer) => {
+      written += chunk.toString()
+    })
+    const root = {
+      intro: false,
+      setup: false,
+      setupBridge: { request: () => {}, confirmMcp: async () => true },
+      onSetupComplete: () => {},
+      onExitSetup: () => {},
+    }
+    const startup = createElement(ChatRoot, {
+      ...root,
+      startupContent: createElement(Text, {}, 'Choose a workspace folder'),
+    })
+    const instance = render(startup, { stdin: input, stdout: output, stderr: ttyOutput(100, 30) })
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Choose a workspace folder'))
+
+    await vi.waitFor(() => expect(mouseModes(written)).toEqual(['1003l', '1002l']))
+
+    const controller = new ChatController(idleBackend(), { settings: { animations: false } })
+    instance.rerender(createElement(ChatRoot, { ...root, controller }))
+
+    await vi.waitFor(() => expect(mouseModes(written).slice(-4)).toEqual(['1003l', '1002h', '1002l', '1003h']))
+
+    instance.rerender(startup)
+
+    await vi.waitFor(() => expect(mouseModes(written).slice(-4)).toEqual(['1003l', '1002h', '1003l', '1002l']))
+    await controller.dispose()
   })
 })
 

@@ -58,6 +58,8 @@ import { LiveSteering } from '../../src/agent/messaging.js'
 import { defineHarnessAgentConfig } from '@strands-agents/harness'
 import * as providerDiscovery from '../../src/model/discovery.js'
 import * as projectWatch from '../../src/project/watch.js'
+import * as configWatch from '../../src/config/watch.js'
+import * as baseCli from '../../src/dev/base-cli.js'
 import { parse, stringify } from 'smol-toml'
 
 import { SystemPromptRecordingModel, writeSessionWithSavedSystemPrompt } from '../fixtures/saved-system-prompt.js'
@@ -120,6 +122,52 @@ describe('interactiveBackgroundTasks', () => {
       waitForCompletion: false,
     })
     expect(interactiveBackgroundTasks({ backgroundTasks: false })).toBe(false)
+  })
+})
+
+describe('profile reload with sessionModelSync', () => {
+  it('shouldHoldACliTomlProfileChangeUntilSessionModelSyncTurnsOn', async () => {
+    const path = join(dirname(testSessionRoot), 'cli.toml')
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, stringify({ profile: { model: 'bedrock/anthropic.claude-old', skills: false } }))
+    const config = await CliConfigStore.load(path)
+    const watches = new Map<string, () => void>()
+    vi.spyOn(configWatch, 'watchConfigFile').mockImplementation((watched, onChange) => {
+      watches.set(watched, onChange)
+      return () => {}
+    })
+    const enabled = vi.spyOn(baseCli, 'sessionModelSyncEnabled').mockResolvedValue(false)
+    mocks.createHarness.mockResolvedValueOnce(fakeAgent('old'))
+    const requestSetup = vi.fn()
+    const controller = await createInteractiveChat({
+      config,
+      agentProfile: config.snapshot().profile,
+      agentOptions: { model: 'bedrock/anthropic.claude-old', skills: false, backgroundTasks: false },
+      requestSetup,
+    })
+    try {
+      expect([...watches.keys()]).toEqual([path, baseCli.baseCliWorkspaceConfigPath()])
+      await writeFile(path, stringify({ profile: { model: 'bedrock/anthropic.claude-new', skills: false } }))
+
+      watches.get(path)!()
+      await vi.waitFor(() => expect(enabled).toHaveBeenCalledOnce())
+      expect(requestSetup).not.toHaveBeenCalled()
+
+      enabled.mockResolvedValue(true)
+      watches.get(baseCli.baseCliWorkspaceConfigPath())!()
+
+      await vi.waitFor(() =>
+        expect(requestSetup).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            profile: expect.objectContaining({ model: 'bedrock/anthropic.claude-new' }),
+            profileSaved: true,
+          })
+        )
+      )
+    } finally {
+      vi.restoreAllMocks()
+      await controller.dispose()
+    }
   })
 })
 

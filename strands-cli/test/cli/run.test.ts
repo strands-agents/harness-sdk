@@ -411,6 +411,21 @@ describe('project invocation', () => {
     }
   )
 
+  it('shouldUseTheBuiltInAgentWhenTheAgentFlagIsEmptyAndADefaultAgentIsSaved', async () => {
+    const workspace = join(tmpdir(), 'strands-invocation-workspace')
+    const config = {
+      snapshot: () => ({
+        profile: defineHarnessAgentConfig({ model: 'openai/gpt-5' }),
+        agentProject: join(tmpdir(), 'strands-missing-saved-agent', 'agent.ts'),
+      }),
+      applyProviderEnvironment: () => {},
+    }
+
+    const invocation = await invocationAgentForRun(parseArgs(['--agent', '']), config, workspace)
+
+    expect(invocation.project).toBeUndefined()
+  })
+
   it('preserves an absolute session directory when resuming from another workspace', async () => {
     const workspace = join(tmpdir(), 'strands-invocation-workspace')
     const sessionDirectory = join(tmpdir(), 'strands-saved-sessions')

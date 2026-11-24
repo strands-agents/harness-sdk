@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import {
   DEFAULT_HARNESS_AGENT_CONFIG,
@@ -24,8 +25,9 @@ import {
 } from '../model/environment.js'
 import { isMissingPathError, strandsUserPath } from '../paths.js'
 import { errorMessage, isControlCharacter } from '../terminal/text.js'
+import { withProcessLock, type LockBusyMessage } from '../process-lock.js'
 import { isRecord } from '../values.js'
-import { DEFAULT_CHAT_SETTINGS, parseSettings, type ChatSettings } from './settings.js'
+import { DEFAULT_CHAT_SETTINGS, migrateSavedSettings, parseSettings, type ChatSettings } from './settings.js'
 
 export {
   applyProviderEnvironmentValues,
@@ -111,11 +113,76 @@ export function userConfigPath(): string {
   return strandsUserPath('cli.toml')
 }
 
+const configBusy: LockBusyMessage = (holders) =>
+  `Another strands process (${holders.join(', ')}) is still saving the CLI config. Try again when it finishes.`
+
+const mergeField = (mine: unknown, base: unknown, disk: unknown): unknown =>
+  isDeepStrictEqual(mine, base) ? disk : mine
+
+const mergeKeys = (
+  mine: ConfigDocument,
+  base: ConfigDocument,
+  disk: ConfigDocument,
+  merge: (mine: unknown, base: unknown, disk: unknown) => unknown
+): ConfigDocument => {
+  const merged: ConfigDocument = {}
+  for (const key of new Set([...Object.keys(mine), ...Object.keys(base), ...Object.keys(disk)])) {
+    const value = merge(mine[key], base[key], disk[key])
+    if (value !== undefined) merged[key] = value
+  }
+  return merged
+}
+
+const mergeSection = (mine: unknown, base: unknown, disk: unknown): unknown => {
+  if (isDeepStrictEqual(mine, base)) return disk
+  if (!isRecord(mine) || !isRecord(base) || !isRecord(disk)) return mine
+  return mergeKeys(mine, base, disk, mergeField)
+}
+
+const mergeConfigDocuments = (mine: ConfigDocument, base: ConfigDocument, disk: ConfigDocument): ConfigDocument =>
+  mergeKeys(mine, base, disk, mergeSection)
+
+const changedProfileFields = (
+  raw: Record<string, unknown>,
+  before: HarnessAgentConfig,
+  after: HarnessAgentConfig
+): Record<string, unknown> => {
+  const next = { ...raw }
+  const previous = before as unknown as Record<string, unknown>
+  const updated = after as unknown as Record<string, unknown>
+  for (const key of new Set([...Object.keys(previous), ...Object.keys(updated)])) {
+    if (isDeepStrictEqual(previous[key], updated[key])) continue
+    if (updated[key] === undefined) delete next[key]
+    else next[key] = globalThis.structuredClone(updated[key])
+  }
+  return next
+}
+
+export const savedAgentProject = async (path = userConfigPath()): Promise<string | undefined> => {
+  const { agentProject } = (await readConfigDocument(path)).document
+  return typeof agentProject === 'string' ? agentProject : undefined
+}
+
+export interface ConfigLayer {
+  readonly source: string
+  read(): Promise<unknown>
+  write(sections: Record<string, unknown>): Promise<void>
+}
+
+interface LayeredValues {
+  settings: ChatSettings
+  permissions: PermissionConfig
+  providers: readonly ProviderId[]
+  providerEnvironment: ProviderEnvironment
+}
+
 export class CliConfigStore {
   private _profileBaseDir: string | undefined
   private _environmentFiles: readonly string[] = []
   private _sessionProviderEnvironment: ProviderEnvironment = {}
   private _writeQueue = Promise.resolve()
+  private _layer: { target: ConfigLayer; base: LayeredValues } | undefined
+  private _diskDocument: ConfigDocument
 
   private constructor(
     private readonly _path: string,
@@ -128,13 +195,14 @@ export class CliConfigStore {
     private _settings: ChatSettings,
     private readonly _persistent = true
   ) {
+    this._diskDocument = _document
     this._profileBaseDir =
       _document.profileBaseDir === undefined
         ? undefined
         : requiredPath(_document.profileBaseDir, `Invalid CLI config at ${_path}: profileBaseDir`)
   }
 
-  static async load(path = userConfigPath()): Promise<CliConfigStore> {
+  static async load(path = userConfigPath(), options: { persist?: boolean } = {}): Promise<CliConfigStore> {
     const { document: loadedDocument, legacyPath } = await readConfigDocument(path)
     const document = withoutProviderCredentials(loadedDocument)
     const store = new CliConfigStore(
@@ -145,9 +213,10 @@ export class CliConfigStore {
       parseProviderEnvironment(document.providers, path),
       parseProfile(document.profile, path),
       parsePermissions(document.permissions, path),
-      parseSettings(document.settings)
+      parseSettings(document.settings),
+      options.persist !== false
     )
-    if (document !== loadedDocument || legacyPath) {
+    if (options.persist !== false && (document !== loadedDocument || legacyPath)) {
       await writeConfigDocument(path, document)
     }
     return store
@@ -224,12 +293,34 @@ export class CliConfigStore {
         agentProject: entrypoint,
         settings: { ...(isRecord(this._document.settings) ? this._document.settings : {}), ...nextSettings },
       }
-      if (this._persistent) {
-        await writeConfigDocument(this._path, document)
-      }
+      await this._save(document)
       this._document = document
       this._onboardingVersion = SETUP_VERSION
       this._settings = nextSettings
+    })
+  }
+
+  async reload(): Promise<boolean> {
+    if (this._layer) throw new Error('A CLI config with a workspace layer cannot reload from disk.')
+    let changed = false
+    await this._enqueueWrite(async () => {
+      const before = this._profile
+      this._adopt(withoutProviderCredentials((await readConfigDocument(this._path)).document))
+      changed = !isDeepStrictEqual(before, this._profile)
+    })
+    return changed
+  }
+
+  updateProfile(update: (profile: HarnessAgentConfig) => HarnessAgentConfig): Promise<void> {
+    if (!this._persistent || this._layer) throw new Error('Only a saved CLI config can update its profile.')
+    return this._enqueueWrite(async () => {
+      const saved = await this._writeLocked((disk) => {
+        const before = parseProfile(disk.profile, this._path)
+        const after = normalizeHarnessAgentConfig(update(before))
+        const priorProfile = isRecord(disk.profile) ? disk.profile : {}
+        return { ...disk, profile: changedProfileFields(priorProfile, before, after) }
+      })
+      this._adopt(saved)
     })
   }
 
@@ -310,8 +401,13 @@ export class CliConfigStore {
         permissions: { ...priorPermissions, mode: configuration.permissionMode, allow: [...allowedTools] },
         settings: { ...(isRecord(this._document.settings) ? this._document.settings : {}), ...settings },
       }
-      if (this._persistent && options.persist !== false) {
-        await writeConfigDocument(this._path, document)
+      if (options.persist !== false) {
+        await this._save(document, {
+          settings,
+          providers,
+          providerEnvironment,
+          permissions: { ...this._permissions, mode: configuration.permissionMode, allow: allowedTools },
+        })
       }
       this._document = document
       this._onboardingVersion = onboardingVersion
@@ -333,9 +429,7 @@ export class CliConfigStore {
         agentProject: undefined,
         profile: { ...priorProfile, ...globalThis.structuredClone(profile) },
       }
-      if (this._persistent) {
-        await writeConfigDocument(this._path, document)
-      }
+      await this._save(document)
       this._document = document
       this._profile = profile
     })
@@ -391,9 +485,7 @@ export class CliConfigStore {
           ...(this._profile.modelModule ? { modelModule } : {}),
         },
       }
-      if (this._persistent) {
-        await writeConfigDocument(this._path, document)
-      }
+      await this._save(document)
       this._document = document
       this._profile = profile
     })
@@ -411,12 +503,92 @@ export class CliConfigStore {
           ...next,
         },
       }
-      if (this._persistent) {
-        await writeConfigDocument(this._path, document)
-      }
+      await this._save(document, { settings: next })
       this._document = document
       this._settings = next
     })
+  }
+
+  /** Uses settings the saved CLI config holds, saving nothing; a workspace layer drops its own value of them. */
+  adoptSavedSettings(saved: Partial<ChatSettings>): Promise<void> {
+    const adopted = globalThis.structuredClone(saved)
+    return this._enqueueWrite(async () => {
+      this._settings = parseSettings({ ...this._settings, ...adopted })
+      if (!this._layer) return
+      const { target } = this._layer
+      const base = { ...this._layer.base, settings: parseSettings({ ...this._layer.base.settings, ...adopted }) }
+      this._layer = { target, base }
+      const held = await target.read()
+      const overridden = isRecord(held) && isRecord(held.settings) ? held.settings : {}
+      if (Object.keys(adopted).some((key) => key in overridden)) {
+        await target.write(layerSections(this._layeredValues(), base))
+      }
+    })
+  }
+
+  useLayer(target: ConfigLayer | undefined): Promise<void> {
+    return this._enqueueWrite(async () => {
+      const base = this._layer?.base ?? this._layeredValues()
+      const values = target ? layeredValues(base, await target.read(), target.source) : base
+      this._settings = values.settings
+      this._permissions = values.permissions
+      this._providers = values.providers
+      this._providerEnvironment = values.providerEnvironment
+      this._layer = target ? { target, base } : undefined
+    })
+  }
+
+  private _layeredValues(): LayeredValues {
+    return {
+      settings: this._settings,
+      permissions: this._permissions,
+      providers: this._providers,
+      providerEnvironment: this._providerEnvironment,
+    }
+  }
+
+  private async _save(document: ConfigDocument, changed?: Partial<LayeredValues>): Promise<void> {
+    if (this._layer) {
+      if (changed) {
+        await this._layer.target.write(layerSections({ ...this._layeredValues(), ...changed }, this._layer.base))
+      }
+      return
+    }
+    if (!this._persistent) return
+    const base = this._diskDocument
+    const saved = await this._writeLocked((disk) => mergeConfigDocuments(document, base, disk))
+    for (const key of Object.keys(document)) delete document[key]
+    Object.assign(document, saved)
+  }
+
+  private async _writeLocked(produce: (disk: ConfigDocument) => ConfigDocument): Promise<ConfigDocument> {
+    await mkdir(dirname(this._path), { recursive: true, mode: 0o700 })
+    return withProcessLock(
+      `${this._path}.lock`,
+      async () => {
+        const disk = withoutProviderCredentials((await readConfigDocument(this._path)).document)
+        const next = produce(disk)
+        await writeConfigDocument(this._path, next)
+        this._diskDocument = next
+        return next
+      },
+      configBusy
+    )
+  }
+
+  private _adopt(document: ConfigDocument): void {
+    this._document = document
+    this._diskDocument = document
+    this._onboardingVersion = parseOnboardingVersion(document.onboarding, this._path)
+    this._providers = parseProviders(document.providers, this._path)
+    this._providerEnvironment = parseProviderEnvironment(document.providers, this._path)
+    this._profile = parseProfile(document.profile, this._path)
+    this._permissions = parsePermissions(document.permissions, this._path)
+    this._settings = parseSettings(document.settings)
+    this._profileBaseDir =
+      document.profileBaseDir === undefined
+        ? undefined
+        : requiredPath(document.profileBaseDir, `Invalid CLI config at ${this._path}: profileBaseDir`)
   }
 
   private _enqueueWrite(write: () => Promise<void>): Promise<void> {
@@ -438,12 +610,56 @@ export class CliConfigStore {
           deny: [...next.deny],
         },
       }
-      if (this._persistent) {
-        await writeConfigDocument(this._path, document)
-      }
+      await this._save(document, { permissions: next })
       this._document = document
       this._permissions = next
     })
+  }
+}
+
+function layeredValues(base: LayeredValues, saved: unknown, source: string): LayeredValues {
+  if (saved === undefined) return base
+  if (!isRecord(saved)) throw new Error(`Invalid CLI settings in ${source}: cli must be an object`)
+  if (saved.settings !== undefined && !isRecord(saved.settings)) {
+    throw new Error(`Invalid CLI settings in ${source}: cli.settings must be an object`)
+  }
+  const providers = saved.providers
+  if (providers !== undefined && !isRecord(providers)) {
+    throw new Error(`Invalid CLI settings in ${source}: cli.providers must be an object`)
+  }
+  return {
+    settings: saved.settings
+      ? parseSettings({ ...base.settings, ...migrateSavedSettings(saved.settings) })
+      : base.settings,
+    permissions: saved.permissions === undefined ? base.permissions : parsePermissions(saved.permissions, source),
+    providers: providers?.enabled === undefined ? base.providers : parseProviders(providers, source),
+    providerEnvironment:
+      providers?.environment === undefined ? base.providerEnvironment : parseProviderEnvironment(providers, source),
+  }
+}
+
+function layerSections(current: LayeredValues, base: LayeredValues): Record<string, unknown> {
+  const settings = Object.fromEntries(
+    Object.entries(current.settings).filter(
+      ([key, value]) => !isDeepStrictEqual(value, base.settings[key as keyof ChatSettings])
+    )
+  )
+  const enabled = !isDeepStrictEqual(current.providers, base.providers)
+  const environment = !isDeepStrictEqual(current.providerEnvironment, base.providerEnvironment)
+  const { mode, allow, deny } = current.permissions
+  return {
+    ...(Object.keys(settings).length ? { settings } : {}),
+    ...(isDeepStrictEqual(current.permissions, base.permissions)
+      ? {}
+      : { permissions: { mode, allow: [...allow], deny: [...deny] } }),
+    ...(enabled || environment
+      ? {
+          providers: {
+            ...(enabled ? { enabled: [...current.providers] } : {}),
+            ...(environment ? { environment: { ...current.providerEnvironment } } : {}),
+          },
+        }
+      : {}),
   }
 }
 

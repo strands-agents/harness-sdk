@@ -1,10 +1,18 @@
-import { useCallback, useMemo, useSyncExternalStore, type ReactElement } from 'react'
+import { useCallback, useMemo, useSyncExternalStore, type ReactElement, type ReactNode } from 'react'
 import type { DOMElement } from 'ink'
 import { isRecord } from '../../values.js'
 
 import type { ChatAttachmentSummary, ChatConfigurationLanguage, ChatTask } from '../../agent/types.js'
-import type { ChatMcpStartup, ChatPanel, ChatSnapshot, ChatVoiceStore } from './controller.js'
-import { isActiveTask, isConfigurationTool } from './state.js'
+import type {
+  ChatMcpStartup,
+  ChatPanel,
+  ChatSnapshot,
+  ChatVoiceStore,
+  DevChatJob,
+  DevChatJobGroup,
+  DevJobTarget,
+} from './controller.js'
+import { isConfigurationTool, listedBackgroundTasks } from './state.js'
 import {
   commandAssistance as commandAssistanceForInput,
   type CommandAssistance,
@@ -21,6 +29,7 @@ import {
   CONFIG_DOCK_GAP,
   CONFIG_DOCK_MIN_HEIGHT,
   CONFIG_DOCK_MIN_TERMINAL_WIDTH,
+  devPanelHeight,
   isComposerPanel,
   isOutlinedComposerPanel,
   type MetadataTarget,
@@ -29,15 +38,23 @@ import {
 } from '../interaction.js'
 import { PromptEditor, promptContentSize, CommandPalette } from './prompt.js'
 import { ResourcePanel } from '../panels/panel.js'
+import { DEV_PANEL_FRAME_COLUMNS, DevPanelFrame, type DevPanelClicks } from '../panels/dev.js'
 import { AgentsPanel, agentGridLayout, clampAgentGridViewport } from '../panels/agents.js'
 import { FROG_ANIMATION_HEIGHT, FrogEasterEgg, type FrogVariant, VOICE_FROG_HEIGHT, VoiceFrog } from '../frog.js'
-import { StartupView, useBrandAnimation } from '../startup.js'
+import {
+  RisingStartupCard,
+  StartupContentRows,
+  StartupView,
+  startupHeaderLayout,
+  useBrandAnimation,
+} from '../startup.js'
 import { TranscriptViewport } from './transcript.js'
 import { PARTY_FRAME_INTERVAL_MS, usePartyFrame, useSpinner, FadeIn } from '../animation.js'
 import { Box, Text, ThemeProvider, useTheme } from '../theme.js'
 import { ComposerFooter, PanelHelpContext, type FooterAction } from '../footer.js'
 import { isMaxEffort } from '../panels/models.js'
 import { attachmentPreviewRows } from '../media.js'
+import { clipboardNoticeText, type ClipboardNotice } from '../clipboard.js'
 import {
   CONFIGURATION_OPEN_CONTROL,
   ConfigurationDock,
@@ -55,6 +72,22 @@ export const QUEUED_PROMPT_ACTIONS = [
 export type QueuedPromptAction = (typeof QUEUED_PROMPT_ACTIONS)[number]['action']
 export type QueuedPromptTarget = `${string}:${QueuedPromptAction}`
 
+const STARTUP_CARD_MIN_CONTENT_ROWS = 12
+const STARTUP_CARD_BORDER_ROWS = 2
+const STARTUP_CARD_PADDING_ROWS = 4
+
+const startupCardLayout = (
+  terminalHeight: number,
+  { headerHeight, paddingTop, lockupHeight }: ReturnType<typeof startupHeaderLayout>
+): { top: number; padding: 0 | 1; contentRows: number } => {
+  const logoBottom = paddingTop + lockupHeight
+  const paddedFrameRows = STARTUP_CARD_BORDER_ROWS + STARTUP_CARD_PADDING_ROWS
+  const padding = terminalHeight - headerHeight - paddedFrameRows >= STARTUP_CARD_MIN_CONTENT_ROWS ? 1 : 0
+  const frameRows = padding ? paddedFrameRows : STARTUP_CARD_BORDER_ROWS
+  const top = Math.max(logoBottom, Math.min(headerHeight, terminalHeight - frameRows - STARTUP_CARD_MIN_CONTENT_ROWS))
+  return { top, padding, contentRows: Math.max(1, terminalHeight - top - frameRows) }
+}
+
 export function ChatView(props: Parameters<typeof ChatViewContent>[0]): ReactElement {
   return (
     <ThemeProvider settings={props.snapshot.settings}>
@@ -64,6 +97,7 @@ export function ChatView(props: Parameters<typeof ChatViewContent>[0]): ReactEle
 }
 
 function ChatViewContent({
+  startupContent,
   onActionElement,
   snapshot,
   input,
@@ -105,6 +139,12 @@ function ChatViewContent({
   focusedQueuedPrompt,
   focusedBackgroundTask,
   hoveredBackgroundTask,
+  focusedDevJob,
+  hoveredDevJobs,
+  onDevJobsElement,
+  devPanelClicks,
+  panelKeyboard = true,
+  onPanelBlur,
   onMetadataElement,
   onPanelElement,
   onDockElement,
@@ -134,7 +174,11 @@ function ChatViewContent({
   attachments = [],
   party = false,
   entranceFade = true,
+  quietFooter = false,
 }: {
+  startupContent?: ReactNode
+  /** Keeps the footer's rows but leaves them blank, for a startup step before any agent is open. */
+  quietFooter?: boolean
   onActionElement?: (action: FooterAction, element: DOMElement | null) => void
   snapshot: ChatSnapshot
   input: string
@@ -176,6 +220,12 @@ function ChatViewContent({
   focusedQueuedPrompt?: QueuedPromptTarget
   focusedBackgroundTask?: string
   hoveredBackgroundTask?: boolean
+  focusedDevJob?: DevJobTarget
+  hoveredDevJobs?: boolean
+  onDevJobsElement?: (element: DOMElement | null) => void
+  devPanelClicks?: DevPanelClicks
+  panelKeyboard?: boolean
+  onPanelBlur?: () => void
   onMetadataElement?: (target: MetadataTarget, element: DOMElement | null) => void
   onPanelElement?: (element: DOMElement | null) => void
   onDockElement?: (element: DOMElement | null) => void
@@ -203,7 +253,7 @@ function ChatViewContent({
   onFrogComplete?: (id: number) => void
   selection?: readonly ScreenSelectionSegment[]
   voice?: ChatVoiceStore
-  clipboardNotice?: { status: 'success'; characterCount: number } | { status: 'error' }
+  clipboardNotice?: ClipboardNotice
   attachments?: readonly ChatAttachmentSummary[]
   party?: boolean
 }): ReactElement {
@@ -215,6 +265,15 @@ function ChatViewContent({
   const hasActivity =
     snapshot.completedTurns.length > 0 || snapshot.activeTurn !== undefined || snapshot.notices.length > 0
   const composerPanel = isComposerPanel(snapshot.panel?.kind) ? snapshot.panel : undefined
+  const openDevPanel = snapshot.panel?.kind === 'dev' ? snapshot.panel : undefined
+  // A docked dev panel goes back above the chat input on a small terminal, judged by the terminal size alone.
+  const dockedDevPanel =
+    openDevPanel?.dock?.() === true &&
+    terminalWidth >= CONFIG_DOCK_MIN_TERMINAL_WIDTH &&
+    terminalHeight >= CONFIG_DOCK_MIN_HEIGHT + CONFIG_DOCK_CHROME_HEIGHT
+      ? openDevPanel
+      : undefined
+  const devPanel = dockedDevPanel ? undefined : openDevPanel
   const maxEffort = composerPanel?.kind === 'effort' && isMaxEffort(composerPanel.slider)
   const composerPanelOutlined = isOutlinedComposerPanel(composerPanel)
   const showCommandPicker = resolvedCommandAssistance !== undefined && !snapshot.panel
@@ -222,14 +281,13 @@ function ChatViewContent({
   const showVoiceStatus = snapshot.voice !== undefined && snapshot.voice.status !== 'off'
   const showVoiceFrog =
     snapshot.voice !== undefined && snapshot.voice.status !== 'off' && snapshot.voice.status !== 'error' && !frog
-  const activeBackgroundTasks = snapshot.tasks.filter(
-    (task) => task.source === 'background' && isActiveTask(task.status)
-  )
+  const activeBackgroundTasks = listedBackgroundTasks(snapshot)
   const backgroundTaskIndex = Math.max(
     0,
     activeBackgroundTasks.findIndex((task) => task.id === focusedBackgroundTask)
   )
   const backgroundTask = activeBackgroundTasks[backgroundTaskIndex]
+  const statusHint = input.startsWith('/') ? 'click view' : input ? 'Tab view' : '↓ view'
   const composerSpinner = useSpinner(Boolean(snapshot.composerStatus), snapshot.settings.animations)
   const mcpStartupSpinner = useSpinner(snapshot.mcpStartup !== undefined, snapshot.settings.animations)
   const partyFrame = usePartyFrame((party || maxEffort) && snapshot.settings.animations)
@@ -275,9 +333,16 @@ function ChatViewContent({
   const restingEditorHeight = composerPanel
     ? promptEditorHeight('', 0, editorWidth, editorMaxRows, false, party, editorMaxHeight)
     : editorHeight
-  const commandDeckHeight = composerStatusRows + restingEditorHeight + 2
+  // A panel that would dock to be read (a change to review) keeps that claim when the terminal is too narrow to dock.
+  const devPanelShare = devPanel
+    ? devPanelHeight(terminalHeight, composerStatusRows + restingEditorHeight + 2, devPanel.dock?.() === true)
+    : 0
+  const devPanelWanted = devPanel?.contentRows?.(Math.max(1, editorWidth - DEV_PANEL_FRAME_COLUMNS))
+  const devPanelRows =
+    devPanelWanted === undefined ? devPanelShare : Math.max(1, Math.min(devPanelShare, devPanelWanted + 2))
+  const commandDeckHeight = composerStatusRows + restingEditorHeight + 2 + devPanelRows
   // A composer panel opens at full size and fades in; its contents carry the only animation.
-  const expandedCommandDeckHeight = composerStatusRows + suggestionRows + editorHeight + 2
+  const expandedCommandDeckHeight = composerStatusRows + suggestionRows + editorHeight + 2 + devPanelRows
   // The dock stays up after a configuration turn ends, until the next prompt starts a turn.
   const configurationTurn = (snapshot.activeTurn ?? snapshot.completedTurns.at(-1))?.entries.some(
     (entry) =>
@@ -303,17 +368,32 @@ function ChatViewContent({
           dockLanguage,
           configurationDockWidth(terminalWidth, false)
         )
+  const showDockedDevPanel = dockedDevPanel !== undefined
   const showConfigurationDock =
+    !showDockedDevPanel &&
     liveConfiguration !== undefined &&
     (explicitConfiguration || configurationTurn) &&
     (explicitConfiguration || terminalWidth >= CONFIG_DOCK_MIN_TERMINAL_WIDTH) &&
     topHeight >= (explicitConfiguration ? CONFIG_DOCK_CHROME_HEIGHT : CONFIG_DOCK_MIN_HEIGHT)
-  const wideConfigurationDock = showConfigurationDock && terminalWidth >= CONFIG_DOCK_MIN_TERMINAL_WIDTH
-  const configDockWidth = showConfigurationDock ? configurationDockWidth(terminalWidth, explicitConfiguration) : 0
+  const wideConfigurationDock =
+    (showConfigurationDock || showDockedDevPanel) && terminalWidth >= CONFIG_DOCK_MIN_TERMINAL_WIDTH
+  const configDockWidth =
+    showConfigurationDock || showDockedDevPanel
+      ? configurationDockWidth(
+          terminalWidth,
+          explicitConfiguration && showConfigurationDock,
+          dockedDevPanel?.wideDock?.() === true
+        )
+      : 0
   const configDockLeft = wideConfigurationDock ? Math.max(0, terminalWidth - 2 - configDockWidth) : 0
   const startupReservedRightWidth = wideConfigurationDock ? configDockWidth + CONFIG_DOCK_GAP : 0
   // The transcript reflows into the space left of the dock instead of running underneath it.
   const transcriptReservedRightWidth = hasActivity ? startupReservedRightWidth : 0
+  const startupRows = terminalHeight - commandDeckHeight
+  const startupAvailableHeight = startupRows + devPanelRows
+  const startupHeader = startupHeaderLayout(terminalWidth, startupAvailableHeight, startupReservedRightWidth)
+  const startupCard = startupCardLayout(terminalHeight, startupHeader)
+  const startupLogoRows = Math.min(startupContent ? startupCard.top + startupCard.padding : Infinity, startupRows)
   // A stable header element keeps the memoized transcript from re-rendering on spinner ticks.
   const { settings } = snapshot
   const frogBrandElapsedMs = useBrandAnimation(frogBrandAnimationId, settings.animations)
@@ -321,9 +401,10 @@ function ChatViewContent({
     () => (
       <StartupView
         terminalWidth={terminalWidth}
-        availableHeight={terminalHeight - commandDeckHeight}
+        availableHeight={startupAvailableHeight}
         animate={settings.animations}
         reservedRightWidth={startupReservedRightWidth}
+        {...(Number.isFinite(startupLogoRows) ? { maxHeight: startupLogoRows } : {})}
         {...(introStartedAt !== undefined ? { introStartedAt } : {})}
         theme={settings.frogTheme}
         partyElapsedMs={partyFrame * PARTY_FRAME_INTERVAL_MS}
@@ -334,8 +415,8 @@ function ChatViewContent({
     ),
     [
       terminalWidth,
-      terminalHeight,
-      commandDeckHeight,
+      startupAvailableHeight,
+      startupLogoRows,
       settings.animations,
       startupReservedRightWidth,
       introStartedAt,
@@ -369,14 +450,7 @@ function ChatViewContent({
             {...(onPanelControlElement ? { onControlElement: onPanelControlElement } : {})}
             {...(pressedPanelControl ? { pressedControl: pressedPanelControl } : {})}
             {...(hoveredPanelControl ? { hoveredControl: hoveredPanelControl } : {})}
-            {...(clipboardNotice
-              ? {
-                  clipboardNotice:
-                    clipboardNotice.status === 'success'
-                      ? `${clipboardNotice.characterCount} ${clipboardNotice.characterCount === 1 ? 'char' : 'chars'} copied to clipboard`
-                      : 'Clipboard copy failed',
-                }
-              : {})}
+            {...(clipboardNotice ? { clipboardNotice: clipboardNoticeText(clipboardNotice) } : {})}
           />
         </PanelHelpContext>
         {selection?.map((segment) => (
@@ -394,7 +468,7 @@ function ChatViewContent({
     )
   }
   const panelView =
-    snapshot.panel && snapshot.panel.kind !== 'config' ? (
+    snapshot.panel && snapshot.panel.kind !== 'config' && snapshot.panel.kind !== 'dev' ? (
       <PanelHelpContext value={snapshot.panel}>
         <ResourcePanel
           panel={snapshot.panel}
@@ -462,6 +536,7 @@ function ChatViewContent({
                 settings={snapshot.settings}
                 scrollOffset={transcriptScroll}
                 layoutKey={`${terminalWidth}:${terminalHeight}:${commandDeckHeight}:${transcriptReservedRightWidth}`}
+                coveredBottomRows={Math.max(0, expandedCommandDeckHeight - commandDeckHeight)}
                 {...(expandedToolGroups ? { expandedToolGroups } : {})}
                 {...(onToolGroupElement ? { onToolGroupElement } : {})}
                 {...(onMaxTranscriptScroll ? { onMaxScrollChange: onMaxTranscriptScroll } : {})}
@@ -470,6 +545,25 @@ function ChatViewContent({
             ) : (
               startupView
             )}
+          </Box>
+        ) : null}
+        {showDockedDevPanel && dockedDevPanel ? (
+          <Box
+            position="absolute"
+            marginLeft={configDockLeft}
+            width={configDockWidth}
+            height={dockAvailableHeight}
+            flexShrink={0}
+          >
+            <DevPanelFrame
+              panel={dockedDevPanel}
+              width={configDockWidth}
+              height={dockAvailableHeight}
+              {...(onPanelElement ? { onElement: onPanelElement } : {})}
+              active={panelKeyboard}
+              {...(onPanelBlur ? { blur: onPanelBlur } : {})}
+              {...(devPanelClicks ? { clicks: devPanelClicks } : {})}
+            />
           </Box>
         ) : null}
         {showConfigurationDock && liveConfiguration ? (
@@ -515,6 +609,7 @@ function ChatViewContent({
       <FadeIn animate={settings.animations && entranceFade} background={canvas}>
         <Box
           position="absolute"
+          display={startupContent ? 'none' : 'flex'}
           marginTop={Math.max(0, terminalHeight - expandedCommandDeckHeight)}
           width={editorWidth}
           height={expandedCommandDeckHeight}
@@ -522,6 +617,17 @@ function ChatViewContent({
           backgroundColor={canvas}
         >
           <Box width="100%" flexShrink={0} flexDirection="column">
+            {devPanel ? (
+              <DevPanelFrame
+                panel={devPanel}
+                width={editorWidth}
+                height={devPanelRows}
+                {...(onPanelElement ? { onElement: onPanelElement } : {})}
+                active={panelKeyboard}
+                {...(onPanelBlur ? { blur: onPanelBlur } : {})}
+                {...(devPanelClicks ? { clicks: devPanelClicks } : {})}
+              />
+            ) : null}
             {statusLayout.maxScroll > 0 ? (
               <Box height={1} paddingX={1} flexShrink={0}>
                 <Text dimColor wrap="truncate-end">
@@ -588,13 +694,19 @@ function ChatViewContent({
               maxRows={editorMaxRows}
               maxHeight={editorMaxHeight}
               {...(snapshot.status === 'running' || snapshot.status === 'interrupting'
-                ? { placeholder: 'Enter to queue • Tab queue actions • Alt+↑ edit queue' }
+                ? {
+                    placeholder: openDevPanel?.sticky
+                      ? 'Enter to send • ↑ back to the question'
+                      : 'Enter to queue • Tab queue actions • Alt+↑ edit queue',
+                  }
                 : {})}
               {...(actionableCommandToken ? { actionableCommandToken } : {})}
               {...(snapshot.composerStatus ? { busyStatus: `${composerSpinner} ${snapshot.composerStatus}` } : {})}
-              {...(snapshot.panel && !composerPanel ? { panelStatus: panelEditorStatus(snapshot.panel) } : {})}
+              {...(snapshot.panel && !composerPanel && !openDevPanel?.sticky
+                ? { panelStatus: panelEditorStatus(snapshot.panel) }
+                : {})}
               {...(focusedQueuedPrompt ? { panelStatus: 'Queue · Tab/Shift+Tab move · Enter choose · Esc back' } : {})}
-              {...(focusedBackgroundTask ? { panelStatus: '←→ choose · Enter view · Esc back' } : {})}
+              {...(focusedBackgroundTask || focusedDevJob ? { panelStatus: '←→ choose · Enter view · Esc back' } : {})}
               party={party}
               partyFrame={partyFrame}
               energy={maxEffort}
@@ -630,24 +742,66 @@ function ChatViewContent({
                 total={activeBackgroundTasks.length}
                 focused={focusedBackgroundTask !== undefined}
                 hovered={hoveredBackgroundTask === true}
-                hint={input.startsWith('/') ? 'click view' : input ? 'Tab view' : '↓ view'}
+                hint={statusHint}
                 {...(onBackgroundTaskElement ? { onElement: onBackgroundTaskElement } : {})}
               />
             ) : null}
+            {snapshot.devJobs?.length ? (
+              <DevJobsStatus
+                groups={snapshot.devJobs}
+                {...(focusedDevJob ? { focused: focusedDevJob } : {})}
+                hovered={hoveredDevJobs === true}
+                hint={statusHint}
+                {...(onDevJobsElement ? { onElement: onDevJobsElement } : {})}
+              />
+            ) : null}
           </Box>
-          <ComposerFooter
-            snapshot={snapshot}
-            width={editorWidth}
-            {...(hoveredAction !== undefined ? { hoveredAction } : {})}
-            {...(availableUpdate ? { availableUpdate } : {})}
-            {...(pressedMetadata ? { pressed: pressedMetadata } : {})}
-            {...(hoveredMetadata ? { hovered: hoveredMetadata } : {})}
-            {...(onMetadataElement ? { onMetadataElement } : {})}
-            {...(onActionElement ? { onActionElement } : {})}
-          />
+          {quietFooter ? (
+            <Box height={1} marginTop={1} flexShrink={0} />
+          ) : (
+            <ComposerFooter
+              snapshot={snapshot}
+              width={editorWidth}
+              {...(hoveredAction !== undefined ? { hoveredAction } : {})}
+              {...(availableUpdate ? { availableUpdate } : {})}
+              {...(pressedMetadata ? { pressed: pressedMetadata } : {})}
+              {...(hoveredMetadata ? { hovered: hoveredMetadata } : {})}
+              {...(onMetadataElement ? { onMetadataElement } : {})}
+              {...(onActionElement ? { onActionElement } : {})}
+            />
+          )}
         </Box>
       </FadeIn>
-      {snapshot.panel && snapshot.panel.kind !== 'config' && !composerPanel ? (
+      {startupContent ? (
+        <RisingStartupCard
+          introStartedAt={introStartedAt}
+          animate={settings.animations && startupHeader.fullLockup}
+          width={editorWidth}
+          height={terminalHeight}
+          rise={terminalHeight - startupCard.top}
+        >
+          <Box flexBasis={startupCard.top} flexShrink={1} />
+          <Box
+            flexGrow={1}
+            flexShrink={0}
+            flexDirection="column"
+            justifyContent="center"
+            paddingX={1}
+            paddingY={startupCard.padding}
+          >
+            <Box
+              flexDirection="column"
+              borderStyle="round"
+              borderColor={accent}
+              paddingX={1}
+              paddingY={startupCard.padding}
+            >
+              <StartupContentRows value={startupCard.contentRows}>{startupContent}</StartupContentRows>
+            </Box>
+          </Box>
+        </RisingStartupCard>
+      ) : null}
+      {snapshot.panel && snapshot.panel.kind !== 'config' && !openDevPanel && !composerPanel ? (
         <FadeIn key={snapshot.panel.kind} animate={settings.animations} background={canvas}>
           {panelView}
         </FadeIn>
@@ -710,11 +864,7 @@ function ChatViewContent({
           paddingRight={1}
           justifyContent="flex-end"
         >
-          <Text dimColor>
-            {clipboardNotice.status === 'success'
-              ? `${clipboardNotice.characterCount} ${clipboardNotice.characterCount === 1 ? 'char' : 'chars'} copied to clipboard`
-              : 'Clipboard copy failed'}
-          </Text>
+          <Text dimColor>{clipboardNoticeText(clipboardNotice)}</Text>
         </Box>
       ) : null}
     </Box>
@@ -744,6 +894,59 @@ function McpStartupStatus({ startup, spinner }: { startup: ChatMcpStartup; spinn
       </Text>
     </Box>
   )
+}
+
+export const stackedDevJobs = (groups: readonly DevChatJobGroup[]): { command: string; job: DevChatJob }[] =>
+  groups.flatMap(({ command, jobs }) => jobs.map((job) => ({ command, job })))
+
+function DevJobsStatus({
+  groups,
+  focused,
+  hovered,
+  hint,
+  onElement,
+}: {
+  groups: readonly DevChatJobGroup[]
+  focused?: DevJobTarget
+  hovered: boolean
+  hint: string
+  onElement?: (element: DOMElement | null) => void
+}): ReactElement {
+  const { accent, selection } = useTheme()
+  const stacked = stackedDevJobs(groups)
+  const index = Math.max(
+    0,
+    stacked.findIndex(({ command, job }) => command === focused?.command && job.id === focused.id)
+  )
+  const shown = stacked[index]!
+  return (
+    <Box
+      ref={onElement}
+      height={1}
+      flexShrink={0}
+      paddingX={1}
+      backgroundColor={focused || hovered ? selection : undefined}
+    >
+      <Box flexShrink={0}>
+        <Text dimColor>
+          /{shown.command}
+          {stacked.length > 1 ? ` ${index + 1}/${stacked.length}` : ''} ·{' '}
+        </Text>
+      </Box>
+      <Box flexGrow={1} flexShrink={1} overflow="hidden">
+        <Text wrap="truncate-end">
+          <Text color={accent}>●</Text> {devJobText(shown.job)}
+        </Text>
+      </Box>
+      <Box marginLeft={1} flexShrink={0}>
+        <Text dimColor>{focused ? '←→ Enter Esc' : hint}</Text>
+      </Box>
+    </Box>
+  )
+}
+
+function devJobText({ label, done, total }: DevChatJob): string {
+  return total === undefined ? label : `${label} ${done ?? 0}/${total}`
 }
 
 function BackgroundTaskStatus({

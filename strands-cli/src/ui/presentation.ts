@@ -7,9 +7,17 @@ import type { BackgroundAgentActivity } from '../agent/background.js'
 import { DEFAULT_CHAT_SETTINGS, type ThemeColors } from './chat/types.js'
 import { modelDisplayName } from '../model/metadata.js'
 import { escapePermissionText } from './chat/panel-state.js'
+import { diffRows, type DiffRow } from './diff-rows.js'
 import { FILE_TOOLS } from '../agent/permission-rules.js'
 import { permissionModeDisplayLabel } from './permission-options.js'
-import { expandTabs, graphemes, normalizeDetailText, sanitizeTerminalText, wrapCells } from '../terminal/text.js'
+import {
+  expandTabs,
+  graphemes,
+  normalizeDetailText,
+  sanitizeTerminalText,
+  wrapCells,
+  wrapWords,
+} from '../terminal/text.js'
 import {
   COMPOSER_RESOURCE_PANEL_HEIGHT,
   COMPOSER_EXPANDED_PANEL_HEIGHT,
@@ -17,6 +25,7 @@ import {
   permissionPanelLayout,
   permissionPreviewCapacity,
 } from './interaction.js'
+import { isOnScreenQuestionTool } from './chat/state.js'
 import { getTheme } from './theme.js'
 import { isRecord } from '../values.js'
 
@@ -51,6 +60,12 @@ export interface PermissionLine {
   dimColor?: boolean
 }
 
+const diffRowStyle = (row: DiffRow, palette: ThemeColors): Omit<PermissionLine, 'label' | 'text'> => {
+  if (row.tone === 'success') return { color: palette.success }
+  if (row.tone === 'error') return { color: palette.error }
+  return row.tone === 'muted' ? { dimColor: true } : {}
+}
+
 export const PERMISSION_LABEL_WIDTH = 9
 
 export function permissionLines(
@@ -81,16 +96,8 @@ export function permissionLines(
   if (diff && !FILE_TOOLS.has(request.toolName)) {
     field('File', diff.path)
   }
-  const added = diff?.lines.filter((line) => line.kind === 'add').length ?? 0
-  const removed = diff?.lines.filter((line) => line.kind === 'remove').length ?? 0
-  if (added + removed > 0) {
-    field('Changes', `+${added} -${removed} lines${diff?.truncated ? ' (preview truncated)' : ''}`, { dimColor: true })
-  }
-  for (const line of diff?.lines ?? []) {
-    field(line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : '', escapePermissionText(line.text), {
-      ...(line.kind === 'add' ? { color: palette.success } : line.kind === 'remove' ? { color: palette.error } : {}),
-      dimColor: line.kind === 'header',
-    })
+  for (const row of diff ? diffRows(diff) : []) {
+    field(row.label, row.text, diffRowStyle(row, palette))
   }
   if (!diff || diff.truncated) {
     field('Input', panel.body ?? '')
@@ -135,7 +142,7 @@ export function detailLines(
   })
   const body = panel.activity
     ? activityDetailLines(panel.activity, width, palette)
-    : wrapCells(normalizeDetailText(panel.body ?? ''), Math.max(1, width)).map((text) => ({ text }))
+    : wrapWords(panel.body ?? '', width).map((text) => ({ text }))
   return metadata.length > 0 ? [...metadata, { text: '' }, ...body] : body
 }
 
@@ -308,7 +315,12 @@ export function metadataPlacements(
   const pathMinimumStart = modelText ? stringWidth(modelText) + separatorWidth : 0
   const pathMaximumEnd = Math.max(0, available - settingsWidth - separatorWidth)
   const pathText = truncateText(
-    sanitizeTerminalText(snapshot.runtime.cwd),
+    sanitizeTerminalText(
+      snapshot.runtime.devWorkspace
+        ? (snapshot.runtime.reloadStatus ??
+            `dev · ${snapshot.runtime.agent} · ${snapshot.runtime.sourceWatching ? 'watching files' : 'watch off'}`)
+        : snapshot.runtime.cwd
+    ),
     Math.max(0, pathMaximumEnd - pathMinimumStart),
     true
   )
@@ -422,6 +434,11 @@ const TOOL_ACTIONS: Readonly<Record<string, string>> = {
   shell: 'Shell',
   skills: 'Skills',
   strands_config: 'Strands Config',
+  strands_dev_confirm: 'Ask',
+  strands_dev_multi_select: 'Ask',
+  strands_dev_number_input: 'Ask',
+  strands_dev_optimization_plan: 'Optimization plan',
+  strands_dev_single_select: 'Ask',
   strands_manage_background_task: 'Background tasks',
   todo_write: 'Update tasks',
   web_fetch: 'Fetch',
@@ -472,6 +489,10 @@ export function summarizeToolInput(name: string, input: JSONValue): string {
       if (summary) {
         return summary
       }
+    }
+    if (isOnScreenQuestionTool(normalizedName)) {
+      // The component on screen already shows the fields, so only the question is worth a line.
+      return truncateText(typeof input.question === 'string' ? input.question : 'a setup question', 160)
     }
     if (normalizedName === 'subagent') {
       return truncateText(typeof input.task === 'string' ? input.task : '', 160)

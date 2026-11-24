@@ -42,7 +42,7 @@ export async function captureNpm(
 }
 
 function windowsNpmCommand(args: string[]): string {
-  if (args.some((arg) => !/^[A-Za-z0-9@/._:+-]+$/u.test(arg))) {
+  if (args.some((arg) => !/^[A-Za-z0-9@/._:+=-]+$/u.test(arg))) {
     throw new Error('npm argument contains characters that are unsafe for cmd.exe')
   }
   return ['npm.cmd', ...args].join(' ')

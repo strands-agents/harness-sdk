@@ -9,6 +9,8 @@ import { type ChatBackend, type ChatEvent, type ChatRunResult, type ChatTask } f
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { AgentMessaging } from '../../src/agent/messaging.js'
 import type { McpServerInfo } from '../../src/agent/mcp.js'
+import * as configWatch from '../../src/config/watch.js'
+import { DEFAULT_CHAT_SETTINGS } from '../../src/config/settings.js'
 import * as projectWatch from '../../src/project/watch.js'
 import type { VoiceInput, VoiceSessionSnapshot, VoiceSupervisorRequest } from '../../src/agent/voice.js'
 
@@ -28,6 +30,126 @@ function backend(
 }
 
 describe('ConversationManager', () => {
+  it('shouldForwardChangedFilesWithoutClaimingSuccessBeforeReload', async () => {
+    let changed: (paths: readonly string[]) => void = () => undefined
+    const watcher = vi.spyOn(projectWatch, 'watchAgentProject').mockImplementation((_project, onChange) => {
+      changed = onChange
+      return () => undefined
+    })
+    const primary = new ChatController(backend('primary', emptyRun))
+    const reloadProject = vi.fn()
+    const manager = new ConversationManager(primary, {
+      fork: async () => primary,
+      project: { root: '/project', entrypoint: '/project/agent.ts', language: 'typescript' },
+      projectPrivatePaths: [],
+      reloadProject,
+    })
+    try {
+      manager.markReloaded(['earlier.ts'])
+      changed(['agent.ts'])
+      expect(reloadProject).toHaveBeenCalledExactlyOnceWith('agent-1', ['agent.ts'])
+      expect(manager.getSnapshot().runtime.reloadStatus).toBeUndefined()
+      manager.markReloaded(['agent.ts'])
+      expect(manager.getSnapshot().runtime.reloadStatus).toBe('↻ agent.ts reloaded · session kept')
+    } finally {
+      await manager.dispose()
+      watcher.mockRestore()
+    }
+  })
+
+  it.each([
+    ['the profile changed', true, [['agent-1', ['cli.toml']]]],
+    ['the profile is unchanged', false, []],
+  ])('shouldReloadTheChatOnlyWhenACliTomlChangeMeans%s', async (_name, profileChanged, reloads) => {
+    let changed: () => void = () => undefined
+    const watcher = vi.spyOn(configWatch, 'watchConfigFile').mockImplementation((_path, onChange) => {
+      changed = onChange
+      return () => undefined
+    })
+    const primary = new ChatController(backend('primary', emptyRun))
+    const reloadProject = vi.fn()
+    const profileReloaded = vi.fn(async () => profileChanged)
+    const manager = new ConversationManager(primary, {
+      fork: async () => primary,
+      reloadProject,
+      configWatch: { path: '/home/.strands/cli.toml', changed: profileReloaded },
+    })
+    try {
+      changed()
+
+      await vi.waitFor(() => expect(profileReloaded).toHaveBeenCalledOnce())
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(reloadProject.mock.calls).toEqual(reloads)
+      expect(watcher).toHaveBeenCalledWith('/home/.strands/cli.toml', expect.any(Function))
+    } finally {
+      await manager.dispose()
+      watcher.mockRestore()
+    }
+  })
+
+  it('shouldApplySavedSettingsToTheOpenChatWithoutAReload', async () => {
+    let changed: () => void = () => undefined
+    const watcher = vi.spyOn(configWatch, 'watchConfigFile').mockImplementation((_path, onChange) => {
+      changed = onChange
+      return () => undefined
+    })
+    const primary = new ChatController(backend('primary', emptyRun))
+    const reloadProject = vi.fn()
+    const manager = new ConversationManager(primary, {
+      fork: async () => primary,
+      reloadProject,
+      configWatch: {
+        path: '/home/.strands/cli.toml',
+        changed: async () => false,
+        settings: () => ({ ...DEFAULT_CHAT_SETTINGS, frogTheme: 'spectre' as const }),
+      },
+    })
+    try {
+      changed()
+
+      await vi.waitFor(() => expect(primary.getSnapshot().settings.frogTheme).toBe('spectre'))
+      expect(reloadProject).not.toHaveBeenCalled()
+    } finally {
+      await manager.dispose()
+      watcher.mockRestore()
+    }
+  })
+
+  it('shouldShowTheReasonAndKeepTheChatWhenACliTomlChangeCannotBeRead', async () => {
+    let changed: () => void = () => undefined
+    const watcher = vi.spyOn(configWatch, 'watchConfigFile').mockImplementation((_path, onChange) => {
+      changed = onChange
+      return () => undefined
+    })
+    const primary = new ChatController(backend('primary', emptyRun))
+    const reloadProject = vi.fn()
+    const manager = new ConversationManager(primary, {
+      fork: async () => primary,
+      reloadProject,
+      configWatch: {
+        path: '/home/.strands/cli.toml',
+        changed: async () => {
+          throw new Error('invalid TOML on line 3')
+        },
+      },
+    })
+    try {
+      changed()
+
+      await vi.waitFor(() =>
+        expect(manager.getSnapshot().panel).toMatchObject({
+          kind: 'error',
+          title: 'live reload failed',
+          rows: [{ label: '/home/.strands/cli.toml', description: 'invalid TOML on line 3' }],
+        })
+      )
+      expect(reloadProject).not.toHaveBeenCalled()
+    } finally {
+      await manager.dispose()
+      watcher.mockRestore()
+    }
+  })
+
   it('opens MCP failure details and retries through the active conversation', async () => {
     let server: McpServerInfo = {
       name: 'docs',
@@ -98,7 +220,7 @@ describe('ConversationManager', () => {
   })
 
   it('refreshes project source immediately and reloads after active work finishes', async () => {
-    let changed!: () => void
+    let changed!: (paths: readonly string[]) => void
     const stopWatching = vi.fn()
     const watch = vi.spyOn(projectWatch, 'watchAgentProject').mockImplementation((_project, onChange) => {
       changed = onChange
@@ -144,7 +266,7 @@ describe('ConversationManager', () => {
       const running = manager.submit('Keep working')
       await vi.waitFor(() => expect(manager.busy).toBe(true))
       await writeFile(entrypoint, "createHarness({ name: 'After' })\n")
-      changed()
+      changed(['agent.ts'])
       await vi.waitFor(
         () => expect(manager.getSnapshot().configuration?.documents.typescript.source).toContain('After'),
         { timeout: 5_000 }
@@ -153,12 +275,12 @@ describe('ConversationManager', () => {
 
       finish()
       await running
-      await vi.waitFor(() => expect(reloadProject).toHaveBeenCalledWith('agent-1'), { timeout: 5_000 })
+      await vi.waitFor(() => expect(reloadProject).toHaveBeenCalledWith('agent-1', ['agent.ts']), { timeout: 5_000 })
 
       reloadProject.mockClear()
       await writeFile(helper, "export const name = 'After'\n")
-      changed()
-      await vi.waitFor(() => expect(reloadProject).toHaveBeenCalledWith('agent-1'), { timeout: 5_000 })
+      changed(['agent.ts'])
+      await vi.waitFor(() => expect(reloadProject).toHaveBeenCalledWith('agent-1', ['agent.ts']), { timeout: 5_000 })
     } finally {
       finish()
       await manager.dispose()
@@ -214,7 +336,7 @@ describe('ConversationManager', () => {
     const entrypoint = join(root, 'agent.ts')
     const primary = new ChatController(backend('primary', emptyRun))
     const fork = new ChatController(backend('fork', emptyRun))
-    let notifyChange!: () => void
+    let notifyChange!: (paths: readonly string[]) => void
     const watch = vi.spyOn(projectWatch, 'watchAgentProject').mockImplementation((_project, onChange) => {
       notifyChange = onChange
       return () => {}
@@ -231,11 +353,11 @@ describe('ConversationManager', () => {
     })
     const forking = manager.submit('/fork')
     try {
-      notifyChange()
+      notifyChange(['agent.ts'])
       expect(reloadProject).not.toHaveBeenCalled()
       finish(fork)
       await forking
-      expect(reloadProject).toHaveBeenCalledExactlyOnceWith('agent-2')
+      expect(reloadProject).toHaveBeenCalledExactlyOnceWith('agent-2', ['agent.ts'])
     } finally {
       finish(fork)
       await forking

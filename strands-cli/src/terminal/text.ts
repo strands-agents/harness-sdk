@@ -32,6 +32,30 @@ export function wrapLines(value: string, width: number): string[] {
   return wrapCells(normalizeDetailText(value), Math.max(1, width))
 }
 
+export function wrapWords(value: string, width: number): string[] {
+  const room = Math.max(1, width)
+  return normalizeDetailText(value)
+    .split('\n')
+    .flatMap((line) => wrapLineAtWords(line, room))
+}
+
+function wrapLineAtWords(line: string, width: number): string[] {
+  const rows: string[] = []
+  let current = ''
+  for (const token of line.match(/\s+|\S+/gu) ?? []) {
+    if (/^\s/u.test(token) || stringWidth(current + token) <= width) {
+      current += token
+      continue
+    }
+    if (current.trim()) rows.push(current.trimEnd())
+    const pieces = wrapCells(token, width)
+    rows.push(...pieces.slice(0, -1))
+    current = pieces.at(-1) ?? ''
+  }
+  rows.push(current.trimEnd())
+  return rows
+}
+
 export function expandTabs(value: string): string {
   return value.replaceAll('\t', '    ')
 }
