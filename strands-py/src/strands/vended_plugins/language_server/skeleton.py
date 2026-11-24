@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import shlex
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -33,6 +35,7 @@ _MAX_DECLARATION_LINES = 6
 _MAX_IMPORT_LINES = 40
 _MAX_SYMBOLS = 120
 _RANGE_KEYS = ("offset", "limit", "start_line", "end_line", "line_range")
+_COMMAND_SEPARATORS = {"&&", "||", ";", "|", "&"}
 
 
 class SkeletonStrategy(BaseOffloadStrategy):
@@ -41,8 +44,9 @@ class SkeletonStrategy(BaseOffloadStrategy):
     The skeleton keeps the imports verbatim and lists every class, function, method and module-level variable with its
     line range. The stash keeps the original read, which ``retrieve_context`` returns by its reference. Reads of part of
     a file, test files, files outside ``root``, and files without a listed extension arrive in full, as does any read
-    the language server cannot outline. It only acts on arrival, so history the model has already read is never
-    rewritten and the prompt cache is kept.
+    the language server cannot outline. A shell command counts as a whole-file read when it succeeds and its output is
+    exactly the full text of a code file it names, such as ``cat pkg/store.py`` or ``cd pkg && cat store.py``. It only
+    acts on arrival, so history the model has already read is never rewritten and the prompt cache is kept.
 
     Example:
         ```python
@@ -58,6 +62,7 @@ class SkeletonStrategy(BaseOffloadStrategy):
         root: Path | str,
         *,
         read_tools: Sequence[str] = ("read",),
+        shell_tools: Sequence[str] = (),
         extensions: Sequence[str] = (".py",),
         symbol_lookup: bool = False,
         conditions: OffloadConditions | None = None,
@@ -68,6 +73,8 @@ class SkeletonStrategy(BaseOffloadStrategy):
             client: The language server that outlines files.
             root: Workspace root; reads of files outside it arrive in full.
             read_tools: Names of the tools that read files; each takes the file as its ``path`` input.
+            shell_tools: Names of shell tools whose whole-file dumps are outlined too; each takes a ``command`` input
+                and returns ``{"output", "error", "exit_code"}`` as JSON text.
             extensions: File extensions the language server understands.
             symbol_lookup: Whether the skeleton points the model at ``retrieve_context(symbol=..., path=...)``; set it
                 when the agent has ``workspace_retrieval_tool`` in place of the built-in one.
@@ -82,10 +89,11 @@ class SkeletonStrategy(BaseOffloadStrategy):
         resolved = (
             conditions if conditions is not None else OffloadConditions(block_threshold=DEFAULT_SKELETON_THRESHOLD)
         )
-        super().__init__("skeleton", list(read_tools), resolved)
+        super().__init__("skeleton", [*read_tools, *shell_tools], resolved)
         self._client = client
         self._root = Path(root).resolve()
         self._read_tools = tuple(read_tools)
+        self._shell_tools = tuple(shell_tools)
         self._extensions = tuple(extensions)
         self._symbol_lookup = symbol_lookup
 
@@ -94,6 +102,7 @@ class SkeletonStrategy(BaseOffloadStrategy):
             self._client,
             self._root,
             read_tools=self._read_tools,
+            shell_tools=self._shell_tools,
             extensions=self._extensions,
             symbol_lookup=self._symbol_lookup,
             conditions=conditions,
@@ -111,7 +120,11 @@ class SkeletonStrategy(BaseOffloadStrategy):
         tool_name: str | None,
         invocation_context: InvocationContext | None = None,
     ) -> tuple[str, list[ToolResultContent]] | None:
-        path = self._whole_file_read(block, agent)
+        path = (
+            self._whole_file_dump(block, agent)
+            if tool_name in self._shell_tools
+            else self._whole_file_read(block, agent)
+        )
         if path is None:
             return None
         try:
@@ -131,8 +144,39 @@ class SkeletonStrategy(BaseOffloadStrategy):
         raw = tool_input.get("path")
         if not isinstance(raw, str) or not raw:
             return None
+        return self._code_file(self._root, raw)
+
+    def _whole_file_dump(self, block: ContentBlock, agent: Agent) -> Path | None:
+        """The code file a shell command in ``block`` printed whole, or None when its output is anything else."""
+        if "toolResult" not in block:
+            return None
+        tool_input = _tool_input(agent.messages, block["toolResult"]["toolUseId"])
+        command = tool_input.get("command") if tool_input else None
+        output = _shell_output(block["toolResult"]["content"])
+        if not isinstance(command, str) or output is None:
+            return None
+        candidates = {path for path in self._command_files(command) if path is not None}
+        return next((path for path in sorted(candidates) if _same_text(path, output)), None)
+
+    def _command_files(self, command: str) -> Iterable[Path | None]:
+        """The code files under the root that ``command``'s words name, each resolved after the ``cd`` before it."""
         try:
-            path = (self._root / raw).resolve()
+            words = list(shlex.shlex(command, posix=True, punctuation_chars=True))
+        except ValueError:
+            return
+        directory = self._root
+        for index, word in enumerate(words):
+            if words[index - 1 : index] == ["cd"] and (
+                index + 1 == len(words) or words[index + 1] in _COMMAND_SEPARATORS
+            ):
+                directory = (directory / word).resolve()
+            elif word not in _COMMAND_SEPARATORS:
+                yield self._code_file(directory, word)
+
+    def _code_file(self, directory: Path, raw: str) -> Path | None:
+        """``raw`` as a code file under the root, resolved from ``directory``, or None when it is not one to outline."""
+        try:
+            path = (directory / raw).resolve()
             readable = path.is_relative_to(self._root) and path.is_file()
         except (OSError, ValueError, RuntimeError):
             return None
@@ -245,6 +289,28 @@ def _tool_input(messages: list[Message], tool_use_id: str) -> dict[str, Any] | N
         return None
     tool_input = tool_use.get("input")
     return tool_input if isinstance(tool_input, dict) else {}
+
+
+def _shell_output(content: list[Any]) -> str | None:
+    """The output of a shell result that succeeded with nothing on stderr, or None."""
+    if len(content) != 1 or "text" not in content[0]:
+        return None
+    try:
+        result = json.loads(content[0]["text"])
+    except ValueError:
+        return None
+    if not isinstance(result, dict) or result.get("exit_code") != 0 or result.get("error"):
+        return None
+    output = result.get("output")
+    return output if isinstance(output, str) else None
+
+
+def _same_text(path: Path, output: str) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return bool(text.strip()) and text.rstrip("\n") == output.rstrip("\n")
 
 
 def _is_test_file(relative_path: Path) -> bool:
