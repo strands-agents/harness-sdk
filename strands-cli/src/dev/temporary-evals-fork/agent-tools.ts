@@ -305,9 +305,7 @@ const answersReport = (review: OptimizeReview): object => {
           `${waiting === 1 ? '1 edit of this run still waits' : `${waiting} edits of this run still wait`} ${WAITING_NEXT}`,
         ]
       : []),
-    ...(left > 0
-      ? [`The developer left ${left === 1 ? '1 edit' : `${left} edits`} of this run as it is. ${LEFT_NEXT}`]
-      : []),
+    ...(left > 0 ? [`The developer left ${plural(left, 'edit')} of this run as it is. ${LEFT_NEXT}`] : []),
   ]
   return defined({
     awaitingAnswer: waiting > 0 ? waiting : undefined,

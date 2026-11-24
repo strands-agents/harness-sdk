@@ -76,7 +76,7 @@ const toolSection = (tools: readonly ChatToolInfo[]): string | undefined =>
 const summaryOf = (workspace: DevWorkspace, tools: readonly ChatToolInfo[], notes: readonly string[]): string =>
   [
     relative(workspace.root, workspace.entrypoint),
-    ...(tools.length > 0 ? [`${tools.length} tool${tools.length === 1 ? '' : 's'}`] : []),
+    ...(tools.length > 0 ? [plural(tools.length, 'tool')] : []),
     ...notes.map((path) => relative(workspace.root, path)),
   ].join(' · ')
 

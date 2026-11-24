@@ -188,28 +188,36 @@ export const optimizeReviewContext = (sessions: TemporaryDevSessions): string | 
   ].join('\n')
 }
 
-export interface AnsweredOptimizeReview {
+interface SettledOptimizeReview {
   readonly run: string
-  /** Every edit of the run has its answer, so the review is over and its diff is closed. */
+  /** Every edit of the run has its answer, so the review is over, its diff is closed, and what it accepted is written. */
   readonly settled: boolean
   /** What the run wrote, once it was settled with an edit to apply. */
   readonly applied?: readonly string[]
   readonly applyError?: string
+}
+
+export interface AnsweredOptimizeReview extends SettledOptimizeReview {
   /** The diff that took the place of the answered one on screen, when the run has another edit to answer. */
   readonly next?: { readonly edit: number; readonly change: string; readonly at: number; readonly of: number }
 }
 
 const nextTurn = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
-/** The review of a run once the edits it accepted are written, or undefined when the run is gone. */
-const written = ({ optimize }: TemporaryDevSessions, runId: string): Promise<OptimizeReview | undefined> =>
+/** What a settled run wrote, once the edits it accepted are written or the run is gone. */
+const written = ({ optimize }: TemporaryDevSessions, runId: string, run: string): Promise<SettledOptimizeReview> =>
   new Promise((resolve) => {
     const look = (): boolean => {
-      const run = optimize.snapshot().runs?.find((candidate) => candidate.id === runId)
-      const review = run?.state.step === 'review' ? run.state.review : undefined
+      const found = optimize.snapshot().runs?.find((candidate) => candidate.id === runId)
+      const review = found?.state.step === 'review' ? found.state.review : undefined
       const writes = review?.edits.some((edit) => edit.decided && edit.accepted && edit.unavailable === undefined)
       if (review && writes && !review.applied) return false
-      resolve(review)
+      resolve({
+        run,
+        settled: true,
+        ...(review?.applied ? { applied: review.applied } : {}),
+        ...(review?.applyError ? { applyError: review.applyError } : {}),
+      })
       return true
     }
     if (look()) return
@@ -251,21 +259,10 @@ export const answerOptimizeReview = async (
         : {}),
     }
   }
-  const settled = await written(sessions, runId)
-  return {
-    run: review.run,
-    settled: true,
-    ...(settled?.applied ? { applied: settled.applied } : {}),
-    ...(settled?.applyError ? { applyError: settled.applyError } : {}),
-  }
+  return written(sessions, runId, review.run)
 }
 
-export interface AppliedOptimizeEdits {
-  readonly run: string
-  /** Every edit of the run has its answer, so the review is over and the accepted edits are written. */
-  readonly settled: boolean
-  readonly applied?: readonly string[]
-  readonly applyError?: string
+export interface AppliedOptimizeEdits extends SettledOptimizeReview {
   /** How many edits of the run still wait for the developer's answer. Nothing is written while one does. */
   readonly waiting?: number
   /** The diff of a waiting edit is on the developer's screen. */
@@ -307,11 +304,5 @@ export const applyOptimizeEdits = async (
     return { run, settled: false, waiting: left, shown: showOptimizeReview(sessions, found.id) }
   }
   optimize.apply(found.id)
-  const settled = await written(sessions, found.id)
-  return {
-    run,
-    settled: true,
-    ...(settled?.applied ? { applied: settled.applied } : {}),
-    ...(settled?.applyError ? { applyError: settled.applyError } : {}),
-  }
+  return written(sessions, found.id, run)
 }

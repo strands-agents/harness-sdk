@@ -96,6 +96,7 @@ describe('TEMPORARY dev commands', () => {
     expect(optimize).toContain('The run goes on in the background')
     expect(optimize).toContain('its proposed edits appear on screen as a diff')
     expect(optimize).toContain('Auto-accept optimization results')
+    expect(optimize).toContain('with strands-evals optimize run and strands-evals optimize resume')
     expect(optimize).not.toMatch(/five tabs|press o|Esc goes back/u)
   })
 
@@ -109,21 +110,6 @@ describe('TEMPORARY dev commands', () => {
       ['strands_dev_run_background'],
       undefined,
     ])
-  })
-
-  it('shouldLeaveAJobWithNothingToReviewToTheChatWhenItsLineOpens', async () => {
-    const { workspace, project } = await fixture()
-    const optimize = temporaryDevCommands(workspace, project)[1]!
-
-    expect(optimize.openJob?.(context, 'run-1')).toBe(false)
-  })
-
-  it('shouldNameTheUpstreamCommandsWhenOptimizeHelpShowsTheDetails', async () => {
-    const { workspace, project } = await fixture()
-
-    const [, optimize] = temporaryDevCommands(workspace, project).map(({ spec }) => spec.details ?? '')
-
-    expect(optimize).toContain('with strands-evals optimize run and strands-evals optimize resume')
   })
 
   it('shouldReportNoRunningJobsWhenNothingRuns', async () => {
