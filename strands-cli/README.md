@@ -282,6 +282,9 @@ A binding cannot point into its own `tmp/`. Dev never changes the global CLI def
 
 The dev session always runs the bound persistent agent. Editing its configuration changes that agent, not a temporary copy.
 Runtime state stays separate from candidate source. The existing watcher reloads the bound project when its source changes. After a successful reload, the status shows `↻ agent.ts reloaded · session kept` (or the Python filename).
+Dev reloads the agent only when one of its source files changes. Source files are code, instruction text (`.md` and `.txt`), configuration (`.yaml`, `.yml`, `.toml`), Cedar policies, skill files, MCP configuration, and dependency manifests.
+A change to another file, for example a log, a `.json` data file, or a `.jsonl` file, does not reload the agent.
+Files in `.agent/` and `.strands/` do not reload the agent, but skill files in their `skills/` folders do.
 Reload waits for active work to finish. A failed replacement keeps the previous agent and conversation active without showing a success message.
 Legacy `.strands/config.json` agents remain in place. Startup creates a `.config` binding without moving or rewriting their source.
 For the old `strands-dev/base-cli/` layout, select Base CLI and type the folder that contains `strands-dev/`.
@@ -296,11 +299,10 @@ A notice in the chat tells you what dev deactivated. Without the session manager
 Dev saves each change that you make in the CLI during a dev session.
 
 - `/model` and `/effort` write `model` and `effort` into the `createHarness` or `create_harness` call of the agent file. Dev uses the same code writer as `/export`.
-- For a Base CLI that is a saved profile, `/model`, `/effort`, and the Apply step of `/optimize` write the profile in `~/.strands/cli.toml`. Then dev writes the view again. A running plain `strands` reloads the agent only when **Sync model to existing sessions** (`sessionModelSync`) is on, in the **Strands dev workspace** section of `/settings`.
-- When plain `strands` runs the saved agent project of the Base CLI, it writes `/model` and `/effort` into that agent file, as dev does.
+- For a Base CLI that is a saved profile, `/model`, `/effort`, and the Apply step of `/optimize` write the profile in `~/.strands/cli.toml`. Then dev writes the view again. Plain `strands` reads the changed profile the next time it starts.
 - The harness ignores `effort` when the agent passes a model object, for example `new BedrockModel({...})`. For a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object, `/effort` writes the reasoning fields into the object instead. These are the same fields that the harness sends for that model id at that effort, in `additionalRequestFields` or `params`. Fields for other purposes do not change.
 - `/settings`, `/permissions`, `/mcp`, and the AWS profile go into the `cli` section of `strands-dev/.config`. This section has the same shape as `cli.toml`, and dev loads it at each start.
-- For a Base CLI that is a saved profile, the **Appearance** settings (theme, transcript spacing, animations, reasoning, and tool output) go into `[settings]` of `~/.strands/cli.toml` instead, so dev and plain `strands` look the same. An open session of either takes a change at once, without a reload. An Appearance value that the Base CLI workspace still holds from an earlier save moves to `cli.toml` the next time dev or plain `strands` starts.
+- For a Base CLI that is a saved profile, the **Appearance** settings (theme, transcript spacing, animations, reasoning, and tool output) go into `[settings]` of `~/.strands/cli.toml` instead, so dev and plain `strands` look the same. An open dev session takes a change at once, without a reload. Plain `strands` takes it the next time it starts. An Appearance value that the Base CLI workspace still holds from an earlier save moves to `cli.toml` the next time dev starts.
 - Dev never saves provider credentials.
 
 If the agent file sets an option in code, for example from a variable, dev does not change the file.
@@ -553,7 +555,6 @@ Run `strands` or `/setup` to configure:
 
 Configuration is stored in `~/.strands/cli.toml`. Explicit CLI flags override the saved
 profile. Applying `/setup` changes reloads the agent while preserving the conversation.
-When another process or editor changes the saved profile in `cli.toml`, the chat also reloads the agent and keeps the conversation.
 
 ### Web search and Exa
 
@@ -588,10 +589,6 @@ projects include `npm run build` for compiling code to import into another appli
 In interactive mode, each TypeScript conversation runs in its own process. Reloading or
 rebuilding its agent evaluates the source again, so module globals reset and are not shared
 between conversations. Model changes and reloads keep the conversation; `/clear` starts fresh.
-
-The chat reloads an imported agent when one of its source files changes. Source files are code, instruction text (`.md` and `.txt`), configuration (`.yaml`, `.yml`, `.toml`), Cedar policies, skill files, MCP configuration, and dependency manifests.
-A change to another file, for example a log, a `.json` data file, or a `.jsonl` file, does not reload the agent.
-Files in `.agent/` and `.strands/` do not reload the agent, but skill files in their `skills/` folders do.
 
 Run `strands --agent ./agent.zip` directly: the CLI extracts the project into its cache and
 installs its declared dependencies on first launch.
@@ -827,8 +824,8 @@ Tool names and descriptions come from the active backend; unreported tools or or
 marked as unknown rather than inferred from defaults. Command support follows the connection's
 capabilities, including Python and ACP backends.
 
-Press Ctrl+Y to copy the full text of an error message. This works in the chat error panel
-and on the startup, setup, and update screens.
+In a dev chat, press Ctrl+Y to copy the full text of an error message. This works in the chat error panel
+and on the dev setup screen.
 
 An available Agent Skill can also be invoked directly with `/skill-name [prompt]` or
 `$skill-name [prompt]`. The CLI activates it through the SDK's `skills` tool, then runs the trailing
@@ -916,8 +913,7 @@ replacing the current prompt.
 Session files are trusted input: resume only sessions you created, not ones that came with a cloned repository.
 
 When a turn fails, the conversation stays as it was before the turn. The chat shows a command that resumes the session after a restart.
-The session also saves the failed message. A resumed chat shows that message again, so that you can send it again.
-When the model provider reports expired credentials, refresh the credentials. Then restart the CLI, because the CLI process can keep the expired credentials.
+In a dev chat, when the model provider reports expired credentials, refresh the credentials. Then restart the CLI, because the CLI process can keep the expired credentials.
 
 Sessions use the Harness default, `./.agent/sessions`. Set `session.dir` to keep them somewhere else;
 authored agents (`--agent`) keep their own session configuration. Relative paths resolve against
