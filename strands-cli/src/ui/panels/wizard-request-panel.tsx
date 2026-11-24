@@ -1,17 +1,26 @@
 import { createElement, useEffect, useMemo, useState, type ReactElement } from 'react'
 import { useInput } from '../input.js'
 
-import { diffSummaryText, wrappedDiffLines } from '../diff-rows.js'
+import type { DevChatPanelProps } from '../chat/types.js'
 import { Box } from '../theme.js'
 import { useDevPanelClicks } from './dev.js'
-import { Line, PanelTitle, useSyncedState } from './kit.js'
-import { useWizardPosition, Wizard, type WizardField, type WizardStep, type WizardToggle } from './wizard.js'
+import {
+  Line,
+  PanelTitle,
+  useSyncedState,
+  Wizard,
+  type WizardField,
+  type WizardStep,
+  type WizardToggle,
+} from './wizard.js'
 import {
   defaultAnswers,
+  diffSummaryText,
   finishedAnswers,
   inputKey,
   numberProblem,
   wizardDiffTextWidth,
+  wrappedDiffLines,
   type WizardAnswer,
   type WizardBroker,
   type WizardDiffSpec,
@@ -21,15 +30,6 @@ import {
   type WizardSelectSpec,
   type WizardStepSpec,
 } from './wizard-request.js'
-
-export interface WizardRequestPanelProps {
-  readonly broker: WizardBroker
-  readonly width: number
-  readonly height: number
-  readonly close: () => void
-  readonly active?: boolean
-  readonly blur?: () => void
-}
 
 type Answers = Record<string, WizardAnswer>
 
@@ -214,12 +214,11 @@ const toStep = (
     }),
     ...(change
       ? {
-          bodyFirst: true,
           bodyRows: 1 + wrappedDiffLines(change.diff, wizardDiffTextWidth(width)).length,
           body: (room: number) => createElement(DiffBody, { spec: change, room, width, active }),
         }
       : {}),
-    ...(problem === undefined ? {} : { notice: { tone: 'error' as const, text: problem } }),
+    ...(problem === undefined ? {} : { notice: problem }),
   }
 }
 
@@ -239,7 +238,6 @@ const RequestView = ({
   height: number
 }): ReactElement => {
   const answers = useSyncedState<Answers>(() => defaultAnswers(request.steps))
-  const position = useWizardPosition()
   const texts = useSyncedState<Record<string, string>>(() => ({}))
   const typed: Typed = {
     value: texts.value,
@@ -264,11 +262,9 @@ const RequestView = ({
       height={height}
       active={active}
       {...(blur ? { onLeave: blur } : {})}
-      finishHint={(blocking) => (blocking ? 'fix the problem to finish' : 'Enter finish')}
       onFinish={() => broker.respond(request.id, finishedAnswers(request.steps, answers.current(), texts.current()))}
       onCancel={() => broker.respond(request.id, undefined)}
       {...(request.back ? { onBack: () => broker.respond(request.id, 'back') } : {})}
-      position={position}
       // Closing a standing question answers nothing: whoever asked keeps it waiting, so Esc only closes it.
       {...(request.standing ? { escapeHint: 'Esc close' } : {})}
     />
@@ -282,7 +278,7 @@ export const WizardRequestPanel = ({
   close,
   active = true,
   blur,
-}: WizardRequestPanelProps): ReactElement => {
+}: Omit<DevChatPanelProps, 'openCommand'> & { broker: WizardBroker }): ReactElement => {
   const [request, setRequest] = useState(() => broker.pending())
   useEffect(() => broker.subscribe(setRequest), [broker])
   useEffect(() => {

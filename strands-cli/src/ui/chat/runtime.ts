@@ -2,21 +2,17 @@ import { resolve } from 'node:path'
 import { containsPath } from '../../paths.js'
 import { type HarnessAgentConfig } from '@strands-agents/harness'
 
-import {
-  configurationFromStore,
-  createBuiltinToolsRuntime,
-  type RequestSetup,
-  type WorkspaceAction,
-} from '../../agent/configuration.js'
+import { configurationFromStore, createBuiltinToolsRuntime, type RequestSetup } from '../../agent/configuration.js'
 import { configurationSource } from '../../config/source.js'
 import { agentPrivatePaths, exportAgentProject, exportSourceProject } from '../../project/export.js'
 import { type ChatConfigurationSource, type ChatConversation, type ChatConversations } from '../../agent/types.js'
 import { type ChatSettings } from '../../config/settings.js'
 import { telemetryEnabled } from '../../cli/telemetry.js'
 import { ChatController, type ChatControllerOptions } from './controller.js'
-import type { DevChatCommand } from './types.js'
+import type { ChatRuntimeInfo } from './types.js'
 import { isUnresolvedBackgroundTask } from './state.js'
 import { ConversationManager, type InitialConversations } from './conversations.js'
+import type { ConversationManagerOptions } from './conversations.js'
 import { CliConfigStore } from '../../config/store.js'
 import { AgentMessaging } from '../../agent/messaging.js'
 import { AgentModelRuntime } from '../../model/runtime.js'
@@ -38,7 +34,6 @@ import { PythonBackend, type PythonOptions } from '../../project/python.js'
 import { TypescriptBackend, type TypescriptInit } from '../../project/typescript-backend.js'
 import type { AgentExtensionHost } from '../../agent/extension.js'
 import type { profileBaseCliChat } from '../../dev/base-cli.js'
-import type { AgentOptions } from '../../dev/agent-options.js'
 import type { TemporaryAgentFacts } from '../../dev/temporary-evals-fork/host.js'
 import type { DevWorkspace } from '../../dev/workspace.js'
 import type { DevStateManager } from '../../dev/runtime.js'
@@ -70,19 +65,21 @@ async function restoreSessionNames(
   return { ...names, agentName: conversation.agentName }
 }
 
+/** A dev workspace's chat, and what it adds to the runtime line, each controller, and the conversation manager. */
 interface DevChat {
   readonly workspace: DevWorkspace
   readonly baseCli: Awaited<ReturnType<typeof profileBaseCliChat>>
   readonly extension: AgentExtensionHost
-  commands(agent: () => TemporaryAgentFacts, settings: () => ChatSettings): DevChatCommand[]
-  saveAgentOptions(change: AgentOptions): Promise<boolean>
-  stateNotice(turnedOff: readonly DevStateManager[]): string | undefined
+  readonly runtime: Pick<ChatRuntimeInfo, 'devWorkspace'>
+  controller(agent: () => TemporaryAgentFacts, turnedOff: readonly DevStateManager[]): Partial<ChatControllerOptions>
+  readonly manager: Partial<ConversationManagerOptions>
 }
 
 const loadDevChat = async (
   path: string,
   project: ImportedAgentProject,
   config: CliConfigStore,
+  requestSetup: RequestSetup,
   agent: () => TemporaryAgentFacts
 ): Promise<DevChat | undefined> => {
   const [
@@ -91,7 +88,7 @@ const loadDevChat = async (
     { devChatExtension },
     { saveAgentChoices },
     telemetry,
-    { devStateNotice },
+    { devStateNotice: stateNotice },
     { temporaryDevChatPart, temporaryDevCommands },
   ] = await Promise.all([
     import('../../dev/workspace.js'),
@@ -110,22 +107,45 @@ const loadDevChat = async (
     harness: baseCli ? 'base-cli' : project.language,
   })
   telemetry.recordDevEvent('dev_launch')
+  const extension = devChatExtension(workspace, project, [temporaryDevChatPart(workspace, project, agent)])
   return {
     workspace,
     baseCli,
-    extension: devChatExtension(workspace, project, [temporaryDevChatPart(workspace, project, agent)]),
-    commands: (info, settings) => temporaryDevCommands(workspace, project, info, settings),
-    saveAgentOptions: (change) => (baseCli ? baseCli.saveAgentOptions(change) : saveAgentChoices(workspace, change)),
-    stateNotice: devStateNotice,
+    extension,
+    runtime: {
+      devWorkspace: {
+        root: workspace.directory ?? workspace.root,
+        entrypoint: project.entrypoint,
+        boundEntrypoint: workspace.entrypoint,
+        origin: workspace.config.origin.kind,
+      },
+    },
+    controller: (info, turnedOff): Partial<ChatControllerOptions> => {
+      const devStateNotice = stateNotice(turnedOff)
+      return {
+        ...(devStateNotice ? { devStateNotice } : {}),
+        workspaceAction: (action): void => requestSetup({ workspaceAction: action }),
+        devCommands: temporaryDevCommands(workspace, project, info, () => config.snapshot().settings),
+        skillsWithoutCommands: extension.extension.skills.map(({ name }) => name),
+        saveAgentOptions: (change) =>
+          baseCli ? baseCli.saveAgentOptions(change) : saveAgentChoices(workspace, change),
+      }
+    },
+    manager: {
+      reloadProjectFiles: (conversationId, paths): void =>
+        requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
+      ...(baseCli
+        ? {
+            configWatch: {
+              ...baseCli.configWatch,
+              // A dev chat's settings sit under the workspace layer, so the watch takes in what cli.toml shares.
+              changed: (): Promise<boolean> => baseCli.configWatch.changed(config),
+              settings: (): ChatSettings => config.snapshot().settings,
+            },
+          }
+        : {}),
+    },
   }
-}
-
-const devStateNoticeOption = (
-  dev: DevChat | undefined,
-  turnedOff: readonly DevStateManager[]
-): { devStateNotice?: string } => {
-  const notice = dev?.stateNotice(turnedOff)
-  return notice ? { devStateNotice: notice } : {}
 }
 
 const nestedWorkspace = (project: ImportedAgentProject, workspace: DevWorkspace | undefined): string[] =>
@@ -145,7 +165,7 @@ export async function createTypescriptChat(
   const project = importAgentProject(path)
   let devAgent = (): TemporaryAgentFacts => ({})
   const dev = options.args.dev?.workspace
-    ? await loadDevChat(options.args.dev.workspace, project, config, () => devAgent())
+    ? await loadDevChat(options.args.dev.workspace, project, config, requestSetup, () => devAgent())
     : undefined
   const devWorkspace = dev?.workspace
   const baseCli = dev?.baseCli
@@ -187,16 +207,7 @@ export async function createTypescriptChat(
       const controller = new ChatController(backend, {
         runtime: {
           version: HARNESS_VERSION,
-          ...(devWorkspace
-            ? {
-                devWorkspace: {
-                  root: devWorkspace.directory ?? devWorkspace.root,
-                  entrypoint: project.entrypoint,
-                  boundEntrypoint: devWorkspace.entrypoint,
-                  origin: devWorkspace.config.origin.kind,
-                },
-              }
-            : {}),
+          ...dev?.runtime,
           cwd: backend.cwd,
           session: sessionName ?? backend.sessionId ?? (backend.state.managedSession ? 'managed' : 'in-memory'),
           ...(sessionName ? { sessionName } : {}),
@@ -205,7 +216,6 @@ export async function createTypescriptChat(
         settings: { ...config.snapshot().settings, ...settings },
         initialMessages: messages,
         ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
-        ...devStateNoticeOption(dev, backend.state.turnedOffState),
         ...(conversation?.configurationBaseline
           ? { initialConfigurationBaseline: conversation.configurationBaseline }
           : {}),
@@ -218,17 +228,7 @@ export async function createTypescriptChat(
           await backend.syncConfiguration()
         },
         requestSetup,
-        ...(dev
-          ? {
-              workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
-              devCommands: dev.commands(
-                () => backend.info?.() ?? {},
-                () => config.snapshot().settings
-              ),
-              skillsWithoutCommands: dev.extension.extension.skills.map(({ name }) => name),
-              saveAgentOptions: dev.saveAgentOptions,
-            }
-          : {}),
+        ...dev?.controller(() => backend.info?.() ?? {}, backend.state.turnedOffState),
         awsProfile: awsProfileSelection(config, requestSetup, peerEndpointId, project.entrypoint),
         project,
         exportAgentProject: (language, destination, output): Promise<string | undefined> =>
@@ -369,25 +369,8 @@ export async function createTypescriptChat(
                 ...nestedWorkspace(project, devWorkspace),
               ].map((path) => resolve(backend.cwd, path))
             }),
-        ...(dev
-          ? {
-              reloadProjectFiles: (conversationId: string, paths: readonly string[]): void =>
-                requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
-            }
-          : {
-              reloadProject: (conversationId: string): void =>
-                requestSetup({ agentProject: project.entrypoint, conversationId }),
-            }),
-        ...(baseCli
-          ? {
-              configWatch: {
-                ...baseCli.configWatch,
-                // A dev chat's settings sit under the workspace layer, so the watch takes in what cli.toml shares.
-                changed: (): Promise<boolean> => baseCli.configWatch.changed(config),
-                settings: (): ChatSettings => config.snapshot().settings,
-              },
-            }
-          : {}),
+        reloadProject: (conversationId): void => requestSetup({ agentProject: project.entrypoint, conversationId }),
+        ...dev?.manager,
       }
     )
   } catch (error) {
@@ -409,7 +392,7 @@ export async function createPythonChat(
   const project = importAgentProject(path)
   let devAgent = (): TemporaryAgentFacts => ({})
   const dev = options.devWorkspace
-    ? await loadDevChat(options.devWorkspace, project, config, () => devAgent())
+    ? await loadDevChat(options.devWorkspace, project, config, requestSetup, () => devAgent())
     : undefined
   const devWorkspace = dev?.workspace
   const baseCli = dev?.baseCli
@@ -426,16 +409,7 @@ export async function createPythonChat(
       runtime: {
         cwd: backend.cwd,
         version: HARNESS_VERSION,
-        ...(devWorkspace
-          ? {
-              devWorkspace: {
-                root: devWorkspace.directory ?? devWorkspace.root,
-                entrypoint: project.entrypoint,
-                boundEntrypoint: devWorkspace.entrypoint,
-                origin: devWorkspace.config.origin.kind,
-              },
-            }
-          : {}),
+        ...dev?.runtime,
         session: sessionName ?? backend.sessionId ?? 'managed',
         ...(sessionName ? { sessionName } : {}),
         ...(agentName ? { agent: agentName } : {}),
@@ -443,7 +417,6 @@ export async function createPythonChat(
       settings: snapshot.settings,
       initialMessages: backend.messages,
       ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
-      ...devStateNoticeOption(dev, backend.turnedOffState),
       ...(conversation?.configurationBaseline
         ? { initialConfigurationBaseline: conversation.configurationBaseline }
         : {}),
@@ -452,17 +425,7 @@ export async function createPythonChat(
       skillNames: backend.skills.map((skill) => skill.name),
       setSettings: (settings) => (baseCli ? baseCli.saveSettings(config, settings) : config.setSettings(settings)),
       requestSetup,
-      ...(dev
-        ? {
-            workspaceAction: (action: WorkspaceAction): void => requestSetup({ workspaceAction: action }),
-            devCommands: dev.commands(
-              () => backend.info?.() ?? {},
-              () => config.snapshot().settings
-            ),
-            skillsWithoutCommands: dev.extension.extension.skills.map(({ name }) => name),
-            saveAgentOptions: dev.saveAgentOptions,
-          }
-        : {}),
+      ...dev?.controller(() => backend.info?.() ?? {}, backend.turnedOffState),
       awsProfile: awsProfileSelection(config, requestSetup, undefined, project.entrypoint),
       project,
       exportAgentProject: (language, destination, output): Promise<string | undefined> => {
@@ -554,25 +517,8 @@ export async function createPythonChat(
         project,
         projectPrivatePaths:
           privatePaths === null ? null : [...privatePaths, ...nestedWorkspace(project, devWorkspace)],
-        ...(dev
-          ? {
-              reloadProjectFiles: (conversationId: string, paths: readonly string[]): void =>
-                requestSetup({ agentProject: project.entrypoint, conversationId, reloadedFiles: paths }),
-            }
-          : {
-              reloadProject: (conversationId: string): void =>
-                requestSetup({ agentProject: project.entrypoint, conversationId }),
-            }),
-        ...(baseCli
-          ? {
-              configWatch: {
-                ...baseCli.configWatch,
-                // A dev chat's settings sit under the workspace layer, so the watch takes in what cli.toml shares.
-                changed: (): Promise<boolean> => baseCli.configWatch.changed(config),
-                settings: (): ChatSettings => config.snapshot().settings,
-              },
-            }
-          : {}),
+        reloadProject: (conversationId): void => requestSetup({ agentProject: project.entrypoint, conversationId }),
+        ...dev?.manager,
       }
     )
   } catch (error) {

@@ -1,31 +1,12 @@
 import { createElement, useState, type ReactElement } from 'react'
-import { Box, Text, useInput, type Instance } from 'ink'
+import { Box, Text, useInput } from 'ink'
 import stringWidth from 'string-width'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import {
-  ChatController,
-  type ChatControllerApi,
-  type DevChatCommand,
-  type DevChatJob,
-  type DevChatJobs,
-  type DevChatPanelProps,
-} from '../../src/ui/chat/controller.js'
-import { sanitizeTerminalText } from '../../src/terminal/text.js'
-import { ChatApp } from '../../src/ui/chat/screen.js'
+import { type DevChatCommand, type DevChatJob, type DevChatPanelProps } from '../../src/ui/chat/controller.js'
 import { useDevPanelClicks } from '../../src/ui/panels/dev.js'
+import { jobStore, mountChat } from '../fixtures/chat-app.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
-import { render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
-
-const mounted: { instance: Instance; controller: ChatControllerApi }[] = []
-
-afterEach(async () => {
-  for (const { instance, controller } of mounted.splice(0)) {
-    instance.unmount()
-    await instance.waitUntilExit()
-    await controller.dispose()
-  }
-})
 
 const probe = (): { command: DevChatCommand; sizes: { width: number; height: number }[] } => {
   const sizes: { width: number; height: number }[] = []
@@ -45,63 +26,21 @@ const probe = (): { command: DevChatCommand; sizes: { width: number; height: num
 }
 
 const mount = async (command: DevChatCommand | readonly DevChatCommand[], rows = 40, backend = idleBackend()) => {
-  const controller = new ChatController(backend, {
-    settings: { animations: false },
-    runtime: { model: 'model-00', cwd: '/work' },
-    devCommands: [command].flat(),
-  })
-  const input = ttyInput()
-  const output = ttyOutput(120, rows)
-  let frame = ''
-  output.on('data', (chunk: Buffer) => {
-    if (chunk.toString().includes('\n')) frame = sanitizeTerminalText(chunk.toString())
-  })
-  const instance = render(createElement(ChatApp, { controller }), {
-    stdin: input,
-    stdout: output,
-    stderr: output,
-    interactive: true,
-    debug: true,
-    patchConsole: false,
-    exitOnCtrlC: false,
-  })
-  mounted.push({ instance, controller })
-  await instance.waitUntilRenderFlush()
-  const press = async (key: string): Promise<void> => {
-    input.write(key)
-    await instance.waitUntilRenderFlush()
-  }
-  const row = (text: string): number => frame.split('\n').findIndex((line) => line.includes(text))
-  const click = async (text: string): Promise<void> => {
-    const lines = frame.split('\n')
-    const line = row(text)
+  const view = await mountChat({ devCommands: [command].flat(), rows, backend })
+  const at = (text: string): string => {
+    const line = view.row(text)
     expect(line, `Visible target: ${text}`).toBeGreaterThanOrEqual(0)
-    const column = stringWidth(lines[line]!.slice(0, lines[line]!.indexOf(text))) + 1
-    await press(`\u001b[<0;${column};${line + 1}M`)
-    await press(`\u001b[<0;${column};${line + 1}m`)
+    return `${stringWidth(view.lines()[line]!.slice(0, view.lines()[line]!.indexOf(text))) + 1};${line + 1}`
   }
-  return { controller, instance, press, click, screen: (): string => frame, row }
-}
-
-const jobFeed = (): DevChatJobs & { set: (jobs: readonly DevChatJob[]) => void } => {
-  let jobs: readonly DevChatJob[] = []
-  const listeners = new Set<() => void>()
-  return {
-    subscribe: (listener) => {
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    },
-    snapshot: () => jobs,
-    set: (next) => {
-      jobs = next
-      for (const listener of listeners) listener()
-    },
+  const click = async (text: string): Promise<void> => {
+    await view.press(`\u001b[<0;${at(text)}M`, `\u001b[<0;${at(text)}m`)
   }
+  return { ...view, at, click }
 }
 
 const experimentWithJobs = () => {
   const { command } = probe()
-  const jobs = jobFeed()
+  const jobs = jobStore()
   const open = vi.fn(command.open)
   return {
     command: {
@@ -122,14 +61,6 @@ const TWO_JOBS: readonly DevChatJob[] = [
 
 const DOWN = '\u001b[B'
 const RIGHT = '\u001b[C'
-
-const reviewerTask = () =>
-  idleBackend({
-    watchTasks(listener) {
-      listener([{ id: 'review', label: 'Reviewer', status: 'working', source: 'background' }])
-      return () => {}
-    },
-  })
 
 const OPTIMIZE_TOOL = 'strands_dev_optimize'
 
@@ -184,8 +115,7 @@ describe('dev command panels', () => {
     await controller.submit('/probe')
     await instance.waitUntilRenderFlush()
 
-    await press('x')
-    await press('y')
+    await press('x', 'y')
 
     expect(screen()).toContain('probe panel keys:[xy]')
     await press('\u001b')
@@ -195,39 +125,9 @@ describe('dev command panels', () => {
   })
 })
 
-describe('dev panel clicks', () => {
-  it('shouldRunTheClickTargetAndKeepThePanelOpenWhenTheUserClicksInsideADevPanel', async () => {
-    const clicked = vi.fn()
-    const ClickPanel = (): ReactElement => {
-      const clicks = useDevPanelClicks()
-      return createElement(
-        Box,
-        { flexDirection: 'column' },
-        createElement(Text, null, 'panel heading'),
-        createElement(Box, clicks ? { ref: clicks.target(clicked) } : {}, createElement(Text, null, 'clickable row'))
-      )
-    }
-    const command: DevChatCommand = {
-      spec: { name: 'probe', usage: '/probe', description: 'Probe' },
-      open: () => ClickPanel,
-    }
-    const { controller, instance, click } = await mount(command)
-    await controller.submit('/probe')
-    await instance.waitUntilRenderFlush()
-
-    await click('panel heading')
-    await click('clickable row')
-
-    expect(clicked).toHaveBeenCalledTimes(1)
-    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/probe' })
-  })
-})
-
-describe('dev panel hover', () => {
-  it('shouldRunTheHoverTargetAndNotTheClickWhenThePointerMovesOverADevPanelTarget', async () => {
-    const clicked = vi.fn()
-    const hovered = vi.fn()
-    const HoverPanel = (): ReactElement => {
+describe('dev panel pointer targets', () => {
+  const openPointerPanel = async (clicked: () => void, hovered?: () => void) => {
+    const PointerPanel = (): ReactElement => {
       const clicks = useDevPanelClicks()
       return createElement(
         Box,
@@ -240,18 +140,29 @@ describe('dev panel hover', () => {
         )
       )
     }
-    const command: DevChatCommand = {
-      spec: { name: 'probe', usage: '/probe', description: 'Probe' },
-      open: () => HoverPanel,
-    }
-    const { controller, instance, press, row, screen } = await mount(command)
-    await controller.submit('/probe')
-    await instance.waitUntilRenderFlush()
-    const line = row('pointer row')
-    const column =
-      stringWidth(screen().split('\n')[line]!.slice(0, screen().split('\n')[line]!.indexOf('pointer row'))) + 1
+    const view = await mount({ ...probe().command, open: () => PointerPanel })
+    await view.controller.submit('/probe')
+    await view.instance.waitUntilRenderFlush()
+    return view
+  }
 
-    await press(`\u001b[<35;${column};${line + 1}M`)
+  it('shouldRunTheClickTargetAndKeepThePanelOpenWhenTheUserClicksInsideADevPanel', async () => {
+    const clicked = vi.fn()
+    const { controller, click } = await openPointerPanel(clicked)
+
+    await click('panel heading')
+    await click('pointer row')
+
+    expect(clicked).toHaveBeenCalledTimes(1)
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/probe' })
+  })
+
+  it('shouldRunTheHoverTargetAndNotTheClickWhenThePointerMovesOverADevPanelTarget', async () => {
+    const clicked = vi.fn()
+    const hovered = vi.fn()
+    const { at, press } = await openPointerPanel(clicked, hovered)
+
+    await press(`\u001b[<35;${at('pointer row')}M`)
 
     expect(hovered).toHaveBeenCalled()
     expect(clicked).not.toHaveBeenCalled()
@@ -355,7 +266,7 @@ describe('dev jobs row', () => {
 
   it('shouldMoveFromTheBackgroundTaskToTheJobWhenTheUserPressesRight', async () => {
     const { command, jobs, open } = experimentWithJobs()
-    const { controller, press, row } = await mount(command, 40, reviewerTask())
+    const { controller, press, row } = await mount(command, 40, backgroundTasks('Reviewer'))
     jobs.set([{ id: 'a', label: 'refunds', done: 3, total: 20 }])
     await vi.waitFor(() => expect(row('Background · ● Reviewer')).toBeGreaterThan(0))
 
@@ -430,5 +341,247 @@ describe('dev jobs row', () => {
     expect(lines.length).toBeLessThanOrEqual(rows)
     expect(screen()).toContain('probe panel')
     expect(screen()).toContain('/experiment · ● refunds 3/20')
+  })
+})
+
+describe('a dev panel that asks for the dock', () => {
+  const widthAt = async (columns: number, dock: boolean): Promise<number> => {
+    const { command, sizes } = probe()
+    const { controller, instance } = await mountChat({
+      devCommands: [{ ...command, sticky: true, ...(dock ? { dock: (): boolean => true } : {}) }],
+      columns,
+    })
+    controller.openDevCommand('probe')
+    await instance.waitUntilRenderFlush()
+    return sizes.at(-1)!.width
+  }
+
+  it('shouldRenderNarrowerThanTheTerminalSoTheTranscriptKeepsTheRest', async () => {
+    const width = await widthAt(120, true)
+
+    expect(width).toBeGreaterThan(0)
+    expect(width).toBeLessThan(120 / 2)
+  })
+
+  it('shouldTakeTheFullWidthWhenItDoesNotAskForTheDock', async () => {
+    expect(await widthAt(120, false)).toBeGreaterThan(120 / 2)
+  })
+
+  it('shouldFallBackToTheInlinePanelOnANarrowTerminal', async () => {
+    expect(await widthAt(70, true)).toBeGreaterThan(70 / 2)
+  })
+})
+
+describe('startup logo with a dev panel', () => {
+  const ARTWORK = /[█▀▄▟▙]/u
+  const artwork = (lines: readonly string[]): readonly string[] => lines.filter((line) => ARTWORK.test(line))
+
+  it.each([40, 30, 24, 20])('shouldKeepTheLogoAtItsSizeWhenADevPanelOpensIn %i rows', async (rows) => {
+    const { controller, instance, lines, screen } = await mount(probe().command, rows)
+    const before = artwork(lines())
+
+    await controller.submit('/probe')
+    await instance.waitUntilRenderFlush()
+
+    expect(screen()).toContain('probe panel')
+    expect(before.length).toBeGreaterThan(1)
+    expect(artwork(lines())).toEqual(before)
+  })
+
+  it('shouldGiveTheRowsOfTheLogoPaddingToThePanelWhenTheScreenIsShort', async () => {
+    const { controller, instance, lines } = await mount(probe().command)
+    const logoTop = (): number => lines().findIndex((line) => ARTWORK.test(line))
+    const before = logoTop()
+
+    await controller.submit('/probe')
+    await instance.waitUntilRenderFlush()
+
+    expect(before).toBeGreaterThan(logoTop())
+    expect(logoTop()).toBeGreaterThanOrEqual(0)
+  })
+})
+
+const askCommand = (dropPending?: () => boolean): DevChatCommand => {
+  const Panel = ({ close, active = true, blur }: DevChatPanelProps): ReactElement => {
+    const [keys, setKeys] = useState('')
+    useInput(
+      (input, key) => {
+        if (key.escape) close()
+        else if (key.downArrow) blur?.()
+        else setKeys((current) => current + input)
+      },
+      { isActive: active }
+    )
+    return createElement(Text, null, `question keys:[${keys}]`)
+  }
+  return {
+    spec: { name: 'ask', usage: '/ask', description: 'Ask' },
+    sticky: true,
+    ...(dropPending ? { dropPending } : {}),
+    open: () => Panel,
+  }
+}
+
+describe('a sticky question panel', () => {
+  const openAsk = async (command = askCommand()) => {
+    const view = await mount(command)
+    await view.press('/ask', '\r')
+    return view
+  }
+
+  it('shouldTypeIntoTheChatInputAfterLeavingWhileTheQuestionStaysOnScreen', async () => {
+    const { controller, press, screen } = await openAsk()
+    expect(screen()).toContain('question keys:[]')
+
+    await press('\u001b[B', 'h', 'i')
+
+    expect(screen()).toContain('question keys:[]')
+    expect(screen()).toContain('hi')
+    expect(controller.getSnapshot().panel?.kind).toBe('dev')
+  })
+
+  it('shouldSubmitToTheAgentWhileTheQuestionStaysOnScreen', async () => {
+    const { controller, press, screen } = await openAsk()
+    await press('\u001b[B')
+
+    await press('h', 'e', 'y', '\r')
+
+    expect(screen()).toContain('question keys:[]')
+    expect(controller.getSnapshot().panel?.kind).toBe('dev')
+    expect(screen()).toContain('hey')
+  })
+
+  it('shouldLeaveTheQuestionOpenWhenTheDeveloperClicksTheInput', async () => {
+    const { controller, press } = await openAsk()
+
+    await press('\u001b[<0;10;37M', '\u001b[<0;10;37m')
+
+    expect(controller.getSnapshot().panel?.kind).toBe('dev')
+  })
+
+  it('shouldMoveBetweenTheQuestionAndTheChatWithTheArrows', async () => {
+    const { press, screen } = await openAsk()
+
+    await press('\u001b[B', 'h')
+    expect(screen()).toContain('question keys:[]')
+    expect(screen()).toContain('h')
+
+    await press('\u007f', '\u001b[A', 'z')
+
+    expect(screen()).toContain('question keys:[z]')
+  })
+
+  it('shouldComeBackToTheInputFromTheStatusLineBeforeUpMovesIntoTheQuestion', async () => {
+    const jobs = { subscribe: () => () => {}, snapshot: () => [{ id: 'a', label: 'refunds', done: 1, total: 1 }] }
+    const { press, screen } = await openAsk({ ...askCommand(), jobs })
+    await press('\u001b[B')
+    expect(screen()).toContain('Enter view')
+
+    await press('\u001b[A', 'z')
+
+    expect(screen()).not.toContain('Enter view')
+    expect(screen()).toContain('question keys:[]')
+
+    await press('\u007f', '\u001b[A', 'z')
+
+    expect(screen()).toContain('question keys:[z]')
+  })
+
+  it('shouldDropThePendingQuestionAndSteerTheMessageIntoTheTurn', async () => {
+    const dropped: number[] = []
+    const { controller, press } = await openAsk(askCommand(() => dropped.push(1) > 0))
+    const steer = vi.spyOn(controller, 'steer')
+    await press('\u001b[B')
+
+    await press('h', 'i', '\r')
+
+    expect(dropped).toEqual([1])
+    expect(steer).toHaveBeenCalledWith('hi')
+  })
+
+  it('shouldSendTheMessageAsAnyOtherWhenThePanelKeepsItsQuestion', async () => {
+    const { controller, press, screen } = await openAsk(askCommand(() => false))
+    const steer = vi.spyOn(controller, 'steer')
+    const submit = vi.spyOn(controller, 'submit')
+    await press('\u001b[B')
+
+    await press('h', 'i', '\r')
+
+    expect(steer).not.toHaveBeenCalled()
+    expect(submit).toHaveBeenCalledWith('hi')
+    expect(controller.getSnapshot().panel?.kind).toBe('dev')
+    expect(screen()).toContain('question keys:[]')
+  })
+
+  it.each([
+    ['TheDeveloperRunsACommand', ['/settings', '\r']],
+    ['TheInputIsEmpty', ['\r']],
+  ])('shouldKeepThePendingQuestionWhen%s', async (_case, keys) => {
+    const dropped: number[] = []
+    const { press } = await openAsk(askCommand(() => dropped.push(1) > 0))
+    await press('\u001b[B')
+
+    for (const key of keys) await press(key)
+
+    expect(dropped).toEqual([])
+  })
+
+  it('shouldNotTakeTheKeyboardBackWhileTheDeveloperDragsToSelectText', async () => {
+    const { press, screen } = await openAsk()
+    await press('\u001b[B')
+    const row = screen()
+      .split('\n')
+      .findIndex((line) => line.includes('question keys:'))
+    expect(row).toBeGreaterThanOrEqual(0)
+    const composer = (): string =>
+      screen()
+        .split('\n')
+        .filter((line) => line.includes('Viewing /ask') || line.includes('Enter drops the question'))
+        .join()
+    const before = composer()
+
+    await press(`\u001b[<0;6;${row + 1}M`, `\u001b[<32;12;${row + 1}M`, `\u001b[<32;20;${row + 1}M`)
+
+    expect(composer()).toBe(before)
+  })
+
+  it('shouldSayEnterSendsOnBothSidesOfAQuestion', async () => {
+    const { press, screen } = await openAsk()
+
+    expect(screen()).toContain('Enter to send')
+    expect(screen()).not.toContain('Viewing /ask')
+
+    await press('\u001b[A')
+
+    expect(screen()).toContain('Enter to send')
+    expect(screen()).not.toContain('Viewing /ask')
+  })
+
+  it('shouldTakeTheKeyboardForAPanelThatIsNotSticky', async () => {
+    const { press, screen } = await openAsk({ ...askCommand(), sticky: false })
+
+    await press('x')
+
+    expect(screen()).toContain('question keys:[x]')
+  })
+
+  it('shouldSendKeysToTheChatUntilUpMovesIntoTheQuestion', async () => {
+    const { press, screen } = await openAsk()
+
+    await press('x')
+    expect(screen()).toContain('question keys:[]')
+
+    await press('\u007f', '\u001b[A', 'x')
+
+    expect(screen()).toContain('question keys:[x]')
+  })
+
+  it('shouldKeepTheInputWhenUpArrivesWithTextTyped', async () => {
+    const { press, screen } = await openAsk()
+    await press('\u001b[B', 'a')
+
+    await press('\u001b[A', 'z')
+
+    expect(screen()).toContain('question keys:[]')
   })
 })

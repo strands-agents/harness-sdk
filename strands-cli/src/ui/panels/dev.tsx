@@ -73,7 +73,7 @@ export const DevPanelFrame = ({
   panel,
   width,
   height,
-  active = true,
+  active,
   blur,
   onElement,
   clicks,
@@ -81,7 +81,7 @@ export const DevPanelFrame = ({
   panel: ChatDevPanel
   width: number
   height: number
-  active?: boolean
+  active: boolean
   blur?: () => void
   onElement?: (element: DOMElement | null) => void
   clicks?: DevPanelClicks

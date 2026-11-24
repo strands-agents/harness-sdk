@@ -287,23 +287,14 @@ export type NewChatPanel =
       configuration: ChatConfigurationSource
       language: ChatConfigurationLanguage
     })
-  | (ChatPanelBase & {
-      kind: 'dev'
-      command: string
-      view: DevChatPanelView
-      close: () => void
-      openCommand: (name: string) => boolean
-      /** A click outside moves the keyboard to the chat input instead of closing this panel. */
-      sticky?: boolean
-      /** Renders beside the transcript at the dock's width rather than above the chat input. */
-      dock?: () => boolean
-      /** Widens that dock, for a panel holding lines to read rather than rows to pick. */
-      wideDock?: () => boolean
-      /** Resolves whatever a turn is waiting on here, so a chat message can be sent instead, and says if it did. */
-      dropPending?: () => boolean
-      /** The rows its content needs at `width` columns, when that is fewer than the panel's share of the screen. */
-      contentRows?: (width: number) => number | undefined
-    })
+  | (ChatPanelBase &
+      Pick<DevChatCommand, 'sticky' | 'dock' | 'wideDock' | 'dropPending' | 'contentRows'> & {
+        kind: 'dev'
+        command: string
+        view: DevChatPanelView
+        close: () => void
+        openCommand: (name: string) => boolean
+      })
 
 export type ChatPanel = NewChatPanel & { id: string }
 export type ChatModelPanel = Extract<ChatPanel, { kind: 'models' }>
