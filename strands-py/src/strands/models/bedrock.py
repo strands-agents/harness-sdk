@@ -905,8 +905,7 @@ class BedrockModel(Model):
                 )
                 return False
             if target_idx == 0:
-                # Nothing precedes the documents, so there is no prefix to cache. Automatic placement
-                # declines for the same reason, leaving the message with no cache point.
+                # Nothing precedes the documents, so the point has nowhere legal to go ahead of the caller's boundary.
                 logger.warning("msg_idx=<%s> | dropped cache point ahead of a leading document", msg_idx)
                 return False
             content.insert(target_idx, placed)
@@ -1015,28 +1014,15 @@ class BedrockModel(Model):
                     logger.debug("msg_idx=<%s> | skipped cache point, no durable prefix", last_user_idx)
                     return
                 content.insert(boundary_idx, {"cachePoint": point})
-                # A False here means a leading document left no prefix to cache; automatic placement
-                # declines for the same reason, so there is nothing to fall back to.
+                # A False here means a leading document left no legal position ahead of the per-call blocks.
                 self._honor_placed_cache_point(content, boundary_idx, last_user_idx)
                 return
 
-            # Insert before non-PDF document blocks to avoid Bedrock ValidationException
-            first_non_pdf_doc_idx: int | None = None
-            for i, block in enumerate(content):
-                if "document" in block and block["document"].get("format", "") != "pdf":
-                    first_non_pdf_doc_idx = i
-                    break
-
-            # Insert the cache point before the first non-PDF document so it is not directly
-            # preceded by that block, which Bedrock rejects with a ValidationException
-            if first_non_pdf_doc_idx is None:
-                content.append({"cachePoint": point})
-            elif first_non_pdf_doc_idx > 0:
-                content.insert(first_non_pdf_doc_idx, {"cachePoint": point})
-            else:
-                # A leading non-PDF document leaves no prefix to cache and Bedrock rejects it
-                logger.debug("msg_idx=<%s> | skipped cache point for leading non-PDF document", last_user_idx)
+            insert_idx = step_back_over_documents(content, len(content))
+            if insert_idx == 0:
+                logger.debug("msg_idx=<%s> | skipped cache point, message holds only non-PDF documents", last_user_idx)
                 return
+            content.insert(insert_idx, {"cachePoint": point})
 
             logger.debug("msg_idx=<%s> | added cache point to last user message", last_user_idx)
 

@@ -1383,7 +1383,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         return false
       }
       if (targetIdx === 0) {
-        // Nothing precedes the documents, so there is no prefix to cache.
+        // Nothing precedes the documents, so the point has nowhere legal to go ahead of the caller's boundary.
         logger.warn(`msg_idx=<${msgIdx}> | dropped cache point ahead of a leading document`)
         return false
       }
@@ -1527,8 +1527,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
             return
           }
           content.splice(boundaryIdx, 0, { cachePoint })
-          // A false here means a leading document left no prefix to cache; automatic placement declines
-          // for the same reason, so there is nothing to fall back to.
+          // A false here means a leading document left no legal position ahead of the per-call blocks.
           this._honorPlacedCachePoint(content, boundaryIdx, lastUserIdx, ttl)
           return
         }
@@ -1545,20 +1544,20 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Where automatic placement puts the conversation cache point in the last user message: before the first non-PDF
-   * document, since Bedrock rejects a cache point directly after one, else at the end.
+   * Where automatic placement puts the conversation cache point in the last user message: at the end, stepped back
+   * over any trailing non-PDF documents, since Bedrock rejects a cache point directly after one.
    *
    * @param content - Content blocks of the last user message
    * @param msgIdx - Index of the message, for logging
-   * @returns The insertion index, or undefined when a leading document leaves nothing to cache
+   * @returns The insertion index, or undefined when the message holds only non-PDF documents
    */
   private _autoCachePointIdx(content: BedrockContentBlock[], msgIdx: number): number | undefined {
-    const firstNonPdfDocIdx = content.findIndex((block) => 'document' in block && block.document?.format !== 'pdf')
-    if (firstNonPdfDocIdx === 0) {
-      logger.debug(`msg_idx=<${msgIdx}> | skipped cache point for leading non-PDF document`)
+    const insertIdx = stepBackOverDocuments(content, content.length)
+    if (insertIdx === 0) {
+      logger.debug(`msg_idx=<${msgIdx}> | skipped cache point, message holds only non-PDF documents`)
       return undefined
     }
-    return firstNonPdfDocIdx === -1 ? content.length : firstNonPdfDocIdx
+    return insertIdx
   }
 
   /**

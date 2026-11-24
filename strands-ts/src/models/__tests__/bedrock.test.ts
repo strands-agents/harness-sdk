@@ -4304,7 +4304,7 @@ describe('BedrockModel', () => {
       ])
     })
 
-    it('skips cache point when a non-PDF document is the first block', async () => {
+    it('appends cache point after text that follows a leading non-PDF document', async () => {
       const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
       const messages = [
         new Message({
@@ -4318,10 +4318,53 @@ describe('BedrockModel', () => {
 
       collectIterator(provider.stream(messages))
 
+      // Bedrock rejects a cache point only directly after a non-PDF document, so the end of the message is legal.
       const call = mockConverseStreamCommand.mock.lastCall?.[0]
       expect(call?.messages?.[0]?.content).toStrictEqual([
         { document: { name: 'data', format: 'csv', source: { bytes: new Uint8Array([1]) } } },
         { text: 'Analyze this file' },
+        { cachePoint: { type: 'default' } },
+      ])
+    })
+
+    it('appends cache point after text that follows a non-PDF document', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('Here is a file'),
+            new DocumentBlock({ name: 'data', format: 'csv', source: { bytes: new Uint8Array([1]) } }),
+            new TextBlock('Analyze it'),
+          ],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { text: 'Here is a file' },
+        { document: { name: 'data', format: 'csv', source: { bytes: new Uint8Array([1]) } } },
+        { text: 'Analyze it' },
+        { cachePoint: { type: 'default' } },
+      ])
+    })
+
+    it('skips cache point when the message holds only non-PDF documents', async () => {
+      const provider = new BedrockModel({ cacheConfig: { strategy: 'auto' } })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new DocumentBlock({ name: 'data', format: 'csv', source: { bytes: new Uint8Array([1]) } })],
+        }),
+      ]
+
+      collectIterator(provider.stream(messages))
+
+      const call = mockConverseStreamCommand.mock.lastCall?.[0]
+      expect(call?.messages?.[0]?.content).toStrictEqual([
+        { document: { name: 'data', format: 'csv', source: { bytes: new Uint8Array([1]) } } },
       ])
     })
 

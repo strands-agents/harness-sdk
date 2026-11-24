@@ -5762,30 +5762,52 @@ def test_inject_cache_point_before_the_first_of_several_non_pdf_documents(bedroc
     ]
 
 
-def test_inject_cache_point_skipped_when_leading_non_pdf_document(bedrock_client):
-    """Test that no cache point is injected when a non-PDF document is the first block.
-
-    A leading cache point has no prefix to cache and Bedrock rejects it with a ValidationException,
-    so injection is skipped for that message.
-    """
+def test_inject_cache_point_after_text_that_follows_a_leading_non_pdf_document(bedrock_client):
+    """Bedrock rejects a cache point only directly after a non-PDF document, so the end of the message is legal."""
+    _ = bedrock_client
     model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
+    document = {"document": {"format": "csv", "name": "data", "source": {"bytes": b"a,b,c"}}}
 
-    cleaned_messages = [
-        {
-            "role": "user",
-            "content": [
-                {"document": {"format": "csv", "name": "data", "source": {"bytes": b"a,b,c"}}},
-                {"text": "Analyze this file"},
-            ],
-        },
-    ]
+    cleaned_messages = [{"role": "user", "content": [document, {"text": "Analyze this file"}]}]
 
     model._inject_cache_point(cleaned_messages)
 
     assert cleaned_messages[0]["content"] == [
-        {"document": {"format": "csv", "name": "data", "source": {"bytes": b"a,b,c"}}},
+        document,
         {"text": "Analyze this file"},
+        {"cachePoint": {"type": "default"}},
     ]
+
+
+def test_inject_cache_point_after_text_that_follows_a_non_pdf_document(bedrock_client):
+    """A document earlier in the message does not hold the point back from the end."""
+    _ = bedrock_client
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
+    document = {"document": {"format": "csv", "name": "data", "source": {"bytes": b"a,b,c"}}}
+
+    cleaned_messages = [{"role": "user", "content": [{"text": "Here is a file"}, document, {"text": "Analyze it"}]}]
+
+    model._inject_cache_point(cleaned_messages)
+
+    assert cleaned_messages[0]["content"] == [
+        {"text": "Here is a file"},
+        document,
+        {"text": "Analyze it"},
+        {"cachePoint": {"type": "default"}},
+    ]
+
+
+def test_inject_cache_point_skipped_when_the_message_holds_only_non_pdf_documents(bedrock_client):
+    """No position in the message has anything other than a non-PDF document directly ahead of it."""
+    _ = bedrock_client
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
+    document = {"document": {"format": "csv", "name": "data", "source": {"bytes": b"a,b,c"}}}
+
+    cleaned_messages = [{"role": "user", "content": [document]}]
+
+    model._inject_cache_point(cleaned_messages)
+
+    assert cleaned_messages[0]["content"] == [document]
 
 
 def test_inject_cache_point_anthropic_strategy_skips_model_check(bedrock_client):
