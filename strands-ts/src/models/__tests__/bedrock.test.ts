@@ -3542,13 +3542,67 @@ describe('BedrockModel', () => {
         expect(systemCachePoints()).toStrictEqual([{ type: 'default' }])
       })
 
-      it('leaves a system cache point alone when the model does not support caching', async () => {
-        // A config that never reaches the wire must not reach the system point either.
-        const provider = new BedrockModel({ modelId: 'meta.llama3-70b-instruct-v1:0', cacheConfig: { ttl: '1h' } })
+      describe('a model Converse does not cache at cache points', () => {
+        const placed = [
+          new Message({
+            role: 'user',
+            content: [
+              new TextBlock('stable'),
+              new CachePointBlock({ cacheType: 'default' }),
+              new TextBlock('volatile'),
+            ],
+          }),
+          new Message({ role: 'user', content: [new CachePointBlock({ cacheType: 'default' })] }),
+        ]
 
-        collectIterator(provider.stream(messages, { toolSpecs, systemPrompt: systemPromptWith() }))
+        it.each([
+          ['meta.llama3-70b-instruct-v1:0', { ttl: '1h' } as const],
+          ['mistral.ministral-3-3b-instruct', undefined],
+          ['us.openai.gpt-6-luna', undefined],
+          ['us.openai.gpt-6-luna', { strategy: 'auto' } as const],
+        ])('drops the cache points placed for %s with cacheConfig %o', async (modelId, cacheConfig) => {
+          const provider = new BedrockModel({ modelId, ...(cacheConfig && { cacheConfig }) })
 
-        expect(systemCachePoints()).toStrictEqual([{ type: 'default' }])
+          collectIterator(provider.stream(placed, { toolSpecs, systemPrompt: systemPromptWith() }))
+
+          const call = mockConverseStreamCommand.mock.lastCall?.[0]
+          expect(call?.system).toStrictEqual([{ text: 'durable system prompt' }])
+          expect(call?.messages).toStrictEqual([{ role: 'user', content: [{ text: 'stable' }, { text: 'volatile' }] }])
+        })
+
+        it("keeps the cache points under strategy: 'anthropic'", async () => {
+          const provider = new BedrockModel({
+            modelId: 'mistral.ministral-3-3b-instruct',
+            cacheConfig: { strategy: 'anthropic', messagesTTL: false, toolsTTL: false },
+          })
+
+          collectIterator(provider.stream(placed.slice(0, 1), { systemPrompt: systemPromptWith() }))
+
+          const call = mockConverseStreamCommand.mock.lastCall?.[0]
+          expect(systemCachePoints()).toStrictEqual([{ type: 'default' }])
+          expect(call?.messages?.[0]?.content?.[1]).toStrictEqual({ cachePoint: { type: 'default' } })
+        })
+
+        it('keeps the cache points for an ARN', async () => {
+          const modelId = 'arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/abc'
+          const provider = new BedrockModel({ modelId })
+
+          collectIterator(provider.stream(placed.slice(0, 1), { systemPrompt: systemPromptWith() }))
+
+          const call = mockConverseStreamCommand.mock.lastCall?.[0]
+          expect(systemCachePoints()).toStrictEqual([{ type: 'default' }])
+          expect(call?.messages?.[0]?.content?.[1]).toStrictEqual({ cachePoint: { type: 'default' } })
+        })
+
+        it('keeps the cache points for a Claude model without cacheConfig', async () => {
+          const provider = new BedrockModel({ modelId: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0' })
+
+          collectIterator(provider.stream(placed.slice(0, 1), { systemPrompt: systemPromptWith() }))
+
+          const call = mockConverseStreamCommand.mock.lastCall?.[0]
+          expect(systemCachePoints()).toStrictEqual([{ type: 'default' }])
+          expect(call?.messages?.[0]?.content?.[1]).toStrictEqual({ cachePoint: { type: 'default' } })
+        })
       })
 
       it('does not mutate the system prompt blocks the caller owns', async () => {

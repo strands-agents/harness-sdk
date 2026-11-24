@@ -674,6 +674,21 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
+   * Whether Converse accepts cache points for this model; it rejects a request carrying one for a model it does not
+   * cache at cache points. `strategy: 'anthropic'` forces them on, and an ARN, whose base model the id does not show,
+   * keeps them unless `modelInfo` says otherwise.
+   *
+   * @returns True when cachePoint blocks are sent
+   */
+  private _takesCachePoints(): boolean {
+    if (this._config.cacheConfig?.strategy === 'anthropic' || this._getCacheStrategy() === 'anthropic') {
+      return true
+    }
+    const modelId = this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId
+    return this.modelInfo.capabilities?.promptCaching === undefined && modelId.startsWith('arn:')
+  }
+
+  /**
    * Whether Converse limits where this model takes cache points (no tools cache point, no TTL, only directly after
    * text).
    *
@@ -1109,7 +1124,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       if (typeof options.systemPrompt === 'string') {
         request.system = [{ text: options.systemPrompt }]
       } else if (options.systemPrompt.length > 0) {
-        request.system = options.systemPrompt.map((block) => this._formatContentBlock(block) as SystemContentBlock)
+        request.system = options.systemPrompt
+          .map((block) => this._formatContentBlock(block) as SystemContentBlock | undefined)
+          .filter((block) => block !== undefined)
       }
     }
 
@@ -1797,6 +1814,13 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       }
 
       case 'cachePointBlock': {
+        if (!this._takesCachePoints()) {
+          warnOnce(
+            logger,
+            `model_id=<${this._config.modelId}> | model does not take cache points | skipping cachePoint blocks`
+          )
+          return undefined
+        }
         const cachePoint: BedrockCachePointBlock = { type: block.cacheType }
         if (block.ttl) {
           // Bedrock validates non-empty TTL values server-side, so do not restrict them to known values here.
