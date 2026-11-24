@@ -177,9 +177,48 @@ strands-evals optimize run experiment.json --agent agent.py:create_agent \
   --split 0.5,0.25,0.25
 ```
 
-Several `--objective` flags make a weighted sum; add `--pareto` for a front. Long commands
-fit in a `.toml` run file whose keys are the flag names, passed in place of the experiment
-file. Run `strands-evals optimize run --help` for every flag.
+Several `--objective` flags make a weighted sum; add `--pareto` for a front. Run
+`strands-evals optimize run --help` for every flag.
+
+### Put the settings in a run file
+
+Once a command gets long, keep it in a `.toml` run file and pass the file where the
+experiment file would go. Each key is a flag name without the leading `--`, with `-`
+written as `_`:
+
+```toml
+# runs/triage.toml
+experiment = "../experiment.json"
+max_rollouts = 120
+name = "triage"
+
+[agent]
+factory = "../agent.py:create_agent"
+
+[objective.triage]
+maximize = "Triage"
+
+[objective.tokens]
+minimize = "output_tokens"
+scale = 100
+
+[constraint.latency]
+metric = "seconds"
+at_most = 30
+```
+
+```bash
+strands-evals optimize run runs/triage.toml
+```
+
+Paths in the file (`experiment`, `config`, and file paths in `MODULE:ATTR` values) resolve
+against the file's own folder, so the run works from any directory. The agent route goes
+under `[agent]`: `factory` for a tunable factory or agent file, `config` and `tune` for a
+config file. Each objective and constraint is a named table; the name is only a label.
+
+A flag given on the command line wins over the file, so
+`strands-evals optimize run runs/triage.toml --max-rollouts 300` reruns with a bigger
+budget. An unknown key fails before the run starts and suggests the closest valid one.
 
 ## Next steps
 
