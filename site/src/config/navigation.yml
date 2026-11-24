@@ -293,6 +293,8 @@ sidebar:
             slug: docs/user-guide/cli/dev
           - docs/user-guide/cli/dev/base-cli
           - docs/user-guide/cli/dev/harness
+          - docs/user-guide/cli/dev/optimization
+          - docs/user-guide/cli/dev/auto-optimize
 
   - label: Harness SDK
     items:

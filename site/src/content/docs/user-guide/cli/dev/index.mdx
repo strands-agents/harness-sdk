@@ -39,6 +39,8 @@ When you run `strands dev`, a picker shows the two paths. **Global Harness** has
 2. **Test.** `/experiment` makes a set of test cases from a description or from your past chats. Then it runs the agent on the cases. The report gives the passed cases, the failed cases, and the reason for each failure.
 3. **Optimize.** `/optimize` tunes the instructions, the model, the effort, and other options against an experiment. You examine each proposed edit as a diff, and dev saves only the edits that you apply.
 
+[How optimization works](optimization/) explains how the optimizer picks its recommendation. Dev can also [optimize automatically](auto-optimize/) every N chat turns, with an experiment that it makes from your chats.
+
 ## What dev keeps apart
 
 Dev keeps its state in a workspace: a `strands-dev/` folder. The workspace holds the settings of dev, the experiments, and the run history.
