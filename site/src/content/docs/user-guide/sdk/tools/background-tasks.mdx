@@ -331,7 +331,9 @@ or external operation may still continue. Tools must check
 libraries that support cancellation. The signal is a
 <Syntax py="threading.Event" ts="AbortSignal" />.
 
-On an idle agent, cancelling background tasks leaves the next invocation alone.
+On an idle agent, plain `agent.cancel()` cancels the next invocation in Python and
+has no effect in TypeScript. Cancelling background tasks leaves the next invocation
+alone.
 If an invocation was only waiting for background tasks, cancellation returns its
 existing turn result; outstanding results arrive on the next invocation.
 See [cancellation](../agents/agent-loop.md#cancellation) for the full contract.

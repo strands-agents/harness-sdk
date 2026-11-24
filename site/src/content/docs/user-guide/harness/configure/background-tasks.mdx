@@ -94,7 +94,10 @@ including `subagent`:
 ## Cancel background work
 
 `agent.cancel()` stops the current invocation but leaves background tasks running.
-To stop them too, call
+On an idle agent, it cancels the next invocation in Python and has no effect in
+TypeScript.
+
+To stop background tasks too, call
 <Syntax
   py="agent.cancel(cancel_background_tasks=True)"
   ts="agent.cancel({ cancelBackgroundTasks: true })"

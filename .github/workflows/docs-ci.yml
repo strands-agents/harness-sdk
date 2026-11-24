@@ -60,8 +60,12 @@ jobs:
       - name: Re-link SDK types
         run: npm install
 
-      - name: Build TypeScript harness
-        run: npm ci && npm run build
+      - name: Build TypeScript harness against local SDK
+        run: |
+          npm ci
+          npm install --no-save ../strands-ts
+          # Resolve the linked SDK's peer dependencies from the harness's dependency tree.
+          npm run build -- --preserveSymlinks
         working-directory: harness-ts
 
       - name: Typecheck snippets
