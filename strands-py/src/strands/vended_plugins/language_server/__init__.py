@@ -21,6 +21,7 @@ Example Usage:
 """
 
 from .client import LanguageServerError, LanguageServerNotFoundError, LspClient, Position, StdioLspClient
+from .skeleton import SkeletonStrategy
 from .strategy import LspPassReport, LspStrategy
 
 __all__ = [
@@ -30,5 +31,6 @@ __all__ = [
     "LspPassReport",
     "LspStrategy",
     "Position",
+    "SkeletonStrategy",
     "StdioLspClient",
 ]

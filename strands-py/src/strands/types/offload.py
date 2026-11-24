@@ -4,7 +4,7 @@ from typing import Literal
 
 from typing_extensions import NotRequired, TypedDict
 
-OffloadMethod = Literal["drop", "truncate", "summarize", "lsp"]
+OffloadMethod = Literal["drop", "truncate", "summarize", "lsp", "skeleton"]
 """Offload method that replaced content with a placeholder."""
 
 
