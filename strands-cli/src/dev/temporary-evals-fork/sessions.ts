@@ -110,7 +110,6 @@ import {
   temporarySplitShares,
   temporaryValidatedFinalists,
 } from './plan.js'
-import { readTemporaryLatestTestResults, readTemporaryTestResults, rememberTemporaryTestResults } from './report.js'
 import {
   hasTemporaryRunResult,
   readTemporaryStudy,
@@ -124,7 +123,12 @@ import {
   type TemporaryStudyOutcome,
   type TemporaryTestDifference,
 } from './study.js'
-import { runTemporaryTest } from './test.js'
+import {
+  readTemporaryLatestTestResults,
+  readTemporaryTestResults,
+  rememberTemporaryTestResults,
+  runTemporaryTest,
+} from './test.js'
 
 export interface TemporaryAppliedChange {
   readonly run: string
