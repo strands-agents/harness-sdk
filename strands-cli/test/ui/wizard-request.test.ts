@@ -451,7 +451,6 @@ const askCommand = (broker: WizardBroker): DevChatCommand => ({
   spec: { name: 'ask', usage: '/ask', description: 'Ask' },
   sticky: true,
   dock: () => wizardRequestHasDiff(broker.pending()),
-  wideDock: () => wizardRequestHasDiff(broker.pending()),
   dropPending: () => broker.dropForTurn(),
   contentRows: (width) => wizardRequestRows(broker.pending(), width),
   attach: (context) => broker.attachOpener(() => context.openPanel('ask')),
