@@ -64,7 +64,7 @@ import {
   type ResolvedCacheSection,
 } from '../models/model.js'
 import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from './model-info.js'
-import { bedrockCacheModelInfo, bedrockLimitsCachePoints } from './bedrock-cache.js'
+import { bedrockCacheModelInfo, bedrockLimitsCachePoints, bedrockTakesGptCachePoints } from './bedrock-cache.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
@@ -145,6 +145,18 @@ const BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
  * Prevents repeated failing API calls that will never succeed for the lifetime of the process.
  */
 const SKIP_COUNT_TOKENS_MODELS = new Set<string>()
+
+/**
+ * Model IDs Converse refused cache points for. Their requests go without cache points for the lifetime of the process
+ * and rely on implicit caching.
+ */
+const IMPLICIT_CACHE_MODELS = new Set<string>()
+
+/** The message Converse rejects a request's cache points with, by error name. */
+const CACHE_POINT_REJECTIONS: Record<string, string> = {
+  AccessDeniedException: 'did not allow prompt caching',
+  ValidationException: "doesn't support the cachePoint field",
+}
 
 /**
  * Mapping of Bedrock stop reasons to SDK stop reasons.
@@ -612,10 +624,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * Strict mode needs each tool's full input schema, so it can't take a deferred tool as a stub.
    */
   override get modelInfo(): ModelInfo {
+    const info = super.modelInfo
     return ModelInfo.merge(
-      super.modelInfo,
+      info,
       SERVER_SIDE_SUMMARY_OFF,
-      bedrockCacheModelInfo(this.modelId ?? ''),
+      this._takesGptCachePoints(info) ? undefined : bedrockCacheModelInfo(this.modelId ?? ''),
       this._config.strictTools === true ? { capabilities: { deferredToolLoading: 'unsupported' } } : undefined,
       this._config.modelInfo
     )
@@ -677,10 +690,24 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * Whether Converse limits where this model takes cache points (no tools cache point, no TTL, only directly after
    * text).
    *
-   * @returns True for a Nova model that takes cache points
+   * @returns True for a Nova or OpenAI GPT model that takes cache points
    */
   private _limitsCachePoints(): boolean {
-    return bedrockLimitsCachePoints(this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId)
+    return (
+      bedrockLimitsCachePoints(this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId) ||
+      this._takesGptCachePoints(super.modelInfo)
+    )
+  }
+
+  /**
+   * Whether this is an OpenAI GPT model that takes cache points, unless Converse has refused them for it.
+   *
+   * @param info - The model info before the Converse caching override
+   * @returns True when cache points are placed for an OpenAI GPT model
+   */
+  private _takesGptCachePoints(info: ModelInfo): boolean {
+    const modelId = this.modelId ?? ''
+    return bedrockTakesGptCachePoints(modelId, info) && !IMPLICIT_CACHE_MODELS.has(modelId)
   }
 
   /**
@@ -1077,7 +1104,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   ): Promise<T> {
     const sent = (this._dropStaleThinkingModelId === request.modelId && requestWithDropBlock(request)) || request
     try {
-      return await send(sent)
+      return await this._sendWithCachePointFallback(sent, send)
     } catch (error) {
       const isBindingError =
         error instanceof Error && error.name === 'ValidationException' && isThinkingBindingError(error)
@@ -1087,9 +1114,44 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       logger.warn(
         `model_id=<${request.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
       )
-      const response = await send(retryRequest)
+      const response = await this._sendWithCachePointFallback(retryRequest, send)
       // Latched only once the retry is accepted, so a rejected retry does not alter later requests.
       this._dropStaleThinkingModelId = request.modelId
+      return response
+    }
+  }
+
+  /**
+   * Sends the request, resending it once without cache points when Converse refuses them for this model.
+   *
+   * Converse takes cache points for some models its documentation lists without them, so it may refuse them. Once the
+   * resend is accepted, every later request to this model ID in the process goes without cache points, caller-placed ones
+   * included, and relies on implicit caching.
+   *
+   * @param request - Formatted Bedrock request
+   * @param send - Sends a request to the Converse or ConverseStream API
+   * @returns The API response
+   */
+  private async _sendWithCachePointFallback<T>(
+    request: ConverseStreamCommandInput,
+    send: (input: ConverseStreamCommandInput) => Promise<T>
+  ): Promise<T> {
+    const modelId = this.modelId ?? ''
+    if (IMPLICIT_CACHE_MODELS.has(modelId)) {
+      return send(requestWithoutCachePoints(request) ?? request)
+    }
+    try {
+      return await send(request)
+    } catch (error) {
+      const retryRequest = isCachePointRejection(error) ? requestWithoutCachePoints(request) : undefined
+      if (!retryRequest) throw error
+
+      const response = await send(retryRequest)
+      IMPLICIT_CACHE_MODELS.add(modelId)
+      warnOnce(
+        logger,
+        `model_id=<${modelId}> | converse rejected cache points for this model, sending none and relying on implicit caching`
+      )
       return response
     }
   }
@@ -2556,6 +2618,53 @@ function requestWithDropBlock(request: ConverseStreamCommandInput): ConverseStre
   const betas = Array.isArray(fields.anthropic_beta) ? fields.anthropic_beta : []
   const anthropicBeta = betas.includes(THINKING_BINDING_BETA) ? betas : [...betas, THINKING_BINDING_BETA]
   return { ...request, additionalModelRequestFields: { ...fields, anthropic_beta: anthropicBeta, thinking } }
+}
+
+/**
+ * Whether Converse rejected the request for carrying cache points the model does not take.
+ *
+ * @param error - The error the request failed with
+ * @returns True for a cache point rejection
+ */
+function isCachePointRejection(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const message = CACHE_POINT_REJECTIONS[error.name]
+  return message !== undefined && error.message.includes(message)
+}
+
+/**
+ * Return the request with every cache point removed from the system prompt, messages and tool definitions, or
+ * undefined if it carries none.
+ *
+ * @param request - The Bedrock request
+ * @returns The request without cache points, or undefined
+ */
+function requestWithoutCachePoints(request: ConverseStreamCommandInput): ConverseStreamCommandInput | undefined {
+  const { system, messages, toolConfig } = request
+  const blocks = [
+    ...(system ?? []),
+    ...(toolConfig?.tools ?? []),
+    ...(messages ?? []).flatMap((message) => message.content ?? []),
+  ]
+  if (!blocks.some(isCachePoint)) return undefined
+  const stripped = { ...request }
+  if (system) {
+    stripped.system = system.filter((block) => !isCachePoint(block))
+  }
+  if (messages) {
+    stripped.messages = messages.map((message) => ({
+      ...message,
+      content: message.content?.filter((block) => !isCachePoint(block)),
+    }))
+  }
+  if (toolConfig?.tools) {
+    stripped.toolConfig = { ...toolConfig, tools: toolConfig.tools.filter((tool) => !isCachePoint(tool)) }
+  }
+  return stripped
+}
+
+function isCachePoint(block: object): boolean {
+  return 'cachePoint' in block
 }
 
 /**

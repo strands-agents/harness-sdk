@@ -37,6 +37,21 @@ export function bedrockLimitsCachePoints(modelId: string): boolean {
 }
 
 /**
+ * Whether `BedrockModel` places cache points on Converse for this OpenAI GPT model: one the model info lists with
+ * cache points (GPT-5.6 and later). Converse takes them under the Nova limits (measured on Converse) but documents no
+ * support, so `BedrockModel` falls back to implicit caching when Converse refuses them, and `bedrockCacheModelInfo`
+ * still reports these models as implicitly cached for `VercelModel`.
+ *
+ * @internal
+ * @param modelId - A Bedrock model id, inference profile id, or ARN
+ * @param modelInfo - What is known about the model, before the Converse caching override
+ * @returns True for an OpenAI GPT model the model info lists with cache points
+ */
+export function bedrockTakesGptCachePoints(modelId: string, modelInfo: ModelInfo): boolean {
+  return isOpenAIGpt(modelId.toLowerCase()) && modelInfo.capabilities?.promptCaching === 'cachePoints'
+}
+
+/**
  * How Converse caches this model, where it differs from the shared model info. The shared info lists cache points
  * for the OpenAI models' own APIs, but Converse caches OpenAI GPT (not gpt-oss, which it does not cache) and xAI
  * implicitly, so they need no cache points. The shared info lists no caching for Nova, which takes cache points.
@@ -47,6 +62,10 @@ export function bedrockLimitsCachePoints(modelId: string): boolean {
  */
 export function bedrockCacheModelInfo(modelId: string): ModelInfo | undefined {
   const id = modelId.toLowerCase()
-  if ((id.includes('openai.') && !id.includes('gpt-oss')) || id.includes('xai.')) return IMPLICIT_CACHE
+  if (isOpenAIGpt(id) || id.includes('xai.')) return IMPLICIT_CACHE
   return bedrockLimitsCachePoints(id) ? CACHE_POINTS : undefined
+}
+
+function isOpenAIGpt(lowerCaseModelId: string): boolean {
+  return lowerCaseModelId.includes('openai.') && !lowerCaseModelId.includes('gpt-oss')
 }
