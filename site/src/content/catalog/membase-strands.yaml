@@ -5,6 +5,6 @@ maintainedBy: partner
 languages:
   python:
     package: membase-strands
-github: https://github.com/unibaseio/membase/tree/main/integrations/strands
-docsUrl: https://github.com/unibaseio/membase/tree/main/integrations/strands#readme
+github: https://github.com/membaseai/membase/tree/main/integrations/strands
+docsUrl: https://github.com/membaseai/membase/tree/main/integrations/strands#readme
 addedDate: 2026-10-25
