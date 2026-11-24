@@ -30,6 +30,20 @@ Configure AWS credentials with permission to invoke them: see the
 credentials before a long run. Trials that fail on expired credentials are retried, never
 scored, but they keep spending rollouts.
 
+### Optional: install the agent skills
+
+To have your coding assistant (Claude Code, Kiro, or any assistant that reads
+[agent skills](https://agentskills.io)) set up and run optimizations for you, install the
+skills that ship with the package, from the same environment:
+
+```bash
+npx skills add "$(python -c 'import strands_evals, pathlib; print(pathlib.Path(strands_evals.__file__).parent / ".agents" / "skills")')" --copy
+```
+
+Then ask the assistant to optimize your agent. This guide does the same steps by hand, so
+you can follow it either way. See [Install the skills](index.md#install-the-skills) for the
+options.
+
 ## Write the experiment
 
 The optimizer judges every configuration with an ordinary
