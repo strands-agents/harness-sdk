@@ -21,7 +21,7 @@ lives in `strands_evals.optimization` and needs the `optimization` extra:
 
 ## Let your coding assistant set it up
 
-If you'd rather not write the run by hand, the evals repo ships an `optimize`
+If you'd rather not write the run by hand, the evals SDK ships an `optimize`
 [agent skill](https://agentskills.io) that guides the coding assistant you already use
 (Claude Code, Kiro, or any assistant that reads skills) through it. The skill works with
 agents built with the Strands harness, from an `agent.py` or `agent.ts` file, and with
@@ -29,6 +29,21 @@ Python tunable factories. It asks what
 may change, what "better" means, any limits, and how much to spend, all in plain language.
 It then shows you the exact command to review, runs it with progress, and reports what
 won. It never applies the result unless you ask.
+
+### Install the skills
+
+The skills ship inside the `strands-agents-evals` package. Install them into your coding
+assistant with the [`skills` CLI](https://github.com/vercel-labs/skills), run from the
+environment where you installed the package:
+
+```bash
+npx skills add "$(python -c 'import strands_evals, pathlib; print(pathlib.Path(strands_evals.__file__).parent / ".agents" / "skills")')" --copy
+```
+
+`--copy` copies the skills into your project, so they keep working if that environment is
+deleted. Run the command again after you upgrade `strands-agents-evals`. To install only
+some of them, add `-s optimize`; to pick an assistant, add `-a claude-code`; to install for
+every project, add `-g`.
 
 ## Why optimize instead of tweaking by hand?
 
