@@ -24,6 +24,7 @@
     <a href="https://pypi.org/project/strands-agents-mcp-server/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/strands-agents-mcp-server"/></a>
     <a href="https://python.org"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/strands-agents-mcp-server"/></a>
     <a href="https://discord.gg/strands"><img alt="Strands Discord" src="https://img.shields.io/badge/Discord-Strands-5865F2?logo=discord&logoColor=white"/></a>
+    <a href="https://glama.ai/mcp/servers/strands-agents/harness-sdk"><img alt="strands-agents/harness-sdk MCP server" src="https://glama.ai/mcp/servers/strands-agents/harness-sdk/badges/score.svg"/></a>
   </div>
 
   <p>
