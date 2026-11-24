@@ -1,13 +1,14 @@
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { relative } from 'node:path'
+import { join, relative } from 'node:path'
 
 import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
-import type { Node, ObjectLiteralExpression, PropertyName, SourceFile } from 'typescript'
+import type { CallExpression, Node, PropertyName, SourceFile } from 'typescript'
 
 import type { ProfileEffort } from '../config/store.js'
 import { profileEffort, resolveModelTarget } from '../model/selection.js'
 import { sourceString } from '../project/source.js'
-import { projectPython, PythonReadFailure, readPythonSource } from './agent-source.js'
 import { editFile } from './file-edits.js'
 import type { DevWorkspace } from './workspace.js'
 
@@ -17,6 +18,13 @@ export interface AgentOptions {
 }
 
 type OptionKey = keyof AgentOptions
+
+export type AgentWorkspace = Pick<DevWorkspace, 'root' | 'entrypoint'> & {
+  config: Pick<DevWorkspace['config'], 'language'>
+}
+
+export const entryOf = (workspace: AgentWorkspace): string =>
+  relative(workspace.root, workspace.entrypoint) || workspace.entrypoint
 
 export class AgentOptionsNotEditable extends Error {}
 
@@ -51,10 +59,88 @@ export type AgentOptionEdit =
   | { readonly option: string; readonly removeItems: readonly number[]; readonly expectedItems: readonly string[] }
   | { readonly option: string; readonly removeKeys: readonly string[] }
 
-interface Span {
-  start: number
-  end: number
+const PYTHON_TIMEOUT_MS = 10_000
+
+export interface TextEdit {
+  readonly start: number
+  readonly end: number
+  readonly text: string
 }
+
+export interface Span {
+  readonly start: number
+  readonly end: number
+}
+
+class PythonReadFailure extends Error {}
+
+export const applyEdits = (source: string, edits: readonly TextEdit[]): string =>
+  [...edits]
+    .sort((left, right) => right.start - left.start)
+    .reduce((text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end), source)
+
+export const indentOf = (source: string, offset: number): string => {
+  const lineStart = source.lastIndexOf('\n', offset - 1) + 1
+  return /^[ \t]*/u.exec(source.slice(lineStart))![0]
+}
+
+export const insertion =
+  (
+    source: string,
+    { open, close }: { open: number; close: number },
+    last: Span | undefined,
+    trailingComma: boolean,
+    padding: string
+  ) =>
+  (entries: readonly string[]): TextEdit => {
+    const at = (position: number, text: string): TextEdit => ({ start: position, end: position, text })
+    const each = (before: string, after: string): string => entries.map((entry) => `${before}${entry}${after}`).join('')
+    if (!last) return at(close, `${padding}${entries.join(', ')}${padding}`)
+    if (!source.slice(open, close).includes('\n'))
+      return trailingComma ? at(close, each('', ', ')) : at(last.end, each(', ', ''))
+    const indent = indentOf(source, last.start)
+    const closingLine = source.lastIndexOf('\n', close - 1) + 1
+    if (trailingComma && !source.slice(closingLine, close).trim()) return at(closingLine, each(indent, ',\n'))
+    if (trailingComma) return at(close, each('', ', '))
+    return at(last.end, each(`,\n${indent}`, ''))
+  }
+
+export const projectPython = (root: string): string => {
+  const environment = join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
+  return existsSync(environment)
+    ? environment
+    : (process.env.PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3'))
+}
+
+export const readPythonSource = <T>(script: string, source: string, interpreter: string): Promise<T> =>
+  new Promise((resolvePromise, reject) => {
+    const fail = (reason: string): void => reject(new PythonReadFailure(reason))
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = spawn(interpreter, ['-I', '-X', 'utf8', '-c', script], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: PYTHON_TIMEOUT_MS,
+      })
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error))
+      return
+    }
+    let output = ''
+    let errors = ''
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => (output += chunk))
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => (errors += chunk))
+    child.stdin.once('error', () => undefined)
+    child.once('error', (error) => fail(error.message))
+    child.once('close', (code) => {
+      if (code !== 0) return fail(errors.trim().split('\n').at(-1) || `exit code ${code}`)
+      try {
+        resolvePromise(JSON.parse(output) as T)
+      } catch {
+        fail('it returned no result')
+      }
+    })
+    child.stdin.end(source)
+  })
 
 interface OptionValue extends Span {
   literal: string | undefined
@@ -70,7 +156,7 @@ const CODE: OptionShape = { literal: undefined, value: { kind: 'code' }, parts: 
 interface OptionCall {
   values: ReadonlyMap<string, OptionValue>
   extensible: boolean
-  insert(entries: readonly string[]): { at: number; text: string }
+  insert(entries: readonly string[]): TextEdit
 }
 
 const OPTION_KEYS: readonly OptionKey[] = ['model', 'effort']
@@ -87,38 +173,12 @@ const modelIdentity = (model: string): string => {
 const sameOption = (key: OptionKey, left: string, right: string): boolean =>
   key === 'model' ? modelIdentity(left) === modelIdentity(right) : profileEffort(left) === profileEffort(right)
 
-const indentOf = (source: string, offset: number): string => {
-  const lineStart = source.lastIndexOf('\n', offset - 1) + 1
-  return /^[ \t]*/u.exec(source.slice(lineStart))![0]
-}
+export const propertyKey = (name: PropertyName | undefined, ts: typeof import('typescript')): string | undefined =>
+  name && (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name))
+    ? name.text
+    : undefined
 
-const insertionBefore = (
-  source: string,
-  { open, close }: { open: number; close: number },
-  last: { start: number; end: number } | undefined,
-  trailingComma: boolean,
-  emptyText: (entries: readonly string[]) => string
-): ((entries: readonly string[]) => { at: number; text: string }) => {
-  return (entries) => {
-    if (!last) return { at: close, text: emptyText(entries) }
-    const multiLine = source.slice(open, close).includes('\n')
-    if (!multiLine)
-      return trailingComma
-        ? { at: close, text: entries.map((entry) => `${entry}, `).join('') }
-        : { at: last.end, text: entries.map((entry) => `, ${entry}`).join('') }
-    const indent = indentOf(source, last.start)
-    const closingLine = source.lastIndexOf('\n', close - 1) + 1
-    if (trailingComma && !source.slice(closingLine, close).trim())
-      return { at: closingLine, text: entries.map((entry) => `${indent}${entry},\n`).join('') }
-    if (trailingComma) return { at: close, text: entries.map((entry) => `${entry}, `).join('') }
-    return { at: last.end, text: entries.map((entry) => `,\n${indent}${entry}`).join('') }
-  }
-}
-
-const propertyKey = (name: PropertyName, ts: typeof import('typescript')): string | undefined =>
-  ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name) ? name.text : undefined
-
-const calleeName = (node: Node, ts: typeof import('typescript')): string | undefined =>
+export const calleeName = (node: Node, ts: typeof import('typescript')): string | undefined =>
   ts.isIdentifier(node) ? node.text : ts.isPropertyAccessExpression(node) ? node.name.text : undefined
 
 const typescriptString = (node: Node, ts: typeof import('typescript')): string | undefined =>
@@ -168,33 +228,39 @@ const typescriptShape = (node: Node, file: SourceFile, ts: typeof import('typesc
   return CODE
 }
 
-const typescriptCall = async (source: string, entry: string): Promise<OptionCall> => {
+export const harnessCalls = async (
+  source: string,
+  entry: string
+): Promise<{ ts: typeof import('typescript'); file: SourceFile; calls: CallExpression[] }> => {
   const ts = (await import('typescript')).default
-  const file: SourceFile = ts.createSourceFile(
+  const file = ts.createSourceFile(
     entry,
     source,
     ts.ScriptTarget.Latest,
     true,
     /\.m?js$/u.test(entry) ? ts.ScriptKind.JS : ts.ScriptKind.TS
   )
-  const calls: Node[] = []
+  const calls: CallExpression[] = []
   const visit = (node: Node): void => {
     if (ts.isCallExpression(node) && calleeName(node.expression, ts) === 'createHarness') calls.push(node)
     ts.forEachChild(node, visit)
   }
   visit(file)
+  return { ts, file, calls }
+}
+
+const typescriptCall = async (source: string, entry: string): Promise<OptionCall> => {
+  const { ts, file, calls } = await harnessCalls(source, entry)
   if (calls.length !== 1)
     throw new AgentOptionsNotEditable(
       calls.length ? `${entry} calls createHarness more than once.` : `${entry} does not call createHarness.`
     )
-  const call = calls[0]!
-  const options = ts.isCallExpression(call) && call.arguments.length === 1 ? call.arguments[0] : undefined
-  if (!options || !ts.isObjectLiteralExpression(options))
+  const object = calls[0]!.arguments.length === 1 ? calls[0]!.arguments[0] : undefined
+  if (!object || !ts.isObjectLiteralExpression(object))
     throw new AgentOptionsNotEditable(`${entry} passes createHarness options that are not an object literal.`)
-  const object: ObjectLiteralExpression = options
   const values = new Map<string, OptionValue>()
   for (const property of object.properties) {
-    const key = property.name ? propertyKey(property.name, ts) : undefined
+    const key = propertyKey(property.name, ts)
     if (!key) continue
     if (values.has(key)) throw new AgentOptionsNotEditable(`${entry} sets ${key} more than once.`)
     const initializer = ts.isPropertyAssignment(property) ? property.initializer : undefined
@@ -208,17 +274,17 @@ const typescriptCall = async (source: string, entry: string): Promise<OptionCall
   return {
     values,
     extensible: true,
-    insert: insertionBefore(
+    insert: insertion(
       source,
       { open: object.getStart(file), close: object.getEnd() - 1 },
-      last ? { start: last.getStart(file), end: last.getEnd() } : undefined,
+      last && { start: last.getStart(file), end: last.getEnd() },
       object.properties.hasTrailingComma,
-      (entries) => ` ${entries.join(', ')} `
+      ' '
     ),
   }
 }
 
-const PYTHON_LOCATOR = `
+const PYTHON_PARSER = `
 import ast, json, re, sys
 source = sys.stdin.read()
 lines = re.findall(r'[^\\r\\n]*(?:\\r\\n|\\r|\\n)|[^\\r\\n]+$', source) or ['']
@@ -227,6 +293,13 @@ def offset(line, column):
     return len(prefix.encode('utf-16-le')) // 2
 def span(node):
     return {'start': offset(node.lineno, node.col_offset), 'end': offset(node.end_lineno, node.end_col_offset)}
+try:
+    tree = ast.parse(source)
+except SyntaxError as error:
+    print(json.dumps({'syntax': error.lineno or 0}))
+    sys.exit(0)`
+
+const PYTHON_LOCATOR = `
 def text(node):
     return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
 def describe(node):
@@ -245,11 +318,6 @@ def describe(node):
     if isinstance(node, ast.Dict) and all(text(key) is not None for key in node.keys):
         return {'kind': 'map', 'entries': [dict(start=span(key)['start'], end=span(value)['end'], key=key.value) for key, value in zip(node.keys, node.values)]}
     return {'kind': 'code'}
-try:
-    tree = ast.parse(source)
-except SyntaxError as error:
-    print(json.dumps({'syntax': error.lineno or 0}))
-    sys.exit(0)
 calls = []
 for node in ast.walk(tree):
     if not isinstance(node, ast.Call):
@@ -274,7 +342,6 @@ type PythonValue =
   | { kind: 'code' }
 
 interface PythonLocation {
-  syntax?: number
   calls?: {
     open: number
     end: number
@@ -307,21 +374,29 @@ const pythonShape = (source: string, value: PythonValue, literal: string | null)
   return scalarShape(value, literal ?? undefined)
 }
 
-const locatePython = async (source: string, interpreter: string): Promise<PythonLocation> => {
+/** What `script` prints for the agent source, after the shared parser has read it. */
+export const readPythonAgent = async <Reading>(
+  script: string,
+  source: string,
+  entry: string,
+  interpreter: string
+): Promise<Reading> => {
+  let reading: Reading & { syntax?: number }
   try {
-    return await readPythonSource<PythonLocation>(PYTHON_LOCATOR, source, interpreter)
+    reading = await readPythonSource(PYTHON_PARSER + script, source, interpreter)
   } catch (error) {
     if (!(error instanceof PythonReadFailure)) throw error
     throw new AgentOptionsNotEditable(
       `Python 3.8 or newer could not read the agent source (${interpreter}): ${error.message}`
     )
   }
+  if (reading.syntax !== undefined)
+    throw new AgentOptionsNotEditable(`${entry} has a syntax error at line ${reading.syntax}. Fix it first.`)
+  return reading
 }
 
 const pythonCall = async (source: string, entry: string, interpreter: string): Promise<OptionCall> => {
-  const location = await locatePython(source, interpreter)
-  if (location.syntax !== undefined)
-    throw new AgentOptionsNotEditable(`${entry} has a syntax error at line ${location.syntax}. Fix it first.`)
+  const location = await readPythonAgent<PythonLocation>(PYTHON_LOCATOR, source, entry, interpreter)
   const calls = location.calls ?? []
   if (calls.length !== 1)
     throw new AgentOptionsNotEditable(
@@ -348,7 +423,7 @@ const pythonCall = async (source: string, entry: string, interpreter: string): P
   return {
     values,
     extensible: call.arguments.length === 0 && call.keywords.every((keyword) => keyword.name !== null),
-    insert: insertionBefore(source, { open: call.open, close }, last, trailing, (entries) => entries.join(', ')),
+    insert: insertion(source, { open: call.open, close }, last, trailing, ''),
   }
 }
 
@@ -360,7 +435,7 @@ const setOptions = async (
   call: OptionCall,
   { entry, python, change, expected }: { entry: string; python: boolean; change: AgentOptions; expected: AgentOptions }
 ): Promise<string> => {
-  const replacements: { start: number; end: number; text: string }[] = []
+  const edits: TextEdit[] = []
   const insertions: string[] = []
   for (const key of OPTION_KEYS) {
     const value = change[key]
@@ -376,34 +451,26 @@ const setOptions = async (
       )
     if (sameOption(key, effective, value)) continue
     const written = key === 'model' ? modelIdentity(value) : value
-    if (current) replacements.push({ start: current.start, end: current.end, text: sourceString(written, python) })
+    if (current) edits.push({ start: current.start, end: current.end, text: sourceString(written, python) })
     else if (!call.extensible)
       throw new AgentOptionsNotEditable(
         `${entry} passes create_harness options that strands dev cannot extend. Add ${key}="${value}" there yourself.`
       )
     else insertions.push(optionEntry(key, written, python))
   }
-  const edits = [...replacements]
-  if (insertions.length) {
-    const { at, text } = call.insert(insertions)
-    edits.push({ start: at, end: at, text })
-  }
-  return edits
-    .sort((left, right) => right.start - left.start)
-    .reduce((text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end), source)
+  if (insertions.length) edits.push(call.insert(insertions))
+  return applyEdits(source, edits)
 }
 
-export const readAgentModel = async (
-  workspace: Pick<DevWorkspace, 'root' | 'entrypoint'> & { config: Pick<DevWorkspace['config'], 'language'> }
-): Promise<string | undefined> => {
-  const entry = relative(workspace.root, workspace.entrypoint) || workspace.entrypoint
+const optionCall = (workspace: AgentWorkspace, source: string): Promise<OptionCall> =>
+  workspace.config.language === 'python'
+    ? pythonCall(source, entryOf(workspace), projectPython(workspace.root))
+    : typescriptCall(source, entryOf(workspace))
+
+export const readAgentModel = async (workspace: AgentWorkspace): Promise<string | undefined> => {
   const source = await readFile(workspace.entrypoint, 'utf8')
   try {
-    const call =
-      workspace.config.language === 'python'
-        ? await pythonCall(source, entry, projectPython(workspace.root))
-        : await typescriptCall(source, entry)
-    const model = call.values.get('model')
+    const model = (await optionCall(workspace, source)).values.get('model')
     if (!model) return modelIdentity(DEFAULT_HARNESS_AGENT_CONFIG.model)
     return model.literal === undefined ? undefined : modelIdentity(model.literal)
   } catch (error) {
@@ -413,29 +480,18 @@ export const readAgentModel = async (
 }
 
 export const saveAgentOptions = async (
-  workspace: Pick<DevWorkspace, 'root' | 'entrypoint'> & { config: Pick<DevWorkspace['config'], 'language'> },
+  workspace: AgentWorkspace,
   change: AgentOptions,
   expected: AgentOptions = {}
-): Promise<boolean> => {
-  const entry = relative(workspace.root, workspace.entrypoint) || workspace.entrypoint
-  const python = workspace.config.language === 'python'
-  return editFile(workspace.root, workspace.entrypoint, async (source) =>
-    setOptions(
-      source,
-      python ? await pythonCall(source, entry, projectPython(workspace.root)) : await typescriptCall(source, entry),
-      { entry, python, change, expected }
-    )
+): Promise<boolean> =>
+  editFile(workspace.root, workspace.entrypoint, async (source) =>
+    setOptions(source, await optionCall(workspace, source), {
+      entry: entryOf(workspace),
+      python: workspace.config.language === 'python',
+      change,
+      expected,
+    })
   )
-}
-
-type AgentWorkspace = Pick<DevWorkspace, 'root' | 'entrypoint'> & { config: Pick<DevWorkspace['config'], 'language'> }
-
-const optionCall = async (workspace: AgentWorkspace, source: string): Promise<OptionCall> => {
-  const entry = relative(workspace.root, workspace.entrypoint) || workspace.entrypoint
-  return workspace.config.language === 'python'
-    ? pythonCall(source, entry, projectPython(workspace.root))
-    : typescriptCall(source, entry)
-}
 
 export const readAgentOptions = async (
   workspace: AgentWorkspace
@@ -508,7 +564,7 @@ const scalarEdit = (
   call: OptionCall,
   { entry, python }: { entry: string; python: boolean },
   edit: Extract<AgentOptionEdit, { value: AgentOptionScalar }>
-): { start: number; end: number; text: string } | string | undefined => {
+): TextEdit | string | undefined => {
   const current = call.values.get(edit.option)
   if (current && current.value.kind === 'code')
     throw new AgentOptionsNotEditable(
@@ -538,7 +594,7 @@ const collectionEdit = (
   call: OptionCall,
   entry: string,
   edit: Exclude<AgentOptionEdit, { value: AgentOptionScalar }>
-): { start: number; end: number; text: string } => {
+): TextEdit => {
   const current = call.values.get(edit.option)
   const wanted = 'removeItems' in edit ? 'list' : 'map'
   if (!current || current.value.kind !== wanted)
@@ -582,10 +638,10 @@ const editedSource = async (
   source: string,
   edits: readonly AgentOptionEdit[]
 ): Promise<string> => {
-  const entry = relative(workspace.root, workspace.entrypoint) || workspace.entrypoint
+  const entry = entryOf(workspace)
   const python = workspace.config.language === 'python'
   const call = await optionCall(workspace, source)
-  const replacements: { start: number; end: number; text: string }[] = []
+  const replacements: TextEdit[] = []
   const insertions: string[] = []
   for (const edit of edits) {
     const change =
@@ -593,13 +649,8 @@ const editedSource = async (
     if (typeof change === 'string') insertions.push(change)
     else if (change) replacements.push(change)
   }
-  if (insertions.length) {
-    const { at, text } = call.insert(insertions)
-    replacements.push({ start: at, end: at, text })
-  }
-  return replacements
-    .sort((left, right) => right.start - left.start)
-    .reduce((text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end), source)
+  if (insertions.length) replacements.push(call.insert(insertions))
+  return applyEdits(source, replacements)
 }
 
 export const editAgentOptions = async (

@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseArgs } from '../../src/cli/arguments.js'
 import { containsPath, strandsUserPath } from '../../src/paths.js'
 import { CliConfigStore } from '../../src/config/store.js'
-import { bindWorkspace, readWorkspaceBinding, updateWorkspaceCli } from '../../src/dev/binding.js'
 import { bindExistingAgent, createDevWorkspace } from '../../src/dev/create.js'
 import { DevFailure, WorkspaceFolderInUse } from '../../src/dev/errors.js'
 import { ensureInitialCandidate } from '../../src/dev/initialize.js'
@@ -15,7 +14,14 @@ import { prepareDevRun } from '../../src/dev/prepare.js'
 import * as search from '../../src/dev/search.js'
 import type { DiscoveredHarness } from '../../src/dev/search.js'
 import * as picker from '../../src/dev/picker.js'
-import { readDevWorkspace, type DevWorkspace, type DevWorkspaceConfig } from '../../src/dev/workspace.js'
+import {
+  bindWorkspace,
+  readWorkspaceBinding,
+  updateWorkspaceCli,
+  readDevWorkspace,
+  type DevWorkspace,
+  type DevWorkspaceConfig,
+} from '../../src/dev/workspace.js'
 import * as installer from '../../src/project/archive.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 

@@ -18,12 +18,13 @@ import {
   type FolderClaims,
 } from './create.js'
 import { DevFailure, WorkspaceFolderInUse } from './errors.js'
-import { readWorkspaceBinding, updateWorkspaceCli } from './binding.js'
 import {
   findDevWorkspace,
   missingAgentPath,
   readDevWorkspace,
+  readWorkspaceBinding,
   entrypointWorkspaceFolder,
+  updateWorkspaceCli,
   workspaceFolder,
   WORKSPACE_FOLDER,
   type DevWorkspace,
@@ -33,6 +34,7 @@ import type { FolderSuggestion, HarnessChoice } from './picker.js'
 import type { DiscoveredHarness } from './search.js'
 import { baseHarnessSelection, discoverLocalHarnesses, harnessFolder, type BaseHarnessSelection } from './selection.js'
 import { initializeWorkspaceBinding } from './initialize.js'
+import type { ProjectSetupSession } from './project-setup.js'
 
 export interface PreparedDevRun {
   args: ParsedArgs
@@ -566,4 +568,56 @@ export const prepareDevRun = async (
       keep: claims.commit,
     }
   })
+}
+
+interface DevRunRequest {
+  args: ParsedArgs
+  savedConfig: CliConfigSnapshot
+  launchDirectory: string
+  screen: StartupScreen
+  setup: ProjectSetupSession
+  config?: CliConfigStore
+  rejected?: PreparedDevRun
+}
+
+const pickerArgs = (args: ParsedArgs): ParsedArgs => {
+  const { init, searchRoots, workspace } = args.dev!
+  return { ...args, agent: undefined, dev: { init, searchRoots, ...(workspace ? { workspace } : {}) } }
+}
+
+export const openDevRun = async (request: DevRunRequest): Promise<PreparedDevRun | undefined> => {
+  const { args, savedConfig, launchDirectory, screen, setup, config } = request
+  let rejected = request.rejected
+  for (;;) {
+    process.chdir(launchDirectory)
+    const prepared = await prepareDevRun(rejected ? pickerArgs(args) : args, {
+      ...(config ? { config } : {}),
+      savedConfig,
+      screen,
+      deferPreparation: true,
+      ...(rejected ? { rejected } : {}),
+    })
+    if (!prepared) return undefined
+    if (screen.signal.aborted) {
+      await prepared.discard()
+      return undefined
+    }
+    const { root, entrypoint, config: bound } = prepared.workspace
+    const result = await setup.prepare({ root, entrypoint, language: bound.language }, screen)
+    if (result === 'cancel') {
+      await prepared.discard()
+      return undefined
+    }
+    if (result === 'ready')
+      return { ...prepared, args: { ...prepared.args, dev: { ...prepared.args.dev!, prepared: true } } }
+    rejected = prepared
+  }
+}
+
+export const openWorkspaceConfiguration = async (args: ParsedArgs, screen: StartupScreen): Promise<void> => {
+  if (!args.dev?.workspace) throw new Error('No dev workspace is active.')
+  const workspace = await readDevWorkspace(args.dev.workspace)
+  if (!workspace?.directory) throw new Error('Initialize this workspace with a .config binding before editing it.')
+  if (!screen.openProject) throw new Error('Workspace editing is unavailable in this terminal.')
+  await screen.openProject({ root: workspace.directory, entrypoint: join(workspace.directory, '.config') })
 }

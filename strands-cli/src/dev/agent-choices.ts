@@ -1,38 +1,36 @@
 import { readFile } from 'node:fs/promises'
-import { relative } from 'node:path'
 
 import type {
-  CallExpression,
   Expression,
   NewExpression,
   Node,
   ObjectLiteralExpression,
   PropertyAssignment,
-  PropertyName,
   SourceFile,
 } from 'typescript'
 
 import { effortFieldsKey, ModelEffortUnavailable, modelEffort, type ReasoningFields } from '../model/effort-fields.js'
 import { sourceLiteral } from '../project/source.js'
 import { isRecord } from '../values.js'
-import { AgentOptionConflict, AgentOptionsNotEditable, saveAgentOptions, type AgentOptions } from './agent-options.js'
 import {
+  AgentOptionConflict,
+  AgentOptionsNotEditable,
   applyEdits,
+  calleeName,
+  entryOf,
+  harnessCalls,
   indentOf,
   insertion,
   projectPython,
-  PythonReadFailure,
-  readPythonSource,
-  removal,
+  propertyKey,
+  readPythonAgent,
+  saveAgentOptions,
+  type AgentOptions,
+  type AgentWorkspace,
   type Span,
   type TextEdit,
-} from './agent-source.js'
+} from './agent-options.js'
 import { editFile } from './file-edits.js'
-import type { DevWorkspace } from './workspace.js'
-
-export type AgentWorkspace = Pick<DevWorkspace, 'root' | 'entrypoint'> & {
-  config: Pick<DevWorkspace['config'], 'language'>
-}
 
 interface ModelConstructor {
   readonly className: string
@@ -87,13 +85,24 @@ const fieldsLiteral = (fields: ReasoningFields, { python, depth, inline }: Liter
   return python ? inlined.replace(/([[{]) /gu, '$1').replace(/ ([}\]])/gu, '$1') : inlined
 }
 
-const propertyKey = (name: PropertyName | undefined, ts: TypeScript): string | undefined =>
-  name && (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name))
-    ? name.text
-    : undefined
+const afterBlanks = (source: string, from: number): number => {
+  let position = from
+  while (source[position] === ' ' || source[position] === '\t') position++
+  return position
+}
 
-const calleeName = (node: Node, ts: TypeScript): string | undefined =>
-  ts.isIdentifier(node) ? node.text : ts.isPropertyAccessExpression(node) ? node.name.text : undefined
+const removal = (source: string, { start, end }: Span): TextEdit => {
+  const next = afterBlanks(source, end)
+  if (source[next] === ',') {
+    const lineStart = source.lastIndexOf('\n', start - 1) + 1
+    const lineEnd = source.indexOf('\n', next + 1)
+    if (!source.slice(lineStart, start).trim() && lineEnd >= 0 && !source.slice(next + 1, lineEnd).trim())
+      return { start: lineStart, end: lineEnd + 1, text: '' }
+    return { start, end: afterBlanks(source, next + 1), text: '' }
+  }
+  const before = source.slice(0, start).trimEnd()
+  return before.endsWith(',') ? { start: before.length - 1, end, text: '' } : { start, end, text: '' }
+}
 
 const unwrapped = (node: Expression, ts: TypeScript): Expression =>
   ts.isParenthesizedExpression(node) ||
@@ -176,7 +185,7 @@ const typescriptConstructor = (expression: NewExpression, context: TypeScriptCon
     { open: settings.getStart(file), close: settings.getEnd() - 1 },
     last && { start: last.getStart(file), end: last.getEnd() },
     settings.properties.hasTrailingComma,
-    (text) => ` ${text} `
+    ' '
   )
   const layout = {
     python: false,
@@ -184,7 +193,7 @@ const typescriptConstructor = (expression: NewExpression, context: TypeScriptCon
     inline: !source.slice(settings.getStart(file), settings.getEnd()).includes('\n'),
   }
   const edit = (fields: ReasoningFields | undefined): TextEdit | undefined => {
-    if (!fieldsProperty) return fields && add(`${key}: ${fieldsLiteral(fields, layout)}`)
+    if (!fieldsProperty) return fields && add([`${key}: ${fieldsLiteral(fields, layout)}`])
     if (!fields) return removal(source, { start: fieldsProperty.getStart(file), end: fieldsProperty.getEnd() })
     const value = fieldsProperty.initializer
     return { start: value.getStart(file), end: value.getEnd(), text: fieldsLiteral(fields, layout) }
@@ -249,20 +258,7 @@ const typescriptModelValue = (
 }
 
 const typescriptModel = async (source: string, entry: string): Promise<ModelReading> => {
-  const ts = (await import('typescript')).default
-  const file = ts.createSourceFile(
-    entry,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    /\.m?js$/u.test(entry) ? ts.ScriptKind.JS : ts.ScriptKind.TS
-  )
-  const calls: CallExpression[] = []
-  const visit = (node: Node): void => {
-    if (ts.isCallExpression(node) && calleeName(node.expression, ts) === 'createHarness') calls.push(node)
-    ts.forEachChild(node, visit)
-  }
-  visit(file)
+  const { ts, file, calls } = await harnessCalls(source, entry)
   const [options, ...extra] = calls.length === 1 ? calls[0]!.arguments : []
   if (!options || extra.length > 0 || !ts.isObjectLiteralExpression(options)) return OPTION
   const model = options.properties.find((property) => propertyKey(property.name, ts) === 'model')
@@ -277,14 +273,6 @@ const typescriptModel = async (source: string, entry: string): Promise<ModelRead
 }
 
 const PYTHON_MODEL_READER = `
-import ast, json, re, sys
-source = sys.stdin.read()
-lines = re.findall(r'[^\\r\\n]*(?:\\r\\n|\\r|\\n)|[^\\r\\n]+$', source) or ['']
-def offset(line, column):
-    prefix = ''.join(lines[:line - 1]) + lines[line - 1].encode('utf-8')[:column].decode('utf-8')
-    return len(prefix.encode('utf-16-le')) // 2
-def span(node):
-    return {'start': offset(node.lineno, node.col_offset), 'end': offset(node.end_lineno, node.end_col_offset)}
 def name_of(node):
     return node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
 def literal(node):
@@ -306,11 +294,6 @@ def describe(node, tree, seen):
     if isinstance(node, ast.Call):
         return {'kind': 'call', 'name': name_of(node.func), 'positional': len(node.args), 'open': span(node.func)['end'], 'close': span(node)['end'] - 1, 'keywords': [keyword(item) for item in node.keywords]}
     return {'kind': 'code'}
-try:
-    tree = ast.parse(source)
-except SyntaxError as error:
-    print(json.dumps({'syntax': error.lineno or 0}))
-    sys.exit(0)
 calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and name_of(node.func) == 'create_harness']
 model = next((item.value for item in calls[0].keywords if item.arg == 'model'), None) if len(calls) == 1 else None
 print(json.dumps(describe(model, tree, frozenset()) if len(calls) == 1 else {'kind': 'option'}))
@@ -325,7 +308,6 @@ interface PythonKeyword {
 }
 
 interface PythonModelReading {
-  readonly syntax?: number
   readonly kind?: 'option' | 'code' | 'call'
   readonly name?: string | null
   readonly positional?: number
@@ -350,7 +332,7 @@ const pythonConstructor = (source: string, entry: string, call: PythonModelReadi
         .includes(',')
     : false
   const extensible = (call.positional ?? 0) === 0 && keywords.every((item) => item.name !== null)
-  const add = insertion(source, { open: call.open ?? close, close }, last, trailing, (text) => text)
+  const add = insertion(source, { open: call.open ?? close, close }, last, trailing, '')
   const layout = {
     python: true,
     depth: depthAt(source, last?.start ?? close, true),
@@ -361,7 +343,7 @@ const pythonConstructor = (source: string, entry: string, call: PythonModelReadi
     if (fieldsKeyword) return { ...fieldsKeyword.value_span, text: fieldsLiteral(fields ?? {}, layout) }
     if (!fields) return undefined
     if (!extensible) throw notEditable(entry, `passes ${className} settings that strands dev cannot extend.`)
-    return add(`${key}=${fieldsLiteral(fields, layout)}`)
+    return add([`${key}=${fieldsLiteral(fields, layout)}`])
   }
   return constructorReading(
     source,
@@ -378,17 +360,7 @@ const pythonConstructor = (source: string, entry: string, call: PythonModelReadi
 }
 
 const pythonModel = async (source: string, entry: string, interpreter: string): Promise<ModelReading> => {
-  let reading: PythonModelReading
-  try {
-    reading = await readPythonSource<PythonModelReading>(PYTHON_MODEL_READER, source, interpreter)
-  } catch (error) {
-    if (!(error instanceof PythonReadFailure)) throw error
-    throw new AgentOptionsNotEditable(
-      `Python 3.8 or newer could not read the agent source (${interpreter}): ${error.message}`
-    )
-  }
-  if (reading.syntax !== undefined)
-    throw new AgentOptionsNotEditable(`${entry} has a syntax error at line ${reading.syntax}. Fix it first.`)
+  const reading = await readPythonAgent<PythonModelReading>(PYTHON_MODEL_READER, source, entry, interpreter)
   if (reading.kind === 'code') throw notEditable(entry, 'builds its model in code that strands dev cannot read.')
   return reading.kind === 'call' ? { kind: 'object', model: pythonConstructor(source, entry, reading) } : OPTION
 }
@@ -417,9 +389,6 @@ const modelReader =
     workspace.config.language === 'python'
       ? pythonModel(source, entry, projectPython(workspace.root))
       : typescriptModel(source, entry)
-
-const entryOf = (workspace: AgentWorkspace): string =>
-  relative(workspace.root, workspace.entrypoint) || workspace.entrypoint
 
 export const saveAgentChoices = async (
   workspace: AgentWorkspace,

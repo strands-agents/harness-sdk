@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { editHarnessName, HARNESS_NAME_RULE, harnessNameProblem } from '../../src/dev/harness-name.js'
+import { editHarnessName, HARNESS_NAME_RULE, harnessNameProblem } from '../../src/dev/picker.js'
 
 const allowedCharacters = 'Use letters, digits, ".", "_", and "-".'
 const atEnd = (value: string) => ({ value, cursor: value.length })

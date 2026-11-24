@@ -4,12 +4,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { parseArgs } from '../../src/cli/arguments.js'
 import { CliConfigStore } from '../../src/config/store.js'
-import { bindWorkspace } from '../../src/dev/binding.js'
 import { bindExistingAgent } from '../../src/dev/create.js'
 import * as picker from '../../src/dev/picker.js'
 import { prepareDevRun } from '../../src/dev/prepare.js'
 import * as discovery from '../../src/dev/search.js'
-import { readDevWorkspace } from '../../src/dev/workspace.js'
+import { bindWorkspace, readDevWorkspace } from '../../src/dev/workspace.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 
 const project = async (): Promise<string> => {

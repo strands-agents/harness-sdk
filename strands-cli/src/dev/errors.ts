@@ -1,4 +1,4 @@
-import { sanitizeTerminalText } from '../terminal/text.js'
+import { errorMessage, sanitizeTerminalText } from '../terminal/text.js'
 
 export type DevOperation = 'open' | 'load' | 'install' | 'build' | 'reload'
 
@@ -49,9 +49,7 @@ const field = (error: unknown, name: string): string | undefined => {
 }
 
 const reason = (errors: unknown[]): string => {
-  const lines = errors.flatMap((error) =>
-    sanitizeTerminalText(error instanceof Error ? error.message : String(error)).split('\n')
-  )
+  const lines = errors.flatMap((error) => errorMessage(error).split('\n'))
   const diagnostic = lines.find((line) =>
     /^(?:SyntaxError|ModuleNotFoundError|ImportError|Error \[ERR_MODULE_NOT_FOUND\]|error TS\d+|npm (?:error|ERR!))/u.test(
       line.trim()

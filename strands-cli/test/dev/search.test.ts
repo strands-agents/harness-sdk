@@ -3,9 +3,8 @@ import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { bindWorkspace } from '../../src/dev/binding.js'
 import { discoverHarnesses, type SkippedHarness } from '../../src/dev/search.js'
-import { readDevWorkspace, type DevWorkspace, type DevWorkspaceConfig } from '../../src/dev/workspace.js'
+import { bindWorkspace, readDevWorkspace, type DevWorkspace, type DevWorkspaceConfig } from '../../src/dev/workspace.js'
 import { importAgentProject } from '../../src/project/import.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 

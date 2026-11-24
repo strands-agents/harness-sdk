@@ -1,7 +1,11 @@
+import { setImmediate } from 'node:timers'
 import { createElement, useState, type ReactElement } from 'react'
 import { Box, useStdout } from 'ink'
 import { useInput } from '../ui/input.js'
 
+import type { RequestSetup, SetupChange } from '../agent/configuration.js'
+import type { CliConfigStore } from '../config/store.js'
+import { modelProviderNeedsSetup } from '../ui/setup/providers.js'
 import { Text, useTheme } from '../ui/theme.js'
 import type { StartupScreen } from '../ui/run.js'
 import { useStartupContentRows } from '../ui/startup.js'
@@ -17,9 +21,11 @@ import {
   type PreparationProgress,
 } from '../project/preparation.js'
 import type { ImportedAgentProject } from '../project/import.js'
-import { sanitizeTerminalText } from '../terminal/text.js'
+import { errorMessage, sanitizeTerminalText } from '../terminal/text.js'
 import { isModelCredentialFailure } from '../model/credential-failure.js'
+import { AgentOptionsNotEditable, readAgentModel, saveAgentOptions } from './agent-options.js'
 import { fixInNewTab, type FixOutcome } from './fix-in-new-tab.js'
+import { readDevWorkspace, type DevWorkspace } from './workspace.js'
 
 const PANEL_FIXED_ROWS = 10
 const DETAILS_MIN_ROWS = 2
@@ -123,10 +129,7 @@ const ask = async (screen: StartupScreen, props: Omit<ProjectSetupPanelProps, 'o
   })
   const cancel = (): void => finish('cancel')
   screen.signal.addEventListener('abort', cancel, { once: true })
-  screen.show(
-    createElement(ProjectSetupPanel, { ...props, onAction: finish }),
-    props.failure ? 'Project setup needs attention' : 'Review project setup'
-  )
+  screen.show(createElement(ProjectSetupPanel, { ...props, onAction: finish }), 'Project setup needs attention')
   try {
     return await answer
   } finally {
@@ -192,7 +195,7 @@ export const projectSetupSession = (): ProjectSetupSession => {
         } catch (logError) {
           failureRecord = {
             ...failureRecord,
-            details: `${failureRecord.details}\nCould not save the setup log: ${sanitizeTerminalText(logError instanceof Error ? logError.message : String(logError))}`,
+            details: `${failureRecord.details}\nCould not save the setup log: ${errorMessage(logError)}`,
           }
         }
       }
@@ -225,4 +228,57 @@ export const projectSetupSession = (): ProjectSetupSession => {
       }
     },
   }
+}
+
+export interface DevChat {
+  showError?(title: string, message: string): void
+}
+
+interface DevChatOpening {
+  readonly workspace: string
+  readonly config: CliConfigStore
+  readonly launch: SetupChange | undefined
+  readonly requestSetup: RequestSetup
+  readonly onAgentModel: (model: string | undefined) => void
+}
+
+export const openDevChat = async <Chat extends DevChat>(
+  { workspace: path, config, launch, requestSetup, onAgentModel }: DevChatOpening,
+  create: () => Promise<Chat>
+): Promise<Chat> => {
+  const workspace = await readDevWorkspace(path)
+  if (!workspace) throw new Error(`No strands dev workspace is at ${path}.`)
+  const notices: { title: string; message: string }[] = []
+  if (launch?.configuration) {
+    const unsaved = await saveChosenModel(workspace, launch.configuration.profile.model)
+    if (unsaved) notices.push({ title: 'Model unchanged', message: unsaved })
+  }
+  const model = await readAgentModel(workspace).catch((error: unknown) => {
+    notices.push({ title: 'Model provider check skipped', message: errorMessage(error) })
+    return undefined
+  })
+  onAgentModel(model)
+  const chat = await create()
+  for (const { title, message } of notices) chat.showError?.(title, message)
+  if (!launch && model) offerProviderSetup(chat, config, model, requestSetup)
+  return chat
+}
+
+const saveChosenModel = async (workspace: DevWorkspace, model: string): Promise<string | undefined> => {
+  try {
+    await saveAgentOptions(workspace, { model })
+    return undefined
+  } catch (error) {
+    if (!(error instanceof AgentOptionsNotEditable)) throw error
+    return `${errorMessage(error)} Set the model to ${model} in the agent file, and the agent reloads.`
+  }
+}
+
+const offerProviderSetup = (chat: DevChat, config: CliConfigStore, model: string, requestSetup: RequestSetup): void => {
+  void modelProviderNeedsSetup(config, model).then(
+    (needed) => {
+      if (needed) setImmediate(() => requestSetup())
+    },
+    (error: unknown) => chat.showError?.('Model provider check failed', errorMessage(error))
+  )
 }
