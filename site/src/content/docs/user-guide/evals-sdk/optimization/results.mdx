@@ -34,6 +34,12 @@ The summary is a stack of tables, read top to bottom:
 Notes at the end define each column. The [quickstart](quickstart.md#run-it) shows a full
 summary from a real run.
 
+In the validation table, `measured` is the mean over the cases that have a value for that
+metric, and `n` is how many there are. It's usually every validation case, but a case where
+an evaluator returned not applicable, or whose trials all failed on infrastructure, isn't
+counted, so `n` can differ between metrics. When only one case has a value, `n` counts its
+runs instead.
+
 The header's **outcome** says how the pick ended:
 
 | Outcome | Means |
