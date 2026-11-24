@@ -481,6 +481,7 @@ These override default Starlight components:
 - **`Hero.astro`**: Suppresses the Starlight hero on `/blog/` paths. Blog pages pass a dummy `hero: { actions: [] }` to collapse Starlight's two-panel layout, and this override ensures that dummy hero has no visual output.
 - **`MarkdownContent.astro`**: Injects the custom frontmatter banners (experimental, external preview, community, languages) at the top of page content.
 - **`PageFrame.astro`**: Extends Starlight's default `PageFrame` to add a full-width site footer containing the `Copyright` component. The footer spans the content area (respecting sidebar offset) with `--sl-color-bg-nav` background to match the header.
+- **`PageTitle.astro`**: Renders the H1 (or the product hub hero) with `PageActions` beside it: small "View as Markdown" and "Edit on GitHub" links that sit next to the title when it fits and wrap below it otherwise. The Markdown link shows only on pages with an `/index.md` twin, decided by `src/util/markdown-twin.ts`, which `Head.astro` also uses for its `rel="alternate"` link.
 - **`Sidebar.astro`** and **`SidebarSublist.astro`**: Custom sidebar navigation that mimics MkDocs Material theme's `navigation.sections` behavior.
 
 #### Sidebar Navigation Style
