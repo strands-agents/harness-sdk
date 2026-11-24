@@ -10,7 +10,7 @@ from typing_extensions import TypedDict
 
 from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....event_loop.streaming import _record_usage
-from ....models._model_proxy import _latest_call_tools
+from ....models._model_proxy import _latest_call_model, _latest_call_tools
 from ....models._provider_name import _model_key
 from ....types.content import ContentBlock, Message, Messages, split_system_prompt
 from ....types.tools import ToolResultContent, ToolSpec
@@ -141,8 +141,8 @@ class SummarizeStrategy(BaseOffloadStrategy):
     async def _summarize_run(self, context: ContextState, model: Model, run: Messages) -> str:
         """The summary of one run, or "" when the model call failed, which keeps the run for a later pass."""
         request = _run_request(context.messages, run)
-        # A summarizer other than the agent's model cannot take reasoning signed for the model that wrote it.
-        if model is not context.agent.model:
+        # A summarizer other than the conversation's model cannot take reasoning signed for the model that wrote it.
+        if model is not self._conversation_model(context.agent):
             request = _without_reasoning(request)
         log_fields = f"run_length=<{len(run)}>"
         return await self._try_summarize(request, model, context.agent, context.invocation_context, log_fields)
@@ -155,7 +155,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         message the next model call responds to, nor a tool use whose result is that message.
         """
         messages = context.messages
-        if not _can_replay_server_side(model, context.agent.model):
+        if not _can_replay_server_side(model, self._conversation_model(context.agent)):
             return None
         if self._conditions.block_threshold is not None:
             # Caller depth varies, so stacklevel=1 pins dedup to this line (once per process).
@@ -334,8 +334,12 @@ class SummarizeStrategy(BaseOffloadStrategy):
         recorded = _latest_call_tools(agent)
         return recorded if recorded is not None else agent.tool_registry.get_all_tool_specs()
 
+    def _conversation_model(self, agent: Agent) -> Model:
+        """The model the conversation is running on: the latest routed model call, or the agent's default model."""
+        return _latest_call_model(agent) or agent.model
+
     def _resolve_model(self, agent: Agent) -> Model | None:
-        return self._config.get("model") or agent.model
+        return self._config.get("model") or self._conversation_model(agent)
 
 
 def _record_summary_usage(invocation_context: InvocationContext | None, result: SummarizeResult, model: Model) -> None:

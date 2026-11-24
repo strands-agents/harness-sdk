@@ -20,7 +20,7 @@ from strands._context_manager.strategies.offload.summarize import BLOCK_SUMMARY_
 from strands._context_manager.types import ContextState
 from strands.agent.invocation_context import ModelUsage, _create_invocation_context
 from strands.models import Model, SummarizeResult
-from strands.models._model_proxy import _latest_tools
+from strands.models._model_proxy import ModelProxy, _latest_tools
 from strands.models._summarize import _SUMMARIZE_GUARD, DEFAULT_SUMMARIZE_INSTRUCTIONS
 from strands.tools.registry import ToolRegistry
 from strands.types.content import ContentBlock, Message, Messages
@@ -640,6 +640,30 @@ class TestRunSummaryReplaysTheAgentRequest:
         assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
 
         assert mock_agent.model.summarize.await_args.kwargs["tool_specs"] == transformed
+
+    @pytest.mark.asyncio
+    async def test_replays_summary_on_the_routed_model_of_the_latest_call(self, mock_agent):
+        # Under a ModelRouter, agent.model is the default candidate while the conversation ran on a routed model.
+        _, routed = _mock_agent(self._messages())
+
+        async def _fake_stream(*_args: Any, **_kwargs: Any):
+            yield {"messageStart": {"role": "assistant"}}
+            yield {"contentBlockDelta": {"delta": {"text": "ok"}}}
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "end_turn"}}
+
+        routed.stream = _fake_stream
+        async for _ in ModelProxy(routed, mock_agent).stream([_text("user", "hi")], None, None):
+            pass
+
+        messages = self._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        routed.summarize.assert_awaited_once()
+        mock_agent.model.summarize.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_sends_the_tools_in_the_same_sorted_order_as_the_model_call(self, mock_agent):

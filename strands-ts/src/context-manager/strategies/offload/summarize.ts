@@ -17,7 +17,7 @@ import type { ContentBlock, OffloadedBlock } from '../../../types/messages.js'
 import type { Model, SummarizeOptions } from '../../../models/model.js'
 import type { SummarizeResult } from '../../../models/summarize.js'
 import { unwrapInvocationContext, type InvocationContext } from '../../../agent/invocation-context.js'
-import { latestCallTools } from '../../../models/model-proxy.js'
+import { latestCallModel, latestCallTools } from '../../../models/model-proxy.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
 import { formatToolResultLabel, toolResultToContentBlocks } from '../../content-rendering.js'
@@ -108,8 +108,8 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     run: Message[]
   ): Promise<{ text: string; tokens: number } | null> {
     let request = runRequest(context.messages, run)
-    // A summarizer other than the agent's model cannot take reasoning signed for the model that wrote it.
-    if (model !== context.agent.model) request = withoutReasoning(request)
+    // A summarizer other than the conversation's model cannot take reasoning signed for the model that wrote it.
+    if (model !== this._conversationModel(context.agent)) request = withoutReasoning(request)
     const logFields = `runLength=<${run.length}>`
     const summary = await this._trySummarize(request, model, context, logFields, true)
     if (!summary) return null
@@ -128,7 +128,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
    * about once.
    */
   private _serverSideEnd(context: ContextState, model: Model, removable: Message[]): number | undefined {
-    if (!this._canReplayServerSide(model, context.agent.model)) return undefined
+    if (!this._canReplayServerSide(model, this._conversationModel(context.agent))) return undefined
     if (this._conditions.blockThreshold !== undefined) {
       this._warnServerSideSkip(context, model)
       return undefined
@@ -340,8 +340,12 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     return agent.contextManager?.callTools(agent, toolSpecs, agent.model) ?? { toolSpecs }
   }
 
+  private _conversationModel(agent: LocalAgent): Model {
+    return latestCallModel(agent) ?? agent.model
+  }
+
   private _resolveModel(agent: LocalAgent): Model | undefined {
-    return this._config.model ?? agent.model
+    return this._config.model ?? this._conversationModel(agent)
   }
 }
 
