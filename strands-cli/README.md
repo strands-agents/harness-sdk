@@ -399,20 +399,7 @@ When the search stops on a proposer error, the command writes the error and exit
 
 ### Evals UI
 
-strands-agents-evals 1.12.0 does not include the evals UI. With this release, dev does not start the page server. Then `o` and the chat tools tell you that the UI is not available.
-
-When the installed release includes the UI, dev starts the evals UI of strands-evals for `strands-dev/experiments/` when the chat starts.
-The evals UI is a local web page with larger views of experiments, reports, and optimization runs.
-In `/experiment`, `/evaluate`, and `/optimize`, push `o` to open the current item in a browser.
-
-The page server listens on `127.0.0.1` only, on a free port. Each start makes a new random token.
-The page link contains the token. The server rejects each request that does not have the token.
-When dev runs on a remote computer over SSH, it does not open a browser. Instead, `o` shows an `ssh -N -L` command and the page link.
-
-You can edit cases on the page, and the page saves them to the experiment file.
-Dev reads the file again when you open the experiment in `/experiment`.
-If the file changed after dev read it, dev does not write over the file. Then open the experiment again.
-If the evals UI cannot start, the chat continues to work. A message gives the cause, and `o` tries again.
+strands-agents-evals 1.12.0 does not include the evals UI. Thus strands dev does not have the evals UI at this time.
 
 The experiment skill, workspace instructions, and `strands_dev_*` tools are injected only into the dev chat at runtime. They are not added to the base harness, saved profile, or exported agent source. Exports preserve authored files; they do not remove dev instructions that someone explicitly writes into those files.
 

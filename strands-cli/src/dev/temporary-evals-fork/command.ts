@@ -35,7 +35,7 @@ const EXPERIMENT_DETAILS = paragraphs(
   '/experiment activates the strands-evals skill, and the agent asks on screen, one question at a time, which experiment to open, or how to make a new one. Add what you want to skip questions, for example /experiment refunds or /experiment make cases from my past chats.',
   'For a new experiment, the agent asks what to test and asks for your approval. Then it makes the cases with an AWS Bedrock model and saves them in strands-dev/experiments/<name>/<name>.json. Generation makes paid model calls and can take minutes. Your chat model does not change.',
   'The agent runs strands-evals generate in the background, and a line below the chat input shows the progress. Click the line to ask about it. Generation stops if strands dev closes.',
-  'The agent lists the saved experiments, Run several experiments, and Create a new experiment. Pick a saved experiment to view its last report, run it, or edit its cases. Running makes paid model calls; picking Run is the approval, and a line below the chat input shows the progress. The report gives the passed and failed cases and the reason each failure got, and the evals UI shows the whole of it.',
+  'The agent lists the saved experiments, Run several experiments, and Create a new experiment. Pick a saved experiment to view its last report, run it, or edit its cases. Running makes paid model calls; picking Run is the approval, and a line below the chat input shows the progress. The report gives the passed and failed cases and the reason each failure got.',
   'Edit opens the experiment in your editor ($STRANDS_EDITOR, $VISUAL, or $EDITOR, as /config uses), and the agent asks what to change. When a generation fails, the agent says why and offers to try again.',
   'A run continues when you cancel the chat turn or close strands dev, and continues from where it stopped at the next start. strands dev saves each report in strands-dev/experiments/<name>/runs/, and the latest as <name>.report.json. From a shell, strands dev evaluate <experiment> runs the same evaluation and prints the result.',
   'Use /optimize to tune the agent against an experiment. You can also ask the agent in plain words, for example "what experiments do I have?"',
@@ -50,7 +50,7 @@ const OPTIMIZE_DETAILS = paragraphs(
   'The optimizer divides the cases into training, validation, and test cases. It tries candidate changes on the training cases. The best candidate on the validation cases wins, and the test cases measure it at the end.',
   'While it runs, a line below the chat input shows the progress. Click the line to ask about it, or ask the agent to stop the run and keep the best candidate so far. You can start other runs at the same time.',
   'The run continues when you cancel the chat turn or close strands dev. When strands dev opens again, the run continues from where it stopped. On Windows, the run stops when strands dev closes, and continues at the next start.',
-  'The run goes on in the background, and a notice says when it finishes. Then its proposed edits appear on screen as a diff, one edit at a time: pick Apply this change or Leave it as it is. The agent source changes once every edit has an answer, and only with the edits you applied. Then run the experiment again from /experiment. Ask the agent to open the run in the evals UI for a closer look.',
+  'The run goes on in the background, and a notice says when it finishes. Then its proposed edits appear on screen as a diff, one edit at a time: pick Apply this change or Leave it as it is. The agent source changes once every edit has an answer, and only with the edits you applied. Then run the experiment again from /experiment.',
   'While a diff is on screen you can also answer it in the chat: say "approve this" or "leave it", and the agent picks that choice for you. Any other message leaves the diff where it is.',
   'Esc closes a diff without an answer. The run stays on the line below the chat input, also after strands dev opens again, and clicking that line, or asking the agent, shows the diff again.',
   'With Auto-accept optimization results on in /settings, a run that finishes writes its edits to the agent source without showing them. A run that you stopped still shows its edits for review.',
@@ -102,9 +102,7 @@ const EVALS_COMMANDS: readonly ((sessions: Sessions, auto: AutoOptimizeRun) => D
       return `how is the evaluation of ${evaluationName(sessions, id) ?? 'the experiment'} going?`
     }),
     attach: (context): void => {
-      const opened = sessions(context)
-      void opened.ui.start()
-      void opened.test.resume()
+      void sessions(context).test.resume()
     },
     jobs: mergedJobsFeed(
       temporaryJobsFeed(sessions().experiments, temporaryGenerationJobs),

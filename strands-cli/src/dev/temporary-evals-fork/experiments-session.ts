@@ -32,7 +32,7 @@ import {
   temporaryUniqueCaseNames,
   type TemporaryExperimentDocument,
 } from './experiment-files.js'
-import { announce, plural, absolutePath, evalsLinkText, type TemporaryHost } from './host.js'
+import { announce, plural, absolutePath, type TemporaryHost } from './host.js'
 import { Store } from './jobs.js'
 
 const DEFAULT_CASES = 20
@@ -333,7 +333,6 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
     await createTemporaryExperimentCases(path, draft, cases)
     this.forget(job.generation.id)
     await this.reload()
-    const link = evalsLinkText(this.host(), { view: 'experiment', experiment: path })
-    announce(this.host(), 'success', `experiment · ${name} · ${plural(cases.length, 'case')} saved to ${shown}${link}`)
+    announce(this.host(), 'success', `experiment · ${name} · ${plural(cases.length, 'case')} saved to ${shown}`)
   }
 }

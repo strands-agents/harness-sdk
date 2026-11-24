@@ -319,26 +319,3 @@ export type OptimizePage =
   { readonly step: 'pick' } | { readonly step: 'setup'; readonly plan: OptimizePlan } | OptimizeRunState
 
 export type OptimizeState = OptimizePage & { readonly runs?: readonly OptimizeRun[] }
-
-export type EvalsBrowserPlace =
-  | { readonly view: 'runs' }
-  | { readonly view: 'opt-runs' }
-  | { readonly view: 'experiment' | 'report'; readonly experiment: string; readonly case?: string }
-  | { readonly view: 'optimization'; readonly record: string }
-
-export interface EvalsBrowserNotice {
-  readonly tone: 'normal' | 'muted' | 'warning'
-  readonly lines: readonly string[]
-}
-
-export interface EvalsBrowserState {
-  readonly status: 'off' | 'starting' | 'ready' | 'unavailable' | 'absent'
-  readonly detail?: string
-}
-
-export interface EvalsBrowser {
-  subscribe(listener: () => void): () => void
-  snapshot(): EvalsBrowserState
-  open(place: EvalsBrowserPlace): Promise<EvalsBrowserNotice | undefined>
-  link?(place: EvalsBrowserPlace, runFolder?: string): string | undefined
-}
