@@ -29,7 +29,7 @@ from .target import OffloadTarget, OffloadTargetMatcher, build_tool_name_map, is
 if TYPE_CHECKING:
     from ....agent.agent import Agent
     from ....agent.invocation_context import InvocationContext
-    from ...stash import Stash
+    from ...archive import Archive
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class OffloadStrategy(ContextStrategy, Protocol):
     def when(
         self,
         *,
-        context_utilization: int | str | None = None,
+        context_utilization: int | float | str | None = None,
         block_threshold: int | str | None = None,
         preserve_recent: int | str | None = None,
     ) -> OffloadStrategy:
@@ -84,7 +84,7 @@ class BaseOffloadStrategy(ABC):
     def when(
         self,
         *,
-        context_utilization: int | str | None = None,
+        context_utilization: int | float | str | None = None,
         block_threshold: int | str | None = None,
         preserve_recent: int | str | None = None,
     ) -> BaseOffloadStrategy:
@@ -131,12 +131,12 @@ class BaseOffloadStrategy(ABC):
                 " context_utilization or a preserve_recent above 0"
             )
 
-    def init(self, agent: Agent, stash: Stash | None = None) -> None:
+    def init(self, agent: Agent, archive: Archive | None = None) -> None:
         """Check the conditions can run on this agent, then register the eager hook if this runs eagerly.
 
         Args:
             agent: The agent this strategy is attached to.
-            stash: The stash offloaded content is stored in.
+            archive: The archive offloaded content is stored in.
 
         Raises:
             ValueError: When a whole-message strategy has none of ``context_utilization``, ``block_threshold``, or
@@ -159,7 +159,7 @@ class BaseOffloadStrategy(ABC):
                 stacklevel=1,
             )
 
-        # The stash is this agent's, closed over rather than kept on the strategy: one strategy or config dict can
+        # The archive is this agent's, closed over rather than kept on the strategy: one strategy or config dict can
         # reach several agents, and whichever ran last would otherwise own every agent's writes.
         async def eager_hook(event: MessageAddedEvent) -> None:
             try:
@@ -168,7 +168,7 @@ class BaseOffloadStrategy(ABC):
                     return
                 threshold = self._conditions.threshold_tokens(event.agent)
                 tool_name_map = build_tool_name_map(messages)
-                await self._transform_blocks(event.message, tool_name_map, threshold, event.agent, stash)
+                await self._transform_blocks(event.message, tool_name_map, threshold, event.agent, archive)
             except Exception:
                 logger.warning("strategy=<%s> | eager hook failed, continuing", self.name, exc_info=True)
 
@@ -215,7 +215,7 @@ class BaseOffloadStrategy(ABC):
             if not self._runs_eagerly and (message is messages[0] or message is messages[-1]):
                 continue
             if await self._transform_blocks(
-                message, tool_name_map, threshold, context.agent, context.stash, context.invocation_context
+                message, tool_name_map, threshold, context.agent, context.archive, context.invocation_context
             ):
                 acted = True
         return acted
@@ -249,33 +249,35 @@ class BaseOffloadStrategy(ABC):
         return [message for message, size in zip(removable, sizes, strict=True) if size > threshold]
 
     def _is_offloadable(
-        self, block: ContentBlock, message: Message, tool_name_map: dict[str, str], stash: Stash | None
+        self, block: ContentBlock, message: Message, tool_name_map: dict[str, str], archive: Archive | None
     ) -> bool:
         """Whether a block in ``message`` is content this strategy may replace."""
         if is_protocol_block(block) or is_offloaded(block):
             return False
         if is_text_block(block) and not block["text"].strip():
             return False
-        # Injected text is written after its message was stashed, so a ref to it would point at nothing.
+        # Injected text is written after its message was archived, so a ref to it would point at nothing.
         if "injected" in block:
             return False
         if is_tool_result_block(block):
             tool_result = block["toolResult"]
-            # An empty result stashes nothing, so a placeholder for it would carry a reference to nothing.
+            # An empty result archives nothing, so a placeholder for it would carry a reference to nothing.
             if not tool_result.get("content"):
                 return False
-            if self._is_protected_result(tool_result, tool_name_map, stash):
+            if self._is_protected_result(tool_result, tool_name_map, archive):
                 return False
         return self._matcher.matches_block(block, message, tool_name_map)
 
-    def _is_protected_result(self, tool_result: ToolResult, tool_name_map: dict[str, str], stash: Stash | None) -> bool:
+    def _is_protected_result(
+        self, tool_result: ToolResult, tool_name_map: dict[str, str], archive: Archive | None
+    ) -> bool:
         """Whether a tool result is the retrieval tool's output, or already holds a placeholder to leave alone.
 
-        Retrieved content is left alone only while there is a stash to retrieve it from again; without one there is no
-        loop to prevent, and an unbounded result is better trimmed. Only drop goes further than this, since truncate
+        Retrieved content is left alone only while there is an archive to retrieve it from again; without one there is
+        no loop to prevent, and an unbounded result is better trimmed. Only drop goes further than this, since truncate
         and summarize would read the placeholder as the content.
         """
-        if stash is not None and tool_name_map.get(tool_result["toolUseId"]) == RETRIEVAL_TOOL_NAME:
+        if archive is not None and tool_name_map.get(tool_result["toolUseId"]) == RETRIEVAL_TOOL_NAME:
             return True
         placeholder = next((item for item in tool_result["content"] if is_offloaded(item)), None)
         return placeholder is not None and (self._method != "drop" or placeholder["offloaded"]["method"] == "drop")
@@ -286,7 +288,7 @@ class BaseOffloadStrategy(ABC):
         tool_name_map: dict[str, str],
         threshold: int | None,
         agent: Agent,
-        stash: Stash | None,
+        archive: Archive | None,
         invocation_context: InvocationContext | None = None,
     ) -> bool:
         """Replace the eligible blocks of a message larger than ``threshold`` tokens, or every one when it is unset."""
@@ -294,7 +296,7 @@ class BaseOffloadStrategy(ABC):
         content = message["content"]
         proxy = ModelProxy(agent.model)
         for block_index, block in enumerate(content):
-            if not self._is_offloadable(block, message, tool_name_map, stash):
+            if not self._is_offloadable(block, message, tool_name_map, archive):
                 continue
             # Counted through the proxy so the block is measured as the model receives it; the system prompt and tool
             # specs are left out, which would otherwise inflate every block against the threshold.
@@ -310,11 +312,11 @@ class BaseOffloadStrategy(ABC):
             if replaced is None:
                 continue
 
-            # Stashed only now the strategy has decided to replace the block: stashing a tool result lists the
+            # Archived only now the strategy has decided to replace the block: archiving a tool result lists the
             # store, which would cost a request for every block a strategy turns out to leave alone.
             preview, kept = replaced
-            stash_ref = await stash.ensure_stashed(block, message, block_index) if stash is not None else None
-            placeholder = offload_placeholder(self._method, preview, stash_ref, tokens)
+            archive_ref = await archive.ensure_archived(block, message, block_index) if archive is not None else None
+            placeholder = offload_placeholder(self._method, preview, archive_ref, tokens)
             content[block_index] = (
                 placeholder_result(block["toolResult"], [placeholder, *kept])
                 if is_tool_result_block(block)
@@ -390,7 +392,7 @@ class EmergencyTruncateStrategy:
             remove_count += 1
         model = context.agent.model
         if not await remove_messages(
-            messages, removable[:remove_count], model, format_elided, "truncate", context.stash
+            messages, removable[:remove_count], model, format_elided, "truncate", context.archive
         ):
             return False
         repair_alternation(messages)

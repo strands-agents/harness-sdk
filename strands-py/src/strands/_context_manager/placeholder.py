@@ -16,17 +16,17 @@ REMOVED_MESSAGES = "earlier messages"
 """What a message-level marker stands for."""
 
 
-def offload_placeholder(method: OffloadMethod, preview: str, stash_ref: str | None, tokens: int = 0) -> ContentBlock:
+def offload_placeholder(method: OffloadMethod, preview: str, archive_ref: str | None, tokens: int = 0) -> ContentBlock:
     """The block that stands in for offloaded content.
 
-    The preview, followed by the stash reference when the original is retrievable.
+    The preview, followed by the archive reference when the original is retrievable.
     """
     offloaded = OffloadedBlock(method=method)
-    if stash_ref is not None:
-        offloaded["ref"] = stash_ref
+    if archive_ref is not None:
+        offloaded["ref"] = archive_ref
     if tokens > 0:
         offloaded["tokens"] = tokens
-    text = preview if stash_ref is None else f"{preview} [ref: {stash_ref}]"
+    text = preview if archive_ref is None else f"{preview} [ref: {archive_ref}]"
     return ContentBlock(text=text, offloaded=offloaded)
 
 

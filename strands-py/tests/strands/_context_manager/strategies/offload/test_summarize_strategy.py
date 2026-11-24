@@ -18,8 +18,9 @@ from strands._context_manager.placeholder import (
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.summarize import BLOCK_SUMMARY_INSTRUCTIONS
 from strands._context_manager.types import ContextState
-from strands.agent.invocation_context import _create_invocation_context
+from strands.agent.invocation_context import ModelUsage, _create_invocation_context
 from strands.models import Model, SummarizeResult
+from strands.models._model_proxy import _latest_tools
 from strands.models._summarize import _SUMMARIZE_GUARD, DEFAULT_SUMMARIZE_INSTRUCTIONS
 from strands.tools.registry import ToolRegistry
 from strands.types.content import ContentBlock, Message, Messages
@@ -627,6 +628,20 @@ class TestRunSummaryReplaysTheAgentRequest:
         }
 
     @pytest.mark.asyncio
+    async def test_sends_the_tools_of_the_latest_model_call_rather_than_the_registrys(self, mock_agent):
+        # InvokeModelStage.Input middleware rewrites the call's tools, and the replay shares the call's cache
+        # only when it sends the same ones (#6332).
+        transformed = [{**AGENT_TOOLS[0], "inputSchema": {"json": {"properties": {"_background_execution": {}}}}}]
+        _latest_tools[mock_agent] = transformed
+        messages = self._messages()
+        mock_agent.messages = messages
+        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+
+        assert await strategy.apply(ContextState(messages=messages, agent=mock_agent, utilization=0.9)) is True
+
+        assert mock_agent.model.summarize.await_args.kwargs["tool_specs"] == transformed
+
+    @pytest.mark.asyncio
     async def test_sends_the_tools_in_the_same_sorted_order_as_the_model_call(self, mock_agent):
         # The summary must send the same tools block as the main loop to keep the cache and thinking valid (#5700).
         mock_agent.tool_registry = ToolRegistry(sort_tool_specs=True)
@@ -837,7 +852,7 @@ class TestServerSideSummary:
             Message(role="assistant", content=[summary]),
             Message(role="user", content=[ContentBlock(text="recent")]),
         ]
-        # A stash ref is keyed by tracking id, so without one the summary's blocks take another message's refs.
+        # An archive ref is keyed by tracking id, so without one the summary's blocks take another message's refs.
         assert messages[1]["tracking_id"] not in (None, "", messages[0].get("tracking_id"))
 
     @pytest.mark.asyncio
@@ -1177,6 +1192,24 @@ class TestClientSideSummariesUseModelSummarize:
         assert await strategy.apply(context) is bool(content)
 
         assert request.usage == {"turns_taken": 0, "inputTokens": 100, "outputTokens": 20, "totalTokens": 120}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("server_side_summary", [False, True])
+    async def test_a_summary_adds_its_usage_under_the_model_that_wrote_it(self, mock_agent, server_side_summary):
+        mock_agent.model.model_info.capabilities.server_side_summary = server_side_summary
+        mock_agent.model.get_config = unittest.mock.Mock(return_value={"model_id": "summary-model"})
+        usage = Usage(inputTokens=100, outputTokens=20, totalTokens=120)
+        content = [ContentBlock(summary={"provider": "anthropic", "text": "compacted"})]
+        mock_agent.model.summarize = unittest.mock.AsyncMock(return_value=SummarizeResult(content, usage))
+        messages = TestServerSideSummary._messages()
+        mock_agent.messages = messages
+        request = _create_invocation_context()
+        strategy = Offload.summarize("*").when(context_utilization="80%", preserve_recent=1)
+
+        context = ContextState(messages=messages, agent=mock_agent, utilization=0.9, invocation_context=request)
+        assert await strategy.apply(context) is True
+
+        assert request.usage_by_model == [ModelUsage(provider_name=None, model_id="summary-model", usage=usage)]
 
     @pytest.mark.asyncio
     async def test_warns_when_summarize_returns_no_text(self, mock_agent, caplog):

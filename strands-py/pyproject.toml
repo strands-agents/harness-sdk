@@ -83,6 +83,9 @@ a2a = [
 
 cedar = ["cedarpy==4.12.2", "cedar-policy-mcp-schema-generator==0.7.0"]
 
+# genai-prices needs Python 3.11; on 3.10 the extra installs nothing and the plugin raises ImportError.
+cost-estimator = ["genai-prices>=0.2.4,<0.3; python_version>='3.11'"]
+
 bidi = [
     "aws_sdk_bedrock_runtime[awscrt]>=0.11.0,<0.12.0; python_version>='3.12'",
     "awscrt==0.32.2; python_version>='3.12'",
@@ -101,14 +104,14 @@ bidi-pyaudio = ["pyaudio>=0.2.0,<0.3.0"]
 bidi-all = ["strands-agents[a2a,bidi,bidi-aec,bidi-google,bidi-io,bidi-openai,docs,otel]"]
 
 all = [
-    "strands-agents[a2a,anthropic,bidi-all,cedar,docs,gemini,litellm,llamaapi,mistral,ollama,openai,writer,sagemaker,otel,web-fetch]"
+    "strands-agents[a2a,anthropic,bidi-all,cedar,cost-estimator,docs,gemini,litellm,llamaapi,mistral,ollama,openai,writer,sagemaker,otel,web-fetch]"
 ]
 
 dev = [
     "commitizen>=4.4.0,<5.0.0",
     "hatch>=1.0.0,<2.0.0",
     "moto>=5.1.0,<6.0.0",
-    "mypy>=1.15.0,<2.4.0",
+    "mypy>=2.0.0,<3.0.0",
     "pre-commit>=3.2.0,<4.7.0",
     "pytest>=9.0.0,<10.0.0",
     "pytest-cov>=7.0.0,<8.0.0",
@@ -148,8 +151,7 @@ raw-options.git_describe_command = ["git", "describe", "--dirty", "--tags", "--l
 installer = "uv"
 features = ["all"]
 dependencies = [
-  # mypy 2.4 has inference failures for async hooks and reversed message lists.
-  "mypy>=1.15.0,<2.4.0",
+  "mypy>=2.0.0,<3.0.0",
   "ruff>=0.16.0,<0.18.0",
   # Include required package dependencies for mypy
   "boto3-stubs[bedrock-agent,bedrock-agent-runtime,s3]>=1.26.0,<2.0.0",
@@ -273,6 +275,7 @@ module = [
     "aws_sdk_bedrock_runtime.*",
     "cedarpy",
     "cedar_mcp_schema_generator",
+    "genai_prices.*",
     "smithy_aws_core.*",
     "smithy_core.*",
     "smithy_http.*",

@@ -3,6 +3,7 @@ import { getCollection } from 'astro:content'
 import fs from 'node:fs'
 import path from 'node:path'
 import Sitemapper from 'sitemapper'
+import { INDEXABLE_STANDALONE_PAGES } from '../src/config/standalone-pages'
 import { resolveRedirectFromUrl } from '../src/util/redirect'
 import { buildRedirectFromMap } from '../src/util/redirect.build'
 import { tagToSlug, getAllTags, getPublishedPosts } from '../src/util/blog'
@@ -50,6 +51,7 @@ async function buildValidSlugs(): Promise<Set<string>> {
 
   return new Set([
     ...docs.map((doc) => doc.id),
+    ...INDEXABLE_STANDALONE_PAGES.map((page) => page.slug),
     'blog',
     ...posts.map((post) => `blog/${post.id}`),
     ...authors.map((author) => `blog/authors/${author.id}`),
@@ -176,14 +178,14 @@ describe('Known Routes', () => {
     const validIds = new Set(docs.map((doc) => doc.id))
 
     // Non-docs Astro pages that are valid redirect targets (not in the docs collection)
-    const validNonDocsPages = new Set(['integrations', 'examples'])
+    const validNonDocsPages = new Set(INDEXABLE_STANDALONE_PAGES.map((page) => page.slug))
 
     // Verify each allowlisted non-docs page exists as an Astro file
     const missingPages: string[] = []
-    for (const slug of validNonDocsPages) {
-      const astroPagePath = path.resolve(`src/pages/${slug}.astro`)
+    for (const page of INDEXABLE_STANDALONE_PAGES) {
+      const astroPagePath = path.resolve(page.pageFile)
       if (!fs.existsSync(astroPagePath)) {
-        missingPages.push(slug)
+        missingPages.push(page.slug)
       }
     }
 

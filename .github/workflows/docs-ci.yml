@@ -24,9 +24,8 @@ jobs:
       - name: Checkout samples
         uses: actions/checkout@v7
         with:
-          # Temporary curated-catalog baseline from samples#342; move to its merged SHA after landing.
           repository: strands-agents/samples
-          ref: 220e21c0209773a5425f0e824e0930e03600da66
+          ref: main
           path: samples-source
           persist-credentials: false
 
