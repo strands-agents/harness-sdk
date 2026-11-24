@@ -104,6 +104,18 @@ If the invocation had already finished its turn and was only waiting for backgro
 tasks, it returns that turn's result, and the cancelled task results are delivered on
 the next invocation.
 
+## Choose the management tool name
+
+To keep a stable management tool name across harness upgrades, set
+<Syntax py="background_tasks.manage_tool_name" ts="backgroundTasks.manageToolName" />
+explicitly. For example, set it to `manage_background_task` to use that name for
+listing, inspecting, and cancelling tasks.
+
+The selected name also appears in completion messages and conversation history.
+Use the same name in hooks and tool-choice settings. When resuming a saved session,
+keep the name used in its messages: set it to `strands_manage_background_task` for
+sessions saved under that name.
+
 ## The CLI
 
 The Strands harness CLI runs on the TypeScript library, so `subagent` runs in the
