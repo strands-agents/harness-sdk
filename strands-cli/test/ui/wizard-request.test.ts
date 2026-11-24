@@ -84,7 +84,7 @@ describe('defaultAnswers', () => {
         {
           key: 'q',
           title: 'Q',
-          fields: [blocked, objective, ...budget, { kind: 'text', key: 'notes', label: 'notes' }],
+          fields: [blocked, objective, ...budget, { kind: 'number', key: 'notes', label: 'notes' }],
         },
       ])
     ).toEqual({ tune: ['instructions'], objective: 'mean', iterations: 4, workers: 4, notes: '' })
@@ -231,14 +231,14 @@ describe('WizardRequestPanel', () => {
     expect(screen()).toContain('instructions')
   })
 
-  it('shouldTakeWhatIsTypedOnATextRowAsTheStartOfItsAnswer', async () => {
-    const { asked, screen, press } = await panel(question([{ kind: 'text', key: 'notes', label: 'notes' }]))
+  it('shouldTakeWhatIsTypedOnANumberRowAsTheStartOfItsAnswer', async () => {
+    const { asked, screen, press } = await panel(question([{ kind: 'number', key: 'notes', label: 'notes' }]))
 
-    await press(...'1 step')
-    expect(screen()).toContain('1 step▌')
+    await press(...'12')
+    expect(screen()).toContain('12▌')
     await press(ENTER, DOWN, ENTER)
 
-    await expect(asked).resolves.toEqual({ notes: '1 step' })
+    await expect(asked).resolves.toEqual({ notes: 12 })
   })
 
   it('shouldStayIdleWithoutACursorWhileTheChatInputHoldsTheKeyboard', async () => {
@@ -489,7 +489,7 @@ describe('the panel around one question', () => {
 
 describe('a real ask call with its question on screen', () => {
   const asked: WizardRequestSpec = {
-    ...question([{ kind: 'text', key: 'request', label: 'request' }]),
+    ...question([{ kind: 'number', key: 'request', label: 'request' }]),
     question: 'Describe the optimization you want, or answer "step by step".',
   }
   const call = (toolUseId: string, name: string, input = {}): never =>

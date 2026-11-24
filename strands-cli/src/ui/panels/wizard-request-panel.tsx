@@ -24,7 +24,7 @@ import {
   type WizardAnswer,
   type WizardBroker,
   type WizardDiffSpec,
-  type WizardFieldSpec,
+  type WizardNumberSpec,
   type WizardOption,
   type WizardRequest,
   type WizardSelectSpec,
@@ -89,37 +89,23 @@ const selectFields = (
   }))
 }
 
-const toField = (
-  spec: Exclude<WizardFieldSpec, WizardSelectSpec | WizardDiffSpec>,
+const numberField = (
+  spec: WizardNumberSpec,
   answers: Answers,
   update: (key: string, value: WizardAnswer) => void
 ): WizardField => {
-  if (spec.kind === 'number') {
-    const value = answers[spec.key]
-    const shown = typeof value === 'number' ? String(value) : ''
-    return {
-      kind: 'text',
-      key: spec.key,
-      label: spec.label,
-      display: [shown || 'none', spec.detail].filter(Boolean).join('   '),
-      hint: 'Enter edit',
-      edit: {
-        value: shown,
-        numeric: true,
-        save: (text) => update(spec.key, text ? Number(text) : ''),
-      },
-    }
-  }
-  const value = typeof answers[spec.key] === 'string' ? (answers[spec.key] as string) : ''
+  const value = answers[spec.key]
+  const shown = typeof value === 'number' ? String(value) : ''
   return {
     kind: 'text',
     key: spec.key,
     label: spec.label,
-    display: value.trim() || 'none',
+    display: [shown || 'none', spec.detail].filter(Boolean).join('   '),
     hint: 'Enter edit',
     edit: {
-      value,
-      save: (text) => update(spec.key, text),
+      value: shown,
+      numeric: true,
+      save: (text) => update(spec.key, text ? Number(text) : ''),
     },
   }
 }
@@ -210,7 +196,7 @@ const toStep = (
       if (field.kind === 'diff') return []
       return field.kind === 'select'
         ? selectFields(field, answers, live, update, typed)
-        : [toField(field, answers, update)]
+        : [numberField(field, answers, update)]
     }),
     ...(change
       ? {

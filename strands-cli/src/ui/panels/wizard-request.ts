@@ -22,13 +22,6 @@ export interface WizardSelectSpec {
   readonly selected?: readonly string[]
 }
 
-interface WizardTextSpec {
-  readonly kind: 'text'
-  readonly key: string
-  readonly label: string
-  readonly value?: string
-}
-
 /** A whole number typed in its own row; finishing waits until it fits min and max. */
 export interface WizardNumberSpec {
   readonly kind: 'number'
@@ -49,7 +42,7 @@ export interface WizardDiffSpec {
   readonly diff: ChatDiffPreview
 }
 
-export type WizardFieldSpec = WizardTextSpec | WizardSelectSpec | WizardNumberSpec | WizardDiffSpec
+export type WizardFieldSpec = WizardSelectSpec | WizardNumberSpec | WizardDiffSpec
 
 export interface WizardStepSpec {
   readonly key: string
@@ -102,9 +95,7 @@ const cleanField = (field: WizardFieldSpec): WizardFieldSpec => {
     }
   const label = sanitizeTerminalText(field.label)
   if (field.kind === 'diff') return { ...field, label, path: sanitizeTerminalText(field.path) }
-  if (field.kind === 'number')
-    return { ...field, label, ...(field.detail === undefined ? {} : { detail: sanitizeTerminalText(field.detail) }) }
-  return { ...field, label }
+  return { ...field, label, ...(field.detail === undefined ? {} : { detail: sanitizeTerminalText(field.detail) }) }
 }
 
 const cleanRequest = (request: WizardRequest): WizardRequest => ({

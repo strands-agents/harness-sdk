@@ -1463,7 +1463,7 @@ describe('TEMPORARY dev sessions', () => {
       void sessions.ask.ask({
         name: 'experiment',
         question: 'Which experiment?',
-        steps: [{ key: 'one', title: 'One', fields: [{ kind: 'text', key: 'answer', label: 'answer' }] }],
+        steps: [{ key: 'one', title: 'One', fields: [{ kind: 'number', key: 'answer', label: 'answer' }] }],
       })
 
       expect(sessions.ask.pending()?.question).toBe('Which experiment?')
