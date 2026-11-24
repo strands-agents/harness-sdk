@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 
 import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
-import type { CallExpression, Node, PropertyName, SourceFile } from 'typescript'
+import type { CallExpression, Node, ObjectLiteralExpression, PropertyName, SourceFile } from 'typescript'
 
 import type { ProfileEffort } from '../config/store.js'
 import { profileEffort, resolveModelTarget } from '../model/selection.js'
@@ -79,7 +79,7 @@ export const indentOf = (source: string, offset: number): string => {
   return /^[ \t]*/u.exec(source.slice(lineStart))![0]
 }
 
-export const insertion =
+const insertion =
   (
     source: string,
     { open, close }: { open: number; close: number },
@@ -99,6 +99,21 @@ export const insertion =
     if (trailingComma) return at(close, each('', ', '))
     return at(last.end, each(`,\n${indent}`, ''))
   }
+
+export const objectInsertion = (
+  source: string,
+  file: SourceFile,
+  object: ObjectLiteralExpression
+): ((entries: readonly string[]) => TextEdit) => {
+  const last = object.properties.at(-1)
+  return insertion(
+    source,
+    { open: object.getStart(file), close: object.getEnd() - 1 },
+    last && { start: last.getStart(file), end: last.getEnd() },
+    object.properties.hasTrailingComma,
+    ' '
+  )
+}
 
 export const pythonInsertion = (
   source: string,
@@ -274,18 +289,7 @@ const typescriptCall = async (source: string, entry: string): Promise<OptionCall
       ...(initializer ? typescriptShape(initializer, file, ts) : CODE),
     })
   }
-  const last = object.properties.at(-1)
-  return {
-    values,
-    extensible: true,
-    insert: insertion(
-      source,
-      { open: object.getStart(file), close: object.getEnd() - 1 },
-      last && { start: last.getStart(file), end: last.getEnd() },
-      object.properties.hasTrailingComma,
-      ' '
-    ),
-  }
+  return { values, extensible: true, insert: objectInsertion(source, file, object) }
 }
 
 const PYTHON_PARSER = `
@@ -301,7 +305,10 @@ try:
     tree = ast.parse(source)
 except SyntaxError as error:
     print(json.dumps({'syntax': error.lineno or 0}))
-    sys.exit(0)`
+    sys.exit(0)
+def name_of(node):
+    return node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+harness_calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and name_of(node.func) == 'create_harness']`
 
 const PYTHON_LOCATOR = `
 def text(node):
@@ -323,12 +330,7 @@ def describe(node):
         return {'kind': 'map', 'entries': [dict(start=span(key)['start'], end=span(value)['end'], key=key.value) for key, value in zip(node.keys, node.values)]}
     return {'kind': 'code'}
 calls = []
-for node in ast.walk(tree):
-    if not isinstance(node, ast.Call):
-        continue
-    name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else None
-    if name != 'create_harness':
-        continue
+for node in harness_calls:
     keywords = []
     for keyword in node.keywords:
         keywords.append(dict(span(keyword.value), name=keyword.arg, literal=text(keyword.value), value=describe(keyword.value)))
@@ -425,9 +427,6 @@ const pythonCall = async (source: string, entry: string, interpreter: string): P
   }
 }
 
-const optionEntry = (key: OptionKey, value: string, python: boolean): string =>
-  python ? `${key}=${sourceString(value, true)}` : `${key}: ${sourceString(value, false)}`
-
 const setOptions = async (
   source: string,
   call: OptionCall,
@@ -454,7 +453,7 @@ const setOptions = async (
       throw new AgentOptionsNotEditable(
         `${entry} passes create_harness options that strands dev cannot extend. Add ${key}="${value}" there yourself.`
       )
-    else insertions.push(optionEntry(key, written, python))
+    else insertions.push(`${key}${python ? '=' : ': '}${sourceString(written, python)}`)
   }
   if (insertions.length) edits.push(call.insert(insertions))
   return applyEdits(source, edits)
