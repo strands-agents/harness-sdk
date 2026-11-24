@@ -8,8 +8,8 @@ import threading
 import unittest.mock
 from typing import Any
 
+from strands._context_manager.archive import Archive
 from strands._context_manager.placeholder import is_offloaded
-from strands._context_manager.stash import Stash
 from strands._context_manager.types import ContextState
 from strands.models._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
 from strands.types.content import ContentBlock, Message, Messages
@@ -91,7 +91,7 @@ def make_agent(messages: Messages | None = None, model: Any = None) -> unittest.
 def make_context(
     messages: Messages,
     *,
-    stash: Stash | None = None,
+    archive: Archive | None = None,
     utilization: float = 0.5,
     overflow: bool = False,
     model: Any = None,
@@ -101,5 +101,5 @@ def make_context(
         agent=make_agent(messages, model),
         utilization=utilization,
         overflow=overflow,
-        stash=stash,
+        archive=archive,
     )

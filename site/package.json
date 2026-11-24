@@ -84,6 +84,7 @@
     "remark-stringify": "^11.0.0",
     "satteri": "^0.10.5",
     "sitemapper": "^4.1.4",
+    "starlight-image-zoom": "^0.16.3",
     "tsx": "^4.21.0",
     "typedoc": "^0.28.20",
     "typedoc-plugin-markdown": "^4.14.1",

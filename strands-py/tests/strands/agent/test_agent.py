@@ -4125,6 +4125,52 @@ async def test_checkpoint_resume_schema_mismatch_raises_checkpoint_exception() -
         await agent.invoke_async(prompt)
 
 
+@pytest.mark.parametrize(
+    ("opt_in", "expected_input", "expected_output"),
+    [
+        # Default: the agent span repeats its calls' usage, so summing every span counts each call twice.
+        ("", 600, 60),
+        ("gen_ai_usage_on_model_spans_only", 300, 30),
+    ],
+)
+def test_trace_usage_sum_with_usage_on_model_spans_only(monkeypatch, opt_in, expected_input, expected_output):
+    """Summing gen_ai.usage.* over every span, as Opik or Datadog do, matches the real usage once opted in."""
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", opt_in)
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = Tracer()
+    tracer.tracer_provider = provider
+    tracer.tracer = provider.get_tracer(tracer.service_name)
+    monkeypatch.setattr(strands.telemetry.tracer, "_tracer_instance", tracer)
+
+    @strands.tool
+    def add(a: int, b: int) -> int:
+        """Add two numbers."""
+        return a + b
+
+    model = MockedModelProvider(
+        [
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "t1", "name": "add", "input": {"a": 1, "b": 2}}}],
+            },
+            {"role": "assistant", "content": [{"text": "3"}]},
+        ],
+        usages=[
+            {"inputTokens": 100, "outputTokens": 10, "totalTokens": 110},
+            {"inputTokens": 200, "outputTokens": 20, "totalTokens": 220},
+        ],
+    )
+    Agent(model=model, tools=[add], callback_handler=None)("add 1 and 2")
+
+    provider.force_flush()
+    spans = exporter.get_finished_spans()
+    assert len([span for span in spans if span.name == "chat"]) == 2
+    assert sum(span.attributes.get("gen_ai.usage.input_tokens", 0) for span in spans) == expected_input
+    assert sum(span.attributes.get("gen_ai.usage.output_tokens", 0) for span in spans) == expected_output
+
+
 @pytest.mark.asyncio
 async def test_agent_span_ends_on_cancellation():
     """Root agent span is exported when the invocation is cancelled via asyncio timeout."""

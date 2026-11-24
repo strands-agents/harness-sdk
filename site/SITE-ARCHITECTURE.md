@@ -278,6 +278,14 @@ from a local product checkout instead of the lock, set its source environment va
 EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box npm run dev
 ```
 
+### 8. Image Zoom (`starlight-image-zoom`)
+
+**What it does:** The [starlight-image-zoom](https://github.com/HiDeoo/starlight-image-zoom) Starlight plugin wraps every Markdown image in a zoom control, so readers can click a shrunk screenshot to see it at full size. Add `data-zoom-off` to an `<img>` to opt out; images inside links are never zoomable.
+
+**Site wiring:** The plugin normally installs its own `MarkdownContent` override, but it skips that when one already exists. Our `src/components/overrides/MarkdownContent.astro` therefore renders the plugin's `<ImageZoom />` element itself. The plugin also adds `rehype-raw` to the Markdown pipeline so it can see images written as raw HTML.
+
+**Limits:** It only wraps `<img>` and `<picture>` in Markdown. `<Diagram>` SVGs are inlined by a component and aren't zoomable.
+
 ## Configuration (`astro.config.mjs`)
 
 The main config ties everything together:
@@ -469,10 +477,12 @@ Replaces the default anchor element to enable MkDocs-style relative linking. Res
 These override default Starlight components:
 
 - **`Head.astro`**: Adds Mermaid diagram support, loads `SiteScripts` (Shortbread + WebSDK), and emits the page JSON-LD `@graph` built by `src/util/structured-data.ts`. Non-docs pages add their own nodes (blog post, changelog release, integrations list, sample guide) by setting `Astro.locals.structuredData` in frontmatter.
+- **`EditLink.astro`**: Renders nothing, so Starlight's footer has no "Edit page" link; the edit link is in `PageActions` beside the title.
 - **`Header.astro`**: Custom header with navigation tabs and theme-aware logos (see [Header Navigation](#header-navigation) below).
 - **`Hero.astro`**: Suppresses the Starlight hero on `/blog/` paths. Blog pages pass a dummy `hero: { actions: [] }` to collapse Starlight's two-panel layout, and this override ensures that dummy hero has no visual output.
 - **`MarkdownContent.astro`**: Injects the custom frontmatter banners (experimental, external preview, community, languages) at the top of page content.
 - **`PageFrame.astro`**: Extends Starlight's default `PageFrame` to add a full-width site footer containing the `Copyright` component. The footer spans the content area (respecting sidebar offset) with `--sl-color-bg-nav` background to match the header.
+- **`PageTitle.astro`**: Renders the H1 (or the product hub hero) with `PageActions` beside it: small "View as Markdown" and "Edit on GitHub" links that sit next to the title when it fits and wrap below it otherwise. The Markdown link shows only on pages with an `/index.md` twin, decided by `src/util/markdown-twin.ts`, which `Head.astro` also uses for its `rel="alternate"` link.
 - **`Sidebar.astro`** and **`SidebarSublist.astro`**: Custom sidebar navigation that mimics MkDocs Material theme's `navigation.sections` behavior.
 
 #### Sidebar Navigation Style

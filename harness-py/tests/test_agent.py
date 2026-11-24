@@ -9,7 +9,7 @@ import boto3
 import pytest
 from strands import Agent, BackgroundTasksConfig, tool
 from strands.agent.conversation_manager import NullConversationManager
-from strands.experimental.context_manager import ContextManager
+from strands.context_manager import ContextManager
 from strands.hooks import BeforeModelCallEvent, BeforeToolCallEvent, HookProvider, HookRegistry
 from strands.memory import MemoryManager
 from strands.models import BedrockModel, CacheConfig, Model, ModelRouter
@@ -74,7 +74,7 @@ def read_large() -> str:
 
 
 class _RetrievingModel(Model):
-    """Calls ``read_large``, then ``retrieve_context`` on the stash reference it gets back, recording each
+    """Calls ``read_large``, then ``retrieve_context`` on the archive reference it gets back, recording each
     tool result."""
 
     def __init__(self) -> None:
@@ -736,7 +736,7 @@ def test_context_manager_true_is_rejected_by_the_sdk():
 
 
 def test_context_manager_config_builds_an_sdk_context_manager():
-    agent = create_harness(context_manager={"stash": False})
+    agent = create_harness(context_manager={"archive": False})
     assert isinstance(agent.conversation_manager, NullConversationManager)
     assert any(isinstance(plugin, ContextManager) for plugin in agent._plugin_registry._plugins.values())
 
@@ -930,11 +930,11 @@ def test_offloaded_tool_result_returned_in_full_on_retrieval(tmp_path):
     assert len(model.seen_tool_results) == 2
     assert model.seen_tool_results[0].startswith("[Truncated:")
     assert model.seen_tool_results[1] == _LARGE_RESULT
-    assert agent.context_manager.stash_is_durable is True
+    assert agent.context_manager.archive_is_durable is True
     agent_scope = Path("scopes", "agent", agent.agent_id)
     snapshot_path = tmp_path / "session" / "retrieval" / agent_scope / "snapshots" / "snapshot_latest.json"
     snapshot = json.loads(snapshot_path.read_text())
-    assert snapshot["data"]["stash"] == {"location": "external", "storage_type": "LocalFileStorage"}
+    assert snapshot["data"]["archive"] == {"location": "external", "storage_type": "LocalFileStorage"}
     assert (tmp_path / "context" / "retrieval" / agent_scope / "tooluse-0_0").is_file()
 
 
@@ -954,23 +954,23 @@ def test_offloaded_tool_result_returned_in_full_on_retrieval(tmp_path):
         ),
     ],
 )
-def test_stash_in_memory_when_harness_does_not_build_the_session(session_kwargs, tmp_path):
+def test_archive_in_memory_when_harness_does_not_build_the_session(session_kwargs, tmp_path):
     agent = create_harness(**session_kwargs(str(tmp_path)))
     assert agent.storage is None
-    assert agent.context_manager.stash_is_durable is False
+    assert agent.context_manager.archive_is_durable is False
 
 
-def test_explicit_storage_backs_the_stash(tmp_path):
+def test_explicit_storage_backs_the_archive(tmp_path):
     storage = InMemoryStorage()
     agent = create_harness(storage=storage, session={"dir": str(tmp_path)})
     assert agent.storage is storage
-    assert agent.context_manager.stash_is_durable is False
+    assert agent.context_manager.archive_is_durable is False
 
 
 def test_storage_none_falls_back_to_the_session_storage(tmp_path):
     agent = create_harness(storage=None, session={"dir": str(tmp_path)})
     assert isinstance(agent.storage, LocalFileStorage)
-    assert agent.context_manager.stash_is_durable is True
+    assert agent.context_manager.archive_is_durable is True
 
 
 def test_skills_loaded_from_dir(tmp_path):

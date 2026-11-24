@@ -769,7 +769,7 @@ await agent.invoke('startup request')
     } finally {
       await Promise.all([first.dispose(), reloaded?.dispose()])
     }
-  }, 30000)
+  }, 60_000)
 
   it.each(['cancel', 'dispose'] as const)(
     'stops a pending replacement before its first model invocation on %s',

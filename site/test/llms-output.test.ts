@@ -81,11 +81,12 @@ describe('llms.txt builder', () => {
     expect(content).not.toContain('## Additional documentation')
   })
 
-  it('links the standalone Box landing page', () => {
+  it('links the standalone product landing pages', () => {
     const content = buildLlmsTxt([], [], [], [], [])
 
     expect(content).toContain('## Product landing pages')
     expect(occurrences(content, '/box/index.md')).toBe(1)
+    expect(occurrences(content, '/decider/index.md')).toBe(1)
   })
 })
 
@@ -102,15 +103,19 @@ describe('llms.txt output', () => {
     expect(notFound.length).toBeGreaterThan(20)
   })
 
-  it('publishes the Box landing page across machine-readable indexes', () => {
+  it('publishes product landing pages across machine-readable indexes', () => {
     const homepage = readFileSync(new URL('../dist/index.md', import.meta.url), 'utf8')
     const llms = readFileSync(new URL('../dist/llms.txt', import.meta.url), 'utf8')
     const llmsFull = readFileSync(new URL('../dist/llms-full.txt', import.meta.url), 'utf8')
 
     expect(homepage).toContain('/box/index.md')
+    expect(homepage).toContain('/decider/index.md')
     expect(llms).toContain('/box/index.md')
+    expect(llms).toContain('/decider/index.md')
     expect(llmsFull).toContain('## Strands Box')
+    expect(llmsFull).toContain('## Strands Decider')
     expect(llmsFull).toMatch(/Source: .*\/box\/index\.md/)
+    expect(llmsFull).toMatch(/Source: .*\/decider\/index\.md/)
   })
 
   it('keeps external FAQ sources valid in llms-full.txt', () => {
