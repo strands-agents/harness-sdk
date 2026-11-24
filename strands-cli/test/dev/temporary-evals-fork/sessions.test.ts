@@ -2641,10 +2641,13 @@ describe('TEMPORARY dev sessions on open', () => {
         ])
         return exit
       })
-      const { workspace, sessions, notices } = await plannedSessions({ spawnOptimizer: optimizing })
+      // The plan reads the agent with the project's Python, so the real interpreter is in place before the plan.
+      const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: optimizing })
       const projectPython = temporaryVenvPython(join(workspace.root, '.venv'))
       await rm(projectPython)
       await symlink(pythonExecutable, projectPython)
+      sessions.optimize.plan(await savedExperiment(workspace, CASES))
+      await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
       sessions.optimize.toggleKnob('effort')
       sessions.optimize.start()
       await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
