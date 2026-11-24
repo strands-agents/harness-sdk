@@ -1090,7 +1090,7 @@ describe('HarnessPicker', () => {
           report = found
           searchSignal = signal
           return new Promise((resolve) => {
-            finish = () => resolve({ harnesses: [], skipped: [] })
+            finish = () => resolve({ harnesses: [] })
           })
         },
       },
@@ -1116,8 +1116,8 @@ describe('HarnessPicker', () => {
     const edited = { ...harness, name: 'Edited harness' }
     const downloaded = { ...harness, name: 'Downloaded harness', entrypoint: '/downloads/agent.ts', root: '/downloads' }
     const results = [
-      { harnesses: [harness, { ...harness, entrypoint: '/old/agent.py', root: '/old' }], skipped: [] },
-      { harnesses: [edited, downloaded], skipped: [] },
+      { harnesses: [harness, { ...harness, entrypoint: '/old/agent.py', root: '/old' }] },
+      { harnesses: [edited, downloaded] },
     ]
     const search = vi.fn(async () => results.shift()!)
     const running = chooseHarness(
@@ -1146,7 +1146,7 @@ describe('HarnessPicker', () => {
         harnesses: [],
         search: (found, signal) =>
           new Promise((resolve) => {
-            searches.push({ report: found, signal, finish: () => resolve({ harnesses: [], skipped: [] }) })
+            searches.push({ report: found, signal, finish: () => resolve({ harnesses: [] }) })
           }),
       },
       { signal: new AbortController().signal, show },

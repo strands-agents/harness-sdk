@@ -1,7 +1,7 @@
 import { constants, type Stats } from 'node:fs'
 import { lstat, open, readdir, realpath } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 import ts from 'typescript'
 
@@ -25,15 +25,9 @@ export interface DiscoveredHarness {
   preparationStatus?: 'Needs setup' | 'Manual setup' | 'Check setup'
 }
 
-export interface SkippedHarness {
-  entrypoint: string
-  expected: string
-}
-
 interface HarnessSearch {
   signal?: AbortSignal
   found?(harness: DiscoveredHarness): void
-  skipped?(source: SkippedHarness): void
 }
 
 const SOURCE_EXTENSION = /\.(?:ts|mts|js|mjs|py)$/u
@@ -48,21 +42,13 @@ const IGNORED_DIRECTORIES = new Set([
   'build',
   '.strands',
 ])
-const EXPECTED_SHAPE = {
-  typescript: 'export const agent = await createHarness(...)',
-  python: 'agent = create_harness(...)',
-} as const
 const PYTHON_FACTORY = 'create_agent'
-const TEST_FOLDERS = new Set(['test', 'tests', '__tests__', 'tests_integ', 'spec', 'specs'])
-const TEST_FILE = /^(?:test_.+\.py|.+_test\.py|conftest\.py|.+\.(?:test|spec)\.[cm]?[jt]sx?)$/u
-const AGENT_FILE = /agent/iu
 
 interface DiscoveryState {
   harnesses: Map<string, DiscoveredHarness>
   warnings: Set<string>
   visited: Set<string>
   vendored: Set<string>
-  roots: readonly string[]
   search: HarnessSearch
 }
 
@@ -75,7 +61,6 @@ export async function discoverHarnesses(
     warnings: new Set(),
     visited: new Set(),
     vendored: new Set(),
-    roots: [],
     search,
   }
   const paths = new Set<string>()
@@ -83,7 +68,6 @@ export async function discoverHarnesses(
     if (!root.trim()) warn(state, root, new Error('Discovery root must not be empty.'))
     else paths.add(resolve(expandHome(root)))
   }
-  state.roots = [...paths]
   for (const path of [...paths].sort()) await visit(path, state, true)
   return {
     harnesses: [...state.harnesses.values()]
@@ -155,10 +139,8 @@ async function scanSource(path: string, details: Stats, state: DiscoveryState): 
   if (state.harnesses.has(path)) return
   const source = await readSource(path, details)
   const language = path.endsWith('.py') ? 'python' : 'typescript'
-  const inspection = language === 'python' ? pythonInspection(path, source) : typescriptInspection(path, source)
-  if (inspection.kind === 'unloadable' && !isTestSource(path, state.roots))
-    state.search.skipped?.({ entrypoint: path, expected: EXPECTED_SHAPE[language] })
-  if (inspection.kind !== 'harness') return
+  const inspection = language === 'python' ? pythonInspection(source) : typescriptInspection(path, source)
+  if (!inspection) return
   await guardProjectMetadata(path)
   const { root } = importAgentProject(path)
   if (!containsPath(root, path)) throw new Error('Imported project root must contain its harness entrypoint.')
@@ -217,16 +199,8 @@ async function readSource(path: string, expected: Stats): Promise<string> {
   }
 }
 
-type SourceInspection = { kind: 'harness'; name: string | undefined } | { kind: 'unloadable' } | { kind: 'unrelated' }
-
-const isTestSource = (path: string, roots: readonly string[]): boolean => {
-  const root = roots.find((candidate) => containsPath(candidate, path)) ?? dirname(path)
-  const parts = relative(root, path).split(sep)
-  return TEST_FILE.test(parts.at(-1) ?? '') || parts.slice(0, -1).some((part) => TEST_FOLDERS.has(part))
-}
-
-const missedAgent = (path: string, constructsAtTopLevel: boolean): SourceInspection =>
-  constructsAtTopLevel || AGENT_FILE.test(basename(path)) ? { kind: 'unloadable' } : { kind: 'unrelated' }
+/** The harness that a source file exports as `agent`; undefined when it exports none. */
+type SourceInspection = { name: string | undefined } | undefined
 
 type ConstructorTest = (callee: ts.Expression) => boolean
 
@@ -235,12 +209,11 @@ const typescriptInspection = (path: string, source: string): SourceInspection =>
   const diagnostics = (file as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics
   if (diagnostics.length) throw new Error(ts.flattenDiagnosticMessageText(diagnostics[0]!.messageText, '\n'))
   const constructs = typescriptConstructor(file)
-  if (!constructs || !callsTypescriptConstructor(file, constructs)) return { kind: 'unrelated' }
+  if (!constructs || !callsTypescriptConstructor(file, constructs)) return undefined
   const call = typescriptAgentCall(file)
-  if (call && (constructs(call.expression) || callsLocalFunction(file, call.expression))) {
-    return { kind: 'harness', name: typescriptName(call.arguments[0]) }
-  }
-  return missedAgent(path, callsTypescriptConstructorOutsideFunctions(file, constructs))
+  return call && (constructs(call.expression) || callsLocalFunction(file, call.expression))
+    ? { name: typescriptName(call.arguments[0]) }
+    : undefined
 }
 
 const typescriptConstructor = (file: ts.SourceFile): ConstructorTest | undefined => {
@@ -276,13 +249,6 @@ const typescriptConstructor = (file: ts.SourceFile): ConstructorTest | undefined
 const callsTypescriptConstructor = (node: ts.Node, constructs: ConstructorTest): boolean =>
   (ts.isCallExpression(node) && constructs(node.expression)) ||
   (ts.forEachChild(node, (child) => callsTypescriptConstructor(child, constructs) || undefined) ?? false)
-
-const callsTypescriptConstructorOutsideFunctions = (node: ts.Node, constructs: ConstructorTest): boolean =>
-  !ts.isFunctionLike(node) &&
-  !ts.isClassLike(node) &&
-  ((ts.isCallExpression(node) && constructs(node.expression)) ||
-    (ts.forEachChild(node, (child) => callsTypescriptConstructorOutsideFunctions(child, constructs) || undefined) ??
-      false))
 
 const typescriptAgentCall = (file: ts.SourceFile): ts.CallExpression | undefined => {
   const statement = file.statements.find(
@@ -340,7 +306,7 @@ interface PythonStatement {
   tokens: PythonToken[]
 }
 
-const pythonInspection = (path: string, source: string): SourceInspection => {
+const pythonInspection = (source: string): SourceInspection => {
   const statements = pythonStatements(source)
   const topLevel = statements.filter((statement) => statement.indent === 0)
   const constructors = new Set<string>()
@@ -353,18 +319,16 @@ const pythonInspection = (path: string, source: string): SourceInspection => {
       const callee = pythonCalleeAt(tokens, index)
       return callee !== undefined && constructs(callee)
     })
-  if (!statements.some(callsConstructor)) return { kind: 'unrelated' }
+  if (!statements.some(callsConstructor)) return undefined
   const functions = topLevel.flatMap(pythonFunction)
   const definesFactory = functions.some(({ name }) => name === PYTHON_FACTORY)
   const callsFactory = (callee: readonly string[]): boolean =>
     definesFactory && callee.length === 1 && functions.some(({ name, coroutine }) => !coroutine && name === callee[0])
   for (const { tokens } of topLevel) {
     const call = pythonAgentCall(tokens)
-    if (call && (constructs(call.callee) || callsFactory(call.callee))) {
-      return { kind: 'harness', name: pythonName(call.argumentsList) }
-    }
+    if (call && (constructs(call.callee) || callsFactory(call.callee))) return { name: pythonName(call.argumentsList) }
   }
-  return missedAgent(path, topLevel.some(callsConstructor))
+  return undefined
 }
 
 const pythonAgentCall = (

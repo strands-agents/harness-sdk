@@ -5,7 +5,7 @@ import type { CliConfigSnapshot } from '../config/store.js'
 import { expandHome, strandsUserPath } from '../paths.js'
 import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
 import { planProjectPreparation } from '../project/preparation-plan.js'
-import { discoverHarnesses, type DiscoveredHarness, type SkippedHarness } from './search.js'
+import { discoverHarnesses, type DiscoveredHarness } from './search.js'
 import { missingAgentPath, readDevWorkspace, WORKSPACE_FOLDER, type DevWorkspace } from './workspace.js'
 
 export interface BaseHarnessSelection {
@@ -14,7 +14,6 @@ export interface BaseHarnessSelection {
   workspace: string
   excludedEntrypoints: readonly string[]
   holds(workspace: DevWorkspace): boolean
-  runs(entrypoint: string): boolean
 }
 
 export const harnessFolder = (source: string, project: ImportedAgentProject): string =>
@@ -50,7 +49,6 @@ export const baseHarnessSelection = async (
     workspace,
     excludedEntrypoints: [...(snapshot.agentProject ? [source] : []), ...(existing ? [existing.entrypoint] : [])],
     holds,
-    runs: (entrypoint) => snapshot.agentProject !== undefined && sameFile(entrypoint, source),
   }
 }
 
@@ -75,7 +73,6 @@ const withPreparationStatus = async (harness: DiscoveredHarness): Promise<Discov
 
 export interface LocalHarnessDiscovery {
   harnesses: DiscoveredHarness[]
-  skipped: SkippedHarness[]
 }
 
 const byEntrypoint = (left: DiscoveredHarness, right: DiscoveredHarness): number =>
@@ -89,7 +86,6 @@ export const discoverLocalHarnesses = async (
 ): Promise<LocalHarnessDiscovery> => {
   const excluded = new Set(excludedEntrypoints.map(canonicalPath))
   const kept = new Map<string, DiscoveredHarness>()
-  const skipped: SkippedHarness[] = []
   let reported = Promise.resolve()
   const report = (harness: DiscoveredHarness): void => {
     reported = reported.then(async () => {
@@ -104,9 +100,8 @@ export const discoverLocalHarnesses = async (
   const discovery = await discoverHarnesses([cwd, ...searchRoots.map((path) => resolve(cwd, expandHome(path)))], {
     ...(search.signal ? { signal: search.signal } : {}),
     found: report,
-    skipped: (source) => skipped.push(source),
   })
   discovery.harnesses.forEach(report)
   await reported
-  return { harnesses: [...kept.values()].sort(byEntrypoint), skipped }
+  return { harnesses: [...kept.values()].sort(byEntrypoint) }
 }

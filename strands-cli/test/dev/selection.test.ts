@@ -114,20 +114,4 @@ describe('local harness search', () => {
     expect(reported).toEqual([`${kept} Needs setup`])
     expect(result.harnesses.map(({ entrypoint }) => entrypoint)).toEqual([kept])
   })
-
-  it('shouldReturnTheSkippedSourcesWhenAFileCallsCreateHarnessInAShapeThatDoesNotLoad', async () => {
-    const launch = await temporaryDirectory()
-    const kept = await harnessProject(join(launch, 'kept'))
-    const support = join(launch, 'support', 'agent.ts')
-    await mkdir(join(launch, 'support'))
-    await writeFile(
-      support,
-      "import { createHarness } from '@strands-agents/harness'\nexport const supportAgent = await createHarness()\n"
-    )
-
-    const result = await discoverLocalHarnesses(launch, [], [])
-
-    expect(result.harnesses.map(({ entrypoint }) => entrypoint)).toEqual([kept])
-    expect(result.skipped).toEqual([{ entrypoint: support, expected: 'export const agent = await createHarness(...)' }])
-  })
 })

@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { discoverHarnesses, type SkippedHarness } from '../../src/dev/search.js'
+import { discoverHarnesses } from '../../src/dev/search.js'
 import { bindWorkspace, readDevWorkspace, type DevWorkspace, type DevWorkspaceConfig } from '../../src/dev/workspace.js'
 import { importAgentProject } from '../../src/project/import.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
@@ -114,6 +114,29 @@ describe('discoverHarnesses', () => {
     ],
     ["import { createHarness } from '@strands-agents/harness'; export const other = createHarness({})", 'ts'],
     ["import { createHarness } from '@strands-agents/harness'; export const agent = new Agent({})", 'ts'],
+    [
+      "import { createHarness } from '@strands-agents/harness'\nexport const supportAgent = await createHarness()",
+      'ts',
+    ],
+    [
+      "import { createHarness } from '@strands-agents/harness'\nexport function createAgent() {\n  return createHarness()\n}",
+      'ts',
+    ],
+    ["import { createHarness } from '@strands-agents/harness'\nexport default await createHarness()", 'ts'],
+    ["import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness({}, {})", 'ts'],
+    ["import { createHarness } from '@strands-agents/harness'\nexport let agent\nagent = await createHarness()", 'ts'],
+    [
+      "import * as harness from '@strands-agents/harness'\nexport const agent = await harness.createHarness().then((built) => built)",
+      'ts',
+    ],
+    [
+      "import { createHarness } from '@strands-agents/harness'\nit('runs', async () => {\n  await createHarness()\n})",
+      'ts',
+    ],
+    ["import { createHarness } from '@strands-agents/harness'\nexport const other = await createHarness()", 'ts'],
+    ["import { createHarness } from '@strands-agents/harness'\nexport const build = async () => createHarness()", 'ts'],
+    ["import { createHarness } from 'other-library'; export const other = createHarness({})", 'ts'],
+    ["import type { createHarness } from '@strands-agents/harness'; export const other = createHarness({})", 'ts'],
     ['from strands import Agent\nagent = Agent()', 'py'],
     ['from other_library import create_harness\nagent = create_harness()', 'py'],
     ['from strands_harness import Agent\nagent = Agent()', 'py'],
@@ -124,156 +147,27 @@ describe('discoverHarnesses', () => {
     ['from strands_harness import create_harness\nother = create_harness()', 'py'],
     ['from strands_harness import create_harness\nagent = not_harness(create_harness())', 'py'],
     ['from strands_harness import create_harness\nagent = create_harness() or other()', 'py'],
+    ['from strands_harness import create_harness\nsupport_agent = create_harness()', 'py'],
+    ['from strands_harness import create_harness\ndef create_agent():\n    return create_harness()', 'py'],
+    ['from strands_harness import create_harness\ndef build():\n    return create_harness()\nagent = build()', 'py'],
+    [
+      'from strands_harness import create_harness\nasync def create_agent():\n    return create_harness()\nagent = create_agent()',
+      'py',
+    ],
+    ['from strands_harness import create_harness\ndef test_tool():\n    agent = create_harness()', 'py'],
+    ['from strands_harness import create_harness\nshared = create_harness()', 'py'],
+    ['from strands_harness import create_harness\ndef build():\n    return create_harness()', 'py'],
+    ['from other_library import create_harness\nother = create_harness()', 'py'],
+    [
+      'from strands_harness import create_harness\ndef create_agent():\n    return Agent()\nagent = create_agent()',
+      'py',
+    ],
   ])('should not offer non-harness or local agents When source is %s', async (source, extension) => {
     const root = await directory()
     await sourceFile(root, `agent.${extension}`, source)
 
     expect(await discoverHarnesses([root])).toEqual({ harnesses: [], warnings: [] })
     expect(importAgentProject).not.toHaveBeenCalled()
-  })
-
-  const typescriptShape = 'export const agent = await createHarness(...)'
-  const pythonShape = 'agent = create_harness(...)'
-  const discoverWithSkipped = async (root: string) => {
-    const skipped: SkippedHarness[] = []
-    const result = await discoverHarnesses([root], { skipped: (source) => skipped.push(source) })
-    return { ...result, skipped }
-  }
-
-  it.each([
-    [
-      "import { createHarness } from '@strands-agents/harness'; function example() { const agent = createHarness({}) }",
-      'ts',
-      typescriptShape,
-    ],
-    [
-      "import { createHarness } from '@strands-agents/harness'; export const other = createHarness({})",
-      'ts',
-      typescriptShape,
-    ],
-    [
-      "import { createHarness } from '@strands-agents/harness'\nexport const supportAgent = await createHarness()",
-      'ts',
-      typescriptShape,
-    ],
-    [
-      "import { createHarness } from '@strands-agents/harness'\nexport function createAgent() {\n  return createHarness()\n}",
-      'ts',
-      typescriptShape,
-    ],
-    [
-      "import { createHarness } from '@strands-agents/harness'\nexport default await createHarness()",
-      'ts',
-      typescriptShape,
-    ],
-    [
-      "import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness({}, {})",
-      'ts',
-      typescriptShape,
-    ],
-    [
-      "import { createHarness } from '@strands-agents/harness'\nexport let agent\nagent = await createHarness()",
-      'ts',
-      typescriptShape,
-    ],
-    [
-      "import * as harness from '@strands-agents/harness'\nexport const agent = await harness.createHarness().then((built) => built)",
-      'ts',
-      typescriptShape,
-    ],
-    ['from strands_harness import create_harness\ndef example():\n    agent = create_harness()', 'py', pythonShape],
-    [
-      'from strands_harness import create_harness\ndef example(): before = 1; agent = create_harness()',
-      'py',
-      pythonShape,
-    ],
-    ['from strands_harness import create_harness\nif False: before = 1; agent = create_harness()', 'py', pythonShape],
-    ['from strands_harness import create_harness\nsupport_agent = create_harness()', 'py', pythonShape],
-    ['from strands_harness import create_harness\nagent = not_harness(create_harness())', 'py', pythonShape],
-    ['from strands_harness import create_harness\nagent = create_harness() or other()', 'py', pythonShape],
-    ['from strands_harness import create_harness\ndef create_agent():\n    return create_harness()', 'py', pythonShape],
-    [
-      'from strands_harness import create_harness\ndef build():\n    return create_harness()\nagent = build()',
-      'py',
-      pythonShape,
-    ],
-    [
-      'from strands_harness import create_harness\nasync def create_agent():\n    return create_harness()\nagent = create_agent()',
-      'py',
-      pythonShape,
-    ],
-  ])('shouldHintTheExpectedShapeWhenACreateHarnessCallDoesNotLoad %s', async (source, extension, expected) => {
-    const root = await directory()
-    const entrypoint = await sourceFile(root, `agent.${extension}`, source)
-
-    expect(await discoverWithSkipped(root)).toEqual({
-      harnesses: [],
-      warnings: [],
-      skipped: [{ entrypoint, expected }],
-    })
-    expect(importAgentProject).not.toHaveBeenCalled()
-  })
-
-  it.each([
-    [
-      'tests/test_tools.py',
-      'from strands_harness import create_harness\ndef test_tool():\n    agent = create_harness()',
-    ],
-    ['tests_integ/conftest.py', 'from strands_harness import create_harness\nshared = create_harness()'],
-    [
-      'test/cli/acp.test.ts',
-      "import { createHarness } from '@strands-agents/harness'\nit('runs', async () => {\n  await createHarness()\n})",
-    ],
-    [
-      'src/support-agent.spec.ts',
-      "import { createHarness } from '@strands-agents/harness'\nexport const other = await createHarness()",
-    ],
-    [
-      'src/runtime.ts',
-      "import { createHarness } from '@strands-agents/harness'\nexport const build = async () => createHarness()",
-    ],
-    ['lib/runtime.py', 'from strands_harness import create_harness\ndef build():\n    return create_harness()'],
-  ])('shouldNotHintWhenTheCallIsInATestOrInsideALibraryFunction %s', async (file, source) => {
-    const root = await directory()
-    await sourceFile(root, file, source)
-
-    expect(await discoverWithSkipped(root)).toEqual({ harnesses: [], warnings: [], skipped: [] })
-  })
-
-  it.each([
-    [
-      'src/support.ts',
-      "import { createHarness } from '@strands-agents/harness'\nexport const support = await createHarness()",
-    ],
-    ['support.py', 'from strands_harness import create_harness\nsupport = create_harness()'],
-    [
-      'src/support-agent.ts',
-      "import { createHarness } from '@strands-agents/harness'\nexport const build = () => createHarness()",
-    ],
-  ])('shouldHintWhenAModuleBuildsAHarnessOrAnAgentFileWrapsOne %s', async (file, source) => {
-    const root = await directory()
-    const entrypoint = await sourceFile(root, file, source)
-
-    expect((await discoverWithSkipped(root)).skipped.map((skipped) => skipped.entrypoint)).toEqual([entrypoint])
-  })
-
-  it.each([
-    ["import { Agent } from '@strands-agents/sdk'; export const agent = new Agent({})", 'ts'],
-    ["import { createHarness } from 'other-library'; export const other = createHarness({})", 'ts'],
-    ["import type { createHarness } from '@strands-agents/harness'; export const other = createHarness({})", 'ts'],
-    ["import { createHarness } from '@strands-agents/harness'; export const agent = new Agent({})", 'ts'],
-    [`/* ${typescriptSource} */`, 'ts'],
-    ['from other_library import create_harness\nother = create_harness()', 'py'],
-    [
-      'from strands_harness import create_harness\ndef create_agent():\n    return Agent()\nagent = create_agent()',
-      'py',
-    ],
-    [`"""${pythonSource}"""`, 'py'],
-  ])('shouldNotHintWhenTheSourceMakesNoHarnessCall %s', async (source, extension) => {
-    const root = await directory()
-    await sourceFile(root, `agent.${extension}`, source)
-
-    expect(await discoverWithSkipped(root)).toEqual({ harnesses: [], warnings: [], skipped: [] })
   })
 
   it.each([
@@ -307,10 +201,9 @@ describe('discoverHarnesses', () => {
     const root = await directory()
     const entrypoint = await sourceFile(root, `agent.${extension}`, source)
 
-    expect(await discoverWithSkipped(root)).toEqual({
+    expect(await discoverHarnesses([root])).toEqual({
       harnesses: [{ name: `agent.${extension}`, entrypoint, root, language }],
       warnings: [],
-      skipped: [],
     })
   })
 
@@ -325,7 +218,7 @@ describe('discoverHarnesses', () => {
     expect((await discoverHarnesses([root])).harnesses).toMatchObject([{ name: 'Factory harness' }])
   })
 
-  it('shouldNotHintAWorkspaceEntrypointWhenItsSourceDoesNotLoadStatically', async () => {
+  it('shouldOfferAWorkspaceEntrypointWhenItsSourceDoesNotLoadStatically', async () => {
     const root = await directory()
     await sourceFile(
       root,
@@ -340,10 +233,7 @@ describe('discoverHarnesses', () => {
       origin: { kind: 'created' },
     })
 
-    const result = await discoverWithSkipped(root)
-
-    expect(result.harnesses).toMatchObject([{ name: 'Bound workspace' }])
-    expect(result.skipped).toEqual([])
+    expect((await discoverHarnesses([root])).harnesses).toMatchObject([{ name: 'Bound workspace' }])
   })
 
   it.each([

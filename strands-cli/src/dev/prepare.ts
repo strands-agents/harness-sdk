@@ -4,7 +4,7 @@ import { type ParsedArgs } from '../cli/arguments.js'
 import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
 import { CliConfigStore, type CliConfigSnapshot, type ConfigLayer } from '../config/store.js'
 import { isProfileBaseCli, promoteBaseCliLook, refreshBaseCliView } from './base-cli.js'
-import { containsPath, expandHome, strandsUserPath } from '../paths.js'
+import { containsPath, expandHome } from '../paths.js'
 import { importAgentProject, type ImportedAgentProject } from '../project/import.js'
 import { prepareWorkspaceDependencies } from '../project/archive.js'
 import { errorMessage, sanitizeTerminalText } from '../terminal/text.js'
@@ -135,8 +135,7 @@ const selectWorkspace = async (
   if (!screen) throw pickerUnavailable(dev.init)
   const base = await baseHarnessSelection(snapshot, cwd, destination)
   const holds = holdsChoiceFor(base)
-  const cliFolder = base.workspace ?? strandsUserPath(WORKSPACE_FOLDER)
-  const { suggestFor, ...folders } = await folderDefaults(cliFolder, { cwd, destination, holds })
+  const { suggestFor, ...folders } = await folderDefaults(base.workspace, { cwd, destination, holds })
   const excluded = base.excludedEntrypoints
   const notice = [
     warning,
