@@ -72,10 +72,14 @@ describe('product identity wiring', () => {
     expect(currentProduct('/docs/learning/how-agents-really-work/')).toBeUndefined()
   })
 
-  it('keeps the Box landing page separate from its docs hub', () => {
+  it('keeps product landing pages separate from their docs hubs', () => {
     const box = products.find((product) => product.label === 'Box')
     expect(box?.href).toBe('/box/')
     expect(box?.docsHref).toBe('/docs/user-guide/box/')
+
+    const decider = products.find((product) => product.label === 'Decider')
+    expect(decider?.href).toBe('/decider/')
+    expect(decider?.docsHref).toBe('/docs/labs/strands-decider/overview/')
   })
 })
 

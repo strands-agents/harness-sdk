@@ -1,4 +1,5 @@
 import { siteLink } from '../util/links'
+import { buildProductContentMarkdown, type ProductContentItem } from './product-content'
 
 export const BOX_HERO_TITLE = 'Contain your AI agent'
 export const BOX_HERO_DESCRIPTION = 'Run Claude Code, Codex or Kiro CLI in a sandbox you control.'
@@ -228,7 +229,7 @@ function landingLink(href: string): string {
   return href.startsWith('http') ? href : siteLink(href)
 }
 
-export function buildBoxLandingMarkdown(headingLevel = 1): string {
+export function buildBoxLandingMarkdown(headingLevel = 1, productContent: readonly ProductContentItem[] = []): string {
   const root = Math.min(Math.max(Math.trunc(headingLevel), 1), 3)
   const lines = [
     heading(root, '/box'),
@@ -346,6 +347,7 @@ export function buildBoxLandingMarkdown(headingLevel = 1): string {
     `- [Configure profiles and MCP imports](${landingLink(BOX_LINKS.mcp)})`,
     `- [Read the Box design story](${landingLink(BOX_LINKS.designStory)})`,
     '',
+    ...buildProductContentMarkdown(productContent, root + 1),
   ]
 
   return lines.join('\n')

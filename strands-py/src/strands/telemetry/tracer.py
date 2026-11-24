@@ -91,6 +91,13 @@ class Tracer:
     Both attributes are controlled by including "gen_ai_latest_experimental", "gen_ai_tool_definitions",
     or "gen_ai_use_latest_invocation_tokens", respectively, in the OTEL_SEMCONV_STABILITY_OPT_IN environment variable.
 
+    Including "gen_ai_usage_on_model_spans_only" records `gen_ai.usage.*` only on model invocation (`chat`) spans
+    and leaves it off the agent span, so each model call's tokens appear once in a trace. Use it with backends that
+    total token usage by summing every span (such as Opik and Datadog), where the agent span's accumulated usage
+    would otherwise count the same tokens twice. It takes precedence over "gen_ai_use_latest_invocation_tokens".
+    Python sets usage on no other container span today; one that adds it must respect this value too, as the
+    TypeScript multi-agent and node spans do.
+
     Including "gen_ai_span_attributes_only" records message content directly as span attributes instead of
     span events, for backends that cannot read span events. This applies to the aggregated content events
     (latest-convention "gen_ai.*" messages and the "memory.query"/"memory.content" events); the legacy
@@ -127,6 +134,11 @@ class Tracer:
         self.use_latest_genai_conventions = "gen_ai_latest_experimental" in opt_in_values
         self._include_tool_definitions = "gen_ai_tool_definitions" in opt_in_values
         self._use_latest_invocation_tokens = "gen_ai_use_latest_invocation_tokens" in opt_in_values
+        self._usage_on_model_spans_only = "gen_ai_usage_on_model_spans_only" in opt_in_values
+        if self._usage_on_model_spans_only and self._use_latest_invocation_tokens:
+            logger.warning(
+                "gen_ai_use_latest_invocation_tokens is ignored because gen_ai_usage_on_model_spans_only is set"
+            )
         self._span_attributes_only = self.is_langfuse or "gen_ai_span_attributes_only" in opt_in_values
 
         unredacted_token = next(
@@ -843,9 +855,13 @@ class Tracer:
                     },
                 )
 
-            if hasattr(response, "metrics") and hasattr(response.metrics, "accumulated_usage"):
-                if self.is_langfuse:
-                    attributes.update({"langfuse.observation.type": "span"})
+            has_usage = hasattr(response, "metrics") and hasattr(response.metrics, "accumulated_usage")
+            # Stops Langfuse from making the agent span a generation that repeats its calls' tokens. Kept even with
+            # gen_ai_usage_on_model_spans_only, since older Langfuse versions would render it as an empty generation.
+            if has_usage and self.is_langfuse:
+                attributes.update({"langfuse.observation.type": "span"})
+            # With gen_ai_usage_on_model_spans_only, usage stays on the chat spans so summing every span counts it once.
+            if has_usage and not self._usage_on_model_spans_only:
                 if self._use_latest_invocation_tokens:
                     latest_invocation = response.metrics.latest_agent_invocation
                     if latest_invocation is None:
