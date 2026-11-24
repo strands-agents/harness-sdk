@@ -326,6 +326,8 @@ You can also ask in plain words, for example "show my experiments", "rerun the f
 Dev adds only two slash commands for this workflow: `/experiment` and `/optimize`. Reading cases or past results does not start a run.
 On request, the agent stops an optimization or discards its pending edits.
 
+Evaluation runs and optimization trials start the agent in its project folder. An agent with the shell, write, or edit tool can change files there. Then the agent tells you so before you approve the run.
+
 Generation, evaluation, and optimization call models and can incur charges. Dev starts a paid run only after your approval.
 Running jobs show below the chat input in one row, one job at a time, as background tasks do.
 With an empty input, ↓ selects the first background task or job, and ←→ selects the next one.
@@ -363,6 +365,7 @@ Thus the setup page and the estimate show the numbers of the run. A run with 0 i
 Dev gives the decision settings only when they are different from the optimizer defaults. These settings are `--feasibility-threshold`, `--agent-failure-score`, and `--n-finalists`.
 A cautious pick rule needs a `FinalPick` object. Thus `task.py` defines `final_pick`, and dev gives `--final-pick` instead of `--n-finalists`.
 The estimate counts the end phase like the optimizer. Under `Pareto`, at least 5 finalists go to validation, and each front member goes to test.
+Like strands-evals, the setup warns when the split leaves 1 to 4 test cases or 1 train case.
 
 The objective row of the setup sets what the run improves, for example `Minimize(tokens)`.
 The constraints row sets what the chosen candidate must meet, for example `tokens <= 4000, Correctness >= 0.8`.
@@ -373,6 +376,8 @@ A run continues after strands dev closes. When a run stops, for example after a 
 The upstream command reads the inputs of the run again from `cli.json` in the run folder. Thus `task.py` must stay in its folder.
 
 When the proposer fails, the search stops before the end phase, and the optimizer selects no candidate. Then `/optimize` shows the proposer error. Correct the cause, then start the run again.
+
+Dev cannot write some edits into the agent file, for example when the agent file reads the text from a variable. When a run finishes, its notice names each of these edits and the reason. The full text of the edit is in `best.diff` in the folder of the run.
 
 From a shell, `strands dev optimize <experiment>` runs the same command and prints the result. The flags after `--` go to `strands-evals optimize run`.
 For example, `strands dev optimize refunds -- --max-iterations 2 --constraint 'tokens<=4000'` runs 2 iterations with a token constraint. `--max-iterations 0` measures only the baseline.
@@ -385,7 +390,7 @@ When the search stops on a proposer error, the command writes the error and exit
 **Limits:**
 
 - Dev tunes only what its space file declares: `createHarness` options as text, choices, and switches, plus the instructions and the effort. Dev does not tune model parameters at this time, for example the temperature.
-- **TEMPORARY:** Evaluation runs and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. In strands-agents-evals 1.12.1, `optimize run` can run a TypeScript agent file, but `run` cannot. Thus dev keeps its runner for the two commands at this time.
+- At this time, evaluation runs and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. In strands-agents-evals 1.12.1, `optimize run` can run a TypeScript agent file, but `run` cannot. Thus dev keeps its runner for the two commands at this time.
 - Dev applies the champion itself, in the Apply step of `/optimize`. The upstream CLI only writes the champion to `best.diff` and `best.values.json`.
 
 ### Evals UI
@@ -903,6 +908,7 @@ Session files are trusted input: resume only sessions you created, not ones that
 
 When a turn fails, the conversation stays as it was before the turn. The chat shows a command that resumes the session after a restart.
 In a dev chat, when the model provider reports expired credentials, refresh the credentials. Then restart the CLI, because the CLI process can keep the expired credentials.
+A dev chat keeps each failed message, and a resumed dev chat shows it again. Thus you can send it again.
 
 Sessions use the Harness default, `./.agent/sessions`. Set `session.dir` to keep them somewhere else;
 authored agents (`--agent`) keep their own session configuration. Relative paths resolve against

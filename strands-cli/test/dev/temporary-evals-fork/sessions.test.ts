@@ -574,20 +574,38 @@ describe('TEMPORARY dev sessions', () => {
 
   const reviewWithMovedInstructions = async () => {
     let root = ''
-    const finished = optimizingProcess()
-    const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
+    let bestDiff = ''
+    const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
       await writeFileAt(join(root, 'instructions.md'), 'Answer in many words.\n')
-      return finished(process)
+      const folder = await writeOptimizerRun(recordOf(args), [
+        ...studyLines(0.9),
+        optimizerStop(),
+        optimizerPicked('win'),
+      ])
+      bestDiff = join(folder, 'best.diff')
+      await writeFile(bestDiff, `-${BASELINE}\n+${WINNER}\n`)
+      return exit
     })
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: optimizing })
     root = workspace.root
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
     sessions.optimize.plan(experiment)
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
     sessions.optimize.start()
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
-    return { workspace, sessions }
+    return { workspace, sessions, notices, bestDiff: (): string => bestDiff }
   }
+
+  it('shouldNameTheEditThatCannotBeWrittenAndWhereItsTextIsWhenARunFinishes', async () => {
+    const { notices, bestDiff } = await reviewWithMovedInstructions()
+
+    await vi.waitFor(() => expect(notices.map(({ text }) => text)).toContainEqual(expect.stringContaining('finished')))
+    const finished = notices.map(({ text }) => text).find((text) => text.includes('finished'))!
+    expect(finished).toContain('strands dev cannot write 1 edit (instructions: ')
+    expect(finished).toContain('the old text is not a plain string there')
+    expect(finished).toContain(`its text is in ${bestDiff()}`)
+    expect(finished).not.toContain('no edits to apply')
+  })
 
   const firstEdit = (sessions: ReturnType<typeof temporaryDevSessions>) => {
     const state = sessions.optimize.snapshot()

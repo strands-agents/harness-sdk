@@ -51,3 +51,15 @@ export const evalsLinkText = (host: TemporarySessionHost, place: EvalsBrowserPla
 }
 
 export const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`
+
+const FILE_TOOLS: ReadonlySet<string> = new Set(['shell', 'write', 'edit'])
+const listed = new Intl.ListFormat('en', { type: 'conjunction' })
+
+export const temporaryFileChangeWarning = ({ workspace, agent }: TemporarySessionHost): string | undefined => {
+  const tools = [...new Set((agent().tools ?? []).map(({ name }) => name).filter((name) => FILE_TOOLS.has(name)))]
+  if (tools.length === 0) return undefined
+  return (
+    `Evaluations and optimizations run this agent in ${workspace.root}, and its ${listed.format(tools)} ` +
+    `${tools.length === 1 ? 'tool' : 'tools'} can change files there.`
+  )
+}

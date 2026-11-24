@@ -414,6 +414,7 @@ const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevCh
       ),
       generations: generations.map(generationStatus),
       optimization: optimizationStatus(optimize.snapshot()),
+      fileChanges: sessions().fileChanges(),
       evalsUi: evalsUiStatus(ui),
       newExperiment: {
         cases: experiments.suggested().cases,
@@ -597,7 +598,7 @@ const planTool = (sessions: Sessions): DevChatTool => ({
         },
         estimate: defined({ rollouts: plan.rollouts, judgeCalls: plan.judgeCalls, usage: plan.usage }),
         problem: plan.budgetProblem ?? plan.objectiveProblem,
-        warning: plan.warning ?? plan.objectiveWarning,
+        warning: [plan.warning, plan.objectiveWarning, sessions().fileChanges()].filter(Boolean).join(' ') || undefined,
         autoAccept: optimize.autoApplies() ? AUTO_PLAN : undefined,
       })
     )

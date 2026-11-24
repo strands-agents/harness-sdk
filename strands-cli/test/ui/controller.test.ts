@@ -1,6 +1,6 @@
 import { setImmediate } from 'node:timers'
 
-import type { ContentBlockData } from '@strands-agents/sdk'
+import { Message, TextBlock, type ContentBlockData } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ChatController } from '../../src/ui/chat/controller.js'
@@ -2016,6 +2016,125 @@ describe('ChatController', () => {
     expect(hint).toContain('Refresh your credentials, then restart Strands so that it loads them.')
     expect(hint).toMatch(/strands dev --workspace '?\S*strands-dev'? --session-id saved-session/u)
     expect(hint).not.toContain('Press s')
+    await controller.dispose()
+  })
+
+  it('shouldSaveTheFailedPromptForAResumeWhenAUserTurnFails', async () => {
+    const saveFailedTurns = vi.fn(async () => {})
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield* []
+          throw new Error('The security token included in the request is expired')
+        },
+      }),
+      {
+        streamPresentation: {},
+        failedTurns: { saved: [], save: saveFailedTurns },
+        sessions: {
+          current: 'saved-session',
+          directory: '/sessions',
+          list: vi.fn(),
+          resolve: vi.fn(),
+        },
+      }
+    )
+
+    await controller.submit('first question')
+    await controller.submit('second question')
+
+    expect(saveFailedTurns).toHaveBeenLastCalledWith([
+      { prompt: 'first question', error: 'The security token included in the request is expired' },
+      { prompt: 'second question', error: 'The security token included in the request is expired' },
+    ])
+    await controller.dispose()
+  })
+
+  it('shouldClearTheSavedFailedPromptsWhenALaterTurnCompletes', async () => {
+    const saveFailedTurns = vi.fn(async () => {})
+    let fail = true
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield* []
+          if (fail) throw new Error('socket hang up')
+          return { stopReason: 'endTurn' }
+        },
+      }),
+      {
+        streamPresentation: {},
+        failedTurns: { saved: [], save: saveFailedTurns },
+        sessions: {
+          current: 'saved-session',
+          directory: '/sessions',
+          list: vi.fn(),
+          resolve: vi.fn(),
+        },
+      }
+    )
+
+    await controller.submit('first question')
+    fail = false
+    await controller.submit('first question')
+    await controller.submit('next question')
+
+    expect(saveFailedTurns.mock.calls).toEqual([[[{ prompt: 'first question', error: 'socket hang up' }]], [[]]])
+    await controller.dispose()
+  })
+
+  it('shouldReportANoticeWhenTheFailedPromptCannotBeSaved', async () => {
+    const saveFailedTurns = vi.fn(async () => Promise.reject(new Error('disk full')))
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield* []
+          throw new Error('socket hang up')
+        },
+      }),
+      {
+        streamPresentation: {},
+        failedTurns: { saved: [], save: saveFailedTurns },
+        sessions: {
+          current: 'saved-session',
+          directory: '/sessions',
+          list: vi.fn(),
+          resolve: vi.fn(),
+        },
+      }
+    )
+
+    await controller.submit('hello')
+
+    expect(controller.getSnapshot().notices).toContainEqual(
+      expect.objectContaining({
+        status: 'error',
+        text: 'The failed message could not be saved for a resume: disk full',
+      })
+    )
+    await controller.dispose()
+  })
+
+  it('shouldShowTheSavedFailedPromptsAfterTheRestoredConversationWhenASessionResumes', async () => {
+    const controller = new ChatController(idleBackend(), {
+      initialMessages: [
+        new Message({ role: 'user', content: [new TextBlock('earlier question')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('earlier answer')] }),
+      ],
+      failedTurns: {
+        saved: [{ prompt: 'failed question', error: 'The security token included in the request is expired' }],
+        save: vi.fn(async () => {}),
+      },
+    })
+
+    expect(controller.getSnapshot().completedTurns).toMatchObject([
+      { prompt: 'earlier question', status: 'complete' },
+      {
+        prompt: 'failed question',
+        status: 'error',
+        error: 'The security token included in the request is expired',
+        recoveryHint: 'The conversation does not include this message. Send it again to retry.',
+      },
+    ])
     await controller.dispose()
   })
 

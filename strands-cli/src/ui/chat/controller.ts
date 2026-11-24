@@ -77,7 +77,7 @@ import {
   readTaskValue,
   readyBackgroundGeneration,
 } from './state.js'
-import { TurnProjector, projectMessages } from './projector.js'
+import { TurnProjector, projectFailedTurns, projectMessages } from './projector.js'
 import {
   type ChatBackend,
   type ChatAttachment,
@@ -113,6 +113,8 @@ import {
   type DevChatJobGroup,
   type DevChatNotice,
   type DevPanelOpening,
+  type FailedTurn,
+  type FailedTurnRecord,
   type NewChatPanel,
 } from './types.js'
 
@@ -162,6 +164,8 @@ export class ChatController implements ChatControllerApi {
   readonly peerEndpointId: string | undefined
   private readonly _listeners = new Set<() => void>()
   private _completedTurns: ChatTurn[] = []
+  private _failedTurns: readonly FailedTurn[]
+  private readonly _failedTurnRecord: FailedTurnRecord | undefined
   private readonly _panelStack: ChatPanel[] = []
   private readonly _skillDetails = new Map<string, SkillInfo>()
   private readonly _sessions: ChatSessionRuntime | undefined
@@ -283,10 +287,15 @@ export class ChatController implements ChatControllerApi {
       tools: info?.tools ?? [],
       ...options.runtime,
     }
+    this._failedTurnRecord = options.failedTurns
+    this._failedTurns = options.failedTurns?.saved ?? []
     if (options.initialTurns) {
       this._completedTurns = [...options.initialTurns]
-    } else if (options.initialMessages) {
-      this._completedTurns.push(...projectMessages(options.initialMessages, this.name))
+    } else if (options.initialMessages || this._failedTurns.length > 0) {
+      this._completedTurns.push(
+        ...projectMessages(options.initialMessages ?? [], this.name),
+        ...projectFailedTurns(this._failedTurns, this.name)
+      )
     }
     this._nextTurn = this._completedTurns.length + 1
     this._context = { ...(backend.contextUsage?.() ?? {}) }
@@ -877,6 +886,7 @@ export class ChatController implements ChatControllerApi {
       this._steeringDrain = undefined
       this._clearDeliveredBackgroundTaskNotices()
       this._emit()
+      if (finished && mode === 'model') await this._updateFailedTurns(finished)
       if (!this._closed) {
         await this._applyDeferredModelRestart()
         this._startBackgroundContinuation()
@@ -910,6 +920,20 @@ export class ChatController implements ChatControllerApi {
     if (!isModelCredentialFailure(message)) return 'other'
     if (isExpiredModelCredential(message)) return 'expiredCredentials'
     return this._runtime.devWorkspace && this._requestSetup ? 'modelSetup' : 'credentials'
+  }
+
+  private async _updateFailedTurns(turn: ChatTurn): Promise<void> {
+    if (!this._failedTurnRecord) return
+    if (turn.status === 'error' && turn.source) return
+    if (turn.status !== 'error' && this._failedTurns.length === 0) return
+    this._failedTurns =
+      turn.status === 'error' ? [...this._failedTurns, { prompt: turn.prompt, error: turn.error ?? '' }] : []
+    try {
+      await this._failedTurnRecord.save(this._failedTurns)
+    } catch (error) {
+      this._addNotice('error', `The failed message could not be saved for a resume: ${errorMessage(error)}`)
+      this._emit()
+    }
   }
 
   private _failureRecoveryHint(error: unknown): string {
@@ -2176,6 +2200,7 @@ export class ChatController implements ChatControllerApi {
       await this._backend.clear()
       this._stopWatchingUsage()
       this._completedTurns = []
+      this._failedTurns = []
       this._notices = []
       this._tasks = []
       this._context = {}

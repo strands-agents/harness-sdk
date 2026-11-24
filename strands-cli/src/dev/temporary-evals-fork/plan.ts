@@ -90,6 +90,7 @@ export const TEMPORARY_TEST_SHARES: readonly number[] = [1 / 2, 1 / 3, 0]
 const PARETO_MIN_FINALISTS = 5
 const TESTED_WITHOUT_PARETO = 2
 const MINIMUM_HELD_OUT_CASES = 2
+const MAXIMUM_WIDE_TEST_CASES = 4
 const SHARE_TOLERANCE = 1e-9
 const CASE_SEARCH_LIMIT = 1000
 
@@ -181,14 +182,33 @@ const heldOutText = ({ validation, test }: CaseSplit, shares: TemporarySplitShar
     ? `${counted(validation, 'validation case')} and ${counted(test, 'test case')}`
     : counted(validation, 'validation case')
 
-const casesToAdd = (caseCount: number, split: TemporarySplitShares): string => {
-  const needed = Array.from({ length: CASE_SEARCH_LIMIT }, (_, extra) => caseCount + extra + 1).find((count) =>
-    isHealthy(temporaryCaseSplit(count, split), split)
+const casesUntil = (
+  caseCount: number,
+  split: TemporarySplitShares,
+  enough: (parts: CaseSplit) => boolean
+): number | undefined =>
+  Array.from({ length: CASE_SEARCH_LIMIT }, (_, extra) => caseCount + extra + 1).find((count) =>
+    enough(temporaryCaseSplit(count, split))
   )
+
+const casesToAdd = (caseCount: number, split: TemporarySplitShares): string => {
+  const needed = casesUntil(caseCount, split, (parts) => isHealthy(parts, split))
   return needed === undefined
     ? 'Give the validation and test shares more of the cases.'
     : `Add ${counted(needed - caseCount, 'more case')}.`
 }
+
+const wideTestNote = (caseCount: number, { test }: CaseSplit, split: TemporarySplitShares): string | undefined => {
+  if (!hasTest(split) || test > MAXIMUM_WIDE_TEST_CASES) return undefined
+  const needed = casesUntil(caseCount, split, (parts) => parts.test > MAXIMUM_WIDE_TEST_CASES)
+  const narrower = needed === undefined ? '' : ` Add ${counted(needed - caseCount, 'more case')} to narrow it.`
+  return `The split leaves ${counted(test, 'test case')}, so the interval of the test check will be wide.${narrower}`
+}
+
+const singleTrainNote = ({ train }: CaseSplit): string | undefined =>
+  train === 1
+    ? 'The split leaves 1 train case, so the score model cannot tell the cases apart, and the effects are less certain.'
+    : undefined
 
 export const temporaryOptimizeWarning = (
   caseCount: number,
@@ -200,6 +220,8 @@ export const temporaryOptimizeWarning = (
   if (caseCount === 0) return `The experiment has no cases, so the optimizer refuses to run. ${casesToAdd(0, split)}`
   if (parts.train === 0)
     return `This split leaves no train cases, so the optimizer refuses to run. ${casesToAdd(caseCount, split)}`
-  if (isHealthy(parts, split)) return undefined
-  return `The split leaves ${heldOutText(parts, split)}, so the scores can be luck. ${casesToAdd(caseCount, split)}`
+  if (!isHealthy(parts, split))
+    return `The split leaves ${heldOutText(parts, split)}, so the scores can be luck. ${casesToAdd(caseCount, split)}`
+  const notes = [singleTrainNote(parts), wideTestNote(caseCount, parts, split)].filter((note) => note !== undefined)
+  return notes.length > 0 ? notes.join(' ') : undefined
 }
