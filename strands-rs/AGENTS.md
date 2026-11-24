@@ -82,13 +82,19 @@ cargo package -p strands-macros -p strands --allow-dirty
 
 ## Releasing
 
-`strands-macros`, `strands` and `strands-harness` share the workspace version and release together through the **Rust: Release** workflow (`.github/workflows/release-rust.yml`), under one `rust/v<version>` tag:
+The repo keeps every Rust crate at the placeholder version `0.0.0`, as the TypeScript and Python packages keep theirs; a release stamps the real version in before it packages (`.github/scripts/stamp-rust-versions.py`), and the stamp is never committed. There is no version bump PR.
 
-1. Bump `[workspace.package] version` in the root `Cargo.toml`, the `strands` and `strands-macros` versions in `[workspace.dependencies]` and `Cargo.lock`, and merge to `main`.
-2. Run the workflow with that version and `dry_run` checked. It runs the Rust gates, packages the crates with the model info copied in, uploads them as `rust-crates` and drafts the release notes on the run page.
-3. Run it again with `dry_run` unchecked. After approval on the `release-gate` environment it tags the commit, creates the GitHub release and publishes the crates to crates.io in dependency order through trusted publishing. If publishing fails after tagging, re-run the failed jobs; crates already on crates.io are skipped.
+- **SDK:** `strands-macros` and `strands` release together through **Rust: Release** (`.github/workflows/release-rust.yml`) under one `rust/v<version>` tag. The macros expand to `strands` internals, so the two always share a version (the exact `=` requirement in the root `Cargo.toml`).
+- **Harness:** `strands-harness` releases on its own through **Harness Rust: Release** (`.github/workflows/release-harness-rs.yml`) under `harness-rust/v<version>`. Its `strands_version` input sets the `strands` version the published harness requires (caret), defaulting to the latest `rust/v*` tag. That version must already be on crates.io: packaging builds the harness against the published `strands`, so a harness that needs unreleased SDK changes waits for an SDK release.
 
-The first release (`0.1.0`) needs no earlier `rust/v*` tag. Every later version is one major, minor or patch step above the latest tag.
+Each workflow runs in two passes:
+
+1. With `dry_run` checked: the gates, packaging with the version stamped and the model info copied in, an inspection of the `.crate` files (uploaded as `rust-crates`), and drafted release notes on the run page.
+2. With `dry_run` unchecked: after approval on the `release-gate` environment, it tags the commit, creates the GitHub release and publishes through crates.io trusted publishing (environment `crates-io`). If publishing fails after tagging, re-run the failed jobs; crates already on crates.io are skipped.
+
+The first release of each (`0.1.0`) needs no earlier tag, and the SDK goes first. Every later version is one major, minor or patch step above that workflow's latest tag.
+
+To check packaging locally, copy the model info into `strands` and `strands-harness` (see [Model info](#model-info) and harness-rs/AGENTS.md); `cargo package --workspace --allow-dirty` then packages all three crates at `0.0.0` against each other. `cargo publish` by hand fails: `0.0.0` is the reserved placeholder on crates.io.
 
 ## Wire compatibility
 

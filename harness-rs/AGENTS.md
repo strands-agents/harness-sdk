@@ -39,3 +39,7 @@ harness-rs/
 - Default sessions are written through `LocalFileStorage::new("./.agent").namespace("sessions")` so the on-disk paths match harness-ts.
 - Byte-observable strings (system prompt, tool descriptions and results, collision rules, limits) follow harness-ts exactly. Port the harness-ts test that pins them.
 - `programmatic_tool_caller` runs its interpreter in a `monty` 1.5.0 worker (`cargo install monty-runtime --version 1.5.0 --locked`, found through `MONTY_BIN`, `PATH`, then a `target/{debug,release}` build in the executable's cargo workspace, as `@pydantic/monty` does) and falls back to in-process. Unit tests pin `Isolation::InProcess`; the worker cases in `tools/programmatic_tool_caller/tests/isolation.rs` run with `--ignored` and `MONTY_BIN` set. Keep the `monty`, `monty-types` and `monty-pool` pins equal.
+
+## Releasing
+
+`strands-harness` releases on its own tag (`harness-rust/v<version>`) through `.github/workflows/release-harness-rs.yml`, separately from the SDK crates. The process, the placeholder `0.0.0` version and the `strands_version` input are in [strands-rs/AGENTS.md](../strands-rs/AGENTS.md#releasing).

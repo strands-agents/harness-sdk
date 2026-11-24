@@ -1,10 +1,14 @@
 name: "Rust: Release"
 
-# Manual release of the Rust crates `strands-macros`, `strands` and
-# `strands-harness` to crates.io. The crates share the workspace version in the
-# repo-root Cargo.toml and release together under one `rust/v<version>` tag.
+# Manual release of the Rust SDK crates `strands-macros` and `strands` to
+# crates.io, together under one `rust/v<version>` tag: the macros expand to
+# `strands` internals, so the two always share a version. The harness crate
+# `strands-harness` releases on its own (release-harness-rs.yml).
 #
-# Shape: scan -> test-lint / harness test-lint / audit / package -> inspect ->
+# The repo keeps the crates at the placeholder 0.0.0; the package and publish
+# jobs stamp the typed version in (.github/scripts/stamp-rust-versions.py).
+#
+# Shape: scan -> test-lint / audit / package -> inspect ->
 #        notes -> approve -> tag + release -> publish -> verify.
 #
 # Publish is the last step. Everything before it runs on a fork too -- only the
@@ -14,7 +18,7 @@ name: "Rust: Release"
 # One-time setup before the first non-dry run:
 #   - GitHub environments `release-gate` (required reviewers; shared with the
 #     other releases) and `crates-io` (deployment branch `main`).
-#   - On crates.io, for each of `strands-macros`, `strands` and `strands-harness`:
+#   - On crates.io, for each of `strands-macros` and `strands`:
 #     Settings -> Trusted Publishing -> add a GitHub publisher with owner
 #     `strands-agents`, repository `harness-sdk`, workflow `release-rust.yml`
 #     and environment `crates-io`.
@@ -23,7 +27,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Explicit version, e.g. 0.2.0 (no leading v, no prefix). Must equal the workspace version in Cargo.toml.'
+        description: 'Explicit version, e.g. 0.2.0 (no leading v, no prefix).'
         required: true
         type: string
       sha:
@@ -44,9 +48,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # Publish order: each crate depends on the ones before it.
-  RELEASE_CRATES: strands-macros strands strands-harness
-  # Paths whose commits belong to the Rust release notes.
-  RELEASE_PATHS: strands-rs harness-rs Cargo.toml Cargo.lock rust-toolchain.toml shared/model-info.json
+  RELEASE_CRATES: strands-macros strands
+  # Paths whose commits belong to the release notes.
+  RELEASE_PATHS: strands-rs Cargo.toml Cargo.lock rust-toolchain.toml shared/model-info.json
   # crates.io rejects API requests without a User-Agent.
   CRATES_IO_USER_AGENT: strands-agents/harness-sdk release-rust workflow (https://github.com/strands-agents/harness-sdk)
 
@@ -97,15 +101,7 @@ jobs:
             RELEASE_SHA=$(git rev-parse origin/main)
           fi
 
-          # 3. The typed version must be the one cargo will publish.
-          WORKSPACE_VERSION=$(git show "$RELEASE_SHA:Cargo.toml" \
-            | python3 -c 'import sys, tomllib; print(tomllib.load(sys.stdin.buffer)["workspace"]["package"]["version"])')
-          if [ "$NEW_VERSION" != "$WORKSPACE_VERSION" ]; then
-            echo "::error::version $NEW_VERSION does not match the workspace version $WORKSPACE_VERSION in Cargo.toml at $RELEASE_SHA. Bump [workspace.package] version (and the strands / strands-macros entries in [workspace.dependencies]) first."
-            exit 1
-          fi
-
-          # 4. Pick tag prefix and resolve previous tag. Without one, only the
+          # 3. Pick tag prefix and resolve previous tag. Without one, only the
           #    initial version may release, with notes drawn from the first
           #    commit that added the Rust SDK.
           TAG_PREFIX="rust/v"
@@ -130,7 +126,7 @@ jobs:
             NOTES_BASE="$PREV_TAG"
             PREV_LABEL="\`$PREV_TAG\` (v$PREV_VERSION)"
 
-            # 5. Reject duplicate / non-monotonic versions, and require a
+            # 4. Reject duplicate / non-monotonic versions, and require a
             #    single-step increment (major, minor, or patch).
             if [ "$NEW_VERSION" = "$PREV_VERSION" ]; then
               echo "::error::version $NEW_VERSION matches existing tag $PREV_TAG."
@@ -155,11 +151,11 @@ jobs:
             esac
           fi
 
-          # 6. Sanity-check: at least one Rust commit since the baseline.
+          # 5. Sanity-check: at least one SDK commit since the baseline.
           read -ra paths <<< "$RELEASE_PATHS"
           COUNT=$(git rev-list --count "$NOTES_BASE..$RELEASE_SHA" -- "${paths[@]}")
           if [ "$COUNT" = "0" ]; then
-            echo "::error::no Rust commits between $NOTES_BASE and $RELEASE_SHA -- nothing to release."
+            echo "::error::no SDK commits between $NOTES_BASE and $RELEASE_SHA -- nothing to release."
             exit 1
           fi
 
@@ -179,7 +175,7 @@ jobs:
             echo "| Previous tag | $PREV_LABEL |"
             echo "| Proposed tag | \`$NEW_TAG\` (v$NEW_VERSION) |"
             echo "| Pinned SHA | \`$RELEASE_SHA\` |"
-            echo "| Rust commits since \`$NOTES_BASE\` | **$COUNT** |"
+            echo "| SDK commits since \`$NOTES_BASE\` | **$COUNT** |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ── Lint + unit-test gates ─────────────────────────────────────────────
@@ -187,15 +183,6 @@ jobs:
     name: Rust test + lint
     needs: scan-commits
     uses: ./.github/workflows/strands-rs-test-lint.yml
-    permissions:
-      contents: read
-    with:
-      ref: ${{ needs.scan-commits.outputs.release_sha }}
-
-  harness-test-lint:
-    name: Harness Rust test + lint
-    needs: scan-commits
-    uses: ./.github/workflows/harness-rs-test-lint.yml
     permissions:
       contents: read
     with:
@@ -212,9 +199,9 @@ jobs:
       ref: ${{ needs.scan-commits.outputs.release_sha }}
 
   # ── Package + verify (uploads rust-crates artifact) ────────────────────
-  # `cargo package --workspace` resolves the unpublished workspace crates
-  # through a local registry overlay and builds each packaged crate, so a
-  # missing file or a dependency that only resolves in-repo fails here.
+  # `cargo package` resolves `strands-macros` for `strands` through a local
+  # registry overlay and builds each packaged crate, so a missing file or a
+  # dependency that only resolves in-repo fails here.
   package:
     name: Package crates
     needs: scan-commits
@@ -231,23 +218,25 @@ jobs:
       - name: Install toolchain
         run: rustup toolchain install  # from rust-toolchain.toml
 
-      - name: Copy the shared model info into the crates
+      - name: Stamp the version and copy the shared model info in
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           # --allow-dirty below would hide any other change; the pinned checkout
-          # must be clean before the git-ignored copies go in.
+          # must be clean before the stamp and the git-ignored copy go in.
           if [ -n "$(git status --porcelain)" ]; then
             git status --porcelain
             echo "::error::checkout is not clean."
             exit 1
           fi
+          python3 .github/scripts/stamp-rust-versions.py --sdk-version "$VERSION"
           cp shared/model-info.json strands-rs/strands/model-info.json
-          cp shared/model-info.json harness-rs/strands-harness/model-info.json
 
       - name: Package
-        # The model-info copies are git-ignored, so cargo reports them as
-        # uncommitted; --allow-dirty lets them into the packages.
-        run: cargo package --workspace --allow-dirty
+        # The stamp and the git-ignored model-info copy are uncommitted;
+        # --allow-dirty lets them into the packages.
+        run: cargo package -p strands-macros -p strands --allow-dirty
 
       - name: Upload crates
         uses: actions/upload-artifact@v7.0.2
@@ -323,7 +312,7 @@ jobs:
         run: |
           set -euo pipefail
           errors=0
-          for name in strands strands-harness; do
+          for name in strands; do
             crate="dist-crates/$name-$EXPECTED.crate"
             listing=$(tar tzf "$crate")
             if ! grep -qx "$name-$EXPECTED/model-info.json" <<< "$listing"; then
@@ -338,7 +327,7 @@ jobs:
   # ── Draft notes grouped by commit type ─────────────────────────────────
   draft-notes:
     name: Draft release notes (grouped by commit type)
-    needs: [scan-commits, test-lint, harness-test-lint, security-audit, package, inspect]
+    needs: [scan-commits, test-lint, security-audit, package, inspect]
     runs-on: strands-agents_ubuntu-latest_4-core
     permissions:
       contents: read
@@ -500,7 +489,9 @@ jobs:
       - name: Install toolchain
         run: rustup toolchain install  # from rust-toolchain.toml
 
-      - name: Copy the shared model info into the crates
+      - name: Stamp the version and copy the shared model info in
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           if [ -n "$(git status --porcelain)" ]; then
@@ -508,8 +499,8 @@ jobs:
             echo "::error::checkout is not clean."
             exit 1
           fi
+          python3 .github/scripts/stamp-rust-versions.py --sdk-version "$VERSION"
           cp shared/model-info.json strands-rs/strands/model-info.json
-          cp shared/model-info.json harness-rs/strands-harness/model-info.json
 
       - name: Exchange the OIDC token for a crates.io token
         id: auth
@@ -530,7 +521,7 @@ jobs:
               continue
             fi
             # The package job verified these exact sources; --no-verify keeps the
-            # three uploads inside the short-lived token's validity. cargo waits
+            # two uploads inside the short-lived token's validity. cargo waits
             # for each crate to reach the index before the next one resolves it.
             cargo publish -p "$name" --allow-dirty --no-verify
           done

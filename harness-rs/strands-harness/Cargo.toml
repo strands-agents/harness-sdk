@@ -6,7 +6,8 @@ readme = "../README.md"
 include = ["/build.rs", "/model-info.json", "/src/**", "/tests/**"]
 keywords = ["agents", "ai", "llm", "strands", "harness"]
 categories = ["api-bindings", "asynchronous"]
-version.workspace = true
+# Releases on its own tag, so it does not inherit the workspace (SDK) version.
+version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

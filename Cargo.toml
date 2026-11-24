@@ -3,7 +3,9 @@ resolver = "3"
 members = ["strands-rs/strands", "strands-rs/strands-macros", "harness-rs/strands-harness"]
 
 [workspace.package]
-version = "0.1.0"
+# Placeholder, as in the other SDKs: each release stamps its version in before packaging
+# (.github/scripts/stamp-rust-versions.py). strands and strands-macros inherit this one.
+version = "0.0.0"
 edition = "2024"
 rust-version = "1.96"
 license = "Apache-2.0"
@@ -12,10 +14,10 @@ homepage = "https://strandsagents.com"
 authors = ["Strands Agents"]
 
 [workspace.dependencies]
-strands = { path = "strands-rs/strands", version = "0.1.0", default-features = false }
+strands = { path = "strands-rs/strands", version = "0.0.0", default-features = false }
 # Exact: the macros expand to `strands::__private`, which is not semver-stable, so the two crates
 # release in lockstep. The harness uses the public `strands` API only, so a caret requirement fits.
-strands-macros = { path = "strands-rs/strands-macros", version = "=0.1.0" }
+strands-macros = { path = "strands-rs/strands-macros", version = "=0.0.0" }
 
 async-stream = "0.3"
 async-trait = "0.1"
