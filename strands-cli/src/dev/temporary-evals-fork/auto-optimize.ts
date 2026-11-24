@@ -20,15 +20,19 @@ const OFF_CHECK_MS = 1000
 
 export const AUTO_OPTIMIZE_JOB = 'auto-optimize'
 
-export interface AutoOptimizeStatus {
+/** What the background work shows of itself while it goes. */
+interface AutoOptimizeActivity {
+  /** The experiment that a background agent is making from the chats right now, once it has a name. */
+  readonly building?: string
+  /** Where that agent writes what it does. */
+  readonly log?: string
+}
+
+export interface AutoOptimizeStatus extends AutoOptimizeActivity {
   /** An optimization starts by itself every this many chat turns; 0 means it is off. */
   readonly everyTurns: number
   /** The chat turns counted since the last one it started, or since the cadence was set. */
   readonly turnsSince: number
-  /** The experiment that a background agent is making from the chats right now. */
-  readonly building?: string
-  /** Where that agent writes what it does. */
-  readonly log?: string
 }
 
 /** What is kept on disk between turns. */
@@ -38,21 +42,12 @@ interface Count {
   readonly every: number
 }
 
-const NOTHING_COUNTED: Count = { turns: 0, every: 0 }
-
 /** What stands in the way of a run that is due, if anything. */
 interface AutoOptimizeGate {
   /** An optimization is running, or the edits of a finished one wait for the developer's answer. */
   busy(): boolean
   /** Resolves once none is, and rejects when the signal aborts first. */
   idle(signal: AbortSignal): Promise<void>
-}
-
-/** What the background work shows of itself while it goes. */
-interface AutoOptimizeActivity {
-  /** The experiment that is being made from the chats, once it has a name. */
-  readonly building?: string
-  readonly log?: string
 }
 
 export interface AutoOptimizeOutcome {
@@ -174,7 +169,9 @@ export class TemporaryAutoOptimize extends Store<AutoOptimizeActivity> {
         clearInterval(watch)
         this.running = undefined
         this.set({})
-        this.work = this.work.then(() => this.startAgain()).catch(() => undefined)
+        this.work = this.work
+          .then(async () => this.remember({ turns: 0, every: (await this.counted()).every }))
+          .catch(() => undefined)
       })
     // Turned off in the settings panel, the work stops within a moment and not at the end of the next turn.
     const watch = setInterval(() => {
@@ -206,10 +203,6 @@ export class TemporaryAutoOptimize extends Store<AutoOptimizeActivity> {
     if (work) work.notice = this.host().context?.report('running', work.began)
   }
 
-  private async startAgain(): Promise<void> {
-    await this.remember({ turns: 0, every: (await this.counted()).every })
-  }
-
   private path(): string {
     return join(temporaryStateFolder(temporaryWorkspaceDirectory(this.host().workspace)), STATE_FILE)
   }
@@ -227,7 +220,7 @@ export class TemporaryAutoOptimize extends Store<AutoOptimizeActivity> {
     this.count =
       isRecord(saved) && whole(saved.turns) && whole(saved.every)
         ? { turns: saved.turns, every: saved.every }
-        : NOTHING_COUNTED
+        : { turns: 0, every: 0 }
     return this.count
   }
 
@@ -335,8 +328,6 @@ export const autoOptimizeWorker =
     }
   }
 
-const spawnAutoOptimizeWorker: AutoOptimizeWorker = autoOptimizeWorker()
-
 /** With fewer cases the optimizer has nothing to train, validate, and test on. */
 const FEWEST_CASES = 3
 
@@ -367,14 +358,6 @@ const freshName = (directory: string, at: Date): string => {
   return name
 }
 
-const autoOptimizeLog = (directory: string, experiment: string): string =>
-  join(temporaryStateFolder(directory), 'auto-optimize', `${experiment}.log`)
-
-const casesOf = async (file: string): Promise<number | undefined> => {
-  if (!existsSync(file)) return undefined
-  return (await readTemporaryExperimentFile(file)).raw.cases.length
-}
-
 /**
  * What auto-optimize does when it is due. An agent in a process of its own makes the experiment, because that takes
  * a model; strands dev then starts the optimizer on it, because that takes none. So the developer's chat is asked
@@ -385,19 +368,20 @@ export const autoOptimizeRun =
     workspace,
     history,
     start,
-    worker = spawnAutoOptimizeWorker,
+    worker = autoOptimizeWorker(),
     now = (): Date => new Date(),
   }: AutoOptimizeRunOptions): AutoOptimizeRun =>
   async ({ signal, building, idle }) => {
     const directory = temporaryWorkspaceDirectory(workspace)
     const experiment = freshName(directory, now())
-    const log = autoOptimizeLog(directory, experiment)
+    const log = join(temporaryStateFolder(directory), 'auto-optimize', `${experiment}.log`)
     building(experiment, log)
     const guide = await history.unattendedConverter({ name: experiment, fewestCases: FEWEST_CASES })
     signal.throwIfAborted()
     const { code } = await worker({ workspace, prompt: `${TASK}\n\n${guide}`, log, signal })
     signal.throwIfAborted()
-    const cases = await casesOf(temporaryExperimentFile(directory, experiment))
+    const file = temporaryExperimentFile(directory, experiment)
+    const cases = existsSync(file) ? (await readTemporaryExperimentFile(file)).raw.cases.length : undefined
     if (cases === undefined)
       throw new Error(
         code === 0
