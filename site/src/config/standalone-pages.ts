@@ -28,6 +28,18 @@ export const INDEXABLE_STANDALONE_PAGES: IndexableStandalonePage[] = [
     ],
   },
   {
+    slug: 'decider',
+    pageFile: 'src/pages/decider.astro',
+    lastmodSources: [
+      'src/pages/decider.astro',
+      'src/pages/decider/',
+      'src/config/decider-landing.ts',
+      'src/components/decider/',
+      'src/components/SiteHead.astro',
+      'src/layouts/ProductLandingLayout.astro',
+    ],
+  },
+  {
     slug: 'examples',
     pageFile: 'src/pages/examples.astro',
   },

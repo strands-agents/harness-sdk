@@ -278,6 +278,14 @@ from a local product checkout instead of the lock, set its source environment va
 EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box npm run dev
 ```
 
+### 8. Image Zoom (`starlight-image-zoom`)
+
+**What it does:** The [starlight-image-zoom](https://github.com/HiDeoo/starlight-image-zoom) Starlight plugin wraps every Markdown image in a zoom control, so readers can click a shrunk screenshot to see it at full size. Add `data-zoom-off` to an `<img>` to opt out; images inside links are never zoomable.
+
+**Site wiring:** The plugin normally installs its own `MarkdownContent` override, but it skips that when one already exists. Our `src/components/overrides/MarkdownContent.astro` therefore renders the plugin's `<ImageZoom />` element itself. The plugin also adds `rehype-raw` to the Markdown pipeline so it can see images written as raw HTML.
+
+**Limits:** It only wraps `<img>` and `<picture>` in Markdown. `<Diagram>` SVGs are inlined by a component and aren't zoomable.
+
 ## Configuration (`astro.config.mjs`)
 
 The main config ties everything together:
