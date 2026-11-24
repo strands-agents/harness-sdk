@@ -97,6 +97,13 @@ _BEDROCK_WEB_FETCH_FAMILY_MODELS = {
 # provider's set so an unsupported level fails here rather than as a request error.
 _ANTHROPIC_LEVELS = ("low", "medium", "high", "xhigh", "max")
 _OPENAI_LEVELS = ("minimal", "low", "medium", "high", "xhigh", "none")
+_OPENAI_NO_MAX_LEVELS = ("none", "low", "medium", "high", "xhigh")
+_OPENAI_NO_NONE_LEVELS = ("low", "medium", "high", "xhigh")
+_OPENAI_GPT5_LEVELS = ("minimal", "low", "medium", "high")
+_OPENAI_GPT5_1_LEVELS = ("none", "low", "medium", "high")
+_OPENAI_REASONING_BASIC_LEVELS = ("low", "medium", "high")
+_OPENAI_NON_REASONING_PREFIXES = ("gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-4-", "gpt-3.5", "chatgpt-")
+_OPENAI_BASIC_REASONING_PREFIXES = ("o1-", "o3", "o4-", "codex-mini", "gpt-oss-")
 _BEDROCK_GPT_LEVELS = ("none", "low", "medium", "high", "xhigh", "max")
 # Converse rejects max on GPT-5.4/5.5 and none on GPT-6 Astra/6.1 Sol.
 _BEDROCK_GPT_NO_MAX_LEVELS = ("none", "low", "medium", "high", "xhigh")
@@ -392,7 +399,32 @@ def _check_effort(effort: object) -> None:
     raise ValueError(f"Unknown effort {effort!r}. Choose one of: {', '.join(EFFORT_LEVELS)}.")
 
 
+def _openai_levels(model_id: str) -> tuple[str, ...]:
+    if (
+        model_id == "gpt-4"
+        or model_id == "chat-latest"
+        or "-chat-latest" in model_id
+        or model_id == "o1-mini"
+        or model_id.startswith("o1-mini-")
+        or model_id.startswith(_OPENAI_NON_REASONING_PREFIXES)
+    ):
+        return ()
+    if model_id == "o1" or model_id.startswith(_OPENAI_BASIC_REASONING_PREFIXES):
+        return _OPENAI_REASONING_BASIC_LEVELS
+    if model_id.startswith(("gpt-6-astra", "gpt-6.1-sol")):
+        return _OPENAI_NO_NONE_LEVELS
+    if model_id.startswith(("gpt-5.2", "gpt-5.4", "gpt-5.5", "gpt-5.1-codex-max")):
+        return _OPENAI_NO_MAX_LEVELS
+    if model_id.startswith("gpt-5.1"):
+        return _OPENAI_GPT5_1_LEVELS
+    if model_id == "gpt-5" or model_id.startswith("gpt-5-"):
+        return _OPENAI_GPT5_LEVELS
+    return _OPENAI_LEVELS
+
+
 def _model_levels(provider_name: str, model_id: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    if provider_name == "openai":
+        return _openai_levels(model_id)
     rows = _MODEL_LEVELS.get(provider_name, ())
     return next((levels for prefix, levels in rows if model_id.startswith(prefix)), default)
 
@@ -400,8 +432,12 @@ def _model_levels(provider_name: str, model_id: str, default: tuple[str, ...]) -
 def _default_effort(model_id: str, levels: tuple[str, ...], recommended: str | None) -> str | None:
     """The level ``"auto"`` resolves to: the vendor's default for the model from the shared model info
     (what Claude Code, Codex, or Gemini CLI run it at), else the provider's ``recommended`` level."""
+    if not levels:
+        return None
     vendor_default = _lookup_model(model_id).get("capabilities", {}).get("defaultEffort")
-    return vendor_default if vendor_default in levels else recommended
+    if vendor_default in levels:
+        return vendor_default
+    return recommended if recommended in levels else None
 
 
 def _effort(
@@ -512,7 +548,9 @@ def supports_thinking(model: Model | str | None) -> bool:
     if provider_name == "anthropic":
         return _claude_thinking_mode(name) is not None
     provider = _PROVIDERS.get(provider_name)
-    return provider is not None and bool(provider.thinking_levels)
+    if provider is None:
+        return False
+    return bool(_model_levels(provider_name, name, provider.thinking_levels))
 
 
 def _supports_media(model: Model | ModelRouter | str | None) -> bool:

@@ -994,3 +994,66 @@ def test_supports_media_requires_every_router_candidate_to_support_it():
         ]
     )
     assert _supports_media(mixed) is False
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "gpt-4-turbo",
+        "gpt-4",
+        "gpt-3.5-turbo",
+        "chatgpt-4o-latest",
+        "chat-latest",
+        "gpt-5-chat-latest",
+        "gpt-5.2-chat-latest",
+        "o1-mini",
+    ],
+)
+def test_openai_non_reasoning_models_omit_reasoning_params(model_id):
+    # https://github.com/strands-agents/harness-sdk/issues/6522
+    spec = f"openai/{model_id}"
+    assert supports_thinking(spec) is False
+    for effort in ("auto", "off"):
+        assert "params" not in resolve(spec, effort=effort).config
+    with pytest.raises(ValueError, match="supports no reasoning levels"):
+        resolve(spec, effort="high")
+
+
+@pytest.mark.parametrize(
+    ("model_id", "accepted", "rejected"),
+    [
+        (
+            "o1",
+            [("auto", "high"), ("low", "low"), ("medium", "medium"), ("high", "high"), ("off", None)],
+            ["minimal", "xhigh"],
+        ),
+        ("o3", [("auto", "high"), ("low", "low"), ("high", "high"), ("off", None)], ["minimal", "xhigh"]),
+        ("o3-mini", [("auto", "high"), ("medium", "medium"), ("off", None)], ["minimal", "xhigh"]),
+        ("o4-mini", [("auto", "high"), ("low", "low"), ("off", None)], ["minimal", "xhigh"]),
+        ("gpt-5", [("auto", "medium"), ("minimal", "minimal"), ("high", "high"), ("off", None)], ["xhigh", "max"]),
+        ("gpt-5-mini", [("auto", "high"), ("minimal", "minimal"), ("high", "high"), ("off", None)], ["xhigh"]),
+        ("gpt-5.1", [("auto", "medium"), ("low", "low"), ("high", "high"), ("off", "none")], ["minimal", "xhigh"]),
+        ("gpt-5.2", [("auto", "medium"), ("xhigh", "xhigh"), ("off", "none")], ["minimal", "max"]),
+        ("gpt-5.4", [("auto", "medium"), ("xhigh", "xhigh"), ("off", "none")], ["minimal", "max"]),
+        ("gpt-6-astra", [("auto", "low"), ("low", "low"), ("xhigh", "xhigh"), ("off", None)], ["minimal", "max"]),
+        ("gpt-6.1-sol", [("auto", "low"), ("low", "low"), ("xhigh", "xhigh"), ("off", None)], ["minimal", "max"]),
+    ],
+)
+def test_openai_effort_validation_matches_model_capabilities(model_id, accepted, rejected):
+    # https://github.com/strands-agents/harness-sdk/issues/6522
+    spec = f"openai/{model_id}"
+    assert supports_thinking(spec) is True
+    for effort, expected in accepted:
+        config = resolve(spec, effort=effort).config
+        if expected is None:
+            assert "params" not in config
+        else:
+            assert config["params"]["reasoning"] == {"effort": expected}
+    for effort in rejected:
+        with pytest.raises(ValueError, match=f"not supported by model {model_id}"):
+            resolve(spec, effort=effort)
