@@ -32,6 +32,12 @@ def test_every_spelling_of_a_model_resolves_to_its_entry(model_id):
     assert _lookup_model(model_id)["capabilities"]["defaultEffort"] == "medium"
 
 
+@pytest.mark.parametrize("model_id", ["gpt-5.4-2026-03-05", "openai.gpt-5.4-2026-03-05"])
+def test_a_dashed_dated_snapshot_resolves_to_its_model(model_id):
+    assert _lookup_model(model_id) is _lookup_model("gpt-5.4")
+    assert _lookup_model(model_id)["capabilities"]["defaultEffort"] == "medium"
+
+
 def test_an_unknown_model_has_an_empty_entry():
     assert _lookup_model("unknown-model") == {}
 
@@ -50,6 +56,7 @@ def test_every_default_effort_is_an_effort_level():
         "us.anthropic.claude-opus-5-5-20260401-v1:0",
         "arn:aws:bedrock:us-west-2:123:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0",
         "claude-haiku-4-5@20251001",
+        # TODO: re-add "gpt-5.4-2026-03-05" once the strands-agents floor includes the YYYY-MM-DD date rule (#6497)
         "anthropic.claude-3-5-haiku-20241022-v2:0",
         "openai.gpt-6.1-sol",
         "global.openai.gpt-6-astra",

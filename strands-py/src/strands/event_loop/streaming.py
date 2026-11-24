@@ -446,6 +446,7 @@ async def process_stream(
     start_time: float | None = None,
     cancel_signal: threading.Event | None = None,
     invocation_context: InvocationContext | None = None,
+    model_key: tuple[str | None, str | None] = (None, None),
 ) -> AsyncGenerator[TypedEvent, None]:
     """Processes the response stream from the API, constructing the final message and extracting usage metrics.
 
@@ -455,6 +456,7 @@ async def process_stream(
         cancel_signal: Optional threading.Event to check for cancellation during streaming.
         invocation_context: The request the call's usage adds to once the stream ends. A cancelled stream adds the
             usage reported before it stopped; a stream that raises adds nothing.
+        model_key: The provider name and model id the usage is recorded under; ``None`` for what is not known.
 
     Yields:
         The reason for stopping, the constructed message, and the usage metrics.
@@ -479,7 +481,7 @@ async def process_stream(
         # Check for cancellation during stream processing
         if cancel_signal and cancel_signal.is_set():
             logger.debug("cancellation detected during stream processing")
-            _record_usage(invocation_context, usage)
+            _record_usage(invocation_context, usage, model_key)
             # Return cancelled stop reason with cancellation message
             # The incomplete message in state["message"] is discarded and never added to agent.messages
             yield ModelStopReason(
@@ -518,7 +520,7 @@ async def process_stream(
     # A provider that aborts in flight ends the stream without messageStop; the in-loop check
     # above cannot see it, so report the cancellation here rather than a truncated end_turn.
     if not saw_message_stop and cancel_signal and cancel_signal.is_set():
-        _record_usage(invocation_context, usage)
+        _record_usage(invocation_context, usage, model_key)
         yield ModelStopReason(
             stop_reason="cancelled",
             message={"role": "assistant", "content": [{"text": "Cancelled by user"}]},
@@ -527,14 +529,16 @@ async def process_stream(
         )
         return
 
-    _record_usage(invocation_context, usage)
+    _record_usage(invocation_context, usage, model_key)
     yield ModelStopReason(stop_reason=stop_reason, message=state["message"], usage=usage, metrics=metrics)
 
 
-def _record_usage(invocation_context: InvocationContext | None, usage: Usage) -> None:
-    """Add a finished model call's usage to the request it ran in, if any."""
+def _record_usage(
+    invocation_context: InvocationContext | None, usage: Usage, model_key: tuple[str | None, str | None]
+) -> None:
+    """Add a finished model call's usage to the request it ran in, if any, under the model that made the call."""
     if invocation_context is not None:
-        invocation_context._record_usage(usage)
+        invocation_context._record_usage(usage, *model_key)
 
 
 async def stream_messages(

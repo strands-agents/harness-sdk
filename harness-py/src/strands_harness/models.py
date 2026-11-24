@@ -40,7 +40,7 @@ _ANTHROPIC_WEB_SEARCH = {"type": "web_search_20260318", "name": "web_search", "a
 
 
 _VERSION_SUFFIX = re.compile(r"-(?:v\d+(?::\d+)?|\d+:\d+)$")
-_DATE_SUFFIX = re.compile(r"[-@]\d{8}$")
+_DATE_SUFFIX = re.compile(r"[-@](?:\d{8}|\d{4}-\d{2}-\d{2})$")
 # The shared model info (``shared/model-info.json``); hatch_build.py copies it into the package.
 _MODELS: dict[str, dict[str, Any]] = json.loads(
     resources.files("strands_harness").joinpath("model_info.json").read_text(encoding="utf-8")

@@ -10,8 +10,10 @@ from typing_extensions import TypedDict
 
 from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....event_loop.streaming import _record_usage
+from ....models._model_proxy import _latest_call_tools
+from ....models._provider_name import _model_key
 from ....types.content import ContentBlock, Message, Messages, split_system_prompt
-from ....types.tools import ToolResultContent
+from ....types.tools import ToolResultContent, ToolSpec
 from ...content_rendering import format_tool_result_label, tool_result_to_content_blocks
 from ...message_trimming import (
     _holds_run,
@@ -201,7 +203,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         except Exception as error:
             logger.warning("messages=<%d>, error=<%s> | summarization failed", replaced, error, exc_info=True)
             return False
-        _record_summary_usage(context.invocation_context, result)
+        _record_summary_usage(context.invocation_context, result, model)
         # Only a summary the provider wrote can be replayed by the agent's model.
         summary = _first_summary(result)
         if summary is None or not summary["summary"].get("provider"):
@@ -297,7 +299,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         """
         try:
             result = await model.summarize(request, **self._summarize_kwargs(agent, replay=replay))
-            _record_summary_usage(invocation_context, result)
+            _record_summary_usage(invocation_context, result, model)
             text = _summary_text(result)
         except Exception as error:
             logger.warning("%s, error=<%s> | summarization failed", log_fields, error)
@@ -317,19 +319,28 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if replay:
             system_prompt, system_prompt_content = split_system_prompt(agent.system_prompt_content)
             kwargs.update(
-                tool_specs=agent.tool_registry.get_all_tool_specs(),
+                tool_specs=self._replayed_tools(agent),
                 system_prompt=system_prompt,
                 system_prompt_content=system_prompt_content,
             )
         return kwargs
 
+    def _replayed_tools(self, agent: Agent) -> list[ToolSpec]:
+        """The tools a replay sends.
+
+        Those of the agent's latest model call, since the replay shares that call's prompt cache only with the same
+        tools, which ``InvokeModelStage.Input`` middleware can have rewritten. Before the first call, the registry's.
+        """
+        recorded = _latest_call_tools(agent)
+        return recorded if recorded is not None else agent.tool_registry.get_all_tool_specs()
+
     def _resolve_model(self, agent: Agent) -> Model | None:
         return self._config.get("model") or agent.model
 
 
-def _record_summary_usage(invocation_context: InvocationContext | None, result: SummarizeResult) -> None:
+def _record_summary_usage(invocation_context: InvocationContext | None, result: SummarizeResult, model: Model) -> None:
     if result.usage is not None:
-        _record_usage(invocation_context, result.usage)
+        _record_usage(invocation_context, result.usage, _model_key(model))
 
 
 def _can_replay_server_side(model: Model, agent_model: Model) -> bool:
