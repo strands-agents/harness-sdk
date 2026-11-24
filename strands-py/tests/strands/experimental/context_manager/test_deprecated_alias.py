@@ -7,6 +7,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 _HISTORICAL_EXPORTS = [
     "ContextManager",
     "ContextManagerConfig",
@@ -79,6 +81,37 @@ def test_deprecation_warning_fires_once_at_importer(tmp_path):
     subprocess.run([sys.executable, str(script)], check=True, env=_subprocess_env())
 
 
+def test_parent_package_resolves_the_alias_by_attribute(tmp_path):
+    script = tmp_path / "check_attribute_access.py"
+    script.write_text(
+        textwrap.dedent(
+            """
+            import warnings
+
+            import strands.experimental
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                alias = strands.experimental.context_manager
+
+            assert alias.ContextManager is not None
+            alias_warnings = [w for w in caught if "strands.experimental.context_manager" in str(w.message)]
+            assert len(alias_warnings) == 1, alias_warnings
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    subprocess.run([sys.executable, str(script)], check=True, env=_subprocess_env())
+
+
+def test_unknown_experimental_attribute_raises_attribute_error():
+    experimental = importlib.import_module("strands.experimental")
+
+    with pytest.raises(AttributeError, match="has no attribute 'not_a_submodule'"):
+        _ = experimental.not_a_submodule
+
+
 def test_stable_import_does_not_load_deprecated_namespace(tmp_path):
     script = tmp_path / "check_stable_import.py"
     script.write_text(
@@ -107,6 +140,12 @@ def test_repository_does_not_import_deprecated_namespace():
     project_root = Path(__file__).resolve().parents[4]
     source_root = project_root / "src"
     shim_root = source_root / "strands" / "experimental" / "context_manager"
+    # The parent package names the alias so it can import it on attribute access; that it stays
+    # unimported until then is covered by test_stable_import_does_not_load_deprecated_namespace.
+    exempt_files = (
+        Path(__file__).resolve(),
+        (source_root / "strands" / "experimental" / "__init__.py").resolve(),
+    )
     forbidden_patterns = (
         "strands.experimental.context_manager",
         ".experimental.context_manager",
@@ -117,7 +156,7 @@ def test_repository_does_not_import_deprecated_namespace():
     for scan_root in (source_root, project_root / "tests", project_root / "tests_integ", project_root / "tests_typing"):
         for source_file in scan_root.rglob("*.py"):
             resolved_file = source_file.resolve()
-            if resolved_file == Path(__file__).resolve() or resolved_file.is_relative_to(shim_root):
+            if resolved_file in exempt_files or resolved_file.is_relative_to(shim_root):
                 continue
             if any(pattern in source_file.read_text(encoding="utf-8") for pattern in forbidden_patterns):
                 violations.append(str(source_file.relative_to(project_root)))
