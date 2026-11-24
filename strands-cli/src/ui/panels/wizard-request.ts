@@ -1,6 +1,6 @@
 import type { ChatDiffPreview } from '../../agent/types.js'
-import { sanitizeTerminalText } from '../../terminal/text.js'
-import { wrappedDiffLines } from '../diff-rows.js'
+import { sanitizeTerminalText, wrapWords } from '../../terminal/text.js'
+import { escapePermissionText } from '../chat/panel-state.js'
 
 export type WizardAnswer = string | number | boolean | readonly string[]
 
@@ -132,6 +132,32 @@ const DIFF_FRAME_ROWS = 2
 
 /** The columns the text of a diff line gets in a panel `width` columns wide, after its indent and its +/- mark. */
 export const wizardDiffTextWidth = (width: number): number => Math.max(1, width - DIFF_INDENT - DIFF_MARK_COLUMNS)
+
+export const diffSummaryText = (diff: ChatDiffPreview): string | undefined => {
+  const added = diff.lines.filter((line) => line.kind === 'add').length
+  const removed = diff.lines.filter((line) => line.kind === 'remove').length
+  if (added + removed === 0) return undefined
+  return `+${added} -${removed} lines${diff.truncated ? ' (preview truncated)' : ''}`
+}
+
+type DiffLine = { label: string; text: string; tone?: 'success' | 'error' | 'muted' }
+
+const LINE_MARK: Record<ChatDiffPreview['lines'][number]['kind'], Omit<DiffLine, 'text'>> = {
+  add: { label: '+', tone: 'success' },
+  remove: { label: '-', tone: 'error' },
+  header: { label: '', tone: 'muted' },
+  context: { label: '' },
+}
+
+/** A change's lines wrapped to `width` columns between words, with the file's own spacing and no summary. */
+export const wrappedDiffLines = (diff: ChatDiffPreview, width: number): DiffLine[] =>
+  diff.lines.flatMap((line) =>
+    wrapWords(escapePermissionText(line.text), width).map((text, index) => ({
+      ...LINE_MARK[line.kind],
+      ...(index === 0 ? {} : { label: '' }),
+      text,
+    }))
+  )
 
 const fieldRows = (field: WizardFieldSpec, width: number | undefined): number => {
   if (field.kind === 'select') return field.options.length
