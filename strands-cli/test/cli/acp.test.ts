@@ -584,7 +584,7 @@ describe('ACP server', () => {
     try {
       await started.promise
       await expect(service.loadSession(request, client)).rejects.toMatchObject({ code: -32602 })
-      await expect(service.newSession({ cwd: process.cwd(), mcpServers: [] })).resolves.toHaveProperty('sessionId')
+      await expect(service.newSession({ cwd: request.cwd, mcpServers: [] })).resolves.toHaveProperty('sessionId')
       expect(buildAgent).toHaveBeenCalledTimes(2)
       initialize.mockRejectedValueOnce(new Error('Initialization failed'))
       release.resolve()
