@@ -1,9 +1,10 @@
 """The ``context_manager="lsp"`` option: language server context on top of the ``"auto"`` strategies.
 
-Code that ``read`` or a read-only shell command returns is offloaded as it arrives and only its skeleton stays in
-context; ``retrieve_context`` returns exact lines (``path`` with ``line_range``) and definitions (``symbol``), and an
-experimental relevance strategy offloads old results about unrelated files near a full window. When the language server
-can't start, the harness falls back to ``"auto"`` and says so, rather than failing construction.
+Broad code reads (more than one file, a whole file, or a long range) are offloaded as they arrive and only their
+skeleton stays in context, while targeted reads of part of one file arrive in full. ``retrieve_context`` returns exact
+lines (``path`` with ``line_range``) and definitions (``symbol``), and an experimental relevance strategy offloads old
+results about unrelated files near a full window. When the language server can't start, the harness falls back to
+``"auto"`` and says so, rather than failing construction.
 """
 
 from __future__ import annotations
@@ -24,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 LSP_COMMAND = ["pyright-langserver", "--stdio"]
 """The language server the option starts: pyright, installed with the ``strands-harness[lsp]`` extra."""
+
+TARGETED_LINES = 200
+"""Lines of one file a read may hold and still arrive in full: a targeted read, usually made to edit the code."""
 
 STATE_KEY = "context_manager"
 """The ``agent.state`` key that records which context manager the ``"lsp"`` option ended up running."""
@@ -89,7 +93,9 @@ def resolve_lsp_context(
         return _fallback(f"{type(error).__name__}: {error}")
 
     strategies: list[ContextStrategy | str] = [
-        CodeSkeletonStrategy(client, root, read_tools=(read_tool,), shell_tools=(shell_tool,)),
+        CodeSkeletonStrategy(
+            client, root, read_tools=(read_tool,), shell_tools=(shell_tool,), targeted_lines=TARGETED_LINES
+        ),
         LspStrategy(client, root),
         *_auto_strategies(),
     ]

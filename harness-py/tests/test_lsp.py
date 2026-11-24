@@ -82,6 +82,7 @@ def test_lsp_skeletons_the_harness_read_tool(workdir, fake_server):
 
     assert skeleton._read_tools == ("read",)
     assert skeleton._shell_tools == ("shell",)
+    assert skeleton._targeted_lines == 200
 
 
 def test_lsp_falls_back_to_auto_when_the_server_is_missing(workdir, monkeypatch, caplog):
