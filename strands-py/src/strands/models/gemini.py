@@ -71,13 +71,13 @@ def _tool_result_media(item: ToolResultContent) -> tuple[ImageContent | Document
 
 @contextmanager
 def _map_client_errors() -> Iterator[None]:
-    """Translate Gemini client errors into the Strands exceptions the agent loop handles."""
+    """Translate Gemini client and server errors into the Strands exceptions the agent loop handles."""
     try:
         yield
-    except genai.errors.ClientError as error:
+    except (genai.errors.ClientError, genai.errors.ServerError) as error:
         # When the response body is not JSON, google-genai sets status to the HTTP reason
         # phrase ("Too Many Requests"), so the HTTP code is the reliable throttling signal.
-        if error.code == 429 or error.status in ("RESOURCE_EXHAUSTED", "UNAVAILABLE"):
+        if error.code in (429, 503) or error.status in ("RESOURCE_EXHAUSTED", "UNAVAILABLE"):
             raise ModelThrottledException(error.message or str(error)) from error
         if error.status == "INVALID_ARGUMENT" and "exceeds the maximum number of tokens" in (error.message or ""):
             raise ContextWindowOverflowException(error.message) from error

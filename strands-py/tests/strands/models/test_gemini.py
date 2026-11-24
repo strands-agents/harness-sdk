@@ -1478,6 +1478,17 @@ async def test_structured_output_throttled_exception(gemini_client, model, messa
 
 
 @pytest.mark.asyncio
+async def test_structured_output_throttled_exception_server_error(gemini_client, model, messages, weather_output):
+    """structured_output() must map Gemini 503 ServerError to ModelThrottledException, matching stream()."""
+    gemini_client.aio.models.generate_content.side_effect = genai.errors.ServerError(
+        503, {"error": {"code": 503, "status": "UNAVAILABLE", "message": "The model is overloaded."}}
+    )
+
+    with pytest.raises(ModelThrottledException, match="The model is overloaded."):
+        await anext(model.structured_output(type(weather_output), messages))
+
+
+@pytest.mark.asyncio
 async def test_structured_output_throttled_exception_by_status(gemini_client, model, messages, weather_output):
     """structured_output() maps RESOURCE_EXHAUSTED and UNAVAILABLE status to ModelThrottledException."""
     gemini_client.aio.models.generate_content.side_effect = genai.errors.ClientError(
