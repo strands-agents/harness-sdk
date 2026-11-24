@@ -61,7 +61,8 @@ def _parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     Raises:
         ValueError: If the frontmatter is malformed or missing required delimiters.
     """
-    stripped = content.strip()
+    # str.strip() keeps a UTF-8 BOM (U+FEFF), which some editors write at the start of the file.
+    stripped = content.lstrip("\ufeff").strip()
     if not stripped.startswith("---"):
         raise ValueError("SKILL.md must start with --- frontmatter delimiter")
 
