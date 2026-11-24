@@ -10,7 +10,7 @@ import {
   useSyncedState,
   Wizard,
   type WizardField,
-  type WizardStep,
+  type WizardProps,
   type WizardToggle,
 } from './wizard.js'
 import {
@@ -24,11 +24,11 @@ import {
   type WizardAnswer,
   type WizardBroker,
   type WizardDiffSpec,
+  type WizardFieldSpec,
   type WizardNumberSpec,
   type WizardOption,
   type WizardRequest,
   type WizardSelectSpec,
-  type WizardStepSpec,
 } from './wizard-request.js'
 
 type Answers = Record<string, WizardAnswer>
@@ -110,13 +110,13 @@ const numberField = (
   }
 }
 
-const problemOf = (spec: WizardStepSpec, answers: Answers): string | undefined =>
-  spec.fields
+const problemOf = (fields: readonly WizardFieldSpec[], answers: Answers): string | undefined =>
+  fields
     .map((field) => (field.kind === 'number' ? numberProblem(field, answers[field.key]) : undefined))
     .find((problem) => problem !== undefined)
 
-const diffOf = (spec: WizardStepSpec): WizardDiffSpec | undefined =>
-  spec.fields.flatMap((field) => (field.kind === 'diff' ? [field] : []))[0]
+const diffOf = (fields: readonly WizardFieldSpec[]): WizardDiffSpec | undefined =>
+  fields.flatMap((field) => (field.kind === 'diff' ? [field] : []))[0]
 
 const DIFF_INDENT = ' '.repeat(2)
 const DIFF_MARK_COLUMNS = 2
@@ -179,20 +179,18 @@ const DiffBody = ({
   )
 }
 
-const toStep = (
-  spec: WizardStepSpec,
+const toForm = (
+  specs: readonly WizardFieldSpec[],
   answers: Answers,
   live: () => Answers,
   update: (key: string, value: WizardAnswer) => void,
   typed: Typed,
   { width, active }: { width: number; active: boolean }
-): WizardStep => {
-  const problem = problemOf(spec, answers)
-  const change = diffOf(spec)
+): Pick<WizardProps, 'fields' | 'notice' | 'body' | 'bodyRows'> => {
+  const problem = problemOf(specs, answers)
+  const change = diffOf(specs)
   return {
-    key: spec.key,
-    title: spec.title,
-    fields: spec.fields.flatMap((field) => {
+    fields: specs.flatMap((field) => {
       if (field.kind === 'diff') return []
       return field.kind === 'select'
         ? selectFields(field, answers, live, update, typed)
@@ -223,18 +221,15 @@ const RequestView = ({
   width: number
   height: number
 }): ReactElement => {
-  const answers = useSyncedState<Answers>(() => defaultAnswers(request.steps))
+  const answers = useSyncedState<Answers>(() => defaultAnswers(request.fields))
   const texts = useSyncedState<Record<string, string>>(() => ({}))
   const typed: Typed = {
     value: texts.value,
     set: (key, text) => texts.set((current) => ({ ...current, [key]: text })),
   }
   const update = (key: string, value: WizardAnswer): void => answers.set((current) => ({ ...current, [key]: value }))
-  const steps = request.steps.map((step) =>
-    toStep(step, answers.value, answers.current, update, typed, { width, active })
-  )
   useEffect(
-    () => broker.draft(request.id, finishedAnswers(request.steps, answers.value, texts.value)),
+    () => broker.draft(request.id, finishedAnswers(request.fields, answers.value, texts.value)),
     [broker, request, answers.value, texts.value]
   )
   return (
@@ -242,13 +237,12 @@ const RequestView = ({
       name={request.name}
       {...(request.question === undefined ? {} : { question: request.question })}
       {...(request.titleParts ? { titleParts: request.titleParts } : {})}
-      steps={steps}
-      {...(request.finishLabel === undefined ? {} : { finishLabel: request.finishLabel })}
+      {...toForm(request.fields, answers.value, answers.current, update, typed, { width, active })}
       width={width}
       height={height}
       active={active}
       {...(blur ? { onLeave: blur } : {})}
-      onFinish={() => broker.respond(request.id, finishedAnswers(request.steps, answers.current(), texts.current()))}
+      onFinish={() => broker.respond(request.id, finishedAnswers(request.fields, answers.current(), texts.current()))}
       onCancel={() => broker.respond(request.id, undefined)}
       {...(request.back ? { onBack: () => broker.respond(request.id, 'back') } : {})}
       // Closing a standing question answers nothing: whoever asked keeps it waiting, so Esc only closes it.

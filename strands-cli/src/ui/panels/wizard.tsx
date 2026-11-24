@@ -38,19 +38,11 @@ const useToneColor = (): ((tone: Tone | undefined) => { color?: string; dimColor
   }
 }
 
-export const PanelTitle = ({
-  name,
-  parts = [],
-  right,
-}: {
-  name: string
-  parts?: readonly string[]
-  right?: ReactNode
-}): ReactElement => {
+export const PanelTitle = ({ name, parts = [] }: { name: string; parts?: readonly string[] }): ReactElement => {
   const { accent } = useTheme()
   return (
-    <Box height={1} flexShrink={0} justifyContent="space-between" overflow="hidden">
-      <Box flexShrink={1} overflow="hidden">
+    <Box height={1} flexShrink={0} overflow="hidden">
+      <Box flexShrink={1} marginRight={2} overflow="hidden">
         <Text wrap="truncate-end">
           <Text color={accent} bold>
             {oneLine(name)}
@@ -60,11 +52,6 @@ export const PanelTitle = ({
           ))}
         </Text>
       </Box>
-      {right === undefined ? null : (
-        <Box flexShrink={0} marginLeft={2}>
-          {right}
-        </Box>
-      )}
     </Box>
   )
 }
@@ -276,27 +263,19 @@ interface WizardText extends FieldBase {
 
 export type WizardField = WizardToggle | WizardText
 
-export interface WizardStep {
-  readonly key: string
-  readonly title: string
+export interface WizardProps {
+  readonly name: string
+  readonly titleParts?: readonly string[]
+  readonly question?: string
   readonly fields: readonly WizardField[]
   /** Why the form cannot finish yet. */
   readonly notice?: string
   /** Drawn above the fields, which are about it. */
   readonly body?: (room: number) => ReactNode
-  /** The rows the body needs to show all of itself, so one question crowds only when they do not fit. */
+  /** The rows the body needs to show all of itself, so the form crowds only when they do not fit. */
   readonly bodyRows?: number
-}
-
-export interface WizardProps {
-  readonly name: string
-  readonly titleParts?: readonly string[]
-  readonly steps: readonly WizardStep[]
-  readonly question?: string
-  readonly status?: string
   readonly width: number
   readonly height: number
-  readonly finishLabel?: string
   readonly onFinish: () => void
   readonly onCancel: () => void
   // When set, the Cancel button reads Back and calls this; Esc still cancels.
@@ -309,19 +288,11 @@ export interface WizardProps {
 }
 
 const LABEL_WIDTH = 12
-const FULL_ROWS = 12
-const BODY_CHROME_ROWS = 6
-const COMPACT_BODY_CHROME_ROWS = 4
 const MIN_LIST_ROWS = 3
 
-type WizardButton = 'next' | 'back' | 'finish' | 'cancel'
+const BUTTONS = ['finish', 'cancel'] as const
 
-const BUTTON_LABELS: Readonly<Record<WizardButton, string>> = {
-  next: '[ Next ]',
-  back: 'Back',
-  finish: '[ Start ]',
-  cancel: 'Cancel',
-}
+type WizardButton = (typeof BUTTONS)[number]
 
 type WizardRow =
   { readonly kind: 'field'; readonly field: WizardField } | { readonly kind: 'button'; readonly button: WizardButton }
@@ -335,21 +306,11 @@ interface Editor {
 const edited = (editor: Editor, value: Editor['value']): Editor =>
   editor.edit.numeric && /\D/u.test(value.input) ? editor : { ...editor, value }
 
-const stepButtons = (at: number, count: number): readonly WizardButton[] => {
-  if (at === count - 1) return ['finish', 'cancel']
-  return at === 0 ? ['next', 'cancel'] : ['next', 'back']
-}
-
-const stepRows = (step: WizardStep, at: number, count: number): WizardRow[] => [
-  ...step.fields.map((field): WizardRow => ({ kind: 'field', field })),
-  ...stepButtons(at, count).map((button): WizardRow => ({ kind: 'button', button })),
-]
-
-// The rows one question draws around its body, counted row by row, so the body gets exactly what is left.
-const rowsAroundBody = (step: WizardStep, { question, compact }: { question: boolean; compact: boolean }): number => {
+// The rows the form draws around its body, counted row by row, so the body gets exactly what is left.
+const rowsAroundBody = (fields: number, { question, compact }: { question: boolean; compact: boolean }): number => {
   const gap = compact ? 0 : 1
   // The title, the buttons, and the key hints, then the gaps, one of them setting the body apart from its fields.
-  return 3 + (question ? 1 : 0) + 3 * gap + step.fields.length
+  return 3 + (question ? 1 : 0) + 3 * gap + fields
 }
 
 const MARKS = {
@@ -413,57 +374,14 @@ const ValueRow = ({
   )
 }
 
-const StepBar = ({
-  steps,
-  at,
-  right,
-  onPick,
-}: {
-  steps: readonly WizardStep[]
-  at: number
-  right: string
-  onPick: (index: number) => void
-}): ReactElement => {
-  const { accent, selection } = useTheme()
-  const toneColor = useToneColor()
-  const clicks = useDevPanelClicks()
-  return (
-    <Box height={1} flexShrink={0} overflow="hidden">
-      <Box flexShrink={0}>
-        {steps.map((step, index) => (
-          <Box
-            key={step.key}
-            flexShrink={0}
-            marginRight={1}
-            {...(index === at ? { backgroundColor: selection } : {})}
-            {...(clicks ? { ref: clicks.target(() => onPick(index)) } : {})}
-          >
-            <Text {...(index === at ? { color: accent, bold: true } : { dimColor: true })}>{` ${step.title}`}</Text>
-            <Text {...toneColor(step.notice ? 'error' : undefined)}>{step.notice ? ' ! ' : '  '}</Text>
-          </Box>
-        ))}
-      </Box>
-      <Box flexGrow={1} flexShrink={1} justifyContent="flex-end" overflow="hidden">
-        <Text dimColor wrap="truncate-end">
-          {right}
-        </Text>
-      </Box>
-    </Box>
-  )
-}
-
 const WizardButtons = ({
-  buttons,
   ready,
-  finishLabel,
   cancelLabel,
   focused,
   onChoose,
   onHover,
 }: {
-  buttons: readonly WizardButton[]
   ready: boolean
-  finishLabel: string
   cancelLabel: string
   focused: WizardButton | undefined
   onChoose: (button: WizardButton) => void
@@ -471,8 +389,6 @@ const WizardButtons = ({
 }): ReactElement => {
   const { accent, selection } = useTheme()
   const clicks = useDevPanelClicks()
-  const label = (name: WizardButton): string =>
-    name === 'finish' ? finishLabel : name === 'cancel' ? cancelLabel : BUTTON_LABELS[name]
   const button = (name: WizardButton, text: ReactElement): ReactElement => (
     <Box
       key={name}
@@ -494,37 +410,24 @@ const WizardButtons = ({
   )
   return (
     <Box height={1} flexShrink={0} overflow="hidden">
-      {buttons.map((name) =>
-        name === 'next' || name === 'finish'
-          ? button(
-              name,
-              <Text {...(name === 'next' || ready ? { color: accent, bold: true } : { dimColor: true })}>
-                {label(name)}
-              </Text>
-            )
-          : button(name, <Text bold={focused === name}>{label(name)}</Text>)
-      )}
+      {button('finish', <Text {...(ready ? { color: accent, bold: true } : { dimColor: true })}>{'[ OK ]'}</Text>)}
+      {button('cancel', <Text bold={focused === 'cancel'}>{cancelLabel}</Text>)}
     </Box>
   )
-}
-
-const buttonHint = (button: WizardButton, blocked: boolean): string => {
-  if (button === 'finish') return blocked ? 'fix the problem to finish' : 'Enter finish'
-  if (button === 'next') return 'Enter next'
-  return button === 'back' ? 'Enter back' : 'Enter cancel'
 }
 
 const rowHints = (
   row: WizardRow | undefined,
   blocked: boolean,
-  { walked, back, leave, escape }: { walked: boolean; back: boolean; leave: boolean; escape: string }
+  { back, leave, escape }: { back: boolean; leave: boolean; escape: string }
 ): string[] => {
-  const tab = walked ? ['Tab next tab'] : []
-  const rest = [...(leave && !walked ? ['↓ chat'] : []), escape]
-  const hints = (action: string, arrows = '↑↓'): string[] => [...tab, arrows, action, ...rest]
-  if (row?.kind === 'button')
-    return hints(back && row.button === 'cancel' ? 'Enter back' : buttonHint(row.button, blocked), '←→')
-  if (row?.kind !== 'field') return [...tab, ...rest]
+  const rest = [...(leave ? ['↓ chat'] : []), escape]
+  const hints = (action: string, arrows = '↑↓'): string[] => [arrows, action, ...rest]
+  if (row?.kind === 'button') {
+    if (row.button === 'cancel') return hints(back ? 'Enter back' : 'Enter cancel', '←→')
+    return hints(blocked ? 'fix the problem to finish' : 'Enter finish', '←→')
+  }
+  if (row?.kind !== 'field') return rest
   if (row.field.kind === 'toggle' && row.field.unavailable !== undefined) return hints('not available')
   return hints(row.field.hint)
 }
@@ -532,12 +435,13 @@ const rowHints = (
 export const Wizard = ({
   name,
   titleParts = [],
-  steps,
   question,
-  status = '',
+  fields,
+  notice: blocking,
+  body,
+  bodyRows = 0,
   width,
   height,
-  finishLabel = BUTTON_LABELS.finish,
   onFinish,
   onCancel,
   onBack,
@@ -545,54 +449,30 @@ export const Wizard = ({
   onLeave,
   escapeHint = 'Esc cancel',
 }: WizardProps): ReactElement => {
-  const at = useSyncedState(0)
   const editing = useSyncedState<Editor | undefined>(undefined)
-  const step = steps[Math.min(at.value, steps.length - 1)] ?? steps[0]!
-  const index = steps.indexOf(step)
-  const rows = stepRows(step, index, steps.length)
-  // Every label of a step gets the width of its longest one, so the values line up.
-  const labelWidth = Math.max(LABEL_WIDTH, ...step.fields.map((field) => field.label.length + 2))
-  const buttons = stepButtons(index, steps.length)
+  const rows: WizardRow[] = [
+    ...fields.map((field): WizardRow => ({ kind: 'field', field })),
+    ...BUTTONS.map((button): WizardRow => ({ kind: 'button', button })),
+  ]
+  // Every label gets the width of the longest one, so the values line up.
+  const labelWidth = Math.max(LABEL_WIDTH, ...fields.map((field) => field.label.length + 2))
   const cursor = cursorIn(useSyncedState(0), rows.length)
-  const blocking = steps.find(({ notice }) => notice)?.notice
   const ready = blocking === undefined
-  const walked = steps.length > 1
   const hasQuestion = question !== undefined
-  // One question is sized to its content, so it crowds only when its body does not fit; a walked form crowds when short.
-  const compact = walked
-    ? height < FULL_ROWS
-    : step.body !== undefined &&
-      height < rowsAroundBody(step, { question: hasQuestion, compact: false }) + (step.bodyRows ?? 0)
-  const bodyRoom = walked
-    ? height - (compact ? COMPACT_BODY_CHROME_ROWS : BODY_CHROME_ROWS)
-    : Math.max(1, height - rowsAroundBody(step, { question: hasQuestion, compact }))
+  // The form is sized to its content, so it crowds only when its body does not fit.
+  const compact =
+    body !== undefined && height < rowsAroundBody(fields.length, { question: hasQuestion, compact: false }) + bodyRows
+  const bodyRoom = Math.max(1, height - rowsAroundBody(fields.length, { question: hasQuestion, compact }))
   // Without the keyboard there is no cursor: the chat holds it.
   const cursorRow = active ? cursor.index : -1
   const focused = active ? rows[cursor.index] : undefined
   const editor = editing.value
-  const firstButton = rows.findIndex((row) => row.kind === 'button')
-  const toggles = step.fields.filter((field): field is WizardToggle => field.kind === 'toggle')
-  const pickStep = (next: number): void => {
-    at.set(Math.max(0, Math.min(next, steps.length - 1)))
-    cursor.set(0)
-  }
-  const wrapStep = (move: 1 | -1): number => (at.current() + move + steps.length) % steps.length
-  const stepTo = (move: 1 | -1, keep: readonly WizardButton[]): void => {
-    const next = wrapStep(move)
-    const nextStep = steps[next]!
-    const nextRows = stepRows(nextStep, next, steps.length)
-    const landing = keep
-      .map((button) => nextRows.findIndex((row) => row.kind === 'button' && row.button === button))
-      .find((found) => found >= 0)
-    at.set(next)
-    cursor.set(landing ?? 0)
-  }
+  const firstButton = fields.length
+  const toggles = fields.filter((field): field is WizardToggle => field.kind === 'toggle')
   const openEditor = (key: string, edit: WizardEdit): void => editing.set({ key, edit, value: textValue(edit.value) })
   const activate = (row: WizardRow | undefined): void => {
     if (row?.kind === 'button') {
       if (row.button === 'cancel') (onBack ?? onCancel)()
-      else if (row.button === 'next') stepTo(1, ['next', 'finish'])
-      else if (row.button === 'back') stepTo(-1, ['back', 'next'])
       else if (ready) onFinish()
       return
     }
@@ -625,16 +505,14 @@ export const Wizard = ({
         const opened = { key: row.field.key, edit: row.field.edit, value: textValue(row.field.edit.value) }
         editing.set(edited(opened, editText(opened.value, input, key)))
       } else if (key.escape) onCancel()
-      else if (key.tab && walked) stepTo(key.shift ? -1 : 1, [])
       // The buttons sit on one line, so ←→ moves between them and ↑ goes back to the fields.
       else if (row?.kind === 'button' && (key.leftArrow || key.rightArrow)) {
-        const at = cursor.current() - firstButton + (key.rightArrow ? 1 : -1)
-        cursor.set(firstButton + Math.max(0, Math.min(at, buttons.length - 1)))
+        cursor.set(firstButton + (key.rightArrow ? 1 : 0))
       } else if (row?.kind === 'button' && key.upArrow) {
         if (firstButton > 0) cursor.set(firstButton - 1)
       } else if (row?.kind === 'button' && key.downArrow) {
-        // Below the buttons of one question, down carries on into the chat.
-        if (!walked) onLeave?.()
+        // Below the buttons, down carries on into the chat.
+        onLeave?.()
       } else if (key.upArrow) cursor.move(-1)
       else if (key.downArrow) cursor.move(1)
       else if (key.return || shortcut(input, key) === ' ') activate(row)
@@ -644,11 +522,11 @@ export const Wizard = ({
   usePaste((text) => editing.set((current) => current && edited(current, editText(current.value, text))))
   const rowOf = (key: string): number => rows.findIndex((row) => row.kind === 'field' && row.field.key === key)
   const toggleRows = toggles.map(({ key }) => rowOf(key))
-  const notice = step.body ? undefined : (step.notice ?? blocking)
+  const notice = body ? undefined : blocking
   // The list chrome is counted from what the panel renders, so a sized panel shows every option.
-  const listChrome = 3 + (walked ? 2 : 0) + (hasQuestion ? 1 : 0) + (compact ? 0 : 1) + (notice ? 1 : compact ? 0 : 1)
+  const listChrome = 3 + (hasQuestion ? 1 : 0) + (compact ? 0 : 1) + (notice ? 1 : compact ? 0 : 1)
   const fieldView = (field: WizardField): ReactNode => {
-    // One scrolling list for every toggle of the step, placed where the first one was declared.
+    // One scrolling list for every toggle, placed where the first one was declared.
     if (field.kind === 'toggle')
       return field.key === toggles[0]?.key ? (
         <Box key={field.key} flexDirection="column" flexShrink={0}>
@@ -688,26 +566,19 @@ export const Wizard = ({
   }
   return (
     <>
-      <PanelTitle
-        name={name}
-        parts={titleParts}
-        {...(steps.length > 1 ? {} : { right: <Text dimColor>{status}</Text> })}
-      />
-      {steps.length > 1 ? <StepBar steps={steps} at={index} right={status} onPick={pickStep} /> : null}
+      <PanelTitle name={name} parts={titleParts} />
       {question === undefined ? null : <Line>{`  ${question}`}</Line>}
       {compact ? null : <Gap />}
-      {step.body?.(bodyRoom)}
-      {step.body && !walked && !compact ? <Gap /> : null}
-      {step.fields.map(fieldView)}
+      {body?.(bodyRoom)}
+      {body && !compact ? <Gap /> : null}
+      {fields.map(fieldView)}
       {notice ? <Line tone="error">{`  ${notice}`}</Line> : compact ? null : <Gap />}
       <WizardButtons
-        buttons={buttons}
         ready={ready}
-        finishLabel={finishLabel}
-        cancelLabel={onBack ? BUTTON_LABELS.back : BUTTON_LABELS.cancel}
+        cancelLabel={onBack ? 'Back' : 'Cancel'}
         focused={focused?.kind === 'button' ? focused.button : undefined}
-        onChoose={(button) => choose(firstButton + buttons.indexOf(button))}
-        onHover={(button) => cursor.set(firstButton + buttons.indexOf(button))}
+        onChoose={(button) => choose(firstButton + BUTTONS.indexOf(button))}
+        onHover={(button) => cursor.set(firstButton + BUTTONS.indexOf(button))}
       />
       <Box flexGrow={1} flexShrink={1} />
       <Box height={1} flexShrink={0} overflow="hidden">
@@ -717,7 +588,6 @@ export const Wizard = ({
             : editor
               ? ['Enter save', 'Esc cancel']
               : rowHints(focused, !ready, {
-                  walked,
                   back: onBack !== undefined,
                   leave: onLeave !== undefined,
                   escape: escapeHint,

@@ -27,7 +27,7 @@ const CTRL_A = '\u0001'
 const question = (fields: readonly WizardFieldSpec[], name = 'optimize'): WizardRequestSpec => ({
   name,
   question: 'What should the run tune?',
-  steps: [{ key: 'question', title: 'Question', fields }],
+  fields,
 })
 
 const tune: WizardFieldSpec = {
@@ -79,15 +79,13 @@ describe('defaultAnswers', () => {
   it('shouldSeedEveryFieldFromItsSpecAndLeaveOutAnUnavailablePick', () => {
     const blocked: WizardFieldSpec = { ...tune, selected: ['instructions', 'model'] } as WizardFieldSpec
 
-    expect(
-      defaultAnswers([
-        {
-          key: 'q',
-          title: 'Q',
-          fields: [blocked, objective, ...budget, { kind: 'number', key: 'notes', label: 'notes' }],
-        },
-      ])
-    ).toEqual({ tune: ['instructions'], objective: 'mean', iterations: 4, workers: 4, notes: '' })
+    expect(defaultAnswers([blocked, objective, ...budget, { kind: 'number', key: 'notes', label: 'notes' }])).toEqual({
+      tune: ['instructions'],
+      objective: 'mean',
+      iterations: 4,
+      workers: 4,
+      notes: '',
+    })
   })
 })
 
@@ -156,8 +154,8 @@ describe('WizardBroker', () => {
     expect(open).toHaveBeenCalledOnce()
   })
 
-  it('shouldResolveWithNothingWhenTheRequestHasNoStep', async () => {
-    await expect(new WizardBroker().ask({ name: 'optimize', steps: [] })).resolves.toBeUndefined()
+  it('shouldResolveWithNothingWhenTheRequestHasNoField', async () => {
+    await expect(new WizardBroker().ask({ name: 'optimize', fields: [] })).resolves.toBeUndefined()
   })
 })
 
@@ -168,7 +166,6 @@ describe('WizardRequestPanel', () => {
     expect(screen()).toContain('What should the run tune?')
     expect(screen()).toContain('☑ instructions')
     expect(screen()).toContain('☐ caching')
-    expect(screen()).not.toContain('Tab next tab')
     await press(DOWN, ENTER, DOWN, ENTER)
     expect(screen()).toContain('not available')
     await press(DOWN, ENTER)
@@ -300,29 +297,22 @@ const review = (before = OLD_PROMPT, after = NEW_PROMPT): WizardRequestSpec => (
   titleParts: ['edit 1 of 2', '20261122-162600-prefix-smoke'],
   question: 'Apply this change to instructions?',
   standing: true,
-  finishLabel: '[ OK ]',
-  steps: [
+  fields: [
     {
-      key: 'review',
-      title: 'Review',
-      fields: [
-        {
-          kind: 'select',
-          key: 'verdict',
-          multiple: false,
-          options: [
-            { value: 'accept', label: 'Apply this change' },
-            { value: 'reject', label: 'Leave it as it is' },
-          ],
-        },
-        {
-          kind: 'diff',
-          key: 'change',
-          label: 'instructions',
-          path: 'agent.ts',
-          diff: createDiffPreview('agent.ts', before, after),
-        },
+      kind: 'select',
+      key: 'verdict',
+      multiple: false,
+      options: [
+        { value: 'accept', label: 'Apply this change' },
+        { value: 'reject', label: 'Leave it as it is' },
       ],
+    },
+    {
+      kind: 'diff',
+      key: 'change',
+      label: 'instructions',
+      path: 'agent.ts',
+      diff: createDiffPreview('agent.ts', before, after),
     },
   ],
 })
@@ -413,11 +403,6 @@ const pickOne = (key: string, labels: readonly string[]): WizardFieldSpec => ({
   options: labels.map((label) => ({ value: label, label, detail: '5 cases' })),
 })
 
-const walked = (...steps: (readonly WizardFieldSpec[])[]): WizardRequestSpec => ({
-  ...question([]),
-  steps: steps.map((fields, index) => ({ key: `step${index}`, title: `step${index}`, fields })),
-})
-
 describe('wizardRequestRows', () => {
   it('shouldCountTheQuestionItsOptionsAndOnePaddingRow', () => {
     expect(wizardRequestRows(undefined)).toBeUndefined()
@@ -426,12 +411,6 @@ describe('wizardRequestRows', () => {
 
   it('shouldGrowWithTheOptionCount', () => {
     expect(wizardRequestRows({ ...question([pickOne('mode', ['a', 'b', 'c', 'd', 'e'])]), id: 'r2' })).toBe(11)
-  })
-
-  it('shouldSizeAWalkedFormToItsTallestStepPlusItsStepBar', () => {
-    const request = walked([pickOne('mode', ['a', 'b'])], [pickOne('more', ['a', 'b', 'c', 'd'])])
-
-    expect(wizardRequestRows({ ...request, id: 'r4' })).toBe(8 + 2 + 2)
   })
 })
 
@@ -473,13 +452,9 @@ describe('the panel around one question', () => {
     expect(row('╰') - row('╭')).toBeLessThanOrEqual(9)
   })
 
-  it.each([
-    ['one step', 1],
-    ['a walked form', 2],
-  ])('shouldShowEveryOptionOfALongListIn%s', async (_name, stepCount) => {
+  it('shouldShowEveryOptionOfALongList', async () => {
     const labels = Array.from({ length: 10 }, (_, index) => `experiment-${index + 1}`)
-    const steps = Array.from({ length: stepCount }, (_, index) => [pickOne(`step${index}`, labels)])
-    const { screen } = await ask(walked(...steps), 50)
+    const { screen } = await ask(question([pickOne('step0', labels)]), 50)
 
     for (const label of labels) expect(screen()).toContain(label)
     expect(screen()).not.toMatch(/↓ \d+ more/u)

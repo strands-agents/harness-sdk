@@ -1,18 +1,11 @@
 import { createElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
-import {
-  Wizard,
-  type WizardField,
-  type WizardProps,
-  type WizardStep,
-  type WizardToggle,
-} from '../../src/ui/panels/wizard.js'
+import { Wizard, type WizardField, type WizardProps, type WizardToggle } from '../../src/ui/panels/wizard.js'
 import { mountElement } from '../fixtures/chat-app.js'
 import { mouseInputSequence } from '../fixtures/terminal.js'
 
 const ENTER = '\r'
-const TAB = '\t'
 const DOWN = '\u001b[B'
 const SPACE = ' '
 const RIGHT = '\u001b[C'
@@ -37,10 +30,10 @@ const toggle = (key: string, label: string, onToggle: () => void = vi.fn(), unav
   ...(unavailable === undefined ? {} : { unavailable }),
 })
 
-const wizard = async (steps: readonly WizardStep[], overrides: Partial<WizardProps> = {}) => {
+const wizard = async (fields: readonly WizardField[], overrides: Partial<WizardProps> = {}) => {
   const props: WizardProps = {
     name: 'setup',
-    steps,
+    fields,
     width: 96,
     height: 18,
     onFinish: vi.fn(),
@@ -50,97 +43,33 @@ const wizard = async (steps: readonly WizardStep[], overrides: Partial<WizardPro
   return { ...(await mountElement(createElement(Wizard, props))), props }
 }
 
-const twoSteps = (save?: (text: string) => void): WizardStep[] => [
-  { key: 'one', title: 'One', fields: [field(save)] },
-  { key: 'two', title: 'Two', fields: [], body: () => null },
-]
-
 describe('Wizard', () => {
-  it('shouldOfferNextAndCancelOnTheFirstStep', async () => {
-    const { screen } = await wizard(twoSteps())
-
-    expect(screen()).toContain('[ Next ]')
-    expect(screen()).toContain('Cancel')
-    expect(screen()).not.toContain('Back')
-  })
-
-  it('shouldOfferStartAndCancelOnTheLastStep', async () => {
-    const { screen, press } = await wizard(twoSteps())
-
-    await press(TAB)
-
-    expect(screen()).toContain('[ Start ]')
-    expect(screen()).not.toContain('[ Next ]')
-  })
-
-  it('shouldWalkToTheNextStepWhenTheUserChoosesNext', async () => {
-    const { screen, press } = await wizard(twoSteps())
+  it('shouldFinishWhenTheUserChoosesTheFinishButtonAndNothingBlocks', async () => {
+    const { press, props } = await wizard([field()])
 
     await press(DOWN, ENTER)
-
-    expect(screen()).toContain('[ Start ]')
-  })
-
-  it('shouldWalkBackWhenTheUserChoosesBack', async () => {
-    const steps: WizardStep[] = [
-      { key: 'one', title: 'One', fields: [field()] },
-      { key: 'two', title: 'Two', fields: [field()] },
-      { key: 'three', title: 'Three', fields: [], body: () => null },
-    ]
-    const { screen, press } = await wizard(steps)
-
-    await press(DOWN, ENTER)
-    expect(screen()).toContain('Back')
-
-    await press(RIGHT, ENTER)
-
-    expect(screen()).toContain('[ Next ]')
-    expect(screen()).not.toContain('Back')
-  })
-
-  it('shouldFinishWhenTheUserChoosesStartAndNoStepBlocks', async () => {
-    const { press, props } = await wizard(twoSteps())
-
-    await press(TAB, ENTER)
 
     expect(props.onFinish).toHaveBeenCalled()
   })
 
-  it('shouldNotFinishWhenAStepHasABlockingNotice', async () => {
-    const steps = twoSteps()
-    steps[0] = { ...steps[0]!, notice: 'Pick a size.' }
-    const { screen, press, props } = await wizard(steps)
+  it('shouldNotFinishWhileANoticeBlocks', async () => {
+    const { screen, press, props } = await wizard([field()], { notice: 'Pick a size.' })
 
-    await press(TAB, ENTER)
+    await press(DOWN, ENTER)
 
     expect(props.onFinish).not.toHaveBeenCalled()
     expect(screen()).toContain('fix the problem to finish')
   })
 
-  it('shouldMarkTheStepThatCarriesANotice', async () => {
-    const steps = twoSteps()
-    steps[0] = { ...steps[0]!, notice: 'look here' }
-    const { screen } = await wizard(steps)
+  it('shouldShowTheNotice', async () => {
+    const { screen } = await wizard([field()], { notice: 'look here' })
 
-    expect(screen()).toContain('One !')
     expect(screen()).toContain('look here')
-  })
-
-  it('shouldShowTheBlockingNoticeOnEveryStepThatHasNoneOfItsOwn', async () => {
-    const steps: WizardStep[] = [
-      { key: 'one', title: 'One', fields: [field()], notice: 'Pick a size.' },
-      { key: 'two', title: 'Two', fields: [field()] },
-    ]
-    const { screen, press } = await wizard(steps)
-
-    await press(TAB)
-
-    expect(screen()).toContain('Pick a size.')
   })
 
   it('shouldSaveTheTextWhenTheUserEditsAFieldAndPressesEnter', async () => {
     const save = vi.fn()
-    const { screen, press } = await wizard(twoSteps(save))
+    const { screen, press } = await wizard([field(save)])
 
     await press(ENTER)
     expect(screen()).toContain('Enter save · Esc cancel')
@@ -152,7 +81,7 @@ describe('Wizard', () => {
 
   it('shouldNotTypeTheMouseReportsOfTheTerminalIntoATextField', async () => {
     const save = vi.fn()
-    const { screen, press } = await wizard(twoSteps(save))
+    const { screen, press } = await wizard([field(save)])
     // The mouse moves, moves with Shift and Alt held, and the wheel turns: each is a report on the same input.
     const mouse = async (): Promise<void> => {
       for (const button of [35, 47, 64, 65]) await press(mouseInputSequence(button, 49, 19, 'M'))
@@ -174,7 +103,7 @@ describe('Wizard', () => {
 
   it('shouldDropTheEditWhenTheUserPressesEscInTheEditor', async () => {
     const save = vi.fn()
-    const { press, props } = await wizard([{ key: 'one', title: 'One', fields: [field(save)] }])
+    const { press, props } = await wizard([field(save)])
 
     await press(ENTER, 'h', ESC)
 
@@ -184,7 +113,7 @@ describe('Wizard', () => {
 
   it('shouldGoBackFromTheCancelButtonButStillCancelOnEscWhenTheWizardOffersBack', async () => {
     const onBack = vi.fn()
-    const { press, screen, props } = await wizard([{ key: 'one', title: 'One', fields: [field()] }], { onBack })
+    const { press, screen, props } = await wizard([field()], { onBack })
 
     await press(DOWN, RIGHT)
     expect(screen()).toContain('Enter back')
@@ -196,13 +125,7 @@ describe('Wizard', () => {
   })
 
   it('shouldLineUpTheValuesWhenALabelIsLongerThanTheDefaultWidth', async () => {
-    const { screen } = await wizard([
-      {
-        key: 'budget',
-        title: 'Budget',
-        fields: [field(vi.fn(), 'steps'), field(vi.fn(), 'trials', 'trials at once')],
-      },
-    ])
+    const { screen } = await wizard([field(vi.fn(), 'steps'), field(vi.fn(), 'trials', 'trials at once')])
 
     const columns = screen()
       .split('\n')
@@ -214,7 +137,7 @@ describe('Wizard', () => {
   })
 
   it('shouldCancelWhenTheUserPressesEscOutsideAnEditor', async () => {
-    const { press, props } = await wizard(twoSteps())
+    const { press, props } = await wizard([field()])
 
     await press(ESC)
 
@@ -224,14 +147,8 @@ describe('Wizard', () => {
   it('shouldToggleTheFieldWhenTheUserPicksAnAvailableKnob', async () => {
     const onToggle = vi.fn()
     const { screen, press } = await wizard([
-      {
-        key: 'one',
-        title: 'One',
-        fields: [
-          { ...toggle('a', 'instructions', onToggle), checked: true },
-          toggle('b', 'tools', vi.fn(), 'not supported yet'),
-        ],
-      },
+      { ...toggle('a', 'instructions', onToggle), checked: true },
+      toggle('b', 'tools', vi.fn(), 'not supported yet'),
     ])
 
     expect(screen()).toContain('☑ instructions')
@@ -245,9 +162,7 @@ describe('Wizard', () => {
   it('shouldFocusAndToggleTheRowTheCursorIsOnWhenAStepMixesTextAndToggles', async () => {
     const first = vi.fn()
     const second = vi.fn()
-    const { press } = await wizard([
-      { key: 'one', title: 'One', fields: [field(), toggle('a', 'alpha', first), toggle('b', 'beta', second)] },
-    ])
+    const { press } = await wizard([field(), toggle('a', 'alpha', first), toggle('b', 'beta', second)])
 
     await press(DOWN, SPACE)
 
@@ -256,7 +171,7 @@ describe('Wizard', () => {
   })
 
   it('shouldKeepTheDeclaredOrderWhenAStepMixesTextAndToggles', async () => {
-    const { screen } = await wizard([{ key: 'one', title: 'One', fields: [field(), toggle('a', 'alpha')] }])
+    const { screen } = await wizard([field(), toggle('a', 'alpha')])
     const rows = screen().split('\n')
 
     expect(rows.findIndex((row) => row.includes('size'))).toBeLessThan(rows.findIndex((row) => row.includes('alpha')))
@@ -264,19 +179,11 @@ describe('Wizard', () => {
 
   it('shouldNotToggleAnUnavailableField', async () => {
     const onToggle = vi.fn()
-    const { screen, press } = await wizard([
-      { key: 'one', title: 'One', fields: [toggle('b', 'tools', onToggle, 'not supported yet')] },
-    ])
+    const { screen, press } = await wizard([toggle('b', 'tools', onToggle, 'not supported yet')])
 
     await press(ENTER)
 
     expect(onToggle).not.toHaveBeenCalled()
     expect(screen()).toContain('not available')
-  })
-
-  it('shouldShowTheStatus', async () => {
-    const { screen } = await wizard(twoSteps(), { status: '~57 rollouts' })
-
-    expect(screen()).toContain('~57 rollouts')
   })
 })

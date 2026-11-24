@@ -152,7 +152,7 @@ describe('reviewOptimizeRun', () => {
 
     await reviewOptimizeRun(devSessions, 'run-1')
 
-    const field = asked[0]!.steps[0]!.fields.find((candidate) => candidate.kind === 'diff')!
+    const field = asked[0]!.fields.find((candidate) => candidate.kind === 'diff')!
     expect(field).toMatchObject({ kind: 'diff', path: 'one.ts' })
   })
 })

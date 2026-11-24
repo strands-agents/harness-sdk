@@ -47,10 +47,10 @@ describe('strands dev UI tools', () => {
       'strands_dev_single_select',
       { question: 'What should the optimizer improve?', title: 'optimize', options: OPTIONS },
       { answer: 'fewer tokens' }
-    )) as { request: { name: string; steps: { fields: unknown[] }[] }; reply: unknown }
+    )) as { request: { name: string; fields: unknown[] }; reply: unknown }
 
     expect(request.name).toBe('optimize')
-    expect(request.steps[0]!.fields).toEqual([
+    expect(request.fields).toEqual([
       {
         kind: 'select',
         key: 'answer',
@@ -90,9 +90,9 @@ describe('strands dev UI tools', () => {
       'strands_dev_number_input',
       { question: 'Budget', fields },
       { iterations: 2, workers: 8 }
-    )) as { request: { steps: { fields: unknown[] }[] }; reply: unknown }
+    )) as { request: { fields: unknown[] }; reply: unknown }
 
-    expect(request.steps[0]!.fields).toEqual(fields.map((field) => ({ kind: 'number', ...field })))
+    expect(request.fields).toEqual(fields.map((field) => ({ kind: 'number', ...field })))
     expect(reply).toEqual({ status: 'answered', answer: { iterations: 2, workers: 8 } })
   })
 

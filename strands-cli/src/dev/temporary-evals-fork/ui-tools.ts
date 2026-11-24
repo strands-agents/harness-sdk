@@ -131,8 +131,7 @@ const numberFields = (value: JSONValue | undefined): WizardNumberSpec[] => {
 const uiRequest = (input: Input, fields: readonly WizardFieldSpec[]): WizardRequestSpec => ({
   name: optionalString(input.title, 'title') ?? 'question',
   question: stringAt(input.question, 'question'),
-  steps: [{ key: 'question', title: 'Question', fields }],
-  finishLabel: '[ OK ]',
+  fields,
   back: true,
 })
 
