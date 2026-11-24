@@ -59,7 +59,7 @@ describe('HarnessPicker', () => {
         Box,
         { height: 40, width: columns, flexDirection: 'column', justifyContent: 'flex-end' },
         createElement(HarnessPicker, {
-          cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+          cli,
           folderFor: () => ({ path: '/work/base-cli', detected: false }),
           harnesses: [harness],
           onSelect: vi.fn(),
@@ -624,23 +624,16 @@ describe('HarnessPicker', () => {
     )
   })
 
-  it('shouldKeepTheAllowedCharactersAndSayWhatWasRemovedWhenTheInputHasOthers', async () => {
+  it.each([
+    ['typed input', [' /x'], 'new-harnessx'],
+    ['a paste into an empty name', ['\u0015', 'support agent/v2'], 'supportagentv2'],
+  ])('shouldKeepTheAllowedCharactersAndSayWhatWasRemovedWhen %s HasOthers', async (_case, keys, name) => {
     const { press, text } = await createForm()
 
-    await press(' /x')
+    for (const key of keys) await press(key)
 
-    await vi.waitFor(() => expect(text()).toContain('› Name: new-harnessx'))
+    await vi.waitFor(() => expect(text()).toContain(`› Name: ${name}`))
     expect(text()).toContain('Removed space and "/". Use letters, digits, ".", "_", and "-".')
-  })
-
-  it('shouldKeepTheAllowedPartOfAPasteWhenThePasteHasOtherCharacters', async () => {
-    const { press, text } = await createForm()
-    await press('\u0015')
-
-    await press('support agent/v2')
-
-    await vi.waitFor(() => expect(text()).toContain('› Name: supportagentv2'))
-    expect(text()).toContain('Removed space and "/".')
   })
 
   it('shouldShowTheAllowedCharactersAgainWhenTheNextInputIsAllowed', async () => {
@@ -865,11 +858,7 @@ describe('HarnessPicker', () => {
       const { input, frame, text } = mount(
         {
           cli: { name: 'Saved profile' },
-          harnesses: Array.from({ length: 12 }, (_, index) => ({
-            ...harness,
-            name: `Project ${index + 1}`,
-            entrypoint: `/project-${index + 1}/agent.py`,
-          })),
+          harnesses: manyProjects(12),
           discovery,
         },
         { height: 50, rows: 12 }

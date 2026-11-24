@@ -521,12 +521,12 @@ export const HarnessPicker = ({
     lineCount(hint) -
     1 -
     detailHeight
-  const notes = [folderNote(folder.value.trim(), folder.suggested)]
+  const note = folderNote(folder.value.trim(), folder.suggested)
   const folderHeight =
     2 +
     (notice ? lineCount(notice) + 1 : 0) +
-    1 +
-    notes.reduce((total, note) => total + 1 + lineCount(note), 0) +
+    2 +
+    lineCount(note) +
     (failure ? lineCount(failure) : 0) +
     1 +
     lineCount(hint)
@@ -596,11 +596,7 @@ export const HarnessPicker = ({
               active={!busy}
             />
           </Box>
-          {notes.map((note) => (
-            <Text key={note} dimColor>
-              {note}
-            </Text>
-          ))}
+          <Text dimColor>{note}</Text>
         </Box>
       ) : creating ? (
         <Box flexDirection="column" gap={1}>
