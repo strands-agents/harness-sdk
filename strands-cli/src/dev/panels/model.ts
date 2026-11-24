@@ -4,9 +4,7 @@ export interface EvalCase {
   readonly expected?: string
 }
 
-export type CaseField = 'input' | 'expected'
-
-export const missingCaseField = ({ input, expected }: Pick<EvalCase, 'input' | 'expected'>): CaseField | undefined =>
+export const missingCaseField = ({ input, expected }: Omit<EvalCase, 'name'>): 'input' | 'expected' | undefined =>
   !input.trim() ? 'input' : !expected?.trim() ? 'expected' : undefined
 
 export interface ExperimentSummary {
@@ -127,11 +125,6 @@ export interface Knob {
   readonly notInCall?: boolean
 }
 
-export interface ModelChoices {
-  readonly current: string
-  readonly picked: readonly string[]
-}
-
 export interface CaseSplit {
   readonly train: number
   readonly validation: number
@@ -201,7 +194,7 @@ export interface OptimizePlan {
   readonly judgeCalls: number
   readonly usage?: UsageEstimate
   readonly warning?: string
-  readonly models?: ModelChoices
+  readonly models?: { readonly current: string; readonly picked: readonly string[] }
 }
 
 export interface TrialProgress {
@@ -336,7 +329,6 @@ export interface EvalsBrowserState {
 }
 
 export interface EvalsBrowser {
-  subscribe(listener: () => void): () => void
   snapshot(): EvalsBrowserState
   open(place: EvalsBrowserPlace): Promise<EvalsBrowserNotice | undefined>
   link?(place: EvalsBrowserPlace, runFolder?: string): string | undefined

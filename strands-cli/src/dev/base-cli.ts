@@ -22,9 +22,7 @@ import type { DevWorkspace } from './workspace.js'
 import { isRecord } from '../values.js'
 
 const VIEW_KEPT = new Set(['node_modules', 'package-lock.json', '.agent', '.strands', 'dist', '.venv', '__pycache__'])
-const VIEW_FOLDER = 'agent'
 const VIEW_ENTRYPOINTS = new Set(['agent/agent.ts', 'agent/agent.py'])
-const VIEW_MANIFEST = 'base-cli-view.json'
 const DEPENDENCY_FILES = new Set(['package.json', 'requirements.txt', 'pyproject.toml'])
 const PROFILE_OPTIONS = new Set([
   'model',
@@ -41,14 +39,14 @@ type ProfileValues = Record<string, unknown>
 
 const isGeneratedView = (workspace: DevWorkspace): boolean =>
   workspace.directory !== undefined &&
-  resolve(workspace.root) === resolve(workspace.directory, VIEW_FOLDER) &&
+  resolve(workspace.root) === resolve(workspace.directory, 'agent') &&
   VIEW_ENTRYPOINTS.has(relative(workspace.root, workspace.entrypoint).split(sep).join('/'))
 
 export const isProfileBaseCli = async (workspace: DevWorkspace, path = userConfigPath()): Promise<boolean> =>
   workspace.config.origin.kind === 'cli' && isGeneratedView(workspace) && (await savedAgentProject(path)) === undefined
 
 const manifestPath = (workspace: DevWorkspace): string =>
-  join(workspace.directory ?? workspace.root, '.strands', 'state', VIEW_MANIFEST)
+  join(workspace.directory ?? workspace.root, '.strands', 'state', 'base-cli-view.json')
 
 const readManifest = async (workspace: DevWorkspace): Promise<ReadonlySet<string>> => {
   const text = await readFile(manifestPath(workspace), 'utf8').catch(() => undefined)
@@ -127,7 +125,7 @@ export const refreshBaseCliView = async (workspace: DevWorkspace, snapshot: CliC
 export const saveBaseCliChoices = async (
   workspace: DevWorkspace,
   change: AgentOptions,
-  path = userConfigPath()
+  path: string
 ): Promise<boolean> => {
   const store = await CliConfigStore.load(path)
   await store.updateProfile((profile) => ({
@@ -194,7 +192,7 @@ export const editBaseCliProfile = async (
   return true
 }
 
-const refreshBaseCliFromDisk = async (workspace: DevWorkspace, path = userConfigPath()): Promise<boolean> =>
+const refreshBaseCliFromDisk = async (workspace: DevWorkspace, path: string): Promise<boolean> =>
   refreshBaseCliView(workspace, (await CliConfigStore.load(path, { persist: false })).snapshot())
 
 interface ProfileBaseCliChat {
@@ -226,7 +224,7 @@ const lookOf = (saved: unknown): Partial<ChatSettings> => {
 const saveBaseCliSettings = async (
   config: CliConfigStore,
   change: Partial<ChatSettings>,
-  path = userConfigPath()
+  path: string
 ): Promise<void> => {
   const look = lookOf(change)
   if (Object.keys(look).length > 0) {
@@ -238,15 +236,12 @@ const saveBaseCliSettings = async (
 }
 
 /** Takes the look that cli.toml holds now into the settings of the dev chat: plain strands, or a hand, changed it. */
-const takeSavedBaseCliLook = async (config: CliConfigStore, path = userConfigPath()): Promise<void> =>
+const takeSavedBaseCliLook = async (config: CliConfigStore, path: string): Promise<void> =>
   config.adoptSavedSettings(lookOf((await CliConfigStore.load(path, { persist: false })).snapshot().settings))
 
 /** Moves a look the Base CLI workspace still holds into cli.toml as dev opens, since it is what dev showed. */
-export const promoteBaseCliLook = async (
-  config: CliConfigStore,
-  held: unknown,
-  path = userConfigPath()
-): Promise<void> => saveBaseCliSettings(config, lookOf(isRecord(held) ? held.settings : undefined), path)
+export const promoteBaseCliLook = async (config: CliConfigStore, held: unknown, path: string): Promise<void> =>
+  saveBaseCliSettings(config, lookOf(isRecord(held) ? held.settings : undefined), path)
 
 export const profileBaseCliChat = async (
   workspace: DevWorkspace,

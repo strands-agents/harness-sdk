@@ -20,7 +20,7 @@ import {
   entryOf,
   harnessCalls,
   indentOf,
-  insertion,
+  objectInsertion,
   pythonInsertion,
   projectPython,
   propertyKey,
@@ -48,8 +48,6 @@ type ModelReading = { readonly kind: 'option' } | { readonly kind: 'object'; rea
 type TypeScript = typeof import('typescript')
 
 const OPTION: ModelReading = { kind: 'option' }
-const TS_INDENT = 2
-const PYTHON_INDENT = 4
 
 const notEditable = (entry: string, problem: string): AgentOptionsNotEditable =>
   new AgentOptionsNotEditable(`${entry} ${problem} Set effort on that model yourself.`)
@@ -58,7 +56,7 @@ const unavailableIn = (entry: string, error: ModelEffortUnavailable): AgentOptio
   new AgentOptionsNotEditable(`${entry}: ${error.message} Set effort on that model yourself.`)
 
 const depthAt = (source: string, offset: number, python: boolean): number =>
-  Math.floor(indentOf(source, offset).length / (python ? PYTHON_INDENT : TS_INDENT))
+  Math.floor(indentOf(source, offset).length / (python ? 4 : 2))
 
 const textLeaves = (value: unknown): string[] =>
   typeof value === 'string'
@@ -178,13 +176,7 @@ const typescriptConstructor = (expression: NewExpression, context: TypeScriptCon
   if (fieldsProperty && !jsonValue(fieldsProperty.initializer, ts))
     throw notEditable(entry, `sets the ${className} ${key} in code.`)
   const last = properties.at(-1)
-  const add = insertion(
-    source,
-    { open: settings.getStart(file), close: settings.getEnd() - 1 },
-    last && { start: last.getStart(file), end: last.getEnd() },
-    settings.properties.hasTrailingComma,
-    ' '
-  )
+  const add = objectInsertion(source, file, settings)
   const layout = {
     python: false,
     depth: depthAt(source, (last ?? settings).getStart(file), false),
@@ -271,8 +263,6 @@ const typescriptModel = async (source: string, entry: string): Promise<ModelRead
 }
 
 const PYTHON_MODEL_READER = `
-def name_of(node):
-    return node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
 def literal(node):
     try:
         return {'value': json.loads(json.dumps(ast.literal_eval(node)))}
@@ -292,9 +282,8 @@ def describe(node, tree, seen):
     if isinstance(node, ast.Call):
         return {'kind': 'call', 'name': name_of(node.func), 'positional': len(node.args), 'open': span(node.func)['end'], 'close': span(node)['end'] - 1, 'keywords': [keyword(item) for item in node.keywords]}
     return {'kind': 'code'}
-calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and name_of(node.func) == 'create_harness']
-model = next((item.value for item in calls[0].keywords if item.arg == 'model'), None) if len(calls) == 1 else None
-print(json.dumps(describe(model, tree, frozenset()) if len(calls) == 1 else {'kind': 'option'}))
+model = next((item.value for item in harness_calls[0].keywords if item.arg == 'model'), None) if len(harness_calls) == 1 else None
+print(json.dumps(describe(model, tree, frozenset()) if len(harness_calls) == 1 else {'kind': 'option'}))
 `
 
 interface PythonKeyword {

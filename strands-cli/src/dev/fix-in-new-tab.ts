@@ -26,8 +26,6 @@ interface TerminalTab {
 
 type MacTerminal = 'iTerm.app' | 'ghostty' | 'Apple_Terminal'
 
-const TAB_TIMEOUT_MS = 15_000
-
 const MAC_TERMINALS: Readonly<Record<MacTerminal, { place: string; script: string }>> = {
   'iTerm.app': {
     place: 'iTerm2 tab',
@@ -115,15 +113,15 @@ export const fixPrompt = ({ report, directory, retry }: FixRequest): string =>
     `5. Tell me what you changed. ${NEXT_STEP[retry].prompt}`,
   ].join('\n')
 
-export const shellCommand = (words: readonly string[], platform: NodeJS.Platform = process.platform): string =>
+export const shellCommand = (words: readonly string[], platform: NodeJS.Platform): string =>
   platform === 'win32'
     ? `& ${words.map((word) => `'${word.replaceAll("'", "''")}'`).join(' ')}`
     : words.map((word) => `'${word.replaceAll("'", "'\\''")}'`).join(' ')
 
 export const terminalTab = (
   command: string,
-  environment: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform
 ): TerminalTab | undefined => {
   if (environment.TMUX) {
     return { place: 'tmux window', command: 'tmux', args: ['new-window', '-n', 'strands fix', command] }
@@ -134,7 +132,11 @@ export const terminalTab = (
   return { place, command: '/usr/bin/osascript', args: ['-e', script, '--', command] }
 }
 
-const LAUNCHER_RUN = `const { status, signal, error } = spawnSync(launch.node, [launch.cli, '--agent', '', launch.prompt], {
+const launcherSource = (launch: { node: string; cli: string; directory: string; prompt: string }): string =>
+  `import { spawnSync } from 'node:child_process'
+import { readSync } from 'node:fs'
+const launch = ${JSON.stringify(launch)}
+const { status, signal, error } = spawnSync(launch.node, [launch.cli, '--agent', '', launch.prompt], {
   cwd: launch.directory,
   stdio: 'inherit',
 })
@@ -145,27 +147,20 @@ if (error || (status !== 0 && status !== 130)) {
 process.exitCode = status ?? 1
 `
 
-const launcherSource = (node: string, cli: string, request: FixRequest): string =>
-  [
-    "import { spawnSync } from 'node:child_process'",
-    "import { readSync } from 'node:fs'",
-    `const launch = ${JSON.stringify({ node, cli, directory: request.directory, prompt: fixPrompt(request) })}`,
-    LAUNCHER_RUN,
-  ].join('\n')
-
 export const writeFixLauncher = async (
   request: FixRequest,
   cli: string | undefined = process.argv[1]
 ): Promise<string> => {
   if (!cli) throw new Error('Cannot find the Strands CLI that is running.')
   const launcher = join(await mkdtemp(join(tmpdir(), 'strands-fix-')), 'fix.mjs')
-  await writeFile(launcher, launcherSource(process.execPath, cli, request), { mode: 0o600 })
+  const launch = { node: process.execPath, cli, directory: request.directory, prompt: fixPrompt(request) }
+  await writeFile(launcher, launcherSource(launch), { mode: 0o600 })
   return launcher
 }
 
 const openTab = ({ command, args }: TerminalTab, environment: NodeJS.ProcessEnv): Promise<string | undefined> =>
   new Promise((resolve) => {
-    execFile(command, args, { env: environment, timeout: TAB_TIMEOUT_MS, windowsHide: true }, (error, _, stderr) =>
+    execFile(command, args, { env: environment, timeout: 15_000, windowsHide: true }, (error, _, stderr) =>
       resolve(error ? stderr.trim().split('\n').at(-1) || error.message : undefined)
     )
   })

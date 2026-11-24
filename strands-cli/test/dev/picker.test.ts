@@ -59,7 +59,7 @@ describe('HarnessPicker', () => {
         Box,
         { height: 40, width: columns, flexDirection: 'column', justifyContent: 'flex-end' },
         createElement(HarnessPicker, {
-          cli: { name: 'Saved profile', path: '/home/test/.strands/cli.toml' },
+          cli,
           folderFor: () => ({ path: '/work/base-cli', detected: false }),
           harnesses: [harness],
           onSelect: vi.fn(),
@@ -624,23 +624,16 @@ describe('HarnessPicker', () => {
     )
   })
 
-  it('shouldKeepTheAllowedCharactersAndSayWhatWasRemovedWhenTheInputHasOthers', async () => {
+  it.each([
+    ['typed input', [' /x'], 'new-harnessx'],
+    ['a paste into an empty name', ['\u0015', 'support agent/v2'], 'supportagentv2'],
+  ])('shouldKeepTheAllowedCharactersAndSayWhatWasRemovedWhen %s HasOthers', async (_case, keys, name) => {
     const { press, text } = await createForm()
 
-    await press(' /x')
+    for (const key of keys) await press(key)
 
-    await vi.waitFor(() => expect(text()).toContain('› Name: new-harnessx'))
+    await vi.waitFor(() => expect(text()).toContain(`› Name: ${name}`))
     expect(text()).toContain('Removed space and "/". Use letters, digits, ".", "_", and "-".')
-  })
-
-  it('shouldKeepTheAllowedPartOfAPasteWhenThePasteHasOtherCharacters', async () => {
-    const { press, text } = await createForm()
-    await press('\u0015')
-
-    await press('support agent/v2')
-
-    await vi.waitFor(() => expect(text()).toContain('› Name: supportagentv2'))
-    expect(text()).toContain('Removed space and "/".')
   })
 
   it('shouldShowTheAllowedCharactersAgainWhenTheNextInputIsAllowed', async () => {
@@ -865,11 +858,7 @@ describe('HarnessPicker', () => {
       const { input, frame, text } = mount(
         {
           cli: { name: 'Saved profile' },
-          harnesses: Array.from({ length: 12 }, (_, index) => ({
-            ...harness,
-            name: `Project ${index + 1}`,
-            entrypoint: `/project-${index + 1}/agent.py`,
-          })),
+          harnesses: manyProjects(12),
           discovery,
         },
         { height: 50, rows: 12 }
@@ -1059,48 +1048,51 @@ describe('HarnessPicker', () => {
     expect(onRefresh).not.toHaveBeenCalled()
   })
 
-  const shownPickers = (show: ReturnType<typeof vi.fn>) =>
-    show.mock.calls
-      .map(([content]) => content as { type: unknown; props: Parameters<typeof HarnessPicker>[0] } | undefined)
-      .filter((content) => content?.type === HarnessPicker)
-      .map((content) => content!.props)
-
-  it('shouldOpenTheSelectorBeforeTheSearchEndsAndAddHarnessesAsTheyAreFound', async () => {
+  /** Opens the selector with `search`. `shown` lists the pickers it showed, and `close` cancels the selection. */
+  const choosing = (search: NonNullable<Parameters<typeof chooseHarness>[0]['search']>) => {
     const show = vi.fn()
-    let report: (found: DiscoveredHarness) => void = () => undefined
-    let finish: () => void = () => undefined
-    let searchSignal: AbortSignal | undefined
     const running = chooseHarness(
-      {
-        cli: { name: 'Saved profile' },
-        harnesses: [],
-        search: (found, signal) => {
-          report = found
-          searchSignal = signal
-          return new Promise((resolve) => {
-            finish = () => resolve({ harnesses: [] })
-          })
-        },
-      },
+      { cli: { name: 'Saved profile' }, harnesses: [], search },
       { signal: new AbortController().signal, show },
       vi.fn()
     )
+    const shown = () =>
+      show.mock.calls
+        .map(([content]) => content as { type: unknown; props: PickerProps } | undefined)
+        .filter((content) => content?.type === HarnessPicker)
+        .map((content) => content!.props)
+    const close = async (): Promise<void> => {
+      await shown().at(-1)!.onSelect(undefined)
+      expect(await running).toBeUndefined()
+    }
+    return { shown, close }
+  }
 
-    expect(shownPickers(show)).toHaveLength(1)
-    expect(shownPickers(show)[0]).toMatchObject({ harnesses: [], discovery: 'running' })
+  it('shouldOpenTheSelectorBeforeTheSearchEndsAndAddHarnessesAsTheyAreFound', async () => {
+    let report: (found: DiscoveredHarness) => void = () => undefined
+    let finish: () => void = () => undefined
+    let searchSignal: AbortSignal | undefined
+    const { shown, close } = choosing((found, signal) => {
+      report = found
+      searchSignal = signal
+      return new Promise((resolve) => {
+        finish = () => resolve({ harnesses: [] })
+      })
+    })
+
+    expect(shown()).toHaveLength(1)
+    expect(shown()[0]).toMatchObject({ harnesses: [], discovery: 'running' })
     report(harness)
-    await vi.waitFor(() => expect(shownPickers(show).at(-1)?.harnesses).toEqual([harness]))
-    expect(shownPickers(show).at(-1)?.discovery).toBe('running')
+    await vi.waitFor(() => expect(shown().at(-1)?.harnesses).toEqual([harness]))
+    expect(shown().at(-1)?.discovery).toBe('running')
     finish()
-    await vi.waitFor(() => expect(shownPickers(show).at(-1)?.discovery).toBe('done'))
-    await shownPickers(show).at(-1)!.onSelect(undefined)
+    await vi.waitFor(() => expect(shown().at(-1)?.discovery).toBe('done'))
+    await close()
 
-    expect(await running).toBeUndefined()
     expect(searchSignal?.aborted).toBe(true)
   })
 
   it('shouldSearchAgainAndShowOnlyTheHarnessesItFindsWhenThePickerAsksForARefresh', async () => {
-    const show = vi.fn()
     const edited = { ...harness, name: 'Edited harness' }
     const downloaded = { ...harness, name: 'Downloaded harness', entrypoint: '/downloads/agent.ts', root: '/downloads' }
     const results = [
@@ -1108,77 +1100,54 @@ describe('HarnessPicker', () => {
       { harnesses: [edited, downloaded] },
     ]
     const search = vi.fn(async () => results.shift()!)
-    const running = chooseHarness(
-      { cli: { name: 'Saved profile' }, harnesses: [], search },
-      { signal: new AbortController().signal, show },
-      vi.fn()
-    )
-    await vi.waitFor(() => expect(shownPickers(show).at(-1)?.discovery).toBe('done'))
+    const { shown, close } = choosing(search)
+    await vi.waitFor(() => expect(shown().at(-1)?.discovery).toBe('done'))
 
-    shownPickers(show).at(-1)!.onRefresh!()
+    shown().at(-1)!.onRefresh!()
 
-    expect(shownPickers(show).at(-1)).toMatchObject({ harnesses: [], discovery: 'running' })
-    await vi.waitFor(() => expect(shownPickers(show).at(-1)?.discovery).toBe('done'))
-    expect(shownPickers(show).at(-1)?.harnesses).toEqual([edited, downloaded])
+    expect(shown().at(-1)).toMatchObject({ harnesses: [], discovery: 'running' })
+    await vi.waitFor(() => expect(shown().at(-1)?.discovery).toBe('done'))
+    expect(shown().at(-1)?.harnesses).toEqual([edited, downloaded])
     expect(search).toHaveBeenCalledTimes(2)
-    await shownPickers(show).at(-1)!.onSelect(undefined)
-    expect(await running).toBeUndefined()
+    await close()
   })
 
   it('shouldStopTheRunningSearchAndIgnoreItsLateResultsWhenThePickerAsksForARefresh', async () => {
-    const show = vi.fn()
     const searches: { report: (found: DiscoveredHarness) => void; signal: AbortSignal; finish: () => void }[] = []
-    const running = chooseHarness(
-      {
-        cli: { name: 'Saved profile' },
-        harnesses: [],
-        search: (found, signal) =>
-          new Promise((resolve) => {
-            searches.push({ report: found, signal, finish: () => resolve({ harnesses: [] }) })
-          }),
-      },
-      { signal: new AbortController().signal, show },
-      vi.fn()
+    const { shown, close } = choosing(
+      (found, signal) =>
+        new Promise((resolve) => {
+          searches.push({ report: found, signal, finish: () => resolve({ harnesses: [] }) })
+        })
     )
     await vi.waitFor(() => expect(searches).toHaveLength(1))
 
-    shownPickers(show).at(-1)!.onRefresh!()
+    shown().at(-1)!.onRefresh!()
     await vi.waitFor(() => expect(searches).toHaveLength(2))
     searches[0]!.report({ ...harness, name: 'Stale harness' })
     searches[0]!.finish()
     searches[1]!.report(harness)
     searches[1]!.finish()
 
-    await vi.waitFor(() => expect(shownPickers(show).at(-1)?.discovery).toBe('done'))
+    await vi.waitFor(() => expect(shown().at(-1)?.discovery).toBe('done'))
     expect(searches[0]!.signal.aborted).toBe(true)
     expect(searches[1]!.signal.aborted).toBe(false)
-    expect(shownPickers(show).at(-1)?.harnesses).toEqual([harness])
-    await shownPickers(show).at(-1)!.onSelect(undefined)
-    expect(await running).toBeUndefined()
+    expect(shown().at(-1)?.harnesses).toEqual([harness])
+    await close()
     expect(searches[1]!.signal.aborted).toBe(true)
   })
 
   it('shouldShowWhyTheSearchStoppedWhenItFails', async () => {
-    const show = vi.fn()
-    const running = chooseHarness(
-      {
-        cli: { name: 'Saved profile' },
-        harnesses: [],
-        search: async () => {
-          throw new Error('EACCES: permission denied, scandir /root')
-        },
-      },
-      { signal: new AbortController().signal, show },
-      vi.fn()
-    )
+    const { shown, close } = choosing(async () => {
+      throw new Error('EACCES: permission denied, scandir /root')
+    })
 
     await vi.waitFor(() =>
-      expect(shownPickers(show).at(-1)).toMatchObject({
+      expect(shown().at(-1)).toMatchObject({
         discovery: { failed: 'EACCES: permission denied, scandir /root' },
       })
     )
-    await shownPickers(show).at(-1)!.onSelect(undefined)
-    expect(await running).toBeUndefined()
+    await close()
   })
 })
 

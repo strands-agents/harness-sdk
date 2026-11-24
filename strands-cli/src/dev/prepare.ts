@@ -442,7 +442,10 @@ const createInLaunchFolder = async (
   if (state.kind === 'files')
     throw folderUnavailable(root, 'The folder holds files that are not a strands dev project. Move or rename it first.')
   if (state.kind === 'occupied') await freeOccupiedFolder(root, state.holder, placement)
-  else await removeEmptyFolder(root)
+  else
+    await rmdir(root).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error
+    })
   const created = await createDevProject({
     language: choice.language,
     snapshot: generalPurposeSnapshot(snapshot, choice.name),
@@ -513,23 +516,6 @@ const undoOnFailure = async <Result>(claims: FolderClaims, work: () => Promise<R
   }
 }
 
-const removeEmptyFolder = async (path: string): Promise<void> => {
-  try {
-    await rmdir(path)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-  }
-}
-
-const discardRejected = async (rejected: PreparedDevRun | undefined): Promise<string | undefined> => {
-  try {
-    await rejected?.discard()
-    return undefined
-  } catch (error) {
-    return `Could not delete the folders of the failed setup: ${errorMessage(error)}`
-  }
-}
-
 export const prepareDevRun = async (
   args: ParsedArgs,
   options: {
@@ -545,7 +531,10 @@ export const prepareDevRun = async (
   config.useEnvironmentFiles(args.envFiles)
   screen?.signal.throwIfAborted()
   screen?.show(undefined, 'Preparing local workspace…')
-  const warning = await discardRejected(rejected)
+  const warning = await rejected?.discard().then(
+    () => undefined,
+    (error: unknown) => `Could not delete the folders of the failed setup: ${errorMessage(error)}`
+  )
   const claims = folderClaims()
   return undoOnFailure(claims, async () => {
     const selected = await selectWorkspace(args, {
