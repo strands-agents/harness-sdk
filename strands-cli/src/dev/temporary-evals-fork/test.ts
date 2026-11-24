@@ -45,7 +45,7 @@ interface TemporaryTestRequest extends TemporaryEvalsRequest {
   startedAt?: number
 }
 
-export interface TemporaryTestOutcome {
+interface TemporaryTestOutcome {
   experiment: string
   name: string
   home: string
