@@ -342,8 +342,8 @@ docs applies to it too.
 `.trim()
 
 export const EVALS_SKILLS_PROMPT = `
-Help me install the Strands Evals SDK and its agent skills (optimize, strands-evals, and
-session-converter) so you can use them in this project. Work through these steps in order,
+Help me install the Strands Evals SDK and all of its agent skills so you can use them in
+this project. Work through these steps in order,
 checking with me before anything that installs software or writes files.
 
 Step 1: Install the package
@@ -355,16 +355,19 @@ Then install the SDK with the optimization extra:
   pip install 'strands-agents-evals[optimization]'
 
 Step 2: Install the skills into this coding assistant
-The skills ship inside the package. With the environment from Step 1 active, run:
-  npx skills add "$(python -c 'import strands_evals, pathlib; print(pathlib.Path(strands_evals.__file__).parent / ".agents" / "skills")')" --copy
-Pass -a with this assistant's name (for example -a claude-code, -a codex, or -a kiro-cli) so the
-skills land where you load them from. Ask me whether to install for this project only or for
-every project (-g). If the command reports "Local path does not exist", the package is an
-editable install from a checkout; run npx skills add <checkout>/.agents/skills --copy instead.
+The skills ship inside the package. First ask me whether to install them for this project
+only or for every project. Then, with the environment from Step 1 active, run this without
+prompts, replacing <agent> with this assistant's skills CLI name (for example claude-code,
+codex, or kiro-cli) and adding -g if I chose every project:
+  npx skills add "$(python -c 'import strands_evals, pathlib; print(pathlib.Path(strands_evals.__file__).parent / ".agents" / "skills")')" --copy -s '*' -a <agent> -y
+-s '*' installs every skill the package ships, -a puts them where you load them from, and -y
+skips the CLI's confirmation prompts. If the command reports "Local path does not exist", the
+package is an editable install from a checkout; run the same command with
+<checkout>/.agents/skills as the path instead.
 
 Step 3: Confirm
 List the installed skills, reload them if this assistant needs a restart to pick up new
-skills, and tell me how to start: for example "optimize my agent" activates the optimize skill.
+skills, and tell me what each one does and how to start using it.
 
 Throughout: prefer the Strands Evals docs at https://strandsagents.com/docs/user-guide/evals-sdk/
 over memory.

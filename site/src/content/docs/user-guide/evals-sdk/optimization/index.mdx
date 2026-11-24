@@ -34,6 +34,20 @@ won. It never applies the result unless you ask.
 
 <CopyPromptButton language="evals-skills" />
 
+To install them yourself instead: the skills ship inside the `strands-agents-evals` package.
+Install them into your coding assistant with the
+[`skills` CLI](https://github.com/vercel-labs/skills), run from the environment where you
+installed the package:
+
+```bash
+npx skills add "$(python -c 'import strands_evals, pathlib; print(pathlib.Path(strands_evals.__file__).parent / ".agents" / "skills")')" --copy
+```
+
+`--copy` copies the skills into your project, so they keep working if that environment is
+deleted. Run the command again after you upgrade `strands-agents-evals`. To install only
+some of them, add `-s <name>`; to pick an assistant, add `-a claude-code`; to install for
+every project, add `-g`.
+
 ## Why optimize instead of tweaking by hand?
 
 Hand tuning works until there are more than two knobs. Then every change needs a full eval
