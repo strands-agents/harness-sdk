@@ -3135,7 +3135,7 @@ export class ChatController implements ChatControllerApi {
       return [
         {
           command: spec.name,
-          jobs: listed.map((job) => ({ ...job, label: jobLabel(job.label) })),
+          jobs: listed.map((job) => ({ ...job, label: sanitizeTerminalText(job.label).replace(/\s+/gu, ' ').trim() })),
           ...(working && backgroundTools.length > 0 ? { covers: backgroundTools } : {}),
         },
       ]
@@ -3351,10 +3351,6 @@ function withScreenContext(prompt: string, context: string | undefined): string 
 
 function skillCommandRequest(command: string, workflow: string, prompt: string): string {
   return [`<strands_dev_command name="${command}">`, workflow, '</strands_dev_command>', '', prompt].join('\n')
-}
-
-function jobLabel(label: string): string {
-  return sanitizeTerminalText(label).replace(/\s+/gu, ' ').trim()
 }
 
 function isLiveLocalCommand(prompt: string): boolean {

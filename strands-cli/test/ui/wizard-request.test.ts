@@ -157,14 +157,8 @@ describe('WizardBroker', () => {
     expect(open).toHaveBeenCalledOnce()
   })
 
-  it('shouldResolveWithNothingWhenCancelledOrWhenTheRequestHasNoStep', async () => {
-    const broker = new WizardBroker()
-    const asked = broker.ask(question([tune]))
-
-    broker.cancelAll()
-
-    await expect(asked).resolves.toBeUndefined()
-    await expect(broker.ask({ name: 'optimize', steps: [] })).resolves.toBeUndefined()
+  it('shouldResolveWithNothingWhenTheRequestHasNoStep', async () => {
+    await expect(new WizardBroker().ask({ name: 'optimize', steps: [] })).resolves.toBeUndefined()
   })
 })
 

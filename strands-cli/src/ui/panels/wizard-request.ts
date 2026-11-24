@@ -74,12 +74,12 @@ export interface WizardRequest {
 
 export type WizardRequestSpec = Omit<WizardRequest, 'id'>
 
-/** `undefined` means the user cancelled instead of finishing; 'back' means they asked for the previous question. */
 /** The developer sent a chat message instead of finishing; `entered` is what the question held on screen then. */
 export class WizardInterruption {
   constructor(readonly entered: Readonly<Record<string, WizardAnswer>>) {}
 }
 
+/** `undefined` means the user cancelled instead of finishing; 'back' means they asked for the previous question. */
 export type WizardOutcome = Readonly<Record<string, WizardAnswer>> | 'back' | WizardInterruption | undefined
 
 type WizardListener = (request: WizardRequest | undefined) => void
@@ -89,34 +89,32 @@ interface PendingWizard {
   readonly resolve: (outcome: WizardOutcome) => void
 }
 
-const cleanText = (text: string): string => sanitizeTerminalText(text)
-
 const cleanField = (field: WizardFieldSpec): WizardFieldSpec => {
   if (field.kind === 'select')
     return {
       ...field,
       options: field.options.map((option) => ({
         ...option,
-        label: cleanText(option.label),
-        ...(option.detail === undefined ? {} : { detail: cleanText(option.detail) }),
-        ...(option.unavailable === undefined ? {} : { unavailable: cleanText(option.unavailable) }),
+        label: sanitizeTerminalText(option.label),
+        ...(option.detail === undefined ? {} : { detail: sanitizeTerminalText(option.detail) }),
+        ...(option.unavailable === undefined ? {} : { unavailable: sanitizeTerminalText(option.unavailable) }),
       })),
     }
-  const label = cleanText(field.label)
-  if (field.kind === 'diff') return { ...field, label, path: cleanText(field.path) }
+  const label = sanitizeTerminalText(field.label)
+  if (field.kind === 'diff') return { ...field, label, path: sanitizeTerminalText(field.path) }
   if (field.kind === 'number')
-    return { ...field, label, ...(field.detail === undefined ? {} : { detail: cleanText(field.detail) }) }
+    return { ...field, label, ...(field.detail === undefined ? {} : { detail: sanitizeTerminalText(field.detail) }) }
   return { ...field, label }
 }
 
 const cleanRequest = (request: WizardRequest): WizardRequest => ({
   ...request,
-  name: cleanText(request.name),
-  ...(request.question === undefined ? {} : { question: cleanText(request.question) }),
-  ...(request.titleParts === undefined ? {} : { titleParts: request.titleParts.map(cleanText) }),
+  name: sanitizeTerminalText(request.name),
+  ...(request.question === undefined ? {} : { question: sanitizeTerminalText(request.question) }),
+  ...(request.titleParts === undefined ? {} : { titleParts: request.titleParts.map(sanitizeTerminalText) }),
   steps: request.steps.map((step) => ({
     ...step,
-    title: cleanText(step.title),
+    title: sanitizeTerminalText(step.title),
     fields: step.fields.map(cleanField),
   })),
 })
@@ -242,7 +240,6 @@ export class WizardBroker {
   private _active: PendingWizard | undefined
   private _open: (() => boolean) | undefined
   private _next = 1
-  private _disposed = false
   // What each shown question holds on screen, so a chat message that drops it can pass the inputs on.
   private readonly _drafts = new Map<string, Readonly<Record<string, WizardAnswer>>>()
 
@@ -255,7 +252,7 @@ export class WizardBroker {
   }
 
   ask(spec: WizardRequestSpec): Promise<WizardOutcome> {
-    if (this._disposed || spec.steps.length === 0) return Promise.resolve(undefined)
+    if (spec.steps.length === 0) return Promise.resolve(undefined)
     const request = cleanRequest({ ...spec, id: `strands-wizard-${this._next++}` })
     this._track?.('shown')
     return new Promise((resolve) => {
@@ -295,17 +292,6 @@ export class WizardBroker {
     }
   }
 
-  cancelAll(): void {
-    const pending = [...(this._active ? [this._active] : []), ...this._queue.splice(0)]
-    const hadActive = this._active !== undefined
-    this._active = undefined
-    for (const wizard of pending) {
-      this._track?.('cancelled')
-      wizard.resolve(undefined)
-    }
-    if (hadActive) this._notify(undefined)
-  }
-
   /** Puts the waiting question about `topic` on screen, ahead of the one there, and opens the panel. False when none waits. */
   bringForward(topic: string): boolean {
     if (this._active?.request.topic !== topic) {
@@ -333,12 +319,6 @@ export class WizardBroker {
   /** Cancels the questions about `topic`, on screen or waiting: whoever asked has its answer from elsewhere. */
   withdraw(topic: string): void {
     this._cancelWhere(({ request }) => request.topic === topic)
-  }
-
-  dispose(): void {
-    this._disposed = true
-    this.cancelAll()
-    this._listeners.clear()
   }
 
   private _cancelWhere(matches: (wizard: PendingWizard) => boolean, interrupted = false): boolean {
