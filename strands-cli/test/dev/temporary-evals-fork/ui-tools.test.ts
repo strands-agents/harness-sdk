@@ -1,9 +1,9 @@
 import type { JSONValue } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { DevChatTool } from '../../src/dev/chat-extension.js'
-import { uiTools } from '../../src/dev/temporary-evals-fork/ui-tools.js'
-import { WizardBroker, type WizardOutcome } from '../../src/ui/panels/wizard-request.js'
+import type { DevChatTool } from '../../../src/dev/chat-extension.js'
+import { uiTools } from '../../../src/dev/temporary-evals-fork/ui-tools.js'
+import { WizardBroker, type WizardOutcome } from '../../../src/ui/panels/wizard-request.js'
 
 const setup = () => {
   const broker = new WizardBroker()

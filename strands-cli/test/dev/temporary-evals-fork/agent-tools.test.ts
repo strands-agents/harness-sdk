@@ -1,6 +1,5 @@
 import type { JSONValue } from '@strands-agents/sdk'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -27,6 +26,7 @@ import {
 import type { AutoOptimizeStatus } from '../../../src/dev/temporary-evals-fork/auto-optimize.js'
 import type { AnsweredOptimizeReview, AppliedOptimizeEdits } from '../../../src/dev/temporary-evals-fork/review-run.js'
 import type { TemporaryAppliedChange, TemporaryDevSessions } from '../../../src/dev/temporary-evals-fork/sessions.js'
+import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const REFUNDS: ExperimentSummary = {
   name: 'refunds',
@@ -280,6 +280,26 @@ const setup = (changes: readonly TemporaryAppliedChange[] = []) => {
   return { ...fake, part, tool, call, history, showReview, answerReview, applyEdits }
 }
 
+/** Saves refunds with two cases as a file, for the tools that read it. */
+const saveExperimentFile = async (
+  experiments: ReturnType<typeof setup>['experiments'],
+  evaluators: readonly string[]
+): Promise<void> => {
+  const folder = await temporaryDirectory('dev-background-')
+  const path = join(folder, 'refunds.json')
+  await writeFile(
+    path,
+    JSON.stringify({
+      evaluators: evaluators.map((type) => ({ evaluator_type: type })),
+      cases: [
+        { name: 'first', input: 'First request' },
+        { name: 'second', input: 'Second request' },
+      ],
+    })
+  )
+  experiments.set({ loaded: true, folder, saved: [{ ...REFUNDS, path }], generations: [] })
+}
+
 const APPLIED: TemporaryAppliedChange = {
   run: '20261117-144415-diffs',
   experiment: 'diffs',
@@ -360,6 +380,34 @@ describe('TEMPORARY dev chat instructions', () => {
     const { part } = setup()
 
     expect(part.instructions).not.toContain('Changes that strands dev made to this agent')
+  })
+
+  it('shouldGuideTheAgentOnPaidRunsTheAutomaticOptimizationAndADiffOnScreen', () => {
+    const { part, tool } = setup()
+
+    for (const guidance of [
+      // Plain requests go to the evals skills, and the approval of a paid run waits for a later turn.
+      'activate the strands-evals skill',
+      'activate the optimize skill',
+      'follow the background-evals skill',
+      'start a run only after the developer approves it in a later turn',
+      'call strands_dev_status again whenever the question is what exists',
+      // What the two automatic settings do, so the agent does not go looking for them.
+      'Auto-optimize every N turns makes an experiment from the chats',
+      'Auto-accept optimization results writes the edits of a finished run',
+      'strands_dev_auto_optimize reads and sets them, so do not search files',
+      'say what it does and that every automatic run is paid',
+      'A question whether you can is not yet a request',
+      // A message that came with a diff on screen answers that diff.
+      'A message that comes with a <strands_dev_screen> block',
+      'pick for them with strands_dev_answer_review',
+      'do not ask them to confirm',
+    ])
+      expect(part.instructions).toContain(guidance)
+    expect(tool('strands_dev_run_background').description).toContain(
+      'only after the developer answered yes, in an earlier turn'
+    )
+    expect(tool('strands_dev_auto_optimize').description).toContain('"optimize every 20 turns from my history"')
   })
 })
 
@@ -466,34 +514,19 @@ describe('TEMPORARY dev chat part', () => {
 
   it('shouldReadSavedCasesAndEvaluatorsWithoutRunningAnything', async () => {
     const { call, experiments, sessions } = setup()
-    const folder = await mkdtemp(join(tmpdir(), 'dev-experiment-read-'))
-    try {
-      const path = join(folder, 'refunds.json')
-      await writeFile(
-        path,
-        JSON.stringify({
-          evaluators: [{ name: 'OutputEvaluator', rubric: 'Check evidence' }],
-          cases: [
-            { name: 'first', input: 'First request', expected_output: 'First answer' },
-            { name: 'second', input: 'Second request', expected_trajectory: ['lookup'] },
-          ],
-        })
-      )
-      experiments.set({ loaded: true, folder, saved: [{ ...REFUNDS, path }], generations: [] })
-      expect(await call('strands_dev_read_experiment', { experiment: 'refunds', limit: 1 })).toMatchObject({
-        total: 2,
-        nextOffset: 1,
-        evaluators: [{ name: 'OutputEvaluator', rubric: 'Check evidence' }],
-        cases: [{ name: 'first', expected_output: 'First answer' }],
-      })
-      expect(await call('strands_dev_read_experiment', { experiment: 'refunds', offset: 1 })).toMatchObject({
-        offset: 1,
-        cases: [{ name: 'second', expected_trajectory: ['lookup'] }],
-      })
-      expect(sessions.test.run).not.toHaveBeenCalled()
-    } finally {
-      await rm(folder, { recursive: true, force: true })
-    }
+    await saveExperimentFile(experiments, ['OutputEvaluator'])
+
+    expect(await call('strands_dev_read_experiment', { experiment: 'refunds', limit: 1 })).toMatchObject({
+      total: 2,
+      nextOffset: 1,
+      evaluators: [{ evaluator_type: 'OutputEvaluator' }],
+      cases: [{ name: 'first', input: 'First request' }],
+    })
+    expect(await call('strands_dev_read_experiment', { experiment: 'refunds', offset: 1 })).toMatchObject({
+      offset: 1,
+      cases: [{ name: 'second', input: 'Second request' }],
+    })
+    expect(sessions.test.run).not.toHaveBeenCalled()
   })
 
   it('shouldOpenAnExperimentOrAnyFileInTheEditorAndSayWhatToOfferWhenNoEditorOpens', async () => {
@@ -574,13 +607,28 @@ describe('TEMPORARY dev chat part', () => {
     expect(sessions.test.runOnly).not.toHaveBeenCalled()
   })
 
-  it('shouldReportACancelledOptimizationInTheWorkspaceStatus', async () => {
-    const { call, optimize } = setup()
-    optimize.set({ step: 'cancelled', experiment: 'refunds', run: 'run-7' })
+  it.each<[OptimizeRunState, object]>([
+    [
+      { step: 'cancelled', experiment: 'refunds', run: 'run-7' },
+      { step: 'cancelled', experiment: 'refunds', run: 'run-7' },
+    ],
+    [
+      {
+        step: 'running',
+        progress: {
+          ...progress(),
+          step: { kind: 'validating', versions: 3, trials: { done: 1, total: 6 } },
+          rollouts: { done: 21, total: 30 },
+        },
+      },
+      // Which part of the run is going, and how far the whole run is.
+      { step: 'running', phase: 'checking the finalists on the validation cases', rollouts: { done: 21, total: 30 } },
+    ],
+  ])('shouldReportTheOptimizationInTheWorkspaceStatusWhenItIs %o', async (run, optimization) => {
+    const { call, finishRun } = setup()
+    finishRun(run)
 
-    expect(await call('strands_dev_status')).toMatchObject({
-      optimization: { step: 'cancelled', experiment: 'refunds', run: 'run-7' },
-    })
+    expect(await call('strands_dev_status')).toMatchObject({ optimization })
   })
 
   it('shouldReportOnlyTheTunableKnobsAndTheObjectivePresetsWhenItPlans', async () => {
@@ -666,17 +714,6 @@ describe('TEMPORARY dev chat part', () => {
     expect(applied.next).toContain(where)
   })
 
-  it.each<[string, Record<string, JSONValue>, string]>([
-    ['no run', { edits: [0] }, 'run is required.'],
-    ['an edit that is not a number', { run: 'r', edits: ['first'] }, 'There is no edit first.'],
-    ['an edit below zero', { run: 'r', edits: [-1] }, 'There is no edit -1.'],
-  ])('shouldApplyNothingWhenTheCallHas%s', async (_case, input, message) => {
-    const { tool, applyEdits } = setup()
-
-    await expect(tool('strands_dev_apply_optimization').run(input)).rejects.toThrow(message)
-    expect(applyEdits).not.toHaveBeenCalled()
-  })
-
   it.each([
     ['why the edits could not be answered', new Error('Run r has no edit 4.'), 'Run r has no edit 4.'],
     [
@@ -692,31 +729,6 @@ describe('TEMPORARY dev chat part', () => {
     await expect(tool('strands_dev_apply_optimization').run({ run: 'r', edits: [0] })).rejects.toThrow(message)
   })
 })
-
-const withExperimentFile = async (
-  experiments: ReturnType<typeof setup>['experiments'],
-  evaluators: readonly string[],
-  run: () => Promise<void>
-): Promise<void> => {
-  const folder = await mkdtemp(join(tmpdir(), 'dev-background-'))
-  try {
-    const path = join(folder, 'refunds.json')
-    await writeFile(
-      path,
-      JSON.stringify({
-        evaluators: evaluators.map((type) => ({ evaluator_type: type })),
-        cases: [
-          { name: 'first', input: 'First request' },
-          { name: 'second', input: 'Second request' },
-        ],
-      })
-    )
-    experiments.set({ loaded: true, folder, saved: [{ ...REFUNDS, path }], generations: [] })
-    await run()
-  } finally {
-    await rm(folder, { recursive: true, force: true })
-  }
-}
 
 describe('background strands-evals runs', () => {
   const optimizeRun = (args: string[]): Record<string, JSONValue> => ({
@@ -857,21 +869,21 @@ describe('background strands-evals runs', () => {
     ],
   ])('shouldPassTheObjectiveOfTheSkillWhenItHas%s', async (_case, args, expression, constraints) => {
     const { call, sessions, experiments } = setup()
-    await withExperimentFile(experiments, ['Helpfulness'], async () => {
-      await call('strands_dev_run_background', optimizeRun(args))
+    await saveExperimentFile(experiments, ['Helpfulness'])
 
-      expect(sessions.optimize.setObjective).toHaveBeenCalledWith({ expression, constraints })
-    })
+    await call('strands_dev_run_background', optimizeRun(args))
+
+    expect(sessions.optimize.setObjective).toHaveBeenCalledWith({ expression, constraints })
   })
 
   it('shouldRefuseAnObjectiveThatIsNotAnEvaluatorOfTheExperiment', async () => {
     const { tool, sessions, experiments } = setup()
-    await withExperimentFile(experiments, ['OutputEvaluator'], async () => {
-      await expect(
-        tool('strands_dev_run_background').run(optimizeRun(['--objective', 'maximize:Helpfulness']))
-      ).rejects.toThrow('Helpfulness is not an evaluator of this experiment or a usage number')
-      expect(sessions.optimize.reset).not.toHaveBeenCalled()
-    })
+    await saveExperimentFile(experiments, ['OutputEvaluator'])
+
+    await expect(
+      tool('strands_dev_run_background').run(optimizeRun(['--objective', 'maximize:Helpfulness']))
+    ).rejects.toThrow('Helpfulness is not an evaluator of this experiment or a usage number')
+    expect(sessions.optimize.reset).not.toHaveBeenCalled()
   })
 
   it('shouldRunTheWholeExperimentWhenItEvaluatesWithoutCases', async () => {
@@ -891,32 +903,31 @@ describe('background strands-evals runs', () => {
 
   it('shouldRunOnlyTheNamedCasesAndRefuseAnUnknownCaseOrASecondRun', async () => {
     const { call, tool, sessions, experiments, test } = setup()
-    await withExperimentFile(experiments, ['OutputEvaluator'], async () => {
-      const [saved] = experiments.snapshot().saved
-      await expect(
-        tool('strands_dev_run_background').run({ command: 'run', experiment: 'refunds', args: ['--case', 'third'] })
-      ).rejects.toThrow('refunds has no case third.')
+    await saveExperimentFile(experiments, ['OutputEvaluator'])
+    const [saved] = experiments.snapshot().saved
+    await expect(
+      tool('strands_dev_run_background').run({ command: 'run', experiment: 'refunds', args: ['--case', 'third'] })
+    ).rejects.toThrow('refunds has no case third.')
 
-      const only = await call('strands_dev_run_background', {
-        command: 'run',
-        experiment: 'refunds',
-        args: ['--case', 'second', '--max-workers', '2'],
-      })
-      test.set({
-        runs: [
-          {
-            experiment: saved!,
-            run: { status: 'running', cases: 1, evaluators: [], done: 0, startedAt: 0, rerun: true },
-          },
-        ],
-      })
-
-      expect(only).toMatchObject({ cases: 1, ignored: ['--max-workers: strands dev sets it'] })
-      expect(sessions.test.runOnly).toHaveBeenCalledWith(saved, ['second'])
-      await expect(tool('strands_dev_run_background').run({ command: 'run', experiment: 'refunds' })).rejects.toThrow(
-        'refunds is already running.'
-      )
+    const only = await call('strands_dev_run_background', {
+      command: 'run',
+      experiment: 'refunds',
+      args: ['--case', 'second', '--max-workers', '2'],
     })
+    test.set({
+      runs: [
+        {
+          experiment: saved!,
+          run: { status: 'running', cases: 1, evaluators: [], done: 0, startedAt: 0, rerun: true },
+        },
+      ],
+    })
+
+    expect(only).toMatchObject({ cases: 1, ignored: ['--max-workers: strands dev sets it'] })
+    expect(sessions.test.runOnly).toHaveBeenCalledWith(saved, ['second'])
+    await expect(tool('strands_dev_run_background').run({ command: 'run', experiment: 'refunds' })).rejects.toThrow(
+      'refunds is already running.'
+    )
   })
 
   it('shouldGenerateANewExperimentFromTheFlagsOfStrandsEvalsGenerate', async () => {
@@ -1021,30 +1032,25 @@ describe('background strands-evals runs', () => {
   })
 })
 
-describe('dev chat guidance', () => {
-  it('shouldPointPlainRequestsAtTheEvalsSkillsAndKeepThePaidRunApprovalForALaterTurn', () => {
-    const { part, tool } = setup()
-
-    expect(part.instructions).toContain('activate the strands-evals skill')
-    expect(part.instructions).toContain('activate the optimize skill')
-    expect(part.instructions).toContain('follow the background-evals skill')
-    expect(part.instructions).toContain('start a run only after the developer approves it in a later turn')
-    expect(part.instructions).toContain('call strands_dev_status again whenever the question is what exists')
-    expect(tool('strands_dev_run_background').description).toContain(
-      'only after the developer answered yes, in an earlier turn'
-    )
-  })
-})
-
 describe('dev chat tool errors and states', () => {
   it.each<[string, Record<string, JSONValue>, string]>([
-    ['an unknown name', { experiment: 'billing' }, 'There is no experiment named billing. Saved experiments: refunds.'],
-    ['a name that is not text', { experiment: 5 }, 'experiment must be text.'],
-    ['no name', {}, 'experiment is required.'],
-  ])('shouldRefuseToReadAnExperimentWhenTheRequestHas%s', async (_case, input, message) => {
-    const { tool } = setup()
+    ['read_experiment', { experiment: 'billing' }, 'There is no experiment named billing. Saved experiments: refunds.'],
+    ['read_experiment', { experiment: 5 }, 'experiment must be text.'],
+    ['read_experiment', {}, 'experiment is required.'],
+    ['apply_optimization', { edits: [0] }, 'run is required.'],
+    ['apply_optimization', { run: 'r', edits: ['first'] }, 'There is no edit first.'],
+    ['apply_optimization', { run: 'r', edits: [-1] }, 'There is no edit -1.'],
+    ['auto_optimize', { everyTurns: 7 }, 'everyTurns must be one of 0, 5, 10, 20, 50, 100.'],
+    ['auto_optimize', { everyTurns: 'often' }, 'everyTurns must be one of 0, 5, 10, 20, 50, 100.'],
+    ['auto_optimize', { acceptResults: 'yes' }, 'acceptResults must be true or false.'],
+    ['answer_review', { edit: 0, answer: 'apply' }, 'run is required.'],
+    ['answer_review', { run: 'r', answer: 'apply' }, 'edit must be the index of the edit'],
+    ['answer_review', { run: 'r', edit: 0, answer: 'yes' }, 'answer must be apply or leave.'],
+  ])('shouldRefuseAndDoNothingWhen %s is called with %j', async (name, input, message) => {
+    const { tool, sessions, applyEdits, answerReview } = setup()
 
-    await expect(tool('strands_dev_read_experiment').run(input)).rejects.toThrow(message)
+    await expect(tool(`strands_dev_${name}`).run(input)).rejects.toThrow(message)
+    for (const effect of [applyEdits, answerReview, sessions.setSettings]) expect(effect).not.toHaveBeenCalled()
   })
 
   it('shouldFindAnExperimentInAnyCaseAndSayWhenNoneIsSaved', async () => {
@@ -1128,7 +1134,12 @@ describe('dev chat tool errors and states', () => {
 
       expect(status.edits[0]).toMatchObject({ answer: 'waiting' })
       expect(status.edits[1]).not.toHaveProperty('answer')
-      expect(status).toMatchObject({ awaitingAnswer: 1 })
+      // It waits without being called "on screen": the diff may be closed.
+      expect(status).toMatchObject({
+        step: 'review',
+        awaitingAnswer: 1,
+        next: expect.stringContaining('The diff may not be showing'),
+      })
     })
 
     it('shouldSayThatAnEditWasLeftAsItIsSoABareYesDoesNotApplyIt', async () => {
@@ -1170,11 +1181,13 @@ describe('dev chat tool errors and states', () => {
         undefined,
       ],
       ['was written without an answer', { applied: ['agent.py'] }, undefined],
+      ['was closed with an edit unanswered', { reviewed: true }, undefined],
     ] as const)('shouldSayWhatWasAnsweredAndNothingMoreWhenTheRun%s', async (_case, change, answer) => {
       const status = await statusOf(change as Partial<OptimizeReview>)
 
       expect((status.edits[0] as { answer?: string }).answer).toBe(answer)
       expect(status).not.toHaveProperty('next')
+      expect(status).not.toHaveProperty('awaitingAnswer')
     })
   })
 
@@ -1290,28 +1303,6 @@ describe('dev chat tool errors and states', () => {
         sessions.setSettings.mock.invocationCallOrder[0]!
       )
     })
-
-    it.each<[string, Record<string, JSONValue>, string]>([
-      ['a number of turns that is not offered', { everyTurns: 7 }, 'everyTurns must be one of 0, 5, 10, 20, 50, 100.'],
-      ['turns that are not a number', { everyTurns: 'often' }, 'everyTurns must be one of 0, 5, 10, 20, 50, 100.'],
-      ['an answer that is not yes or no', { acceptResults: 'yes' }, 'acceptResults must be true or false.'],
-    ])('shouldChangeNothingWhenTheCallGives%s', async (_case, input, message) => {
-      const { tool, sessions } = setup()
-
-      await expect(tool('strands_dev_auto_optimize').run(input)).rejects.toThrow(message)
-      expect(sessions.setSettings).not.toHaveBeenCalled()
-    })
-
-    it('shouldTellTheAgentWhatTheTwoSettingsDoSoItDoesNotGoLookingForThem', () => {
-      const { part, tool } = setup()
-
-      expect(part.instructions).toContain('Auto-optimize every N turns makes an experiment from the chats')
-      expect(part.instructions).toContain('Auto-accept optimization results writes the edits of a finished run')
-      expect(part.instructions).toContain('strands_dev_auto_optimize reads and sets them, so do not search files')
-      expect(part.instructions).toContain('say what it does and that every automatic run is paid')
-      expect(part.instructions).toContain('A question whether you can is not yet a request')
-      expect(tool('strands_dev_auto_optimize').description).toContain('"optimize every 20 turns from my history"')
-    })
   })
 
   describe('an answer to the diff on screen, given in a chat message', () => {
@@ -1378,61 +1369,6 @@ describe('dev chat tool errors and states', () => {
       await expect(tool('strands_dev_answer_review').run({ run: 'r', edit: 0, answer: 'apply' })).rejects.toThrow(
         "is not the diff on the developer's screen now"
       )
-    })
-
-    it.each<[string, Record<string, JSONValue>, string]>([
-      ['no run', { edit: 0, answer: 'apply' }, 'run is required.'],
-      ['no edit', { run: RUN, answer: 'apply' }, 'edit must be the index of the edit'],
-      ['an answer that is neither', { run: RUN, edit: 0, answer: 'yes' }, 'answer must be apply or leave.'],
-    ])('shouldPickNothingWhenTheCallHas%s', async (_case, input, message) => {
-      const { tool, answerReview } = setup()
-
-      await expect(tool('strands_dev_answer_review').run(input)).rejects.toThrow(message)
-      expect(answerReview).not.toHaveBeenCalled()
-    })
-
-    it('shouldTellTheAgentToAnswerTheDiffThatAMessageCameWith', () => {
-      const { part } = setup()
-
-      expect(part.instructions).toContain('A message that comes with a <strands_dev_screen> block')
-      expect(part.instructions).toContain('pick for them with strands_dev_answer_review')
-      expect(part.instructions).toContain('do not ask them to confirm')
-    })
-  })
-
-  it('shouldSayThatAnEditStillWaitsWithoutCallingItOnScreen', async () => {
-    const { call, finishRun } = setup()
-    finishRun({ step: 'review', review: review() })
-
-    const waiting = (await call('strands_dev_status')) as { optimization: Record<string, unknown> }
-    finishRun({ step: 'review', review: { ...review(), reviewed: true } })
-    const answered = (await call('strands_dev_status')) as { optimization: Record<string, unknown> }
-
-    expect(waiting.optimization).toMatchObject({
-      step: 'review',
-      awaitingAnswer: 1,
-      next: expect.stringContaining('The diff may not be showing'),
-    })
-    expect(answered.optimization).not.toHaveProperty('awaitingAnswer')
-  })
-
-  it('shouldSayWhichPartOfTheRunIsGoingAndHowFarTheWholeRunIs', async () => {
-    const { call, finishRun } = setup()
-    finishRun({
-      step: 'running',
-      progress: {
-        ...progress(),
-        step: { kind: 'validating', versions: 3, trials: { done: 1, total: 6 } },
-        rollouts: { done: 21, total: 30 },
-      },
-    })
-
-    expect(await call('strands_dev_status')).toMatchObject({
-      optimization: {
-        step: 'running',
-        phase: 'checking the finalists on the validation cases',
-        rollouts: { done: 21, total: 30 },
-      },
     })
   })
 

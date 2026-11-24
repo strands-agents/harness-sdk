@@ -8,7 +8,7 @@ import { runTemporaryOptimization, type TemporaryOptimizationDependencies } from
 import { temporaryWorkspaceDirectory } from './evals-process.js'
 import { temporaryWorkspaceReady } from './layout-migration.js'
 import { readTemporaryTestResults, rememberTemporaryTestResults } from './report.js'
-import { runTemporaryTest, type TemporaryTestDependencies, type TemporaryTestOutcome } from './test.js'
+import { runTemporaryTest, type TemporaryTestDependencies } from './test.js'
 
 interface TemporaryDevCommandDependencies extends TemporaryOptimizationDependencies, TemporaryTestDependencies {
   openWorkspace?: (args: ParsedArgs) => Promise<PreparedDevRun | undefined>
@@ -28,14 +28,6 @@ interface Shared {
   onProgress: (line: string) => void
   prepare: () => Promise<void>
 }
-
-const temporaryTestSummary = (outcome: TemporaryTestOutcome, optimize: string): string[] => [
-  `${outcome.passed} of ${outcome.checks} checks passed (overall score ${outcome.overall.toFixed(2)})`,
-  `Report: ${outcome.report}`,
-  outcome.passed < outcome.checks
-    ? `The report gives each failing check its reason. Run ${optimize} ${outcome.name} to improve the agent on them.`
-    : 'Every check passed.',
-]
 
 const openWorkspace = async (args: ParsedArgs): Promise<PreparedDevRun | undefined> => {
   const { prepareDevRun } = await import('../prepare.js')
@@ -63,30 +55,29 @@ const optimize = async (
   return { lines: summary, code: proposerFailure ? 1 : 0 }
 }
 
-const rememberTest = async (
-  { home, report, seconds }: TemporaryTestOutcome,
-  warn: (line: string) => void
-): Promise<void> => {
+const evaluate = async (
+  shared: Shared,
+  dependencies: TemporaryDevCommandDependencies
+): Promise<{ lines: string[]; code: number }> => {
+  const { home, report, seconds, passed, checks, overall, name } = await runTemporaryTest(shared, dependencies)
   try {
     await rememberTemporaryTestResults(
       home,
       await readTemporaryTestResults(report, { experiment: basename(home), seconds })
     )
   } catch (error) {
-    warn(`warning: this result is not kept as the latest report: ${errorMessage(error)}`)
+    shared.onProgress(`warning: this result is not kept as the latest report: ${errorMessage(error)}`)
   }
-}
-
-const evaluate = async (
-  shared: Shared,
-  dependencies: TemporaryDevCommandDependencies
-): Promise<{ lines: string[]; code: number }> => {
-  const outcome = await runTemporaryTest(shared, dependencies)
-  await rememberTest(outcome, shared.onProgress)
   const workspace = shared.workspaceOption ? ` --workspace ${shared.workspaceOption}` : ''
   return {
-    lines: temporaryTestSummary(outcome, `strands dev optimize${workspace}`),
-    code: outcome.passed < outcome.checks ? 1 : 0,
+    lines: [
+      `${passed} of ${checks} checks passed (overall score ${overall.toFixed(2)})`,
+      `Report: ${report}`,
+      passed < checks
+        ? `The report gives each failing check its reason. Run strands dev optimize${workspace} ${name} to improve the agent on them.`
+        : 'Every check passed.',
+    ],
+    code: passed < checks ? 1 : 0,
   }
 }
 

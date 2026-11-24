@@ -46,6 +46,24 @@ const captured = (): { stream: PassThrough; text: () => string } => {
 const opened = (workspace: DevWorkspace): PreparedDevRun =>
   ({ workspace, config: { applyProviderEnvironment: vi.fn() } }) as unknown as PreparedDevRun
 
+/** Runs strands dev evaluate support in a new workspace whose evaluation writes this report. */
+const evaluated = async (report: unknown, flags: readonly string[] = []) => {
+  const workspace = await workspaceFixture()
+  const stdout = captured()
+  const stderr = captured()
+  const exit = await runTemporaryDevCommand(
+    parseArgs(['dev', 'evaluate', 'support', ...flags]),
+    { stdout: stdout.stream, stderr: stderr.stream },
+    {
+      openWorkspace: async () => opened(workspace),
+      prepareProject: vi.fn(async () => {}),
+      run: environmentRunner(),
+      spawnTests: reportingTests(report),
+    }
+  )
+  return { workspace, exit, stdout: stdout.text(), stderr: stderr.text() }
+}
+
 describe('TEMPORARY strands dev optimize command', () => {
   it('shouldWriteTheSummaryToStdoutAndProgressToStderrWhenTheOptimizationSucceeds', async () => {
     const workspace = await workspaceFixture()
@@ -116,24 +134,10 @@ describe('TEMPORARY strands dev optimize command', () => {
     { passes: [true, true], code: 0, last: 'Every check passed.' },
     { passes: [true, false], code: 1, last: 'Run strands dev optimize support to improve the agent on them.' },
   ])('shouldExitWith$codeAndPrintTheSummaryWhenDevTestFinishes', async ({ passes, code, last }) => {
-    const workspace = await workspaceFixture()
-    const stdout = captured()
-    const stderr = captured()
-    const spawnTests = reportingTests({ overall_score: 0.5, test_passes: passes })
-
-    const exit = await runTemporaryDevCommand(
-      parseArgs(['dev', 'evaluate', 'support']),
-      { stdout: stdout.stream, stderr: stderr.stream },
-      {
-        openWorkspace: async () => opened(workspace),
-        prepareProject: vi.fn(async () => {}),
-        run: environmentRunner(),
-        spawnTests,
-      }
-    )
+    const { workspace, exit, stdout } = await evaluated({ overall_score: 0.5, test_passes: passes })
 
     expect(exit).toBe(code)
-    const lines = stdout.text().trim().split('\n')
+    const lines = stdout.trim().split('\n')
     expect(lines[0]).toBe(`${passes.filter(Boolean).length} of 2 checks passed (overall score 0.50)`)
     expect(lines.at(-1)).toContain(last)
     expect(lines[1]).toMatch(/^Report: .+[\\/]report\.json$/u)
@@ -141,27 +145,12 @@ describe('TEMPORARY strands dev optimize command', () => {
   })
 
   it('shouldKeepTheWorkspaceInTheNextStepWhenDevTestRunsOnAnotherWorkspace', async () => {
-    const workspace = await workspaceFixture()
-    const stdout = captured()
-    const spawnTests = reportingTests({ overall_score: 0, test_passes: [false] })
+    const { stdout } = await evaluated({ overall_score: 0, test_passes: [false] }, ['--workspace', '/work/desk'])
 
-    await runTemporaryDevCommand(
-      parseArgs(['dev', 'evaluate', 'support', '--workspace', '/work/desk']),
-      { stdout: stdout.stream, stderr: captured().stream },
-      {
-        openWorkspace: async () => opened(workspace),
-        prepareProject: vi.fn(async () => {}),
-        run: environmentRunner(),
-        spawnTests,
-      }
-    )
-
-    expect(stdout.text()).toContain('Run strands dev optimize --workspace /work/desk support to improve')
+    expect(stdout).toContain('Run strands dev optimize --workspace /work/desk support to improve')
   })
 
   it('shouldWriteTheLatestResultWhenAHeadlessTestFinishes', async () => {
-    const workspace = await workspaceFixture()
-    const stderr = captured()
     const report = {
       overall_score: 1,
       cases: [{ name: 'a', evaluator: 'Equals' }],
@@ -170,16 +159,7 @@ describe('TEMPORARY strands dev optimize command', () => {
       reasons: ['matches'],
     }
 
-    await runTemporaryDevCommand(
-      parseArgs(['dev', 'evaluate', 'support']),
-      { stdout: captured().stream, stderr: stderr.stream },
-      {
-        openWorkspace: async () => opened(workspace),
-        prepareProject: vi.fn(async () => {}),
-        run: environmentRunner(),
-        spawnTests: reportingTests(report),
-      }
-    )
+    const { workspace, stderr } = await evaluated(report)
 
     const home = join(workspace.directory!, 'experiments/support')
     const latest = JSON.parse(await readFile(join(home, '.state/latest.json'), 'utf8')) as {
@@ -190,26 +170,14 @@ describe('TEMPORARY strands dev optimize command', () => {
     expect(latest.seconds).toBeGreaterThanOrEqual(0)
     expect(JSON.parse(await readFile(join(home, latest.run, 'report.json'), 'utf8'))).toEqual(report)
     expect(JSON.parse(await readFile(join(home, 'support.report.json'), 'utf8'))).toEqual(report)
-    expect(stderr.text()).not.toContain('warning:')
+    expect(stderr).not.toContain('warning:')
   })
 
   it('shouldWarnOnStderrWhenAHeadlessTestCannotWriteTheLatestResult', async () => {
-    const workspace = await workspaceFixture()
-    const stderr = captured()
-
-    const exit = await runTemporaryDevCommand(
-      parseArgs(['dev', 'evaluate', 'support']),
-      { stdout: captured().stream, stderr: stderr.stream },
-      {
-        openWorkspace: async () => opened(workspace),
-        prepareProject: vi.fn(async () => {}),
-        run: environmentRunner(),
-        spawnTests: reportingTests({ overall_score: 1, test_passes: [true] }),
-      }
-    )
+    const { workspace, exit, stderr } = await evaluated({ overall_score: 1, test_passes: [true] })
 
     expect(exit).toBe(0)
-    expect(stderr.text()).toMatch(
+    expect(stderr).toMatch(
       /warning: this result is not kept as the latest report: .+ is not a usable evaluation report/u
     )
     expect(existsSync(join(workspace.directory!, 'experiments/support/.state/latest.json'))).toBe(false)

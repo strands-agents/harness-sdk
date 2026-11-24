@@ -1265,14 +1265,15 @@ describe('TEMPORARY dev sessions', () => {
     expect(temporaryOptimizeJobs(both).map(({ id }) => id)).toEqual([second, first])
   })
 
-  it('shouldApplyTheEditOfTheRunWhoseQuestionWasAnsweredWhenTwoRunsWaitForReview', async () => {
+  /** Two finished runs that wait for review, with the question of the first one on screen. */
+  const twoRunsToReview = async () => {
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizingProcess() })
     const capital = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
     const cities = await savedExperiment(workspace, ['d0', 'd1', 'd2', 'd3'], 'cities')
     sessions.optimize.plan(capital)
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
     const first = sessions.optimize.start()
-    await vi.waitFor(() => expect(sessions.ask.pending()).toBeDefined())
+    await vi.waitFor(() => expect(sessions.ask.pending()?.topic).toBe(first))
     const firstQuestion = sessions.ask.pending()!
     sessions.optimize.reset()
     sessions.optimize.plan(cities)
@@ -1281,6 +1282,11 @@ describe('TEMPORARY dev sessions', () => {
     await vi.waitFor(() =>
       expect(sessions.optimize.snapshot().runs?.map(({ state }) => state.step)).toEqual(['review', 'review'])
     )
+    return { workspace, sessions, first, second, firstQuestion }
+  }
+
+  it('shouldApplyTheEditOfTheRunWhoseQuestionWasAnsweredWhenTwoRunsWaitForReview', async () => {
+    const { sessions, first, second, firstQuestion } = await twoRunsToReview()
 
     sessions.ask.respond(firstQuestion.id, { verdict: 'accept' })
 
@@ -1294,20 +1300,7 @@ describe('TEMPORARY dev sessions', () => {
   })
 
   it('shouldOpenTheReviewOfTheRunWhoseStatusLineIsOpenedAheadOfTheOneOnScreen', async () => {
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizingProcess() })
-    const capital = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    const cities = await savedExperiment(workspace, ['d0', 'd1', 'd2', 'd3'], 'cities')
-    sessions.optimize.plan(capital)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-    const first = sessions.optimize.start()
-    await vi.waitFor(() => expect(sessions.ask.pending()?.topic).toBe(first))
-    sessions.optimize.reset()
-    sessions.optimize.plan(cities)
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
-    const second = sessions.optimize.start()
-    await vi.waitFor(() =>
-      expect(sessions.optimize.snapshot().runs?.map(({ state }) => state.step)).toEqual(['review', 'review'])
-    )
+    const { workspace, sessions, first, second } = await twoRunsToReview()
     const optimize = devCommand(workspace, 'optimize')
     const { context } = chat()
 

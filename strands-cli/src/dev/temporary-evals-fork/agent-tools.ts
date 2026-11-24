@@ -8,7 +8,6 @@ import type { DevChatPart, DevChatTool } from '../chat-extension.js'
 import { STRANDS_EVALS_OPTIMIZE_SKILL, STRANDS_EVALS_SKILL } from '../evals-skill.js'
 import { isGenerating, type CrashScore } from '../panels/model.js'
 import type {
-  ExperimentRun,
   ExperimentSummary,
   Generation,
   Knob,
@@ -64,18 +63,9 @@ interface TemporaryDevChatHost {
   /** Puts a run's waiting edits on the developer's screen. Says whether it had any to show. */
   readonly showReview?: (run: string) => boolean
   /** Picks a choice of the diff on the developer's screen in their place. Throws when that diff is not showing. */
-  readonly answerReview?: (answer: ReviewAnswer) => Promise<AnsweredOptimizeReview>
+  readonly answerReview?: (answer: Parameters<typeof answerOptimizeReview>[1]) => Promise<AnsweredOptimizeReview>
   /** Answers the named edits of a run with apply, and writes the run once every edit has its answer. */
-  readonly applyEdits?: (named: {
-    readonly run: string
-    readonly edits: readonly number[]
-  }) => Promise<AppliedOptimizeEdits>
-}
-
-interface ReviewAnswer {
-  readonly run: string
-  readonly edit: number
-  readonly apply: boolean
+  readonly applyEdits?: (named: Parameters<typeof applyOptimizeEdits>[1]) => Promise<AppliedOptimizeEdits>
 }
 
 const TEXT_LIMIT = 600
@@ -173,9 +163,15 @@ const pageOf = <Value>(
   return { offset, ...(next < items.length ? { nextOffset: next } : {}), items: items.slice(offset, next) }
 }
 
-const PAGE_PROPERTIES = {
-  offset: { type: 'integer' as const, minimum: 0, description: 'Zero-based first case. Default 0.' },
-  limit: { type: 'integer' as const, minimum: 1, maximum: 50, description: 'Cases to return. Default 10.' },
+const PAGED_EXPERIMENT: DevChatTool['inputSchema'] = {
+  type: 'object',
+  properties: {
+    experiment: { type: 'string' },
+    offset: { type: 'integer', minimum: 0, description: 'Zero-based first case. Default 0.' },
+    limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Cases to return. Default 10.' },
+  },
+  required: ['experiment'],
+  additionalProperties: false,
 }
 
 const readExperimentTool = (sessions: Sessions): DevChatTool => ({
@@ -183,12 +179,7 @@ const readExperimentTool = (sessions: Sessions): DevChatTool => ({
   readOnly: true,
   description:
     'Read a saved experiment, its evaluator definitions, and a page of cases. Does not run the agent or generate cases.',
-  inputSchema: {
-    type: 'object',
-    properties: { experiment: { type: 'string' }, ...PAGE_PROPERTIES },
-    required: ['experiment'],
-    additionalProperties: false,
-  },
+  inputSchema: PAGED_EXPERIMENT,
   run: async (input): Promise<string> => {
     const selected = await findExperiment(sessions, requiredText(input, 'experiment'))
     const { experiment, raw } = await readTemporaryExperimentFile(selected.path)
@@ -210,17 +201,12 @@ const testResultsTool = (sessions: Sessions): DevChatTool => ({
   readOnly: true,
   description:
     'Inspect existing progress or the last evaluation result, including inputs, outputs, and evaluator verdicts. Does not rerun evaluations.',
-  inputSchema: {
-    type: 'object',
-    properties: { experiment: { type: 'string' }, ...PAGE_PROPERTIES },
-    required: ['experiment'],
-    additionalProperties: false,
-  },
+  inputSchema: PAGED_EXPERIMENT,
   run: async (input): Promise<string> => {
     const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
     const { test } = sessions()
     await test.show()
-    const run = test.snapshot().runs.find((entry) => entry.experiment.path === experiment.path)?.run
+    const run = runOf(test, experiment.path)
     if (!run) return reply({ experiment: experiment.name, status: 'not_run' })
     if (run.status !== 'done') return reply({ experiment: experiment.name, ...runStatus(run) })
     const page = pageOf(run.results.cases, input)
@@ -235,7 +221,11 @@ const testResultsTool = (sessions: Sessions): DevChatTool => ({
   },
 })
 
-const runStatus = (run: TestRun): object => {
+const runOf = (test: TemporaryDevSessions['test'], path: string): TestRun | undefined =>
+  test.snapshot().runs.find(({ experiment }) => experiment.path === path)?.run
+
+const runStatus = (run: TestRun | undefined): object | undefined => {
+  if (!run) return undefined
   if (run.status === 'running') return { status: 'running', done: run.done, cases: run.cases }
   if (run.status === 'failed') return { status: 'failed', message: run.message }
   const { cases, overall, report } = run.results
@@ -315,9 +305,7 @@ const answersReport = (review: OptimizeReview): object => {
           `${waiting === 1 ? '1 edit of this run still waits' : `${waiting} edits of this run still wait`} ${WAITING_NEXT}`,
         ]
       : []),
-    ...(left > 0
-      ? [`The developer left ${left === 1 ? '1 edit' : `${left} edits`} of this run as it is. ${LEFT_NEXT}`]
-      : []),
+    ...(left > 0 ? [`The developer left ${plural(left, 'edit')} of this run as it is. ${LEFT_NEXT}`] : []),
   ]
   return defined({
     awaitingAnswer: waiting > 0 ? waiting : undefined,
@@ -368,11 +356,6 @@ const pageStatus = (state: OptimizeState): object => {
   }
 }
 
-const lastRun = (runs: readonly ExperimentRun[], path: string): object | undefined => {
-  const found = runs.find(({ experiment }) => experiment.path === path)
-  return found ? runStatus(found.run) : undefined
-}
-
 const EVALS_UI_OPENING = 'strands_dev_open_evals_ui opens an experiment, a report, or an optimization run.'
 
 const evalsUiStatus = (ui: EvalsBrowser): object => {
@@ -394,7 +377,6 @@ const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevCh
     await test.show()
     const [saved, pastChats] = await Promise.all([experiments.reload(), history.pastChats()])
     const { folder, generations } = experiments.snapshot()
-    const { runs } = test.snapshot()
     return reply({
       experimentsFolder: folder,
       experiments: saved.map(({ name, caseCount, path }) =>
@@ -403,7 +385,7 @@ const statusTool = (sessions: Sessions, history: TemporarySessionHistory): DevCh
           cases: caseCount,
           file: path,
           evalsUi: ui.link?.({ view: 'experiment', experiment: path }),
-          lastTest: lastRun(runs, path),
+          lastTest: runStatus(runOf(test, path)),
         })
       ),
       generations: generations.map(generationStatus),
@@ -528,7 +510,6 @@ const plannedSetup = async (sessions: Sessions, experiment: ExperimentSummary): 
     state.step === 'setup' || state.step === 'failed' ? state : undefined
   )
   if (planned.step === 'failed') throw new Error(planned.message)
-  if (planned.step !== 'setup') throw new Error('The optimization could not be planned.')
   return planned.plan
 }
 
@@ -753,9 +734,7 @@ const backgroundTool = (sessions: Sessions): DevChatTool => ({
     const { cases, ignored } = runFlagCases(args)
     const { test } = sessions()
     await test.show()
-    if (
-      test.snapshot().runs.some((entry) => entry.experiment.path === experiment.path && entry.run.status === 'running')
-    )
+    if (runOf(test, experiment.path)?.status === 'running')
       throw new Error(`${experiment.name} is already running. strands_dev_evaluation_results reads its progress.`)
     if (cases.length > 0) {
       await caseNames(experiment, cases)
@@ -794,8 +773,8 @@ const stopBackgroundTool = (sessions: Sessions): DevChatTool => ({
     const experiment = await findExperiment(sessions, name)
     if (command === 'run') {
       await test.show()
-      const run = test.snapshot().runs.find((entry) => entry.experiment.path === experiment.path)?.run
-      if (run?.status !== 'running') throw new Error(`No evaluation of ${experiment.name} is running.`)
+      if (runOf(test, experiment.path)?.status !== 'running')
+        throw new Error(`No evaluation of ${experiment.name} is running.`)
       test.stop(experiment.path)
       return reply({ command, experiment: experiment.name, status: 'stopping' })
     }

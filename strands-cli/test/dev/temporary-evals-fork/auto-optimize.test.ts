@@ -375,6 +375,7 @@ const runSetup = async (made: { cases?: number; code?: number } = { cases: 5 }) 
   const root = await temporaryDirectory()
   const workspace = workspaceIn(root)
   const file = (name: string): string => join(root, 'strands-dev', 'experiments', name, `${name}.json`)
+  const log = join(root, 'strands-dev', 'tmp', '.state', 'auto-optimize', `${NAME}.log`)
   const order: string[] = []
   const requests: AutoOptimizeWorkerRequest[] = []
   const worker = vi.fn<AutoOptimizeWorker>(async (request) => {
@@ -405,7 +406,7 @@ const runSetup = async (made: { cases?: number; code?: number } = { cases: 5 }) 
     now: () => NOW,
   })
   const go = () => run({ signal: stop.signal, building, idle })
-  return { root, file, worker, requests, unattendedConverter, start, idle, building, stop, order, go }
+  return { file, log, worker, requests, unattendedConverter, start, idle, building, stop, order, go }
 }
 
 describe('what auto-optimize does in the background when it is due', () => {
@@ -421,7 +422,7 @@ describe('what auto-optimize does in the background when it is due', () => {
   })
 
   it('shouldGiveTheAgentTheSkillForItsExperimentWhenItStarts', async () => {
-    const { go, requests, unattendedConverter, root } = await runSetup()
+    const { go, requests, unattendedConverter, log } = await runSetup()
 
     await go()
 
@@ -429,18 +430,15 @@ describe('what auto-optimize does in the background when it is due', () => {
     expect(requests[0]!.prompt).toContain('strands dev runs you in the background')
     expect(requests[0]!.prompt).toContain('strands dev starts the optimization itself')
     expect(requests[0]!.prompt.endsWith(`the skill: save it as ${NAME}`)).toBe(true)
-    expect(requests[0]!.log).toBe(join(root, 'strands-dev', 'tmp', '.state', 'auto-optimize', `${NAME}.log`))
+    expect(requests[0]!.log).toBe(log)
   })
 
   it('shouldNameTheExperimentAndItsLogBeforeTheAgentStarts', async () => {
-    const { go, building, worker, root } = await runSetup()
+    const { go, building, worker, log } = await runSetup()
 
     await go()
 
-    expect(building).toHaveBeenCalledExactlyOnceWith(
-      NAME,
-      join(root, 'strands-dev', 'tmp', '.state', 'auto-optimize', `${NAME}.log`)
-    )
+    expect(building).toHaveBeenCalledExactlyOnceWith(NAME, log)
     expect(building.mock.invocationCallOrder[0]).toBeLessThan(worker.mock.invocationCallOrder[0]!)
   })
 
@@ -461,16 +459,14 @@ describe('what auto-optimize does in the background when it is due', () => {
   })
 
   it('shouldPointAtTheLogWhenTheAgentSavedNoExperiment', async () => {
-    const { go, start, root } = await runSetup({})
-    const log = join(root, 'strands-dev', 'tmp', '.state', 'auto-optimize', `${NAME}.log`)
+    const { go, start, log } = await runSetup({})
 
     await expect(go()).rejects.toThrow(`the chats gave no experiment · the agent's reasons are in ${log}`)
     expect(start).not.toHaveBeenCalled()
   })
 
   it('shouldGiveTheExitCodeWhenTheAgentFailedBeforeItSavedAnything', async () => {
-    const { go, root } = await runSetup({ code: 1 })
-    const log = join(root, 'strands-dev', 'tmp', '.state', 'auto-optimize', `${NAME}.log`)
+    const { go, log } = await runSetup({ code: 1 })
 
     await expect(go()).rejects.toThrow(`the agent that makes the experiment stopped with code 1 · see ${log}`)
   })
