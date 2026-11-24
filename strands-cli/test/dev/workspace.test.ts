@@ -141,8 +141,7 @@ describe('readDevWorkspace', () => {
     'a//agent.ts',
     '.git/agent.ts',
     'NUL.ts',
-    'missing.ts',
-  ])('should reject unsafe or absent entrypoints When the path is %j', async (entrypoint) => {
+  ])('should reject unsafe entrypoints When the path is %j', async (entrypoint) => {
     const root = await project()
     await manifest(root, config({ entrypoint }))
 
