@@ -2,7 +2,12 @@ import type { SageMakerRuntimeClient, SageMakerRuntimeClientConfig } from '@aws-
 
 import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
 import { DecisionModel } from './decision-model.js'
-import { askSystemOne, resolveDefaultMinConfidence, type SystemOneRequestConfig } from './system-one-http-adapter.js'
+import {
+  askSystemOne,
+  resolveDefaultMinConfidence,
+  systemOneRequestBody,
+  type SystemOneRequestConfig,
+} from './system-one-http-adapter.js'
 import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
 
 const SAGEMAKER_PROVIDER_NAME = 'sagemaker'
@@ -22,7 +27,7 @@ export interface SageMakerDecisionModelOptions {
    * with `region` or `clientConfig`.
    */
   readonly client?: SageMakerRuntimeClient
-  /** Default minimum confidence. Defaults to `0.5`. */
+  /** Default minimum confidence, in `[0.0, 1.0]`. Defaults to `0.5`. */
   readonly defaultMinConfidence?: number
 }
 
@@ -86,6 +91,7 @@ export class SageMakerDecisionModel extends DecisionModel {
         options.defaultMinConfidence ?? SAGEMAKER_DEFAULT_MIN_CONFIDENCE,
         'SageMakerDecisionModel'
       ),
+      buildRequestBody: systemOneRequestBody,
     }
   }
 

@@ -26,6 +26,8 @@ your code stays as it is.
 | Decision model | Class | Answers with | Reports |
 | --- | --- | --- | --- |
 | [LLM decision model](llm.mdx) | `LLMDecisionModel` | Any model provider | Latency, token usage |
+| [Gemini decision model](gemini.mdx) (TypeScript) | `GeminiDecisionModel` | Google's Gemini Decisions API | Latency, token usage, probabilities, confidence |
+| [OpenAI decision model](openai.mdx) (TypeScript) | `OpenAIDecisionModel` | OpenAI's Decisions API | Latency, token usage, probabilities, confidence |
 | [TypeSafe Jev](typesafe.mdx) | `TypeSafeDecisionModel` | TypeSafe's hosted Jev model | Latency, per-answer confidence, token usage when the provider returns it |
 | [Decisions API](decisions-api.mdx) | `DecisionsAPIDecisionModel` | A decision model hosted on decisionapi.net | Latency, per-answer confidence, token usage when the provider returns it |
 | [Amazon SageMaker AI](sagemaker.mdx) | `SageMakerDecisionModel` | A decision model deployed to your SageMaker AI real-time endpoint | Latency, per-answer confidence, token usage when the endpoint returns it |

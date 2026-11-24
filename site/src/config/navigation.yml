@@ -435,6 +435,8 @@ sidebar:
                   - label: "Overview"
                     slug: docs/user-guide/sdk/decision-models/models
                   - docs/user-guide/sdk/decision-models/models/llm
+                  - docs/user-guide/sdk/decision-models/models/gemini
+                  - docs/user-guide/sdk/decision-models/models/openai
                   - docs/user-guide/sdk/decision-models/models/typesafe
                   - docs/user-guide/sdk/decision-models/models/decisions-api
                   - docs/user-guide/sdk/decision-models/models/sagemaker

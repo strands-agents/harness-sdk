@@ -1,0 +1,158 @@
+import { ContextWindowOverflowError, ModelError } from '../errors.js'
+import { DecisionModel } from './decision-model.js'
+import {
+  askSystemOne,
+  httpTransport,
+  isRecord,
+  RefusedAnswer,
+  resolveSystemOneProviderConfig,
+  SystemOneHttpError,
+  toWireQuestions,
+  toWireStateText,
+  type RequestBodyBuilder,
+  type SystemOneProviderConfig,
+} from './system-one-http-adapter.js'
+import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
+
+const OPENAI_ENDPOINT = 'https://api.openai.com/v1/decisions'
+const OPENAI_DEFAULT_MODEL_ID = 'gpt-6-luna'
+const OPENAI_DEFAULT_MIN_CONFIDENCE = 0.5
+const OPENAI_MAX_QUESTIONS = 400
+
+/** Options for constructing an {@link OpenAIDecisionModel}. */
+export interface OpenAIDecisionModelOptions {
+  /** OpenAI API key. Defaults to `OPENAI_API_KEY`. */
+  readonly apiKey?: string
+  /** OpenAI decision model identifier. Defaults to `gpt-6-luna`. */
+  readonly modelId?: string
+  /** Default minimum confidence. Defaults to `0.5`. */
+  readonly defaultMinConfidence?: number
+  /** Custom fetch implementation, primarily for transport configuration and tests. */
+  readonly fetch?: typeof globalThis.fetch
+}
+
+/**
+ * Decision model backed by the OpenAI Decisions API.
+ *
+ * String state is sent as the request input. Content block and message state is sent as JSON text.
+ *
+ * Boolean questions are sent as `predicate` questions. The API returns only a probability for them, so
+ * their confidence is `|2p - 1|`, where an even split is `0` and certainty is `1`.
+ *
+ * The API can refuse one question and answer the rest
+ * ({@link https://developers.openai.com/api/docs/guides/decisions | Decisions guide}). A refused question is
+ * reported as `Uncertain`, so the remaining answers stay usable; it throws only for a question that set
+ * `uncertainty: false`.
+ *
+ * HTTP 413 and OpenAI's HTTP 400 token-limit responses raise {@link ContextWindowOverflowError}, preserving
+ * the HTTP failure as the cause.
+ *
+ * @example
+ * ```typescript
+ * const decisions = new OpenAIDecisionModel()
+ * const result = await decisions.ask('A customer needs a refund today.', {
+ *   department: { question: 'Which team should handle this?', choices: ['billing', 'support'] },
+ * })
+ * ```
+ */
+export class OpenAIDecisionModel extends DecisionModel {
+  private readonly _providerConfig: SystemOneProviderConfig
+
+  /**
+   * @param options - Provider, model, and confidence configuration.
+   * @throws Error if the API key, confidence threshold, or fetch implementation is invalid.
+   */
+  constructor(options: OpenAIDecisionModelOptions = {}) {
+    super()
+    this._providerConfig = resolveSystemOneProviderConfig(options, {
+      className: 'OpenAIDecisionModel',
+      providerName: 'openai',
+      endpoint: OPENAI_ENDPOINT,
+      apiKeyEnvironmentVariable: 'OPENAI_API_KEY',
+      modelId: OPENAI_DEFAULT_MODEL_ID,
+      defaultMinConfidence: OPENAI_DEFAULT_MIN_CONFIDENCE,
+      maxQuestions: OPENAI_MAX_QUESTIONS,
+      buildRequestBody: openAIRequestBody,
+    })
+  }
+
+  protected async _ask<const Q extends Record<string, Question>>(
+    state: DecisionInput,
+    questions: Q,
+    options: DecisionCallOptions
+  ): Promise<DecisionResult<Q>> {
+    const transport = httpTransport(this._providerConfig)
+    try {
+      return await askSystemOne(
+        this._providerConfig,
+        async (body, cancelSignal) =>
+          toSystemOneResponse(await transport(body, cancelSignal), this._providerConfig.modelId),
+        state,
+        questions,
+        options.cancelSignal
+      )
+    } catch (error) {
+      if (isContextOverflow(error)) throw new ContextWindowOverflowError(error.message, { cause: error.cause })
+      throw error
+    }
+  }
+}
+
+/**
+ * OpenAI reports input over the model's token limit as HTTP 400, with no error code observed so far, so the
+ * message is the signal; `context_length_exceeded` is also accepted in case the API starts sending it.
+ */
+function isContextOverflow(error: unknown): error is ModelError & { cause: SystemOneHttpError } {
+  if (!(error instanceof ModelError) || !(error.cause instanceof SystemOneHttpError)) return false
+  const { status, body } = error.cause
+  const detail = isRecord(body) ? body['error'] : undefined
+  if (status !== 400 || !isRecord(detail)) return false
+  const message = typeof detail['message'] === 'string' ? detail['message'].toLowerCase() : ''
+  return detail['code'] === 'context_length_exceeded' || message.includes('exceeds the token limit')
+}
+
+const openAIRequestBody: RequestBodyBuilder = (state, questions, modelId) => ({
+  ...(modelId !== undefined && { model: modelId }),
+  input: toWireStateText(state),
+  questions: toOpenAIQuestions(questions),
+})
+
+/** OpenAI takes an ordered question array, named by question id, with `predicate` in place of `noul`. */
+function toOpenAIQuestions(questions: Record<string, Question>): Record<string, unknown>[] {
+  return Object.entries(toWireQuestions(questions)).map(([name, question]) =>
+    question.type === 'noul'
+      ? { name, type: 'predicate', instructions: question.instructions }
+      : {
+          name,
+          type: 'choice',
+          instructions: question.instructions,
+          choices: Object.keys(question.criteria).map((value) => ({ value })),
+        }
+  )
+}
+
+/**
+ * Maps an OpenAI response to the System One shape: answers arrive as an array named by question id,
+ * the guide's examples omit `model`, `predicate` answers carry `probability`, and choice
+ * probabilities are a `{ value, probability }` list. Anything else passes through for the shared parser
+ * to validate.
+ */
+function toSystemOneResponse(payload: unknown, modelId: string): unknown {
+  if (!isRecord(payload) || !Array.isArray(payload['answers'])) return payload
+  const answers = Object.fromEntries(
+    payload['answers'].filter(isRecord).map((answer) => [String(answer['name']), toSystemOneAnswer(answer)])
+  )
+  return { ...payload, model: payload['model'] ?? modelId, answers }
+}
+
+function toSystemOneAnswer(answer: Record<string, unknown>): unknown {
+  if (answer['type'] === 'refusal') return new RefusedAnswer('openai refused to answer')
+  if (answer['type'] === 'predicate') return { type: 'noul', noul: answer['probability'] }
+  if (answer['type'] !== 'choice' || !Array.isArray(answer['probabilities'])) return answer
+  return {
+    ...answer,
+    probabilities: Object.fromEntries(
+      answer['probabilities'].filter(isRecord).map((entry) => [String(entry['value']), entry['probability']])
+    ),
+  }
+}

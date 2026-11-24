@@ -64,6 +64,7 @@ export interface Question<C extends 'boolean' | readonly string[] = 'boolean' | 
    * - `{ minConfidence }`: `Uncertain` is permitted, with a custom minimum
    *   confidence in `[0.0, 1.0]`. Read only by implementations that return
    *   per-answer confidence (e.g. System One models); ignored by {@link LLMDecisionModel}.
+   *   Confidence is on each provider's own scale, so see the provider's documentation.
    */
   uncertainty?: boolean | { minConfidence?: number }
 }

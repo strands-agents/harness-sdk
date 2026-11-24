@@ -18,7 +18,19 @@ export interface SystemOneRequestConfig {
   /** Sent as the request's `model`; omitted when undefined so the server uses its own. */
   modelId?: string
   defaultMinConfidence: number
+  /**
+   * Default minimum confidence for Choice questions, for APIs whose Noul and Choice confidence need different
+   * defaults. Defaults to `defaultMinConfidence`.
+   */
+  defaultChoiceMinConfidence?: number
   maxQuestions?: number
+  /** Builds the request body. {@link systemOneRequestBody} builds the System One `{ state, model, questions }` shape. */
+  buildRequestBody: RequestBodyBuilder
+  /**
+   * How far a Choice answer's probabilities may sum from `1`, for APIs that round more coarsely than the
+   * default check allows. Defaults to the 4-decimal rounding tolerance.
+   */
+  probabilitySumTolerance?: number
 }
 
 /** @internal */
@@ -27,7 +39,57 @@ export interface SystemOneProviderConfig extends SystemOneRequestConfig {
   apiKey: string
   modelId: string
   fetch: typeof globalThis.fetch
+  /** Builds the request's authentication headers from the API key. */
+  authHeaders: AuthHeadersProvider
 }
+
+/**
+ * Builds the HTTP headers that authenticate a request with the provider's API key.
+ *
+ * @internal
+ */
+export type AuthHeadersProvider = (apiKey: string) => Record<string, string>
+
+/**
+ * Sends the API key as `Authorization: Bearer <apiKey>`.
+ *
+ * @internal
+ */
+export const bearerAuth: AuthHeadersProvider = (apiKey) => ({ Authorization: `Bearer ${apiKey}` })
+
+/**
+ * A decision API's JSON request body. Every System One API takes `questions`, keyed by question id or as an
+ * ordered array that names each question; the rest of the body varies.
+ *
+ * @internal
+ */
+export interface WireRequestBody {
+  model?: string
+  questions: Record<string, WireQuestion> | readonly Record<string, unknown>[]
+  [field: string]: unknown
+}
+
+/**
+ * Builds a request body from the decision state, questions, and configured model id.
+ *
+ * @internal
+ */
+export type RequestBodyBuilder = (
+  state: DecisionInput,
+  questions: Record<string, Question>,
+  modelId: string | undefined
+) => WireRequestBody
+
+/**
+ * Builds the System One `{ state, model, questions }` request body; `model` is omitted when undefined.
+ *
+ * @internal
+ */
+export const systemOneRequestBody: RequestBodyBuilder = (state, questions, modelId) => ({
+  state: toWireState(state),
+  ...(modelId !== undefined && { model: modelId }),
+  questions: toWireQuestions(questions),
+})
 
 /**
  * Sends a serialized System One request and resolves to the parsed JSON response payload.
@@ -53,10 +115,14 @@ export function resolveSystemOneProviderConfig(
     defaultMinConfidence?: number
     fetch?: typeof globalThis.fetch
   },
-  defaults: Omit<SystemOneProviderConfig, 'apiKey' | 'modelId' | 'fetch'> & {
+  defaults: Omit<SystemOneProviderConfig, 'apiKey' | 'modelId' | 'fetch' | 'buildRequestBody' | 'authHeaders'> & {
     apiKeyEnvironmentVariable: string
     modelId: string
     className: string
+    /** Defaults to {@link systemOneRequestBody}. */
+    buildRequestBody?: RequestBodyBuilder
+    /** Defaults to {@link bearerAuth}. */
+    authHeaders?: AuthHeadersProvider
   }
 ): SystemOneProviderConfig {
   if (typeof window !== 'undefined') {
@@ -87,8 +153,22 @@ export function resolveSystemOneProviderConfig(
     apiKey,
     modelId,
     defaultMinConfidence,
+    buildRequestBody: defaults.buildRequestBody ?? systemOneRequestBody,
+    authHeaders: defaults.authHeaders ?? bearerAuth,
     fetch: (input, init) => fetchImplementation(input, init),
     ...(defaults.maxQuestions !== undefined && { maxQuestions: defaults.maxQuestions }),
+    // A caller's defaultMinConfidence applies to every question type, so the provider's Choice default only
+    // applies when the caller didn't set one.
+    ...(options.defaultMinConfidence === undefined &&
+      defaults.defaultChoiceMinConfidence !== undefined && {
+        defaultChoiceMinConfidence: resolveDefaultMinConfidence(
+          defaults.defaultChoiceMinConfidence,
+          defaults.className
+        ),
+      }),
+    ...(defaults.probabilitySumTolerance !== undefined && {
+      probabilitySumTolerance: defaults.probabilitySumTolerance,
+    }),
   }
 }
 
@@ -100,13 +180,25 @@ interface WireNoulQuestion {
 interface WireChoiceQuestion {
   type: 'choice'
   instructions: string
-  criteria: Record<string, null>
+  criteria: Record<string, null | ''>
 }
 
-type WireQuestion = WireNoulQuestion | WireChoiceQuestion
+/** @internal */
+export type WireQuestion = WireNoulQuestion | WireChoiceQuestion
+
+/**
+ * Answer a provider returns when its API refused to answer a question. The shared parser reports it as
+ * {@link Uncertain} carrying `reason`, and throws for a question that disabled uncertainty. Probabilities
+ * and confidence stay empty: the provider returned none. A class instance, so no server JSON can produce it.
+ *
+ * @internal
+ */
+export class RefusedAnswer {
+  constructor(readonly reason?: string) {}
+}
 
 interface ParsedAnswer {
-  answer: boolean | string
+  answer: boolean | string | Uncertain
   probabilities: Readonly<Record<string, number>>
   confidence: number
 }
@@ -145,16 +237,12 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
     throw new Error(`${config.providerName} accepts at most ${config.maxQuestions} questions per request`)
   }
 
-  const body = JSON.stringify({
-    state: toWireState(state),
-    ...(config.modelId !== undefined && { model: config.modelId }),
-    questions: toWireQuestions(questions),
-  })
+  const body = JSON.stringify(config.buildRequestBody(state, questions, config.modelId))
 
   const startedAt = globalThis.performance.now()
   const payload = await transport(body, cancelSignal)
 
-  const result = parseResult(payload, questions, config.defaultMinConfidence)
+  const result = parseResult(payload, questions, config)
   return {
     answers: result.answers,
     ...(result.usage !== undefined && { usage: result.usage }),
@@ -166,6 +254,15 @@ export async function askSystemOne<const Q extends Record<string, Question>>(
       confidence: result.confidence,
     },
   }
+}
+
+/**
+ * Serializes state as one text input, for APIs that take a string rather than System One `state`.
+ *
+ * @internal
+ */
+export function toWireStateText(state: DecisionInput): string {
+  return typeof state === 'string' ? state : JSON.stringify(toWireState(state))
 }
 
 function toWireState(state: DecisionInput): unknown {
@@ -200,7 +297,14 @@ function rejectBinaryContent(block: ContentBlock | ToolResultContent): void {
   }
 }
 
-function toWireQuestions(questions: Record<string, Question>): Record<string, WireQuestion> {
+/**
+ * @param choiceDescription - Value sent for each choice in `criteria`, for APIs that require a string.
+ * @internal
+ */
+export function toWireQuestions(
+  questions: Record<string, Question>,
+  choiceDescription: null | '' = null
+): Record<string, WireQuestion> {
   return Object.fromEntries(
     Object.entries(questions).map(([id, question]) => {
       if (question.choices === 'boolean') {
@@ -209,7 +313,7 @@ function toWireQuestions(questions: Record<string, Question>): Record<string, Wi
       if (question.choices.length > MAX_CHOICE_COUNT) {
         throw new Error(`question id=<${id}> | System One APIs allow at most ${MAX_CHOICE_COUNT} choices`)
       }
-      const criteria = Object.fromEntries(question.choices.map((choice) => [choice, null]))
+      const criteria = Object.fromEntries(question.choices.map((choice) => [choice, choiceDescription]))
       return [id, { type: 'choice', instructions: question.question, criteria } satisfies WireChoiceQuestion]
     })
   )
@@ -230,7 +334,7 @@ async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSig
     response = await config.fetch(config.endpoint, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${config.apiKey}`,
+        ...config.authHeaders(config.apiKey),
         'Content-Type': 'application/json',
       },
       body,
@@ -286,7 +390,7 @@ function errorDetail(body: unknown): string | undefined {
 function parseResult<const Q extends Record<string, Question>>(
   payload: unknown,
   questions: Q,
-  defaultMinConfidence: number
+  config: SystemOneRequestConfig
 ): {
   modelId: string
   answers: { [K in keyof Q]: AnswerOf<Q[K]> }
@@ -300,9 +404,14 @@ function parseResult<const Q extends Record<string, Question>>(
   const parsedAnswers = Object.keys(questions).map((id) => {
     const question = questions[id]!
     if (!Object.hasOwn(rawAnswers, id)) throw new ModelError(`decision provider omitted answer for question id=<${id}>`)
-    const parsed = parseAnswer(rawAnswers[id], question, id)
-    const minConfidence = resolveMinConfidence(question, defaultMinConfidence)
-    const answer = minConfidence !== undefined && parsed.confidence < minConfidence ? new Uncertain() : parsed.answer
+    const parsed = parseAnswer(rawAnswers[id], question, id, config)
+    const minConfidence = resolveMinConfidence(
+      question,
+      question.choices === 'boolean'
+        ? config.defaultMinConfidence
+        : (config.defaultChoiceMinConfidence ?? config.defaultMinConfidence)
+    )
+    const answer = resolveAnswer(parsed, minConfidence)
     return { id, answer, probabilities: parsed.probabilities, confidence: parsed.confidence }
   })
 
@@ -322,10 +431,24 @@ function parseResult<const Q extends Record<string, Question>>(
   }
 }
 
-function parseAnswer(rawAnswer: unknown, question: Question, id: string): ParsedAnswer {
+function parseAnswer(rawAnswer: unknown, question: Question, id: string, config: SystemOneRequestConfig): ParsedAnswer {
+  if (rawAnswer instanceof RefusedAnswer) return parseRefusedAnswer(rawAnswer, question, id)
   const answer = requireRecord(rawAnswer, `answer for question id=<${id}>`)
   if (question.choices === 'boolean') return parseNoulAnswer(answer, id)
-  return parseChoiceAnswer(answer, question.choices, id)
+  return parseChoiceAnswer(answer, question.choices, id, config.probabilitySumTolerance)
+}
+
+function parseRefusedAnswer(refused: RefusedAnswer, question: Question, id: string): ParsedAnswer {
+  if (question.uncertainty === false) {
+    throw new ModelError(`question id=<${id}> | decision provider refused to answer and uncertainty is disabled`)
+  }
+  return { answer: new Uncertain(refused.reason), probabilities: {}, confidence: 0 }
+}
+
+function resolveAnswer(parsed: ParsedAnswer, minConfidence: number | undefined): boolean | string | Uncertain {
+  if (parsed.answer instanceof Uncertain) return parsed.answer
+  if (minConfidence !== undefined && parsed.confidence < minConfidence) return new Uncertain()
+  return parsed.answer
 }
 
 function parseNoulAnswer(answer: Record<string, unknown>, id: string): ParsedAnswer {
@@ -336,11 +459,20 @@ function parseNoulAnswer(answer: Record<string, unknown>, id: string): ParsedAns
   return {
     answer: probability >= 0.5,
     probabilities: { true: probability, false: 1 - probability },
-    confidence: Math.abs(2 * probability - 1),
+    // Use the API's own confidence when it returns one; otherwise derive it from the yes probability.
+    confidence:
+      answer['confidence'] === undefined
+        ? Math.abs(2 * probability - 1)
+        : requireProbability(answer['confidence'], `confidence for question id=<${id}>`),
   }
 }
 
-function parseChoiceAnswer(answer: Record<string, unknown>, choices: readonly string[], id: string): ParsedAnswer {
+function parseChoiceAnswer(
+  answer: Record<string, unknown>,
+  choices: readonly string[],
+  id: string,
+  sumTolerance: number | undefined
+): ParsedAnswer {
   if (answer['type'] !== 'choice') {
     throw new ModelError(`answer for choice question id=<${id}> must have type 'choice'`)
   }
@@ -364,9 +496,9 @@ function parseChoiceAnswer(answer: Record<string, unknown>, choices: readonly st
   const probabilityValues = Object.values(probabilities)
   const sum = probabilityValues.reduce((total, probability) => total + probability, 0)
   const isRounded = probabilityValues.every((p) => Math.abs(p * 1e4 - Math.round(p * 1e4)) < 1e-6)
-  const tolerance = isRounded
-    ? choices.length * PROBABILITY_ROUNDING_TOLERANCE + PROBABILITY_TOLERANCE
-    : PROBABILITY_TOLERANCE
+  const tolerance =
+    sumTolerance ??
+    (isRounded ? choices.length * PROBABILITY_ROUNDING_TOLERANCE + PROBABILITY_TOLERANCE : PROBABILITY_TOLERANCE)
   if (Math.abs(sum - 1) > tolerance) {
     throw new ModelError(`probabilities for question id=<${id}> must sum to 1`)
   }
