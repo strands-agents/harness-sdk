@@ -827,6 +827,9 @@ class GeminiModel(Model):
 
         Yields:
             Model events with the last being the structured output.
+
+        Raises:
+            ModelThrottledException: If the request is throttled by Gemini.
         """
         params = {
             **(self.config.get("params") or {}),
@@ -835,7 +838,14 @@ class GeminiModel(Model):
         }
         request = self._format_request(prompt, None, system_prompt, params)
         client = self._get_client().aio
-        response = await client.models.generate_content(**request)
+        try:
+            response = await client.models.generate_content(**request)
+        except genai.errors.ClientError as error:
+            if error.code == 429:
+                raise ModelThrottledException(error.message or str(error)) from error
+            if error.status in ("RESOURCE_EXHAUSTED", "UNAVAILABLE"):
+                raise ModelThrottledException(error.message or str(error)) from error
+            raise
         yield {"output": output_model.model_validate(response.parsed)}
 
     @staticmethod
