@@ -325,14 +325,6 @@ const answersReport = (review: OptimizeReview): object => {
   })
 }
 
-interface ChosenReview {
-  readonly id?: string
-  readonly review: OptimizeReview
-}
-
-const listedReviews = ({ runs = [] }: OptimizeState): ChosenReview[] =>
-  runs.flatMap(({ id, state }) => (state.step === 'review' ? [{ id, review: state.review }] : []))
-
 const optimizationStatus = (state: OptimizeState): object =>
   defined({
     ...pageStatus(state),
@@ -924,8 +916,10 @@ const reviewOptimizationTool = (sessions: Sessions, show: (run: string) => boole
   },
   run: async (input): Promise<string> => {
     const wanted = text(input, 'run')
-    const waiting = listedReviews(sessions().optimize.snapshot()).filter(
-      ({ review }) => temporaryEditsAwaitingAnswer(review) > 0 && !review.applied
+    const waiting = (sessions().optimize.snapshot().runs ?? []).flatMap(({ id, state }) =>
+      state.step === 'review' && temporaryEditsAwaitingAnswer(state.review) > 0 && !state.review.applied
+        ? [{ id, review: state.review }]
+        : []
     )
     const found = wanted ? waiting.find(({ review }) => review.run === wanted) : waiting[0]
     if (!found?.id) throw new Error(wanted ? `Run ${wanted} has no edit waiting for an answer.` : NOTHING_WAITS)
@@ -942,8 +936,6 @@ const reviewOptimizationTool = (sessions: Sessions, show: (run: string) => boole
     })
   },
 })
-
-const ANSWERS = ['apply', 'leave'] as const
 
 const answeredNext = ({ settled, applied, applyError, next }: AnsweredOptimizeReview, apply: boolean): string => {
   if (next)
@@ -981,7 +973,7 @@ const answerReviewTool = (answerReview: NonNullable<TemporaryDevChatHost['answer
       edit: { type: 'integer', description: 'The edit that the diff on screen shows, by its index in that run.' },
       answer: {
         type: 'string',
-        enum: [...ANSWERS],
+        enum: ['apply', 'leave'],
         description: 'apply writes the edit; leave keeps the agent as it is.',
       },
     },
@@ -1053,11 +1045,9 @@ const applyTool = (applyEdits: NonNullable<TemporaryDevChatHost['applyEdits']>):
   },
 })
 
-const CHANGE_LIMIT = 600
-
 const signed = (value: number): string => `${value >= 0 ? '+' : ''}${value.toFixed(2)}`
 
-const changedValue = (text: string): string => JSON.stringify(clip(text, CHANGE_LIMIT) ?? '')
+const changedValue = (text: string): string => JSON.stringify(clip(text) ?? '')
 
 const changedEdit = ({ label, kind, target, before, after, added }: ProposedEdit): string => {
   const where = target ? ` in ${target}` : ''
