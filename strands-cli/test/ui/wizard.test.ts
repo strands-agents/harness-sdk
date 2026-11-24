@@ -58,7 +58,6 @@ const wizard = async (
     steps,
     width: 96,
     height: 18,
-    finishHint: (blocking) => (blocking ? 'fix it to start' : 'Enter start'),
     onFinish: vi.fn(),
     onCancel: vi.fn(),
     ...overrides,
@@ -129,31 +128,28 @@ describe('Wizard', () => {
 
   it('shouldNotFinishWhenAStepHasABlockingNotice', async () => {
     const steps = twoSteps()
-    steps[0] = { ...steps[0]!, notice: { tone: 'error', text: 'Pick a size.' } }
+    steps[0] = { ...steps[0]!, notice: 'Pick a size.' }
     const { text, press, props } = await wizard(steps)
 
     await press(TAB)
     await press(ENTER)
 
     expect(props.onFinish).not.toHaveBeenCalled()
-    expect(text()).toContain('fix it to start')
+    expect(text()).toContain('fix the problem to finish')
   })
 
-  it.each([
-    ['error', '!'],
-    ['warning', '!'],
-  ])('shouldMarkTheStepThatCarriesA%sNotice', async (tone, mark) => {
+  it('shouldMarkTheStepThatCarriesANotice', async () => {
     const steps = twoSteps()
-    steps[0] = { ...steps[0]!, notice: { tone: tone as 'error' | 'warning', text: 'look here' } }
+    steps[0] = { ...steps[0]!, notice: 'look here' }
     const { text } = await wizard(steps)
 
-    expect(text()).toContain(`One ${mark}`)
+    expect(text()).toContain('One !')
     expect(text()).toContain('look here')
   })
 
   it('shouldShowTheBlockingNoticeOnEveryStepThatHasNoneOfItsOwn', async () => {
     const steps: WizardStep[] = [
-      { key: 'one', title: 'One', fields: [field()], notice: { tone: 'error', text: 'Pick a size.' } },
+      { key: 'one', title: 'One', fields: [field()], notice: 'Pick a size.' },
       { key: 'two', title: 'Two', fields: [field()] },
     ]
     const { text, press } = await wizard(steps)

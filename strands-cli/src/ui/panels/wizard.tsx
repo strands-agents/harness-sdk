@@ -244,12 +244,7 @@ const cursorIn = (state: SyncedState<number>, count: number): Cursor => {
   }
 }
 
-export interface WizardNotice {
-  readonly tone: Tone
-  readonly text: string
-}
-
-export interface WizardEdit {
+interface WizardEdit {
   readonly value: string
   readonly save: (text: string) => void
   // Refuse every keystroke or paste that would put a non-digit in the field.
@@ -273,7 +268,7 @@ export interface WizardToggle extends FieldBase {
   readonly edit?: WizardEdit
 }
 
-export interface WizardText extends FieldBase {
+interface WizardText extends FieldBase {
   readonly kind: 'text'
   readonly display: string
   readonly edit: WizardEdit
@@ -285,7 +280,8 @@ export interface WizardStep {
   readonly key: string
   readonly title: string
   readonly fields: readonly WizardField[]
-  readonly notice?: WizardNotice
+  /** Why the form cannot finish yet. */
+  readonly notice?: string
   /** Drawn above the fields, which are about it. */
   readonly body?: (room: number) => ReactNode
   /** The rows the body needs to show all of itself, so one question crowds only when they do not fit. */
@@ -301,7 +297,6 @@ export interface WizardProps {
   readonly width: number
   readonly height: number
   readonly finishLabel?: string
-  readonly finishHint: (blocking: WizardNotice | undefined) => string
   readonly onFinish: () => void
   readonly onCancel: () => void
   // When set, the Cancel button reads Back and calls this; Esc still cancels.
@@ -356,9 +351,6 @@ const rowsAroundBody = (step: WizardStep, { question, compact }: { question: boo
   // The title, the buttons, and the key hints, then the gaps, one of them setting the body apart from its fields.
   return 3 + (question ? 1 : 0) + 3 * gap + step.fields.length
 }
-
-const blockingNotice = (steps: readonly WizardStep[]): WizardNotice | undefined =>
-  steps.map(({ notice }) => notice).find((notice) => notice?.tone === 'error')
 
 const MARKS = {
   check: { on: '☑', off: '☐' },
@@ -447,7 +439,7 @@ const StepBar = ({
             {...(clicks ? { ref: clicks.target(() => onPick(index)) } : {})}
           >
             <Text {...(index === at ? { color: accent, bold: true } : { dimColor: true })}>{` ${step.title}`}</Text>
-            <Text {...toneColor(step.notice?.tone)}>{step.notice ? ' ! ' : '  '}</Text>
+            <Text {...toneColor(step.notice ? 'error' : undefined)}>{step.notice ? ' ! ' : '  '}</Text>
           </Box>
         ))}
       </Box>
@@ -516,27 +508,22 @@ const WizardButtons = ({
   )
 }
 
-const buttonHint = (
-  button: WizardButton,
-  finishHint: (blocking: WizardNotice | undefined) => string,
-  blocking: WizardNotice | undefined
-): string => {
-  if (button === 'finish') return finishHint(blocking)
+const buttonHint = (button: WizardButton, blocked: boolean): string => {
+  if (button === 'finish') return blocked ? 'fix the problem to finish' : 'Enter finish'
   if (button === 'next') return 'Enter next'
   return button === 'back' ? 'Enter back' : 'Enter cancel'
 }
 
 const rowHints = (
   row: WizardRow | undefined,
-  finishHint: (blocking: WizardNotice | undefined) => string,
-  blocking: WizardNotice | undefined,
+  blocked: boolean,
   { walked, back, leave, escape }: { walked: boolean; back: boolean; leave: boolean; escape: string }
 ): string[] => {
   const tab = walked ? ['Tab next tab'] : []
   const rest = [...(leave && !walked ? ['↓ chat'] : []), escape]
   const hints = (action: string, arrows = '↑↓'): string[] => [...tab, arrows, action, ...rest]
   if (row?.kind === 'button')
-    return hints(back && row.button === 'cancel' ? 'Enter back' : buttonHint(row.button, finishHint, blocking), '←→')
+    return hints(back && row.button === 'cancel' ? 'Enter back' : buttonHint(row.button, blocked), '←→')
   if (row?.kind !== 'field') return [...tab, ...rest]
   if (row.field.kind === 'toggle' && row.field.unavailable !== undefined) return hints('not available')
   return hints(row.field.hint)
@@ -551,7 +538,6 @@ export const Wizard = ({
   width,
   height,
   finishLabel = BUTTON_LABELS.finish,
-  finishHint,
   onFinish,
   onCancel,
   onBack,
@@ -568,7 +554,7 @@ export const Wizard = ({
   const labelWidth = Math.max(LABEL_WIDTH, ...step.fields.map((field) => field.label.length + 2))
   const buttons = stepButtons(index, steps.length)
   const cursor = cursorIn(useSyncedState(0), rows.length)
-  const blocking = blockingNotice(steps)
+  const blocking = steps.find(({ notice }) => notice)?.notice
   const ready = blocking === undefined
   const walked = steps.length > 1
   const hasQuestion = question !== undefined
@@ -713,7 +699,7 @@ export const Wizard = ({
       {step.body?.(bodyRoom)}
       {step.body && !walked && !compact ? <Gap /> : null}
       {step.fields.map(fieldView)}
-      {notice ? <Line tone={notice.tone}>{`  ${notice.text}`}</Line> : compact ? null : <Gap />}
+      {notice ? <Line tone="error">{`  ${notice}`}</Line> : compact ? null : <Gap />}
       <WizardButtons
         buttons={buttons}
         ready={ready}
@@ -730,7 +716,7 @@ export const Wizard = ({
             ? ['↑ answer this']
             : editor
               ? ['Enter save', 'Esc cancel']
-              : rowHints(focused, finishHint, blocking, {
+              : rowHints(focused, !ready, {
                   walked,
                   back: onBack !== undefined,
                   leave: onLeave !== undefined,

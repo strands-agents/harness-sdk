@@ -218,7 +218,7 @@ const toStep = (
           body: (room: number) => createElement(DiffBody, { spec: change, room, width, active }),
         }
       : {}),
-    ...(problem === undefined ? {} : { notice: { tone: 'error' as const, text: problem } }),
+    ...(problem === undefined ? {} : { notice: problem }),
   }
 }
 
@@ -262,7 +262,6 @@ const RequestView = ({
       height={height}
       active={active}
       {...(blur ? { onLeave: blur } : {})}
-      finishHint={(blocking) => (blocking ? 'fix the problem to finish' : 'Enter finish')}
       onFinish={() => broker.respond(request.id, finishedAnswers(request.steps, answers.current(), texts.current()))}
       onCancel={() => broker.respond(request.id, undefined)}
       {...(request.back ? { onBack: () => broker.respond(request.id, 'back') } : {})}

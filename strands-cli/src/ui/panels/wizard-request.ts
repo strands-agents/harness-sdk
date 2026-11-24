@@ -22,7 +22,7 @@ export interface WizardSelectSpec {
   readonly selected?: readonly string[]
 }
 
-export interface WizardTextSpec {
+interface WizardTextSpec {
   readonly kind: 'text'
   readonly key: string
   readonly label: string
