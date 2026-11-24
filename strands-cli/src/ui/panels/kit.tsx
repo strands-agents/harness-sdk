@@ -1,12 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { useCallback, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { type Key } from 'ink'
-import { useInput } from '../input.js'
 
 import { emptyEditor, reduceInputSequence, type EditorState } from '../../terminal/composer.js'
 import { graphemes, sanitizeTerminalText } from '../../terminal/text.js'
 import { EditableText } from '../text-input.js'
 import { Box, Text, useTheme } from '../theme.js'
-import type { DevChatPanelProps } from '../chat/types.js'
 import { useDevPanelClicks } from './dev.js'
 
 export type Tone = 'success' | 'error' | 'warning' | 'muted'
@@ -19,42 +17,14 @@ export interface ListItem {
   readonly tone?: Tone
 }
 
-const PROGRESS_WIDTH = 16
 // The cursor and the mark that a list row draws before its label.
 const LIST_MARK_COLUMNS = 4
-const ELAPSED_TICK_MS = 1000
-const SECONDS_PER_MINUTE = 60
 
 export const oneLine = (text: string): string => sanitizeTerminalText(text).replace(/\s+/gu, ' ').trim()
 
 const indented = (text: string): string => `${/^ */u.exec(text)?.[0] ?? ''}${oneLine(text)}`
 
-export const quoted = (text: string): string => `"${oneLine(text)}"`
-
 export const shortcut = (input: string, key: Key): string => (key.ctrl || key.meta ? '' : input)
-
-export const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`
-
-export const listed = (words: readonly string[]): string =>
-  words.length < 3 ? words.join(' and ') : `${words.slice(0, -1).join(', ')}, and ${words.at(-1)}`
-
-export const formatSeconds = (seconds: number): string => {
-  const whole = Math.max(0, Math.round(seconds))
-  return whole < SECONDS_PER_MINUTE
-    ? `${whole}s`
-    : `${Math.floor(whole / SECONDS_PER_MINUTE)}m ${whole % SECONDS_PER_MINUTE}s`
-}
-
-export const signed = (value: number): string => `${value >= 0 ? '+' : ''}${value.toFixed(2)}`
-
-export const useElapsed = (startedAt: number): number => {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), ELAPSED_TICK_MS)
-    return (): void => clearInterval(timer)
-  }, [startedAt])
-  return Math.max(0, (now - startedAt) / ELAPSED_TICK_MS)
-}
 
 export const useToneColor = (): ((tone: Tone | undefined) => { color?: string; dimColor?: boolean }) => {
   const { success, error, warning } = useTheme()
@@ -127,26 +97,9 @@ export const Line = ({
   )
 }
 
-export const Paragraph = ({ children, rows, tone }: { children: string; rows: number; tone?: Tone }): ReactElement => {
-  const toneColor = useToneColor()
-  return (
-    <Box height={Math.max(1, rows)} flexShrink={0} overflow="hidden">
-      <Text wrap="wrap" {...toneColor(tone)}>
-        {sanitizeTerminalText(children)}
-      </Text>
-    </Box>
-  )
-}
-
 export const Gap = ({ rows = 1 }: { rows?: number }): ReactElement => <Box height={rows} flexShrink={0} />
 
 export const Fill = (): ReactElement => <Box flexGrow={1} flexShrink={1} />
-
-export const Rule = ({ width }: { width: number }): ReactElement => (
-  <Box height={1} flexShrink={0} overflow="hidden">
-    <Text dimColor>{'─'.repeat(Math.max(0, width))}</Text>
-  </Box>
-)
 
 export const KeyHints = ({ hints }: { hints: readonly string[] }): ReactElement => (
   <Box height={1} flexShrink={0} overflow="hidden">
@@ -155,47 +108,6 @@ export const KeyHints = ({ hints }: { hints: readonly string[] }): ReactElement 
     </Text>
   </Box>
 )
-
-export const ProgressBar = ({ done, total }: { done: number; total: number }): ReactElement => {
-  const { accent } = useTheme()
-  const clamped = Math.max(0, Math.min(done, total))
-  const filled = total > 0 ? Math.round((clamped / total) * PROGRESS_WIDTH) : 0
-  return (
-    <Text>
-      <Text color={accent}>{'█'.repeat(filled)}</Text>
-      <Text dimColor>{'░'.repeat(PROGRESS_WIDTH - filled)}</Text>
-      <Text>{` ${clamped}/${total}`}</Text>
-    </Text>
-  )
-}
-
-export const Field = ({
-  label,
-  value,
-  labelWidth,
-  rows = 1,
-  tone,
-}: {
-  label: string
-  value: string
-  labelWidth: number
-  rows?: number
-  tone?: Tone
-}): ReactElement => {
-  const toneColor = useToneColor()
-  return (
-    <Box height={Math.max(1, rows)} flexShrink={0} overflow="hidden">
-      <Box width={labelWidth} flexShrink={0}>
-        <Text dimColor>{label}</Text>
-      </Box>
-      <Box flexGrow={1} flexShrink={1} overflow="hidden">
-        <Text wrap={rows > 1 ? 'wrap' : 'truncate-end'} {...toneColor(tone)}>
-          {rows > 1 ? sanitizeTerminalText(value) : oneLine(value)}
-        </Text>
-      </Box>
-    </Box>
-  )
-}
 
 export const listWindow = (selected: number, count: number, capacity: number): { start: number; end: number } => {
   if (count <= capacity) return { start: 0, end: count }
@@ -328,41 +240,6 @@ export const TextField = ({
   )
 }
 
-export const StoppedView = ({
-  command,
-  close,
-  height,
-  message,
-  retry,
-  outcome = 'stopped',
-  tone = 'error',
-  retryHint = 'Enter try again',
-  closeHint = 'Esc close',
-}: DevChatPanelProps & {
-  command: string
-  message: string
-  retry: () => void
-  outcome?: string
-  tone?: Tone
-  retryHint?: string
-  closeHint?: string
-}): ReactElement => {
-  useInput((_input, key) => {
-    if (key.escape) close()
-    else if (key.return) retry()
-  })
-  return (
-    <>
-      <PanelTitle name={command} parts={[outcome]} />
-      <Paragraph rows={Math.max(1, height - 2)} tone={tone}>
-        {message}
-      </Paragraph>
-      <Fill />
-      <KeyHints hints={[retryHint, closeHint]} />
-    </>
-  )
-}
-
 type Update<Value> = Value | ((current: Value) => Value)
 
 export interface SyncedState<Value> {
@@ -397,5 +274,3 @@ export const cursorIn = (state: SyncedState<number>, count: number): Cursor => {
     set: (index) => state.set(Math.max(0, index)),
   }
 }
-
-export const useCursor = (count: number, initial = 0): Cursor => cursorIn(useSyncedState(initial), count)
