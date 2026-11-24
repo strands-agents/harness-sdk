@@ -1,7 +1,8 @@
 """The ``context_manager="lsp"`` option: language server context on top of the ``"auto"`` strategies.
 
-Large code reads arrive as skeletons, ``retrieve_context`` also finds definitions and greps the workspace, and an
-experimental relevance strategy offloads old reads of unrelated files near a full window. When the language server
+Large code reads arrive as skeletons, ``grep -n`` and ``sed -n`` results carry the symbols and definitions they touch,
+``retrieve_context`` also finds definitions and greps the workspace, and an experimental relevance strategy offloads
+old reads of unrelated files near a full window. When the language server
 can't start, the harness falls back to ``"auto"`` and says so, rather than failing construction.
 """
 
@@ -41,12 +42,14 @@ class LspContext:
     Attributes:
         context_manager: The context manager to pass to the agent: the language server pipeline, or ``"auto"``.
         tools: Tools the pipeline adds; its ``retrieve_context`` replaces the built-in one.
+        plugins: Plugins the option adds: the shell-result enricher.
         status: What ran, for ``agent.state``: ``{"requested": "lsp", "active": "lsp" | "auto", "reason": ...}``.
         close: Shuts the language server down, or None when none started.
     """
 
     context_manager: ContextManager | Literal["auto"]
     tools: list[Any] = field(default_factory=list)
+    plugins: list[Any] = field(default_factory=list)
     status: dict[str, str] = field(default_factory=dict)
     close: Callable[[], None] | None = None
 
@@ -70,6 +73,7 @@ def resolve_lsp_context(
         return _fallback(f"the language server reads local files, but the agent runs in {type(sandbox).__name__}")
     try:
         from strands.vended_plugins.language_server import (
+            CodeFetchEnricher,
             LspStrategy,
             SkeletonStrategy,
             StdioLspClient,
@@ -95,6 +99,7 @@ def resolve_lsp_context(
     return LspContext(
         context_manager=manager,
         tools=[workspace_retrieval_tool(manager, WorkspaceSearch(client, root))],
+        plugins=[CodeFetchEnricher(client, root, shell_tools=(shell_tool,))],
         status={"requested": "lsp", "active": "lsp"},
         close=client.close,
     )

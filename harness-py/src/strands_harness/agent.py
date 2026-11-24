@@ -346,7 +346,8 @@ def create_harness(
             value raises.
         context_manager: The SDK's ``Agent(context_manager=)`` option: ``"auto"`` (the default) or
             ``"agentic"`` for an SDK preset, ``"lsp"`` (experimental) for ``"auto"`` plus language server
-            context: large ``read`` results of code files arrive as skeletons, ``retrieve_context`` also finds
+            context: large ``read`` results and shell dumps of code files arrive as skeletons, ``grep -n`` and
+            ``sed -n`` results carry the symbols and definitions they touch, ``retrieve_context`` also finds
             definitions and greps the workspace, and old reads of unrelated files are offloaded near a full
             window. ``"lsp"`` starts ``pyright-langserver`` in the working directory (install
             ``strands-harness[lsp]``); when it can't, it logs a warning and runs ``"auto"``, and
@@ -507,6 +508,8 @@ def create_harness(
             all_plugins.append(skills_plugin)
 
     all_plugins.extend(_select_builtin_plugins(builtin_plugins, all_plugins))
+    if lsp_context is not None:
+        all_plugins.extend(lsp_context.plugins)
     harness_plugins = all_plugins[len(consumer_plugins) :]
 
     # Memory is built from ``memory`` when on and nothing explicit was given. A ``MemoryManager``

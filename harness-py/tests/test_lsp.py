@@ -187,3 +187,14 @@ def test_lsp_shuts_the_server_down_with_the_agent(workdir, fake_server, monkeypa
     gc.collect()
 
     assert closed == [True]
+
+
+def test_lsp_enriches_shell_results(workdir, fake_server):
+    from strands.vended_plugins.language_server import CodeFetchEnricher
+
+    agent = create_harness(context_manager="lsp")
+
+    [enricher] = [
+        plugin for plugin in agent._plugin_registry._plugins.values() if isinstance(plugin, CodeFetchEnricher)
+    ]
+    assert enricher._shell_tools == ("shell",)
