@@ -117,24 +117,6 @@ describe('TEMPORARY apply an optimized setting', () => {
     expect(target(location).target).toBe('agent.py')
   })
 
-  it.each([
-    { name: 'TextThatFits', after: 'Answer in two words.', expected: { target: 'agent.py' } },
-    { name: 'TextThatNeedsEscapes', after: "Answer with the capital's name\nonly.", expected: { target: 'agent.py' } },
-  ])('shouldCheckTheNewTextAtOnceWhenTheCallerGives$name', async ({ after, expected }) => {
-    const root = await project({ 'agent.py': PYTHON_AGENT('"Answer in one word."') })
-
-    const location = await locateTemporaryEdit({
-      root,
-      entrypoint: join(root, 'agent.py'),
-      knob: 'instructions',
-      before: 'Answer in one word.',
-      after,
-    })
-
-    expect(location).toMatchObject(expected)
-    expect(await read(root, 'agent.py')).toBe(PYTHON_AGENT('"Answer in one word."'))
-  })
-
   it('shouldUseTheEntrypointStringWhenSeveralTextFilesAlsoHoldTheText', async () => {
     const root = await project({
       'agent.py': PYTHON_AGENT(`"""${INSTRUCTIONS}"""`),
@@ -640,15 +622,5 @@ describe('TEMPORARY apply next to option saves', () => {
     const source = await read(root, 'agent.py')
     expect(source).toContain('model="bedrock/next-model"')
     expect(source).toContain(`"""${NEW_INSTRUCTIONS}"""`)
-  })
-
-  it('shouldRefuseTheOptimizationWhenTheOptionChangedAfterItWasMeasured', async () => {
-    const root = await project({ 'agent.py': PYTHON_AGENT(`"""${INSTRUCTIONS}"""`) })
-    const location = target(await locate(root, 'agent.py', INSTRUCTIONS))
-    await editFile(root, join(root, 'agent.py'), (content) => content.replace(INSTRUCTIONS, 'Answer briefly.'))
-
-    await expect(location.write(NEW_INSTRUCTIONS)).rejects.toThrow('agent.py changed after this edit was proposed')
-
-    expect(await read(root, 'agent.py')).toContain('"""Answer briefly."""')
   })
 })

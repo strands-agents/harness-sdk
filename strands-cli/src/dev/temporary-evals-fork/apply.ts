@@ -41,9 +41,7 @@ interface Chain {
   readonly value: string
 }
 
-type Rewritten = { readonly content: string } | { readonly problem: string }
-
-type Match = { readonly rewrite: (after: string) => Rewritten } | { readonly unavailable: string }
+type Match = { readonly rewrite: (after: string) => string } | { readonly unavailable: string }
 
 type Matcher = (content: string) => Match
 
@@ -241,9 +239,6 @@ const javascriptLiterals = (source: string): Literal[] => {
 
 const isPython = (entry: string): boolean => extname(entry) === '.py'
 
-const sourceLiterals = (entry: string, content: string): Literal[] =>
-  isPython(entry) ? pythonLiterals(content) : javascriptLiterals(content)
-
 const hexCode = (text: string, length: number): number | undefined =>
   text.length === length && HEX.test(text) ? Number.parseInt(text, 16) : undefined
 
@@ -352,7 +347,7 @@ const joined = (entry: string, content: string, left: Literal, right: Literal): 
 
 const literalChains = (entry: string, content: string): Chain[] => {
   const groups: Literal[][] = []
-  for (const literal of sourceLiterals(entry, content)) {
+  for (const literal of isPython(entry) ? pythonLiterals(content) : javascriptLiterals(content)) {
     const group = groups.at(-1)
     const last = group?.at(-1)
     if (group && last && joined(entry, content, last, literal)) group.push(literal)
@@ -448,14 +443,14 @@ const literalMatcher =
     if (count > 1) return { unavailable: `${paste}; the old text is there ${count} times.` }
     const chain = chains.find(({ value }) => value.includes(before))
     if (!chain || !before) return { unavailable: `${paste}; the old text is not a plain string there.` }
-    return { rewrite: (after): Rewritten => ({ content: rewriteChain(entry, content, chain, before, after) }) }
+    return { rewrite: (after): string => rewriteChain(entry, content, chain, before, after) }
   }
 
 const textFileMatcher =
   (target: string, before: string): Matcher =>
   (content) =>
     content.trim() === before.trim()
-      ? { rewrite: (after): Rewritten => ({ content: `${after.trimEnd()}${content.slice(content.trimEnd().length)}` }) }
+      ? { rewrite: (after): string => `${after.trimEnd()}${content.slice(content.trimEnd().length)}` }
       : { unavailable: `${target} no longer holds the old instructions. Paste the new instructions there yourself.` }
 
 const rewriteFile = async (root: string, file: string, matcher: Matcher, after: string): Promise<void> => {
@@ -466,22 +461,13 @@ const rewriteFile = async (root: string, file: string, matcher: Matcher, after: 
       throw new Error(
         `${relative(root, file)} changed after this edit was proposed, and the text it replaces is no longer there.`
       )
-    const rewritten = match.rewrite(after)
-    if ('problem' in rewritten) throw new Error(rewritten.problem)
-    return rewritten.content
+    return match.rewrite(after)
   })
 }
 
-const located = async (
-  root: string,
-  file: string,
-  matcher: Matcher,
-  after: string | undefined
-): Promise<TemporaryEditLocation> => {
+const located = async (root: string, file: string, matcher: Matcher): Promise<TemporaryEditLocation> => {
   const match = matcher(await readFile(file, 'utf8'))
   if ('unavailable' in match) return match
-  const rewritten = after === undefined ? undefined : match.rewrite(after)
-  if (rewritten && 'problem' in rewritten) return { unavailable: rewritten.problem }
   return { target: relative(root, file), write: (text) => rewriteFile(root, file, matcher, text) }
 }
 
@@ -520,8 +506,6 @@ const filesHolding = async (root: string, before: string): Promise<string[]> => 
   return held
 }
 
-const languageOf = (file: string): 'python' | 'typescript' => (extname(file) === '.py' ? 'python' : 'typescript')
-
 // A string the agent file does not hold yet: quoted the way each language's own strings are in a generated agent.
 const NEW_LITERAL = { open: 0, start: 0, end: 0, close: 0, kind: 'plain', prefix: '', depth: 0 } as const
 
@@ -551,25 +535,25 @@ const addInstructions = async (
 }
 
 const locateInstructions = async (
-  root: string,
-  entrypoint: string,
+  workspace: AgentWorkspace,
   before: string,
   after: string | undefined
 ): Promise<TemporaryEditLocation> => {
+  const { root, entrypoint } = workspace
   const entry = relative(root, entrypoint)
-  if (!before.trim()) return addInstructions({ root, entrypoint, config: { language: languageOf(entrypoint) } }, after)
+  if (!before.trim()) return addInstructions(workspace, after)
   const files = await filesHolding(root, before)
   const names = files.map((file) => relative(root, file))
   const source = await readFile(entrypoint, 'utf8')
   const [only] = files
   if (only && files.length === 1 && !source.includes(before))
-    return located(root, only, textFileMatcher(relative(root, only), before), after)
+    return located(root, only, textFileMatcher(relative(root, only), before))
   if (only && files.length === 1)
     return {
       unavailable: `The old instructions are in ${names[0]} and in ${entry}. Paste the new instructions into the one the agent reads yourself.`,
     }
   const matcher = literalMatcher(entry, before)
-  if ('rewrite' in matcher(source) || files.length < 2) return located(root, entrypoint, matcher, after)
+  if ('rewrite' in matcher(source) || files.length < 2) return located(root, entrypoint, matcher)
   return {
     unavailable: `The old instructions are in ${files.length} files (${names.join(', ')}). Paste the new instructions into the one the agent reads yourself.`,
   }
@@ -602,9 +586,14 @@ export const locateTemporaryEdit = async ({
   after,
 }: TemporaryEditRequest): Promise<TemporaryEditLocation> => {
   const file = resolve(root, entrypoint)
-  const entry = relative(root, file)
-  if (knob === 'instructions') return locateInstructions(root, file, before, after)
-  if (knob === 'effort')
-    return effortEdit({ root, entrypoint: file, config: { language: languageOf(file) } }, before, after)
-  return { unavailable: `Change the ${knob} in ${entry} yourself; strands dev applies only instructions and effort.` }
+  const workspace: AgentWorkspace = {
+    root,
+    entrypoint: file,
+    config: { language: isPython(file) ? 'python' : 'typescript' },
+  }
+  if (knob === 'instructions') return locateInstructions(workspace, before, after)
+  if (knob === 'effort') return effortEdit(workspace, before, after)
+  return {
+    unavailable: `Change the ${knob} in ${relative(root, file)} yourself; strands dev applies only instructions and effort.`,
+  }
 }
