@@ -25,9 +25,9 @@ export class DropStrategy extends BaseOffloadStrategy {
   }
 
   protected async _applyPerMessage(context: ContextState): Promise<boolean> {
-    const { messages, agent } = context
+    const { messages, agent, archive } = context
     const text = placeholderFor(agent.model, formatDroppedMessages)
-    return removeMessages(messages, await this._removableMessages(context), text, 'drop', this._archive)
+    return removeMessages(messages, await this._removableMessages(context), text, 'drop', archive)
   }
 
   protected async _replaceBlock(

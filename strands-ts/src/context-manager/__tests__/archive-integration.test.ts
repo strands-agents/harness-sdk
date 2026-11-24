@@ -681,4 +681,61 @@ describe('Offload strategies with archive', () => {
       expect(acted).toBe(true)
     })
   })
+
+  describe('per-agent archive isolation', () => {
+    it('writes each agent’s eagerly offloaded content into its own archive when a strategy is shared', async () => {
+      const strategy = Offload.truncate('toolResults', { previewTokens: 40 }).when({ blockThreshold: 100 })
+
+      const archiveA = new Archive(new InMemoryStorage(), 'session-a', 'agent-a')
+      const archiveB = new Archive(new InMemoryStorage(), 'session-b', 'agent-b')
+
+      const hooksA: Array<(event: { agent: unknown; message: Message }) => Promise<void>> = []
+      const hooksB: Array<(event: { agent: unknown; message: Message }) => Promise<void>> = []
+
+      const messagesA: Message[] = []
+      const messagesB: Message[] = []
+
+      const agentA = makeContext(messagesA, { archive: archiveA }).agent
+      ;(agentA as unknown as { addHook: (_event: unknown, cb: (e: { agent: unknown; message: Message }) => Promise<void>) => void }).addHook = (
+        _event,
+        cb
+      ) => {
+        hooksA.push(cb)
+      }
+
+      const agentB = makeContext(messagesB, { archive: archiveB }).agent
+      ;(agentB as unknown as { addHook: (_event: unknown, cb: (e: { agent: unknown; message: Message }) => Promise<void>) => void }).addHook = (
+        _event,
+        cb
+      ) => {
+        hooksB.push(cb)
+      }
+
+      // Initialize agentA first, then agentB on the same strategy instance.
+      strategy.init(agentA, archiveA)
+      strategy.init(agentB, archiveB)
+
+      const secretMsg = makeToolResultMessage('PII-OF-ALICE ' + 'confidential '.repeat(200), 'orch-crm-1')
+      messagesA.push(secretMsg)
+      for (const hook of hooksA) {
+        await hook({ agent: agentA, message: secretMsg })
+      }
+
+      expect(await archiveA.takeSnapshot()).toHaveProperty('orch-crm-1_0')
+      expect(await archiveB.takeSnapshot()).toStrictEqual({})
+    })
+
+    it('does not leak a previous agent’s archive into a subsequent apply() call with no archive', async () => {
+      const strategy = Offload.drop('toolResults').when({})
+      const archiveA = new Archive(new InMemoryStorage(), 'session-a', 'agent-a')
+
+      const messagesA = [makeToolResultMessage('a'.repeat(500), 'tool-a')]
+      await strategy.apply(makeContext(messagesA, { archive: archiveA }))
+
+      const messagesB = [makeToolResultMessage('b'.repeat(500), 'tool-b')]
+      await strategy.apply(makeContext(messagesB))
+
+      expect(await archiveA.takeSnapshot()).toStrictEqual({ 'tool-a_0': { text: 'a'.repeat(500) } })
+    })
+  })
 })
