@@ -60,11 +60,6 @@ type ChatControllerFactory = (
 type ChatControllerSource = ChatControllerApi | ChatControllerFactory
 
 /** Keeps the previous chat on screen, read-only, while its replacement starts. */
-const devPanelCommand = (controller: ChatControllerApi): string | undefined => {
-  const { panel } = controller.getSnapshot()
-  return panel?.kind === 'dev' ? panel.command : undefined
-}
-
 function reloadingController(previous: ChatControllerApi, close: (exitCode: number) => void): ChatControllerApi {
   const snapshot = { ...previous.getSnapshot(), composerStatus: 'Reloading agent...' }
   return {
@@ -236,10 +231,10 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
       instance.rerender(chatRoot())
       replacementTask = (async (): Promise<void> => {
         const conversations = await previousController.captureConversations?.()
-        const openDevPanel = devPanelCommand(previousController)
+        const { panel } = previousController.getSnapshot()
         const replacement = await initializeController(launch, conversations)
         if (launch?.reloadedFiles && conversations) replacement.markReloaded?.(launch.reloadedFiles)
-        if (openDevPanel) replacement.openDevCommand?.(openDevPanel, { restore: true })
+        if (panel?.kind === 'dev') replacement.openDevCommand?.(panel.command, { restore: true })
         await Promise.allSettled([previousController.dispose()])
         if (pendingExitCode !== undefined) {
           replacement.close(pendingExitCode)
