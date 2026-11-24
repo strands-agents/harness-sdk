@@ -50,9 +50,11 @@ def build_default_subagent(
 
     def builder(spec: AgentSpec) -> Agent:
         child_config = dict(parent_config)
-        if isinstance(child_config.get("context_manager"), ContextManager):
+        parent_context_manager = child_config.get("context_manager")
+        if isinstance(parent_context_manager, ContextManager) or parent_context_manager == "lsp":
             # A ContextManager instance carries per-agent state (stash, retrieval bookkeeping), so a
-            # delegate must not share the parent's. Fall back to the default strategy for children.
+            # delegate must not share the parent's; "lsp" would start another language server per
+            # delegate. Fall back to the default strategy for children.
             child_config["context_manager"] = defaults.DEFAULT_CONTEXT_MANAGER
         if spec.instructions is not None:
             child_config["instructions"] = spec.instructions

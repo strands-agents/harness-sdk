@@ -51,6 +51,8 @@ anthropic = ["strands-agents[anthropic]"]
 gemini = ["strands-agents[gemini]"]
 ollama = ["strands-agents[ollama]"]
 litellm = ["strands-agents[litellm]"]
+# The language server context_manager="lsp" starts; the nodejs extra ships the Node runtime it runs on.
+lsp = ["pyright[nodejs]>=1.1.400"]
 dev = [
     "pytest>=8.0.0,<9.0.0",
     "pytest-asyncio>=0.24.0,<1.0.0",

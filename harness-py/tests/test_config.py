@@ -300,7 +300,14 @@ def test_config_rejects_malformed_builtin_tools(value, message):
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [("auto", "auto"), ("agentic", "agentic"), ("off", False), (False, False), ({"stash": False}, {"stash": False})],
+    [
+        ("auto", "auto"),
+        ("agentic", "agentic"),
+        ("lsp", "lsp"),
+        ("off", False),
+        (False, False),
+        ({"stash": False}, {"stash": False}),
+    ],
 )
 def test_config_context_manager_passes_through_and_maps_off(value, expected, tmp_path):
     assert normalize_harness_agent_config({"contextManager": value})["contextManager"] == expected
@@ -311,9 +318,9 @@ def test_config_context_manager_passes_through_and_maps_off(value, expected, tmp
 @pytest.mark.parametrize(
     ("value", "message"),
     [
-        (True, "contextManager: Input should be one of 'auto', 'agentic', 'off'; false; or a config object"),
-        ("turbo", "contextManager: Input should be 'auto', 'agentic' or 'off'"),
-        (3, "contextManager: Input should be one of 'auto', 'agentic', 'off'; false; or a config object"),
+        (True, "contextManager: Input should be one of 'auto', 'agentic', 'lsp', 'off'; false; or a config object"),
+        ("turbo", "contextManager: Input should be 'auto', 'agentic', 'lsp' or 'off'"),
+        (3, "contextManager: Input should be one of 'auto', 'agentic', 'lsp', 'off'; false; or a config object"),
         (0, "contextManager: Input should be one of"),
         ({"stash": float("nan")}, "contextManager.stash: Input should be a finite number"),
     ],
