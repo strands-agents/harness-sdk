@@ -221,14 +221,23 @@ const spawnAttachedEvals: TemporaryEvalsSpawner = ({
     })
   })
 
-type TemporaryEvalsRun = Pick<TemporaryEvalsProcess, 'signal' | 'background' | 'detached' | 'onSpawn'> & {
+/** What a request for an evaluation and for an optimization share. */
+export interface TemporaryEvalsRequest extends Pick<
+  TemporaryEvalsProcess,
+  'signal' | 'background' | 'detached' | 'onSpawn'
+> {
   workspace: DevWorkspace
+  experiment?: string
+  forkArguments?: readonly string[]
+  onProgress?: (line: string) => void
+  prepare?: () => Promise<void>
+  now?: () => Date
 }
 
 /** Runs the optimizer environment's interpreter in the project, with the process options of the request. */
 export const runTemporaryEvals = (
   spawnEvals: TemporaryEvalsSpawner = spawnTemporaryEvals,
-  { workspace, signal, background, detached, onSpawn }: TemporaryEvalsRun,
+  { workspace, signal, background, detached, onSpawn }: TemporaryEvalsRequest,
   { python, args, log }: { python: string; args: string[]; log: string },
   onLine: (line: string) => void
 ): Promise<TemporaryEvalsExit> =>

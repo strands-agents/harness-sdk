@@ -12,6 +12,7 @@ import {
   temporaryFlagValues,
   temporaryTypescriptRunnerOf,
   temporaryWorkspaceDirectory,
+  type TemporaryEvalsRequest,
   type TemporaryEvalsSpawner,
 } from './evals-process.js'
 import {
@@ -37,18 +38,8 @@ interface TemporaryTestFiles {
   readonly store: string
 }
 
-interface TemporaryTestRequest {
-  workspace: DevWorkspace
-  experiment?: string
-  forkArguments?: readonly string[]
-  signal?: AbortSignal
-  onProgress?: (line: string) => void
-  prepare?: () => Promise<void>
-  now?: () => Date
+interface TemporaryTestRequest extends TemporaryEvalsRequest {
   onStart?: (files: TemporaryTestFiles) => void | Promise<void>
-  onSpawn?: (pid: number) => void
-  background?: boolean
-  detached?: boolean
   resume?: TemporaryTestFiles
   only?: readonly string[]
   startedAt?: number

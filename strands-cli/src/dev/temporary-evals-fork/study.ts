@@ -286,7 +286,7 @@ class RunState {
     ['propose', (event): void => this.readPropose(event)],
     ['trial', (event): void => this.readTrial(event)],
     ['score', (event): void => this.readScore(event)],
-    ['iteration_end', (event): void => this.readIterationEnd(event)],
+    ['iteration_end', ({ best_after }): void => void (this.bestAfter = texts(best_after))],
     ['finalists', ({ candidate_ids }): void => void (this.finalists = texts(candidate_ids))],
     ['proposer_error', (event): void => this.readProposerError(event)],
     ['resume', (): void => this.readResume()],
@@ -531,16 +531,12 @@ class RunState {
 
   private readScore({ candidate_id, split, objective_by_run, statuses }: Event): void {
     const id = text(candidate_id)
-    if (id === undefined || (split !== 'train' && split !== 'validation' && split !== 'test')) return
+    if (id === undefined || !isSplit(split)) return
     const value = objectiveMean(objective_by_run)
     const byId = this.scores.get(id) ?? new Map<Split, number>()
     if (value !== undefined) byId.set(split, value)
     this.scores.set(id, byId)
     if (split === 'train') this.completed.set(id, isRecord(statuses) ? (finite(statuses.completed) ?? 0) : 0)
-  }
-
-  private readIterationEnd({ best_after }: Event): void {
-    this.bestAfter = texts(best_after)
   }
 
   private readStop({ reason, message }: Event): void {

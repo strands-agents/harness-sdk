@@ -5,7 +5,6 @@ import { resolve } from 'node:path'
 import { isRecord } from '../../values.js'
 import { writeEvalsOptimizeEntry, type EvalsFinalPick, type EvalsOptimizeEntry } from '../evals-agent/entry-files.js'
 import type { OptimizeDecision, OptimizeObjective } from '../panels/model.js'
-import type { DevWorkspace } from '../workspace.js'
 import type { TemporaryHarnessDefaultsReader } from './knobs.js'
 import { readTemporaryProposerFailure, temporaryRunFolder } from './study.js'
 import { resolveTemporaryExperiment, temporaryRunnableExperiment } from './experiment.js'
@@ -19,6 +18,7 @@ import {
   temporaryTypescriptRunnerOf,
   temporaryWorkspaceDirectory,
   type TemporaryEvalsExit,
+  type TemporaryEvalsRequest,
   type TemporaryEvalsSpawner,
 } from './evals-process.js'
 import {
@@ -37,21 +37,11 @@ import {
   type TemporaryOptimizeSettings,
 } from './plan.js'
 
-interface TemporaryOptimizationRequest {
-  workspace: DevWorkspace
-  experiment?: string
+interface TemporaryOptimizationRequest extends TemporaryEvalsRequest {
   settings?: Partial<TemporaryOptimizeSettings>
   objective?: OptimizeObjective
   space?: string
-  forkArguments?: readonly string[]
-  signal?: AbortSignal
-  onProgress?: (line: string) => void
-  prepare?: () => Promise<void>
-  now?: () => Date
   onStart?: (record: string) => void
-  background?: boolean
-  detached?: boolean
-  onSpawn?: (pid: number) => void
   continuing?: string
 }
 
