@@ -133,8 +133,9 @@ def test_render_skeleton_keeps_imports_and_lists_signatures():
     text = render_skeleton(SOURCE.splitlines(), SYMBOLS, "pkg/store.py")
 
     assert text.splitlines() == [
-        "Skeleton of pkg/store.py (422 lines): imports and signatures, bodies omitted to save context. Retrieve the"
-        ' full file with retrieve_context and the reference below, or read a line range of "pkg/store.py".',
+        "Skeleton of pkg/store.py (422 lines): imports and signatures, bodies omitted to save context."
+        " retrieve_context with the reference below returns the full file, or read a line range of"
+        ' "pkg/store.py".',
         "imports:",
         "   1 | import os",
         "   2 | from typing import (",
@@ -147,6 +148,12 @@ def test_render_skeleton_keeps_imports_and_lists_signatures():
         "  L15-18 def get( self, key: str, default: Any = None ) -> Any:",
         "L21-22 def run(callback: Callable[[], None]) -> None:",
     ]
+
+
+def test_render_skeleton_points_at_symbol_lookup_when_asked():
+    header = render_skeleton(SOURCE.splitlines(), SYMBOLS, "pkg/store.py", symbol_lookup=True).splitlines()[0]
+
+    assert 'retrieve_context(symbol="<name>", path="pkg/store.py") shows one definition;' in header
 
 
 def test_render_skeleton_caps_the_symbols_it_lists():

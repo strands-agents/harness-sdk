@@ -59,6 +59,7 @@ class SkeletonStrategy(BaseOffloadStrategy):
         *,
         read_tools: Sequence[str] = ("read",),
         extensions: Sequence[str] = (".py",),
+        symbol_lookup: bool = False,
         conditions: OffloadConditions | None = None,
     ) -> None:
         """Configure the strategy.
@@ -68,6 +69,8 @@ class SkeletonStrategy(BaseOffloadStrategy):
             root: Workspace root; reads of files outside it arrive in full.
             read_tools: Names of the tools that read files; each takes the file as its ``path`` input.
             extensions: File extensions the language server understands.
+            symbol_lookup: Whether the skeleton points the model at ``retrieve_context(symbol=..., path=...)``; set it
+                when the agent has ``workspace_retrieval_tool`` in place of the built-in one.
             conditions: When and how the strategy fires; defaults to a ``block_threshold`` of
                 ``DEFAULT_SKELETON_THRESHOLD`` tokens, acting on arrival.
 
@@ -84,10 +87,16 @@ class SkeletonStrategy(BaseOffloadStrategy):
         self._root = Path(root).resolve()
         self._read_tools = tuple(read_tools)
         self._extensions = tuple(extensions)
+        self._symbol_lookup = symbol_lookup
 
     def _with_conditions(self, conditions: OffloadConditions) -> SkeletonStrategy:
         return SkeletonStrategy(
-            self._client, self._root, read_tools=self._read_tools, extensions=self._extensions, conditions=conditions
+            self._client,
+            self._root,
+            read_tools=self._read_tools,
+            extensions=self._extensions,
+            symbol_lookup=self._symbol_lookup,
+            conditions=conditions,
         )
 
     async def _apply_per_message(self, context: ContextState) -> bool:
@@ -111,7 +120,7 @@ class SkeletonStrategy(BaseOffloadStrategy):
         except Exception:
             logger.warning("path=<%s> | language server could not outline the file, keeping the full read", path)
             return None
-        return render_skeleton(lines, symbols, str(path.relative_to(self._root))), []
+        return render_skeleton(lines, symbols, str(path.relative_to(self._root)), self._symbol_lookup), []
 
     def _whole_file_read(self, block: ContentBlock, agent: Agent) -> Path | None:
         """The code file a whole-file read in ``block`` returned, or None when it is not one to outline."""
@@ -131,22 +140,28 @@ class SkeletonStrategy(BaseOffloadStrategy):
         return path
 
 
-def render_skeleton(lines: list[str], symbols: list[dict[str, Any]], relative_path: str) -> str:
+def render_skeleton(
+    lines: list[str], symbols: list[dict[str, Any]], relative_path: str, symbol_lookup: bool = False
+) -> str:
     """The skeleton of a file: a header, its imports verbatim, and each symbol's line range and declaration.
 
     Args:
         lines: The file's lines.
         symbols: The file's ``DocumentSymbol`` tree from the language server.
         relative_path: The file's path as the model should name it.
+        symbol_lookup: Whether to point at ``retrieve_context(symbol=..., path=...)`` for one definition.
 
     Returns:
         The skeleton text.
     """
     flat = list(_flatten(symbols))
     first_symbol_line = min((symbol["range"]["start"]["line"] for symbol, _ in flat), default=len(lines))
+    lookup = (
+        f'retrieve_context(symbol="<name>", path="{relative_path}") shows one definition; ' if symbol_lookup else ""
+    )
     out = [
         f"Skeleton of {relative_path} ({len(lines)} lines): imports and signatures, bodies omitted to save context."
-        " Retrieve the full file with retrieve_context and the reference below,"
+        f" {lookup}retrieve_context with the reference below returns the full file,"
         f' or read a line range of "{relative_path}".'
     ]
     imports = _import_lines(lines, first_symbol_line)
@@ -211,12 +226,19 @@ def _import_lines(lines: list[str], first_symbol_line: int) -> list[str]:
 
 
 def _tool_input(messages: list[Message], tool_use_id: str) -> dict[str, Any] | None:
-    for message in reversed(messages):
-        for block in message["content"]:
-            if "toolUse" in block and block["toolUse"]["toolUseId"] == tool_use_id:
-                tool_input = block["toolUse"].get("input")
-                return tool_input if isinstance(tool_input, dict) else {}
-    return None
+    tool_use = next(
+        (
+            block["toolUse"]
+            for message in reversed(messages)
+            for block in message["content"]
+            if "toolUse" in block and block["toolUse"]["toolUseId"] == tool_use_id
+        ),
+        None,
+    )
+    if tool_use is None:
+        return None
+    tool_input = tool_use.get("input")
+    return tool_input if isinstance(tool_input, dict) else {}
 
 
 def _is_test_file(relative_path: Path) -> bool:
