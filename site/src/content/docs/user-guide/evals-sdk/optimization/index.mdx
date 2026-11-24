@@ -32,18 +32,7 @@ won. It never applies the result unless you ask.
 
 ### Install the skills
 
-The skills ship inside the `strands-agents-evals` package. Install them into your coding
-assistant with the [`skills` CLI](https://github.com/vercel-labs/skills), run from the
-environment where you installed the package:
-
-```bash
-npx skills add "$(python -c 'import strands_evals, pathlib; print(pathlib.Path(strands_evals.__file__).parent / ".agents" / "skills")')" --copy
-```
-
-`--copy` copies the skills into your project, so they keep working if that environment is
-deleted. Run the command again after you upgrade `strands-agents-evals`. To install only
-some of them, add `-s optimize`; to pick an assistant, add `-a claude-code`; to install for
-every project, add `-g`.
+<CopyPromptButton language="evals-skills" />
 
 ## Why optimize instead of tweaking by hand?
 
