@@ -138,7 +138,10 @@ a[aria-current="page"]:hover {
    classic scrollbar, which overstates the room by half its width; the P gutters absorb that.
    Centring: translateX(min(0px, 50cqw - 50%)) is 0 for an element no wider than the column
    (cqw is the text column, % the element), and moves a wider one left by half its overhang.
-   Only direct children widen: inside an aside or a <TabItem> they would leave its box behind. */
+   Only direct children widen: inside an aside or a <TabItem> they would leave its box behind.
+   A component can opt in from its own styles: width: calc(100cqw + 2 * var(--wide-grow)) and
+   transform: translateX(calc(-1 * var(--wide-grow))) take the full wide width (see
+   FoundationComparison.astro). */
 @media (min-width: 72rem) {
 	:root[data-has-sidebar] .sl-markdown-content {
 		container-type: inline-size;
@@ -168,11 +171,11 @@ a[aria-current="page"]:hover {
 		max-width: calc(100cqw + 2 * var(--wide-grow));
 		transform: translateX(min(0px, 50cqw - 50%));
 	}
-	/* The agent-foundation comparison always wraps heavily at column width, so it takes the full
-	   wide width whenever there is room. */
-	:root[data-has-sidebar] .sl-markdown-content > .fc {
-		width: calc(100cqw + 2 * var(--wide-grow));
-		transform: translateX(calc(-1 * var(--wide-grow)));
+	/* The container makes .sl-markdown-content its own formatting context, so its first child's
+	   top margin no longer collapses through it (the learning pages' course notice moved 24px
+	   down). Drop that margin to match the layout without the container. */
+	:root[data-has-sidebar] .sl-markdown-content > :first-child {
+		margin-block-start: 0;
 	}
 }
 

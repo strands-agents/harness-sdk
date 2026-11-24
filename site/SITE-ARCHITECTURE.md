@@ -296,7 +296,7 @@ EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box npm run dev
 
 ### 10. Wide Tables and Images (`src/styles/custom.css`)
 
-**What it does:** On large screens, a top-level table that doesn't fit the text column, or a Markdown image wider than it, grows into the spare room on both sides of the text, staying centred on it, up to `--wide-max` (72rem). Anything that fits keeps its normal width and position. Authors mark nothing, so imported product docs get it too. The agent-foundation comparison (`.fc`) always takes the full wide width, since it wraps heavily at column width.
+**What it does:** On large screens, a top-level table that doesn't fit the text column, or a Markdown image wider than it, grows into the spare room on both sides of the text, staying centred on it, up to `--wide-max` (72rem). Anything that fits keeps its normal width and position. Authors mark nothing, so imported product docs get it too. A component can opt in to the full wide width from its own styles with `--wide-grow` and `cqw`, as `FoundationComparison.astro` does, since the comparison wraps heavily at column width.
 
 **Why:** Tables with long cells wrap into tall rows at column width, and large screenshots are shrunk. A page-wide content width would make every paragraph harder to read, so only tables and images grow; prose and code blocks keep the column width.
 
@@ -304,7 +304,7 @@ EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box npm run dev
 
 - **Tables** get `width: max-content` with `min-width: 100%` and the cap as `max-width`, so a table grows only as far as its unwrapped cells need, and a table too wide even at the cap still scrolls inside itself.
 - **Images** get the cap as `max-width`, so only an image wider than the column grows.
-- **Centring:** `.sl-markdown-content` is an inline-size container, and each element is moved by `translateX(min(0px, 50cqw - 50%))`. That is 0 for an element no wider than the column and half its overhang for a wider one.
+- **Centring:** `.sl-markdown-content` is an inline-size container (which stops its first child's top margin collapsing through it, so that margin is set to 0), and each element is moved by `translateX(min(0px, 50cqw - 50%))`. That is 0 for an element no wider than the column and half its overhang for a wider one.
 - Only direct children of `.sl-markdown-content` widen. Inside an aside or a `<TabItem>` they stay at the width of their box. The block stops one 1.5rem panel padding short of the TOC, the sidebar or the window edge, which also absorbs the up to ~8px a classic scrollbar adds to `100vw`.
 
 ## Configuration (`astro.config.mjs`)
