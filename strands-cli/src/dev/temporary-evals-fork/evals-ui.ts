@@ -12,6 +12,7 @@ import type { EvalsBrowser, EvalsBrowserNotice, EvalsBrowserPlace, EvalsBrowserS
 import { prepareTemporaryOptimizerEnvironment, type TemporaryEnvironmentOptions } from './environment.js'
 import { temporaryEvalsEnvironment, temporaryWorkspaceDirectory } from './evals-process.js'
 import { announce, firstLine, type TemporaryHost } from './host.js'
+import { Store } from './jobs.js'
 import {
   ensureTemporaryExperimentsFolder,
   temporaryExperimentHome,
@@ -97,9 +98,7 @@ const segments = (id: string): string => id.split('/').map(encodeURIComponent).j
 const isRemote = (environment: NodeJS.ProcessEnv): boolean =>
   Boolean(environment.SSH_CONNECTION || environment.SSH_CLIENT || environment.SSH_TTY)
 
-export class TemporaryEvalsUi implements EvalsBrowser {
-  private state: EvalsBrowserState = { status: 'off' }
-  private readonly listeners = new Set<() => void>()
+export class TemporaryEvalsUi extends Store<EvalsBrowserState> implements EvalsBrowser {
   private server: TemporaryUiProcess | undefined
   private url: string | undefined
   private port: number | undefined
@@ -109,17 +108,13 @@ export class TemporaryEvalsUi implements EvalsBrowser {
   constructor(
     private readonly host: TemporaryHost,
     private readonly dependencies: TemporaryUiDependencies = {}
-  ) {}
-
-  subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
+  ) {
+    super({ status: 'off' })
   }
 
-  snapshot = (): EvalsBrowserState => this.state
-
   start(): void {
-    if (this.state.status === 'starting' || this.state.status === 'ready') return
+    const { status } = this.snapshot()
+    if (status === 'starting' || status === 'ready') return
     this.set({ status: 'starting', detail: 'preparing the evals environment' })
     void this.launch()
   }
@@ -138,7 +133,7 @@ export class TemporaryEvalsUi implements EvalsBrowser {
   }
 
   open = async (place: EvalsBrowserPlace): Promise<EvalsBrowserNotice | undefined> => {
-    const { state } = this
+    const state = this.snapshot()
     if (state.status === 'off' || state.status === 'unavailable') {
       this.start()
       return {
@@ -197,11 +192,6 @@ export class TemporaryEvalsUi implements EvalsBrowser {
     return path !== root && containsPath(root, path) ? relative(root, path).split(sep).join('/') : undefined
   }
 
-  private set(state: EvalsBrowserState): void {
-    this.state = state
-    this.listeners.forEach((listener) => listener())
-  }
-
   private async launch(): Promise<void> {
     const host = this.host()
     try {
@@ -234,7 +224,7 @@ export class TemporaryEvalsUi implements EvalsBrowser {
     const output: string[] = []
     let pending = ''
     const timer = setTimeout(() => {
-      if (this.state.status !== 'starting' || this.server !== server) return
+      if (this.snapshot().status !== 'starting' || this.server !== server) return
       this.fail('the page server did not print its address in time')
       this.stop()
     }, START_TIMEOUT_MS)
@@ -245,7 +235,7 @@ export class TemporaryEvalsUi implements EvalsBrowser {
       pending = lines.pop() ?? ''
       for (const line of lines) {
         const match = URL_LINE.exec(line)
-        if (match && this.state.status === 'starting') this.ready(match[1]!, Number(match[2]))
+        if (match && this.snapshot().status === 'starting') this.ready(match[1]!, Number(match[2]))
         else if (line.trim()) output.push(line.trim())
       }
       output.splice(0, Math.max(0, output.length - ERROR_LINES))

@@ -42,7 +42,6 @@ interface TemporaryTestRequest {
   workspace: DevWorkspace
   experiment?: string
   forkArguments?: readonly string[]
-  environment?: NodeJS.ProcessEnv
   signal?: AbortSignal
   onProgress?: (line: string) => void
   prepare?: () => Promise<void>
@@ -163,7 +162,7 @@ export const runTemporaryTest = async (
   request: TemporaryTestRequest,
   dependencies: TemporaryTestDependencies = {}
 ): Promise<TemporaryTestOutcome> => {
-  const { workspace, forkArguments = [], environment = process.env, signal, onProgress = ignoreProgress } = request
+  const { workspace, forkArguments = [], signal, onProgress = ignoreProgress } = request
   const directory = temporaryWorkspaceDirectory(workspace)
   assertTemporaryForkArguments(forkArguments, TEST_OWNED_FLAGS, 'strands dev')
   const experiment = await resolveTemporaryExperiment(
@@ -206,7 +205,7 @@ export const runTemporaryTest = async (
       ...forkArguments,
     ],
     cwd: workspace.root,
-    env: temporaryEvalsEnvironment(python, environment),
+    env: temporaryEvalsEnvironment(python, process.env),
     ...(signal ? { signal } : {}),
     ...(request.background ? { background: true } : {}),
     ...(request.detached ? { detached: true } : {}),
@@ -214,7 +213,7 @@ export const runTemporaryTest = async (
     log,
     onLine: onProgress,
   })
-  if (exit.code !== 0) throw temporaryEvalsFailure('strands-evals run', exit, environment, testNextStep(exit.code, log))
+  if (exit.code !== 0) throw temporaryEvalsFailure('strands-evals run', exit, process.env, testNextStep(exit.code, log))
   if (!existsSync(report))
     throw new Error(`strands-evals run finished without writing ${report}. The full output is in ${log}.`)
   const scores = await readScores(report)

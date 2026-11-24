@@ -330,7 +330,6 @@ interface TemporaryGenerationRequest {
   readonly settings: GenerationSettings
   readonly context: string
   readonly files: TemporaryGenerationFiles
-  readonly environment?: NodeJS.ProcessEnv
   readonly signal?: AbortSignal
   readonly background?: boolean
   readonly onGenerating?: () => void
@@ -399,7 +398,7 @@ export const generateTemporaryExperiment = async (
   request: TemporaryGenerationRequest,
   dependencies: TemporaryExperimentDependencies = {}
 ): Promise<TemporaryGenerationOutcome> => {
-  const { workspace, settings, context, files, environment = process.env, signal } = request
+  const { workspace, settings, context, files, signal } = request
   generatorModelId(settings.model) // Validate before installing dependencies or starting a paid job.
   const directory = temporaryWorkspaceDirectory(workspace)
   const python = await prepareTemporaryOptimizerEnvironment(
@@ -417,14 +416,14 @@ export const generateTemporaryExperiment = async (
     command: python,
     args: temporaryGenerateArguments(settings, context, files),
     cwd: workspace.root,
-    env: temporaryEvalsEnvironment(python, environment),
+    env: temporaryEvalsEnvironment(python, process.env),
     ...(signal ? { signal } : {}),
     ...(request.background ? { background: true } : {}),
     log: files.log,
     onLine: ignoreProgress,
   })
   if (exit.code !== 0)
-    throw temporaryEvalsFailure('strands-evals generate', exit, environment, generatorNextStep(exit.code))
+    throw temporaryEvalsFailure('strands-evals generate', exit, process.env, generatorNextStep(exit.code))
   if (!existsSync(files.draft)) throw new Error(`strands-evals generate finished without writing ${files.draft}.`)
   const { complete, dropped } = await temporaryDropIncompleteCases(files.draft)
   if (complete === 0) {
