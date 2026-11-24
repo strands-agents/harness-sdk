@@ -246,6 +246,23 @@ describe('readDevWorkspace', () => {
     await expect(readDevWorkspace(path)).rejects.toThrow('symbolic link')
   })
 
+  it('shouldReportTheLegacyConfigPathWhenAGenuineWorkspaceVersionIsUnsupported', async () => {
+    const root = await project()
+    await mkdir(join(root, '.strands'))
+    const path = join(root, '.strands/config.json')
+    const original = JSON.stringify({
+      version: 2,
+      name: 'Old workspace',
+      language: 'typescript',
+      entrypoint: 'agent.ts',
+      origin: { kind: 'cli' },
+    })
+    await writeFile(path, original)
+
+    await expect(readDevWorkspace(root)).rejects.toThrow(path)
+    expect(await readFile(path, 'utf8')).toBe(original)
+  })
+
   it('should report missing entrypoints When an existing workspace loses its source', async () => {
     const root = await project()
     await manifest(root, config({ entrypoint: 'missing.ts' }))

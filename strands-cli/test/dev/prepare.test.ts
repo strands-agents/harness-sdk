@@ -10,7 +10,7 @@ import { bindExistingAgent, createDevWorkspace } from '../../src/dev/create.js'
 import { DevFailure, WorkspaceFolderInUse } from '../../src/dev/errors.js'
 import { ensureInitialCandidate } from '../../src/dev/initialize.js'
 import type { FolderSuggestion, HarnessChoice } from '../../src/dev/picker.js'
-import { prepareDevRun } from '../../src/dev/prepare.js'
+import { openWorkspaceConfiguration, prepareDevRun } from '../../src/dev/prepare.js'
 import * as search from '../../src/dev/search.js'
 import type { DiscoveredHarness } from '../../src/dev/search.js'
 import * as picker from '../../src/dev/picker.js'
@@ -1467,5 +1467,64 @@ describe('workspace with a missing agent', () => {
     expect(options.folderFor?.(choice)).toEqual({ path: folder, detected: false, occupiedBy: holder })
     expect(prepared?.workspace.entrypoint).toBe(join(root, 'main.ts'))
     expect(JSON.parse(await readFile(join(folder, '.config'), 'utf8')).agent.entrypoint).toBe('main.ts')
+  })
+})
+
+describe('workspace opening', () => {
+  it.each(['explicit', 'launch-directory', 'child-directory'] as const)(
+    'shouldSkipSelectionWhenAValidBindingExistsAt%s',
+    async (location) => {
+      const root = await fixture()
+      const launch = await temporaryDirectory()
+      const directory = location === 'child-directory' ? join(launch, 'strands-dev') : launch
+      await mkdir(directory, { recursive: true })
+      await bindWorkspace(directory, {
+        version: 1,
+        name: 'Configured agent',
+        agent: { path: root, entrypoint: 'agent.ts', language: 'typescript' },
+        origin: { kind: 'discovered' },
+      })
+      vi.spyOn(process, 'cwd').mockReturnValue(launch)
+      vi.spyOn(CliConfigStore, 'load').mockResolvedValue(CliConfigStore.memory())
+      vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+      const scan = vi.spyOn(search, 'discoverHarnesses')
+      const select = vi.spyOn(picker, 'chooseHarness')
+      const before = await readFile(join(directory, '.config'), 'utf8')
+
+      const prepared = await prepareDevRun(
+        parseArgs(location === 'explicit' ? ['dev', '--workspace', directory] : ['dev'])
+      )
+
+      expect(prepared?.args.agent).toBe(join(root, 'agent.ts'))
+      expect(scan).not.toHaveBeenCalled()
+      expect(select).not.toHaveBeenCalled()
+      expect(await readFile(join(directory, '.config'), 'utf8')).toBe(before)
+    }
+  )
+})
+
+describe('workspace configuration from Settings', () => {
+  const screen = (openProject?: () => Promise<void>) => ({
+    signal: new AbortController().signal,
+    show: vi.fn(),
+    ...(openProject ? { openProject } : {}),
+  })
+
+  it('shouldOpenTheConfigOfTheActiveWorkspaceWhenEditIsChosen', async () => {
+    const launch = await temporaryDirectory()
+    const directory = join(launch, 'strands-dev')
+    await mkdir(directory)
+    await bindExistingAgent(directory, join(await fixture(launch), 'agent.ts'))
+    const openProject = vi.fn(async () => undefined)
+
+    await openWorkspaceConfiguration(parseArgs(['dev', '--workspace', directory]), screen(openProject))
+
+    expect(openProject).toHaveBeenCalledExactlyOnceWith({ root: directory, entrypoint: join(directory, '.config') })
+  })
+
+  it('shouldRefuseToEditWhenNoDevWorkspaceIsActive', async () => {
+    await expect(openWorkspaceConfiguration(parseArgs(['dev']), screen())).rejects.toThrow(
+      'No dev workspace is active.'
+    )
   })
 })

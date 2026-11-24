@@ -12,6 +12,7 @@ import {
 } from '../../src/dev/create.js'
 import { readDevWorkspace } from '../../src/dev/workspace.js'
 import { devFailure } from '../../src/dev/errors.js'
+import { discoverHarnesses } from '../../src/dev/search.js'
 import * as installer from '../../src/project/archive.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
 
@@ -190,6 +191,26 @@ describe('createDevWorkspace', () => {
     expect(bound.root).toBe(cwd)
     expect(bound.entrypoint).toBe(join(cwd, 'agent.ts'))
     expect(await readFile(bound.entrypoint, 'utf8')).toBe('source')
+  })
+
+  it('shouldBindAFoundTypeScriptAgentWhenItsProjectHasUnrelatedConfig', async () => {
+    const root = await temporaryDirectory()
+    await writeFile(join(root, 'package.json'), '{"type":"module"}')
+    await writeFile(
+      join(root, 'agent.ts'),
+      "import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness({ name: 'My agent' })\n"
+    )
+    await mkdir(join(root, '.strands'))
+    const original = JSON.stringify({ agent: 'agent.ts', model: 'custom-model' })
+    const path = join(root, '.strands/config.json')
+    await writeFile(path, original)
+
+    const found = await discoverHarnesses([root])
+    const workspace = await bindExistingAgent(join(root, 'strands-dev'), found.harnesses[0]!.entrypoint)
+
+    expect(found.warnings).toEqual([])
+    expect(workspace.entrypoint).toBe(join(root, 'agent.ts'))
+    expect(await readFile(path, 'utf8')).toBe(original)
   })
 
   it('shouldOpenTheBoundAgentWhenItsProjectFolderIsMovedWithTheWorkspace', async () => {
