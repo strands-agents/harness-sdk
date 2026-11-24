@@ -1,6 +1,7 @@
 """Tests for the ContextManager plugin."""
 
 import unittest.mock
+import warnings
 
 import pytest
 
@@ -658,6 +659,24 @@ class TestStrategyInit:
 
         assert strategy.received == {"archive": cm.archive}
 
+    def test_strategy_init_annotations_are_not_evaluated(self, mock_agent):
+        """Reading the keyword off the signature must not resolve a TYPE_CHECKING-only annotation."""
+
+        class AnnotatedStrategy:
+            name = "custom"
+
+            def init(self, agent: "OnlyForTypeChecking", archive: "OnlyForTypeChecking | None" = None) -> None:  # noqa: F821
+                self.received = archive
+
+            async def apply(self, context):
+                return False
+
+        strategy = AnnotatedStrategy()
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+
+        assert strategy.received is cm.archive
+
     def test_type_error_raised_by_init_propagates(self, mock_agent):
         """A TypeError from inside init() is not mistaken for a signature mismatch."""
 
@@ -813,11 +832,32 @@ class TestDeprecatedStashNames:
         assert context_manager.archive is None
 
     def test_config_dict_accepts_the_deprecated_key(self, mock_agent):
-        with pytest.warns(DeprecationWarning, match="ContextManager\\(stash=...\\) is deprecated"):
+        with pytest.warns(DeprecationWarning, match='"stash" key'):
             context_manager = ContextManager.from_strategy({"stash": False})
         context_manager.init_agent(mock_agent)
 
         assert context_manager.archive is None
+
+    def test_config_dict_archive_key_wins_over_stash(self, mock_agent):
+        context_manager = ContextManager.from_strategy({"archive": False, "stash": True})
+        context_manager.init_agent(mock_agent)
+
+        assert context_manager.archive is None
+
+    def test_construction_emits_no_deprecation_warning(self, mock_agent):
+        # Plugin discovery reads every class attribute, so the old names must not be properties.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            context_manager = ContextManager()
+            context_manager.init_agent(mock_agent)
+
+        assert [str(warning.message) for warning in caught if "stash" in str(warning.message)] == []
+
+    def test_unknown_attribute_raises_attribute_error(self):
+        context_manager = ContextManager()
+
+        with pytest.raises(AttributeError, match="has no attribute 'not_a_name'"):
+            _ = context_manager.not_a_name
 
     def test_stash_property_returns_the_archive(self, mock_agent):
         context_manager = ContextManager()
@@ -826,17 +866,27 @@ class TestDeprecatedStashNames:
         with pytest.warns(DeprecationWarning, match="ContextManager.stash is deprecated"):
             assert context_manager.stash is context_manager.archive
 
-    def test_stash_is_durable_property_returns_archive_is_durable(self, mock_agent):
+    def test_stash_is_durable_property_returns_archive_is_durable(self, mock_agent, tmp_path):
+        from strands.storage.local_file_storage import LocalFileStorage
+
         mock_agent.session_id = "test-session"
-        mock_agent.storage = None
+        mock_agent.storage = LocalFileStorage(base_dir=str(tmp_path))
         context_manager = ContextManager()
         context_manager.init_agent(mock_agent)
 
         with pytest.warns(DeprecationWarning, match="ContextManager.stash_is_durable is deprecated"):
-            assert context_manager.stash_is_durable is context_manager.archive_is_durable
+            assert context_manager.stash_is_durable is True
 
     def test_context_state_stash_returns_the_archive(self, mock_agent, archive):
         context = ContextState(messages=mock_agent.messages, agent=mock_agent, utilization=0.5, archive=archive)
 
         with pytest.warns(DeprecationWarning, match="ContextState.stash is deprecated"):
             assert context.stash is archive
+
+    def test_context_state_stash_assigns_the_archive(self, mock_agent, archive):
+        context = ContextState(messages=mock_agent.messages, agent=mock_agent, utilization=0.5)
+
+        with pytest.warns(DeprecationWarning, match="ContextState.stash is deprecated"):
+            context.stash = archive
+
+        assert context.archive is archive

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, deprecated
 
 from ..types.content import ContentBlock, Messages
 
@@ -55,14 +54,16 @@ class ContextState:
     invocation_context: InvocationContext | None = field(default=None)
 
     @property
+    @deprecated("ContextState.stash is deprecated and will be removed in v1.68.0. Use ContextState.archive instead.")
     def stash(self) -> Archive | None:
         """Deprecated name for :attr:`archive`. Removed in v1.68.0."""
-        warnings.warn(
-            "ContextState.stash is deprecated and will be removed in v1.68.0. Use ContextState.archive instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         return self.archive
+
+    @stash.setter
+    @deprecated("ContextState.stash is deprecated and will be removed in v1.68.0. Use ContextState.archive instead.")
+    def stash(self, archive: Archive | None) -> None:
+        """Deprecated name for :attr:`archive`. Removed in v1.68.0."""
+        self.archive = archive
 
 
 @runtime_checkable

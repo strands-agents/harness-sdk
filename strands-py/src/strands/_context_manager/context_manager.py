@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import sys
 import warnings
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -44,6 +45,9 @@ CONTEXT_MANAGER_PRESETS: tuple[str, ...] = ("auto", "agentic")
 
 _ARCHIVE_KEYWORDS = ("archive", "stash")
 """The keyword a strategy's optional ``init`` takes the archive under; ``stash`` is the pre-rename name."""
+
+_RENAMED_ATTRIBUTES = {"stash": "archive", "stash_is_durable": "archive_is_durable"}
+"""Pre-rename attribute names, served from ``ContextManager.__getattr__``. Removed in v1.68.0."""
 
 ContextManagerStrategy = Literal["auto", "agentic"]
 """Supported preset strings for the ``context_manager`` parameter.
@@ -135,26 +139,30 @@ class ContextManager(Plugin):
         """
         return self._archive_is_durable
 
-    @property
-    def stash(self) -> Archive | None:
-        """Deprecated name for :attr:`archive`. Removed in v1.68.0."""
-        warnings.warn(
-            "ContextManager.stash is deprecated and will be removed in v1.68.0. Use ContextManager.archive instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self._archive
+    def __getattr__(self, name: str) -> Any:
+        """Serve the pre-rename ``stash`` names, warning at the caller. Removed in v1.68.0.
 
-    @property
-    def stash_is_durable(self) -> bool:
-        """Deprecated name for :attr:`archive_is_durable`. Removed in v1.68.0."""
+        Args:
+            name: Attribute being read.
+
+        Returns:
+            The value held under the current name.
+
+        Raises:
+            AttributeError: For any name other than the two pre-rename ones.
+        """
+        # Not properties: plugin discovery reads every class attribute, so a property here warns on
+        # construction, naming a spelling the caller never used.
+        current_name = _RENAMED_ATTRIBUTES.get(name)
+        if current_name is None:
+            raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
         warnings.warn(
-            "ContextManager.stash_is_durable is deprecated and will be removed in v1.68.0. "
-            "Use ContextManager.archive_is_durable instead.",
+            f"ContextManager.{name} is deprecated and will be removed in v1.68.0. "
+            f"Use ContextManager.{current_name} instead.",
             DeprecationWarning,
             stacklevel=2,
         )
-        return self._archive_is_durable
+        return getattr(self, current_name)
 
     @staticmethod
     def from_strategy(
@@ -192,7 +200,19 @@ class ContextManager(Plugin):
                 f"Valid presets: {', '.join(f'{p!r}' for p in CONTEXT_MANAGER_PRESETS)}"
             )
         if isinstance(strategy, dict):
-            return ContextManager(**strategy)
+            # Warn here rather than in __init__: the default warning filter only shows a
+            # DeprecationWarning attributed to the caller's own module, and from __init__ this path
+            # attributes it to the SDK.
+            config: dict[str, Any] = {**strategy}
+            if config.get("archive") is None and config.get("stash") is not None:
+                warnings.warn(
+                    'The "stash" key of a context_manager config is deprecated and will be removed in v1.68.0. '
+                    'Use "archive" instead.',
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
+                config["archive"] = config.pop("stash")
+            return ContextManager(**config)
         raise ValueError(
             f"Unsupported context_manager value: {strategy!r}. "
             "Supported: 'auto', 'agentic', ContextManagerConfig dict, ContextManager instance, or False"
@@ -360,15 +380,30 @@ class ContextManager(Plugin):
         return any_acted
 
 
+if sys.version_info >= (3, 14):
+    import annotationlib
+
+    def _signature(init: Callable[..., Any]) -> inspect.Signature:
+        """Read a signature without evaluating annotations, which 3.14 defers and may not resolve."""
+        return inspect.signature(init, annotation_format=annotationlib.Format.STRING)
+
+else:
+    _signature = inspect.signature
+
+
 def _init_strategy(init: Callable[..., Any], agent: Agent, archive: Archive | None) -> None:
     """Call a strategy's optional ``init`` with the archive, under whichever keyword it declares.
 
     The keyword is read off the signature rather than tried and retried, so a ``TypeError`` raised by ``init``
     itself is never mistaken for one it does not accept. A strategy that declares neither keyword, nor
     ``**kwargs``, is called with the agent alone.
+
+    A ``**kwargs``-only ``init`` receives ``archive=`` alone, the one pre-rename spelling that does not carry
+    forward: passing ``stash=`` as well would reach an ``init`` that forwards ``**kwargs`` to a built-in
+    strategy, which does not accept it.
     """
     try:
-        parameters = inspect.signature(init).parameters
+        parameters = _signature(init).parameters
     except (TypeError, ValueError):
         init(agent, archive=archive)
         return
