@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 352" width="720" height="352">
+  <!-- Type: trace waterfall. Story: a queued task's timeout starts only when an execution slot opens. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <rect class="dg-zone" x="112" y="48" width="584" height="208" rx="8"/>
+  <text class="dg-eyebrow" x="24" y="24">2 SLOTS · TIMEOUT: 4 SECONDS</text>
+  <line class="dg-lifeline" x1="144" y1="56" x2="144" y2="276"/>
+  <line class="dg-lifeline" x1="336" y1="56" x2="336" y2="276"/>
+  <line class="dg-lifeline" x1="528" y1="56" x2="528" y2="276"/>
+  <line class="dg-lifeline" x1="624" y1="56" x2="624" y2="276"/>
+  <path class="dg-edge" d="M144,284 H686" marker-end="url(#arrow)"/>
+
+  <text class="dg-name" x="24" y="96">Task A</text>
+  <text class="dg-name" x="24" y="156">Task B</text>
+  <text class="dg-name" x="24" y="216">Task C</text>
+  <text class="dg-code" x="144" y="304" text-anchor="middle">0s</text>
+  <text class="dg-code" x="336" y="304" text-anchor="middle">2s</text>
+  <text class="dg-code" x="528" y="304" text-anchor="middle">4s</text>
+  <text class="dg-code" x="624" y="304" text-anchor="middle">5s</text>
+  <text class="dg-label" x="24" y="288">TIME</text>
+
+  <rect class="dg-node" x="144" y="72" width="192" height="36" rx="6"/>
+  <text class="dg-code" x="160" y="95">working</text>
+  <text class="dg-sub" x="348" y="95">Completed; C can start</text>
+
+  <rect class="dg-node" x="144" y="132" width="384" height="36" rx="6"/>
+  <text class="dg-code" x="160" y="155">working</text>
+  <text class="dg-sub is-danger-text" x="540" y="155">Timed out</text>
+
+  <rect class="dg-node is-optional" x="144" y="192" width="192" height="36" rx="6"/>
+  <text class="dg-code" x="160" y="215">queued</text>
+  <rect class="dg-node is-focal" x="336" y="192" width="288" height="36" rx="6"/>
+  <text class="dg-code is-focal-text" x="352" y="215">working</text>
+  <text class="dg-sub" x="636" y="215">Done</text>
+
+  <text class="dg-note" x="24" y="328">C finishes after 3 seconds of execution. Its 2 seconds in the queue do not count.</text>
+</svg>
