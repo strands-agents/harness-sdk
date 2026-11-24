@@ -29,6 +29,16 @@ LSP_COMMAND = ["pyright-langserver", "--stdio"]
 TARGETED_LINES = 200
 """Lines of one file a read may hold and still arrive in full: a targeted read, usually made to edit the code."""
 
+GUIDANCE = (
+    "Reading code: use the read tool, not shell commands such as cat, sed or grep -A, to read source files. A"
+    " whole-file read of a large code file returns its skeleton: imports and signatures with line ranges. Then read"
+    " the lines you need with read(path, offset, limit), or one definition with"
+    ' retrieve_context(symbol="<name>", path="<file>"). Tool results may be shortened to save context; follow any'
+    " instructions in them to see more. Use the shell to search, run code and run tests."
+)
+"""What the system prompt tells the agent when the language server is active, so it reads code the way the
+skeletons expect instead of working around them."""
+
 STATE_KEY = "context_manager"
 """The ``agent.state`` key that records which context manager the ``"lsp"`` option ended up running."""
 
@@ -47,6 +57,7 @@ class LspContext:
         context_manager: The context manager to pass to the agent: the language server pipeline, or ``"auto"``.
         tools: Tools the pipeline adds; its ``retrieve_context`` replaces the built-in one.
         plugins: Plugins the option adds.
+        guidance: Added to the harness's system prompt when the language server is active; None on fallback.
         status: What ran, for ``agent.state``: ``{"requested": "lsp", "active": "lsp" | "auto", "reason": ...}``.
         close: Shuts the language server down, or None when none started.
     """
@@ -54,6 +65,7 @@ class LspContext:
     context_manager: ContextManager | Literal["auto"]
     tools: list[Any] = field(default_factory=list)
     plugins: list[Any] = field(default_factory=list)
+    guidance: str | None = None
     status: dict[str, str] = field(default_factory=dict)
     close: Callable[[], None] | None = None
 
@@ -106,6 +118,7 @@ def resolve_lsp_context(
         tools=[workspace_retrieval_tool(manager, WorkspaceSearch(client, root))],
         status={"requested": "lsp", "active": "lsp"},
         close=client.close,
+        guidance=GUIDANCE,
     )
 
 

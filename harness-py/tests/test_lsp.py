@@ -195,3 +195,23 @@ def test_lsp_adds_no_plugins(workdir, fake_server):
     agent = create_harness(context_manager="lsp")
 
     assert not [p for p in agent._plugin_registry._plugins.values() if isinstance(p, CodeFetchEnricher)]
+
+
+def test_lsp_tells_the_agent_how_to_read_code(workdir, fake_server):
+    agent = create_harness(context_manager="lsp", instructions="Fix the bug.")
+
+    assert agent.system_prompt.count(lsp_module.GUIDANCE) == 1
+    assert "Fix the bug." in agent.system_prompt
+
+
+def test_lsp_guidance_is_left_out_with_a_custom_prompt(workdir, fake_server):
+    assert create_harness(context_manager="lsp", system_prompt="Mine.").system_prompt == "Mine."
+
+
+def test_lsp_guidance_is_left_out_on_fallback(workdir, monkeypatch):
+    monkeypatch.setattr(lsp_module, "LSP_COMMAND", ["no-such-langserver", "--stdio"])
+
+    agent = create_harness(context_manager="lsp")
+
+    assert agent.state.get("context_manager")["active"] == "auto"
+    assert lsp_module.GUIDANCE not in agent.system_prompt
