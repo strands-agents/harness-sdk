@@ -405,6 +405,7 @@ sidebar:
             items:
               - docs/user-guide/sdk/model-providers
               - docs/user-guide/sdk/model-providers/model-routing
+              - docs/user-guide/sdk/model-providers/prompt-caching
               - docs/user-guide/sdk/model-providers/amazon-bedrock
               - docs/user-guide/sdk/model-providers/amazon-bedrock-prompt-caching
               - docs/user-guide/sdk/model-providers/amazon-nova
@@ -479,6 +480,7 @@ sidebar:
               - docs/user-guide/sdk/plugins/context-injector
               - docs/user-guide/sdk/plugins/todos
               - docs/user-guide/sdk/plugins/goal-loop
+              - docs/user-guide/sdk/plugins/genai-prices-estimator
               - docs/user-guide/sdk/plugins/custom-plugins
           - label: Interventions
             addedDate: 2026-06-03
@@ -652,6 +654,8 @@ sidebar:
                 slug: docs/user-guide/evals-sdk/evaluators/deterministic_evaluators
               - label: "Structured output similarity"
                 slug: docs/user-guide/evals-sdk/evaluators/structured_output_evaluator
+              - label: "Typed rubric"
+                slug: docs/user-guide/evals-sdk/evaluators/typed_rubric_evaluator
               - label: "Custom"
                 slug: docs/user-guide/evals-sdk/evaluators/custom_evaluator
           - label: Detectors

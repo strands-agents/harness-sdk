@@ -7,7 +7,6 @@ import re
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from fractions import Fraction
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from typing_extensions import TypedDict
@@ -29,8 +28,8 @@ class OffloadConditions(TypedDict, total=False):
     when the target isn't ``"*"`` and ``preserve_recent`` is unset or 0.
 
     Attributes:
-        context_utilization: Context usage at or above which the strategy fires: ``"80%"`` of the context window, or a
-            whole number of 1,000 or more input tokens, at most the model's context window.
+        context_utilization: Context usage at or above which the strategy fires: ``0.8`` or ``"80%"`` of the context
+            window, or a whole number of 1,000 or more input tokens, at most the model's context window.
         block_threshold: Size above which a message (target ``"*"``) or block is offloaded: a whole number of tokens
             above 0, or ``"5%"`` of the context window. Unset, there is no size check. Media the token count measures
             as 0 always passes, except in a strategy acting on arrival, which leaves it alone.
@@ -38,14 +37,14 @@ class OffloadConditions(TypedDict, total=False):
             share above 0 keeps at least one.
     """
 
-    context_utilization: int | str
+    context_utilization: int | float | str
     block_threshold: int | str
     preserve_recent: int | str
 
 
 @dataclass(frozen=True)
 class ParsedCondition:
-    """A condition's value: a count in the condition's unit, or, with ``is_share``, a percent of a whole."""
+    """A condition's value: a count in the condition's unit, or, with ``is_share``, a fraction of a whole."""
 
     value: float
     is_share: bool
@@ -54,18 +53,18 @@ class ParsedCondition:
         """Return the count this condition stands for out of ``whole``, rounded up."""
         if not self.is_share:
             return int(self.value)
-        # Exact decimal arithmetic: a percent is inexact as a binary float, and the product lands just above the
-        # answer often enough to matter, so "1.1%" of 200,000 would round up to 2,201.
-        return math.ceil(Fraction(str(self.value)) * whole / 100)
+        # Rounded first, since a float product like 0.07 * 100 = 7.000000000000001 would otherwise ceil to 8.
+        return math.ceil(round(self.value * whole, 9))
 
 
 @dataclass(frozen=True)
 class _ConditionRule:
-    """The accepted range for a ``"N%"`` value's N, the smallest whole count, and the accepted forms."""
+    """The accepted range for a share, the smallest whole count, the accepted forms, and the share form."""
 
-    percent_in_range: Callable[[float], bool]
+    share_in_range: Callable[[float], bool]
     min_count: int
     expected: str
+    float_share: bool = False
 
 
 # ``[0-9]`` keeps the digits ASCII, so what matches is what ``float`` below parses.
@@ -76,28 +75,30 @@ MIN_UTILIZATION_TOKENS = 1000
 
 CONDITION_RULES: dict[str, _ConditionRule] = {
     "context_utilization": _ConditionRule(
-        lambda percent: 0 < percent <= 100,
+        lambda share: 0 < share <= 1,
         MIN_UTILIZATION_TOKENS,
-        f'a "N%" string up to "100%" or a whole token count of at least {MIN_UTILIZATION_TOKENS}',
+        f'a float above 0 up to 1.0, a "N%" string up to "100%", or a whole token count of at least'
+        f" {MIN_UTILIZATION_TOKENS}",
+        float_share=True,
     ),
     "block_threshold": _ConditionRule(
-        lambda percent: 0 < percent < 100, 1, 'a "N%" string below "100%" or a whole token count above 0'
+        lambda share: 0 < share < 1, 1, 'a "N%" string below "100%" or a whole token count above 0'
     ),
     "preserve_recent": _ConditionRule(
-        lambda percent: 0 <= percent < 100, 0, 'a "N%" string below "100%" or a whole message count'
+        lambda share: 0 <= share < 1, 0, 'a "N%" string below "100%" or a whole message count'
     ),
 }
 
 CONDITION_NAMES = ", ".join(CONDITION_RULES)
 
 
-def build_conditions(**supplied: int | str | None) -> OffloadConditions:
+def build_conditions(**supplied: int | float | str | None) -> OffloadConditions:
     """The supplied conditions, without the ones left unset."""
     return cast(OffloadConditions, {name: value for name, value in supplied.items() if value is not None})
 
 
 def parse_condition(name: str, raw: Any) -> ParsedCondition | None:
-    """Parse one condition value: a ``"N%"`` string is a share, a whole number a count, and None unset.
+    """Parse one condition value: a ``"N%"`` string or allowed float is a share, a whole number a count, None unset.
 
     Raises:
         ValueError: When the value is not accepted for the condition.
@@ -105,21 +106,37 @@ def parse_condition(name: str, raw: Any) -> ParsedCondition | None:
     if raw is None:
         return None
     rule = CONDITION_RULES[name]
-    if isinstance(raw, str) and _PERCENT_PATTERN.fullmatch(raw):
-        percent = float(raw[:-1])
-        if rule.percent_in_range(percent):
-            return ParsedCondition(percent, True)
+    share = _share(rule, raw)
+    if share is not None and rule.share_in_range(share):
+        return ParsedCondition(share, True)
     if isinstance(raw, int) and not isinstance(raw, bool) and raw >= rule.min_count:
         return ParsedCondition(raw, False)
     shown = f'"{raw}"' if isinstance(raw, str) else raw
-    raise ValueError(f"{name}={shown} is invalid: expected {rule.expected}{_percent_hint(raw)}")
+    raise ValueError(f"{name}={shown} is invalid: expected {rule.expected}{_share_hint(rule, raw)}")
 
 
-def _percent_hint(raw: Any) -> str:
-    """Suggest the ``"N%"`` spelling for a rejected number that reads as a share or a percent."""
+def _share(rule: _ConditionRule, raw: Any) -> float | None:
+    """The share a value written in the rule's share form stands for, or None when it is not in that form."""
+    if isinstance(raw, str) and _PERCENT_PATTERN.fullmatch(raw):
+        return float(raw[:-1]) / 100
+    if rule.float_share and isinstance(raw, float) and math.isfinite(raw):
+        return raw
+    return None
+
+
+def _share_hint(rule: _ConditionRule, raw: Any) -> str:
+    """Suggest the right spelling for a rejected value that reads as a share, a percent, or a float count."""
+    if isinstance(raw, float) and raw.is_integer() and raw >= rule.min_count:
+        return f"; for a count, write {int(raw)}"
     if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not 0 < raw <= 100:
         return ""
-    percent = f"{raw * 100 if raw <= 1 else raw:g}"
+    # A fractional float above 1, like 1.2, is more likely a mistyped share than a percent.
+    if isinstance(raw, float) and raw > 1 and not raw.is_integer():
+        return ""
+    share = raw if raw <= 1 else raw / 100
+    percent = f"{share * 100:g}"
+    if rule.float_share:
+        return f'; for {percent}%, write {float(share)!r} or "{percent}%"'
     return f'; for {percent}%, write "{percent}%"'
 
 
@@ -165,8 +182,9 @@ class ResolvedConditions:
         utilization = self.context_utilization
         if utilization is None or context.overflow:
             return True
-        whole = 100 if utilization.is_share else _effective_window_limit(context.agent)
-        return context.utilization >= utilization.value / whole
+        if utilization.is_share:
+            return context.utilization >= utilization.value
+        return context.utilization >= utilization.value / _effective_window_limit(context.agent)
 
     def threshold_tokens(self, agent: Agent) -> int | None:
         """Tokens above which content is offloaded, or None when ``block_threshold`` is unset so nothing is checked."""
@@ -201,5 +219,5 @@ class ResolvedConditions:
             return
         raise ValueError(
             f"context_utilization ({int(utilization.value)}) is larger than the model's context window"
-            f' ({limit} tokens); use a smaller token count or a "N%" share'
+            f' ({limit} tokens); use a smaller token count or a share like 0.8 or "80%"'
         )

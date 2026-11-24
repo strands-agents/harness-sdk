@@ -8,10 +8,13 @@ import {
   BOX_BOUNDARY_PANELS,
   BOX_CAPABILITIES,
   BOX_EXAMPLE_BOUNDARY,
+  BOX_HERO_DESCRIPTION,
+  BOX_HERO_TITLE,
   BOX_INSTALL_COMMAND,
   BOX_LANDING_DESCRIPTION,
   BOX_LANDING_TITLE,
   BOX_LINKS,
+  BOX_RELEASE_STATUS,
   BOX_REPOSITORY_URL,
   buildBoxLandingMarkdown,
 } from '../src/config/box-landing'
@@ -52,9 +55,30 @@ describe('Box landing page', () => {
     expect(main?.getAttribute('data-pagefind-body')).not.toBeNull()
     expect(headings[0]?.tagName).toBe('H1')
     expect(main?.querySelectorAll('h1')).toHaveLength(1)
-    expect(main?.querySelector('h1')?.text.replace(/\s+/g, ' ').trim()).toBe('Put your agent in a box.')
+    expect(main?.querySelector('h1')?.text.replace(/\s+/g, ' ').trim()).toBe(BOX_HERO_TITLE)
+    expect(main?.querySelector('.box-hero__subtitle')?.text.replace(/\s+/g, ' ').trim()).toBe(BOX_HERO_DESCRIPTION)
+    expect(main?.querySelector('#box-start-title')).toBeNull()
+    expect(main?.querySelector('#box-start-product')?.tagName).toBe('H2')
+    expect(main?.querySelector('#box-start-product')?.text.trim()).toBe('/box')
+    expect(main?.querySelector('.box-hero__install-title')).toBeNull()
     expect(page.querySelector('.sidebar')).toBeNull()
     expect(page.querySelector('starlight-menu-button')).toBeNull()
+  })
+
+  it('makes the install command the primary hero action', () => {
+    const actions = page.querySelector('.box-hero__actions')
+    const markup = actions?.innerHTML ?? ''
+    const commandIndex = markup.indexOf('data-command-pill')
+    const linksIndex = markup.indexOf('box-hero__links')
+
+    expect(commandIndex).toBeGreaterThanOrEqual(0)
+    expect(linksIndex).toBeGreaterThan(commandIndex)
+    expect(actions?.querySelector('[data-command-pill]')?.getAttribute('data-command')).toBe(BOX_INSTALL_COMMAND)
+    expect(actions?.querySelector('[data-command-copy]')?.getAttribute('aria-label')).toBe(
+      'Copy the Box install command'
+    )
+    expect(actions?.querySelector('.box-hero__link--primary')).toBeNull()
+    expect(actions?.querySelector('.box-hero__meta')?.text).not.toContain(BOX_RELEASE_STATUS)
   })
 
   it('wires the agent selector and capability examples accessibly', () => {
@@ -102,7 +126,10 @@ describe('Box landing page', () => {
       ...BOX_AGENT_EXAMPLES.map((example) => example.href),
     ].filter((href) => href.startsWith('http'))
 
-    expect(BOX_INSTALL_COMMAND).toContain('raw.githubusercontent.com/strands-agents/box/main/install.sh')
+    expect(BOX_INSTALL_COMMAND).toBe(
+      'curl -fsSL https://raw.githubusercontent.com/strands-agents/box/main/install.sh | sh'
+    )
+    expect(BOX_INSTALL_COMMAND).not.toContain('BOX_VERSION')
 
     for (const href of configuredExternalLinks) {
       expect(() => new URL(href)).not.toThrow()

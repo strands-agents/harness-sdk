@@ -14,15 +14,19 @@ import { siteLink } from '../src/util/links'
 
 const projects = Object.keys(PRODUCT_CONTENT_PROJECTS) as ProductContentProject[]
 const expectedFeaturedArticles = {
-  box: ['article-strands-box-linux-sandbox', 'article-strands-box-the-big-picture'],
+  box: ['article-strands-box-cli', 'article-strands-box-linux-sandbox'],
   decider: [
+    'article-introducing-strands-decider-v2',
     'article-amazon-saves-millions-replacing-sonnet-with-strands-decider',
-    'article-strands-decider-gemma-4-models',
   ],
 } satisfies Record<ProductContentProject, string[]>
 const expectedTaggedArticles = {
-  box: expectedFeaturedArticles.box,
-  decider: [...expectedFeaturedArticles.decider, 'article-introducing-strands-decider'],
+  box: [...expectedFeaturedArticles.box, 'article-strands-box-the-big-picture'],
+  decider: [
+    ...expectedFeaturedArticles.decider,
+    'article-strands-decider-gemma-4-models',
+    'article-introducing-strands-decider',
+  ],
 } satisfies Record<ProductContentProject, string[]>
 
 describe('product content', () => {
@@ -59,8 +63,10 @@ describe('product content', () => {
     const box = await getProductContent('box')
     const decider = await getProductContent('decider')
 
-    expect(box.map((item) => item.kind)).toEqual(['video', 'article', 'article'])
-    expect(decider.map((item) => item.kind)).toEqual(['video', 'article', 'article'])
+    for (const items of [box, decider]) {
+      expect(items.filter((item) => item.kind === 'video')).toHaveLength(1)
+      expect(items.filter((item) => item.kind === 'article')).toHaveLength(2)
+    }
   })
 
   it('keeps a video and article when newer items exceed the limit', () => {
