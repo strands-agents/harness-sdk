@@ -346,6 +346,47 @@ when {
 
 A permit on the name doesn’t admit `127.0.0.1:4259`, and a wildcard host permit includes the name.
 
+## Log-only mode
+
+Log-only mode trials a policy without enforcing it. Box decides every action as usual, but a denial from a `forbid`, or from no `permit` matching, doesn’t block: the action goes ahead and Box records what the policy would have denied. Use it to see what a new or generated policy would block on real work before you enforce it.
+
+Turn it on with the table form of the `policy` key in `box.toml`:
+
+```toml
+[policy]
+source      = "policy.dw"
+enforcement = "log_only"      # "enforce" is the default
+```
+
+Each would-deny is recorded as a denial that Box didn’t enforce, and it names every rule that would have blocked the action, across all its steps, so one trial finds them all. The `policy_installed` record states the mode on every run. [A decision](/docs/user-guide/box/guides/record-telemetry/index.md#a-decision) lists the keys.
+
+To list what a trial would have denied, filter the decision records on `strands.box.policy.would_deny.ids`. This prints each record’s action, resource, and the rules that would have blocked it:
+
+```sh
+jq -r 'select(.resourceLogs) | .resourceLogs[].scopeLogs[]
+  | select(.scope.name == "strands-box.policy") | .logRecords[]
+  | .attributes | map({(.key): (.value | if has("arrayValue") then (.arrayValue.values | map(.stringValue) | join(","))
+      elif has("boolValue") then .boolValue else .stringValue end)}) | add
+  | select(has("strands.box.policy.would_deny.ids"))
+  | "\(.["strands.box.policy.action"]) \(.["strands.box.policy.resource"]) \(.["strands.box.policy.would_deny.ids"])"' \
+  <box_dir>/private/telemetry/records.jsonl
+```
+
+A line such as `fs:move ~/agent-home/b.txt no-read-a,no-move-onto-b` is a move that ran in the trial, and that the rules `no-read-a` and `no-move-onto-b` would block once you enforce the policy.
+
+Some denials still block in log-only mode, so a missing or broken policy doesn’t fail open:
+
+-   a policy that isn’t installed yet (`policy_pending`);
+-   a rule that fails to evaluate (`internal_fault`);
+-   an MCP tool whose rule can never validate;
+-   the reachable-paths floor, the sandbox, and credential isolation, which aren’t policy.
+
+An action log-only mode lets through really happens, so history records its real outcome. A later rule that depends on it, such as “allow `git push` only after `npm test` passed”, sees what actually ran. After the first would-deny, a run can take a path an enforcing run wouldn’t, so decisions after `first_flip` are an approximation.
+
+**A box keeps one history across modes.** When you switch the same box from `log_only` to `enforce`, the enforcing run inherits what the trial did, because those actions really happened. A budget over the last hour counts the bytes a trial sent, and an “only after the tests passed” rule is met by a trial’s test run. To start enforcing with no trial behind it, run the trial in its own `box_dir`, or [start with fresh history](#start-with-fresh-history-after-a-dogwood-upgrade) before you enforce.
+
+**The policy protects nothing during a trial.** On the Shell and Monty path the policy is the only thing between the workload and your home directory, credential files, and cloud metadata. The egress gateway attaches each bound credential to a request the policy would deny. Box prints this on stderr at startup. Run trials only where that’s acceptable, such as a disposable VM or a host with no credentials you care about.
+
 ## History persistence and process crashes
 
 Box batches policy-history writes by default. Accepted events affect decisions during the run before those events necessarily reach disk. The engine checks persistence thresholds of 1,000 events or one second when an event arrives. A separate one-second timer also persists pending history while Box is idle. This interval is a polling target, not a maximum persistence delay.
@@ -804,4 +845,4 @@ Correct the system clock, or remove the box directory to start again, as [gettin
 -   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): a first policy, a denial, and the decision log.
 -   [The action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md): every action, its fields, and which part of the box raises it.
 -   [Security](/docs/user-guide/box/security/index.md): what `box.toml` governs, what `policy.dw` governs, and what a policy cannot do today.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/a2a97eede44b01f536faa4ada8c3085f97634681/docs/design/policy.md): how one engine per box decides, and why.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/policy.md): how one engine per box decides, and why.

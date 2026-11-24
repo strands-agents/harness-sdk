@@ -15,11 +15,11 @@ class MyPlugin(Plugin):
 
 ```python
 def hook(
-    func: HookCallback | None = None
-) -> _WrappedHookCallable | Callable[[HookCallback], _WrappedHookCallable]
+    func: _HookCallableT | None = None
+) -> _HookCallableT | Callable[[_HookCallableT], _HookCallableT]
 ```
 
-Defined in: [src/strands/plugins/decorator.py:39](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/plugins/decorator.py#L39)
+Defined in: [src/strands/plugins/decorator.py:42](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/plugins/decorator.py#L42)
 
 Mark a method as a hook callback for automatic registration.
 

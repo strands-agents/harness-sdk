@@ -389,6 +389,7 @@
   - [generate](https://strandsagents.com/docs/user-guide/evals-sdk/cli/generate/index.md): Generate evaluation experiments from the command line with strands-evals generate: LLM-created test cases from a context description, with or without topics.
   - [diagnose](https://strandsagents.com/docs/user-guide/evals-sdk/cli/diagnose/index.md): Detect failures and analyze root causes from the command line: strands-evals diagnose scores a Session JSON, and fetch pulls one from a trace provider.
   - [report](https://strandsagents.com/docs/user-guide/evals-sdk/cli/report/index.md): Render evaluation reports and schema-check experiment files from the command line with strands-evals report and validate, including stdin piping for CI.
+  - [ui](https://strandsagents.com/docs/user-guide/evals-sdk/cli/ui/index.md): Serve a local page over a directory of evaluation files with strands-evals ui: browse reports, sessions, and optimizer runs, and edit cases in place.
 
 ## Contribute
 

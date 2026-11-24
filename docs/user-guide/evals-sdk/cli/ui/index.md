@@ -1,0 +1,42 @@
+`strands-evals ui` serves a local page over the evaluation files in a directory. It scans for experiments, reports, sessions, diagnoses, and optimizer runs, pairs each report with the experiment it was made from, and gives each one a view in the browser.
+
+## Start the server
+
+```bash
+# Serve the current directory and open a browser
+strands-evals ui
+
+# Serve a specific directory
+strands-evals ui experiments/
+
+# Print what the scan found and exit, without serving
+strands-evals ui experiments/ --list
+```
+
+The server binds loopback (`127.0.0.1`) on a free port and prints a link carrying a token generated for that run. Every request needs the token, so another process or browser tab on the same machine cannot read or write through the server. Opening the link trades the token for a cookie and lands on a clean address, so the token is not left in the address bar or the browser history.
+
+| Flag | Purpose |
+| --- | --- |
+| `--port` | Bind a fixed port instead of one chosen by the OS. |
+| `--token` (or `STRANDS_EVALS_UI_TOKEN`) | Supply a stable token so the printed link survives restarts and can be bookmarked. |
+| `--read-only` | Browse without the save path. The editor loads cases but refuses writes. |
+| `--host` | Bind beyond loopback, for example `0.0.0.0` inside a container. Anyone who can reach that address with the link can read the files, and write them unless `--read-only` is set. |
+| `--depth` | How many directories deep to scan (default: 3). |
+| `--no-browser` | Print the URL without opening a browser. |
+
+## What the page shows
+
+-   **Reports**: summary figures, every row with its verdict and the evaluator’s reason, a score distribution per evaluator, cost per case read from recorded sessions, a group-by lens over case metadata, and side-by-side comparison of two or more reports.
+-   **Experiments**: a case editor that writes back to the file it loaded. A save checks the file’s modified time first, so a concurrent `run` or another editor is never silently overwritten.
+-   **Sessions and diagnoses**: a session saved by [`fetch`](/docs/user-guide/evals-sdk/cli/diagnose/index.md#fetch-pull-a-session-from-a-provider), trace by trace, with any diagnosis written by [`diagnose`](/docs/user-guide/evals-sdk/cli/diagnose/index.md) shown alongside it.
+-   **Optimizer runs**: each run’s result, setup, iteration progress, candidate diffs against the baseline, and trade-off front.
+-   **Live refresh**: the page polls the folder while open, so a run in progress fills in without a reload. Unsaved edits are never replaced.
+-   **Addresses**: every view has a URL of its own, so Back and Forward work and a view can be bookmarked or shared with someone serving the same folder.
+
+The page is also written to be handed to a coding agent. Reports, experiments, sessions, and their rows have **Copy as Markdown** actions, the same Markdown is served at a file’s address with `.md` added, and `/llms.txt` describes every route. A request made outside the browser sends the token as the `X-Evals-Token` header. These machine-readable forms are experimental and may change before a release.
+
+## Next steps
+
+-   [`run`](/docs/user-guide/evals-sdk/cli/run/index.md): produce the reports the page shows.
+-   [`diagnose` and `fetch`](/docs/user-guide/evals-sdk/cli/diagnose/index.md): produce the sessions and diagnoses the page lists.
+-   [`report`](/docs/user-guide/evals-sdk/cli/report/index.md): render a single report in the terminal instead.

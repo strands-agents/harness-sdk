@@ -173,6 +173,8 @@ Each effective decision produces one log record and one span that share a trace 
 
 `strands.box.policy.verdict` holds `deny` or `permit`. `strands.box.policy.cause` holds one of six values: `permitted`, `forbidden`, `no_match`, `policy_pending`, `internal_fault`, and `enforcement`.
 
+In [log-only mode](/docs/user-guide/box/reference/policy/index.md#log-only-mode), a denial that Box let through keeps `verdict = deny` and the policy’s own cause and rules, and also carries `strands.box.policy.enforced = false`. The run’s first such denial also carries `strands.box.policy.first_flip = true`, because later decisions can differ from what an enforcing run would decide. `strands.box.policy.would_deny.ids` lists every rule that would have denied the action, across all its steps and gates, in the order decided; a missing `permit` appears as `<default-deny>`. A record Box applied carries `would_deny.ids` too when a step log-only let through came before what really blocked the action, such as the kernel or a floor, so a trial still finds that rule. An applied record never carries `enforced` or `first_flip`, so `verdict == "deny"` finds every would-deny, and `enforced` separates them from real blocks.
+
 A record whose cause is `internal_fault` also carries the key `error.type`, with the value `strands.box.policy.evaluation_error`.
 
 The action value carries the vocabulary term alone, so a reader sees `fs:read` rather than `Box::Action::"fs:read"`. Every other value is reported as the enforcement point holds it. A spawn that a tool grammar decides reports the grammar action, so `Tool::git::Action::"push"` reads as the action `push` in the category `Tool::git`.
@@ -243,6 +245,7 @@ A control-plane record states one change to the authority this box holds. The sc
 | `strands.box.control.subject` | what the operation was about |
 | `strands.box.control.reason` | why a refusal happened |
 | `strands.box.control.detail` | further text the operation carries |
+| `strands.box.control.enforcement` | on `policy_installed`, how the policy’s verdicts apply: `enforce` or `log_only` |
 
 A `workload_started` record states that the box finished its setup and the workload is running inside its containment. The box writes `box_started` before it installs the policy and builds the sandbox, and `workload_started` once the workload’s `exec` succeeds. The subject is the box’s name. A run whose containment or `exec` fails has no `workload_started` record, and its `box_stopped` is `refused`.
 
@@ -339,4 +342,4 @@ Set `STRANDS_BOX_TELEMETRY_DEBUG` to also print each failed export as it happens
 ## See also
 
 -   [Getting started](/docs/user-guide/box/core/quickstart/index.md): install Box, then run Claude Code or Codex in a box.
--   [How telemetry works](https://github.com/strands-agents/box/blob/a2a97eede44b01f536faa4ada8c3085f97634681/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.

@@ -56,7 +56,7 @@ The packs that ship with `box` are in `resources/packs/`. `box profile show <nam
 
 The header holds no other key, and `box` refuses a pack that has no header.
 
-When a tool pack extends another tool pack, it takes that pack’s tool in, and the base is not a tool of its own. `@box/go` extends `@box/git`, so go gets git’s settings and the agent gets no `git` tool, unless the profile or a support pack sets `[tool.git] program`. To keep both tools, use `include` too: `@box/npm` extends and includes `@box/node`, so npm gets node’s settings and the agent keeps a `node` tool. [Pack kinds](https://github.com/strands-agents/box/blob/a2a97eede44b01f536faa4ada8c3085f97634681/docs/design/cli/profile-language.md#pack-kinds) has the background.
+When a tool pack extends another tool pack, it takes that pack’s tool in, and the base is not a tool of its own. `@box/go` extends `@box/git`, so go gets git’s settings and the agent gets no `git` tool, unless the profile or a support pack sets `[tool.git] program`. To keep both tools, use `include` too: `@box/npm` extends and includes `@box/node`, so npm gets node’s settings and the agent keeps a `node` tool. [Pack kinds](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/cli/profile-language.md#pack-kinds) has the background.
 
 ## Inputs
 
@@ -117,7 +117,7 @@ A route’s credential never reaches the agent through an input. If `from = "env
 
 ### Two packs that declare one input
 
-Two packs can declare the same name, and then it is one input. The declarations agree on `type`, and the value satisfies every `pattern` and `values` list. When the packs give different defaults or sources, `box` picks neither and the error names each pack: set the input in your profile’s `[options]`. [One input in two packs](https://github.com/strands-agents/box/blob/a2a97eede44b01f536faa4ada8c3085f97634681/docs/design/cli/profile-language.md#one-input-in-two-packs) has the full rules.
+Two packs can declare the same name, and then it is one input. The declarations agree on `type`, and the value satisfies every `pattern` and `values` list. When the packs give different defaults or sources, `box` picks neither and the error names each pack: set the input in your profile’s `[options]`. [One input in two packs](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/cli/profile-language.md#one-input-in-two-packs) has the full rules.
 
 ## Providers
 
@@ -173,7 +173,7 @@ The first three roles are for a server at a URL, and the last two for a server o
 -   A `target` cannot overlap a `[[storage.files]]` target, except a `fill` row. Rows that share a target use the same `kind`, and one row’s section is not inside another’s.
 -   `box` reads no file in your project, in `~/.strands/box`, in a folder the agent can write, or in a folder that a [plugin](/docs/user-guide/box/plugins/index.md) keeps on your machine. A file or a key your machine does not have reads as no servers.
 
-[MCP servers](https://github.com/strands-agents/box/blob/a2a97eede44b01f536faa4ada8c3085f97634681/docs/design/cli/profiles.md#mcp-servers) says how `box` declares a server, fills in its variables, and why it declares none for some, and [An MCP server has no automatic declaration](/docs/user-guide/box/troubleshooting/index.md#an-mcp-server-has-no-automatic-declaration) has the fixes.
+[MCP servers](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/cli/profiles.md#mcp-servers) says how `box` declares a server, fills in its variables, and why it declares none for some, and [An MCP server has no automatic declaration](/docs/user-guide/box/troubleshooting/index.md#an-mcp-server-has-no-automatic-declaration) has the fixes.
 
 ## Storage
 
@@ -228,7 +228,7 @@ optional = true
     Quit the program that writes the file, such as the agent on your machine, then run again. A `sync` update does not make this check, so a file written during an update can come in part written, and the next update brings it up to date.
     
 
-[Copies](https://github.com/strands-agents/box/blob/a2a97eede44b01f536faa4ada8c3085f97634681/docs/design/cli/profile-language.md#copies) has the full steps, including `sync`.
+[Copies](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/cli/profile-language.md#copies) has the full steps, including `sync`.
 
 ### Copy only part of a settings file
 
@@ -326,7 +326,7 @@ When a run brings a `sync` copy up to date, it prints what it did, such as `upda
 
 ### Import hooks: `[[storage.hooks]]`
 
-A `[[storage.hooks]]` row makes the hooks in a JSON copy in storage follow the hooks in a file of yours, on each run. `box` keeps each hook that runs one shell script, and lets the box read that script. The row says where the file keeps its hooks and what a kept hook looks like. [Hooks](https://github.com/strands-agents/box/blob/a2a97eede44b01f536faa4ada8c3085f97634681/docs/design/cli/profile-language.md#hooks) shows `@box/claude`’s row and the checks each hook and script pass. An agent pack that imports hooks says in its README how the [`[limits]`](/docs/user-guide/box/profiles/index.md#what-a-profile-holds) apply to a hook.
+A `[[storage.hooks]]` row makes the hooks in a JSON copy in storage follow the hooks in a file of yours, on each run. `box` keeps each hook that runs one shell script, and lets the box read that script. The row says where the file keeps its hooks and what a kept hook looks like. [Hooks](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/cli/profile-language.md#hooks) shows `@box/claude`’s row and the checks each hook and script pass. An agent pack that imports hooks says in its README how the [`[limits]`](/docs/user-guide/box/profiles/index.md#what-a-profile-holds) apply to a hook.
 
 | Key | What it does |
 | --- | --- |
@@ -370,7 +370,7 @@ The file is one tool table. `box` puts `[run]` and the tables after it under `[t
 | `homebrew` | A program installed through Homebrew: its own files, its dependencies, and their configuration folders. |
 | `directory` | A standalone program that reads files beside it, when nothing else in the list fits. |
 
-List every type the program can have. A type that does not fit adds nothing, so `["node", "homebrew"]` works for Node from nvm and Node from Homebrew. For another layout, leave out `installation` and list the paths in `[filesystem]`. The `# installation` comments in `box profile show --full` name each type that applied. [Installation layouts](https://github.com/strands-agents/box/blob/a2a97eede44b01f536faa4ada8c3085f97634681/docs/design/cli/profile-language.md#installation-layouts) says what each type matches and reads.
+List every type the program can have. A type that does not fit adds nothing, so `["node", "homebrew"]` works for Node from nvm and Node from Homebrew. For another layout, leave out `installation` and list the paths in `[filesystem]`. The `# installation` comments in `box profile show --full` name each type that applied. [Installation layouts](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/cli/profile-language.md#installation-layouts) says what each type matches and reads.
 
 A tool pack’s program input finds the program on your `PATH` only, because the agent types the bare name and the box finds it on the agent’s `PATH`. Leave out `search`, or write exactly `[{ env = "PATH" }]`. Only `[run] command` names the input, and a profile cannot set it in `[options]`. Another pack that needs the program’s folder uses `${{ tool.git.root }}`.
 
@@ -423,7 +423,7 @@ Each `[[storage.files]]` row in a tool’s storage names its `mode`:
 | `"link"` | One read-only link to the source file or folder. |
 | `"link-children"` | A folder of the tool’s own with one read-only link for each entry in the source folder, so the tool can add its own entries beside them. A source that is a file stops the run. |
 
-A link row holds only `source`, `target`, and `mode`, and its `target` holds no placeholder. Each run brings the links up to date with their sources, and leaves what the tool put at a target in place of a link. A link grants nothing, so the tool still needs a `read` entry for its source. Two rows of one tool cannot have the same target, or one inside the other. [Tool storage](https://github.com/strands-agents/box/blob/a2a97eede44b01f536faa4ada8c3085f97634681/docs/design/cli/profile-language.md#tool-storage) has the background.
+A link row holds only `source`, `target`, and `mode`, and its `target` holds no placeholder. Each run brings the links up to date with their sources, and leaves what the tool put at a target in place of a link. A link grants nothing, so the tool still needs a `read` entry for its source. Two rows of one tool cannot have the same target, or one inside the other. [Tool storage](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/cli/profile-language.md#tool-storage) has the background.
 
 ### Tool grammars
 
