@@ -213,6 +213,16 @@ describe('createHarness', () => {
     ])
   })
 
+  it('uses the harness management tool name when the supplied name is undefined', async () => {
+    const agent = await createHarness({
+      // @ts-expect-error JavaScript callers can pass undefined explicitly.
+      backgroundTasks: { manageToolName: undefined },
+    })
+    await agent.initialize()
+
+    expect(toolNames(agent)).toContain('manage_background_task')
+  })
+
   it('treats backgroundTasks true the same as the default', async () => {
     const agent = await createHarness({ backgroundTasks: true })
 
