@@ -1880,25 +1880,31 @@ describe('ChatController', () => {
     await controller.dispose()
   })
 
-  it('shouldOpenAFixPanelWhenATurnFailsInADevChat', async () => {
-    const backend = idleBackend({
+  const failingBackend = (message: string): ChatBackend =>
+    idleBackend({
       async *stream() {
         yield* []
-        throw new Error('Python agent exited (1). Traceback: boom')
+        throw new Error(message)
       },
     })
-    const controller = new ChatController(backend, {
+
+  const devChat = (backend: ChatBackend, options: ConstructorParameters<typeof ChatController>[1] = {}) =>
+    new ChatController(backend, {
       streamPresentation: {},
       runtime: {
         devWorkspace: {
           root: '/project/strands-dev',
-          entrypoint: '/project/agent.py',
-          boundEntrypoint: '/project/agent.py',
+          entrypoint: '/project/agent.ts',
+          boundEntrypoint: '/project/agent.ts',
           origin: 'discovered',
         },
         cwd: '/project',
       },
+      ...options,
     })
+
+  it('shouldOpenAFixPanelWhenATurnFailsInADevChat', async () => {
+    const controller = devChat(failingBackend('Python agent exited (1). Traceback: boom'))
 
     await controller.submit('hello')
 
@@ -1915,25 +1921,7 @@ describe('ChatController', () => {
     ['missing AWS credentials', 'Could not load credentials from any providers'],
     ['an invalid security token', 'The security token included in the request is invalid.'],
   ])('shouldOfferModelSetupWhenADevChatTurnFailsWith %s', async (_, message) => {
-    const backend = idleBackend({
-      async *stream() {
-        yield* []
-        throw new Error(message)
-      },
-    })
-    const controller = new ChatController(backend, {
-      streamPresentation: {},
-      requestSetup: vi.fn(),
-      runtime: {
-        devWorkspace: {
-          root: '/project/strands-dev',
-          entrypoint: '/project/agent.ts',
-          boundEntrypoint: '/project/agent.ts',
-          origin: 'discovered',
-        },
-        cwd: '/project',
-      },
-    })
+    const controller = devChat(failingBackend(message), { requestSetup: vi.fn() })
 
     await controller.submit('hello')
 
@@ -1952,24 +1940,7 @@ describe('ChatController', () => {
   })
 
   it('shouldKeepTheFixPanelForACredentialFailureWhenTheDevChatCannotOpenSetup', async () => {
-    const backend = idleBackend({
-      async *stream() {
-        yield* []
-        throw new Error('Could not load credentials from any providers')
-      },
-    })
-    const controller = new ChatController(backend, {
-      streamPresentation: {},
-      runtime: {
-        devWorkspace: {
-          root: '/project/strands-dev',
-          entrypoint: '/project/agent.ts',
-          boundEntrypoint: '/project/agent.ts',
-          origin: 'discovered',
-        },
-        cwd: '/project',
-      },
-    })
+    const controller = devChat(failingBackend('Could not load credentials from any providers'))
 
     await controller.submit('hello')
 
@@ -1981,12 +1952,7 @@ describe('ChatController', () => {
   })
 
   it('shouldAdviseARestartWithoutAPanelWhenADevChatTurnFailsWithAnExpiredToken', async () => {
-    const backend = idleBackend({
-      async *stream() {
-        yield* []
-        throw new Error('The security token included in the request is expired')
-      },
-    })
+    const backend = failingBackend('The security token included in the request is expired')
     Object.assign(backend, {
       sessionIdentity: {
         sessionId: 'saved-session',
@@ -1995,19 +1961,7 @@ describe('ChatController', () => {
         configured: { sessionId: null, sessionDir: '/project/strands-dev/.strands/state/sessions' },
       },
     })
-    const controller = new ChatController(backend, {
-      streamPresentation: {},
-      requestSetup: vi.fn(),
-      runtime: {
-        devWorkspace: {
-          root: '/project/strands-dev',
-          entrypoint: '/project/agent.ts',
-          boundEntrypoint: '/project/agent.ts',
-          origin: 'discovered',
-        },
-        cwd: '/project',
-      },
-    })
+    const controller = devChat(backend, { requestSetup: vi.fn() })
 
     await controller.submit('hello')
 
@@ -2020,16 +1974,8 @@ describe('ChatController', () => {
   })
 
   it('shouldShowWhatDevDeactivatedWhenADevChatOpensAnAgentWithCustomState', async () => {
-    const controller = new ChatController(idleBackend(), {
+    const controller = devChat(idleBackend(), {
       devStateNotice: 'Dev deactivated the custom session manager and memory of this agent in this chat.',
-      runtime: {
-        devWorkspace: {
-          root: '/project/strands-dev',
-          entrypoint: '/project/agent.ts',
-          boundEntrypoint: '/project/agent.ts',
-          origin: 'discovered',
-        },
-      },
     })
 
     expect(controller.getSnapshot().notices).toContainEqual({
@@ -2041,13 +1987,10 @@ describe('ChatController', () => {
   })
 
   it('shouldNotOpenAFixPanelWhenATurnFailsOutsideADevChat', async () => {
-    const backend = idleBackend({
-      async *stream() {
-        yield* []
-        throw new Error('The security token included in the request is expired')
-      },
+    const controller = new ChatController(failingBackend('The security token included in the request is expired'), {
+      streamPresentation: {},
+      runtime: { cwd: '/project' },
     })
-    const controller = new ChatController(backend, { streamPresentation: {}, runtime: { cwd: '/project' } })
 
     await controller.submit('hello')
 

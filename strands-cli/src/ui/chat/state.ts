@@ -94,7 +94,7 @@ export function isConfigurationTool(name: string): boolean {
 }
 
 /** The strands dev tools that put one question on screen and wait for its answer. */
-export const ON_SCREEN_QUESTION_TOOLS: ReadonlySet<string> = new Set([
+const ON_SCREEN_QUESTION_TOOLS: ReadonlySet<string> = new Set([
   'strands_dev_single_select',
   'strands_dev_multi_select',
   'strands_dev_number_input',

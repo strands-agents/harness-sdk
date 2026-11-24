@@ -1,6 +1,7 @@
 import { createElement, useEffect, useMemo, useState, type ReactElement } from 'react'
 import { useInput } from '../input.js'
 
+import type { DevChatPanelProps } from '../chat/types.js'
 import { Box } from '../theme.js'
 import { useDevPanelClicks } from './dev.js'
 import {
@@ -29,15 +30,6 @@ import {
   type WizardSelectSpec,
   type WizardStepSpec,
 } from './wizard-request.js'
-
-export interface WizardRequestPanelProps {
-  readonly broker: WizardBroker
-  readonly width: number
-  readonly height: number
-  readonly close: () => void
-  readonly active?: boolean
-  readonly blur?: () => void
-}
 
 type Answers = Record<string, WizardAnswer>
 
@@ -287,7 +279,7 @@ export const WizardRequestPanel = ({
   close,
   active = true,
   blur,
-}: WizardRequestPanelProps): ReactElement => {
+}: Omit<DevChatPanelProps, 'openCommand'> & { broker: WizardBroker }): ReactElement => {
   const [request, setRequest] = useState(() => broker.pending())
   useEffect(() => broker.subscribe(setRequest), [broker])
   useEffect(() => {

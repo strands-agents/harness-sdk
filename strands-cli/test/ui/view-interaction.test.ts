@@ -104,31 +104,37 @@ describe('MCP panel input', () => {
   })
 })
 
-describe('error panel input', () => {
-  const devRuntime = {
-    devWorkspace: {
-      root: '/project/strands-dev',
-      entrypoint: '/project/agent.ts',
-      boundEntrypoint: '/project/agent.ts',
-      origin: 'discovered',
-    },
-  }
+const devWorkspace = {
+  root: '/project/strands-dev',
+  entrypoint: '/project/agent.ts',
+  boundEntrypoint: '/project/agent.ts',
+  origin: 'discovered',
+}
 
+const renderChat = (controller: ChatControllerApi) => {
+  const input = ttyInput()
+  const output = ttyOutput(100, 24)
+  const frame = captureFrame(output)
+  const instance = render(createElement(ChatApp, { controller }), {
+    stdin: input,
+    stdout: output,
+    stderr: ttyOutput(100, 24),
+    exitOnCtrlC: false,
+    patchConsole: false,
+    interactive: true,
+  })
+  return { input, frame, instance }
+}
+
+describe('error panel input', () => {
   it('shouldCopyTheWholeErrorWhenControlYIsPressedInAScrollingDevErrorPanel', async () => {
     const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
-    const input = ttyInput()
-    const output = ttyOutput(100, 24)
-    const frame = captureFrame(output)
-    const controller = new ChatController(idleBackend(), { settings: { animations: false }, runtime: devRuntime })
-    const message = Array.from({ length: 30 }, (_, index) => `Trace ${index}: agent.ts failed`).join('\n')
-    const instance = render(createElement(ChatApp, { controller }), {
-      stdin: input,
-      stdout: output,
-      stderr: ttyOutput(100, 24),
-      exitOnCtrlC: false,
-      patchConsole: false,
-      interactive: true,
+    const controller = new ChatController(idleBackend(), {
+      settings: { animations: false },
+      runtime: { devWorkspace },
     })
+    const message = Array.from({ length: 30 }, (_, index) => `Trace ${index}: agent.ts failed`).join('\n')
+    const { input, frame, instance } = renderChat(controller)
     try {
       await vi.waitFor(() => expect(frame().join('\n')).toContain('/settings'))
       controller.showError('Agent reload failed', message)
@@ -149,18 +155,8 @@ describe('error panel input', () => {
 
   it('shouldNotCopyAnErrorWhenControlYIsPressedOutsideADevChat', async () => {
     const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
-    const input = ttyInput()
-    const output = ttyOutput(100, 24)
-    const frame = captureFrame(output)
     const controller = new ChatController(idleBackend(), { settings: { animations: false } })
-    const instance = render(createElement(ChatApp, { controller }), {
-      stdin: input,
-      stdout: output,
-      stderr: ttyOutput(100, 24),
-      exitOnCtrlC: false,
-      patchConsole: false,
-      interactive: true,
-    })
+    const { input, frame, instance } = renderChat(controller)
     try {
       await vi.waitFor(() => expect(frame().join('\n')).toContain('/settings'))
       controller.showError('Agent reload failed', 'agent.ts failed')
@@ -180,28 +176,6 @@ describe('error panel input', () => {
 })
 
 describe('dev error panel fix', () => {
-  const devWorkspace = {
-    root: '/project/strands-dev',
-    entrypoint: '/project/agent.ts',
-    boundEntrypoint: '/project/agent.ts',
-    origin: 'discovered',
-  }
-
-  const renderChat = (controller: ChatControllerApi) => {
-    const input = ttyInput()
-    const output = ttyOutput(100, 24)
-    const frame = captureFrame(output)
-    const instance = render(createElement(ChatApp, { controller }), {
-      stdin: input,
-      stdout: output,
-      stderr: ttyOutput(100, 24),
-      exitOnCtrlC: false,
-      patchConsole: false,
-      interactive: true,
-    })
-    return { input, frame, instance }
-  }
-
   const reloading = (controller: ChatController): ChatControllerApi => {
     let source: ChatSnapshot | undefined
     let snapshot: ChatSnapshot | undefined
