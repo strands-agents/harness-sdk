@@ -229,6 +229,15 @@ export class Tracer {
    */
   private readonly _spanAttributesOnly: boolean
 
+  /**
+   * Whether `gen_ai.usage.*` is recorded only on model invocation (`chat`) spans.
+   *
+   * Set via `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_usage_on_model_spans_only`. By default the agent,
+   * multi-agent and node spans also carry the usage of the model calls under them, which backends that
+   * total token usage by summing every span (such as Opik and Datadog) count more than once.
+   */
+  private readonly _usageOnModelSpansOnly: boolean
+
   /** In-memory execution trace state, collected independently of OTEL. */
   private readonly _traceState: AgentTraceState = { traces: [] }
 
@@ -250,6 +259,7 @@ export class Tracer {
 
     this._isLangfuse = Tracer._detectLangfuse()
     this._spanAttributesOnly = this._isLangfuse || optInValues.has('gen_ai_span_attributes_only')
+    this._usageOnModelSpansOnly = optInValues.has('gen_ai_usage_on_model_spans_only')
 
     // Get tracer from global API to ensure ground truth
     this._tracer = trace.getTracer(getServiceName())
@@ -341,7 +351,7 @@ export class Tracer {
 
     try {
       const attributes: Record<string, AttributeValue> = {}
-      if (accumulatedUsage) this._setUsageAttributes(attributes, accumulatedUsage)
+      if (accumulatedUsage && !this._usageOnModelSpansOnly) this._setUsageAttributes(attributes, accumulatedUsage)
       // Langfuse auto-generates "generation" observations for spans with token usage,
       // which duplicates the token counts already reported on this agent span.
       // Setting observation.type to "span" prevents Langfuse from creating that
@@ -597,7 +607,7 @@ export class Tracer {
     try {
       const attributes: Record<string, AttributeValue> = {}
       if (options.duration !== undefined) attributes['gen_ai.agent.execution_time'] = options.duration
-      if (options.usage) this._setUsageAttributes(attributes, options.usage)
+      if (options.usage && !this._usageOnModelSpansOnly) this._setUsageAttributes(attributes, options.usage)
 
       this._endSpan(span, attributes, options.error)
     } catch (err) {
@@ -650,7 +660,7 @@ export class Tracer {
       const attributes: Record<string, AttributeValue> = {}
       if (options.status) attributes['gen_ai.agent.status'] = options.status
       if (options.duration !== undefined) attributes['gen_ai.agent.execution_time'] = options.duration
-      if (options.usage) this._setUsageAttributes(attributes, options.usage)
+      if (options.usage && !this._usageOnModelSpansOnly) this._setUsageAttributes(attributes, options.usage)
 
       this._endSpan(span, attributes, options.error)
     } catch (err) {
