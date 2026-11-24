@@ -18,7 +18,7 @@ from .types import is_tool_use_block
 
 if TYPE_CHECKING:
     from ..models.model import Model
-    from .stash import Stash
+    from .archive import Archive
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ def _run_start(messages: Messages, run: Messages) -> int | None:
 
     A pass awaits between selecting a run and removing it, so the run can be displaced or broken up before the
     removal reaches it. Removing ``len(run)`` messages from a stale start takes messages nobody selected, and those
-    are not in the stash entry the run was written to.
+    are not in the archive entry the run was written to.
     """
     start = _index_of(messages, run[0])
     if start is None:
@@ -101,7 +101,7 @@ def with_pairs(messages: Messages, to_remove: list[Message]) -> list[Message]:
 
 
 def new_message(role: Role, content: list[ContentBlock]) -> Message:
-    """A message joining the history, with the tracking id a stash ref is keyed by.
+    """A message joining the history, with the tracking id an archive ref is keyed by.
 
     Without one the message shares the fallback key space with every other message that lacks one, so a block
     offloaded from it takes the ref of whatever was stored at that block index first.
@@ -115,7 +115,7 @@ def insert_marker(messages: Messages, index: int, marker: ContentBlock) -> None:
     """Add a marker as assistant content at the gap left by removed messages.
 
     The marker joins an assistant message beside the gap, before any trailing ``toolUse`` blocks, which keeps that
-    message's tracking id for stash refs; otherwise it becomes its own assistant message. It never joins message 0,
+    message's tracking id for archive refs; otherwise it becomes its own assistant message. It never joins message 0,
     and the last message is never removed, so a new marker never ends the history.
     """
     index = max(1, min(index, len(messages)))
@@ -180,7 +180,7 @@ async def remove_messages(
     model: Model,
     format_marker: Callable[[int], str],
     method: OffloadMethod,
-    stash: Stash | None,
+    archive: Archive | None,
 ) -> bool:
     """Remove messages with their tool pairs, leaving one ``format_marker(tokens)`` placeholder per contiguous run.
 
@@ -191,42 +191,42 @@ async def remove_messages(
     # Last run first, so removing a run leaves the earlier runs' positions unchanged.
     for run in reversed(_split_into_runs(messages, with_pairs(messages, to_remove))):
         tokens = await removed_tokens(run, model)
-        if await _replace_run(messages, run, format_marker(tokens), tokens, method, stash):
+        if await _replace_run(messages, run, format_marker(tokens), tokens, method, archive):
             acted = True
     return acted
 
 
 async def _replace_run(
-    messages: Messages, run: Messages, text: str, tokens: int, method: OffloadMethod, stash: Stash | None
+    messages: Messages, run: Messages, text: str, tokens: int, method: OffloadMethod, archive: Archive | None
 ) -> bool:
-    """Replace a contiguous run of messages with one placeholder reading ``text``, stashed under its own reference.
+    """Replace a contiguous run of messages with one placeholder reading ``text``, archived under its own reference.
 
-    A failed stash write leaves the placeholder without a reference, rather than keeping content already accounted
+    A failed archive write leaves the placeholder without a reference, rather than keeping content already accounted
     for.
     """
-    stash_ref = await stash_removed(stash, run, method)
+    archive_ref = await archive_removed(archive, run, method)
     start = _run_start(messages, run)
     if start is None:
         return False
-    # Stashed before the splice and the marker inserted without an await between: a cancellation here would
+    # Archived before the splice and the marker inserted without an await between: a cancellation here would
     # otherwise leave the run neither in the history nor retrievable.
     del messages[start : start + len(run)]
-    insert_marker(messages, start, offload_placeholder(method, text, stash_ref, tokens))
+    insert_marker(messages, start, offload_placeholder(method, text, archive_ref, tokens))
     return True
 
 
-async def stash_removed(stash: Stash | None, removed: Messages, method: OffloadMethod) -> str | None:
+async def archive_removed(archive: Archive | None, removed: Messages, method: OffloadMethod) -> str | None:
     """The reference a run of removed messages is retrievable under.
 
-    None when there is no stash or the write failed, which leaves the placeholder without a reference rather than
+    None when there is no archive or the write failed, which leaves the placeholder without a reference rather than
     keeping content the caller has accounted for.
     """
-    if stash is None or not removed:
+    if archive is None or not removed:
         return None
     try:
-        return await stash.store_removed(removed)
+        return await archive.store_removed(removed)
     except Exception:
-        logger.warning("method=<%s> | failed to stash removed messages", method, exc_info=True)
+        logger.warning("method=<%s> | failed to archive removed messages", method, exc_info=True)
         return None
 
 
