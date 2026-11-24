@@ -1576,4 +1576,29 @@ describe('truncate whole messages', () => {
 
     expect(textsOf(messages)).toEqual(afterFirstPass)
   })
+
+  it('skips empty tool results across drop, truncate, and summarize without modifying content', async () => {
+    const makeEmptyToolResult = (id: string): Message =>
+      new Message({
+        role: 'user',
+        content: [new ToolResultBlock({ toolUseId: id, status: 'success', content: [] })],
+      })
+
+    for (const strategy of [
+      Offload.drop('toolResults').when({}),
+      Offload.truncate('toolResults').when({}),
+      Offload.summarize('toolResults').when({}),
+    ]) {
+      const messages = [makeEmptyToolResult('t-empty')]
+      const context = makeContext(messages)
+      const summarizeSpy = vi.spyOn(context.agent.model, 'summarize')
+      summarizeSpy.mockClear()
+
+      const result = await strategy.apply(context)
+
+      expect(result).toBe(false)
+      expect((messages[0]!.content[0] as ToolResultBlock).content).toEqual([])
+      expect(summarizeSpy).not.toHaveBeenCalled()
+    }
+  })
 })
