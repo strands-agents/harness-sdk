@@ -2,17 +2,23 @@ import { createElement, type ReactElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { createDiffPreview } from '../../src/agent/file-changes.js'
+import type { ChatBackend } from '../../src/agent/types.js'
+import type { DevChatCommand } from '../../src/ui/chat/controller.js'
 import { WizardRequestPanel } from '../../src/ui/panels/wizard-request-panel.js'
 import {
   defaultAnswers,
   WizardBroker,
+  wizardRequestHasDiff,
   wizardRequestRows,
   type WizardFieldSpec,
   type WizardRequestSpec,
 } from '../../src/ui/panels/wizard-request.js'
-import { captureFrame, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
+import { mountChat } from '../fixtures/chat-app.js'
+import { idleBackend } from '../fixtures/chat-backend.js'
+import { captureFrame, mouseInputSequence, render, ttyInput, ttyOutput } from '../fixtures/terminal.js'
 
 const ENTER = '\r'
+const UP = '\u001b[A'
 const DOWN = '\u001b[B'
 const ESCAPE = '\u001b'
 const BACKSPACE = '\u007f'
@@ -435,5 +441,224 @@ describe('a question that shows a change to read', () => {
     const rows = wizardRequestRows(wide.pending(), 76)!
     expect(wizardRequestRows(short.pending(), 76)).toBeLessThan(rows)
     expect(wizardRequestRows(wide.pending(), 40)).toBeGreaterThan(rows)
+  })
+})
+
+const pickOne = (key: string, labels: readonly string[]): WizardFieldSpec => ({
+  kind: 'select',
+  key,
+  multiple: false,
+  options: labels.map((label) => ({ value: label, label, detail: '5 cases' })),
+})
+
+const walked = (...steps: (readonly WizardFieldSpec[])[]): WizardRequestSpec => ({
+  ...question([]),
+  steps: steps.map((fields, index) => ({ key: `step${index}`, title: `step${index}`, fields })),
+})
+
+describe('wizardRequestRows', () => {
+  it('shouldCountTheQuestionItsOptionsAndOnePaddingRow', () => {
+    expect(wizardRequestRows(undefined)).toBeUndefined()
+    expect(wizardRequestRows({ ...question([pickOne('mode', ['a', 'b'])]), id: 'r1' })).toBe(8)
+  })
+
+  it('shouldGrowWithTheOptionCount', () => {
+    expect(wizardRequestRows({ ...question([pickOne('mode', ['a', 'b', 'c', 'd', 'e'])]), id: 'r2' })).toBe(11)
+  })
+
+  it('shouldSizeAWalkedFormToItsTallestStepPlusItsStepBar', () => {
+    const request = walked([pickOne('mode', ['a', 'b'])], [pickOne('more', ['a', 'b', 'c', 'd'])])
+
+    expect(wizardRequestRows({ ...request, id: 'r4' })).toBe(8 + 2 + 2)
+  })
+})
+
+describe('wizardRequestHasDiff', () => {
+  it('shouldBeFalseForAQuestionWithNoDiff', () => {
+    expect(wizardRequestHasDiff({ ...question([tune]), id: 'r1' })).toBe(false)
+    expect(wizardRequestHasDiff(undefined)).toBe(false)
+  })
+
+  it('shouldBeTrueOnlyWhenAFieldIsADiff', () => {
+    expect(wizardRequestHasDiff({ ...review(), id: 'r2' })).toBe(true)
+  })
+})
+
+// The command as the dev chat registers it: the panel in the chat, sized and docked by the question it shows.
+const askCommand = (broker: WizardBroker): DevChatCommand => ({
+  spec: { name: 'ask', usage: '/ask', description: 'Ask' },
+  sticky: true,
+  dock: () => wizardRequestHasDiff(broker.pending()),
+  wideDock: () => wizardRequestHasDiff(broker.pending()),
+  dropPending: () => broker.dropForTurn(),
+  contentRows: (width) => wizardRequestRows(broker.pending(), width),
+  attach: (context) => broker.attachOpener(() => context.openPanel('ask')),
+  open: () => (props) => createElement(WizardRequestPanel, { ...props, broker }),
+})
+
+describe('the panel around one question', () => {
+  const ask = async (spec: WizardRequestSpec, rows: number) => {
+    const broker = new WizardBroker()
+    void broker.ask(spec)
+    const view = await mountChat({ devCommands: [askCommand(broker)], columns: 110, rows })
+    await view.press('/ask')
+    await view.press(ENTER)
+    return view
+  }
+
+  it('shouldFitTheQuestionRatherThanHalfTheScreen', async () => {
+    const { row } = await ask(question([pickOne('mode', ['Step by step', 'Describe it'])]), 30)
+
+    expect(row('╭')).toBeGreaterThanOrEqual(0)
+    expect(row('╰') - row('╭')).toBeLessThanOrEqual(9)
+  })
+
+  it.each([
+    ['one step', 1],
+    ['a walked form', 2],
+  ])('shouldShowEveryOptionOfALongListIn%s', async (_name, stepCount) => {
+    const labels = Array.from({ length: 10 }, (_, index) => `experiment-${index + 1}`)
+    const steps = Array.from({ length: stepCount }, (_, index) => [pickOne(`step${index}`, labels)])
+    const { screen } = await ask(walked(...steps), 50)
+
+    for (const label of labels) expect(screen()).toContain(label)
+    expect(screen()).not.toMatch(/↓ \d+ more/u)
+  })
+})
+
+describe('a real ask call with its question on screen', () => {
+  const asked: WizardRequestSpec = {
+    ...question([{ kind: 'text', key: 'request', label: 'request' }]),
+    question: 'Describe the optimization you want, or answer "step by step".',
+  }
+  const call = (toolUseId: string, name: string, input = {}): never =>
+    ({ type: 'toolStart', toolUseId, name, input }) as never
+  const result = (toolUseId: string, text: string): never =>
+    ({ type: 'toolResult', toolUseId, status: 'success', content: [{ type: 'text', text }] }) as never
+
+  // Streams the question call and holds the turn open on it, the way the real tool does.
+  const askingBackend = (broker: WizardBroker, answered: Promise<unknown>): ChatBackend =>
+    idleBackend({
+      async *stream() {
+        // Two finished calls first, so the pending ask lands inside a tool group, not alone.
+        yield call('use-a', 'strands_dev_status')
+        yield result('use-a', '{}')
+        yield call('use-b', 'strands_dev_status')
+        yield result('use-b', '{}')
+        yield call('use-1', 'strands_dev_confirm', { question: asked.question })
+        void broker.ask(asked)
+        await answered
+        yield result('use-1', '{"status":"answered"}')
+        return { stopReason: 'endTurn' }
+      },
+    })
+
+  const openQuestion = async () => {
+    const broker = new WizardBroker()
+    let resolve = (): void => {}
+    const answered = new Promise<void>((done) => {
+      resolve = done
+    })
+    const view = await mountChat({
+      devCommands: [askCommand(broker)],
+      rows: 30,
+      backend: askingBackend(broker, answered),
+    })
+    for (const character of 'optimize') await view.press(character)
+    await view.press(ENTER)
+    await new Promise((done) => setTimeout(done, 50))
+    return { ...view, resolve }
+  }
+
+  it('shouldShowTheCursorOnlyOnceFocusMovesIntoTheQuestion', async () => {
+    const { press, screen, resolve } = await openQuestion()
+
+    expect(screen()).not.toContain('›')
+    expect(screen()).toContain('↑ answer this')
+
+    await press(UP)
+
+    expect(screen()).toContain('›')
+    expect(screen()).not.toContain('↑ answer this')
+    resolve()
+  })
+
+  it('shouldShowOnlyTheQuestion', async () => {
+    const { screen, resolve } = await openQuestion()
+    const shown = screen()
+
+    expect(shown).toContain('Describe the optimization you want')
+    expect(shown).not.toContain('Ask ×')
+    expect(shown).not.toContain('3 tool calls')
+    expect(shown).not.toContain('Waiting for your answer')
+    expect(shown).not.toContain('Viewing /ask')
+    expect(shown).toContain('Enter to send')
+    expect(shown).toContain('↑ answer this')
+    expect(shown).not.toContain('›')
+    resolve()
+  })
+})
+
+describe('a finished run’s review in the chat', () => {
+  const WHEEL_DOWN = 65
+  const RULES = Array.from({ length: 24 }, (_, index) => `Rule ${index + 1}: keep the answer short.`).join('\n')
+  const CHANGED = RULES.replace('Rule 2:', 'Rule 2 (first):').replace('Rule 23:', 'Rule 23 (last):')
+
+  const mount = async (columns: number, rows: number) => {
+    const broker = new WizardBroker()
+    const view = await mountChat({ devCommands: [askCommand(broker)], columns, rows })
+    void broker.ask(review(RULES, CHANGED))
+    await view.instance.waitUntilRenderFlush()
+    return view
+  }
+
+  it.each([
+    [80, 24, '+ Rule 2 (first): keep the answer short.'],
+    [89, 30, '+ Rule 2 (first): keep the answer short.'],
+    [60, 20, '@@ -1,5 +1,5 @@'],
+  ])('shouldShowTheChangeAndBothChoicesAboveTheInputAt%ix%i', async (columns, rows, line) => {
+    const { lines, screen, row } = await mount(columns, rows)
+
+    expect(screen()).toContain('agent.ts · +2 -2 lines')
+    expect(screen()).toContain('@@ -1,5 +1,5 @@')
+    expect(screen()).toContain(line)
+    expect(screen()).toContain('○ Apply this change')
+    expect(screen()).toContain('○ Leave it as it is')
+    expect(screen()).toMatch(/↓ \d+ more/u)
+    expect(row('○ Leave it as it is')).toBeLessThan(row('Enter to send'))
+    expect(lines().length).toBeLessThanOrEqual(rows)
+  })
+
+  it('shouldScrollTheChangeWithPageDownOnceTheQuestionHoldsTheKeyboard', async () => {
+    const { press, screen } = await mount(80, 24)
+    expect(screen()).not.toContain('Rule 23 (last)')
+
+    await press(UP)
+    await press(PAGE_DOWN)
+    await press(PAGE_DOWN)
+    await press(PAGE_DOWN)
+
+    expect(screen()).toContain('+ Rule 23 (last): keep the answer short.')
+    expect(screen()).toContain('› ○ Apply this change')
+  })
+
+  it('shouldScrollTheChangeWithTheWheelWhileTheChatHoldsTheKeyboard', async () => {
+    const { press, row, screen } = await mount(80, 24)
+    const over = row('- Rule 2: keep the answer short.')
+    expect(over).toBeGreaterThan(0)
+
+    for (let turn = 0; turn < 8; turn++) await press(mouseInputSequence(WHEEL_DOWN, 10, over, 'M'))
+
+    expect(screen()).toContain('+ Rule 23 (last): keep the answer short.')
+    expect(screen()).toContain('↑ answer this')
+  })
+
+  it('shouldShowTheChangeBesideTheChatOnAWideTerminal', async () => {
+    const { lines, row, screen } = await mount(120, 40)
+
+    expect(screen()).toContain('+ Rule 2 (first): keep the answer short.')
+    expect(screen()).toContain('+ Rule 23 (last): keep the answer short.')
+    expect(lines()[row('○ Apply this change')]!.indexOf('○')).toBeGreaterThan(40)
+    expect(screen()).not.toMatch(/↓ \d+ more/u)
   })
 })

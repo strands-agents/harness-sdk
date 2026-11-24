@@ -15,6 +15,7 @@ import { AgentMessaging } from '../../src/agent/messaging.js'
 import { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { AgentSkillsRuntime } from '../../src/agent/skills.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
+import { mountChat } from '../fixtures/chat-app.js'
 
 describe('TUI mouse input', () => {
   it.each([
@@ -1303,6 +1304,41 @@ describe('startup screen mouse input', () => {
 
     await vi.waitFor(() => expect(mouseModes(written).slice(-4)).toEqual(['1003l', '1002h', '1003l', '1002l']))
     await controller.dispose()
+  })
+})
+
+describe('selecting text with the mouse', () => {
+  const typed = async (text: string) => {
+    const view = await mountChat({ columns: 100, rows: 30 })
+    for (const character of text) await view.press(character)
+    await view.press('\r')
+    const row = view.row(text)
+    expect(row).toBeGreaterThanOrEqual(0)
+    return { ...view, row }
+  }
+
+  it('shouldPaintTheTextThatIsThereNowWhenTheScreenChangesMidDrag', async () => {
+    const { press, screen, lines, controller, row } = await typed('first line of text')
+
+    await press(mouseInputSequence(0, 3, row, 'M'))
+    controller.notify('success', 'a notice that shifts the screen')
+    await press(mouseInputSequence(32, 11, row, 'M'))
+
+    expect(lines().filter((line) => line.includes('first line of text')).length).toBeLessThanOrEqual(1)
+    expect(screen()).not.toContain('first line of textfirst')
+  })
+
+  it('shouldLeaveTheTextUnchangedWhileDraggingAcrossIt', async () => {
+    const { press, screen, row } = await typed('selectable words here')
+
+    await press(mouseInputSequence(0, 3, row, 'M'))
+    await press(mouseInputSequence(32, 9, row, 'M'))
+    await press(mouseInputSequence(32, 17, row, 'M'))
+    const during = screen()
+    await press(mouseInputSequence(0, 17, row, 'm'))
+
+    expect(during).toContain('selectable words here')
+    expect(screen()).toContain('selectable words here')
   })
 })
 
