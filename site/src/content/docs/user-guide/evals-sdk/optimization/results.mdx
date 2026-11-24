@@ -5,7 +5,8 @@ sidebar:
   label: "Reading the results"
 ---
 
-An optimization run ends with a **champion**: the configuration that shipped. This page
+An optimization run ends with a **champion**: the configuration the optimizer picked for
+you to review and apply. This page
 covers how to read why it won, how sure the run is, which options mattered, and how to
 apply it. It also covers resuming a run that was stopped partway.
 
@@ -24,7 +25,7 @@ The summary is a stack of tables, read top to bottom:
 
 | Section | Answers |
 |---|---|
-| Header | What ran and what shipped: the objective, why the search stopped, rollouts spent against the budget, the champion, and the outcome |
+| Header | What ran and what won: the objective, why the search stopped, rollouts spent against the budget, the champion, and the outcome |
 | Validation | How the baseline and each finalist scored on cases the search never saw: the estimate, its sd, and the measured mean per metric, with P(met) for each constraint |
 | Test vs baseline | Whether the win holds on cases nothing else read: both means, the difference, and its 90% interval |
 | Changed | The champion's new numbers and choices, next to the baseline's |
@@ -37,12 +38,12 @@ The header's **outcome** says how the pick ended:
 
 | Outcome | Means |
 |---|---|
-| `top_finalist` | A finalist beat your current agent and ships |
-| `baseline_best` | Your current agent ranked first among the feasible candidates and ships |
-| `no_feasible_finalist` | No finalist met every constraint, so your current agent ships |
-| `no_finalists` | The search produced nothing to validate, so your current agent ships |
+| `top_finalist` | A finalist beat your current agent and is the champion |
+| `baseline_best` | Your current agent ranked first among the feasible candidates and stays the champion |
+| `no_feasible_finalist` | No finalist met every constraint, so your current agent stays the champion |
+| `no_finalists` | The search produced nothing to validate, so your current agent stays the champion |
 
-Your current agent shipping is a real answer: it's as good as anything the search found
+Your current agent winning is a real answer: it's as good as anything the search found
 within the budget. `result.validation.outcome` holds the same value.
 
 ## What changed
@@ -58,8 +59,8 @@ champion.values                    # every value of the champion, changed or not
 ```
 
 Text from a file marker appears in the diff on its real file path; text from your code
-appears as a hunk headed by its key. `result.improved` is `False` when the baseline
-shipped.
+appears as a hunk headed by its key. `result.improved` is `False` when the champion is
+your current agent.
 
 ## Apply the champion
 
@@ -104,7 +105,7 @@ The interval is `None` when only one test case was measured by both, and the mea
 
 Read the interval, not the point. An interval that excludes zero is a change the test cases
 support. One that includes zero means the test cases can't tell, often because there are
-few of them. The report never changes what ships.
+few of them. The report never changes which candidate is the champion.
 
 `result.validation` shows how the champion was picked: every finalist's estimate on
 validation, the pick rule, each constraint's P(met), and why any finalist was ruled out.

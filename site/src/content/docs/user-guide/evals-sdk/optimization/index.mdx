@@ -53,7 +53,7 @@ run, one lucky run looks like a win, and nobody remembers which combination was 
 **Tweaking by hand:**
 
 - One change at a time, judged on whatever cases you happened to rerun
-- A single noisy run decides what ships
+- A single noisy run decides what you keep
 - No record of what was tried or why it lost
 
 **Optimizing:**
@@ -137,7 +137,7 @@ flowchart LR
    constraint. If nothing beats your current agent, your current agent wins. That's a
    valid result, not a failure.
 4. **Report on test.** The champion and your current agent are compared on the test cases
-   with a paired 90% interval. The report never changes what ships.
+   with a paired 90% interval. The report never changes the pick.
 
 We chose a fit over "highest measured mean" because each candidate runs on few cases,
 often once. The fit pools evidence across candidates that share an option, so it ranks

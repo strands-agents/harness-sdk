@@ -6,7 +6,7 @@ sidebar:
   label: "Objectives and budget"
 ---
 
-The optimizer ships whatever scores best on the objective you give it, within the
+The optimizer picks whatever scores best on the objective you give it, within the
 constraints you set and the budget you allow. This page covers how to say what "better"
 means, how to rule candidates out, and how much a run costs.
 
@@ -52,7 +52,7 @@ evaluator's scale defaults to its range, so you only set it for usage metrics, w
 no upper bound.
 
 When you can't name an exchange rate between quality and cost, use `Pareto` with the same
-terms. The optimizer still ships one champion, but it validates and tests the whole front
+terms. The optimizer still picks one champion, but it validates and tests the whole front
 of trade-offs so you can pick another from `result.front`:
 
 ```python
@@ -63,7 +63,7 @@ objective = Pareto(Maximize("Helpfulness"), Minimize("tokens", scale=1000))
 
 ## Rule candidates out with constraints
 
-A constraint is a line a shipped candidate must not cross:
+A constraint is a line the champion must not cross:
 
 ```python
 from strands_evals.optimization import AtLeast, AtMost
@@ -76,8 +76,8 @@ constraints = [
 
 During the search, constraints only rank: candidates likely to meet every constraint come
 first, but the others can still be parents. At the end, only a candidate that meets every
-constraint on validation can ship, and "meets" means the model puts the chance of meeting
-it at 90% or more. When no candidate qualifies, your current agent ships.
+constraint on validation can be the champion, and "meets" means the model puts the chance of meeting
+it at 90% or more. When no candidate qualifies, your current agent stays the champion.
 
 Prefer a constraint over a cost term when you have a hard limit. A weighted cost term buys
 quality with tokens at a fixed rate; a constraint says "never above this".
@@ -148,7 +148,7 @@ Retrying itself is free only inside a trial, when the model call is throttled. A
 that fails on an outage or expired credentials is run again by the optimizer, and each
 re-run costs a rollout.
 
-## Other settings that change what ships
+## Other settings that change the pick
 
 | Setting | `Optimizer` argument | CLI flag | Default | Change it when |
 |---|---|---|---|---|
@@ -156,7 +156,7 @@ re-run costs a rollout.
 | Runs per candidate | `runs_per_candidate=3` | `--runs-per-candidate 3` | 1 | Your agent is noisy and each case needs repeats |
 | Proposals per step | `proposals_per_iteration=2` | `--proposals-per-iteration 2` | 4 | You want wider or narrower steps |
 | Agent failure score | `agent_failure_score=None` | `--agent-failure-score none` | `"worst"` | A crash should count as missing data, not as the worst score |
-| Final pick rule | `final_pick=FinalPick(rule=LowerBound(q=0.1))` | `--final-pick MODULE:ATTR` | `Mean()` | You'd rather ship cautiously, ranking by the pessimistic end |
+| Final pick rule | `final_pick=FinalPick(rule=LowerBound(q=0.1))` | `--final-pick MODULE:ATTR` | `Mean()` | You'd rather pick cautiously, ranking by the pessimistic end |
 
 `Split`, `FinalPick`, and `LowerBound` import from `strands_evals.optimization`.
 
