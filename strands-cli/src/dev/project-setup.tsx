@@ -25,7 +25,7 @@ import { errorMessage, sanitizeTerminalText } from '../terminal/text.js'
 import { isModelCredentialFailure } from '../model/credential-failure.js'
 import { AgentOptionsNotEditable, readAgentModel, saveAgentOptions } from './agent-options.js'
 import { fixInNewTab, type FixOutcome } from './fix-in-new-tab.js'
-import { readDevWorkspace, type DevWorkspace } from './workspace.js'
+import { readDevWorkspace } from './workspace.js'
 
 const PANEL_FIXED_ROWS = 10
 const DETAILS_MIN_ROWS = 2
@@ -250,8 +250,12 @@ export const openDevChat = async <Chat extends DevChat>(
   if (!workspace) throw new Error(`No strands dev workspace is at ${path}.`)
   const notices: { title: string; message: string }[] = []
   if (launch?.configuration) {
-    const unsaved = await saveChosenModel(workspace, launch.configuration.profile.model)
-    if (unsaved) notices.push({ title: 'Model unchanged', message: unsaved })
+    const chosen = launch.configuration.profile.model
+    await saveAgentOptions(workspace, { model: chosen }).catch((error: unknown) => {
+      if (!(error instanceof AgentOptionsNotEditable)) throw error
+      const message = `${errorMessage(error)} Set the model to ${chosen} in the agent file, and the agent reloads.`
+      notices.push({ title: 'Model unchanged', message })
+    })
   }
   const model = await readAgentModel(workspace).catch((error: unknown) => {
     notices.push({ title: 'Model provider check skipped', message: errorMessage(error) })
@@ -260,25 +264,12 @@ export const openDevChat = async <Chat extends DevChat>(
   onAgentModel(model)
   const chat = await create()
   for (const { title, message } of notices) chat.showError?.(title, message)
-  if (!launch && model) offerProviderSetup(chat, config, model, requestSetup)
+  if (!launch && model)
+    void modelProviderNeedsSetup(config, model).then(
+      (needed) => {
+        if (needed) setImmediate(() => requestSetup())
+      },
+      (error: unknown) => chat.showError?.('Model provider check failed', errorMessage(error))
+    )
   return chat
-}
-
-const saveChosenModel = async (workspace: DevWorkspace, model: string): Promise<string | undefined> => {
-  try {
-    await saveAgentOptions(workspace, { model })
-    return undefined
-  } catch (error) {
-    if (!(error instanceof AgentOptionsNotEditable)) throw error
-    return `${errorMessage(error)} Set the model to ${model} in the agent file, and the agent reloads.`
-  }
-}
-
-const offerProviderSetup = (chat: DevChat, config: CliConfigStore, model: string, requestSetup: RequestSetup): void => {
-  void modelProviderNeedsSetup(config, model).then(
-    (needed) => {
-      if (needed) setImmediate(() => requestSetup())
-    },
-    (error: unknown) => chat.showError?.('Model provider check failed', errorMessage(error))
-  )
 }
