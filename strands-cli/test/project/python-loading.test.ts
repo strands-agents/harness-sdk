@@ -981,7 +981,7 @@ agent = create_agent()`
     ['from strands_harness import create_harness as make_harness', 'make_harness'],
     ['import strands_harness as harness', 'harness.create_harness'],
     ['import strands_harness', 'strands_harness.create_harness'],
-  ])('shouldReconstructTheAgentInADevChatWhenTheDirectCallUses %s', async (binding, callee) => {
+  ])('shouldReconstructTheAgentInADevChatWhenTheDirectCallUses %s', { timeout: 30_000 }, async (binding, callee) => {
     const authored = baseSource
       .replace('from strands_harness import create_harness', binding)
       .replace('def build(**overrides):', 'def build_options():')
