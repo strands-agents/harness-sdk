@@ -1,6 +1,5 @@
 import { resolve } from 'node:path'
 
-import { hyperlinkEscapes } from '../../terminal/terminal.js'
 import type { DevChatCommandContext } from '../../ui/chat/types.js'
 import type { EvalsBrowserPlace } from '../panels/model.js'
 import type { DevWorkspace } from '../workspace.js'
@@ -42,12 +41,9 @@ export const announce = (host: TemporarySessionHost, status: 'success' | 'error'
 // Generated files are shown with their absolute path, so the developer and the model can open them from anywhere.
 export const absolutePath = (path: string): string => resolve(path)
 
-// The evals UI address of a generated file for a notice, linked where the terminal supports it; empty until the UI is ready.
 export const evalsLinkText = (host: TemporarySessionHost, place: EvalsBrowserPlace, runFolder?: string): string => {
   const link = host.evalsLink?.(place, runFolder)
-  if (!link) return ''
-  const escapes = hyperlinkEscapes(link)
-  return ` · evals UI ${escapes ? `${escapes.open}${link}${escapes.close}` : link}`
+  return link ? `\nevals UI: ${link}` : ''
 }
 
 export const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`
