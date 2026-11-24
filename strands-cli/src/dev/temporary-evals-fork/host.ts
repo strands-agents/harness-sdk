@@ -12,9 +12,7 @@ import type { TemporaryTestDependencies } from './test.js'
 
 export type TemporarySessionDependencies = TemporaryExperimentDependencies &
   TemporaryTestDependencies &
-  TemporaryOptimizationDependencies & {
-    readonly initialCopy?: (workspace: DevWorkspace, signal: AbortSignal) => Promise<unknown>
-  }
+  TemporaryOptimizationDependencies & {}
 
 /** The settings of the workspace that the dev sessions go by. They are read when needed, so a change counts at once. */
 export interface TemporaryDevSettings {

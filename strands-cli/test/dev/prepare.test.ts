@@ -9,7 +9,6 @@ import { CliConfigStore } from '../../src/config/store.js'
 import { bindWorkspace, readWorkspaceBinding, updateWorkspaceCli } from '../../src/dev/binding.js'
 import { bindExistingAgent, createDevWorkspace } from '../../src/dev/create.js'
 import { DevFailure, WorkspaceFolderInUse } from '../../src/dev/errors.js'
-import { ensureInitialCandidate } from '../../src/dev/initialize.js'
 import type { FolderSuggestion, HarnessChoice } from '../../src/dev/picker.js'
 import { prepareDevRun } from '../../src/dev/prepare.js'
 import * as search from '../../src/dev/search.js'
@@ -196,11 +195,11 @@ describe('prepareDevRun', () => {
     expect(await readFile(join(root, '.strands/config.json'), 'utf8')).toBe(before)
   })
 
-  it('shouldKeepTheBindingAndTheInitialCopyWhenAgentRunsAnotherEntrypointOfTheBoundProject', async () => {
+  it('shouldKeepTheBindingWhenAgentRunsAnotherEntrypointOfTheBoundProject', async () => {
     const root = await fixture()
     await writeFile(join(root, 'other.ts'), 'export const agent = null')
     const folder = join(root, 'strands-dev')
-    const initial = await ensureInitialCandidate(await bindExistingAgent(folder, join(root, 'agent.ts')))
+    await bindExistingAgent(folder, join(root, 'agent.ts'))
     const before = await readFile(join(folder, '.config'), 'utf8')
     vi.spyOn(CliConfigStore, 'load').mockResolvedValue(config())
     vi.spyOn(process.stderr, 'write').mockReturnValue(true)
@@ -210,7 +209,6 @@ describe('prepareDevRun', () => {
     })
 
     expect(prepared?.args.agent).toBe(join(root, 'other.ts'))
-    expect(await ensureInitialCandidate(prepared!.workspace)).toBe(initial)
     expect(await readFile(join(folder, '.config'), 'utf8')).toBe(before)
   })
 

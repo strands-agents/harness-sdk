@@ -10,7 +10,6 @@ import { isRecord } from '../../values.js'
 import { editAgentOptions } from '../agent-options.js'
 import { baseCliEditProblem, editBaseCliProfile, isProfileBaseCli } from '../base-cli.js'
 import type { DevWorkspace } from '../workspace.js'
-import { ensureInitialCopy } from '../initialize.js'
 import { userConfigPath } from '../../config/store.js'
 import {
   measuredVersions,
@@ -1166,7 +1165,6 @@ export class TemporaryOptimize extends Store<OptimizeState> {
     const show = (): void => this.updateRun(entry, { step: 'running', progress: progress() })
     show()
     try {
-      await (this.host().dependencies?.initialCopy ?? ensureInitialCopy)(this.host().workspace, abort.signal)
       const space = continuing?.space ?? (await this.writeSpace(plan, now, variables))
       const cases = await readTemporaryRunnableCases(plan.experiment.path).catch(() => [])
       await runTemporaryOptimization(

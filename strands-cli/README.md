@@ -96,7 +96,7 @@ Discovery omits the current CLI source and the base workspace already represente
 Creation errors stay in the picker so you can retry without restarting the CLI.
 Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
 It skips dependency folders, build output, private state, and copied harness libraries.
-It never lists an agent inside a `strands-dev/` or `strands-dev-N/` folder, for example the copies in `strands-dev/tmp/`.
+It never lists an agent inside a `strands-dev/` or `strands-dev-N/` folder, for example an old agent copy in `strands-dev/tmp/`.
 Discovery lists a source file only in a shape that strands dev can load.
 In TypeScript, a top-level `agent` must come from one `createHarness(...)` call or from a call to a local function.
 In Python, `agent` must come from `create_harness(...)`. Or, the file must define `create_agent` and set `agent` from a local function.
@@ -154,11 +154,9 @@ With `--workspace`, the two flags use that folder.
 When that folder holds the workspace of another agent, the two flags stop with an error that names the folder and the agent. They do not replace it.
 
 Initialization records the persistent agent in `.config`. It does not copy the agent.
-When `--agent` names another entrypoint of the project that the workspace binds, that entrypoint runs for one launch. `.config` and the initial copy do not change.
+When `--agent` names another entrypoint of the project that the workspace binds, that entrypoint runs for one launch. `.config` does not change.
 Without a terminal, select an existing workspace, an entrypoint, or a creation option explicitly.
 `strands dev init` prepares the workspace and exits without a model request.
-
-The first `/optimize` installs one independent copy of the bound agent under `tmp/`. Later runs of `/optimize` reuse that recorded initial copy.
 
 When `.config` names an agent that is missing, dev stops with an error that names the workspace and the agent.
 To bind the workspace to another agent, run `strands dev init` in a terminal and select the agent. Dev asks you to type DELETE before it replaces the workspace.
@@ -197,7 +195,6 @@ Installation stays in the project environment. Destination overrides cannot redi
 
 After preparation, the CLI loads the entrypoint in the same runtime used by chat. Validation makes no model request.
 Dependencies and resources loaded only during a later tool call can still fail at runtime.
-The first `/optimize` prepares the initial candidate copy with the same declared preparation path. After a failure, validation-only mode skips dependency installation.
 
 ### When setup fails
 
@@ -233,12 +230,6 @@ strands-workspace/
   strands-dev/
     .config
     tmp/
-      <candidate-id>/
-        baseline/
-        agent/
-        candidate.json
-        reports/
-      initial.json
 ```
 
 With `--workspace`, dev puts the new project in `agent/` inside the workspace:
@@ -255,7 +246,7 @@ strands-dev/
 For Python, the project contains `agent.py` and its dependency files instead.
 In `strands-workspace/`, an `agent/` folder holds the packaged model module. Dev makes this folder only when the saved profile has a local model module.
 The top-level `agent/` in a workspace exists only when dev creates a new project inside the workspace. Existing projects can be outside the workspace.
-When the workspace is inside the project, dev keeps the workspace out of candidate copies, `/export`, and the source watcher.
+When the workspace is inside the project, dev keeps the workspace out of `/export` and the source watcher.
 
 The Base CLI view copies only the skills that the profile configures, as `/export` does. Skills that skill discovery finds, for example in `~/.codex/skills`, stay out of the view. Unlike `/export`, dev skips a configured skill folder that does not exist.
 
@@ -281,7 +272,7 @@ In `strands-workspace/strands-dev/.config`, `agent.path` is `..`.
 A binding cannot point into its own `tmp/`. Dev never changes the global CLI default during creation or startup.
 
 The dev session always runs the bound persistent agent. Editing its configuration changes that agent, not a temporary copy.
-Runtime state stays separate from candidate source. The existing watcher reloads the bound project when its source changes. After a successful reload, the status shows `↻ agent.ts reloaded · session kept` (or the Python filename).
+Runtime state stays separate from the agent source. The existing watcher reloads the bound project when its source changes. After a successful reload, the status shows `↻ agent.ts reloaded · session kept` (or the Python filename).
 Dev reloads the agent only when one of its source files changes. Source files are code, instruction text (`.md` and `.txt`), configuration (`.yaml`, `.yml`, `.toml`), Cedar policies, skill files, MCP configuration, and dependency manifests.
 A change to another file, for example a log, a `.json` data file, or a `.jsonl` file, does not reload the agent.
 Files in `.agent/` and `.strands/` do not reload the agent, but skill files in their `skills/` folders do.
@@ -311,13 +302,6 @@ The change then applies to the current chat only, and an error tells you which o
 All programmatic edits to the agent files use one lock for each agent, in `.strands/state/`.
 Each edit reads the file again while it holds the lock, and it changes only its own option.
 Thus an option change and an optimization edit do not overwrite each other, also when they come from two processes.
-
-### Temporary candidate infrastructure
-
-Candidate creation exports the current bound source into a baseline, then installs an independent agent project from that baseline.
-Each candidate has its own dependency environment and reports directory. Credentials, prior sessions, and memory are excluded from the copied project.
-`candidate.json` records the original agent and baseline fingerprint. The stale-baseline check rejects candidates when the main source changes.
-Creating or editing candidates never switches the dev chat away from the bound agent.
 
 ### Experiments, evaluations, and optimization
 
