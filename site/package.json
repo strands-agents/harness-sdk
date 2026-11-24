@@ -24,6 +24,7 @@
     "routes:update": "tsx scripts/update-known-routes.ts",
     "changelog:sync": "tsx scripts/changelog/sync.ts",
     "catalog:stats": "tsx scripts/catalog/refresh-stats.ts",
+    "content-refs:resolve": "tsx scripts/content-ref-overrides.ts",
     "samples:sync": "tsx scripts/samples/sync.ts",
     "external-docs:generate": "tsx scripts/external-docs/cli.ts",
     "astro": "astro"

@@ -5,12 +5,10 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { parseRefOverrides, resolveTrackedSource } from '../../scripts/external-docs/cli'
+import { resolveTrackedSource } from '../../scripts/external-docs/cli'
 import type { ExternalDocsProductConfig } from '../../scripts/external-docs/schema'
 
 const temporaryDirectories: string[] = []
-const REVISION_A = 'a'.repeat(40)
-const REVISION_B = 'b'.repeat(40)
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
@@ -56,35 +54,6 @@ describe('external docs source resolution', () => {
     expect(() => resolveTrackedSource(productConfig(repository), sourcesRoot)).toThrow()
     expect(fs.existsSync(first.root)).toBe(false)
   }, 15_000)
-})
-
-describe('external docs ref overrides', () => {
-  const productIds = ['strands-box', 'strands-decider']
-
-  it('parses exact revisions for configured products', () => {
-    expect(parseRefOverrides(`strands-box=${REVISION_A}, strands-decider=${REVISION_B}`, productIds)).toEqual(
-      new Map([
-        ['strands-box', REVISION_A],
-        ['strands-decider', REVISION_B],
-      ])
-    )
-  })
-
-  it('rejects malformed revisions', () => {
-    expect(() => parseRefOverrides('strands-box=main', productIds)).toThrow(/40-character lowercase commit SHA/)
-  })
-
-  it('rejects duplicate products', () => {
-    expect(() => parseRefOverrides(`strands-box=${REVISION_A},strands-box=${REVISION_B}`, productIds)).toThrow(
-      /duplicate product "strands-box"/
-    )
-  })
-
-  it('rejects unknown products', () => {
-    expect(() => parseRefOverrides(`other-product=${REVISION_A}`, productIds)).toThrow(
-      /unknown product "other-product"/
-    )
-  })
 })
 
 function createRepository(): {

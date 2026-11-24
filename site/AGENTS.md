@@ -122,6 +122,7 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 ├── README.md
 ├── overrides/                    # Legacy MkDocs overrides (being migrated)
 ├── scripts/                      # Build and utility scripts
+│   ├── content-ref-overrides.ts  # Validate production source overrides and split them by importer
 │   ├── catalog/                  # Catalog stats refresh
 │   ├── external-docs/            # External Markdown import
 │   └── samples/                  # Import samples metadata and guides at build time

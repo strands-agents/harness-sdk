@@ -47,11 +47,12 @@ available in the repository but do not generate website routes.
 - Set `SAMPLES_SOURCE_DIR` to a checkout of the samples repository.
 - Set `SAMPLES_REQUIRE_SOURCE=1` to fail when the source checkout is missing or has no samples. Without it, the build clears generated guides and renders the local setup message at `/examples/`.
 
-Docs CI, pull request previews, and manual production deploys check out
-`strands-agents/samples@main` once. `samples:sync` reads only that checkout for the rest of the
-build. Production records the resolved Samples revision alongside the external documentation
-revisions in the workflow summary and resulting `gh-pages` commit. Samples commits and merges do
-not trigger site rebuilds, but the next website build picks them up.
+Docs CI and pull request previews check out `strands-agents/samples@main` once. Manual production
+deploys do the same by default, but an emergency `content_ref_overrides` input can select an exact
+Samples commit. `samples:sync` reads only that checkout for the rest of the build. Production
+records the resolved Samples revision alongside the external documentation revisions in the
+workflow summary and resulting `gh-pages` commit. Samples commits and merges do not trigger site
+rebuilds, but the next website build picks them up.
 
 The importer warns when a guide links to a missing file and fails when a guide references a missing image.
 
@@ -202,25 +203,29 @@ is rejected by the config schema.
 Every `external-docs:generate` invocation creates a fresh shallow checkout for each product,
 fetches its configured `main` branch, and resolves `FETCH_HEAD` once. The manifest, Markdown pages,
 and linked assets all come from that checkout. Local builds, CI, pull request previews, and
-production deploys therefore use the latest `main` commit available when the build starts. A
-failed fetch fails the build instead of falling back to stale content.
+production deploys therefore use the latest `main` commit available when each product is fetched.
+A failed fetch fails the build instead of falling back to stale content.
 
-Manual production deploys accept an emergency-only `external_docs_ref_overrides` input. The value
-is a comma-separated list of product IDs and exact revisions, such as
-`strands-box=<40-character SHA>,strands-decider=<40-character SHA>`. Overrides apply only to that
-production run; the configured refs, CI, and pull request previews continue to follow `main`.
+Manual production deploys accept an emergency-only `content_ref_overrides` input. The value is a
+comma-separated list of source IDs and exact revisions, such as
+`samples=<40-character SHA>,strands-box=<40-character SHA>,strands-decider=<40-character SHA>`.
+Overrides apply only to that production run. CI, pull request previews, and production otherwise
+follow `main` for every source. Local builds follow `main` for external documentation products;
+Samples uses the `SAMPLES_SOURCE_DIR` behavior described above.
 
-If an external documentation product's `main` revision breaks generation or redirect validation:
+If a documentation source's `main` revision breaks sample import, external documentation
+generation, or redirect validation:
 
-1. Copy the last known-good product revision from a successful deployment summary or `gh-pages`
+1. Copy the last known-good source revision from a successful deployment summary or `gh-pages`
    commit message.
-2. Dispatch `Docs: Deploy to GitHub Pages` with that product and revision in
-   `external_docs_ref_overrides`.
+2. Dispatch `Docs: Deploy to GitHub Pages` with that source and revision in
+   `content_ref_overrides`.
 3. Repair the upstream repository, then leave the input empty on the next production deploy.
 
-The resolved commit SHA is recorded in generated page provenance, generated navigation, and the
-production deployment summary. It is a per-build record, not a committed input. It also keeps
-source and asset links internally consistent if the branch advances while a build is running.
+External product revisions are recorded in generated page provenance and generated navigation. The
+production deployment summary and resulting `gh-pages` commit record those revisions together with
+the resolved Samples revision. These are per-build records, not committed inputs. They also keep
+source and asset links internally consistent if a branch advances while a build is running.
 Upstream product commits do not trigger site rebuilds, but the next website build picks them up.
 
 #### Generated layout
