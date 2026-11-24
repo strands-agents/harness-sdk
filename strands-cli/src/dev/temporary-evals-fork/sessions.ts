@@ -32,7 +32,7 @@ import {
   type TestRun,
   type TestState,
 } from '../panels/model.js'
-import { locateTemporaryEdit } from './apply.js'
+import { locateTemporaryEdit, type TemporaryEditLocation, type TemporaryEditTarget } from './apply.js'
 import { reviewOptimizeRun } from './review-run.js'
 import {
   clearUnreadableCaseResults,
@@ -243,8 +243,6 @@ const autoAnswered = (review: OptimizeReview): OptimizeReview => ({
   ),
 })
 
-type EditWriter = (after: string) => Promise<void>
-
 interface RunEntry {
   readonly id: string
   readonly experiment: string
@@ -254,7 +252,7 @@ interface RunEntry {
   record?: string
   abort: AbortController | undefined
   stopping: boolean
-  writers: Map<number, EditWriter>
+  writers: Map<number, TemporaryEditTarget['write']>
   changes: readonly TemporaryKnobChange[]
   sources: FSWatcher | undefined
   /** The notice that a review came back with strands dev, kept so it stops asking once the review is over. */
@@ -300,10 +298,7 @@ const testCheck = (test: TemporaryTestDifference | undefined): TestCheck | undef
     ...(test.ci ? { range: test.ci } : {}),
   }
 
-const locateBaseCliEdit = (
-  workspace: DevWorkspace,
-  change: TemporaryKnobChange
-): { target: string; write: (after: string) => Promise<void> } | { unavailable: string } => {
+const locateBaseCliEdit = (workspace: DevWorkspace, change: TemporaryKnobChange): TemporaryEditLocation => {
   const edit =
     change.knob.key === 'instructions'
       ? { option: 'instructions', value: change.after, expected: change.before }
@@ -330,10 +325,6 @@ export class TemporaryTest extends Store<TestState> {
     super({ runs: [] })
   }
 
-  show(): Promise<void> {
-    return this.restore()
-  }
-
   run(experiments: readonly ExperimentSummary[]): void {
     for (const experiment of experiments) {
       if (this.isRunning(experiment.path)) continue
@@ -346,7 +337,7 @@ export class TemporaryTest extends Store<TestState> {
   runOnly(experiment: ExperimentSummary, names: readonly string[]): void {
     if (this.isRunning(experiment.path) || names.length === 0) return
     this.starting(experiment, names.length, true)
-    void this.rerun(experiment, names)
+    void this.execute(experiment, experiment.path, true, undefined, names)
   }
 
   stop(path: string): void {
@@ -479,7 +470,7 @@ export class TemporaryTest extends Store<TestState> {
     return temporaryWorkspaceDirectory(this.host().workspace)
   }
 
-  private async restore(): Promise<void> {
+  async show(): Promise<void> {
     const saved = await this.experiments.reload()
     await Promise.all(saved.filter(({ path }) => !this.runs.has(path)).map((experiment) => this.restoreRun(experiment)))
   }
@@ -523,10 +514,6 @@ export class TemporaryTest extends Store<TestState> {
 
   private starting(experiment: ExperimentSummary, cases: number, rerun: boolean): void {
     this.update(experiment, { status: 'running', cases, evaluators: [], done: 0, startedAt: Date.now(), rerun })
-  }
-
-  private async rerun(experiment: ExperimentSummary, names: readonly string[]): Promise<void> {
-    await this.execute(experiment, experiment.path, true, undefined, names)
   }
 
   private async execute(
@@ -637,13 +624,6 @@ export class TemporaryOptimize extends Store<OptimizeState> {
   reset(): void {
     this.showPage({ step: 'pick' })
     this.experiments.refresh()
-  }
-
-  openRun(id: string): void {
-    const entry = this.entries.get(id)
-    if (!entry) return
-    this.showPage(entry.state, entry.id)
-    void this.recheck(entry, false)
   }
 
   toggleKnob(key: KnobKey): void {
@@ -829,13 +809,9 @@ export class TemporaryOptimize extends Store<OptimizeState> {
     return [...this.changes]
   }
 
-  private shownEntry(): RunEntry | undefined {
-    return this.shown === undefined ? undefined : this.entries.get(this.shown)
-  }
-
   /** Several runs can wait for review at once, and the shown one moves as each finishes, so a walk names its own. */
   private reviewedEntry(run: string | undefined): RunEntry | undefined {
-    return run === undefined ? this.shownEntry() : this.entries.get(run)
+    return this.entries.get(run ?? this.shown ?? '')
   }
 
   private addRun(experiment: string, startedAt: number, state: OptimizeRunState, listed = true): RunEntry {
@@ -1361,9 +1337,7 @@ export class TemporaryOptimize extends Store<OptimizeState> {
     announce(this.host(), 'success', `optimize · ${plan.experiment.name} cancelled · the agent source is unchanged`)
   }
 
-  private async locate(
-    change: TemporaryKnobChange
-  ): Promise<{ target: string; write: (after: string) => Promise<void> } | { unavailable: string }> {
+  private async locate(change: TemporaryKnobChange): Promise<TemporaryEditLocation> {
     const { workspace } = this.host()
     if (await isProfileBaseCli(workspace)) return locateBaseCliEdit(workspace, change)
     if (change.knob.key === 'instructions')
@@ -1387,8 +1361,8 @@ export class TemporaryOptimize extends Store<OptimizeState> {
     outcome: TemporaryStudyOutcome,
     record: string,
     knobs: readonly TemporaryKnob[]
-  ): Promise<{ review: OptimizeReview; writers: Map<number, EditWriter>; changes: TemporaryKnobChange[] }> {
-    const writers = new Map<number, EditWriter>()
+  ): Promise<{ review: OptimizeReview; writers: RunEntry['writers']; changes: TemporaryKnobChange[] }> {
+    const writers: RunEntry['writers'] = new Map()
     const edits: ProposedEdit[] = []
     const changes = temporaryKnobChanges(knobs, outcome.baseline.params, outcome.best?.params ?? {})
     for (const change of changes) {

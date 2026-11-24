@@ -1217,9 +1217,6 @@ describe('TEMPORARY dev sessions', () => {
 
     sessions.optimize.reset()
     const listed = sessions.optimize.snapshot()
-    sessions.optimize.openRun(started!)
-    const reopened = sessions.optimize.snapshot()
-    sessions.optimize.reset()
     gate.resolve()
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().runs?.[0]?.state.step).toBe('review'))
@@ -1227,7 +1224,6 @@ describe('TEMPORARY dev sessions', () => {
       step: 'pick',
       runs: [{ id: started, experiment: 'capital', state: { step: 'running' } }],
     })
-    expect(reopened.step).toBe('running')
     expect(sessions.optimize.snapshot().step).toBe('pick')
   })
 

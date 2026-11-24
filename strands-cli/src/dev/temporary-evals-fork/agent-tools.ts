@@ -16,6 +16,7 @@ import type {
   EvalsBrowserPlace,
   KnobKey,
   OptimizeObjective,
+  OptimizePlan,
   OptimizeReview,
   OptimizeRun,
   OptimizeState,
@@ -27,6 +28,7 @@ import type {
 import { uiTools } from './ui-tools.js'
 import { temporaryWorkflowSkills } from './workflow-skills.js'
 import { readTemporaryExperimentFile } from './experiment.js'
+import { plural } from './host.js'
 import type { TemporaryStore } from './jobs.js'
 import {
   BACKGROUND_COMMANDS,
@@ -526,6 +528,18 @@ const tunedKnobs = (knobs: readonly Knob[], tune: readonly KnobKey[]): void => {
   throw new Error(`This agent cannot tune ${unknown.join(', ')}. It can tune ${available.join(', ')}.`)
 }
 
+const plannedSetup = async (sessions: Sessions, experiment: ExperimentSummary): Promise<OptimizePlan> => {
+  const { optimize } = sessions()
+  optimize.reset()
+  optimize.plan(experiment)
+  const planned = await until(optimize, (state) =>
+    state.step === 'setup' || state.step === 'failed' ? state : undefined
+  )
+  if (planned.step === 'failed') throw new Error(planned.message)
+  if (planned.step !== 'setup') throw new Error('The optimization could not be planned.')
+  return planned.plan
+}
+
 const planTool = (sessions: Sessions): DevChatTool => ({
   name: 'strands_dev_optimization_plan',
   description:
@@ -541,15 +555,7 @@ const planTool = (sessions: Sessions): DevChatTool => ({
   },
   run: async (input): Promise<string> => {
     const { optimize } = sessions()
-    const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
-    optimize.reset()
-    optimize.plan(experiment)
-    const planned = await until(optimize, (state) =>
-      state.step === 'setup' || state.step === 'failed' ? state : undefined
-    )
-    if (planned.step === 'failed') throw new Error(planned.message)
-    if (planned.step !== 'setup') throw new Error('The optimization could not be planned.')
-    const { plan } = planned
+    const plan = await plannedSetup(sessions, await findExperiment(sessions, requiredText(input, 'experiment')))
     return reply(
       defined({
         experiment: { name: plan.experiment.name, cases: plan.experiment.caseCount },
@@ -651,16 +657,10 @@ const startOptimization = async (
     TEMPORARY_DECISION_CHOICES.crashScore
   )
   const objective = await objectiveFor(experiment, settings)
-  optimize.reset()
-  optimize.plan(experiment)
-  const planned = await until(optimize, (state) =>
-    state.step === 'setup' || state.step === 'failed' ? state : undefined
-  )
-  if (planned.step === 'failed') throw new Error(planned.message)
-  if (planned.step !== 'setup') throw new Error('The optimization could not be planned.')
-  tunedKnobs(planned.plan.knobs, settings.tune)
+  const plan = await plannedSetup(sessions, experiment)
+  tunedKnobs(plan.knobs, settings.tune)
   if (settings.tune.includes('model')) for (const model of settings.models) optimize.pickModel(model, true)
-  for (const knob of planned.plan.knobs)
+  for (const knob of plan.knobs)
     if (!knob.unavailable && knob.kind !== 'models' && knob.enabled !== settings.tune.includes(knob.key))
       optimize.toggleKnob(knob.key)
   if (iterations !== undefined) optimize.setIterations(iterations)
@@ -1057,8 +1057,6 @@ const CHANGE_LIMIT = 600
 
 const signed = (value: number): string => `${value >= 0 ? '+' : ''}${value.toFixed(2)}`
 
-const counted = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? '' : 's'}`
-
 const changedValue = (text: string): string => JSON.stringify(clip(text, CHANGE_LIMIT) ?? '')
 
 const changedEdit = ({ label, kind, target, before, after, added }: ProposedEdit): string => {
@@ -1073,12 +1071,12 @@ const testCheckText = (check: TestCheck | undefined): string => {
   const range = check.range
     ? ` (${Math.round(check.confidence * 100)}% confidence range ${signed(check.range[0])} to ${signed(check.range[1])})`
     : ''
-  return ` The test check gave ${signed(check.difference)} on ${counted(check.cases, 'unseen test case')}${range}.`
+  return ` The test check gave ${signed(check.difference)} on ${plural(check.cases, 'unseen test case')}${range}.`
 }
 
 const changeSummary = (change: TemporaryAppliedChange): string =>
   `- ${new Date(change.appliedAt).toISOString()}: ${change.auto ? 'auto-accept' : '/optimize'} applied ` +
-  `${counted(change.edits.length, 'edit')} from run ${change.run} of the experiment ${change.experiment}. ` +
+  `${plural(change.edits.length, 'edit')} from run ${change.run} of the experiment ${change.experiment}. ` +
   (change.auto
     ? 'The developer has auto-accept on, so they were not shown these edits before they were written. '
     : '') +

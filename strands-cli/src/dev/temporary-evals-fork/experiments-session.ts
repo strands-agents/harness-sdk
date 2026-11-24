@@ -176,10 +176,6 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
     return this.saved
   }
 
-  suggested(): GenerationSettings {
-    return this.defaults()
-  }
-
   agentSummary(): string {
     return this.summary
   }
@@ -250,7 +246,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
     })
   }
 
-  private defaults(): GenerationSettings {
+  suggested(): GenerationSettings {
     const facts = this.host().agent()
     return {
       name: this.freeName(),
@@ -291,12 +287,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
   }
 
   private start(settings: GenerationSettings): Job {
-    const job = this.track(settings, temporaryGenerationFiles(this.directory(), settings.name, new Date()))
-    this.publish()
-    return job
-  }
-
-  private track(settings: GenerationSettings, files: TemporaryGenerationFiles): Job {
+    const files = temporaryGenerationFiles(this.directory(), settings.name, new Date())
     const id = `generation-${this.nextId++}`
     const job: Job = {
       generation: {
@@ -315,6 +306,7 @@ export class TemporaryExperiments extends Store<ExperimentsState> {
       abort: new AbortController(),
     }
     this.jobs.set(id, job)
+    this.publish()
     return job
   }
 

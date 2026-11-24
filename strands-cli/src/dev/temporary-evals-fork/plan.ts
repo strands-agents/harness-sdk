@@ -7,6 +7,7 @@ import {
   type UsageEstimate,
   type UsageRange,
 } from '../panels/model.js'
+import { plural } from './host.js'
 import type { TemporaryRolloutPhases, TemporaryUsageProfile } from './study.js'
 
 export type TemporarySplitShares = readonly [train: number, validation: number, test: number]
@@ -174,12 +175,10 @@ const hasTest = ([, , test]: TemporarySplitShares): boolean => test > 0
 const isHealthy = ({ train, validation, test }: CaseSplit, shares: TemporarySplitShares): boolean =>
   train > 0 && validation >= MINIMUM_HELD_OUT_CASES && (!hasTest(shares) || test >= MINIMUM_HELD_OUT_CASES)
 
-const counted = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? '' : 's'}`
-
 const heldOutText = ({ validation, test }: CaseSplit, shares: TemporarySplitShares): string =>
   hasTest(shares)
-    ? `${counted(validation, 'validation case')} and ${counted(test, 'test case')}`
-    : counted(validation, 'validation case')
+    ? `${plural(validation, 'validation case')} and ${plural(test, 'test case')}`
+    : plural(validation, 'validation case')
 
 const casesToAdd = (caseCount: number, split: TemporarySplitShares): string => {
   const needed = Array.from({ length: CASE_SEARCH_LIMIT }, (_, extra) => caseCount + extra + 1).find((count) =>
@@ -187,7 +186,7 @@ const casesToAdd = (caseCount: number, split: TemporarySplitShares): string => {
   )
   return needed === undefined
     ? 'Give the validation and test shares more of the cases.'
-    : `Add ${counted(needed - caseCount, 'more case')}.`
+    : `Add ${plural(needed - caseCount, 'more case')}.`
 }
 
 export const temporaryOptimizeWarning = (

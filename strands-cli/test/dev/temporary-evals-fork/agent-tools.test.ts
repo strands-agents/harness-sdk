@@ -186,7 +186,6 @@ const fakeSessions = () => {
     optimize: {
       ...optimize,
       reset: vi.fn(() => optimize.set({ step: 'pick', runs: optimize.snapshot().runs ?? [] })),
-      openRun: vi.fn(),
       autoApplies: vi.fn((): boolean => false),
       appliedChanges: vi.fn((): readonly TemporaryAppliedChange[] => []),
       stop: vi.fn(),
