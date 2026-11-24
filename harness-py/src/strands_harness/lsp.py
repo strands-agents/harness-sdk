@@ -1,8 +1,8 @@
 """The ``context_manager="lsp"`` option: language server context on top of the ``"auto"`` strategies.
 
-Large code reads arrive as skeletons, ``grep -n`` and ``sed -n`` results carry the symbols and definitions they touch,
-``retrieve_context`` also finds definitions and greps the workspace, and an experimental relevance strategy offloads
-old reads of unrelated files near a full window. When the language server
+Code that ``read`` or a read-only shell command returns is offloaded as it arrives and only its skeleton stays in
+context; ``retrieve_context`` returns exact lines (``path`` with ``line_range``) and definitions (``symbol``), and an
+experimental relevance strategy offloads old results about unrelated files near a full window. When the language server
 can't start, the harness falls back to ``"auto"`` and says so, rather than failing construction.
 """
 
@@ -42,7 +42,7 @@ class LspContext:
     Attributes:
         context_manager: The context manager to pass to the agent: the language server pipeline, or ``"auto"``.
         tools: Tools the pipeline adds; its ``retrieve_context`` replaces the built-in one.
-        plugins: Plugins the option adds: the shell-result enricher.
+        plugins: Plugins the option adds.
         status: What ran, for ``agent.state``: ``{"requested": "lsp", "active": "lsp" | "auto", "reason": ...}``.
         close: Shuts the language server down, or None when none started.
     """
@@ -62,7 +62,7 @@ def resolve_lsp_context(
     Args:
         root: Workspace root the language server indexes.
         read_tool: Name of the tool that reads files, through ``path``, ``offset`` and ``limit`` inputs.
-        shell_tool: Name of the shell tool; a command that prints a whole code file is outlined like a read.
+        shell_tool: Name of the shell tool; code its read-only commands print is offloaded like a read.
         sandbox: The agent's sandbox. The language server reads the local filesystem, so any sandbox other than the
             local environment falls back to ``"auto"``.
 
@@ -73,9 +73,8 @@ def resolve_lsp_context(
         return _fallback(f"the language server reads local files, but the agent runs in {type(sandbox).__name__}")
     try:
         from strands.vended_plugins.language_server import (
-            CodeFetchEnricher,
+            CodeSkeletonStrategy,
             LspStrategy,
-            SkeletonStrategy,
             StdioLspClient,
             WorkspaceSearch,
             workspace_retrieval_tool,
@@ -90,7 +89,7 @@ def resolve_lsp_context(
         return _fallback(f"{type(error).__name__}: {error}")
 
     strategies: list[ContextStrategy | str] = [
-        SkeletonStrategy(client, root, read_tools=(read_tool,), shell_tools=(shell_tool,), symbol_lookup=True),
+        CodeSkeletonStrategy(client, root, read_tools=(read_tool,), shell_tools=(shell_tool,)),
         LspStrategy(client, root),
         *_auto_strategies(),
     ]
@@ -99,7 +98,6 @@ def resolve_lsp_context(
     return LspContext(
         context_manager=manager,
         tools=[workspace_retrieval_tool(manager, WorkspaceSearch(client, root))],
-        plugins=[CodeFetchEnricher(client, root, shell_tools=(shell_tool,))],
         status={"requested": "lsp", "active": "lsp"},
         close=client.close,
     )

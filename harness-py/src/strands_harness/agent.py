@@ -346,8 +346,8 @@ def create_harness(
             value raises.
         context_manager: The SDK's ``Agent(context_manager=)`` option: ``"auto"`` (the default) or
             ``"agentic"`` for an SDK preset, ``"lsp"`` (experimental) for ``"auto"`` plus language server
-            context: large ``read`` results and shell dumps of code files arrive as skeletons, ``grep -n`` and
-            ``sed -n`` results carry the symbols and definitions they touch, ``retrieve_context`` also finds
+            context: code that ``read`` or a read-only shell command returns is offloaded and arrives as its
+            skeleton, ``retrieve_context`` also returns exact lines and finds
             definitions and greps the workspace, and old reads of unrelated files are offloaded near a full
             window. ``"lsp"`` starts ``pyright-langserver`` in the working directory (install
             ``strands-harness[lsp]``); when it can't, it logs a warning and runs ``"auto"``, and

@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from strands.experimental.context_manager import ContextManager
 from strands.vended_plugins import language_server
-from strands.vended_plugins.language_server import LspStrategy, SkeletonStrategy
+from strands.vended_plugins.language_server import CodeSkeletonStrategy, LspStrategy
 
 from strands_harness import create_harness
 from strands_harness import lsp as lsp_module
@@ -69,7 +69,7 @@ def test_lsp_builds_skeletons_relevance_and_auto_with_a_workspace_retrieve_conte
         "offload:summarize",
         "offload:emergency-truncate",
     ]
-    assert isinstance(_strategies(agent)[0], SkeletonStrategy)
+    assert isinstance(_strategies(agent)[0], CodeSkeletonStrategy)
     assert isinstance(_strategies(agent)[1], LspStrategy)
     assert agent.tool_names.count("retrieve_context") == 1
     schema = agent.tool_registry.registry["retrieve_context"].tool_spec["inputSchema"]
@@ -82,7 +82,6 @@ def test_lsp_skeletons_the_harness_read_tool(workdir, fake_server):
 
     assert skeleton._read_tools == ("read",)
     assert skeleton._shell_tools == ("shell",)
-    assert skeleton._symbol_lookup is True
 
 
 def test_lsp_falls_back_to_auto_when_the_server_is_missing(workdir, monkeypatch, caplog):
@@ -189,12 +188,9 @@ def test_lsp_shuts_the_server_down_with_the_agent(workdir, fake_server, monkeypa
     assert closed == [True]
 
 
-def test_lsp_enriches_shell_results(workdir, fake_server):
+def test_lsp_adds_no_plugins(workdir, fake_server):
     from strands.vended_plugins.language_server import CodeFetchEnricher
 
     agent = create_harness(context_manager="lsp")
 
-    [enricher] = [
-        plugin for plugin in agent._plugin_registry._plugins.values() if isinstance(plugin, CodeFetchEnricher)
-    ]
-    assert enricher._shell_tools == ("shell",)
+    assert not [p for p in agent._plugin_registry._plugins.values() if isinstance(p, CodeFetchEnricher)]
