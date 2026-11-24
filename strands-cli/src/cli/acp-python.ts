@@ -6,7 +6,7 @@ import { readCliVersion } from '../package-version.js'
 import type { ImportedAgentProject } from '../project/import.js'
 import { PythonBackend, type PythonOptions } from '../project/python.js'
 import { sessionAgentDefinitionFromMeta } from '../session/agent-definition.js'
-import { projectPrompt, replaySessionHistory, sendChatEvent, toAcpStopReason, toAcpUsage } from './acp-events.js'
+import { finishAcpPrompt, projectPrompt, replaySessionHistory, sendChatEvent } from './acp-events.js'
 import { createAcpApp, validateSessionId } from './acp.js'
 
 export async function runPythonAcpServer(
@@ -109,19 +109,7 @@ export async function runPythonAcpServer(
           }
           next = await stream.next()
         }
-        const result = next.value
-        const used = result.context?.projectedTokens ?? result.context?.currentTokens
-        if (used !== undefined && result.context?.contextWindow !== undefined) {
-          await client.notify(acp.methods.client.session.update, {
-            sessionId: params.sessionId,
-            update: { sessionUpdate: 'usage_update', used, size: result.context.contextWindow },
-          })
-        }
-        const usage = result.usage ? toAcpUsage(result.usage) : undefined
-        return {
-          stopReason: toAcpStopReason(result.stopReason),
-          ...(usage ? { usage } : {}),
-        }
+        return await finishAcpPrompt(client, params.sessionId, next.value)
       } finally {
         if (!next.done) await stream.return({ stopReason: 'cancelled' })
       }
