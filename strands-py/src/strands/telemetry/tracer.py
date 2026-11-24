@@ -88,8 +88,8 @@ class Tracer:
 
     When the OTEL_EXPORTER_OTLP_ENDPOINT environment variable is set, traces are sent to the OTLP endpoint.
 
-    Both attributes are controlled by including "gen_ai_latest_experimental", "gen_ai_tool_definitions",
-    or "gen_ai_use_latest_invocation_tokens", respectively, in the OTEL_SEMCONV_STABILITY_OPT_IN environment variable.
+    Both attributes are controlled by including "gen_ai_latest_experimental" or "gen_ai_tool_definitions",
+    respectively, in the OTEL_SEMCONV_STABILITY_OPT_IN environment variable.
 
     Including "gen_ai_span_attributes_only" records message content directly as span attributes instead of
     span events, for backends that cannot read span events. This applies to the aggregated content events
@@ -126,7 +126,6 @@ class Tracer:
         ## To-do: should not set below attributes directly, use env var instead
         self.use_latest_genai_conventions = "gen_ai_latest_experimental" in opt_in_values
         self._include_tool_definitions = "gen_ai_tool_definitions" in opt_in_values
-        self._use_latest_invocation_tokens = "gen_ai_use_latest_invocation_tokens" in opt_in_values
         self._span_attributes_only = self.is_langfuse or "gen_ai_span_attributes_only" in opt_in_values
 
         unredacted_token = next(
@@ -842,41 +841,6 @@ class Tracer:
                         "finish_reason": str(response.stop_reason),
                     },
                 )
-
-            if hasattr(response, "metrics") and hasattr(response.metrics, "accumulated_usage"):
-                if self.is_langfuse:
-                    attributes.update({"langfuse.observation.type": "span"})
-                if self._use_latest_invocation_tokens:
-                    latest_invocation = response.metrics.latest_agent_invocation
-                    if latest_invocation is None:
-                        logger.warning(
-                            "latest_agent_invocation is None despite _use_latest_invocation_tokens being set"
-                        )
-                        usage: Usage = Usage(inputTokens=0, outputTokens=0, totalTokens=0)
-                    else:
-                        usage = latest_invocation.usage
-                else:
-                    usage = response.metrics.accumulated_usage
-                prompt_tokens = _total_prompt_tokens(usage)
-                attributes.update(
-                    {
-                        "gen_ai.usage.prompt_tokens": prompt_tokens,
-                        "gen_ai.usage.completion_tokens": usage["outputTokens"],
-                        "gen_ai.usage.input_tokens": prompt_tokens,
-                        "gen_ai.usage.output_tokens": usage["outputTokens"],
-                        "gen_ai.usage.total_tokens": usage["totalTokens"],
-                        "gen_ai.usage.cache_read.input_tokens": usage.get("cacheReadInputTokens", 0),
-                        "gen_ai.usage.cache_creation.input_tokens": usage.get("cacheWriteInputTokens", 0),
-                    }
-                )
-                # Deprecated pre-semconv name, dual-emitted unless opted into the latest conventions
-                if not self.use_latest_genai_conventions:
-                    attributes.update(
-                        {
-                            "gen_ai.usage.cache_read_input_tokens": usage.get("cacheReadInputTokens", 0),
-                            "gen_ai.usage.cache_write_input_tokens": usage.get("cacheWriteInputTokens", 0),
-                        }
-                    )
 
         self._end_span(span, attributes, error)
 
