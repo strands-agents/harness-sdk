@@ -95,6 +95,8 @@ class Tracer:
     and leaves it off the agent span, so each model call's tokens appear once in a trace. Use it with backends that
     total token usage by summing every span (such as Opik and Datadog), where the agent span's accumulated usage
     would otherwise count the same tokens twice. It takes precedence over "gen_ai_use_latest_invocation_tokens".
+    Python sets usage on no other container span today; one that adds it must respect this value too, as the
+    TypeScript multi-agent and node spans do.
 
     Including "gen_ai_span_attributes_only" records message content directly as span attributes instead of
     span events, for backends that cannot read span events. This applies to the aggregated content events
@@ -854,6 +856,8 @@ class Tracer:
                 )
 
             has_usage = hasattr(response, "metrics") and hasattr(response.metrics, "accumulated_usage")
+            # Stops Langfuse from making the agent span a generation that repeats its calls' tokens. Kept even with
+            # gen_ai_usage_on_model_spans_only, since older Langfuse versions would render it as an empty generation.
             if has_usage and self.is_langfuse:
                 attributes.update({"langfuse.observation.type": "span"})
             # With gen_ai_usage_on_model_spans_only, usage stays on the chat spans so summing every span counts it once.

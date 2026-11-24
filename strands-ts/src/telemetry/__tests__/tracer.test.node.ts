@@ -1320,9 +1320,16 @@ describe('Tracer', () => {
 
       tracer.endModelInvokeSpan(span, { usage })
 
-      expect(mockSpan.getAttributeValue('gen_ai.usage.input_tokens')).toBe(10)
-      expect(mockSpan.getAttributeValue('gen_ai.usage.output_tokens')).toBe(20)
-      expect(mockSpan.getAttributeValue('gen_ai.usage.total_tokens')).toBe(30)
+      const usageAttributes = Object.fromEntries(
+        mockSpan.calls.setAttribute.filter((call) => call.key.startsWith('gen_ai.usage.')).map((c) => [c.key, c.value])
+      )
+      expect(usageAttributes).toStrictEqual({
+        'gen_ai.usage.prompt_tokens': 10,
+        'gen_ai.usage.input_tokens': 10,
+        'gen_ai.usage.completion_tokens': 20,
+        'gen_ai.usage.output_tokens': 20,
+        'gen_ai.usage.total_tokens': 30,
+      })
     })
 
     it('keeps langfuse.observation.type on the agent span', () => {

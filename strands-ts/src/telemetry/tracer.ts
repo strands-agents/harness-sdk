@@ -357,6 +357,8 @@ export class Tracer {
       // Setting observation.type to "span" prevents Langfuse from creating that
       // extra generation, avoiding double-counted tokens in dashboards.
       // See https://github.com/langfuse/langfuse/issues/7549
+      // Kept even when usage is omitted (gen_ai_usage_on_model_spans_only): older Langfuse versions
+      // otherwise render the agent span as an empty generation.
       if (this._isLangfuse) attributes['langfuse.observation.type'] = 'span'
       if (response !== undefined) this._addResponseEvent(span, response, stopReason)
 

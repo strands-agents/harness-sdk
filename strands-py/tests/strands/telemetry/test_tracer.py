@@ -1371,9 +1371,13 @@ def test_end_model_invoke_span_keeps_usage_when_usage_on_model_spans_only(mock_s
     )
 
     attributes = mock_span.set_attributes.call_args[0][0]
-    assert attributes["gen_ai.usage.input_tokens"] == 10
-    assert attributes["gen_ai.usage.output_tokens"] == 20
-    assert attributes["gen_ai.usage.total_tokens"] == 30
+    assert {key: value for key, value in attributes.items() if key.startswith("gen_ai.usage.")} == {
+        "gen_ai.usage.prompt_tokens": 10,
+        "gen_ai.usage.input_tokens": 10,
+        "gen_ai.usage.completion_tokens": 20,
+        "gen_ai.usage.output_tokens": 20,
+        "gen_ai.usage.total_tokens": 30,
+    }
 
 
 def test_end_agent_span_warns_when_opted_in_but_no_invocations(mock_span, monkeypatch, caplog):
