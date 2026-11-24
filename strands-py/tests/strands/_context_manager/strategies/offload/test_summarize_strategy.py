@@ -852,7 +852,7 @@ class TestServerSideSummary:
             Message(role="assistant", content=[summary]),
             Message(role="user", content=[ContentBlock(text="recent")]),
         ]
-        # A stash ref is keyed by tracking id, so without one the summary's blocks take another message's refs.
+        # An archive ref is keyed by tracking id, so without one the summary's blocks take another message's refs.
         assert messages[1]["tracking_id"] not in (None, "", messages[0].get("tracking_id"))
 
     @pytest.mark.asyncio

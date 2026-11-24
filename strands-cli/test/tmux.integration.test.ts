@@ -147,7 +147,7 @@ describe.runIf(process.env.STRANDS_CLI_TEST_TMUX === 'true' && process.platform 
       await tmux('detach-client', '-s', 'cli')
       expect(await first.exited).toMatchObject({ exitCode: 0 })
       expect(await tmux('list-clients', '-t', 'cli')).toBe('')
-      expect(await capture()).toContain('tmux draft▌')
+      await expect.poll(capture, poll).toContain('tmux draft▌')
       const second = await attach('tmux draft▌')
       expect(await pane('#{pane_pid}')).toBe(pid)
       second.write(' after reattach')

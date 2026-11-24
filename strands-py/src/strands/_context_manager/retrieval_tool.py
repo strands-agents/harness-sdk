@@ -1,4 +1,4 @@
-"""Retrieval tool for accessing stashed (L1) content.
+"""Retrieval tool for accessing archived (L1) content.
 
 Registered automatically when the ContextManager has storage configured.
 """
@@ -20,7 +20,7 @@ from .placeholder import is_offloaded
 
 if TYPE_CHECKING:
     from ..types.content import ContentBlock, Messages
-    from .stash import Stash
+    from .archive import Archive
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +28,17 @@ RETRIEVAL_TOOL_NAME = "retrieve_context"
 
 _DEFAULT_MAX_RESULT_TOKENS = 10_000
 
-_StashEntry = Union["ContentBlock", ToolResultContent, "Messages"]
-"""What a stash entry holds: one stored block, or the messages removed together."""
+_ArchiveEntry = Union["ContentBlock", ToolResultContent, "Messages"]
+"""What an archive entry holds: one stored block, or the messages removed together."""
 
 _MEDIA_KEYS = ("image", "document")
-"""Media a tool result can carry back, whose bytes the stash holds base64-encoded."""
+"""Media a tool result can carry back, whose bytes the archive holds base64-encoded."""
 
 _DEFAULT_CONTEXT_LINES = 5
 
 
-def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -> PythonAgentTool:
-    """Create the ``retrieve_context`` tool backed by the given stash."""
+def _create_retrieval_tool(archive: Archive, max_result_tokens: int | None = None) -> PythonAgentTool:
+    """Create the ``retrieve_context`` tool backed by the given archive."""
     max_chars = (max_result_tokens or _DEFAULT_MAX_RESULT_TOKENS) * CHARS_PER_TOKEN
 
     async def _invoke(tool_use: dict[str, Any], **kwargs: Any) -> ToolResult:
@@ -46,7 +46,7 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
         inputs = tool_use.get("input", {})
         reference = str(inputs["reference"]).strip()
 
-        entries = await _resolve_reference(stash, reference)
+        entries = await _resolve_reference(archive, reference)
         if not entries:
             return _error(
                 tool_use_id,
@@ -115,22 +115,22 @@ def _create_retrieval_tool(stash: Stash, max_result_tokens: int | None = None) -
     )
 
 
-async def _resolve_reference(stash: Stash, reference: str) -> list[_StashEntry]:
+async def _resolve_reference(archive: Archive, reference: str) -> list[_ArchiveEntry]:
     """Resolve a reference to its stored entries.
 
     An id (a tool result's ``toolUseId``, or a ``removed-`` reference) resolves to every entry keyed under it, in
     index order; otherwise the reference is an exact key and resolves to that entry. Ids take precedence because a
     placeholder references a tool result by id, and an id may itself end like a key (``tool_1``).
     """
-    keys = await stash.keys_of(reference)
+    keys = await archive.keys_of(reference)
     if keys:
-        stored = [await stash.retrieve(key) for key in keys]
-        return [cast("_StashEntry", entry) for entry in stored if entry is not None]
-    exact = await stash.retrieve(reference)
-    return [cast("_StashEntry", exact)] if exact is not None else []
+        stored = [await archive.retrieve(key) for key in keys]
+        return [cast("_ArchiveEntry", entry) for entry in stored if entry is not None]
+    exact = await archive.retrieve(reference)
+    return [cast("_ArchiveEntry", exact)] if exact is not None else []
 
 
-def _full_content(entries: list[_StashEntry], max_chars: int) -> list[ToolResultContent]:
+def _full_content(entries: list[_ArchiveEntry], max_chars: int) -> list[ToolResultContent]:
     """The stored content itself.
 
     Tool result items, and removed messages rendered as role markers and their content, are returned as blocks, so
@@ -151,7 +151,7 @@ def _full_content(entries: list[_StashEntry], max_chars: int) -> list[ToolResult
 
 
 def _search_entries(
-    tool_use_id: str, entries: list[_StashEntry], inputs: Mapping[str, Any], max_chars: int
+    tool_use_id: str, entries: list[_ArchiveEntry], inputs: Mapping[str, Any], max_chars: int
 ) -> ToolResult:
     """The lines of the entries' text that match ``pattern`` or fall in ``line_range``."""
     text = _join_text(
@@ -197,7 +197,7 @@ def _as_result_item(block: ContentBlock | ToolResultContent) -> ToolResultConten
 
 
 def _restore_media(data: Mapping[str, Any]) -> ToolResultContent | None:
-    """A media tool result item from stash data, bytes decoded from the base64 the stash holds, or None."""
+    """A media tool result item from archive data, bytes decoded from the base64 the archive holds, or None."""
     for key in _MEDIA_KEYS:
         if key not in data:
             continue
@@ -255,7 +255,7 @@ def _error(tool_use_id: str, message: str) -> ToolResult:
 def _retrieval_calls_before(messages: Messages, index: int | None) -> frozenset[str]:
     """The retrieval tool calls the message at ``index`` answers, or, with None, the ones the last message makes.
 
-    Their results are copies of stashed content, so the stash leaves them out. A tool result follows the message
+    Their results are copies of archived content, so the archive leaves them out. A tool result follows the message
     that called it, so only that message is read.
     """
     position = len(messages) if index is None else index

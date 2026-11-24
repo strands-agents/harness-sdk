@@ -127,6 +127,15 @@ This will break existing code.
 :::
 ```
 
+## Wide Tables and Images
+
+There is nothing to mark up. On large screens, a top-level table whose cells wrap at column
+width, or an image wider than the column, grows into the spare room on both sides of the
+text, up to 72rem; everything else keeps the column width. On laptops and phones nothing
+changes. A table or image inside an aside or `<TabItem>` stays at the width of its box, so
+keep a wide table at the top level of the page when it needs the room. Prose and code blocks
+never widen.
+
 ## Frontmatter Schema
 
 Required fields:

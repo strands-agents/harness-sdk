@@ -25,7 +25,7 @@ from .target import OffloadTarget, media_kind
 if TYPE_CHECKING:
     from ....agent.agent import Agent
     from ....agent.invocation_context import InvocationContext
-    from ...stash import Stash
+    from ...archive import Archive
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +69,12 @@ class TruncateStrategy(BaseOffloadStrategy):
     def _with_conditions(self, conditions: OffloadConditions) -> TruncateStrategy:
         return TruncateStrategy(self._target, self._truncate_config, conditions)
 
-    def init(self, agent: Agent, stash: Stash | None = None) -> None:
+    def init(self, agent: Agent, archive: Archive | None = None) -> None:
         """Check a percent ``block_threshold`` against ``preview_tokens``, then initialize the strategy.
 
         Args:
             agent: The agent this strategy is attached to.
-            stash: The stash offloaded content is stored in.
+            archive: The archive offloaded content is stored in.
 
         Raises:
             ValueError: When a percent ``block_threshold`` of the context window is no larger than ``preview_tokens``,
@@ -84,7 +84,7 @@ class TruncateStrategy(BaseOffloadStrategy):
         tokens = self._conditions.threshold_tokens(agent)
         if threshold is not None and threshold.is_share and tokens is not None:
             self._check_threshold_exceeds_preview(tokens, f"{tokens} tokens of the context window")
-        super().init(agent, stash)
+        super().init(agent, archive)
 
     def _check_threshold_exceeds_preview(self, tokens: int, shown: str) -> None:
         """Check the threshold leaves room for a preview, so truncating a block takes it below the threshold.
@@ -107,7 +107,7 @@ class TruncateStrategy(BaseOffloadStrategy):
         # A middle of only placeholders has nothing new to elide.
         if all(is_offloaded(block) for message in middle for block in message["content"]):
             return False
-        return await remove_messages(messages, middle, context.agent.model, format_elided, "truncate", context.stash)
+        return await remove_messages(messages, middle, context.agent.model, format_elided, "truncate", context.archive)
 
     async def _select_middle(self, eligible: list[Message], agent: Agent) -> list[Message]:
         """The eligible messages between the head and the tail kept within the preview token budget."""
