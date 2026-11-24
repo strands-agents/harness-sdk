@@ -288,4 +288,4 @@ async def delete_session() -> None
 
 Defined in: [src/strands/session/snapshot\_session\_manager.py:550](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/session/snapshot_session_manager.py#L550)
 
-Delete all snapshots and stash data for this session.
+Delete all snapshots and archive data for this session.

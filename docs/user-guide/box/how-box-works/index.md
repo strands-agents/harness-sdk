@@ -16,7 +16,7 @@ The agent runs inside an operating system sandbox. Box enforces what it can reac
 -   The sandbox limits the agent’s own file access, such as its tools that read and edit files, to the files and folders that the profile grants.
 -   Box checks everything else against your policy before it happens: each shell command and the files that command touches, each network request, and each MCP tool call.
 
-![The agent runs in an OS sandbox inside the box. Its requests go to Box, which checks each one against your policy before it reaches files, commands, the network, or MCP tools. Denied requests stop there.](https://raw.githubusercontent.com/strands-agents/box/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/cli/images/how-box-works.png)
+![The agent runs in an OS sandbox inside the box. Its requests go to Box, which checks each one against your policy before it reaches files, commands, the network, or MCP tools. Denied requests stop there.](https://raw.githubusercontent.com/strands-agents/box/a2a97eede44b01f536faa4ada8c3085f97634681/docs/cli/images/how-box-works.png)
 
 The picture is simplified: the agent’s own file reads and writes reach only the files the profile grants, and the sandbox enforces that. Box checks the rest against policy, including each command the box’s shell runs itself, such as `echo`, `cp`, or a redirect. A program that the shell starts, such as `git` or `node`, runs in a sandbox of its own, which reaches only the files its toolchain grants. So a file rule in your policy decides the shell’s own commands, and not what those programs or the agent’s file tools open ([Where file rules apply](/docs/user-guide/box/file-rules/index.md)). A sandbox refusal fails with an error such as `operation not permitted`. It isn’t a policy decision, so the activity banner and the run history don’t show it.
 
@@ -39,7 +39,7 @@ policies = ["policy.dw"]
 
 A pack holds what one program needs in a box: how to start it, where its settings are, and which hosts it reaches. A profile lists its packs, and `box` puts them together for each run.
 
-An agent pack runs the agent, a tool pack runs a program that the agent calls from its shell, and a support pack adds the rest, such as a model provider’s [route](#credentials) and where Box gets its credential. [Packs](/docs/user-guide/box/packs/index.md) says what each kind holds and how to write one, and the [user guide](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/cli/README.md#packs) lists the packs that Box ships.
+An agent pack runs the agent, a tool pack runs a program that the agent calls from its shell, and a support pack adds the rest, such as a model provider’s [route](#credentials) and where Box gets its credential. [Packs](/docs/user-guide/box/packs/index.md) says what each kind holds and how to write one, and the [user guide](https://github.com/strands-agents/box/blob/a2a97eede44b01f536faa4ada8c3085f97634681/docs/cli/README.md#packs) lists the packs that Box ships.
 
 ## Starters
 
@@ -57,7 +57,7 @@ An edit to a rule can take effect while the agent keeps running: the banner show
 
 The agent needs keys to do its work, such as its model key or a token to push to GitHub. Box keeps them outside the box. A host that needs a key is reached through a route: an `[egress.<name>]` table in a pack or the profile that names the hosts and where the key comes from, such as a variable in your shell, never the key itself. Where the key comes from can also be your password manager: a [plugin](/docs/user-guide/box/plugins/index.md) in the profile reads it on your machine when the box starts ([Read a token from your vault](/docs/user-guide/box/profiles/index.md#read-a-token-from-your-vault)). Inside the box, the agent sees a placeholder key in place of the key, and Box puts the real key in as the request leaves for one of the route’s hosts.
 
-![The agent in the box sends a placeholder key. Box holds the real token and adds it as the request leaves for github.com.](https://raw.githubusercontent.com/strands-agents/box/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/cli/images/credentials.png)
+![The agent in the box sends a placeholder key. Box holds the real token and adds it as the request leaves for github.com.](https://raw.githubusercontent.com/strands-agents/box/a2a97eede44b01f536faa4ada8c3085f97634681/docs/cli/images/credentials.png)
 
 The model provider’s pack sets this up for the model key. For another service, you add a route to the profile ([Give the agent a token for another service](/docs/user-guide/box/profiles/index.md#give-the-agent-a-token-for-another-service)).
 
@@ -73,4 +73,4 @@ A box limits what the agent can reach, but it doesn’t check what the agent wri
 
 -   [Get started](/docs/user-guide/box/quickstart/index.md): install `box` and run Claude Code in a box.
 -   [Command reference](/docs/user-guide/box/reference/cli/index.md): every `box` command and its flags.
--   For how each part works inside, the [design pages](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/design/cli/profiles.md) go deeper.
+-   For how each part works inside, the [design pages](https://github.com/strands-agents/box/blob/a2a97eede44b01f536faa4ada8c3085f97634681/docs/design/cli/profiles.md) go deeper.

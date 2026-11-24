@@ -124,7 +124,7 @@ Initialize the Agent with the specified configuration.
     
 -   `"auto"` - Proactive truncation of tool results + summarization at 85% utilization.
     
--   `"agentic"` - Model-driven context management via injected tools. A :class:`~strands._context_manager.types.ContextManagerConfig` dict for custom strategy pipelines. A :class:`~strands._context_manager.context_manager.ContextManager` instance for full control.
+-   `"agentic"` - (Experimental) Model-driven context management via injected tools. A :class:`~strands.context_manager.ContextManagerConfig` dict for custom strategy pipelines. A :class:`~strands.context_manager.ContextManager` instance for full control.
     
 -   `False` - Disable all context management. When set (except `False`), any co-provided `conversation_manager` is ignored. Defaults to None (SlidingWindowConversationManager, no offloader).
     

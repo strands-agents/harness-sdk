@@ -102,7 +102,7 @@ secret.ref = "aws://my-profile"
 | `langfuse` | spans | `secret.ref`, and `destination` for a region or a self-hosted Langfuse |
 | `langsmith` | spans | `secret.ref`, and optionally `project` and `destination` |
 | `cloudwatch_logs` | log records | `region`, `log_group`, `log_stream`, and an `aws://` or `credsd://` `secret.ref` |
-| `cloudwatch_traces` | spans | `region`, and an `aws://` or `credsd://` `secret.ref` |
+| `cloudwatch_traces` | spans | `region`, an `aws://` or `credsd://` `secret.ref`, and optionally `log_group` and `log_stream` together |
 
 A vendor that takes only spans is sent no log or metric batch. That is the one exception to the rule that the workload’s log records and metrics reach every target.
 
@@ -317,6 +317,7 @@ Exit `1` alone does not prove that Box refused, because a workload is free to ex
 | ``a `<kind>` target sets `<key>` itself, so leave it out`` | A vendor kind names a key it sets. |
 | `` `<key>` does not apply to a `<kind>` target `` | A key belongs to another kind. |
 | `` a `cloudwatch_logs` target needs `log_group` and `log_stream` `` | A CloudWatch Logs target names no group or stream. |
+| ``a `cloudwatch_traces` target names `log_group` and `log_stream` together, or neither`` | A CloudWatch traces target names one of the two without the other. |
 | `` needs `region`, an AWS region such as `us-west-2` `` | A CloudWatch target names no region, or an invalid one. |
 | `` `secret.ref` names no scheme this box reads `` | The reference is a literal value, or its scheme is not `env://`, `secret://`, `aws://`, `credsd://`, or a [declared scheme](/docs/user-guide/box/reference/configuration/index.md#secret-sourcescheme). A declared scheme with nothing after `://` is refused in the same way. |
 | `its destination is neither https nor loopback` | A credential would cross the network in the clear. |
@@ -338,4 +339,4 @@ Set `STRANDS_BOX_TELEMETRY_DEBUG` to also print each failed export as it happens
 ## See also
 
 -   [Getting started](/docs/user-guide/box/core/quickstart/index.md): install Box, then run Claude Code or Codex in a box.
--   [How telemetry works](https://github.com/strands-agents/box/blob/2762080a7a4c65fd7e777646a8fd79706aebd66a/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/a2a97eede44b01f536faa4ada8c3085f97634681/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.

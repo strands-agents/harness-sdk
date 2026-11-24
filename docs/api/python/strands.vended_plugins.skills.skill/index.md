@@ -9,7 +9,7 @@ This module defines the Skill dataclass and provides classmethods for discoverin
 class Skill()
 ```
 
-Defined in: [src/strands/vended\_plugins/skills/skill.py:211](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/skills/skill.py#L211)
+Defined in: [src/strands/vended\_plugins/skills/skill.py:212](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/skills/skill.py#L212)
 
 Represents an agent skill with metadata and instructions.
 
@@ -51,7 +51,7 @@ skill = Skill.from\_url(“[https://example.com/SKILL.md](https://example.com/SK
 def from_file(cls, skill_path: str | Path, *, strict: bool = False) -> Skill
 ```
 
-Defined in: [src/strands/vended\_plugins/skills/skill.py:254](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/skills/skill.py#L254)
+Defined in: [src/strands/vended\_plugins/skills/skill.py:255](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/skills/skill.py#L255)
 
 Load a single skill from a directory containing SKILL.md.
 
@@ -78,7 +78,7 @@ A Skill instance populated from the SKILL.md file.
 def from_content(cls, content: str, *, strict: bool = False) -> Skill
 ```
 
-Defined in: [src/strands/vended\_plugins/skills/skill.py:302](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/skills/skill.py#L302)
+Defined in: [src/strands/vended\_plugins/skills/skill.py:303](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/skills/skill.py#L303)
 
 Parse SKILL.md content into a Skill instance.
 
@@ -112,7 +112,7 @@ A Skill instance populated from the parsed content.
 def from_url(cls, url: str, *, strict: bool = False) -> Skill
 ```
 
-Defined in: [src/strands/vended\_plugins/skills/skill.py:345](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/skills/skill.py#L345)
+Defined in: [src/strands/vended\_plugins/skills/skill.py:346](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/skills/skill.py#L346)
 
 Load a skill by fetching its SKILL.md content from an HTTPS URL.
 
@@ -146,7 +146,7 @@ def from_directory(cls,
                    strict: bool = False) -> list[Skill]
 ```
 
-Defined in: [src/strands/vended\_plugins/skills/skill.py:387](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/skills/skill.py#L387)
+Defined in: [src/strands/vended\_plugins/skills/skill.py:388](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/vended_plugins/skills/skill.py#L388)
 
 Load all skills from a parent directory containing skill subdirectories.
 

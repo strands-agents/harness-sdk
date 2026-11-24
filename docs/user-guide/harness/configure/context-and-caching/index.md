@@ -2,7 +2,7 @@ Two defaults keep a long conversation coherent and affordable. A model can only 
 
 ## Context management
 
-With `context_manager` on, Strands harness keeps the relevant history in the model’s window, summarizing older turns as the conversation grows so a long task does not overflow the context. It also offloads bulky tool results: each is replaced with a short preview and a reference, and the full content stays in the context manager’s stash, where the agent reads it back with the `retrieve_context` tool when it actually needs it.
+With `context_manager` on, Strands harness keeps the relevant history in the model’s window, summarizing older turns as the conversation grows so a long task does not overflow the context. It also offloads bulky tool results: each is replaced with a short preview and a reference, and the full content stays in the context manager’s archive, where the agent reads it back with the `retrieve_context` tool when it actually needs it.
 
 The option takes `"auto"` (the default), `"agentic"`, or off:
 

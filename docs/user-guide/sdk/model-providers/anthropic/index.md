@@ -424,7 +424,7 @@ To keep thinking blocks, pair an eager per-block strategy for tool results with 
 (( tab "Python" ))
 ```python
 from strands import Agent
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 from strands.models.anthropic import AnthropicModel
 
 model = AnthropicModel(

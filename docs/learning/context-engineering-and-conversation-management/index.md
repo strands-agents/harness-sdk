@@ -17,13 +17,13 @@ It breaks down into four categories:
 | **Select** | Choose what enters context, inject relevant info, filter out noise | `ContextInjector` plugin |
 | **Compress** | Shrink what’s already in context, summarize history, truncate results | `ContextManager` strategies (truncate, summarize, drop) |
 | **Isolate** | Separate concerns, give sub-agents their own context windows | Multi-agent patterns with separate agent contexts |
-| **Externalize** | Move large data out of context, store externally, keep a compact reference | `ContextManager` stash + retrieval tool |
+| **Externalize** | Move large data out of context, store externally, keep a compact reference | `ContextManager` archive + retrieval tool |
 
 ## The one-line default: `context_manager="auto"`
 
 Changed since recording
 
-The video uses `SummarizingConversationManager` and `ContextOffloader`. The updated starting point is `context_manager="auto"`. For custom behavior, use `ContextManager` and `Offload` from `strands.experimental.context_manager`, as shown below. Truncation keeps previews; it does not simply drop whole messages.
+The video uses `SummarizingConversationManager` and `ContextOffloader`. The updated starting point is `context_manager="auto"`. For custom behavior, use `ContextManager` and `Offload` from `strands.context_manager`, as shown below. Truncation keeps previews; it does not simply drop whole messages.
 
 For most use cases, start here:
 
@@ -35,7 +35,7 @@ agent = Agent(context_manager="auto")
 
 This single parameter enables:
 
--   **Offloading** large tool results to a stash, replaced with truncated previews
+-   **Offloading** large tool results to an archive, replaced with truncated previews
 -   **Summarization** of old messages into structured summaries (not dropped)
 -   **Proactive compression** firing at 85% context usage to stay ahead of overflow
 
@@ -71,22 +71,18 @@ Control when injection fires:
 
 The `ContextManager` is the engine behind `context_manager="auto"`. When you need custom control over how context is managed, build your own strategy pipeline using `Offload` strategies.
 
-Experimental
-
-`ContextManager` and `Offload` are currently exported from `strands.experimental.context_manager`. They are fully functional and will move to the main namespace in an upcoming release.
-
 There are three types of Offload strategies:
 
 | Strategy | What stays in context |
 | --- | --- |
 | `Offload.truncate(...)` | A head/tail preview of the original |
 | `Offload.summarize(...)` | An LLM-generated summary of the original |
-| `Offload.drop(...)` | Nothing (original goes to stash only) |
+| `Offload.drop(...)` | Nothing (original goes to the archive only) |
 
 Each strategy takes a **target** that controls what content it operates on:
 
 ```python
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 Offload.summarize("*")                   # everything: all message types
 Offload.truncate("tool_results")         # only successful tool results
@@ -108,7 +104,7 @@ Truncate matching content to head/tail previews when context gets full:
 
 ```python
 from strands import Agent
-from strands.experimental.context_manager import ContextManager, Offload
+from strands.context_manager import ContextManager, Offload
 
 agent = Agent(
     context_manager=ContextManager(
@@ -128,7 +124,7 @@ Instead of dropping old messages, compress them into summaries. Preserves more i
 
 ```python
 from strands import Agent
-from strands.experimental.context_manager import ContextManager, Offload
+from strands.context_manager import ContextManager, Offload
 
 agent = Agent(
     context_manager=ContextManager(
@@ -149,7 +145,7 @@ Summarizing history doesn’t require your most capable model. Pass a cheaper on
 ```python
 from strands import Agent
 from strands.models import BedrockModel
-from strands.experimental.context_manager import ContextManager, Offload
+from strands.context_manager import ContextManager, Offload
 
 summarizer_model = BedrockModel(model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0")
 
@@ -165,12 +161,12 @@ agent = Agent(
                 },
             ).when(utilization=0.85, preserve_recent=8),
         ],
-        stash=False,
+        archive=False,
     ),
 )
 ```
 
-`stash=False` turns off the stash entirely: offloaded content isn’t kept anywhere and the agent gets no retrieval tool. That’s fine for pure summarization where you don’t need to pull anything back. Leave it on (the default) when you want the agent to be able to recover offloaded tool results.
+`archive=False` turns off the archive entirely: offloaded content isn’t kept anywhere and the agent gets no retrieval tool. That’s fine for pure summarization where you don’t need to pull anything back. Leave it on (the default) when you want the agent to be able to recover offloaded tool results.
 
 📂 [custom\_summarizer.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/08-context-management/custom_summarizer.py)
 
@@ -180,9 +176,9 @@ agent = Agent(
 | --- | --- |
 | `context_manager="auto"` | Best default. Offloading + summarization + proactive compression |
 | `context_manager="agentic"` | Model self-manages context. Trades tokens for judgment |
-| `Offload.truncate(...)` | Keeps a preview; originals remain recoverable when stash is enabled |
+| `Offload.truncate(...)` | Keeps a preview; originals remain recoverable when the archive is enabled |
 | `Offload.summarize(...)` | Preserves more info. Lossy compression, costs an LLM call |
-| `Offload.drop(...)` | Most aggressive. Content goes to stash only |
+| `Offload.drop(...)` | Most aggressive. Content goes to the archive only |
 | Context injection | Ephemeral per-call data. Never persisted to history |
 
 ## Resources

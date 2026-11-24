@@ -46,6 +46,8 @@ When the OTEL\_EXPORTER\_OTLP\_ENDPOINT environment variable is set, traces are 
 
 Both attributes are controlled by including “gen\_ai\_latest\_experimental”, “gen\_ai\_tool\_definitions”, or “gen\_ai\_use\_latest\_invocation\_tokens”, respectively, in the OTEL\_SEMCONV\_STABILITY\_OPT\_IN environment variable.
 
+Including “gen\_ai\_usage\_on\_model\_spans\_only” records `gen_ai.usage.*` only on model invocation (`chat`) spans and leaves it off the agent span, so each model call’s tokens appear once in a trace. Use it with backends that total token usage by summing every span (such as Opik and Datadog), where the agent span’s accumulated usage would otherwise count the same tokens twice. It takes precedence over “gen\_ai\_use\_latest\_invocation\_tokens”. Python sets usage on no other container span today; one that adds it must respect this value too, as the TypeScript multi-agent and node spans do.
+
 Including “gen\_ai\_span\_attributes\_only” records message content directly as span attributes instead of span events, for backends that cannot read span events. This applies to the aggregated content events (latest-convention “gen\_ai.\*” messages and the “memory.query”/“memory.content” events); the legacy per-message events are always emitted as events. The default (token absent, non-Langfuse) emits span events for backward compatibility. Independent of this token, tool spans under the latest conventions additionally record `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result` as span attributes per the execute\_tool span convention.
 
 Span attribute redaction is opt-in via the `gen_ai_unredacted_attributes=<list>` token in the same environment variable. The list uses `;` as a separator and supports trailing-`*` glob patterns. When the token is absent, all attributes are emitted unredacted (backward compatible).
@@ -60,7 +62,7 @@ Sensitive attributes subject to the redaction policy are: `gen_ai.input.messages
 def __init__() -> None
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:116](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L116)
+Defined in: [src/strands/telemetry/tracer.py:123](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L123)
 
 Initialize the tracer.
 
@@ -71,7 +73,7 @@ Initialize the tracer.
 def is_langfuse() -> bool
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:198](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L198)
+Defined in: [src/strands/telemetry/tracer.py:210](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L210)
 
 Check if Langfuse is configured as the OTLP endpoint.
 
@@ -87,7 +89,7 @@ def end_span_with_error(span: Span,
                         exception: Exception | None = None) -> None
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:323](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L323)
+Defined in: [src/strands/telemetry/tracer.py:335](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L335)
 
 End a span with error status.
 
@@ -104,7 +106,7 @@ def end_span_with_cancellation(span: Span,
                                cancellation: BaseException) -> None
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:337](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L337)
+Defined in: [src/strands/telemetry/tracer.py:349](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L349)
 
 End a span that was cancelled without marking it as success or failure.
 
@@ -129,7 +131,7 @@ def start_model_invoke_span(messages: Messages,
                             **kwargs: Any) -> Span
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:408](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L408)
+Defined in: [src/strands/telemetry/tracer.py:420](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L420)
 
 Start a new span for a model invocation.
 
@@ -154,7 +156,7 @@ def end_model_invoke_span(span: Span, message: Message, usage: Usage,
                           metrics: Metrics, stop_reason: StopReason) -> None
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:449](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L449)
+Defined in: [src/strands/telemetry/tracer.py:461](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L461)
 
 End a model invocation span with results and metrics.
 
@@ -176,7 +178,7 @@ def start_tool_call_span(tool: ToolUse,
                          **kwargs: Any) -> Span
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:509](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L509)
+Defined in: [src/strands/telemetry/tracer.py:521](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L521)
 
 Start a new span for a tool call.
 
@@ -199,7 +201,7 @@ def end_tool_call_span(span: Span,
                        error: Exception | None = None) -> None
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:585](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L585)
+Defined in: [src/strands/telemetry/tracer.py:597](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L597)
 
 End a tool call span with results.
 
@@ -220,7 +222,7 @@ def start_event_loop_cycle_span(
         **kwargs: Any) -> Span
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:645](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L645)
+Defined in: [src/strands/telemetry/tracer.py:657](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L657)
 
 Start a new span for an event loop cycle.
 
@@ -245,7 +247,7 @@ def end_event_loop_cycle_span(
         tool_result_message: Message | None = None) -> None
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:686](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L686)
+Defined in: [src/strands/telemetry/tracer.py:698](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L698)
 
 End an event loop cycle span with results.
 
@@ -270,7 +272,7 @@ def start_agent_span(messages: Messages,
                      **kwargs: Any) -> Span
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:733](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L733)
+Defined in: [src/strands/telemetry/tracer.py:745](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L745)
 
 Start a new span for an agent invocation.
 
@@ -298,7 +300,7 @@ def end_agent_span(span: Span,
                    error: Exception | None = None) -> None
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:804](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L804)
+Defined in: [src/strands/telemetry/tracer.py:816](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L816)
 
 End an agent span with results and metrics.
 
@@ -318,7 +320,7 @@ def start_multiagent_span(
 ) -> Span
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:895](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L895)
+Defined in: [src/strands/telemetry/tracer.py:911](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L911)
 
 Start a new span for swarm invocation.
 
@@ -328,7 +330,7 @@ Start a new span for swarm invocation.
 def end_swarm_span(span: Span, result: str | None = None) -> None
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:933](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L933)
+Defined in: [src/strands/telemetry/tracer.py:949](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L949)
 
 End a swarm span with results.
 
@@ -345,7 +347,7 @@ def start_memory_search_span(query: str,
                              **kwargs: Any) -> Span
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:997](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L997)
+Defined in: [src/strands/telemetry/tracer.py:1013](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1013)
 
 Start a new span for a memory search.
 
@@ -373,7 +375,7 @@ def end_memory_search_span(span: Span,
                            error: Exception | None = None) -> None
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:1038](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1038)
+Defined in: [src/strands/telemetry/tracer.py:1054](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1054)
 
 End a memory search span with results.
 
@@ -396,7 +398,7 @@ def start_memory_add_span(content: str,
                           **kwargs: Any) -> Span
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:1083](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1083)
+Defined in: [src/strands/telemetry/tracer.py:1099](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1099)
 
 Start a new span for a memory add.
 
@@ -423,7 +425,7 @@ def end_memory_add_span(span: Span,
                         error: Exception | None = None) -> None
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:1122](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1122)
+Defined in: [src/strands/telemetry/tracer.py:1138](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1138)
 
 End a memory add span.
 
@@ -444,7 +446,7 @@ def start_memory_inject_span(max_entries: int | None = None,
                              **kwargs: Any) -> Span
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:1141](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1141)
+Defined in: [src/strands/telemetry/tracer.py:1157](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1157)
 
 Start a new span for memory context injection.
 
@@ -468,7 +470,7 @@ def end_memory_inject_span(span: Span,
                            format_error: bool = False) -> None
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:1168](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1168)
+Defined in: [src/strands/telemetry/tracer.py:1184](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1184)
 
 End a memory injection span.
 
@@ -492,7 +494,7 @@ def start_memory_extract_span(store_name: str,
                               **kwargs: Any) -> Span
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:1198](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1198)
+Defined in: [src/strands/telemetry/tracer.py:1214](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1214)
 
 Start a new root span for a background memory extraction.
 
@@ -519,7 +521,7 @@ def end_memory_extract_span(span: Span,
                             error: Exception | None = None) -> None
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:1248](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1248)
+Defined in: [src/strands/telemetry/tracer.py:1264](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1264)
 
 End a memory extraction span.
 
@@ -535,7 +537,7 @@ End a memory extraction span.
 def get_tracer() -> Tracer
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:1441](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1441)
+Defined in: [src/strands/telemetry/tracer.py:1457](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1457)
 
 Get or create the global tracer.
 
@@ -549,7 +551,7 @@ The global tracer instance.
 def serialize(obj: Any) -> str
 ```
 
-Defined in: [src/strands/telemetry/tracer.py:1455](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1455)
+Defined in: [src/strands/telemetry/tracer.py:1471](https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/telemetry/tracer.py#L1471)
 
 Serialize an object to JSON with consistent settings.
 

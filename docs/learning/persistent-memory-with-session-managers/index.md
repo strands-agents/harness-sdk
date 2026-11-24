@@ -122,7 +122,7 @@ Session managers are one of three related pieces, and it helps to keep them stra
 
 -   **Session manager**: persists the conversation so the agent can resume where it left off. Scoped to one session.
 -   **Memory manager**: durable knowledge that carries across sessions (user preferences, facts, decisions) without replaying old conversations. Backed by one or more **memory stores**.
--   **Storage**: the byte-level backend underneath both. `LocalFileStorage`, `S3Storage`, and community backends implement the same `Storage` interface, so a session manager, a memory store, and the context manager’s stash can all share one backend.
+-   **Storage**: the byte-level backend underneath both. `LocalFileStorage`, `S3Storage`, and community backends implement the same `Storage` interface, so a session manager, a memory store, and the context manager’s archive can all share one backend.
 
 Memory is opt-in and separate from sessions. Attach a `MemoryManager` with a store and the agent gets recall (a tool to search what it knows) and injection (relevant memories folded into the prompt automatically):
 

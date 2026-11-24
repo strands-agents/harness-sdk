@@ -245,6 +245,7 @@
     -   **Write**
         -   [Write](/docs/api/python/strands.vended_tools.write.write)
 -   **Experimental**
+    -   [Overview](/docs/api/python/strands.experimental)
     -   [Agent Config](/docs/api/python/strands.experimental.agent_config)
     -   **Checkpoint**
         -   [Checkpoint](/docs/api/python/strands.experimental.checkpoint.checkpoint)

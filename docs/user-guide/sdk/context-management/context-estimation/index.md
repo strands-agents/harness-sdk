@@ -1,7 +1,3 @@
-Experimental in Python
-
-In Python, the `ContextManager` strategy API is still exported from `strands.experimental.context_manager` and may change in future versions. The TypeScript API is stable.
-
 The SDK estimates how much of the model’s context window is in use so it can trigger compression before overflow. Three pieces work together: the context window limit, token counting, and utilization estimation.
 
 ## Context window limit

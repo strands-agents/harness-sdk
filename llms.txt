@@ -476,6 +476,7 @@
 - [strands.decisions.typesafe_decision_model](https://strandsagents.com/docs/api/python/strands.decisions.typesafe_decision_model/index.md)
 - [strands.event_loop.event_loop](https://strandsagents.com/docs/api/python/strands.event_loop.event_loop/index.md)
 - [strands.event_loop.streaming](https://strandsagents.com/docs/api/python/strands.event_loop.streaming/index.md)
+- [strands.experimental](https://strandsagents.com/docs/api/python/strands.experimental/index.md)
 - [strands.experimental.agent_config](https://strandsagents.com/docs/api/python/strands.experimental.agent_config/index.md)
 - [strands.experimental.checkpoint.checkpoint](https://strandsagents.com/docs/api/python/strands.experimental.checkpoint.checkpoint/index.md)
 - [strands.handlers.callback_handler](https://strandsagents.com/docs/api/python/strands.handlers.callback_handler/index.md)

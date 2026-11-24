@@ -1,7 +1,3 @@
-Experimental in Python
-
-In Python, the `ContextManager` strategy API is still exported from `strands.experimental.context_manager` and may change in future versions. The TypeScript API is stable.
-
 When the [built-in modes](/docs/user-guide/sdk/context-management/built-in-modes/index.md) don’t fit, build a custom strategy pipeline. Define which content to reduce, how to reduce it, and when each strategy fires.
 
 ## Strategy pipeline
@@ -13,7 +9,7 @@ The SDK always appends an emergency truncation strategy as the final step. It on
 (( tab "Python" ))
 ```python
 from strands import Agent
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 agent = Agent(
     context_manager={
@@ -62,11 +58,11 @@ The `Offload` namespace exposes three methods. Each returns a strategy builder t
 
 ### Truncate
 
-Replaces oversized content with a head/tail preview. The original content is stored in the `stash``archive` for later retrieval.
+Replaces oversized content with a head/tail preview. The original content is stored in the archive for later retrieval.
 
 (( tab "Python" ))
 ```python
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 Offload.truncate(
     "tool_results",
@@ -113,7 +109,7 @@ On models that preserve thinking, some summaries drop thinking blocks. See [Mode
 
 (( tab "Python" ))
 ```python
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 Offload.summarize("*").when(
     utilization=0.85,
@@ -155,11 +151,11 @@ A batched summary resends the conversation with the agent’s system prompt and 
 
 ### Drop
 
-Removes matching content entirely. No preview, no `stash``archive` entry.
+Removes matching content entirely. No preview, no archive entry.
 
 (( tab "Python" ))
 ```python
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 Offload.drop("tool_results").when(preserve_recent=5)
 ```
@@ -205,7 +201,7 @@ Fire eagerly on individual blocks over 2,000 tokens:
 
 (( tab "Python" ))
 ```python
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 Offload.truncate("tool_results").when(threshold=2000)
 ```
@@ -227,7 +223,7 @@ Summarize oldest messages when the window reaches 85%:
 
 (( tab "Python" ))
 ```python
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 Offload.summarize("*").when(
     utilization=0.85,
@@ -253,7 +249,7 @@ Target tool results over 1,500 tokens, but only fire when the window reaches 90%
 
 (( tab "Python" ))
 ```python
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 Offload.truncate("tool_results").when(
     threshold=1500,
@@ -305,26 +301,26 @@ Tool name lists use the `tool::` prefix. Prefix a name with `!` to exclude it (a
 
 ## Storing originals
 
-The `stash``archive` stores all message content on arrival as JSON, before any strategy runs. Truncated or summarized content can be retrieved on demand through the `retrieve_context` tool, which the SDK registers by default.
+The archive stores all message content on arrival as JSON, before any strategy runs. Truncated or summarized content can be retrieved on demand through the `retrieve_context` tool, which the SDK registers by default.
 
 Note
 
-Configure the `stash``archive` through the key below, but treat the object itself as internal. The `Offload` builders read and write it for you, and its methods are not a stable contract for code outside the SDK.
+Configure the archive through the key below, but treat the object itself as internal. The `Offload` builders read and write it for you, and its methods are not a stable contract for code outside the SDK.
 
-The `stash``archive` uses in-memory storage by default. Configure it through the `stash``archive` key:
+The archive uses in-memory storage by default. Configure it through the `archive` key:
 
 -   Omit or pass `true` for defaults (in-memory storage)
 -   Pass a config with a custom storage backend
--   Pass `false` to disable the `stash``archive` entirely
+-   Pass `false` to disable the archive entirely
 
 (( tab "Python" ))
 ```python
 from strands import Agent
 
-# Disable stash and retrieval tool
+# Disable the archive and retrieval tool
 agent = Agent(
     context_manager={
-        "stash": False,
+        "archive": False,
     },
 )
 ```

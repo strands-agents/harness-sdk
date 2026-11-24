@@ -1,7 +1,3 @@
-Experimental in Python
-
-In Python, the `ContextManager` strategy API is still exported from `strands.experimental.context_manager` and may change in future versions. The TypeScript API is stable.
-
 As conversations grow, your agent’s context window fills with messages, tool results, and system prompts. Without management, this leads to token limit errors, degraded performance, and loss of relevant information.
 
 The SDK ships context management that works out of the box. Pick a mode and the SDK wires up an ordered strategy pipeline with tuned defaults.
@@ -36,7 +32,7 @@ The `context_manager``contextManager` parameter is a first-class agent parameter
 
 The ContextManager runs strategies as an ordered pipeline. Each strategy sees the output of the previous one. The SDK always appends an emergency truncation strategy as the final step, which only fires when the window is still overflowing after all other strategies have run.
 
-A `stash``archive` stores all message content on arrival as JSON, before any strategy acts. Truncated or summarized content is preserved and retrievable on demand through the `retrieve_context` tool, registered by default.
+An archive stores all message content on arrival as JSON, before any strategy acts. Truncated or summarized content is preserved and retrievable on demand through the `retrieve_context` tool, registered by default.
 
 When `context_manager``contextManager` is set, any co-provided `conversation_manager``conversationManager` is ignored. The ContextManager owns overflow recovery and proactive compression internally.
 
@@ -45,7 +41,7 @@ When `context_manager``contextManager` is set, any co-provided `conversation_man
 | Value | Behavior |
 | --- | --- |
 | `"auto"` | Background compression with tuned defaults. No model involvement. |
-| `"agentic"` | Model-driven: the model manages its own context. |
+| `"agentic"` | Model-driven: the model manages its own context. Experimental. |
 | Custom config | Full control over the strategy pipeline, targets, and conditions. |
 | `false` | No context management. Overflow errors propagate directly. |
 
@@ -53,21 +49,17 @@ See [Built-in Modes](/docs/user-guide/sdk/context-management/built-in-modes/inde
 
 ## Storage backends
 
-The `ContextManager` uses in-memory `stash``archive` storage by default. Content does not persist across process restarts. Provide a durable storage backend when the `stash``archive` needs to survive restarts:
+The `ContextManager` uses in-memory archive storage by default. Content does not persist across process restarts. Provide a durable storage backend when the archive needs to survive restarts:
 
 (( tab "Python" ))
 ```python
 from strands.storage import LocalFileStorage, S3Storage
 
 # Local filesystem
-stash = {"storage": LocalFileStorage("./artifacts/")}
+archive_local = {"storage": LocalFileStorage("./artifacts/")}
 
 # S3, using ambient AWS credentials
-stash = {
-    "storage": S3Storage(
-        "my-bucket", prefix="agent-stash/",
-    ),
-}
+archive_s3 = {"storage": S3Storage("my-bucket", prefix="agent-archive/")}
 ```
 (( /tab "Python" ))
 
@@ -83,7 +75,7 @@ const archiveS3 = { storage: new S3Storage('my-bucket', { prefix: 'agent-archive
 ```
 (( /tab "TypeScript" ))
 
-Pass one of these `stash``archive` values in your context manager configuration. See [Storage](/docs/user-guide/sdk/storage/index.md) for the full storage backend reference.
+Pass one of these archive values in your context manager configuration. See [Storage](/docs/user-guide/sdk/storage/index.md) for the full storage backend reference.
 
 ## Limitations
 
@@ -114,7 +106,23 @@ If you currently use `SummarizingConversationManager`, `ContextOffloader`, or `c
 ### Migrating from the experimental module
 
 (( tab "Python" ))
-No changes. The Python API is still `strands.experimental.context_manager`, and the names below are unchanged.
+The Python API moved out of `strands.experimental`, and the stash was renamed to the archive.
+
+| Before | After |
+| --- | --- |
+| `from strands.experimental.context_manager import …` | `from strands.context_manager import …` |
+| `StashConfig` | `ArchiveConfig` |
+| `{"stash": …}` | `{"archive": …}` |
+| `ContextManager(stash=…)` | `ContextManager(archive=…)` |
+| `context_manager.stash` | `context_manager.archive` |
+| `context_manager.stash_is_durable` | `context_manager.archive_is_durable` |
+| `ContextState.stash` | `ContextState.archive` |
+
+The old names still work this release, deprecated, and are removed in the next minor. `context_manager="auto"` and `context_manager="agentic"` are unchanged.
+
+A custom strategy whose `init` takes `**kwargs` is the exception: it now receives the archive under `archive` only, so rename `kwargs["stash"]` there first. Declaring `init(self, agent, archive=None)` keeps it explicit.
+
+Sessions saved before the rename still resume, and keep resuming after the deprecated names are gone.
 (( /tab "Python" ))
 
 (( tab "TypeScript" ))
@@ -132,7 +140,7 @@ The TypeScript API moved out of `@strands-agents/sdk/experimental`, and the stas
 
 The old names still work this release, deprecated, and are removed in the next minor. Root-package imports are the exception — they are gone now, so move those first. `contextManager: "auto"` and `contextManager: "agentic"` are unchanged.
 
-Sessions saved before the rename still resume, but the compatibility read goes away with the deprecated names — resume each one once on this release to migrate it forward.
+Sessions saved before the rename still resume, and keep resuming after the deprecated names are gone.
 (( /tab "TypeScript" ))
 
 ## Related pages

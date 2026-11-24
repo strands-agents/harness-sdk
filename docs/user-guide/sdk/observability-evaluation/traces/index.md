@@ -118,6 +118,11 @@ export OTEL_EXPORTER_OTLP_HEADERS="key1=value1,key2=value2"
 # Setting gen_ai_latest_experimental also drops the deprecated cache-token aliases
 # (see Captured Attributes below).
 export OTEL_SEMCONV_STABILITY_OPT_IN="gen_ai_latest_experimental,gen_ai_tool_definitions"
+
+# Values combine, comma-separated. Adding gen_ai_usage_on_model_spans_only records token usage
+# only on model invocation spans, for backends that total usage by summing every span
+# (see "Token usage across spans" below):
+# export OTEL_SEMCONV_STABILITY_OPT_IN="gen_ai_latest_experimental,gen_ai_usage_on_model_spans_only"
 ```
 
 ### Code Configuration
@@ -231,6 +236,10 @@ Strands traces include rich attributes that provide context for each operation:
 Cache-token attribute names
 
 Strands emits cache-token counts under the OpenTelemetry semantic-convention names `gen_ai.usage.cache_read.input_tokens` and `gen_ai.usage.cache_creation.input_tokens`. For backward compatibility it also emits the older aliases `gen_ai.usage.cache_read_input_tokens` and `gen_ai.usage.cache_write_input_tokens`. Opting into the latest conventions with `OTEL_SEMCONV_STABILITY_OPT_IN="gen_ai_latest_experimental"` drops the aliases and emits only the semantic-convention names.
+
+Token usage across spans
+
+By default the agent span carries the total `gen_ai.usage.*` of the model calls under it, and in TypeScript so do the multi-agent and node spans. That matches the OpenTelemetry GenAI semantic conventions, but a backend that totals a trace’s usage by summing every span (such as Opik or Datadog) then counts each model call more than once. Set `OTEL_SEMCONV_STABILITY_OPT_IN="gen_ai_usage_on_model_spans_only"` to record usage only on the model invocation spans, so each call is counted once; for agent-level totals, sum the model invocation spans. With this set, `gen_ai_use_latest_invocation_tokens` has no effect.
 
 ### Agent-Level Attributes
 

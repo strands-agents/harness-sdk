@@ -1,7 +1,3 @@
-Experimental in Python
-
-In Python, the `ContextManager` strategy API is still exported from `strands.experimental.context_manager` and may change in future versions. The TypeScript API is stable.
-
 Named strategy presets are shorthand for preconfigured `Offload` strategies. Pass a preset name string in the strategies array instead of building the strategy by hand.
 
 Preset expansions are internal defaults and may change between releases as tuning improves. The preset *name* is the stable contract. Use raw `Offload.*` strategies when you need a pinned configuration.
@@ -66,7 +62,7 @@ Combine named presets with raw `Offload` strategies in the same array. Order mat
 (( tab "Python" ))
 ```python
 from strands import Agent
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 
 agent = Agent(
     context_manager={
