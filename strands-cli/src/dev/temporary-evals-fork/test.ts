@@ -22,7 +22,7 @@ import {
   temporaryNamedExperiment,
   temporaryRunnableExperiment,
   writeTemporaryExperimentFile,
-} from './experiment-files.js'
+} from './experiment.js'
 import {
   temporaryExperimentHome,
   temporaryExperimentsFolder,

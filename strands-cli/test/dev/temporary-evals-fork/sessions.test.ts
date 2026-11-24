@@ -11,6 +11,7 @@ import { createDevWorkspace } from '../../../src/dev/create.js'
 import type { ExperimentSummary, OptimizePlan } from '../../../src/dev/panels/model.js'
 import * as installer from '../../../src/project/archive.js'
 import {
+  readTemporaryOptimizeRecords,
   readTemporaryRunRecords,
   saveTemporaryRunRecord,
   type TemporaryTestRecord,
@@ -22,9 +23,7 @@ import { temporaryDevChatPart, temporaryDevCommands } from '../../../src/dev/tem
 import { TemporaryExperiments } from '../../../src/dev/temporary-evals-fork/experiments-session.js'
 import { readTemporaryTestResults, rememberTemporaryTestResults } from '../../../src/dev/temporary-evals-fork/report.js'
 import type { TemporarySessionHost } from '../../../src/dev/temporary-evals-fork/host.js'
-import type { AutoOptimizeRun } from '../../../src/dev/temporary-evals-fork/auto-optimize.js'
-import type { AutoOptimizeWorker } from '../../../src/dev/temporary-evals-fork/auto-optimize-worker.js'
-import { readTemporaryOptimizeRecords } from '../../../src/dev/temporary-evals-fork/optimize-runs.js'
+import type { AutoOptimizeRun, AutoOptimizeWorker } from '../../../src/dev/temporary-evals-fork/auto-optimize.js'
 import {
   answerOptimizeReview,
   applyOptimizeEdits,

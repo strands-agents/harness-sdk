@@ -14,24 +14,22 @@ import {
   type GenerationSettings,
 } from '../panels/model.js'
 import { temporaryAgentContext } from './agent-context.js'
-import { generatorModelProblem } from './generator-model.js'
-import { temporaryWorkspaceDirectory } from './evals-process.js'
-import {
-  generateTemporaryExperiment,
-  isTemporaryExperimentName,
-  temporaryGenerationError,
-  temporaryGenerationFiles,
-  type TemporaryGenerationFiles,
-} from './experiment.js'
-import { temporaryExperimentFile, temporaryExperimentsFolder, watchTemporaryExperiments } from './layout.js'
-import { temporaryWorkspaceReady } from './layout-migration.js'
 import {
   createTemporaryExperimentCases,
+  generateTemporaryExperiment,
+  generatorModelProblem,
+  isTemporaryExperimentName,
   listTemporaryExperiments,
   readTemporaryExperimentFile,
+  temporaryGenerationError,
+  temporaryGenerationFiles,
   temporaryUniqueCaseNames,
   type TemporaryExperimentDocument,
-} from './experiment-files.js'
+  type TemporaryGenerationFiles,
+} from './experiment.js'
+import { temporaryWorkspaceDirectory } from './evals-process.js'
+import { temporaryExperimentFile, temporaryExperimentsFolder, watchTemporaryExperiments } from './layout.js'
+import { temporaryWorkspaceReady } from './layout-migration.js'
 import { announce, plural, absolutePath, evalsLinkText, type TemporaryHost } from './host.js'
 import { Store } from './jobs.js'
 

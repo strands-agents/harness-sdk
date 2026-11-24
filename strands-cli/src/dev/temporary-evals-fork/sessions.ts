@@ -36,11 +36,17 @@ import { locateTemporaryEdit } from './apply.js'
 import { reviewOptimizeRun } from './review-run.js'
 import {
   clearUnreadableCaseResults,
+  dropTemporaryOptimizeRecord,
   dropTemporaryRunRecord,
+  isTemporaryOptimizeAlive,
   isTemporaryRunAlive,
+  readTemporaryOptimizeRecords,
   readTemporaryRunRecords,
+  saveTemporaryOptimizeRecord,
   saveTemporaryRunRecord,
+  waitForTemporaryOptimize,
   waitForTemporaryRun,
+  type TemporaryOptimizeRecord,
   type TemporaryTestRecord,
 } from './background-runs.js'
 import { temporaryWorkspaceDirectory } from './evals-process.js'
@@ -53,7 +59,12 @@ import {
 } from './layout.js'
 import { temporaryWorkspaceReady } from './layout-migration.js'
 import { TemporaryEvalsUi } from './evals-ui.js'
-import { readTemporaryExperimentFile, readTemporaryRunnableCases, temporaryCaseCount } from './experiment-files.js'
+import {
+  readTemporaryExperimentFile,
+  readTemporaryRunnableCases,
+  temporaryCaseCount,
+  temporaryJudgeEvaluatorCount,
+} from './experiment.js'
 import { TemporaryExperiments } from './experiments-session.js'
 import {
   announce,
@@ -66,7 +77,6 @@ import {
 } from './host.js'
 import { TemporaryAutoOptimize } from './auto-optimize.js'
 import type { ChatSettings } from '../../config/settings.js'
-import { temporaryJudgeEvaluatorCount } from './evaluators.js'
 import { Store, watchTemporaryFileCount, type TemporaryTail } from './jobs.js'
 import {
   readTemporaryKnobs,
@@ -84,14 +94,6 @@ import {
   TEMPORARY_USAGE_METRICS,
 } from './objective.js'
 import { runTemporaryOptimization } from './optimize.js'
-import {
-  dropTemporaryOptimizeRecord,
-  isTemporaryOptimizeAlive,
-  readTemporaryOptimizeRecords,
-  saveTemporaryOptimizeRecord,
-  waitForTemporaryOptimize,
-  type TemporaryOptimizeRecord,
-} from './optimize-runs.js'
 import {
   TEMPORARY_DECISION_CHOICES,
   TEMPORARY_DECISION_DEFAULTS,

@@ -5,12 +5,7 @@ import { basename, dirname, relative } from 'node:path'
 import { errorMessage } from '../../terminal/text.js'
 import { isRecord } from '../../values.js'
 import type { CaseResult, EvaluatorVerdict, TestResults } from '../panels/model.js'
-import {
-  temporaryCaseExpected,
-  temporaryCaseName,
-  temporaryCaseText,
-  type TemporaryRawCase,
-} from './experiment-files.js'
+import { temporaryCaseExpected, temporaryCaseName, temporaryCaseText, type TemporaryRawCase } from './experiment.js'
 import { pruneTemporaryTestRuns, temporaryLatestRecord, temporaryLatestReport, temporaryTestRunOf } from './layout.js'
 
 export interface TemporaryTestRun {

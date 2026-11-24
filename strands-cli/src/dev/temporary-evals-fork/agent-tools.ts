@@ -26,7 +26,7 @@ import type {
 } from '../panels/model.js'
 import { uiTools } from './ui-tools.js'
 import { temporaryWorkflowSkills } from './workflow-skills.js'
-import { readTemporaryExperimentFile } from './experiment-files.js'
+import { readTemporaryExperimentFile } from './experiment.js'
 import type { TemporaryStore } from './jobs.js'
 import {
   BACKGROUND_COMMANDS,

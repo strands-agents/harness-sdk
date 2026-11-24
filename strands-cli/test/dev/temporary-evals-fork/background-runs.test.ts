@@ -7,11 +7,17 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   clearUnreadableCaseResults,
+  dropTemporaryOptimizeRecord,
   dropTemporaryRunRecord,
+  isTemporaryOptimizeAlive,
   isTemporaryRunAlive,
+  readTemporaryOptimizeRecords,
   readTemporaryRunRecords,
+  saveTemporaryOptimizeRecord,
   saveTemporaryRunRecord,
+  waitForTemporaryOptimize,
   waitForTemporaryRun,
+  type TemporaryOptimizeRecord,
   type TemporaryTestRecord,
 } from '../../../src/dev/temporary-evals-fork/background-runs.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
@@ -30,21 +36,23 @@ const OUTSIDE_HOME = 'tmp/.state/outside-experiments/capital'
 interface RunPlace {
   readonly home?: string
   readonly stamp?: string
+  readonly startedAt?: number
   readonly pid?: number
 }
 
 const runFolder = (workspace: string, home: string, stamp: string): string => join(workspace, home, 'runs', stamp)
+
+const experimentOf = (workspace: string, home: string): string =>
+  home === INSIDE_HOME ? join(workspace, INSIDE_HOME, 'capital.json') : join(dirname(workspace), 'capital.json')
 
 const recordIn = (
   workspace: string,
   { home = INSIDE_HOME, stamp = STAMP, pid }: RunPlace = {}
 ): TemporaryTestRecord => {
   const run = runFolder(workspace, home, stamp)
-  const experiment =
-    home === INSIDE_HOME ? join(workspace, INSIDE_HOME, 'capital.json') : join(dirname(workspace), 'capital.json')
   return {
     version: 1,
-    experiment,
+    experiment: experimentOf(workspace, home),
     cases: join(run, '.state/experiment.json'),
     rerun: false,
     report: join(run, 'report.json'),
@@ -57,6 +65,25 @@ const recordIn = (
 
 const savedRecordFile = (workspace: string, home = INSIDE_HOME, stamp = STAMP): string =>
   join(runFolder(workspace, home, stamp), '.state/record.json')
+
+const optimizeRecordIn = (
+  workspace: string,
+  { home = INSIDE_HOME, stamp = STAMP, startedAt = 1, pid }: RunPlace = {}
+): TemporaryOptimizeRecord => {
+  const run = join(workspace, home, 'optimizations', stamp)
+  return {
+    version: 1,
+    experiment: experimentOf(workspace, home),
+    record: join(run, 'optimizer'),
+    space: join(run, '.state/space.json'),
+    iterations: 4,
+    startedAt,
+    ...(pid === undefined ? {} : { pid }),
+  }
+}
+
+const optimizeRecordFile = (workspace: string, home = INSIDE_HOME): string =>
+  join(workspace, home, 'optimizations', STAMP, '.state/record.json')
 
 const writeFileAt = async (path: string, text: string): Promise<void> => {
   await mkdir(dirname(path), { recursive: true })
@@ -205,4 +232,129 @@ describe('TEMPORARY case results before a resume', () => {
 
     expect(existsSync(store)).toBe(false)
   })
+})
+
+describe('TEMPORARY optimize run records', () => {
+  it('shouldListSavedRecordsOldestFirstAndForgetADroppedOne', async () => {
+    const workspace = await temporaryDirectory()
+    const older = optimizeRecordIn(workspace, { stamp: '20261111-150405', startedAt: 1 })
+    const newer = optimizeRecordIn(workspace, { stamp: '20261111-160405', startedAt: 2, pid: 99 })
+    await saveTemporaryOptimizeRecord(newer)
+    await saveTemporaryOptimizeRecord(older)
+
+    expect(await readTemporaryOptimizeRecords(workspace)).toEqual([older, newer])
+
+    await dropTemporaryOptimizeRecord(older)
+    expect(await readTemporaryOptimizeRecords(workspace)).toEqual([newer])
+  })
+
+  it('shouldSaveTheRecordInTheStateFolderOfItsRun', async () => {
+    const workspace = await temporaryDirectory()
+
+    await saveTemporaryOptimizeRecord(optimizeRecordIn(workspace))
+
+    expect(await readdir(dirname(optimizeRecordFile(workspace)))).toEqual(['record.json'])
+  })
+
+  it.each([
+    ['TheOptimizationsFolderOfItsExperiment', INSIDE_HOME],
+    ['TheHomeOfAnExperimentOutsideTheExperimentsFolder', OUTSIDE_HOME],
+  ])('shouldFindTheRecordOfAnUnfinishedRunWhenItIsIn%s', async (_case, home) => {
+    const workspace = await temporaryDirectory()
+    const record = optimizeRecordIn(workspace, { home })
+    await writeFileAt(optimizeRecordFile(workspace, home), JSON.stringify(record))
+
+    expect(await readTemporaryOptimizeRecords(workspace)).toEqual([record])
+  })
+
+  it('shouldListTheRecordsOfEveryExperimentHomeOldestFirst', async () => {
+    const workspace = await temporaryDirectory()
+    const inside = optimizeRecordIn(workspace, { stamp: '20261111-160405', startedAt: 2 })
+    const outside = optimizeRecordIn(workspace, { home: OUTSIDE_HOME, stamp: '20261111-150405', startedAt: 1 })
+    await saveTemporaryOptimizeRecord(inside)
+    await saveTemporaryOptimizeRecord(outside)
+
+    expect(await readTemporaryOptimizeRecords(workspace)).toEqual([outside, inside])
+  })
+
+  it('shouldFindNoRecordsWhenNoRunWasEverRecorded', async () => {
+    expect(await readTemporaryOptimizeRecords(join(await temporaryDirectory(), 'strands-dev'))).toEqual([])
+  })
+
+  it('shouldKeepThatTheRunAwaitsItsReviewSoThatItComesBackAsOne', async () => {
+    const workspace = await temporaryDirectory()
+    const record = { ...optimizeRecordIn(workspace), awaitsReview: true }
+    await saveTemporaryOptimizeRecord(record)
+
+    expect(await readTemporaryOptimizeRecords(workspace)).toEqual([record])
+  })
+
+  it('shouldKeepTheObjectiveOfARecordSoThatTheRunResumesWithIt', async () => {
+    const workspace = await temporaryDirectory()
+    const record = {
+      ...optimizeRecordIn(workspace),
+      objective: { expression: 'Minimize(tokens)', constraints: 'Contains >= 0.8' },
+    }
+
+    await saveTemporaryOptimizeRecord(record)
+
+    expect(await readTemporaryOptimizeRecords(workspace)).toEqual([record])
+  })
+
+  it('shouldReadTheConstraintsOfARecordThatSavedThemAsLimits', async () => {
+    const workspace = await temporaryDirectory()
+    const record = optimizeRecordIn(workspace)
+    await writeFileAt(
+      optimizeRecordFile(workspace),
+      JSON.stringify({ ...record, objective: { expression: 'Minimize(tokens)', limits: 'Contains >= 0.8' } })
+    )
+
+    expect(await readTemporaryOptimizeRecords(workspace)).toEqual([
+      { ...record, objective: { expression: 'Minimize(tokens)', constraints: 'Contains >= 0.8' } },
+    ])
+  })
+
+  it.each([
+    ['OneEvaluator', { kind: 'evaluator', evaluator: 'Equals' }, { expression: 'Maximize("Equals")', constraints: '' }],
+    ['TheMeanOfEveryEvaluator', { kind: 'evaluators', evaluators: ['Contains'] }, { expression: '', constraints: '' }],
+  ])('shouldReadAnObjectiveSavedBeforeTheApiNotationAs%s', async (_case, saved, objective) => {
+    const workspace = await temporaryDirectory()
+    const record = optimizeRecordIn(workspace)
+    await writeFileAt(optimizeRecordFile(workspace), JSON.stringify({ ...record, objective: saved }))
+
+    expect(await readTemporaryOptimizeRecords(workspace)).toEqual([{ ...record, objective }])
+  })
+
+  it.each([
+    ['AnEvaluatorObjectiveWithoutAName', { kind: 'evaluator' }],
+    ['AnUnknownObjectiveShape', { kind: 'cheapest', metric: 'tokens' }],
+    ['AnExpressionWithoutConstraints', { expression: 'Minimize(tokens)' }],
+  ])('shouldSkipARecordWith%s', async (_case, objective) => {
+    const workspace = await temporaryDirectory()
+    await writeFileAt(optimizeRecordFile(workspace), JSON.stringify({ ...optimizeRecordIn(workspace), objective }))
+
+    expect(await readTemporaryOptimizeRecords(workspace)).toEqual([])
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'shouldSeeTheRunAliveOnlyWhileItsProcessStillNamesTheRecord',
+    async () => {
+      const workspace = await temporaryDirectory()
+      const record = optimizeRecordIn(workspace)
+      const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 1500)', record.record], { stdio: 'ignore' })
+      await new Promise((resolve) => child.once('spawn', resolve))
+      const running = { ...record, pid: child.pid! }
+
+      expect(await isTemporaryOptimizeAlive(running)).toBe(true)
+      expect(
+        await isTemporaryOptimizeAlive({
+          ...running,
+          record: optimizeRecordIn(workspace, { stamp: '20261111-160405' }).record,
+        })
+      ).toBe(false)
+      await waitForTemporaryOptimize(running)
+      expect(await isTemporaryOptimizeAlive(running)).toBe(false)
+    },
+    10_000
+  )
 })

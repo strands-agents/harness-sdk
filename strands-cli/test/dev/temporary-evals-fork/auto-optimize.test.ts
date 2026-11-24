@@ -1,15 +1,23 @@
 import { existsSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, URL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
   autoOptimizeJobs,
+  autoOptimizeRun,
+  autoOptimizeWorker,
+  autoOptimizeWorkerArguments,
+  strandsCommandOf,
   TemporaryAutoOptimize,
   type AutoOptimizeOutcome,
   type AutoOptimizeRun,
+  type AutoOptimizeWorker,
+  type AutoOptimizeWorkerRequest,
 } from '../../../src/dev/temporary-evals-fork/auto-optimize.js'
 import type { TemporarySessionHost } from '../../../src/dev/temporary-evals-fork/host.js'
+import type { UnattendedConversion } from '../../../src/dev/temporary-evals-fork/session-converter.js'
 import type { DevChatCommandContext } from '../../../src/ui/chat/types.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
@@ -350,5 +358,237 @@ describe('auto-optimize every N turns', () => {
     await Promise.all([auto.turnEnded({ prompt: 'five' }, run), auto.turnEnded({ prompt: 'six' }, run)])
 
     expect(run).toHaveBeenCalledOnce()
+  })
+})
+
+const NOW = new Date(2026, 10, 23, 15, 2)
+const NAME = 'history-20261123-1502'
+
+const experimentWith = (cases: number): string =>
+  JSON.stringify({
+    cases: Array.from({ length: cases }, (_, index) => ({ name: `c${index}`, input: 'hi', expected_assertion: 'ok' })),
+    evaluators: [{ evaluator_type: 'OutputEvaluator' }],
+  })
+
+/** The background work with an agent that the test plays: it saves the cases it is told to, or none. */
+const runSetup = async (made: { cases?: number; code?: number } = { cases: 5 }) => {
+  const root = await temporaryDirectory()
+  const workspace = workspaceIn(root)
+  const file = (name: string): string => join(root, 'strands-dev', 'experiments', name, `${name}.json`)
+  const order: string[] = []
+  const requests: AutoOptimizeWorkerRequest[] = []
+  const worker = vi.fn<AutoOptimizeWorker>(async (request) => {
+    order.push('agent')
+    requests.push(request)
+    const name = /save it as (\S+)/u.exec(request.prompt)![1]!
+    if (made.cases !== undefined) {
+      await mkdir(dirname(file(name)), { recursive: true })
+      await writeFile(file(name), experimentWith(made.cases))
+    }
+    return { code: made.code ?? 0 }
+  })
+  const unattendedConverter = vi.fn(async ({ name }: UnattendedConversion) => `the skill: save it as ${name}`)
+  const start = vi.fn(async (_experiment: string) => {
+    order.push('optimizer')
+    return 'run-1'
+  })
+  const idle = vi.fn(async (): Promise<void> => {
+    order.push('idle')
+  })
+  const building = vi.fn()
+  const stop = new AbortController()
+  const run = autoOptimizeRun({
+    workspace,
+    history: { unattendedConverter },
+    start,
+    worker,
+    now: () => NOW,
+  })
+  const go = () => run({ signal: stop.signal, building, idle })
+  return { root, file, worker, requests, unattendedConverter, start, idle, building, stop, order, go }
+}
+
+describe('what auto-optimize does in the background when it is due', () => {
+  it('shouldHaveAnAgentMakeTheExperimentAndThenStartTheOptimizerItself', async () => {
+    const { go, order, start } = await runSetup({ cases: 5 })
+
+    const outcome = await go()
+
+    expect(outcome).toEqual({ experiment: NAME, cases: 5 })
+    // The optimizer is started by strands dev and not by the agent: no model decides whether a paid run may begin.
+    expect(order).toEqual(['agent', 'idle', 'optimizer'])
+    expect(start).toHaveBeenCalledExactlyOnceWith(NAME)
+  })
+
+  it('shouldGiveTheAgentTheSkillForItsExperimentWhenItStarts', async () => {
+    const { go, requests, unattendedConverter, root } = await runSetup()
+
+    await go()
+
+    expect(unattendedConverter).toHaveBeenCalledExactlyOnceWith({ name: NAME, fewestCases: 3 })
+    expect(requests[0]!.prompt).toContain('strands dev runs you in the background')
+    expect(requests[0]!.prompt).toContain('strands dev starts the optimization itself')
+    expect(requests[0]!.prompt.endsWith(`the skill: save it as ${NAME}`)).toBe(true)
+    expect(requests[0]!.log).toBe(join(root, 'strands-dev', 'tmp', '.state', 'auto-optimize', `${NAME}.log`))
+  })
+
+  it('shouldNameTheExperimentAndItsLogBeforeTheAgentStarts', async () => {
+    const { go, building, worker, root } = await runSetup()
+
+    await go()
+
+    expect(building).toHaveBeenCalledExactlyOnceWith(
+      NAME,
+      join(root, 'strands-dev', 'tmp', '.state', 'auto-optimize', `${NAME}.log`)
+    )
+    expect(building.mock.invocationCallOrder[0]).toBeLessThan(worker.mock.invocationCallOrder[0]!)
+  })
+
+  it('shouldTakeANameThatNoExperimentHasWhenOneWasMadeInTheSameMinute', async () => {
+    const { go, file } = await runSetup()
+    await mkdir(dirname(file(NAME)), { recursive: true })
+
+    const outcome = await go()
+
+    expect(outcome.experiment).toBe(`${NAME}-2`)
+  })
+
+  it('shouldStartNoOptimizerWhenTheChatsGaveTooFewCases', async () => {
+    const { go, start } = await runSetup({ cases: 2 })
+
+    await expect(go()).rejects.toThrow(`${NAME} has 2 of the 3 cases an optimization needs`)
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('shouldPointAtTheLogWhenTheAgentSavedNoExperiment', async () => {
+    const { go, start, root } = await runSetup({})
+    const log = join(root, 'strands-dev', 'tmp', '.state', 'auto-optimize', `${NAME}.log`)
+
+    await expect(go()).rejects.toThrow(`the chats gave no experiment · the agent's reasons are in ${log}`)
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('shouldGiveTheExitCodeWhenTheAgentFailedBeforeItSavedAnything', async () => {
+    const { go, root } = await runSetup({ code: 1 })
+    const log = join(root, 'strands-dev', 'tmp', '.state', 'auto-optimize', `${NAME}.log`)
+
+    await expect(go()).rejects.toThrow(`the agent that makes the experiment stopped with code 1 · see ${log}`)
+  })
+
+  it('shouldStartNoOptimizerWhenItWasStoppedWhileTheAgentWorked', async () => {
+    const { go, stop, start, worker } = await runSetup()
+    worker.mockImplementationOnce(async () => {
+      stop.abort()
+      return { code: 143 }
+    })
+
+    await expect(go()).rejects.toThrow()
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('shouldWaitForAnOptimizationThatTheDeveloperStartedMeanwhileBeforeItStartsItsOwn', async () => {
+    const { go, idle, start } = await runSetup()
+    let free!: () => void
+    idle.mockImplementationOnce(() => new Promise<void>((resolve) => (free = (): void => resolve())))
+
+    const going = go()
+    await vi.waitFor(() => expect(idle).toHaveBeenCalled())
+    const whileTheOtherRuns = start.mock.calls.length
+    free()
+    await going
+
+    expect(whileTheOtherRuns).toBe(0)
+    expect(start).toHaveBeenCalledOnce()
+  })
+})
+
+const PROGRAM = fileURLToPath(new URL('../../fixtures/auto-optimize-worker.mjs', import.meta.url))
+
+const workerSetup = async () => {
+  const root = await temporaryDirectory()
+  const workspace = workspaceIn(root)
+  const log = join(root, 'strands-dev', 'tmp', '.state', 'auto-optimize', 'history.log')
+  const worker = autoOptimizeWorker(() => [process.execPath, PROGRAM])
+  return { root, workspace, log, worker }
+}
+
+describe('the process that auto-optimize works in', () => {
+  it('shouldRunTheAgentOfTheWorkspaceOnOneRequestWithoutASessionOrMemory', () => {
+    const workspace = workspaceIn('/w')
+
+    // Its work must not be saved as a chat: the next experiment would be made from it.
+    expect(autoOptimizeWorkerArguments(workspace)).toEqual([
+      'dev',
+      '--workspace',
+      expect.stringMatching(/strands-dev$/u),
+      '--print',
+      '--session',
+      'off',
+      '--memory',
+      'off',
+    ])
+  })
+
+  it.each([
+    [
+      ['/repo/strands-cli/bin/strands.js', '/usr/bin/node', []],
+      ['/usr/bin/node', '/repo/strands-cli/bin/strands.js'],
+    ],
+    [
+      ['/repo/strands-cli/src/main.ts', '/usr/bin/node', ['--import', 'tsx']],
+      ['/usr/bin/node', '--import', 'tsx', '/repo/strands-cli/src/main.ts'],
+    ],
+    // An installed strands is a link without an extension, and the runtime still needs it.
+    [
+      ['/opt/homebrew/bin/strands', '/usr/bin/node', []],
+      ['/usr/bin/node', '/opt/homebrew/bin/strands'],
+    ],
+    [['/usr/local/bin/strands', '/usr/local/bin/strands', []], ['/usr/local/bin/strands']],
+    [[undefined, '/usr/local/bin/strands', []], ['/usr/local/bin/strands']],
+  ] as const)('shouldStartTheSameStrandsThatIsRunning %j', ([entry, runtime, flags], command) => {
+    expect(strandsCommandOf(entry, runtime, flags)).toEqual(command)
+  })
+
+  it('shouldGiveTheRequestOnStandardInputAndWriteAllItPrintsToTheLog', async () => {
+    const { root, workspace, log, worker } = await workerSetup()
+
+    const exit = await worker({ workspace, prompt: 'exit 0', log, signal: new AbortController().signal })
+
+    const printed = await readFile(log, 'utf8')
+    expect(exit).toEqual({ code: 0 })
+    expect(printed).toContain('request: exit 0')
+    expect(printed).toContain(`arguments: ${JSON.stringify(autoOptimizeWorkerArguments(workspace))}`)
+    expect(printed).toContain(`cwd: ${await realpath(root)}`)
+    // The strands dev that starts it has the project open, so the agent must not install or build it again.
+    expect(printed).toContain('prepared: 1')
+  })
+
+  it('shouldGiveTheExitCodeOfAnAgentThatFailed', async () => {
+    const { workspace, log, worker } = await workerSetup()
+
+    const exit = await worker({ workspace, prompt: 'exit 3', log, signal: new AbortController().signal })
+
+    expect(exit).toEqual({ code: 3 })
+  })
+
+  it('shouldStopTheAgentWhenTheSignalAborts', async () => {
+    const { root, workspace, log, worker } = await workerSetup()
+    const started = join(root, 'started')
+    const stop = new AbortController()
+
+    const exit = worker({ workspace, prompt: `wait ${started}`, log, signal: stop.signal })
+    await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 10_000 })
+    stop.abort()
+
+    expect((await exit).code).not.toBe(0)
+  })
+
+  it('shouldNotLeaveItsListenersBehindWhenTheAgentEnds', async () => {
+    const { workspace, log, worker } = await workerSetup()
+    const before = process.listenerCount('exit')
+
+    await worker({ workspace, prompt: 'exit 0', log, signal: new AbortController().signal })
+
+    expect(process.listenerCount('exit')).toBe(before)
   })
 })
