@@ -32,17 +32,20 @@ scored, but they keep spending rollouts.
 
 ### Optional: install the agent skills
 
-To have your coding assistant (Claude Code, Kiro, or any assistant that reads
-[agent skills](https://agentskills.io)) set up and run optimizations for you, install the
-skills that ship with the package, from the same environment:
+The evals SDK ships agent skills, including `optimize`, that let your coding assistant set
+up and run an optimization for you. This guide does the same steps by hand, so you can
+follow it either way.
+
+<CopyPromptButton language="evals-skills" />
+
+To install them yourself instead, run this from the environment where you installed the
+package:
 
 ```bash
 npx skills add "$(python -c 'import strands_evals, pathlib; print(pathlib.Path(strands_evals.__file__).parent / ".agents" / "skills")')" --copy
 ```
 
-Then ask the assistant to optimize your agent. This guide does the same steps by hand, so
-you can follow it either way. See [Install the skills](index.md#install-the-skills) for the
-options.
+See [Install the skills](index.md#install-the-skills) for the options.
 
 ## Write the experiment
 

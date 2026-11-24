@@ -46,7 +46,8 @@ npx skills add "$(python -c 'import strands_evals, pathlib; print(pathlib.Path(s
 `--copy` copies the skills into your project, so they keep working if that environment is
 deleted. Run the command again after you upgrade `strands-agents-evals`. To install only
 some of them, add `-s <name>`; to pick an assistant, add `-a claude-code`; to install for
-every project, add `-g`.
+every project, add `-g`. If the command reports `Local path does not exist`, the package is
+an editable install from a checkout: use `<checkout>/.agents/skills` as the path instead.
 
 ## Why optimize instead of tweaking by hand?
 
