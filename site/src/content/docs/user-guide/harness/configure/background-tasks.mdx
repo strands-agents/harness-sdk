@@ -53,19 +53,6 @@ agent.cancel({ cancelBackgroundTasks: true })
 If the invocation had already finished its turn and was only waiting for background tasks, it
 returns that turn's result, and the cancelled task results are delivered on the next invocation.
 
-## Choose the management tool name
-
-The model lists, reads, and cancels background tasks through a tool named
-`manage_background_task`. Use that name when a hook or tool-choice setting refers to it.
-Finished tasks are delivered as calls to this tool, so the name is also written into
-conversation history.
-
-To change it, set
-<Syntax py="background_tasks.manage_tool_name" ts="backgroundTasks.manageToolName" />.
-Agents built directly on the Strands Harness SDK default to
-`strands_manage_background_task`. Set that value to resume a session saved under it,
-because existing messages keep the name they were written with.
-
 ## The CLI
 
 The Strands harness CLI runs on the TypeScript library, so the `generalist` runs in the background
