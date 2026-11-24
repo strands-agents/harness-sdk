@@ -558,7 +558,6 @@ const sameScalar = (option: string, left: unknown, right: unknown): boolean => {
 }
 
 const scalarEdit = (
-  source: string,
   call: OptionCall,
   { entry, python }: { entry: string; python: boolean },
   edit: Extract<AgentOptionEdit, { value: AgentOptionScalar }>
@@ -637,7 +636,7 @@ const editedSource = async (
   const insertions: string[] = []
   for (const edit of edits) {
     const change =
-      'value' in edit ? scalarEdit(source, call, { entry, python }, edit) : collectionEdit(source, call, entry, edit)
+      'value' in edit ? scalarEdit(call, { entry, python }, edit) : collectionEdit(source, call, entry, edit)
     if (typeof change === 'string') insertions.push(change)
     else if (change) replacements.push(change)
   }

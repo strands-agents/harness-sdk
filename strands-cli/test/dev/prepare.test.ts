@@ -10,7 +10,12 @@ import { bindExistingAgent, createDevWorkspace } from '../../src/dev/create.js'
 import { DevFailure, WorkspaceFolderInUse } from '../../src/dev/errors.js'
 import { ensureInitialCandidate } from '../../src/dev/initialize.js'
 import type { FolderSuggestion, HarnessChoice } from '../../src/dev/picker.js'
-import { openWorkspaceConfiguration, prepareDevRun } from '../../src/dev/prepare.js'
+import {
+  baseHarnessSelection,
+  discoverLocalHarnesses,
+  openWorkspaceConfiguration,
+  prepareDevRun,
+} from '../../src/dev/prepare.js'
 import * as search from '../../src/dev/search.js'
 import type { DiscoveredHarness } from '../../src/dev/search.js'
 import * as picker from '../../src/dev/picker.js'
@@ -1432,5 +1437,105 @@ describe('workspace configuration from Settings', () => {
     await expect(openWorkspaceConfiguration(parseArgs(['dev']), terminalScreen())).rejects.toThrow(
       'No dev workspace is active.'
     )
+  })
+})
+
+describe('base harness selection', () => {
+  const project = async (root: string) => {
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'package.json'), '{"type":"module"}')
+    await writeFile(join(root, 'agent.ts'), 'export const agent = {}')
+    return { root, entrypoint: join(root, 'agent.ts'), language: 'typescript' as const, name: 'Same name' }
+  }
+
+  it('shouldShowTheSavedProfilePathWhenTheCliUsesItsBuiltInHarness', async () => {
+    const root = await temporaryDirectory()
+    const snapshot = CliConfigStore.memory().snapshot()
+    snapshot.path = join(root, 'cli.toml')
+
+    const base = await baseHarnessSelection(snapshot, await temporaryDirectory())
+
+    expect(base.source).toBe(snapshot.path)
+    expect(base.workspace).toBe(strandsUserPath('strands-dev'))
+    expect(base.excludedEntrypoints).toEqual([])
+  })
+
+  it('shouldExcludeTheDefaultSourceAndReopenedCopyWhenTheyAreDiscoveredAgain', async () => {
+    const root = await temporaryDirectory()
+    const original = await project(join(root, 'original'))
+    const copy = await project(strandsUserPath('strands-dev'))
+    await mkdir(join(copy.root, '.strands'))
+    await writeFile(
+      join(copy.root, '.strands/config.json'),
+      JSON.stringify({
+        version: 1,
+        name: 'CLI copy',
+        language: 'typescript',
+        entrypoint: 'agent.ts',
+        origin: { kind: 'cli' },
+      })
+    )
+    const snapshot = CliConfigStore.memory().snapshot()
+    snapshot.agentProject = original.root
+
+    const base = await baseHarnessSelection(snapshot, root)
+
+    expect(base.source).toBe(original.entrypoint)
+    expect(base.name).toBe('CLI copy')
+    expect(base.workspace).toBe(strandsUserPath('strands-dev'))
+    expect(base.excludedEntrypoints).toEqual([original.entrypoint, copy.entrypoint])
+  })
+
+  it.each([
+    ['at the project root', 'saved/agent.ts'],
+    ['in a source folder', 'saved/src/agent.ts'],
+  ])('shouldPlaceTheBaseCliWorkspaceInTheStrandsFolderWhenItsSavedProjectFileIs%s', async (_case, file) => {
+    const root = await temporaryDirectory()
+    await mkdir(join(root, file, '..'), { recursive: true })
+    await writeFile(join(root, 'saved/package.json'), '{"type":"module"}')
+    await writeFile(join(root, file), 'export const agent = {}')
+    const snapshot = CliConfigStore.memory().snapshot()
+    snapshot.agentProject = join(root, file)
+
+    const base = await baseHarnessSelection(snapshot, root)
+
+    expect(base.source).toBe(join(root, file))
+    expect(base.workspace).toBe(strandsUserPath('strands-dev'))
+  })
+
+  it('shouldKeepTheGivenWorkspaceWhenTheUserPassesOne', async () => {
+    const launch = await temporaryDirectory()
+
+    const base = await baseHarnessSelection(CliConfigStore.memory().snapshot(), launch, 'chosen/strands-dev')
+
+    expect(base.workspace).toBe(join(launch, 'chosen/strands-dev'))
+  })
+})
+
+describe('local harness search', () => {
+  const harnessProject = async (root: string): Promise<string> => {
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'package.json'), '{"type":"module"}')
+    await writeFile(
+      join(root, 'agent.ts'),
+      "import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness({ name: 'Agent' })\n"
+    )
+    return join(root, 'agent.ts')
+  }
+
+  it('shouldReportOnlyKeptHarnessesWithTheirSetupStatusAsTheyAreFound', async () => {
+    const launch = await temporaryDirectory()
+    const kept = await harnessProject(join(launch, 'kept'))
+    const excluded = await harnessProject(join(launch, 'excluded'))
+    const reported: string[] = []
+
+    const result = await discoverLocalHarnesses(launch, [], [excluded], {
+      found: ({ entrypoint, preparationStatus }) => {
+        reported.push(`${entrypoint} ${preparationStatus}`)
+      },
+    })
+
+    expect(reported).toEqual([`${kept} Needs setup`])
+    expect(result.harnesses.map(({ entrypoint }) => entrypoint)).toEqual([kept])
   })
 })

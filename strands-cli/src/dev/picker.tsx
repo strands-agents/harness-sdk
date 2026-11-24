@@ -7,7 +7,6 @@ import { emptyEditor, reduceInputSequence } from '../terminal/composer.js'
 import { errorMessage, graphemes, sanitizeTerminalText, wrapLines } from '../terminal/text.js'
 import { EditableText } from '../ui/text-input.js'
 import type { DiscoveredHarness } from './search.js'
-import type { LocalHarnessDiscovery } from './selection.js'
 import { useTerminalSize } from '../ui/terminal-size.js'
 import { useCopyableError } from '../ui/clipboard.js'
 import { useStartupContentRows } from '../ui/startup.js'
@@ -724,7 +723,7 @@ export const HarnessPicker = ({
 type HarnessSource = (
   found: (harness: DiscoveredHarness) => void,
   signal: AbortSignal
-) => Promise<LocalHarnessDiscovery>
+) => Promise<{ harnesses: DiscoveredHarness[] }>
 
 const SEARCH_FLUSH_MS = 100
 

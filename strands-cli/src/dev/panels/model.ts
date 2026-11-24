@@ -86,7 +86,6 @@ export interface TestResults {
   readonly overall: number
   readonly report: string
   readonly seconds: number
-  readonly tokens?: number
 }
 
 export type TestRun =
