@@ -116,6 +116,7 @@ class StdioLspClient:
         self._request_timeout = request_timeout
         self._next_id = 0
         self._write_lock = threading.Lock()
+        self._sync_lock = threading.Lock()
         self._responses: dict[int, dict[str, Any]] = {}
         self._response_ready = threading.Condition()
         self._exited = False
@@ -186,6 +187,11 @@ class StdioLspClient:
         """Open the document, or send its contents again when they changed on disk."""
         uri = path.as_uri()
         text = path.read_text(encoding="utf-8", errors="replace")
+        # Queries run on worker threads; one document's open and version updates must not interleave.
+        with self._sync_lock:
+            self._sync_text(uri, text)
+
+    def _sync_text(self, uri: str, text: str) -> None:
         if uri not in self._versions:
             self._versions[uri] = 1
             document = {"uri": uri, "languageId": self._language_id, "version": 1, "text": text}

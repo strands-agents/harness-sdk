@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import re
 from collections.abc import Iterable, Sequence
@@ -70,7 +71,8 @@ class WorkspaceSearch:
             )
             return f"{len(definitions)} definitions named {name!r}: {places}. Pass path= to choose one."
         where = f" in {path}" if path else ""
-        return f"No definition named {name!r}{where}; text matches instead.\n" + self._grep(re.escape(name), scope)
+        matches = await asyncio.to_thread(self._grep, re.escape(name), scope)
+        return f"No definition named {name!r}{where}; text matches instead.\n" + matches
 
     async def grep(self, pattern: str, path: str | None = None) -> str:
         """Lines matching ``pattern`` as ``path:line: text``, in file order.
@@ -85,7 +87,7 @@ class WorkspaceSearch:
         scope = self._scope(path)
         if scope is None:
             return f"No file or directory {path} in the workspace."
-        return self._grep(pattern, scope)
+        return await asyncio.to_thread(self._grep, pattern, scope)
 
     async def _definitions(self, name: str, scope: Path) -> list[tuple[Path, dict[str, Any]]]:
         """The ``(file, DocumentSymbol)`` of each definition named ``name`` under ``scope``."""
