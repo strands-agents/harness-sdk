@@ -81,6 +81,7 @@ def test_lsp_skeletons_the_harness_read_tool(workdir, fake_server):
     skeleton = _strategies(create_harness(context_manager="lsp"))[0]
 
     assert skeleton._read_tools == ("read",)
+    assert skeleton._shell_tools == ("shell",)
     assert skeleton._symbol_lookup is True
 
 

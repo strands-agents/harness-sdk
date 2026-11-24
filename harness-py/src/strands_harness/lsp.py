@@ -51,12 +51,15 @@ class LspContext:
     close: Callable[[], None] | None = None
 
 
-def resolve_lsp_context(root: Path | str, read_tool: str = "read", sandbox: Sandbox | None = None) -> LspContext:
+def resolve_lsp_context(
+    root: Path | str, read_tool: str = "read", shell_tool: str = "shell", sandbox: Sandbox | None = None
+) -> LspContext:
     """Start the language server in ``root`` and build the context pipeline around it, or fall back to ``"auto"``.
 
     Args:
         root: Workspace root the language server indexes.
         read_tool: Name of the tool that reads files, through ``path``, ``offset`` and ``limit`` inputs.
+        shell_tool: Name of the shell tool; a command that prints a whole code file is outlined like a read.
         sandbox: The agent's sandbox. The language server reads the local filesystem, so any sandbox other than the
             local environment falls back to ``"auto"``.
 
@@ -83,7 +86,7 @@ def resolve_lsp_context(root: Path | str, read_tool: str = "read", sandbox: Sand
         return _fallback(f"{type(error).__name__}: {error}")
 
     strategies: list[ContextStrategy | str] = [
-        SkeletonStrategy(client, root, read_tools=(read_tool,), symbol_lookup=True),
+        SkeletonStrategy(client, root, read_tools=(read_tool,), shell_tools=(shell_tool,), symbol_lookup=True),
         LspStrategy(client, root),
         *_auto_strategies(),
     ]
