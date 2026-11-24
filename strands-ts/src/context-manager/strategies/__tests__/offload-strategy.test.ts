@@ -794,6 +794,31 @@ describe('pinned message protection', () => {
     expect(merged?.metadata?.custom?.pinned).toBe(true)
   })
 
+  it('repairs alternation when a message-level pass throws after removing a run', async () => {
+    // A pinned middle message splits the removable set into two runs. removeMessages handles the last run first;
+    // a failure while sizing the second run leaves the first removal's gap unrepaired.
+    const messages = [
+      text('user', 'task'),
+      new Message({ role: 'assistant', content: [new TextBlock('long-a1 ' + 'word '.repeat(600))] }),
+      new Message({ role: 'user', content: [new TextBlock('long-u2 ' + 'word '.repeat(600))] }),
+      new Message({ role: 'assistant', content: [new TextBlock('pinned-a3')], metadata: { custom: { pinned: true } } }),
+      new Message({ role: 'user', content: [new TextBlock('long-u4 ' + 'word '.repeat(600))] }),
+      text('assistant', 'latest'),
+    ]
+    const context = makeContext(messages, 0.5)
+    const original = context.agent.model.countTokens.bind(context.agent.model)
+    vi.spyOn(context.agent.model, 'countTokens').mockImplementation(async (sized) => {
+      // Only the second run is sized with a multi-message array; the first run has already been spliced out.
+      if (sized.length >= 2) throw new Error('CountTokens throttled')
+      return original(sized)
+    })
+    const strategy = Offload.drop('*').when({ blockThreshold: 100 })
+
+    await expect(strategy.apply(context)).rejects.toThrow('CountTokens throttled')
+
+    expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user', 'assistant'])
+  })
+
   it('repairAlternation merges metadata, the later message winning and custom holding both', () => {
     const earlierUsage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
     const laterUsage = { inputTokens: 5, outputTokens: 5, totalTokens: 10 }
