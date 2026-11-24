@@ -11,6 +11,9 @@ import { listTemporaryTestRuns, temporaryTestRunFiles, temporaryTestRunOf } from
 const runCommand = promisify(execFile)
 const RECORD_VERSION = 1
 const POLL_MS = 1000
+const REPLACE_ATTEMPTS = 6
+const REPLACE_WAIT_MS = 20
+const HELD_OPEN: ReadonlySet<unknown> = new Set(['EPERM', 'EACCES', 'EBUSY'])
 
 export interface TemporaryTestRecord {
   readonly version: typeof RECORD_VERSION
@@ -38,13 +41,32 @@ const isTestRecord = (value: unknown): value is TemporaryTestRecord =>
   typeof value.startedAt === 'number' &&
   (value.pid === undefined || Number.isInteger(value.pid))
 
-export const saveTemporaryRunRecord = async (record: TemporaryTestRecord): Promise<void> => {
-  const path = recordPath(record)
+/** Windows refuses to rename over a file held open, so the rename waits and tries again before it gives up. */
+const replaceFile = async (staging: string, path: string): Promise<void> => {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await rename(staging, path)
+    } catch (error) {
+      if (attempt >= REPLACE_ATTEMPTS || !isRecord(error) || !HELD_OPEN.has(error.code)) throw error
+      await sleep(REPLACE_WAIT_MS * 2 ** attempt)
+    }
+  }
+}
+
+export const writeTemporaryRecord = async (path: string, record: object): Promise<void> => {
   await mkdir(dirname(path), { recursive: true })
   const staging = `${path}.${process.pid}.tmp`
   await writeFile(staging, `${JSON.stringify(record, null, 2)}\n`)
-  await rename(staging, path)
+  try {
+    await replaceFile(staging, path)
+  } catch (error) {
+    await rm(staging, { force: true })
+    throw error
+  }
 }
+
+export const saveTemporaryRunRecord = (record: TemporaryTestRecord): Promise<void> =>
+  writeTemporaryRecord(recordPath(record), record)
 
 export const dropTemporaryRunRecord = (record: TemporaryTestRecord): Promise<void> =>
   rm(recordPath(record), { force: true })

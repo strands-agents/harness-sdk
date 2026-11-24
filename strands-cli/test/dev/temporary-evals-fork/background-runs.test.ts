@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { existsSync } from 'node:fs'
-import { mkdir, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -15,6 +15,13 @@ import {
   type TemporaryTestRecord,
 } from '../../../src/dev/temporary-evals-fork/background-runs.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
+
+vi.mock('node:fs/promises', async (original) => {
+  const fs = await original<typeof import('node:fs/promises')>()
+  return { ...fs, rename: vi.fn(fs.rename) }
+})
+
+const heldOpen = (): Error => Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
 
 const STAMP = '20261116-090000'
 const INSIDE_HOME = 'experiments/capital'
@@ -117,6 +124,29 @@ describe('TEMPORARY test run records', () => {
 
   it('shouldFindNoRecordsWhenNoRunWasEverRecorded', async () => {
     expect(await readTemporaryRunRecords(join(await temporaryDirectory(), 'strands-dev'))).toEqual([])
+  })
+
+  it('shouldSaveTheRecordWhenTheFileItReplacesIsHeldOpenForAMoment', async () => {
+    const workspace = await temporaryDirectory()
+    const record = recordIn(workspace)
+    await saveTemporaryRunRecord(record)
+    vi.mocked(rename).mockRejectedValueOnce(heldOpen()).mockRejectedValueOnce(heldOpen())
+
+    await saveTemporaryRunRecord({ ...record, pid: 4242 })
+
+    expect(await readTemporaryRunRecords(workspace)).toEqual([{ ...record, pid: 4242 }])
+  })
+
+  it('shouldGiveUpAndLeaveNoStagingFileWhenTheRecordCannotBeReplaced', async () => {
+    const workspace = await temporaryDirectory()
+    const record = recordIn(workspace)
+    await saveTemporaryRunRecord(record)
+    vi.mocked(rename).mockRejectedValueOnce(Object.assign(new Error('ENOSPC: no space left'), { code: 'ENOSPC' }))
+
+    await expect(saveTemporaryRunRecord({ ...record, pid: 4242 })).rejects.toThrow('ENOSPC')
+
+    expect(await readTemporaryRunRecords(workspace)).toEqual([record])
+    expect(await readdir(dirname(savedRecordFile(workspace)))).toEqual(['record.json'])
   })
 })
 
