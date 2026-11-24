@@ -21,6 +21,21 @@ Background tasks are disabled by default in the SDK. Enable them with the
 [Strands harness](../../harness/configure/background-tasks.md) enables them by default
 and always runs its `subagent` tool in the background.
 
+## How it works
+
+The model decides whether to call a tool. An `always` policy controls how a
+tool call executes; it does not cause the call itself.
+
+<Diagram
+  name="background-task-delivery"
+  alt="Background task dispatch and delivery, as a sequence between the model, the agent, and a background task. Dispatch: the model requests a tool call, the agent queues the tool as a background task, and returns a receipt with the task ID to the model. Continue: the agent makes its next model call while the tool runs in the background. Delivery: the task reports that its result is ready, and the agent delivers the result to the model before the next model call."
+/>
+
+[Tool executors](executors.md) order the foreground tool calls in one model response.
+Background tasks use a separate queue, so the loop continues before those calls finish.
+Direct calls through `agent.tool` always execute in the foreground, even for a tool
+with an `always` policy.
+
 ## Run a tool in the background
 
 This example simulates a slow report query. It always runs `build_report` in the
@@ -71,21 +86,6 @@ Amazon Bedrock provider.
     ```
   </Tab>
 </Tabs>
-
-The model still decides whether to call a tool. An `always` policy controls how a
-tool call executes; it does not cause the call itself.
-
-### What happens during the call
-
-<Diagram
-  name="background-task-delivery"
-  alt="Background task dispatch and delivery, as a sequence between the model, the agent, and a background task. Dispatch: the model requests a tool call, the agent queues the tool as a background task, and returns a receipt with the task ID to the model. Continue: the agent makes its next model call while the tool runs in the background. Delivery: the task reports that its result is ready, and the agent delivers the result to the model before the next model call."
-/>
-
-[Tool executors](executors.md) order the foreground tool calls in one model response.
-Background tasks use a separate queue, so the loop continues before those calls finish.
-Direct calls through `agent.tool` always execute in the foreground, even for a tool
-with an `always` policy.
 
 ## Configure background tasks
 

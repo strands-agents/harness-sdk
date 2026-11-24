@@ -1,20 +1,21 @@
 ---
-title: Run work in the background
+title: Run harness tools in the background
 description: "Strands harness runs its subagent tool in the background and lets the model run other tools there too. Tune or disable that with a background tasks policy."
 sourceLinks:
   - path: harness-py/src/strands_harness/agent.py
   - path: harness-ts/src/agent.ts
   - path: strands-cli/src/agent/background.ts
 sidebar:
-  label: "Run work in the background"
+  label: "Run tools in the background"
 ---
 
 Background tasks let a tool run while the agent keeps working, instead of blocking the
 agent loop until it finishes. Strands harness enables them by default. Configure them
 through <Syntax py="background_tasks" ts="backgroundTasks" /> when you create the harness.
 
-This is a Strands Harness SDK capability. For task states, result delivery, and
-cancellation, see [run tools in the background](../../sdk/tools/background-tasks.md).
+This is a Strands Harness SDK capability. For the full walkthrough, including the
+execution diagram, configuration options, and examples, see the
+[SDK guide to background tasks](../../sdk/tools/background-tasks.md#how-it-works).
 
 ## What runs in the background by default
 
@@ -29,9 +30,12 @@ The default policy is `agentic: ["*"]`, to which the harness adds `subagent` as 
 
 ## Tune the policy
 
-Pass a policy object to control which tools may run in the background, along with
-concurrency, timeouts, and whether invocations wait. This configuration keeps other
-tools in the foreground and lets two delegates run at once:
+Pass a policy object to choose which tools run in the background. The
+[full configuration](../../sdk/tools/background-tasks.md#configure-background-tasks)
+covers `agentic`, `always`, and `never`, plus concurrency, timeouts, and whether
+invocations wait.
+
+This example keeps other tools in the foreground and lets two delegates run at once:
 
 <Tabs>
   <Tab label="Python">
