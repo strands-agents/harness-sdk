@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { Agent, Message, Offload, OffloadedBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '@strands-agents/sdk'
+import { Agent, Message, OffloadedBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '@strands-agents/sdk'
+import { Offload } from '@strands-agents/sdk/context-manager'
 import { anthropic, bedrock, openai, openaiResponses } from '../__fixtures__/model-providers.js'
 
 // Regression tests for https://github.com/strands-agents/harness-sdk/issues/5291: summarizing a history that

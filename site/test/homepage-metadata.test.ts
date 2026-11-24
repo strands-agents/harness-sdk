@@ -4,6 +4,8 @@ import { getCollection } from 'astro:content'
 import { parse } from 'node-html-parser'
 import { describe, expect, it } from 'vitest'
 
+import { bannerHrefs, homepageBanner, homepageCommunityPost } from '../src/util/announcements'
+
 function configuredPathWithBase(value: string): string {
   const base = (process.env.ASTRO_BASE_PATH ?? '/').replace(/\/$/, '')
   const normalizedValue = value.startsWith('/') ? value : `/${value}`
@@ -265,7 +267,11 @@ describe('homepage machine-readable metadata', () => {
           text: product.querySelector('.toolkit__card-slug')?.text.trim(),
         },
         description: product.querySelector('.toolkit__card-desc')?.text.trim(),
-        action: product.querySelector('.toolkit__card-read')?.text.trim(),
+        action: {
+          text: product.querySelector('.toolkit__card-read')?.text.trim(),
+          href: product.querySelector('.toolkit__card-read')?.getAttribute('href'),
+          ariaLabel: product.querySelector('.toolkit__card-read')?.getAttribute('aria-label'),
+        },
       }))
     ).toEqual([
       {
@@ -281,8 +287,12 @@ describe('homepage machine-readable metadata', () => {
           text: '/box',
         },
         description:
-          'Run agents in an OS-enforced sandbox. Set which files, programs, and network destinations they can access.',
-        action: 'Explore Strands Box',
+          'Run coding agents like Claude Code in an OS-enforced sandbox. Choose which files, programs, and hosts they reach, and keep your keys out of their reach.',
+        action: {
+          text: 'Explore Strands Box',
+          href: configuredPathWithBase('/box/'),
+          ariaLabel: 'Explore Strands Box',
+        },
       },
       {
         tag: 'ARTICLE',
@@ -297,7 +307,11 @@ describe('homepage machine-readable metadata', () => {
           text: '/evals',
         },
         description: 'Run evaluations, detect failures, and measure agent behavior before deployment.',
-        action: 'Run an evaluation',
+        action: {
+          text: 'Run an evaluation',
+          href: configuredPathWithBase('/docs/user-guide/evals-sdk/'),
+          ariaLabel: 'Run an evaluation with Strands Evals',
+        },
       },
       {
         tag: 'ARTICLE',
@@ -312,7 +326,11 @@ describe('homepage machine-readable metadata', () => {
           text: '/decider',
         },
         description: 'Route, classify, or score known outcomes with a small decision model that reports confidence.',
-        action: 'Explore the models',
+        action: {
+          text: 'Explore the models',
+          href: configuredPathWithBase('/docs/labs/strands-decider/overview/'),
+          ariaLabel: 'Explore the Strands Decider models',
+        },
       },
     ])
     expect(cards).toHaveLength(3)
@@ -396,19 +414,40 @@ describe('homepage machine-readable metadata', () => {
 
     const latestPost = posts[0]
     if (!latestPost) throw new Error('expected at least one published blog post')
-    const communityPost = posts[1] ?? latestPost
+
+    const announcements = (await getCollection('announcements')).map((entry) => entry.data)
+    const banner = homepageBanner(announcements, posts, new Date())
+    const promoted = bannerHrefs(banner)
+    const communityPost = homepageCommunityPost(posts, promoted) ?? latestPost
 
     const announcement = homepage.querySelector('.announcement')
-    const bannerLink = announcement?.querySelector('.announcement__link')
     const communityLink = homepage.querySelector('.community__blog-link')
 
-    expect(bannerLink?.getAttribute('href')).toBe(configuredPathWithBase(`/blog/${latestPost.id}/`))
-    expect(bannerLink?.querySelector('.announcement__title')?.text.trim()).toBe(latestPost.data.title)
-    expect(announcement?.getAttribute('data-expires')).toBeUndefined()
-    expect(announcement?.querySelector('.announcement__fallback')).toBeNull()
+    if (banner?.links) {
+      const items = announcement?.querySelectorAll('.announcement__item') ?? []
+      expect(items.map((item) => item.getAttribute('href'))).toEqual(promoted.map(configuredPathWithBase))
+      expect(items.map((item) => item.text.trim())).toEqual(banner.links.map((link) => link.title))
+    } else {
+      const bannerLink = announcement?.querySelector('.announcement__link')
+      expect(bannerLink?.getAttribute('href')).toBe(configuredPathWithBase(banner!.href))
+      expect(bannerLink?.querySelector('.announcement__title')?.text.trim()).toBe(banner!.title)
+    }
+    if (banner?.links) {
+      expect(announcement?.querySelector('.announcement__links')?.getAttribute('aria-label')).toBe(banner.title)
+    }
+    if (banner?.expires) {
+      // A manual announcement swaps to the latest post on the client once it expires.
+      expect(announcement?.getAttribute('data-expires')).toBe(banner.expires)
+      expect(announcement?.querySelector('.announcement__fallback')).not.toBeNull()
+    } else {
+      expect(announcement?.getAttribute('data-expires')).toBeUndefined()
+      expect(announcement?.querySelector('.announcement__fallback')).toBeNull()
+    }
     expect(communityLink?.getAttribute('href')).toBe(configuredPathWithBase(`/blog/${communityPost.id}/`))
     expect(communityLink?.text.trim()).toBe(communityPost.data.title)
-    if (posts.length > 1) expect(communityLink?.getAttribute('href')).not.toBe(bannerLink?.getAttribute('href'))
+    if (posts.length > promoted.length) {
+      expect(promoted.map(configuredPathWithBase)).not.toContain(communityLink?.getAttribute('href'))
+    }
   })
 
   it('shows five FAQ previews and links to the standalone FAQ page', () => {
@@ -425,6 +464,7 @@ describe('homepage machine-readable metadata', () => {
 
     expect(markdown).toContain('# Strands Agents')
     expect(markdown).toContain('/docs/user-guide/sdk/quickstart/overview/index.md')
+    expect(markdown).toContain('/box/index.md')
     expect(markdown).toContain('/examples/')
     expect(markdown).toContain('/faq/index.md')
     expect(markdown).toContain('https://pypi.org/project/strands-agents/')

@@ -12,7 +12,7 @@ export interface ModelEntry {
 
 const MODELS = modelInfoData.models as Readonly<Record<string, ModelEntry>>
 const VERSION_SUFFIX = /-(?:v\d+(?::\d+)?|\d+:\d+)$/
-const DATE_SUFFIX = /[-@]\d{8}$/
+const DATE_SUFFIX = /[-@](?:\d{8}|\d{4}-\d{2}-\d{2})$/
 
 /** The model's entry, matched by the SDK's rule (version suffix, date, leading segments); empty when unknown. */
 export function lookupModel(modelId: string): ModelEntry {

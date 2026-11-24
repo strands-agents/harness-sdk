@@ -11,6 +11,7 @@ import { ToolRegistry } from '../../registry/tool-registry.js'
 import { ToolStreamEvent } from '../../tools/tool.js'
 import type { CountTokensOptions } from '../../models/model.js'
 import type { Tool, ToolStreamGenerator } from '../../tools/tool.js'
+import type { ContextState } from '../types.js'
 
 function makeMockAgent(overrides?: {
   id?: string
@@ -93,6 +94,64 @@ describe('ContextManager', () => {
     })
   })
 
+  describe('deprecated stash surface', () => {
+    it('honors the stash config key when archive is omitted', async () => {
+      const storage = new InMemoryStorage()
+      const cm = new ContextManager({ stash: { storage: storage.namespace('team') } })
+      await cm.initAgent(makeMockAgent())
+      await cm.archive!.store('tool-1', 0, new TextEncoder().encode('{}'))
+
+      expect(await storage.list('')).toStrictEqual(['team/tool-1_0'])
+    })
+
+    it('honors stash: false', async () => {
+      const cm = new ContextManager({ stash: false })
+      await cm.initAgent(makeMockAgent())
+
+      expect(cm.archive).toBeUndefined()
+    })
+
+    it('prefers archive when both keys are set', async () => {
+      const cm = new ContextManager({ archive: false, stash: true })
+      await cm.initAgent(makeMockAgent())
+
+      expect(cm.archive).toBeUndefined()
+    })
+
+    it('resolves the stash getters to the archive', async () => {
+      const cm = new ContextManager()
+      await cm.initAgent(makeMockAgent())
+
+      // The published CLI reads these through optional chaining, so a missing getter loses the
+      // archive on fork without throwing.
+      expect(cm.stash).toBe(cm.archive)
+      expect(cm.stashIsDurable).toBe(cm.archiveIsDurable)
+    })
+
+    it('sets stash alongside archive on the state a strategy receives', async () => {
+      let received: ContextState | undefined
+      const cm = new ContextManager({
+        strategies: [
+          {
+            name: 'test',
+            apply: async (context) => {
+              received = context
+              return false
+            },
+          },
+        ],
+      })
+      const agent = makeMockAgent()
+      await cm.initAgent(agent)
+
+      await invokeTrackedHook(agent, makeBeforeEvent(agent, 100))
+
+      // A strategy reading `context.stash?.…` goes silently no-op without this, the same way the
+      // published CLI's fork did.
+      expect(received?.stash).toBe(cm.archive)
+    })
+  })
+
   describe('from', () => {
     it('returns a ContextManager instance as-is', () => {
       const cm = new ContextManager({ strategies: [{ name: 'custom', apply: async () => false }] })
@@ -124,12 +183,12 @@ describe('ContextManager', () => {
     })
   })
 
-  describe('stash root', () => {
-    it('uses an explicitly configured scoped stash storage as the exact root', async () => {
+  describe('archive root', () => {
+    it('uses an explicitly configured scoped archive storage as the exact root', async () => {
       const storage = new InMemoryStorage()
-      const cm = new ContextManager({ stash: { storage: storage.namespace('team') } })
+      const cm = new ContextManager({ archive: { storage: storage.namespace('team') } })
       await cm.initAgent(makeMockAgent())
-      await cm.stash!.store('tool-1', 0, new TextEncoder().encode('{}'))
+      await cm.archive!.store('tool-1', 0, new TextEncoder().encode('{}'))
 
       expect(await storage.list('')).toStrictEqual(['team/tool-1_0'])
     })
@@ -141,14 +200,14 @@ describe('ContextManager', () => {
       })
       const cm = new ContextManager()
       await cm.initAgent(agent)
-      await cm.stash!.store('tool-1', 0, new TextEncoder().encode('{}'))
+      await cm.archive!.store('tool-1', 0, new TextEncoder().encode('{}'))
 
       expect(await storage.list('')).toStrictEqual(['tenant/context/test-ses/scopes/agent/test-agent/tool-1_0'])
     })
   })
 
   describe('seeded messages', () => {
-    it('does not overwrite a stashed original with a seeded preview', async () => {
+    it('does not overwrite an archived original with a seeded preview', async () => {
       const storage = new InMemoryStorage()
       const view = storage.namespace('team')
       await view.write('tu-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original full result' })))
@@ -168,16 +227,16 @@ describe('ContextManager', () => {
           }),
         ],
       })
-      const cm = new ContextManager({ stash: { storage: view } })
+      const cm = new ContextManager({ archive: { storage: view } })
 
       await cm.initAgent(makeMockAgent({ messages: [preview] }))
 
-      expect(await cm.stash!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
+      expect(await cm.archive!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
     })
   })
 
   describe('seeded messages from a session without placeholder metadata', () => {
-    it('does not overwrite a stashed original with a text-only preview', async () => {
+    it('does not overwrite an archived original with a text-only preview', async () => {
       const storage = new InMemoryStorage()
       const view = storage.namespace('team')
       await view.write('tu-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original full result' })))
@@ -194,12 +253,12 @@ describe('ContextManager', () => {
         ],
         trackingId: 'msg-1',
       })
-      const cm = new ContextManager({ stash: { storage: view } })
+      const cm = new ContextManager({ archive: { storage: view } })
 
       await cm.initAgent(makeMockAgent({ messages: [restored] }))
 
-      expect(await cm.stash!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
-      expect(await cm.stash!.retrieve('msg-1_0')).toStrictEqual({ data: { text: 'original user text' } })
+      expect(await cm.archive!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
+      expect(await cm.archive!.retrieve('msg-1_0')).toStrictEqual({ data: { text: 'original user text' } })
     })
   })
 
@@ -578,7 +637,7 @@ describe('ContextManager', () => {
           return true
         },
       }
-      const cm = new ContextManager({ strategies: [strategy], stash: false })
+      const cm = new ContextManager({ strategies: [strategy], archive: false })
       const agent = makeMockAgent({
         messages: [new Message({ role: 'user', content: [new TextBlock('hello')] })],
         systemPrompt: 'be helpful',
@@ -601,7 +660,7 @@ describe('ContextManager', () => {
 
     it('omits the system prompt when the agent has none', async () => {
       const countOptions: (CountTokensOptions | undefined)[] = []
-      const cm = new ContextManager({ strategies: [{ name: 'noop', apply: async () => false }], stash: false })
+      const cm = new ContextManager({ strategies: [{ name: 'noop', apply: async () => false }], archive: false })
       const agent = makeMockAgent({
         messages: [new Message({ role: 'user', content: [new TextBlock('hello')] })],
         countTokens: async (_messages, options) => {
@@ -629,7 +688,7 @@ describe('ContextManager', () => {
       ]
 
       // Only the emergency truncate appended by the constructor can act.
-      const cm = new ContextManager({ strategies: [{ name: 'noop', apply: async () => false }], stash: false })
+      const cm = new ContextManager({ strategies: [{ name: 'noop', apply: async () => false }], archive: false })
       const agent = makeMockAgent({
         messages,
         systemPrompt: 'be helpful',

@@ -7,7 +7,7 @@ import { Message, TextBlock, ToolResultBlock } from '../types/messages.js'
 import type { OffloadedBlockData, OffloadMethod } from '../types/messages.js'
 import type { Agent } from '../agent/agent.js'
 import type { ContextState } from '../context-manager/types.js'
-import type { Stash } from '../context-manager/stash.js'
+import type { Archive } from '../context-manager/archive.js'
 import { createMockAgent } from './agent-helpers.js'
 import { isOffloaded } from '../context-manager/placeholder.js'
 
@@ -64,8 +64,8 @@ export function heuristicCountTokens(messages: Message[]): number {
 }
 
 export interface MakeContextOptions {
-  /** Stash the strategies may write to. */
-  stash?: Stash
+  /** Archive the strategies may write to. */
+  archive?: Archive
   /** Context window utilization reported to the strategies. Defaults to 0.5. */
   utilization?: number
   /** Whether the strategies run on an overflow. */
@@ -79,7 +79,7 @@ export interface MakeContextOptions {
 
 /** A {@link ContextState} over a mock agent whose model counts tokens with {@link heuristicCountTokens}. */
 export function makeContext(messages: Message[], options: MakeContextOptions = {}): ContextState {
-  const { stash, utilization = 0.5, overflow, model = {} } = options
+  const { archive, utilization = 0.5, overflow, model = {} } = options
   const extra: Partial<Agent> =
     model === null
       ? {}
@@ -89,7 +89,7 @@ export function makeContext(messages: Message[], options: MakeContextOptions = {
     messages,
     agent,
     utilization,
-    ...(stash !== undefined && { stash }),
+    ...(archive !== undefined && { archive }),
     ...(overflow && { overflow: true }),
   }
 }

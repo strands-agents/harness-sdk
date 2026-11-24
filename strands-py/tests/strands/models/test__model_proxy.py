@@ -5,6 +5,7 @@ import unittest.mock
 
 import pytest
 
+from strands.agent.invocation_context import ModelUsage, _create_invocation_context
 from strands.models._model_proxy import ModelProxy
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
@@ -119,6 +120,18 @@ def test_prepare_passes_injected_blocks_through_to_a_model_that_takes_temporary_
 
     assert tru_messages is messages
     assert tru_trailing == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_adds_the_call_usage_under_the_model_it_wraps(alist):
+    usage = {"inputTokens": 3, "outputTokens": 4, "totalTokens": 7}
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "done"}]}], [usage])
+    model.get_config = lambda: {"model_id": "model-a"}
+    invocation_context = _create_invocation_context()
+
+    await alist(ModelProxy(model).stream([user({"text": "go"})], None, None, invocation_context=invocation_context))
+
+    assert invocation_context.usage_by_model == [ModelUsage(provider_name=None, model_id="model-a", usage=usage)]
 
 
 @pytest.mark.asyncio

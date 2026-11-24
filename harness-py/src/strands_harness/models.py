@@ -40,7 +40,7 @@ _ANTHROPIC_WEB_SEARCH = {"type": "web_search_20260318", "name": "web_search", "a
 
 
 _VERSION_SUFFIX = re.compile(r"-(?:v\d+(?::\d+)?|\d+:\d+)$")
-_DATE_SUFFIX = re.compile(r"[-@]\d{8}$")
+_DATE_SUFFIX = re.compile(r"[-@](?:\d{8}|\d{4}-\d{2}-\d{2})$")
 # The shared model info (``shared/model-info.json``); hatch_build.py copies it into the package.
 _MODELS: dict[str, dict[str, Any]] = json.loads(
     resources.files("strands_harness").joinpath("model_info.json").read_text(encoding="utf-8")
@@ -89,7 +89,6 @@ _BEDROCK_GPT_PREFIXES = ("openai.gpt-5.", "openai.gpt-daybreak-", "openai.gpt-6-
 # regionally, so unlike the OpenAI-on-Bedrock case no inference-profile prefix is carried over.
 _BEDROCK_WEB_FETCH_FAMILY_MODELS = {
     "amazon.": "amazon.nova-lite-v1:0",
-    "meta.": "meta.llama3-2-3b-instruct-v1:0",
     "mistral.": "mistral.mistral-small-2402-v1:0",
 }
 
@@ -610,15 +609,15 @@ def resolve_model(
 
 
 def _bedrock_web_fetch_model(name: str) -> str | None:
-    """Small Bedrock summarizer id for a Bedrock main model ``name``, or ``None`` if the family is
-    unidentifiable.
+    """Small Bedrock summarizer id for a Bedrock main model ``name``, or ``None`` if its family has no
+    mapped small model.
 
     Bedrock hosts models from several providers, so the summarizer follows the main model's family.
     An Anthropic-on-Bedrock model (an ``anthropic.`` prefix, after any cross-region prefix like
     ``us.``) gets Anthropic Haiku; an OpenAI-on-Bedrock model (an ``openai.`` prefix) gets the OpenAI
     small model hosted on Bedrock (``openai.`` + the OpenAI-provider summarizer), carrying the main
     model's cross-region prefix because those ids are only served through an inference profile.
-    Amazon, Meta, and Mistral families get their small regional models. The summarizer always shares
+    Amazon and Mistral families get their small regional models. The summarizer always shares
     the main model's credentials. A family with no mapped small model returns ``None`` so the caller
     can reuse the main model rather than guess.
     """
@@ -646,7 +645,7 @@ def resolve_web_fetch_model(
     reuse it as the summarizer. A router uses its concrete default model because auxiliary calls are
     outside the primary agent invocation and cannot share its routing decision. On Bedrock the
     summarizer follows the main model's family (Anthropic-on-Bedrock gets Haiku, OpenAI-on-Bedrock gets
-    the OpenAI small model, Amazon/Meta/Mistral get their small regional models); a Bedrock family
+    the OpenAI small model, Amazon/Mistral get their small regional models); a Bedrock family
     with no mapped small model reuses the main model and logs a warning
     rather than guessing. Thinking is never applied: summarizing a page is a fast task.
 
@@ -670,9 +669,8 @@ def resolve_web_fetch_model(
         small = _bedrock_web_fetch_model(name)
         if small is None:
             logger.warning(
-                f"model=<{main}> | could not identify the Bedrock model family for the web_fetch "
-                "summarizer; reusing the main model. Set builtin_tools={'web_fetch': {'model': ...}} to choose a "
-                "smaller one."
+                f"model=<{main}> | no small web_fetch summarizer is mapped for this Bedrock model family; "
+                "reusing the main model. Set builtin_tools={'web_fetch': {'model': ...}} to choose a smaller one."
             )
             return _concrete_model(resolve_model(main, main, effort="off"))
     elif (base_url_var := _CUSTOM_ENDPOINT_VARS.get(provider_name)) and os.environ.get(base_url_var):

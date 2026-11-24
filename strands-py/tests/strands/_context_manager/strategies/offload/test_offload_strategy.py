@@ -296,7 +296,7 @@ class TestMessageLevelWithRoleAlternation:
         assert await Offload.drop("*").when(preserve_recent=2).apply(context) is True
 
         marker = offload_placeholder("drop", format_dropped_messages(removed_tokens), None, removed_tokens)
-        assert messages == [q1, {**tool_use, "content": [*tool_use["content"], marker]}, tool_result, a3]
+        assert messages == [q1, {**tool_use, "content": [marker, *tool_use["content"]]}, tool_result, a3]
         assert messages[2] is tool_result
 
     @pytest.mark.asyncio
@@ -703,6 +703,17 @@ class TestInsertMarker:
         assert len(messages) == 3
         assert messages[1]["content"] == [ContentBlock(text="a1"), self._MARKER]
 
+    def test_places_the_marker_before_a_trailing_tool_use_block(self):
+        """A text block after a toolUse reads as assistant prefill to Anthropic models with thinking enabled."""
+        tool_use = ContentBlock(toolUse={"toolUseId": "tu-1", "name": "read", "input": {}})
+        carrier = Message(role="assistant", content=[ContentBlock(text="a1"), tool_use])
+        messages = [_text("user", "task"), carrier, _text("user", "u1")]
+
+        insert_marker(messages, 1, self._MARKER)
+
+        assert len(messages) == 3
+        assert messages[1]["content"] == [ContentBlock(text="a1"), self._MARKER, tool_use]
+
     def test_gives_a_standalone_marker_message_its_own_tracking_id(self):
         """A stash ref is keyed by tracking id, so two id-less messages would share one block index."""
         messages = [_text("user", "task"), _text("user", "u1"), _text("user", "u2")]
@@ -830,20 +841,25 @@ class TestRepeatedMessageLevelReduction:
 
 class TestParseCondition:
     _EXPECTED = {
-        "context_utilization": 'a "N%" string up to "100%" or a whole token count of at least 1000',
+        "context_utilization": (
+            'a float above 0 up to 1.0, a "N%" string up to "100%", or a whole token count of at least 1000'
+        ),
+        "block_threshold": 'a "N%" string below "100%" or a whole token count above 0',
         "preserve_recent": 'a "N%" string below "100%" or a whole message count',
     }
 
     @pytest.mark.parametrize(
         ("name", "raw", "parsed"),
         [
-            ("context_utilization", "70%", ParsedCondition(70, True)),
+            ("context_utilization", "70%", ParsedCondition(0.7, True)),
+            ("context_utilization", 0.7, ParsedCondition(0.7, True)),
+            ("context_utilization", 1.0, ParsedCondition(1.0, True)),
             ("context_utilization", 50_000, ParsedCondition(50_000, False)),
             ("context_utilization", 1000, ParsedCondition(1000, False)),
             ("block_threshold", 2500, ParsedCondition(2500, False)),
-            ("block_threshold", "5%", ParsedCondition(5, True)),
+            ("block_threshold", "5%", ParsedCondition(0.05, True)),
             ("preserve_recent", 4, ParsedCondition(4, False)),
-            ("preserve_recent", "50%", ParsedCondition(50, True)),
+            ("preserve_recent", "50%", ParsedCondition(0.5, True)),
         ],
     )
     def test_accepts(self, name, raw, parsed):
@@ -853,7 +869,9 @@ class TestParseCondition:
         ("name", "raw", "shown"),
         [
             ("context_utilization", 0, "0"),
-            ("context_utilization", 0.5, "0.5"),
+            ("context_utilization", 0.0, "0.0"),
+            ("context_utilization", float("nan"), "nan"),
+            ("context_utilization", float("inf"), "inf"),
             ("context_utilization", 1, "1"),
             ("context_utilization", 1.5, "1.5"),
             ("context_utilization", "101%", '"101%"'),
@@ -876,10 +894,13 @@ class TestParseCondition:
     @pytest.mark.parametrize(
         ("name", "raw", "hint"),
         [
-            ("context_utilization", 80, '; for 80%, write "80%"'),
-            ("context_utilization", 0.8, '; for 80%, write "80%"'),
-            ("context_utilization", 1, '; for 100%, write "100%"'),
+            ("context_utilization", 80, '; for 80%, write 0.8 or "80%"'),
+            ("context_utilization", 1, '; for 100%, write 1.0 or "100%"'),
             ("context_utilization", 999, ""),
+            ("context_utilization", 50_000.0, "; for a count, write 50000"),
+            ("context_utilization", 1.5, ""),
+            ("block_threshold", 1.0, "; for a count, write 1"),
+            ("preserve_recent", 4.0, "; for a count, write 4"),
             ("preserve_recent", 0.07, '; for 7%, write "7%"'),
         ],
     )
@@ -902,6 +923,8 @@ class TestConditionResolution:
         [
             ({"context_utilization": "70%"}, DEFAULT_CONTEXT_WINDOW_LIMIT, 0.7, True),
             ({"context_utilization": "70%"}, DEFAULT_CONTEXT_WINDOW_LIMIT, 0.69, False),
+            ({"context_utilization": 0.7}, DEFAULT_CONTEXT_WINDOW_LIMIT, 0.7, True),
+            ({"context_utilization": 0.7}, DEFAULT_CONTEXT_WINDOW_LIMIT, 0.69, False),
             ({"context_utilization": 50_000}, 100_000, 0.5, True),
             ({"context_utilization": 50_000}, 100_000, 0.49, False),
         ],
@@ -926,7 +949,8 @@ class TestConditionResolution:
             strategy.init(_context([], context_window_limit=None).agent)
 
     @pytest.mark.parametrize(
-        ("context_window_limit", "context_utilization"), [(100_000, 100_000), (100_000, "100%"), (None, "80%")]
+        ("context_window_limit", "context_utilization"),
+        [(100_000, 100_000), (100_000, "100%"), (100_000, 1.0), (None, 0.8)],
     )
     def test_accepts_on_init_a_utilization_within_the_context_window(self, context_window_limit, context_utilization):
         strategy = Offload.drop("*").when(context_utilization=context_utilization)

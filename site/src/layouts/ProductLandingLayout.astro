@@ -1,0 +1,85 @@
+---
+import Search from '@astrojs/starlight/components/Search.astro'
+import AnnouncementBanner from '../components/AnnouncementBanner.astro'
+import Footer from '../components/Footer.astro'
+import Navigation from '../components/Navigation.astro'
+import SiteHead from '../components/SiteHead.astro'
+import type { JsonLdNode } from '../util/structured-data'
+import '../styles/fonts.css'
+
+interface Props {
+  title: string
+  description: string
+  canonicalPath: string
+  markdownPath: string
+  ogImageAlt: string
+  structuredData?: JsonLdNode[]
+  footerTopShape?: boolean
+}
+
+const {
+  title,
+  description,
+  canonicalPath,
+  markdownPath,
+  ogImageAlt,
+  structuredData = [],
+  footerTopShape = true,
+} = Astro.props
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <SiteHead
+      {title}
+      {description}
+      {canonicalPath}
+      {markdownPath}
+      {ogImageAlt}
+      {structuredData}
+    />
+  </head>
+  <body>
+    <AnnouncementBanner />
+    <Navigation />
+    <div class="site-search-host">
+      <Search />
+    </div>
+    <main data-pagefind-body>
+      <slot />
+    </main>
+    <Footer topShape={footerTopShape} />
+  </body>
+</html>
+
+<style is:global>
+  .site-search-host {
+    display: contents;
+  }
+
+  .site-search-host button[data-open-modal] {
+    display: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
+  }
+
+  body {
+    overflow-x: hidden;
+  }
+</style>

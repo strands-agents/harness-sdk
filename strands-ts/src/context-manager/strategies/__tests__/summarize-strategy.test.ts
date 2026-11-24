@@ -98,7 +98,7 @@ describe('Offload.summarize', () => {
       expect((block.content[0] as TextBlock).text).toContain('[Summarized:')
     })
 
-    it('summarizes with agent.auxModel when the strategy has no model', async () => {
+    it('summarizes with agent.model rather than agent.auxModel when the strategy has no model', async () => {
       const largeText = 'x'.repeat(2500 * 4 + 100)
       const messages = [makeToolResultMessage(largeText)]
       const mainModel = {
@@ -115,8 +115,8 @@ describe('Offload.summarize', () => {
       const result = await strategy.apply({ messages, agent, utilization: 0.9 })
 
       expect(result).toBe(true)
-      expect(auxModel.summarize).toHaveBeenCalledTimes(1)
-      expect(mainModel.summarize).not.toHaveBeenCalled()
+      expect(mainModel.summarize).toHaveBeenCalledTimes(1)
+      expect(auxModel.summarize).not.toHaveBeenCalled()
     })
 
     it('summarizes assistant text blocks', async () => {
@@ -345,10 +345,7 @@ function baseModel(serverSideSummary = false) {
 }
 
 /** An agent on a {@link baseModel}, with a system prompt, a tool, a cancel signal and agent metadata. */
-function mockAgent(
-  messages: Message[],
-  options: { serverSideSummary?: boolean; systemPrompt?: string | null; auxModel?: unknown } = {}
-) {
+function mockAgent(messages: Message[], options: { serverSideSummary?: boolean; systemPrompt?: string | null } = {}) {
   const spies = baseModel(options.serverSideSummary)
   const controller = new AbortController()
   const systemPrompt = options.systemPrompt === undefined ? AGENT_PROMPT : options.systemPrompt
@@ -360,7 +357,6 @@ function mockAgent(
       cancelSignal: controller.signal,
       agentMetadata: { sessionId: 'session' },
       ...(systemPrompt !== null && { systemPrompt }),
-      ...(options.auxModel !== undefined && { auxModel: options.auxModel }),
     } as unknown as Partial<Agent>,
   })
   return { agent, controller, ...spies }
@@ -418,7 +414,11 @@ const summarizedToolResult = (summary: string): { role: string; content: unknown
 const pinned = (text: string): Message =>
   new Message({ role: 'user', content: [new TextBlock(text)], metadata: { custom: { pinned: true } } })
 
-const perMessage = () => Offload.summarize('*').when({ contextUtilization: '80%', preserveRecent: 1 })
+const perMessage = (model?: unknown) =>
+  Offload.summarize('*', model ? { model: model as Model } : undefined).when({
+    contextUtilization: '80%',
+    preserveRecent: 1,
+  })
 const perBlock = (config?: { systemPrompt: string }) =>
   Offload.summarize('toolResults', config).when({ blockThreshold: 100 })
 
@@ -743,9 +743,9 @@ describe('a summarized run replays the agent request', () => {
       modelInfo: {},
       summarize: vi.fn(async (_messages: Message[]) => summaryResult('aux summary')),
     }
-    const { agent } = mockAgent(messages, { auxModel })
+    const { agent } = mockAgent(messages)
 
-    expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
+    expect(await perMessage(auxModel).apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
     const expected = replayMessages().slice(0, 4)
     expected[1] = new Message({ role: 'assistant', content: [new TextBlock('old1')] })
@@ -926,10 +926,10 @@ describe('server-side summary', () => {
     const messages = serverSideMessages()
     const agent = createMockAgent({
       messages,
-      extra: { model: agentModel, auxModel } as unknown as Partial<Agent>,
+      extra: { model: agentModel } as unknown as Partial<Agent>,
     })
 
-    expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
+    expect(await perMessage(auxModel).apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
     expect(turns(messages)).toEqual([
       { role: 'user', content: [new TextBlock('task')] },
@@ -1048,9 +1048,9 @@ describe('server-side summary', () => {
   ])('requires both models to support server-side summary: $name', async ({ agentSupports, auxSupports }) => {
     const messages = serverSideMessages()
     const aux = baseModel(auxSupports)
-    const { agent } = mockAgent(messages, { serverSideSummary: agentSupports, auxModel: aux.model })
+    const { agent } = mockAgent(messages, { serverSideSummary: agentSupports })
 
-    expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
+    expect(await perMessage(aux.model).apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
     expect(turns(messages)).toEqual([
       { role: 'user', content: [new TextBlock('task')] },
