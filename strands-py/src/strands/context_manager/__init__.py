@@ -10,7 +10,8 @@ Example:
     from strands import Agent
     from strands.context_manager import ContextManager, Offload
 
-    agent = Agent(context_manager=ContextManager(strategies=[Offload.truncate("tool_results")]))
+    strategy = Offload.truncate("tool_results").when(block_threshold=1500)
+    agent = Agent(context_manager=ContextManager(strategies=[strategy]))
     ```
 """
 

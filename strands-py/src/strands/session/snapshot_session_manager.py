@@ -726,7 +726,9 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         Storage errors are logged and swallowed so an archive failure never prevents session restore.
         """
         # ``stash`` is the pre-rename key. An inline snapshot under it holds the only copy of content the agent had
-        # already offloaded, so a read falls back to it; writes only ever go to ``archive``.
+        # already offloaded, so a read falls back to it; writes only ever go to ``archive``. The fallback outlives
+        # the deprecated names: an immutable snapshot is never rewritten, so a pre-rename checkpoint keeps the old
+        # key forever and no resume can migrate it forward.
         archive_data = snapshot.data.get("archive") or snapshot.data.get("stash")
         if archive_data is None:
             return

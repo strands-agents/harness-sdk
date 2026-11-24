@@ -137,7 +137,9 @@ The Python API moved out of `strands.experimental`, and the stash was renamed to
 
 The old names still work this release, deprecated, and are removed in the next minor. `context_manager="auto"` and `context_manager="agentic"` are unchanged.
 
-Sessions saved before the rename still resume, but the compatibility read goes away with the deprecated names — resume each one once on this release to migrate it forward.
+A custom strategy whose `init` takes `**kwargs` is the exception: it now receives the archive under `archive` only, so rename `kwargs["stash"]` there first. Declaring `init(self, agent, archive=None)` keeps it explicit.
+
+Sessions saved before the rename still resume, and keep resuming after the deprecated names are gone.
 
 </Tab>
 <Tab label="TypeScript">
@@ -156,7 +158,7 @@ The TypeScript API moved out of `@strands-agents/sdk/experimental`, and the stas
 
 The old names still work this release, deprecated, and are removed in the next minor. Root-package imports are the exception — they are gone now, so move those first. `contextManager: "auto"` and `contextManager: "agentic"` are unchanged.
 
-Sessions saved before the rename still resume, but the compatibility read goes away with the deprecated names — resume each one once on this release to migrate it forward.
+Sessions saved before the rename still resume, and keep resuming after the deprecated names are gone.
 
 </Tab>
 </Tabs>
