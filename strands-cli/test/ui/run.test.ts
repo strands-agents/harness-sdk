@@ -427,35 +427,18 @@ describe('runInkChat', () => {
     }
   })
 
-  it.each<[string, string, Partial<SetupChange>, number]>([
-    ['SaveTheProfile', 'AProfileChangeArrives', {}, 1],
-    ['KeepCliTomlAsItIs', 'CliTomlIsReloaded', { reloadedFiles: ['cli.toml'], profileSaved: true }, 0],
-  ])('should%sWhen%s', async (_outcome, _event, reload, saves) => {
-    const config = CliConfigStore.memory()
-    const saveProfile = vi.spyOn(config, 'saveProfile').mockResolvedValue()
-    const unusedFork = async (): Promise<ChatController> => {
-      throw new Error('Unused')
-    }
-    const snapshot: ChatConversation['snapshot'] = {
-      scope: 'agent',
-      schemaVersion: '1.0',
-      createdAt: new Date().toISOString(),
-      data: {},
-      appData: {},
-    }
-    const conversation = (): ChatController =>
-      new ChatController({ ...idleBackend(), captureConversation: async () => snapshot })
-    const previous = new ConversationManager(conversation(), { fork: unusedFork })
-    const disposed = vi.spyOn(previous, 'dispose')
-    let requestSetup: RequestSetup | undefined
-    const source = async (
-      _signal: AbortSignal,
-      setup: RequestSetup,
-      conversations?: ChatConversations
-    ): Promise<ChatControllerApi> => {
-      requestSetup = setup
-      return conversations ? new ConversationManager(conversation(), { fork: unusedFork }) : previous
-    }
+  const agentSnapshot: ChatConversation['snapshot'] = {
+    scope: 'agent',
+    schemaVersion: '1.0',
+    createdAt: new Date().toISOString(),
+    data: {},
+    appData: {},
+  }
+  const unusedFork = async (): Promise<ChatController> => {
+    throw new Error('Unused')
+  }
+  // Runs the chat on a terminal that nobody types into; the returned function unmounts it and waits for the run to end.
+  const runOnTerminal = (source: Parameters<typeof runInkChat>[0], config = CliConfigStore.memory()) => {
     const output = Object.assign(new PassThrough(), {
       isTTY: true,
       columns: 100,
@@ -480,6 +463,32 @@ describe('runInkChat', () => {
         return instance
       },
     })
+    return async (): Promise<void> => {
+      instance.unmount()
+      await running
+    }
+  }
+
+  it.each<[string, string, Partial<SetupChange>, number]>([
+    ['SaveTheProfile', 'AProfileChangeArrives', {}, 1],
+    ['KeepCliTomlAsItIs', 'CliTomlIsReloaded', { reloadedFiles: ['cli.toml'], profileSaved: true }, 0],
+  ])('should%sWhen%s', async (_outcome, _event, reload, saves) => {
+    const config = CliConfigStore.memory()
+    const saveProfile = vi.spyOn(config, 'saveProfile').mockResolvedValue()
+    const conversation = (): ChatController =>
+      new ChatController({ ...idleBackend(), captureConversation: async () => agentSnapshot })
+    const previous = new ConversationManager(conversation(), { fork: unusedFork })
+    const disposed = vi.spyOn(previous, 'dispose')
+    let requestSetup: RequestSetup | undefined
+    const source = async (
+      _signal: AbortSignal,
+      setup: RequestSetup,
+      conversations?: ChatConversations
+    ): Promise<ChatControllerApi> => {
+      requestSetup = setup
+      return conversations ? new ConversationManager(conversation(), { fork: unusedFork }) : previous
+    }
+    const stop = runOnTerminal(source, config)
     try {
       await vi.waitFor(() => expect(requestSetup).toBeDefined())
 
@@ -488,28 +497,17 @@ describe('runInkChat', () => {
       await vi.waitFor(() => expect(disposed).toHaveBeenCalled())
       expect(saveProfile).toHaveBeenCalledTimes(saves)
     } finally {
-      instance.unmount()
-      await running
+      await stop()
     }
   })
 
   it('shouldReopenTheDevPanelWhenAFileChangeReloadsTheAgent', async () => {
-    const snapshot: ChatConversation['snapshot'] = {
-      scope: 'agent',
-      schemaVersion: '1.0',
-      createdAt: new Date().toISOString(),
-      data: {},
-      appData: {},
-    }
     const open = vi.fn<NonNullable<DevChatCommand['open']>>(() => () => null)
     const devCommands: DevChatCommand[] = [
       { spec: { name: 'optimize', usage: '/optimize', description: 'Tune this agent' }, open },
     ]
     const conversation = (): ChatController =>
-      new ChatController({ ...idleBackend(), captureConversation: async () => snapshot }, { devCommands })
-    const unusedFork = async (): Promise<ChatController> => {
-      throw new Error('Unused')
-    }
+      new ChatController({ ...idleBackend(), captureConversation: async () => agentSnapshot }, { devCommands })
     const previous = new ConversationManager(conversation(), { fork: unusedFork })
     let replacement: ConversationManager | undefined
     let requestSetup: RequestSetup | undefined
@@ -534,31 +532,7 @@ describe('runInkChat', () => {
       )
       return replacement
     }
-    const input = Object.assign(new PassThrough(), {
-      isTTY: true,
-      setRawMode: vi.fn(),
-      ref: vi.fn(),
-      unref: vi.fn(),
-    }) as unknown as NodeJS.ReadStream
-    const output = Object.assign(new PassThrough(), {
-      isTTY: true,
-      columns: 100,
-      rows: 30,
-    }) as unknown as NodeJS.WriteStream
-    output.resume()
-    let instance!: Instance
-    const running = runInkChat(source, {
-      config: CliConfigStore.memory(),
-      intro: false,
-      alternateScreen: false,
-      input,
-      output,
-      errorOutput: output,
-      renderApp: (element, options) => {
-        instance = render(element, { ...options, interactive: true, patchConsole: false })
-        return instance
-      },
-    })
+    const stop = runOnTerminal(source)
     try {
       await vi.waitFor(() => expect(requestSetup).toBeDefined())
       await previous.submit('/optimize')
@@ -572,8 +546,7 @@ describe('runInkChat', () => {
       expect(replacement?.getSnapshot().runtime.reloadStatus).toBe('↻ agent.ts reloaded · session kept')
       expect(open.mock.calls.map(([, options]) => options)).toEqual([undefined, { restore: true }])
     } finally {
-      instance.unmount()
-      await running
+      await stop()
     }
   })
 
