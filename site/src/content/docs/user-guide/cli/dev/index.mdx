@@ -1,0 +1,53 @@
+---
+title: strands dev
+description: "strands dev is the builder for Strands harness. Use it to test the Base CLI or a harness in code on experiments, and to optimize it with Strands Evals."
+sourceLinks:
+  - path: strands-cli/src/dev/workspace.ts
+  - path: strands-cli/src/dev/picker.tsx
+  - path: strands-cli/src/dev/temporary-evals-fork/command.ts
+sidebar:
+  label: "Overview"
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
+You improve an agent in a loop. You change its instructions or its tools, you try it, and you compare its answers with the answers that you expect. Then you change it again.
+`strands dev` puts that loop in one chat. It tests the agent on experiments, tunes it with [Strands Evals](/docs/user-guide/evals-sdk/), and shows each proposed change as a diff for your approval.
+
+## Select what to improve
+
+`strands dev` works on one agent at a time. Select the path that matches your agent:
+
+<CardGrid>
+  <LinkCard
+    title="Improve the Base CLI"
+    href="base-cli/"
+    description="Tune the agent that plain strands runs. The changes go into your saved profile in ~/.strands/cli.toml."
+  />
+  <LinkCard
+    title="Improve a harness in code"
+    href="harness/"
+    description="Open a TypeScript or Python harness project, or make a new one. The changes go into its source file."
+  />
+</CardGrid>
+
+When you run `strands dev`, a picker shows the two paths. **Global Harness** has the Base CLI. **Discovered Harnesses** has the harness files in the current folder, and **New Harness** makes a new project.
+
+## The three steps of a dev chat
+
+1. **Build.** Chat with the agent while you change it. When you change the model or the effort in the chat, dev saves the change in the agent.
+2. **Test.** `/experiment` makes a set of test cases from a description or from your past chats. Then it runs the agent on the cases. The report gives the passed cases, the failed cases, and the reason for each failure.
+3. **Optimize.** `/optimize` tunes the instructions, the model, the effort, and other options against an experiment. You examine each proposed edit as a diff, and dev saves only the edits that you apply.
+
+## What dev keeps apart
+
+Dev keeps its state in a workspace: a `strands-dev/` folder. The workspace holds the settings of dev, the experiments, and the run history.
+Dev runs your agent from its own file or profile, and not from a copy. The optimizer makes each candidate in memory. Your agent changes only with the edits that you apply.
+
+## What you need
+
+- Node.js 22.12 or later for the CLI.
+- Python 3.10 or later, for experiments and optimization. Dev installs `strands-agents-evals` in a shared Python environment the first time that it needs it.
+- Access to AWS Bedrock for the generation of cases. Generation uses its own Bedrock connection, and not the model of your chat.
+
+Generation, evaluation, and optimization call models, and these calls can cost money. Dev starts a paid run only after your approval.

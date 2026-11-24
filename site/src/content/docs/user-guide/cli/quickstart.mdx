@@ -1,22 +1,17 @@
 ---
 title: Quickstart
-description: "Install the Strands CLI, create a harness agent with strands dev, make an experiment for it, run the experiment, and apply the edits of the optimizer."
+description: "Install the Strands CLI, connect a model provider in setup, and start a chat with a Strands harness agent in your terminal, with no code."
 sourceLinks:
-  - path: strands-cli/src/dev/picker.tsx
-  - path: strands-cli/src/dev/temporary-evals-fork/command.ts
-  - path: strands-cli/src/dev/temporary-evals-fork/workflow-skills.ts
+  - path: strands-cli/src/cli/arguments.ts
+  - path: strands-cli/src/ui/setup/wizard.tsx
 ---
 
-In this quickstart, you build a Python harness agent with `strands dev`. You make an experiment for the agent, you run the experiment, and then the optimizer proposes changes to the agent.
-At the end, you have an agent file with the edits that you applied, and a report for each run.
+In this quickstart, you install the Strands CLI, connect a model provider, and start a chat with the default agent.
 
 ## Before you start
 
 - Install Node.js 22.12 or later.
-- Install Python 3.10 or later. When `python3` on your path is older, set `PYTHON` to a newer interpreter.
-- Get credentials for a model provider, and access to AWS Bedrock. Case generation uses Bedrock.
-
-This quickstart makes paid model calls for the generation of cases, for the evaluation, and for the optimization.
+- Get credentials for a model provider, for example an AWS profile with access to Amazon Bedrock.
 
 ## Install the CLI
 
@@ -26,100 +21,38 @@ npm install -g @strands-agents/cli
 
 ## Connect a model provider
 
-Run `strands`. When setup opens, select **Quickstart**, and then select a provider and a model.
-The CLI finds the credentials that you have already, for example an AWS profile. Then the chat opens. Type `/exit` to close it.
+Run `strands`. When setup opens, select **Quickstart**:
 
-## Create a harness
+1. **Select a provider.** The CLI finds the credentials that you have already, for example an AWS profile or an `OPENAI_API_KEY` in your environment.
+2. **Select a model.** Search the models of the provider, or keep the default.
+3. **Select Save and Launch.** The chat opens.
 
-Go to an empty folder, and run `strands dev`:
+To change more than the model, select **Customize** instead. It shows the name, the instructions, the tools, the plugins, the context and memory, and the tool permissions of the agent.
+
+## Chat with the agent
+
+Type a task and push Enter, for example "make a list of the TODO comments in this folder".
+Before most tool calls, the CLI asks for your approval: **Allow once**, **Always allow**, **Deny once**, or **Always deny**. Reads of files in the current folder do not need an approval.
+Type `/help` to see the commands, and `/exit` to close the chat.
+
+You can also give one task from your shell:
 
 ```bash
-mkdir support-agent && cd support-agent
-strands dev
+strands "summarize what this repo does"
 ```
 
-The picker shows three groups: **Global Harness**, **Discovered Harnesses**, and **New Harness**. Select **Create a new harness**.
-Type a name for the agent. The language is Python. Push Enter.
+## Change the agent for one run
 
-Dev creates the project and installs its dependencies in `.venv`:
+Flags change one run, and the saved profile stays the same:
 
-```text
-strands-workspace/
-  agent.py        the harness agent
-  strands-dev/    the workspace of strands dev
+```bash
+strands --model anthropic/claude-sonnet-5      # use a different model
+strands --agent ./agent.ts                     # use an agent file
 ```
 
-The chat opens. A card at the top names the workspace and the harness file.
-In the background, dev installs `strands-agents-evals` in a shared Python environment the first time that it needs it. This installation can take some minutes.
-
-## Change the agent while you chat
-
-Ask the agent a question. Then open `strands-workspace/agent.py` in your editor. Add instructions to the `create_harness` call:
-
-```python
-from strands_harness import create_harness
-
-agent = create_harness(
-    name="support-agent",
-    instructions="You answer questions about the refund policy of an online store. Answer in two sentences or less.",
-)
-```
-
-Your file also has the model, session, and memory options from your saved profile. Keep them.
-Save the file. Dev reloads the agent, and the status line shows `↻ agent.py reloaded · session kept`. Ask again, and compare the answer.
-
-## Make an experiment
-
-An experiment is a set of test cases for the agent. Type `/experiment`.
-The agent asks what the experiment must test:
-
-```text
-/experiment
-```
-
-Write the topic of the cases, for example "questions about refunds, late fees, and damaged items".
-The agent gives a name and a number of cases for the experiment, and it waits for your approval. Reply "yes".
-
-The generation runs in the background, and a line below the chat input shows its progress. When it finishes, a notice gives the path of the experiment file, `strands-dev/experiments/<name>/<name>.json`.
-
-## Run the experiment
-
-Type `/experiment` again, and select your experiment. Then select **Run it**. The selection is your approval, and the run starts at once.
-
-When the run finishes, a notice gives the path of the report. Type `/experiment`, select the experiment, and select **View its last report**.
-The agent gives the passed cases, the total, and the score. For each failed case, it gives the reason from the evaluator.
-
-## Optimize the agent
-
-Type `/optimize`. The agent asks which experiment to use, which options to tune, what the run must improve, what must stay true, and the budget. For a first run, select a small budget.
-
-The agent prints a review of the run in the chat, with the estimated rollouts and judge calls. Reply "approve" to start the run, or name a row to change it.
-
-The run continues in the background. When it finishes, the proposed edits show on screen as a diff, one edit at a time. Select **Apply this change** or **Leave it as it is**.
-When each edit has an answer, dev writes the edits that you applied into `agent.py`. Then dev reloads the agent.
-
-To measure the change, run the experiment again from `/experiment`.
-
-## Open the evals UI
-
-The evals UI is a local web page for your experiments, reports, and optimization runs. When it is ready, a notice in the chat gives its link.
-You can also ask the agent, for example "open the last report in the evals UI".
-
-## What you built
-
-You have a harness agent in `strands-workspace/agent.py`, with the edits that you applied. Its workspace keeps the experiment and the history of each run:
-
-```text
-strands-workspace/strands-dev/experiments/<name>/
-  <name>.json          the experiment, which you can commit
-  <name>.report.json   the latest evaluation report
-  runs/                one folder for each evaluation run
-  optimizations/       one folder for each optimization run
-```
-
-To run the agent without dev, use `strands --agent strands-workspace/agent.py`.
+To save a change, type `/setup` in a chat. To get the agent as code, type `/export`. The CLI writes a TypeScript or Python project with an `agent` that you can import in your application.
 
 ## Next steps
 
-- [Strands harness](/docs/user-guide/harness/) explains the options of the `create_harness` call.
-- [How evaluation works](/docs/user-guide/evals-sdk/how-evaluation-works/) explains the cases, the evaluators, and the scores.
+- [strands dev](/docs/user-guide/cli/dev/) tests the Base CLI on experiments and tunes it.
+- [Strands harness](/docs/user-guide/harness/) explains the options of the agent.

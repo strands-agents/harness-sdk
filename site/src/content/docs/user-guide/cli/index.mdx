@@ -1,60 +1,53 @@
 ---
 title: Strands CLI
-description: "Run a Strands harness agent in your terminal. Then use strands dev to build that agent, test it on experiments, and optimize it with Strands Evals."
+description: "Chat with a Strands harness agent in your terminal. Configure a model provider once, and the agent works with your files, shell commands, and the web."
 sourceLinks:
   - path: strands-cli/src/cli/arguments.ts
-  - path: strands-cli/src/dev/workspace.ts
-  - path: strands-cli/src/dev/temporary-evals-fork/command.ts
+  - path: strands-cli/src/config/store.ts
 sidebar:
   label: "Overview"
 ---
 
 import { CardGrid, LinkCard } from '@astrojs/starlight/components'
 
-You improve an agent in a loop. You change its instructions or its tools, you try it, and you compare its answers with the answers that you expect. Then you change it again.
-Each pass of that loop usually needs a test set, a script that runs it, and a manual review of the results.
+The Strands CLI gives you a [Strands harness](/docs/user-guide/harness/) agent in your terminal, and you do not write code.
+You configure a model provider once. Then the agent reads and changes files, runs shell commands, searches the web, and keeps your sessions.
 
-The Strands CLI puts that loop in your terminal. It has two commands:
-
-- `strands` opens a chat with a [Strands harness](/docs/user-guide/harness/) agent. You configure a model provider once, and you do not write code.
-- `strands dev` is the builder for Strands harness. It opens a harness project in a workspace of its own, and it reloads the agent when you change the agent files. In the same chat, it tests the agent on experiments and tunes the agent with [Strands Evals](/docs/user-guide/evals-sdk/).
+```bash
+npm install -g @strands-agents/cli
+strands "summarize what this repo does"
+```
 
 <CardGrid>
   <LinkCard
     title="Quickstart"
     href="quickstart/"
-    description="Install the CLI, then build, test, and optimize a harness agent in one session."
+    description="Install the CLI, connect a model provider, and start a chat."
   />
   <LinkCard
-    title="Strands harness"
-    href="/docs/user-guide/harness/"
-    description="The agent that the CLI runs, and how to configure it."
-  />
-  <LinkCard
-    title="Strands Evals"
-    href="/docs/user-guide/evals-sdk/"
-    description="The evaluation library that strands dev uses for experiments and optimization."
+    title="strands dev"
+    href="dev/"
+    description="Build, test, and optimize a harness agent: the Base CLI, or a harness in code."
   />
 </CardGrid>
 
-## What strands dev does
+## The agent that you get
 
-`strands dev` gives each harness project a workspace: a `strands-dev/` folder next to the agent file. The workspace keeps the settings, the experiments, and the optimization runs of dev.
-Your default agent for `strands` does not change.
+The default agent uses Claude Opus 5 on Amazon Bedrock. It has reasoning, shell and file tools, web access, prompt caching, todos, a subagent, Agent Skills, resumable sessions, long-term memory, and automatic context management.
 
-A dev chat has three steps:
+## The Base CLI
 
-1. **Build.** Chat with the agent, and edit its source file. After each save, dev reloads the agent and keeps the conversation. When you change the model or the effort in the chat, dev writes the change into the agent file.
-2. **Test.** `/experiment` makes a set of test cases from a description or from your past chats. Then it runs the agent on the cases. The report gives the passed cases, the failed cases, and the reason for each failure.
-3. **Optimize.** `/optimize` tunes the instructions, the model, the effort, and other options of the harness against an experiment. You examine each proposed edit as a diff, and dev writes only the edits that you apply.
+The agent that `strands` runs is the Base CLI. Its configuration is the saved profile in `~/.strands/cli.toml`.
+Setup writes this profile, and `/setup` in a chat opens setup again. You can also ask the agent to change its own configuration, for example "use high reasoning and keep responses concise".
 
-The agent file stays a usual Strands harness file. You can commit it, run it with `strands --agent`, or import its agent in your application.
+To make the Base CLI better with tests and measured changes, use `strands dev`. See [Improve the Base CLI](dev/base-cli/).
 
-## What you need
+## When to use strands dev
 
-- Node.js 22.12 or later for the CLI.
-- Credentials for a model provider. The default model is on Amazon Bedrock.
-- Python 3.10 or later for a Python harness, and for experiments and optimization. The first evaluation installs `strands-agents-evals` in a shared Python environment.
-- Access to AWS Bedrock for case generation. Generation uses its own Bedrock connection, and not the model of your chat.
+Use `strands` to work with an agent. Use `strands dev` to work on an agent:
 
-Generation, evaluation, and optimization call models, and these calls can cost money. Dev starts a paid run only after your approval.
+- Test the agent on a set of cases, and read why each failed case failed.
+- Tune its instructions, model, effort, and other options against those cases.
+- Change a harness project in code, and get a reload after each save.
+
+`strands dev` keeps its state in a workspace of its own. Plain `strands` keeps the same default agent.

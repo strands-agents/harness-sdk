@@ -142,6 +142,8 @@ products:
         href: /docs/user-guide/cli/
       - label: Quickstart
         href: /docs/user-guide/cli/quickstart/
+      - label: strands dev
+        href: /docs/user-guide/cli/dev/
   - label: Harness SDK
     accent: teal
     name: Strands Harness SDK
@@ -280,11 +282,17 @@ sidebar:
 
   - label: CLI
     items:
-      - label: Get started
+      - label: Strands CLI
         items:
           - label: "Overview"
             slug: docs/user-guide/cli
           - docs/user-guide/cli/quickstart
+      - label: strands dev
+        items:
+          - label: "Overview"
+            slug: docs/user-guide/cli/dev
+          - docs/user-guide/cli/dev/base-cli
+          - docs/user-guide/cli/dev/harness
 
   - label: Harness SDK
     items:
