@@ -38,6 +38,9 @@ classifiers = [
 # dependency because the tool is on by default. Pinned exactly while Monty is pre-1.0 and its API moves.
 dependencies = [
     "strands-agents[otel]>=1.67.0,<2.0.0",
+    # The otel extra's packages, repeated by name for packagers that have no extras (conda).
+    "opentelemetry-exporter-otlp-proto-http>=1.30.0,<2.0.0",
+    "opentelemetry-processor-baggage>=0.51b0,<1.00b0",
     "anthropic[bedrock]>=1.7.0,<3.0.0",
     # The first release with bedrock-agentcore InvokeWebSearch, which backs web_search on Bedrock;
     # botocore is imported directly there too.
@@ -57,6 +60,7 @@ dev = [
     "pytest>=8.0.0,<9.0.0",
     "pytest-asyncio>=0.24.0,<1.0.0",
     "ruff>=0.16.0,<0.17.0",
+    "tomli>=2.0.0,<3.0.0; python_version < '3.11'",
     "strands-agents[openai,anthropic,gemini,ollama,litellm]",
     "openai>=2.0.0,<3.0.0",
     # The MCP test fixtures use mcp v1's FastMCP API; the SDK allows mcp 2.x, which renamed it.
