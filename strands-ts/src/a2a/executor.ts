@@ -8,7 +8,7 @@
 import type { ExecutionEventBus, RequestContext } from '@a2a-js/sdk/server'
 import type { AgentExecutor } from '@a2a-js/sdk/server'
 import { A2AError } from '@a2a-js/sdk/server'
-import type { Part } from '@a2a-js/sdk'
+import type { Part, Task } from '@a2a-js/sdk'
 import type { AgentResult, InvokableAgent, LocalAgent } from '../types/agent.js'
 import type { Snapshot } from '../types/snapshot.js'
 import type { ContentBlock } from '../types/messages.js'
@@ -223,14 +223,35 @@ export class A2AExecutor implements AgentExecutor {
   /**
    * Executes the agent in response to an A2A message.
    *
+   * A message refused while its task waits in `input-required` leaves the task waiting, with the
+   * reason for the refusal, instead of rejecting.
+   *
    * @param context - The A2A request context containing the user message
    * @param eventBus - The event bus for publishing A2A artifact and status events
    */
   async execute(context: RequestContext, eventBus: ExecutionEventBus): Promise<void> {
+    try {
+      await this._executeMessage(context, eventBus)
+    } catch (error) {
+      // The request handler would turn a rejection into a terminal failed task.
+      const { task } = context
+      if (!(error instanceof A2AError) || task?.status.state !== 'input-required') {
+        throw error
+      }
+      this._publishRefusal(task, error.message, eventBus)
+    }
+  }
+
+  /**
+   * Converts the inbound message to a prompt and runs the agent serving its context.
+   *
+   * @param context - The A2A request context containing the user message
+   * @param eventBus - The event bus for publishing A2A artifact and status events
+   */
+  private async _executeMessage(context: RequestContext, eventBus: ExecutionEventBus): Promise<void> {
     const { userMessage } = context
 
-    // Interrupt responses resume a parked task, so they are recognised before the generic
-    // conversion below would flatten them into text.
+    // The generic conversion would flatten interrupt responses into text.
     const prompt: AgentPrompt = extractInterruptResponses(userMessage.parts) ?? partsToContentBlocks(userMessage.parts)
     if (prompt.length === 0) {
       throw A2AError.invalidRequest('No content blocks available')
@@ -452,6 +473,38 @@ export class A2AExecutor implements AgentExecutor {
       parts.push({ kind: 'data', data: { [INTERRUPTS_KEY]: pending } })
     }
 
+    this._parkTask(parts, taskId, contextId, eventBus)
+  }
+
+  /**
+   * Keeps a task in `input-required` after refusing a message sent to it.
+   *
+   * The data part the task advertised follows the reason, so the client can answer again without
+   * fetching the task.
+   *
+   * @param task - The waiting task the refused message was sent to
+   * @param reason - Why the message was refused
+   * @param eventBus - The event bus for publishing status events
+   */
+  private _publishRefusal(task: Task, reason: string, eventBus: ExecutionEventBus): void {
+    const advertised = (task.status.message?.parts ?? []).filter((part) => part.kind === 'data')
+    this._parkTask(
+      [{ kind: 'text', text: `Message refused: ${reason}` }, ...advertised],
+      task.id,
+      task.contextId,
+      eventBus
+    )
+  }
+
+  /**
+   * Publishes the final `input-required` status of a task.
+   *
+   * @param parts - The parts of the status message
+   * @param taskId - The A2A task waiting for input
+   * @param contextId - The A2A context the task belongs to
+   * @param eventBus - The event bus for publishing status events
+   */
+  private _parkTask(parts: Part[], taskId: string, contextId: string, eventBus: ExecutionEventBus): void {
     eventBus.publish({
       kind: 'status-update',
       taskId,
