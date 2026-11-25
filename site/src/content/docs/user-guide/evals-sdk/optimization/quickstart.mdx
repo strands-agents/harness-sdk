@@ -138,6 +138,9 @@ to a file:
 experiment.to_file("experiment.json")
 ```
 
+To browse and edit its cases in the browser, run [`strands-evals ui`](../cli/ui.md) in the
+folder that holds the file.
+
 ## Declare what may change
 
 Write the agent as a factory function and mark the parameters the optimizer may change.
@@ -198,7 +201,8 @@ print(result.summary())
 ```
 
 `run()` writes everything to a run folder under `.strands-evals/optimization/runs/` and
-returns the result when the run ends. Use `await optimizer.run_async()` inside an event
+returns the result when the run ends. To watch the run fill in as it goes, open that folder
+in the browser with `strands-evals ui .strands-evals/optimization/runs/`. Use `await optimizer.run_async()` inside an event
 loop.
 
 ```text

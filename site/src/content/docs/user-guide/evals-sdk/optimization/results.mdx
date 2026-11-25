@@ -52,6 +52,20 @@ The header's **outcome** says how the pick ended:
 Your current agent winning is a real answer: it's as good as anything the search found
 within the budget. `result.validation.outcome` holds the same value.
 
+## Browse a run in the browser
+
+To look through a run without writing code, serve its folder with
+[`strands-evals ui`](../cli/ui.md):
+
+```bash
+strands-evals ui .strands-evals/optimization/runs/
+```
+
+Each run gets a view with its result, its setup, the progress of every step, each
+candidate's diff against the baseline, and the trade-off front. The page refreshes while a
+run is in progress. Point it at the runs folder itself: started from your project folder,
+it doesn't look inside `.strands-evals/`.
+
 ## What changed
 
 The champion's changes come in two parts, because text and settings are applied
