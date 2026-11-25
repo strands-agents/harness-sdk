@@ -32,10 +32,12 @@ const typePaths = Object.fromEntries(Object.entries(catalogTypePaths()).map(([t,
 
 // The SDK facet renders only when the catalog actually has evals entries;
 // the Verified filter only when at least one entry is actually verified.
-const showSdkFacet = shown.some((c) => c.sdk === 'evals')
-const hasVerified = shown.some((c) => c.badges.includes('verified'))
-const hasFeatured = shown.some((c) => c.featured)
-const hasNew = shown.some((c) => c.badges.includes('new'))
+// Facets come from every card, not just this type's, so a type page offers the
+// same filters as /integrations/ and keeps every filter in an old link.
+const showSdkFacet = cards.some((c) => c.sdk === 'evals')
+const hasVerified = cards.some((c) => c.badges.includes('verified'))
+const hasFeatured = cards.some((c) => c.featured)
+const hasNew = cards.some((c) => c.badges.includes('new'))
 
 // Counts span both SDKs while filtering is per-SDK; with no evals entries the
 // two coincide, so if/when evals entries land these need client-side recompute.
@@ -48,7 +50,7 @@ const typeFacets = CATALOG_TYPES.map(({ value, labelPlural }) => ({
 const maintainedByFacets = MAINTAINED_BY_TIERS.map(({ value, label }) => ({
   value,
   label,
-  count: shown.filter((c) => c.maintainedBy === value).length,
+  count: cards.filter((c) => c.maintainedBy === value).length,
 })).filter((t) => t.count > 0)
 ---
 
