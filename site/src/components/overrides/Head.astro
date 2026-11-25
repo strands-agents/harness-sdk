@@ -9,7 +9,8 @@ import SiteScripts from '../SiteScripts.astro'
 import Analytics from '../Analytics.astro'
 import { articleSchema, baseSchemas, buildBreadcrumbItems, productSchema, serializeJsonLd } from '../../util/structured-data'
 import { currentProduct } from '../../util/current-product'
-import { getDocsIds, getSampleGuideRouteIds } from '../../util/docs-ids'
+import { getDocsIds } from '../../util/docs-ids'
+import { getMarkdownTwinHref } from '../../util/markdown-twin'
 import { relatedUserGuideFor } from '../../util/related-docs'
 import { languageLabel, resolveLanguage, sourceLinkUrl } from '../../util/source-links'
 import type { SourceLink } from '../../content.config'
@@ -22,12 +23,9 @@ const base = import.meta.env.BASE_URL || '/'
 const faviconHref = base.endsWith('/') ? `${base}favicon.svg` : `${base}/favicon.svg`
 
 // Raw markdown twins are available for generated sample guides and non-preview docs.
-const [docIds, sampleGuideRouteIds] = await Promise.all([getDocsIds(), getSampleGuideRouteIds()])
+const docIds = await getDocsIds()
 const baseNoSlash = base.replace(/\/$/, '')
-const hasMarkdownTwin =
-  sampleGuideRouteIds.has(route.entry.id) ||
-  (docIds.has(route.entry.id) && route.entry.data.externalDocs?.status !== 'preview')
-const markdownHref = hasMarkdownTwin ? `${baseNoSlash}/${route.entry.id}/index.md` : null
+const markdownHref = await getMarkdownTwinHref(route.entry, base)
 
 // Build breadcrumb list from the canonical route id rather than the deployed URL,
 // which may contain a preview base path.

@@ -715,7 +715,7 @@ class TestInsertMarker:
         assert messages[1]["content"] == [ContentBlock(text="a1"), self._MARKER, tool_use]
 
     def test_gives_a_standalone_marker_message_its_own_tracking_id(self):
-        """A stash ref is keyed by tracking id, so two id-less messages would share one block index."""
+        """An archive ref is keyed by tracking id, so two id-less messages would share one block index."""
         messages = [_text("user", "task"), _text("user", "u1"), _text("user", "u2")]
 
         insert_marker(messages, 1, self._MARKER)
