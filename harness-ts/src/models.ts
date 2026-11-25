@@ -73,6 +73,7 @@ const BEDROCK_GPT_PREFIXES = ['openai.gpt-5.', 'openai.gpt-daybreak-', 'openai.g
 // than as a request error.
 const ANTHROPIC_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const OPENAI_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'none'] as const
+const OPENAI_GPT_6_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const BEDROCK_GPT_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 // Converse rejects max on GPT-5.4/5.5 and none on GPT-6 Astra/6.1 Sol.
 const BEDROCK_GPT_NO_MAX_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'] as const
@@ -85,6 +86,11 @@ const GOOGLE_MINIMAL_LEVELS = ['minimal', 'low', 'medium', 'high'] as const
 // Per-model levels: https://ai.google.dev/gemini-api/docs/thinking#controlling-thinking for Gemini;
 // Gemma 4 on Mantle only reasons at `high`.
 const MODEL_LEVELS: Record<string, [string, readonly string[]][]> = {
+  openai: [
+    ['gpt-6-astra', OPENAI_GPT_6_LEVELS],
+    ['gpt-6.1-sol', OPENAI_GPT_6_LEVELS],
+    ['gpt-6.2-', OPENAI_GPT_6_LEVELS],
+  ],
   google: [
     ['gemini-3.1-flash-lite-image', ['minimal', 'high']],
     ['gemini-3.6-flash', GOOGLE_MINIMAL_LEVELS],

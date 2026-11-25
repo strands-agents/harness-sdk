@@ -385,6 +385,28 @@ def test_astra_and_6_1_sol_on_bedrock_resolve_effort_without_none(model_id):
 
 
 @pytest.mark.parametrize(
+    "model_id",
+    [
+        "gpt-6-astra",
+        "gpt-6-astra-healthcare",
+        "gpt-6.1-sol",
+        "gpt-6.1-sol-healthcare",
+        "gpt-6.2-sol",
+        "gpt-6.2-sol-healthcare",
+        "gpt-6.2-astra-healthcare",
+    ],
+)
+def test_gpt_6_on_openai_resolves_effort_without_none_or_minimal_and_accepts_max(model_id):
+    # https://github.com/strands-agents/harness-sdk/issues/6557
+    for effort in ("low", "medium", "high", "xhigh", "max"):
+        model = resolve(f"openai/{model_id}", effort=effort)
+        assert model.config["params"]["reasoning"] == {"effort": effort}
+    assert "reasoning" not in (resolve(f"openai/{model_id}", effort="off").config.get("params") or {})
+    with pytest.raises(ValueError, match="not supported"):
+        resolve(f"openai/{model_id}", effort="minimal")
+
+
+@pytest.mark.parametrize(
     "model_id", ["openai.gpt-5.4", "us.openai.gpt-5.4", "openai.gpt-5.5", "us.openai.gpt-5.5", "global.openai.gpt-5.5"]
 )
 def test_gpt_5_4_and_5_5_on_bedrock_resolve_effort_without_max(model_id):

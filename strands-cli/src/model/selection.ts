@@ -8,10 +8,16 @@ import type { DetectedProviderEnvironment } from './environment.js'
 
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const OPENAI_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
+const OPENAI_GPT_6_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const GOOGLE_EFFORTS = ['low', 'medium', 'high'] as const
 const GOOGLE_MINIMAL_EFFORTS = ['minimal', 'low', 'medium', 'high'] as const
 // Per-model levels by provider; mirrors MODEL_LEVELS in harness-ts src/models.ts.
 const MODEL_EFFORTS: Record<string, [string, readonly string[]][]> = {
+  openai: [
+    ['gpt-6-astra', OPENAI_GPT_6_EFFORTS],
+    ['gpt-6.1-sol', OPENAI_GPT_6_EFFORTS],
+    ['gpt-6.2-', OPENAI_GPT_6_EFFORTS],
+  ],
   google: [
     ['gemini-3.1-flash-lite-image', ['minimal', 'high']],
     ['gemini-3.6-flash', GOOGLE_MINIMAL_EFFORTS],
