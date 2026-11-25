@@ -176,8 +176,14 @@ export interface OptimizePlan {
   readonly width: number
   readonly workers: number
   readonly iterations: number
+  readonly maxRollouts: number
+  readonly seed?: number
+  readonly rerunPasses: number
+  /** Flags handed to strands-evals optimize run unchanged, such as --reflection-model. */
+  readonly passed?: readonly string[]
   readonly rollouts: number
   readonly budgetProblem?: string
+  readonly splitProblem?: string
   readonly judgeCalls: number
   readonly usage?: UsageEstimate
   readonly warning?: string

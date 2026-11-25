@@ -495,6 +495,43 @@ describe('optimization session', () => {
     expect(args.slice(at, at + 2)).toEqual(flags)
   })
 
+  it('shouldStartARunThatStoppedBeforeItsRunFolderAgainWithItsSeedCapAndReRuns', async () => {
+    const continuing = optimizingProcess()
+    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
+    const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
+    await interruptedRun(workspace, experiment, { seed: 7, maxRollouts: 900, rerunPasses: 1 })
+
+    await sessions.optimize.resume()
+
+    await vi.waitFor(() => expect(continuing).toHaveBeenCalledTimes(1))
+    const { args } = continuing.mock.calls[0]![0]
+    expect(['--seed', '--max-rollouts', '--rerun-passes'].map((flag) => flagValue(args, flag))).toEqual([
+      '7',
+      '900',
+      '1',
+    ])
+  })
+
+  it('shouldWarnAboutAChosenSplitAndRefuseToStartWhenItLeavesNoValidationCase', async () => {
+    const optimizing = optimizingProcess()
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing }, { names: TWENTY_CASES })
+
+    sessions.optimize.setSplit([0.85, 0.05, 0.1])
+    expect(setupPlan(sessions)).toMatchObject({
+      split: { train: 17, validation: 1, test: 2 },
+      warning: expect.stringContaining('so the scores can be luck'),
+    })
+    expect(setupPlan(sessions).splitProblem).toBeUndefined()
+
+    sessions.optimize.setSplit([0.97, 0.01, 0.02])
+
+    expect(setupPlan(sessions).splitProblem).toBe(
+      'The split leaves 19 train cases and 0 validation cases of 20; the optimizer needs at least 1 of each. Raise the train or validation share, or add cases.'
+    )
+    expect(sessions.optimize.start()).toBeUndefined()
+    expect(optimizing).not.toHaveBeenCalled()
+  })
+
   it('shouldResumeAStoppedRunWithTheParallelTrialsOfTheFirstRunWhenItsFolderHoldsTheRestOfThePlan', async () => {
     const continuing = optimizingProcess()
     const { workspace, sessions } = await sessionsFor({ spawnOptimizer: continuing })
@@ -588,11 +625,42 @@ describe('optimization session', () => {
     const state = sessions.optimize.snapshot()
     if (state.step !== 'setup') throw new Error('the plan closed')
     expect(state.plan.rollouts).toBeGreaterThan(500)
-    expect(state.plan.budgetProblem).toBe(
-      `Needs about ${state.plan.rollouts} rollouts, but one run can use 500. Lower the steps, candidates, or runs.`
+    expect(state.plan.budgetProblem).toMatch(
+      /^Needs about \d+ rollouts with re-run headroom, but this run can use 500\. Lower the steps, candidates, or runs, or raise --max-rollouts\.$/u
     )
     expect(started).toBeUndefined()
     expect(optimizing).not.toHaveBeenCalled()
+  })
+
+  it('shouldStartALargerRunAndGiveTheOptimizerItsRolloutCapSplitAndPassedFlagsWhenTheCapIsRaised', async () => {
+    const { optimizing, recorded } = recordingOptimizer()
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing }, { names: TWENTY_CASES })
+    sessions.optimize.setRepetitions(5)
+    sessions.optimize.setWidth(8)
+    sessions.optimize.setIterations(8)
+    sessions.optimize.setMaxRollouts(5000)
+    sessions.optimize.setSplit([0.6, 0.2, 0.2])
+    sessions.optimize.setSeed(-3)
+    sessions.optimize.setRerunPasses(1)
+    sessions.optimize.setPassed(['--reflection-model', 'bedrock/proposer'])
+
+    expect(sessions.optimize.start()).toBeDefined()
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+    const { args } = optimizing.mock.calls[0]![0]
+    expect(args.filter((argument) => argument === '--seed')).toHaveLength(1)
+    expect(['--max-rollouts', '--split', '--seed', '--rerun-passes'].map((flag) => flagValue(args, flag))).toEqual([
+      '5000',
+      '0.6,0.2,0.2',
+      '-3',
+      '1',
+    ])
+    expect(recorded()).toMatchObject({
+      maxRollouts: 5000,
+      rerunPasses: 1,
+      seed: -3,
+      passed: ['--reflection-model', 'bedrock/proposer'],
+    })
   })
 
   it('shouldChangeADecisionSettingOnlyToOneOfItsChoicesAndCountTheFinalistsInTheEstimate', async () => {

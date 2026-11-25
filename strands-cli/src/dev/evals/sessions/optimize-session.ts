@@ -71,6 +71,10 @@ import {
   evalsRolloutPhases,
   evalsSplitChoices,
   evalsSplitShares,
+  evalsRolloutReserve,
+  evalsSharesProblem,
+  evalsSplitProblem,
+  type EvalsSplitShares,
 } from '../tuning/plan.js'
 import {
   hasEvalsRunResult,
@@ -117,7 +121,17 @@ const WORKERS = 4
 
 type RunPlan = Pick<
   OptimizePlan,
-  'experiment' | 'iterations' | 'width' | 'repetitions' | 'workers' | 'split' | 'decision'
+  | 'experiment'
+  | 'iterations'
+  | 'width'
+  | 'repetitions'
+  | 'workers'
+  | 'split'
+  | 'decision'
+  | 'maxRollouts'
+  | 'seed'
+  | 'rerunPasses'
+  | 'passed'
 > & {
   readonly objective?: OptimizeObjective
 }
@@ -367,6 +381,39 @@ export class EvalsOptimize extends Store<OptimizeState> {
     this.updatePlan((plan) => (isEvalsBudgetValue('workers', workers) ? { ...plan, workers } : plan))
   }
 
+  setMaxRollouts(maxRollouts: number): void {
+    this.updatePlan((plan) =>
+      isEvalsBudgetValue('maxRollouts', maxRollouts) ? this.estimate({ ...plan, maxRollouts }) : plan
+    )
+  }
+
+  setSeed(seed: number): void {
+    this.updatePlan((plan) => (Number.isSafeInteger(seed) ? { ...plan, seed } : plan))
+  }
+
+  setRerunPasses(rerunPasses: number): void {
+    this.updatePlan((plan) =>
+      isEvalsBudgetValue('rerunPasses', rerunPasses) ? this.estimate({ ...plan, rerunPasses }) : plan
+    )
+  }
+
+  setSplit(shares: EvalsSplitShares): void {
+    if (evalsSharesProblem(shares)) return
+    this.updatePlan(({ warning: _earlier, ...plan }) => {
+      const warning = evalsOptimizeWarning(plan.experiment.caseCount, shares)
+      return this.estimate({
+        ...plan,
+        split: evalsCaseSplit(plan.experiment.caseCount, shares),
+        ...(warning ? { warning } : {}),
+      })
+    })
+  }
+
+  /** Flags handed to strands-evals optimize run unchanged, such as --reflection-model. */
+  setPassed(passed: readonly string[]): void {
+    this.updatePlan(({ passed: _earlier, ...plan }) => (passed.length > 0 ? { ...plan, passed } : plan))
+  }
+
   setObjective(objective: OptimizeObjective): void {
     this.updatePlan(({ objectiveProblem: _problem, objectiveWarning: _warning, ...plan }) =>
       this.estimate({ ...plan, ...objectiveFields(objective, this.evaluatorNames) })
@@ -387,7 +434,8 @@ export class EvalsOptimize extends Store<OptimizeState> {
 
   start({ fromAutoOptimize = false }: { fromAutoOptimize?: boolean } = {}): string | undefined {
     const page = this.page
-    if (page.step !== 'setup' || page.plan.objectiveProblem || page.plan.budgetProblem) return undefined
+    if (page.step !== 'setup' || page.plan.objectiveProblem || page.plan.budgetProblem || page.plan.splitProblem)
+      return undefined
     const knobs = this.catalog.map((knob) => ({
       ...knob,
       enabled: page.plan.knobs.find(({ key }) => key === knob.key)?.enabled ?? false,
@@ -597,25 +645,35 @@ export class EvalsOptimize extends Store<OptimizeState> {
     if (this.page.step === 'setup') this.showPage({ step: 'setup', plan: change(this.page.plan) })
   }
 
-  private estimate({ usage: _earlier, budgetProblem: _over, ...plan }: OptimizePlan): OptimizePlan {
-    const pareto = isEvalsPareto(plan.objective)
-    const { rollouts, judgeCalls, usage } = evalsRolloutEstimate({
+  private estimate({
+    usage: _earlier,
+    budgetProblem: _over,
+    splitProblem: _split,
+    ...plan
+  }: OptimizePlan): OptimizePlan {
+    const shape = {
       split: plan.split,
       repetitions: plan.repetitions,
       iterations: plan.iterations,
       width: plan.width,
-      evaluators: this.evaluators,
       finalists: plan.decision.finalists,
-      pareto,
+      pareto: isEvalsPareto(plan.objective),
+    }
+    const { rollouts, judgeCalls, usage } = evalsRolloutEstimate({
+      ...shape,
+      evaluators: this.evaluators,
       ...(this.usageProfile ? { profile: this.usageProfile } : {}),
     })
-    const budgetProblem = evalsRolloutCapProblem(rollouts)
+    const reserve = evalsRolloutReserve({ ...shape, rerunPasses: plan.rerunPasses })
+    const budgetProblem = evalsRolloutCapProblem(reserve, plan.maxRollouts)
+    const splitProblem = evalsSplitProblem(plan.split)
     return {
       ...plan,
       rollouts,
       judgeCalls,
       ...(usage ? { usage } : {}),
       ...(budgetProblem ? { budgetProblem } : {}),
+      ...(splitProblem ? { splitProblem } : {}),
     }
   }
 
@@ -650,6 +708,8 @@ export class EvalsOptimize extends Store<OptimizeState> {
           width: WIDTH,
           workers: WORKERS,
           iterations: DEFAULT_ITERATIONS,
+          maxRollouts: EVALS_OPTIMIZE_DEFAULTS.maxRollouts,
+          rerunPasses: EVALS_OPTIMIZE_DEFAULTS.rerunPasses,
           rollouts: 0,
           judgeCalls: 0,
           ...(warning ? { warning } : {}),
@@ -724,6 +784,10 @@ export class EvalsOptimize extends Store<OptimizeState> {
       repetitions: saved.repetitions ?? REPETITIONS,
       workers: saved.workers ?? WORKERS,
       split: evalsCaseSplit(caseCount, saved.split ?? EVALS_OPTIMIZE_DEFAULTS.split),
+      maxRollouts: saved.maxRollouts ?? EVALS_OPTIMIZE_DEFAULTS.maxRollouts,
+      rerunPasses: saved.rerunPasses ?? EVALS_OPTIMIZE_DEFAULTS.rerunPasses,
+      ...(saved.seed === undefined ? {} : { seed: saved.seed }),
+      ...(saved.passed ? { passed: saved.passed } : {}),
       decision: saved.decision ?? EVALS_DECISION_DEFAULTS,
       ...(saved.objective ? { objective: saved.objective } : {}),
     }
@@ -819,9 +883,13 @@ export class EvalsOptimize extends Store<OptimizeState> {
             width: plan.width,
             repetitions: plan.repetitions,
             concurrency: plan.workers,
+            maxRollouts: plan.maxRollouts,
+            rerunPasses: plan.rerunPasses,
+            ...(plan.seed === undefined ? {} : { seed: plan.seed }),
             decision: plan.decision,
             ...(shares ? { split: shares } : {}),
           },
+          ...(plan.passed ? { evalsArguments: plan.passed } : {}),
           ...(plan.objective ? { objective: plan.objective } : {}),
           space,
           now: () => now,
@@ -847,6 +915,10 @@ export class EvalsOptimize extends Store<OptimizeState> {
               ...(shares ? { split: shares } : {}),
               ...(plan.objective ? { objective: plan.objective } : {}),
               decision: plan.decision,
+              maxRollouts: plan.maxRollouts,
+              rerunPasses: plan.rerunPasses,
+              ...(plan.seed === undefined ? {} : { seed: plan.seed }),
+              ...(plan.passed ? { passed: plan.passed } : {}),
               startedAt,
               ...(entry.fromAutoOptimize ? { fromAutoOptimize: true } : {}),
             })
