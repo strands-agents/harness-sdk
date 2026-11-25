@@ -9,12 +9,12 @@ import type { ExecutionEventBus, RequestContext } from '@a2a-js/sdk/server'
 import type { AgentExecutor } from '@a2a-js/sdk/server'
 import { A2AError } from '@a2a-js/sdk/server'
 import type { Part } from '@a2a-js/sdk'
-import type { InvokableAgent, LocalAgent } from '../types/agent.js'
+import type { AgentResult, InvokableAgent, LocalAgent } from '../types/agent.js'
 import type { Snapshot } from '../types/snapshot.js'
 import type { ContentBlock } from '../types/messages.js'
 import type { Interrupt, InterruptState } from '../interrupt.js'
-import type { InterruptResponseContent } from '../types/interrupt.js'
-import { isInterruptResponseContent } from '../types/interrupt.js'
+import { isInterruptResponseContent, type InterruptResponseContent } from '../types/interrupt.js'
+import type { JSONValue } from '../types/json.js'
 import { ModelStreamUpdateEvent, ContentBlockEvent } from '../hooks/events.js'
 import { INTERRUPTS_KEY, contentBlocksToParts, extractInterruptResponses, partsToContentBlocks } from './adapters.js'
 import { normalizeError } from '../errors.js'
@@ -62,6 +62,20 @@ function isInterruptResume(prompt: AgentPrompt): prompt is InterruptResponseCont
 /** Reads the agent's interrupt state, a field not declared on {@link InvokableAgent}. */
 function interruptStateOf(agent: InvokableAgent): InterruptState | undefined {
   return (agent as { _interruptState?: InterruptState })._interruptState
+}
+
+/**
+ * Returns a value unchanged when it can cross the JSON-RPC boundary, `null` for a value JSON drops
+ * (a function or a symbol), else its string form.
+ *
+ * An interrupt reason is user data, typed as JSON only at compile time.
+ */
+function jsonable(value: JSONValue): JSONValue {
+  try {
+    return JSON.stringify(value) === undefined ? null : value
+  } catch {
+    return String(value)
+  }
 }
 
 /** A full Strands `Agent` that can be both invoked and snapshotted. */
@@ -329,29 +343,7 @@ export class A2AExecutor implements AgentExecutor {
         next = await stream.next()
       }
 
-      // Publish final artifact chunk to signal end of artifact
-      eventBus.publish({
-        kind: 'artifact-update',
-        taskId,
-        contextId,
-        artifact: {
-          artifactId,
-          // If no deltas were streamed, publish the full result; otherwise empty to close the artifact
-          parts: [{ kind: 'text', text: isFirstChunk && next.value ? next.value.toString() : '' }],
-        },
-        append: !isFirstChunk,
-        lastChunk: true,
-      })
-
-      // An agent that stopped on an interrupt has not finished its work, so the task waits for the
-      // client to answer rather than reporting success.
-      const result = next.value
-      if (result?.stopReason === 'interrupt') {
-        this._publishInputRequired(result.interrupts ?? [], taskId, contextId, eventBus)
-        return
-      }
-
-      eventBus.publish({ kind: 'status-update', taskId, contextId, status: { state: 'completed' }, final: true })
+      this._publishResult(next.value, artifactId, isFirstChunk, taskId, contextId, eventBus)
     } catch (error) {
       logger.error(`task_id=<${taskId}> | error in streaming execution`, normalizeError(error))
       throw error
@@ -382,11 +374,52 @@ export class A2AExecutor implements AgentExecutor {
   }
 
   /**
+   * Publishes how a run ended: `input-required` when the agent stopped on an interrupt, otherwise the
+   * closing artifact chunk and `completed`.
+   *
+   * @param result - The result the agent returned
+   * @param artifactId - The text artifact the run streamed into
+   * @param isFirstChunk - Whether no text delta was streamed into the artifact
+   * @param taskId - The A2A task the run belongs to
+   * @param contextId - The A2A context the task belongs to
+   * @param eventBus - The event bus for publishing artifact and status events
+   */
+  private _publishResult(
+    result: AgentResult | undefined,
+    artifactId: string,
+    isFirstChunk: boolean,
+    taskId: string,
+    contextId: string,
+    eventBus: ExecutionEventBus
+  ): void {
+    // Checked before the closing artifact, which could carry the raw interrupt list.
+    if (result?.stopReason === 'interrupt') {
+      this._publishInputRequired(result.interrupts ?? [], taskId, contextId, eventBus)
+      return
+    }
+
+    // Publish final artifact chunk to signal end of artifact
+    eventBus.publish({
+      kind: 'artifact-update',
+      taskId,
+      contextId,
+      artifact: {
+        artifactId,
+        // If no deltas were streamed, publish the full result; otherwise empty to close the artifact
+        parts: [{ kind: 'text', text: isFirstChunk && result ? result.toString() : '' }],
+      },
+      append: !isFirstChunk,
+      lastChunk: true,
+    })
+
+    eventBus.publish({ kind: 'status-update', taskId, contextId, status: { state: 'completed' }, final: true })
+  }
+
+  /**
    * Moves the task to `input-required` and tells the client which interrupts are waiting.
    *
-   * The interrupts are published twice: a text part describing what is needed, and a data part
-   * carrying each `interruptId`. Only the id lets a client address its answer back to the interrupt
-   * that raised it, and ids are generated server-side so they cannot be inferred from the prose.
+   * The interrupts are published twice: a text part for people, and a data part with each
+   * `interruptId`, which a client sends back to answer.
    *
    * @param interrupts - The unanswered interrupts that stopped the agent
    * @param taskId - The A2A task being paused
@@ -399,10 +432,14 @@ export class A2AExecutor implements AgentExecutor {
     contextId: string,
     eventBus: ExecutionEventBus
   ): void {
-    const descriptions = interrupts.map((interrupt) =>
-      interrupt.reason === undefined
-        ? `- ${interrupt.name}`
-        : `- ${interrupt.name}: ${JSON.stringify(interrupt.reason)}`
+    // `reason` is always present, null when the interrupt has none, the same as on the Python server.
+    const pending = interrupts.map((interrupt) => ({
+      interruptId: interrupt.id,
+      name: interrupt.name,
+      reason: jsonable(interrupt.reason ?? null),
+    }))
+    const descriptions = pending.map(({ name, reason }) =>
+      reason === null ? `- ${name}` : `- ${name}: ${JSON.stringify(reason)}`
     )
     const text =
       descriptions.length > 0
@@ -411,17 +448,8 @@ export class A2AExecutor implements AgentExecutor {
 
     // The text part stays first so clients that only read prose are unaffected.
     const parts: Part[] = [{ kind: 'text', text }]
-    if (interrupts.length > 0) {
-      parts.push({
-        kind: 'data',
-        data: {
-          [INTERRUPTS_KEY]: interrupts.map((interrupt) => ({
-            interruptId: interrupt.id,
-            name: interrupt.name,
-            ...(interrupt.reason === undefined ? {} : { reason: interrupt.reason }),
-          })),
-        },
-      })
+    if (pending.length > 0) {
+      parts.push({ kind: 'data', data: { [INTERRUPTS_KEY]: pending } })
     }
 
     eventBus.publish({

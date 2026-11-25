@@ -14,6 +14,7 @@ import { AgentResult } from '../../types/agent.js'
 import { Interrupt } from '../../interrupt.js'
 import { Message } from '../../types/messages.js'
 import type { ModelStreamEvent } from '../../models/streaming.js'
+import type { JSONValue } from '../../types/json.js'
 
 function createMockEventBus(): ExecutionEventBus & { events: AgentExecutionEvent[] } {
   const events: AgentExecutionEvent[] = []
@@ -419,7 +420,7 @@ describe('A2AExecutor context isolation', () => {
   })
 
   describe('interrupts', () => {
-    function interruptingAgent(interrupts: Interrupt[]): InvokableAgent {
+    function interruptingAgent(interrupts?: Interrupt[]): InvokableAgent {
       return {
         id: 'test-agent',
         name: 'Test Agent',
@@ -431,13 +432,13 @@ describe('A2AExecutor context isolation', () => {
             stopReason: 'interrupt',
             lastMessage: new Message({ role: 'assistant', content: [new TextBlock('')] }),
             invocationState: {},
-            interrupts,
+            ...(interrupts !== undefined && { interrupts }),
           })
         },
       }
     }
 
-    async function runInterrupting(interrupts: Interrupt[]) {
+    async function runInterrupting(interrupts?: Interrupt[]) {
       const executor = new A2AExecutor({ agentFactory: () => interruptingAgent(interrupts) })
       const eventBus = createMockEventBus()
       await executor.execute(createRequestContext('create the spring campaign'), eventBus)
@@ -458,14 +459,18 @@ describe('A2AExecutor context isolation', () => {
 
       const dataParts = (statuses[0]!.status.message?.parts ?? []).filter((p) => p.kind === 'data')
       expect(dataParts).toHaveLength(1)
-      expect(dataParts[0]).toEqual({
+      expect(dataParts[0]).toStrictEqual({
         kind: 'data',
         data: {
           interrupts: [
             { interruptId: 'int-1', name: 'approve', reason: { campaign: 'spring' } },
-            { interruptId: 'int-2', name: 'confirm' },
+            { interruptId: 'int-2', name: 'confirm', reason: null },
           ],
         },
+      })
+      expect(statuses[0]!.status.message?.parts?.[0]).toStrictEqual({
+        kind: 'text',
+        text: 'Agent requires input:\n- approve: {"campaign":"spring"}\n- confirm',
       })
     })
 
@@ -475,18 +480,33 @@ describe('A2AExecutor context isolation', () => {
       ])
 
       const parts = statuses[0]!.status.message?.parts ?? []
-      expect(parts[0]!.kind).toBe('text')
-      expect(parts[0]).toMatchObject({ text: expect.stringContaining('approve') })
-      expect(parts[0]).toMatchObject({ text: expect.stringContaining('needs sign-off') })
+      expect(parts[0]).toStrictEqual({ kind: 'text', text: 'Agent requires input:\n- approve: "needs sign-off"' })
     })
 
-    it('still parks the task when no interrupt details are given', async () => {
-      const statuses = await runInterrupting([])
+    it.each([
+      { desc: 'a BigInt reason as a string', reason: 10n, wire: '10', text: 'Agent requires input:\n- approve: "10"' },
+      { desc: 'a function reason as null', reason: () => 'x', wire: null, text: 'Agent requires input:\n- approve' },
+    ])('advertises $desc', async ({ reason, wire, text }) => {
+      const statuses = await runInterrupting([
+        new Interrupt({ id: 'int-1', name: 'approve', reason: reason as unknown as JSONValue, source: 'tool' }),
+      ])
+
+      expect(statuses[0]!.status.message?.parts).toStrictEqual([
+        { kind: 'text', text },
+        { kind: 'data', data: { interrupts: [{ interruptId: 'int-1', name: 'approve', reason: wire }] } },
+      ])
+    })
+
+    it.each([
+      { desc: 'an empty interrupt list', interrupts: [] },
+      { desc: 'no interrupt list', interrupts: undefined },
+    ])('still parks the task when the result has $desc', async ({ interrupts }) => {
+      const statuses = await runInterrupting(interrupts)
 
       expect(statuses.map((e) => e.status.state)).toEqual(['input-required'])
-      const parts = statuses[0]!.status.message?.parts ?? []
-      expect(parts.filter((p) => p.kind === 'data')).toHaveLength(0)
-      expect(parts[0]!.kind).toBe('text')
+      expect(statuses[0]!.status.message?.parts).toStrictEqual([
+        { kind: 'text', text: 'Agent requires additional input to continue' },
+      ])
     })
 
     it('reports a normal completion as completed', async () => {
@@ -514,6 +534,9 @@ describe('A2AExecutor context isolation', () => {
 
       const statuses = eventBus.events.filter((e): e is TaskStatusUpdateEvent => e.kind === 'status-update')
       expect(statuses.map((e) => e.status.state)).toEqual(['input-required'])
+
+      // The interrupts reach the client only in the status message, never as an artifact.
+      expect(eventBus.events.map((event) => event.kind)).toStrictEqual(['task', 'status-update'])
 
       // Read the advertised interrupts the way a client would, with no access to server internals.
       const dataParts = (statuses[0]!.status.message?.parts ?? []).filter((p) => p.kind === 'data')
