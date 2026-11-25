@@ -39,7 +39,9 @@ class DropStrategy(BaseOffloadStrategy):
     async def _apply_per_message(self, context: ContextState) -> bool:
         removable = await self._removable_messages(context)
         model = context.agent.model
-        return await remove_messages(context.messages, removable, model, format_dropped_messages, "drop", context.stash)
+        return await remove_messages(
+            context.messages, removable, model, format_dropped_messages, "drop", context.archive
+        )
 
     async def _replace_block(
         self,

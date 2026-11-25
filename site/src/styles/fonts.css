@@ -151,6 +151,13 @@
   --sl-color-text-accent: var(--strands-green);
   --sl-color-text-invert: var(--sl-color-accent-low);
   --sl-color-backdrop-overlay: hsla(223, 13%, 10%, 0.66);
+  /* Inline code chip. Starlight's default (gray-5, #3d3c3c) is 1.91:1 against
+     the black page, so code-dense pages read as rows of grey boxes, and it
+     drops the grey body text to 5.42:1. A faint white tint (#1a1a1a on black,
+     1.20:1, about what GitHub and react.dev use) keeps the text at 8.63:1 and
+     stays faint on raised surfaces too. Light mode's gray-6 chip is already
+     1.10:1 against white. */
+  --sl-color-bg-inline-code: rgba(255, 255, 255, 0.1);
 
   /* Dark-mode values for the light remaps above. */
   --accent-green: var(--strands-green);

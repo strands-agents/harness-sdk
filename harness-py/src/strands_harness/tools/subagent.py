@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
-from strands.experimental.context_manager import ContextManager
+from strands.context_manager import ContextManager
 from strands.multiagent import AgentSpec, Choice, Fixed
 from strands.tools.mcp import MCPClient
 from strands.tools.tools import AgentTool
@@ -51,7 +51,7 @@ def build_default_subagent(
     def builder(spec: AgentSpec) -> Agent:
         child_config = dict(parent_config)
         if isinstance(child_config.get("context_manager"), ContextManager):
-            # A ContextManager instance carries per-agent state (stash, retrieval bookkeeping), so a
+            # A ContextManager instance carries per-agent state (archive, retrieval bookkeeping), so a
             # delegate must not share the parent's. Fall back to the default strategy for children.
             child_config["context_manager"] = defaults.DEFAULT_CONTEXT_MANAGER
         if spec.instructions is not None:

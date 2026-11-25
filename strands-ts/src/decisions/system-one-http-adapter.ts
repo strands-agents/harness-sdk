@@ -24,8 +24,8 @@ export interface SystemOneRequestConfig {
 /** @internal */
 export interface SystemOneProviderConfig extends SystemOneRequestConfig {
   endpoint: string
-  apiKey: string
-  modelId: string
+  /** Sent as a bearer token. Omit when the injected `fetch` authenticates the request. */
+  apiKey?: string
   fetch: typeof globalThis.fetch
 }
 
@@ -230,7 +230,7 @@ async function sendHttp(config: SystemOneProviderConfig, body: string, cancelSig
     response = await config.fetch(config.endpoint, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${config.apiKey}`,
+        ...(config.apiKey !== undefined && { Authorization: `Bearer ${config.apiKey}` }),
         'Content-Type': 'application/json',
       },
       body,
@@ -272,7 +272,7 @@ function translateHttpError(providerName: string, status: number, body: unknown)
 function errorDetail(body: unknown): string | undefined {
   if (typeof body === 'string') return body
   if (!isRecord(body)) return undefined
-  for (const field of ['error', 'message', 'detail']) {
+  for (const field of ['error', 'message', 'Message', 'detail']) {
     const value = body[field]
     if (typeof value === 'string') return value
     if (isRecord(value)) {

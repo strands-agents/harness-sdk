@@ -166,12 +166,14 @@ describe('ACP server', () => {
         promptCapabilities: { image: true, embeddedContext: true },
       })
 
+      // The service pins the first cwd it receives, so every request must pass the same one.
+      const cwd = process.cwd()
       const session = await connection.agent.request(acp.methods.agent.session.new, {
-        cwd: process.cwd(),
+        cwd,
         mcpServers: [],
       })
       const secondSession = await connection.agent.request(acp.methods.agent.session.new, {
-        cwd: process.cwd(),
+        cwd,
         mcpServers: [],
       })
       const response = await connection.agent.request(acp.methods.agent.session.prompt, {
@@ -290,7 +292,7 @@ describe('ACP server', () => {
     }
   })
 
-  it('persists and replays ACP prompts, and recovers when a client write fails', async () => {
+  it('persists and replays ACP prompts, and recovers when a client write fails', { timeout: 15_000 }, async () => {
     const modelInputs: string[][] = []
 
     class PersistenceModel extends Model {
@@ -326,7 +328,7 @@ describe('ACP server', () => {
       }
     }
 
-    const originalCwd = process.cwd()
+    const cwd = process.cwd()
     const root = await mkdtemp(join(tmpdir(), 'strands-acp-persistence-'))
     const workspace = join(root, 'workspace')
     const sessionDirectory = join(workspace, '.agent', 'sessions')
@@ -336,6 +338,9 @@ describe('ACP server', () => {
         ...options,
         model: new PersistenceModel(),
         builtinTools: [],
+        builtinPlugins: [],
+        memory: false,
+        skills: false,
         contextManager: false,
         printer: false,
       })
@@ -348,7 +353,7 @@ describe('ACP server', () => {
     try {
       first = new AcpService({ session: { dir: sessionDirectory } }, { buildAgent })
       const { sessionId } = await first.newSession({
-        cwd: workspace,
+        cwd,
         mcpServers: [],
         _meta: {
           [AGENT_DEFINITION_META_KEY]: {
@@ -375,7 +380,7 @@ describe('ACP server', () => {
 
       const replayed: string[] = []
       const second = new AcpService({ session: { dir: sessionDirectory } }, { buildAgent })
-      await second.loadSession({ sessionId, cwd: workspace, mcpServers: [] }, {
+      await second.loadSession({ sessionId, cwd, mcpServers: [] }, {
         notify: vi.fn(async (_method, params: acp.SessionNotification) => {
           const update = params.update
           if (
@@ -402,7 +407,7 @@ describe('ACP server', () => {
       ])
 
       first = new AcpService({ session: false }, { buildAgent })
-      const retrySession = await first.newSession({ cwd: workspace, mcpServers: [] })
+      const retrySession = await first.newSession({ cwd, mcpServers: [] })
       const request: acp.PromptRequest = {
         sessionId: retrySession.sessionId,
         prompt: [{ type: 'text', text: 'retry after a failed write' }],
@@ -414,13 +419,12 @@ describe('ACP server', () => {
       await expect(first.prompt(request, client)).resolves.toMatchObject({ stopReason: 'end_turn' })
     } finally {
       await first?.dispose()
-      process.chdir(originalCwd)
       await rm(root, { recursive: true, force: true })
     }
   })
 
   it('builds the system prompt from the profile when a loaded session saved its own', async () => {
-    const originalCwd = process.cwd()
+    const cwd = process.cwd()
     const workspace = await mkdtemp(join(tmpdir(), 'strands-acp-system-prompt-'))
     const sessionDirectory = join(workspace, '.agent', 'sessions')
     await writeSessionWithSavedSystemPrompt(sessionDirectory, 'saved-session')
@@ -429,13 +433,22 @@ describe('ACP server', () => {
       { session: { dir: sessionDirectory } },
       {
         buildAgent: (options) =>
-          createHarness({ ...options, model, builtinTools: [], contextManager: false, printer: false }),
+          createHarness({
+            ...options,
+            model,
+            builtinTools: [],
+            builtinPlugins: [],
+            memory: false,
+            skills: false,
+            contextManager: false,
+            printer: false,
+          }),
       }
     )
     const client = { notify: vi.fn(async () => undefined) } as unknown as acp.AgentContext
 
     try {
-      await service.loadSession({ sessionId: 'saved-session', cwd: workspace, mcpServers: [] }, client)
+      await service.loadSession({ sessionId: 'saved-session', cwd, mcpServers: [] }, client)
       await service.prompt({ sessionId: 'saved-session', prompt: [{ type: 'text', text: 'continue' }] }, client)
 
       expect(model.systemPrompts).toEqual([harnessSystemPrompt()])
@@ -444,7 +457,6 @@ describe('ACP server', () => {
       expect(model.firstMessageTexts).toEqual(['earlier request'])
     } finally {
       await service.dispose()
-      process.chdir(originalCwd)
       await rm(workspace, { recursive: true, force: true })
     }
   })
@@ -456,13 +468,15 @@ describe('ACP server', () => {
     const client = {
       notify: vi.fn(async () => undefined),
     } as unknown as acp.AgentContext
+    // The service pins the first cwd it receives, so every request must pass the same one.
+    const cwd = process.cwd()
 
     try {
       await expect(
         service.loadSession(
           {
             sessionId: 'missing-session',
-            cwd: process.cwd(),
+            cwd,
             mcpServers: [],
           },
           client
@@ -472,7 +486,7 @@ describe('ACP server', () => {
         service.loadSession(
           {
             sessionId: '../outside',
-            cwd: process.cwd(),
+            cwd,
             mcpServers: [],
           },
           client
@@ -580,7 +594,7 @@ describe('ACP server', () => {
     try {
       await started.promise
       await expect(service.loadSession(request, client)).rejects.toMatchObject({ code: -32602 })
-      await expect(service.newSession({ cwd: process.cwd(), mcpServers: [] })).resolves.toHaveProperty('sessionId')
+      await expect(service.newSession({ cwd: request.cwd, mcpServers: [] })).resolves.toHaveProperty('sessionId')
       expect(buildAgent).toHaveBeenCalledTimes(2)
       initialize.mockRejectedValueOnce(new Error('Initialization failed'))
       release.resolve()

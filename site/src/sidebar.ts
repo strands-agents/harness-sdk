@@ -65,7 +65,12 @@ export interface Product {
   slug: string
   /** Homepage card color key (--card-accent-* in fonts.css), e.g. "teal". */
   accent?: string
+  /** Product landing page used by marketing surfaces and product switchers. */
   href: string
+  /** Docs hub used to scope docs navigation when it differs from the landing page. */
+  docsHref?: string
+  /** Shorter description used in the desktop and mobile navigation menus. */
+  navDescription?: string
   description: string
   /** Source repository URL, e.g. "https://github.com/strands-agents/shell". */
   repository: string
