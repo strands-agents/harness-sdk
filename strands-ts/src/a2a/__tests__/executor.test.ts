@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { A2AExecutor } from '../executor.js'
 import type { AgentExecutionEvent, ExecutionEventBus, RequestContext } from '@a2a-js/sdk/server'
 import type { TaskArtifactUpdateEvent, TaskStatusUpdateEvent } from '@a2a-js/sdk'
@@ -654,6 +654,19 @@ describe('A2AExecutor context isolation', () => {
       await expect(executor.execute(resumeContext('int-1', { approved: true }), createMockEventBus())).rejects.toThrow(
         /no interrupt is pending/
       )
+    })
+
+    it('refuses an interrupt id that only exists on Object.prototype', async () => {
+      onTestFinished(() => {
+        delete (Object.prototype as { response?: unknown }).response
+      })
+      const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
+      await parkAndReadId(executor)
+
+      await expect(
+        executor.execute(resumeContext('__proto__', { approved: true }), createMockEventBus())
+      ).rejects.toThrow('No pending interrupt matches id(s): __proto__')
+      expect(({} as { response?: unknown }).response).toBeUndefined()
     })
 
     it('leaves an ordinary data part on the generic content path', async () => {

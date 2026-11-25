@@ -366,7 +366,7 @@ export class A2AExecutor implements AgentExecutor {
 
     const unknownIds = responses
       .map((content) => content.interruptResponse.interruptId)
-      .filter((id) => !(id in state.interrupts))
+      .filter((id) => !Object.hasOwn(state.interrupts, id))
       .sort()
     if (unknownIds.length > 0) {
       throw A2AError.invalidParams(`No pending interrupt matches id(s): ${unknownIds.join(', ')}`)
