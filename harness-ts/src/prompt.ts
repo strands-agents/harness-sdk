@@ -38,12 +38,14 @@ the immediate context, with a way to retrieve them. Work as if the full history 
 do not need to wrap up early or hand off mid-task.`
 
 /**
- * Assemble the harness contract, an optional domain block, and per-request context.
+ * Assemble the harness contract, an optional domain block, and conversation-level context.
  *
  * @param instructions - A domain block appended after the contract: identity, scope, and any
  *   task-specific policy the consumer wants the agent to follow.
- * @param contextParts - Additional blocks appended last, e.g. a current timestamp or
- *   request-scoped hints supplied by a serving layer.
+ * @param contextParts - Additional blocks appended last, e.g. a deployment region supplied by a
+ *   serving layer. They are part of the system prompt, which prompt caching reuses across turns,
+ *   so keep them the same for every turn of a conversation; put per-turn values in a
+ *   `ContextInjector`.
  * @returns The assembled system prompt.
  */
 export function buildSystemPrompt(instructions?: string, contextParts?: string[]): string {
