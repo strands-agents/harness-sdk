@@ -13,8 +13,10 @@ import type {
 import { Agent } from '../../agent/agent.js'
 import type { InvokableAgent } from '../../types/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
+import { MockSnapshotStorage } from '../../__fixtures__/mock-storage-provider.js'
 import { createMockAgent } from '../../__fixtures__/agent-helpers.js'
 import { createMockTool } from '../../__fixtures__/tool-helpers.js'
+import { SessionManager } from '../../session/session-manager.js'
 import { TextBlock } from '../../types/messages.js'
 import { ImageBlock, encodeBase64 } from '../../types/media.js'
 import { ContentBlockEvent, ModelStreamUpdateEvent } from '../../hooks/events.js'
@@ -597,8 +599,11 @@ describe('A2AExecutor context isolation', () => {
         .interruptId
     }
 
-    it('completes the round trip when the advertised id is answered', async () => {
-      const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
+    it.each([
+      ['factory', (): A2AExecutor => new A2AExecutor({ agentFactory: () => campaignAgent() })],
+      ['single-agent', (): A2AExecutor => new A2AExecutor({ agent: campaignAgent() })],
+    ])('completes the round trip when the advertised id is answered (%s mode)', async (_mode, createExecutor) => {
+      const executor = createExecutor()
       const interruptId = await parkAndReadId(executor)
 
       const eventBus = createMockEventBus()
@@ -608,6 +613,35 @@ describe('A2AExecutor context isolation', () => {
       expect(statuses.map((event) => event.status.state)).toStrictEqual(['completed'])
 
       // The paused tool resumed with the client's answer, not merely with the task marked done.
+      expect(resumedWith).toStrictEqual([{ approved: true }])
+    })
+
+    it('resumes an interrupt that a new agent restores from its session', async () => {
+      const storage = new MockSnapshotStorage()
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'createCampaign', toolUseId: 'tool-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Campaign is live.' })
+      const tool = createMockTool('createCampaign', (context) => {
+        resumedWith.push(context.interrupt({ name: 'approveCampaign' }))
+      })
+      // A new executor per request stands in for a server restart.
+      const createExecutor = (): A2AExecutor =>
+        new A2AExecutor({
+          agentFactory: (contextId) =>
+            new Agent({
+              model,
+              tools: [tool],
+              printer: false,
+              sessionManager: new SessionManager({ sessionId: contextId, storage: { snapshot: storage } }),
+            }),
+        })
+      const interruptId = await parkAndReadId(createExecutor())
+
+      const eventBus = createMockEventBus()
+      await createExecutor().execute(resumeContext(interruptId, { approved: true }), eventBus)
+
+      const statuses = eventBus.events.filter((event): event is TaskStatusUpdateEvent => event.kind === 'status-update')
+      expect(statuses.map((event) => event.status.state)).toStrictEqual(['completed'])
       expect(resumedWith).toStrictEqual([{ approved: true }])
     })
 

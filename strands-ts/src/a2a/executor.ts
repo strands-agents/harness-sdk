@@ -277,6 +277,10 @@ export class A2AExecutor implements AgentExecutor {
   ): Promise<void> {
     const { agent, lock } = this._acquireContextAgent(context.contextId)
     using _release = await lock.acquire()
+    // A session manager restores a parked interrupt when the agent initializes.
+    if (hasSessionManager(agent)) {
+      await (agent as { initialize?: () => Promise<void> }).initialize?.()
+    }
     await this._streamAgent(agent, context, prompt, eventBus)
   }
 
