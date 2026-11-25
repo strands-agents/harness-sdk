@@ -127,11 +127,11 @@ const containsCurrent = (item: ProductNavItem): boolean =>
   }
 
   /* Language-scoped rows (Quickstart / API reference) follow the header language toggle, as in
-     the docs sidebar. Default (attr unset) = TypeScript. */
+     the docs sidebar. Default (attr unset) = TypeScript; unsupported languages hide both rows. */
   :global(html:not([data-lang-pref='python'])) li:has(> a[href*='/quickstart/python']),
   :global(html:not([data-lang-pref='python'])) li:has(> a[href*='/api/python']),
-  :global(html[data-lang-pref='python']) li:has(> a[href*='/quickstart/typescript']),
-  :global(html[data-lang-pref='python']) li:has(> a[href*='/api/typescript']) {
+  :global(html[data-lang-pref]:not([data-lang-pref='typescript'])) li:has(> a[href*='/quickstart/typescript']),
+  :global(html[data-lang-pref]:not([data-lang-pref='typescript'])) li:has(> a[href*='/api/typescript']) {
     display: none;
   }
 </style>

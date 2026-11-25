@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { getCollection } from 'astro:content'
+import { JSDOM } from 'jsdom'
 import { parse } from 'node-html-parser'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { DEFAULT_LANGUAGE_LABEL, LANGUAGE_STORAGE_KEY } from '../src/util/language-preference'
@@ -59,11 +60,15 @@ beforeAll(async () => {
   guides = sortSampleGuides(await getCollection('sampleGuides'))
 })
 
-function builtPage(guide?: SampleGuideEntry) {
+function builtPageHtml(guide?: SampleGuideEntry): string {
   const relativePath = guide
     ? path.join('examples', guide.data.slug, 'index.html')
     : path.join('examples', 'index.html')
-  return parse(readFileSync(new URL(`../dist/${relativePath}`, import.meta.url), 'utf8'))
+  return readFileSync(new URL(`../dist/${relativePath}`, import.meta.url), 'utf8')
+}
+
+function builtPage(guide?: SampleGuideEntry) {
+  return parse(builtPageHtml(guide))
 }
 
 function builtMarkdownPage(guide: SampleGuideEntry): string {
@@ -79,6 +84,44 @@ function configuredPathWithBase(value: string): string {
 
 function sampleGuideHref(guide: SampleGuideEntry): string {
   return configuredPathWithBase(sampleGuidePath(guide))
+}
+
+function inlineScript(html: string, marker: string): string {
+  const document = new JSDOM(html).window.document
+  const script =
+    [...document.querySelectorAll<HTMLScriptElement>('script')].find((script) => script.textContent.includes(marker))
+      ?.textContent ?? ''
+  if (!script) throw new Error(`Missing inline script containing ${marker}`)
+  return script
+}
+
+function loadCatalog(preference?: string): JSDOM['window'] {
+  const html = builtPageHtml()
+  const dom = new JSDOM(html, {
+    runScripts: 'outside-only',
+    url: 'https://example.test/examples/',
+  })
+  if (preference) dom.window.localStorage.setItem(LANGUAGE_STORAGE_KEY, preference)
+  const scripts = [...dom.window.document.querySelectorAll<HTMLScriptElement>('script')].filter((script) =>
+    ['SAMPLE_GUIDE_LANGUAGE', '__strandsLanguageToggleInit', '__strandsSampleCatalogInit'].some((marker) =>
+      script.textContent.includes(marker)
+    )
+  )
+  for (const script of scripts) dom.window.eval(script.textContent)
+  dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'))
+  return dom.window
+}
+
+function loadGuideLanguageToggle(guide: SampleGuideEntry, preference: string): JSDOM['window'] {
+  const html = builtPageHtml(guide)
+  const dom = new JSDOM(html, {
+    runScripts: 'outside-only',
+    url: `https://example.test${sampleGuidePath(guide)}`,
+  })
+  dom.window.localStorage.setItem(LANGUAGE_STORAGE_KEY, preference)
+  dom.window.eval(inlineScript(html, '__strandsLanguageToggleInit'))
+  dom.window.document.dispatchEvent(new dom.window.Event('DOMContentLoaded'))
+  return dom.window
 }
 
 function sidebarGuidesForLanguage(
@@ -185,7 +228,7 @@ describe('generated sample guide pages', () => {
     expect(page.querySelector('html[data-has-sidebar]')).not.toBeNull()
     expect(page.querySelector('.product-switcher__slug')?.textContent.trim()).toBe('/examples')
     expect(page.querySelector('.sample-catalog__intro')?.textContent.trim()).toBe(
-      'Explore complete examples, organized by what you want to learn or build.'
+      `Showing ${DEFAULT_LANGUAGE_LABEL} examples, organized by what you want to learn or build.`
     )
 
     const landingSidebar = buildSampleGuideSidebar(guides)
@@ -227,24 +270,26 @@ describe('generated sample guide pages', () => {
         renderedSection
           ?.querySelectorAll('.sl-link-card[data-sample-family]')
           .map((card) => card.getAttribute('data-sample-family'))
-      ).toEqual(section.families.map((family) => family.key))
+      ).toEqual(section.families.flatMap((family) => family.guides.map(() => family.key)))
 
       for (const family of section.families) {
-        const card = renderedSection?.querySelector(`.sl-link-card[data-sample-family="${family.key}"]`)
-        const primary =
-          family.guides.find((guide) => guide.data.language === DEFAULT_LANGUAGE_LABEL.toLowerCase()) ?? family.primary
-        expect(card?.querySelector('.sample-link-card__title')?.getAttribute('href'), family.key).toBe(
-          sampleGuideHref(primary)
-        )
-        expect(card?.querySelector('.sample-link-card__title')?.textContent.trim(), family.key).toBe(primary.data.title)
-        expect(card?.querySelector('.sample-link-card__description')?.textContent.trim(), family.key).toBe(
-          primary.data.description
-        )
         for (const guide of family.guides) {
-          expect(
-            card?.querySelector(`.sample-link-card__languages a[href="${sampleGuideHref(guide)}"]`)?.textContent.trim(),
-            guide.id
-          ).toBe(languageLabel(guide.data.language))
+          const card = renderedSection?.querySelector(
+            `.sl-link-card[data-sample-family="${family.key}"][data-sample-language="${guide.data.language}"]`
+          )
+          expect(card?.querySelector('.sample-link-card__title')?.getAttribute('href'), guide.id).toBe(
+            sampleGuideHref(guide)
+          )
+          expect(card?.querySelector('.sample-link-card__title')?.textContent.trim(), guide.id).toBe(guide.data.title)
+          expect(card?.querySelector('.sample-link-card__description')?.textContent.trim(), guide.id).toBe(
+            guide.data.description
+          )
+          expect(card?.querySelector('.sample-link-card__language')?.textContent.trim(), guide.id).toBe(
+            languageLabel(guide.data.language)
+          )
+          expect(card?.hasAttribute('hidden'), guide.id).toBe(
+            guide.data.language !== DEFAULT_LANGUAGE_LABEL.toLowerCase()
+          )
         }
       }
     }
@@ -319,6 +364,78 @@ describe('generated sample guide pages', () => {
     }
 
     expect(builtPage(guide).querySelector('.expressive-code')).not.toBeNull()
+  })
+})
+
+describe('sample catalog language interactions', () => {
+  it('shows only the selected language and hides empty catalog sections', ({ skip }) => {
+    if (guides[0]?.data.catalogMode !== 'curated') skip('requires a curated sample catalog')
+
+    const window = loadCatalog('Python')
+    const cards = [...window.document.querySelectorAll<HTMLElement>('[data-sample-language]')]
+    const sections = [...window.document.querySelectorAll<HTMLElement>('[data-sample-category]')]
+
+    function expectLanguage(label: string, language: 'python' | 'typescript'): void {
+      const visibleCards = cards.filter((card) => !card.hidden)
+      expect(visibleCards).toHaveLength(guides.filter((guide) => guide.data.language === language).length)
+      for (const card of visibleCards) {
+        expect(card.dataset.sampleLanguage).toBe(language)
+        expect(card.querySelector('.sample-link-card__title')?.getAttribute('href')).toContain(`/examples/${language}/`)
+        expect(card.querySelector('.sample-link-card__language')?.textContent).toBe(label)
+      }
+      expect(window.document.querySelector('[data-sample-catalog-status]')?.textContent).toContain(
+        `Showing ${label} examples`
+      )
+    }
+
+    expectLanguage('Python', 'python')
+
+    window.dispatchEvent(new window.CustomEvent('lang-change', { detail: 'Rust' }))
+    expect(window.document.documentElement.dataset.langPref).toBe('rust')
+    expect(cards.every((card) => card.hidden)).toBe(true)
+    expect(sections.every((section) => section.hidden)).toBe(true)
+    expect(window.document.querySelector('[data-sample-catalog-status]')?.textContent).toBe(
+      'No Rust examples are available yet.'
+    )
+
+    const sectionIds = new Set(sections.map((section) => section.querySelector('h2')?.id))
+    const tocEntries = [
+      ...window.document.querySelectorAll<HTMLElement>('starlight-toc a[href], mobile-starlight-toc a[href]'),
+    ]
+      .filter((link) => sectionIds.has(link.getAttribute('href')?.replace(/^.*#/, '')))
+      .map((link) => ({
+        sectionId: link.getAttribute('href')?.replace(/^.*#/, ''),
+        item: link.closest<HTMLElement>('li'),
+      }))
+      .filter((entry): entry is { sectionId: string; item: HTMLElement } => Boolean(entry.sectionId && entry.item))
+    expect(tocEntries.length).toBeGreaterThan(0)
+    expect(tocEntries.every(({ item }) => item.hidden)).toBe(true)
+
+    window.dispatchEvent(new window.CustomEvent('lang-change', { detail: 'TypeScript' }))
+    expectLanguage('TypeScript', 'typescript')
+    expect(sections.some((section) => !section.hidden)).toBe(true)
+    for (const { sectionId, item } of tocEntries) {
+      expect(item.hidden).toBe(window.document.getElementById(sectionId)?.closest('section')?.hidden)
+    }
+  })
+})
+
+describe('sample guide language preference', () => {
+  it('renders the route language without persisting it until the selector is used', ({ skip }) => {
+    const guide = guides.find((entry) => entry.data.language === 'typescript')
+    if (!guide) skip('requires a TypeScript sample guide')
+
+    const window = loadGuideLanguageToggle(guide, 'Python')
+    const typeScriptOptions = [
+      ...window.document.querySelectorAll<HTMLButtonElement>('language-toggle [data-lang="TypeScript"]'),
+    ]
+
+    expect(window.localStorage.getItem(LANGUAGE_STORAGE_KEY)).toBe('Python')
+    expect(typeScriptOptions.every((option) => option.getAttribute('aria-checked') === 'true')).toBe(true)
+
+    typeScriptOptions[0]?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+
+    expect(window.localStorage.getItem(LANGUAGE_STORAGE_KEY)).toBe('TypeScript')
   })
 })
 

@@ -437,9 +437,9 @@ const columns = [
   const langGroup = document.querySelector('[data-footer-lang]')
   function currentLang() {
     try {
-      return localStorage.getItem(LANGUAGE_STORAGE_KEY) === 'Python' ? 'Python' : 'TypeScript'
+      return localStorage.getItem(LANGUAGE_STORAGE_KEY) || DEFAULT_LANGUAGE_LABEL
     } catch {
-      return 'TypeScript'
+      return DEFAULT_LANGUAGE_LABEL
     }
   }
   function paintLang(lang: string) {
@@ -449,7 +449,8 @@ const columns = [
   }
   langGroup?.querySelectorAll<HTMLButtonElement>('[data-lang]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const lang = btn.dataset.lang === 'Python' ? 'Python' : 'TypeScript'
+      const lang = btn.dataset.lang
+      if (!lang) return
       try {
         localStorage.setItem(LANGUAGE_STORAGE_KEY, lang)
       } catch {}
@@ -462,7 +463,7 @@ const columns = [
   // Keep the footer in sync when language changes elsewhere.
   window.addEventListener('lang-change', (e: Event) => {
     const lang = (e as CustomEvent).detail
-    paintLang(lang === 'Python' ? 'Python' : 'TypeScript')
+    paintLang(typeof lang === 'string' ? lang : DEFAULT_LANGUAGE_LABEL)
   })
   paintLang(currentLang())
 

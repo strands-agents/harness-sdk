@@ -1,10 +1,12 @@
 ---
 /**
- * Copyable install command that follows the site-wide Python/TypeScript
- * preference. Shows `pip install …` for Python and `npm install …` for
- * TypeScript, swapping live on the `lang-change` event that the language
- * toggles broadcast (same channel as the banner/UseCases terminal). The copy
- * button writes the *visible* command, so users always copy what they see.
+ * Copyable install command that follows the site-wide language preference.
+ * Shows `pip install …` for Python and `npm install …` for TypeScript,
+ * swapping live on the `lang-change` event that the language toggles
+ * broadcast (same channel as the banner/UseCases terminal). Languages without
+ * a command render an explicit unavailable state instead of another language's
+ * command. The copy button writes the *visible* command, so users always copy
+ * what they see.
  *
  * Rendered in the homepage banner, toolkit cards, and site footer. The inline
  * script is idempotent and event-driven, so multiple instances stay in sync.
@@ -29,10 +31,11 @@ const {
 
 <div class:list={['install', compact && 'install--compact']} data-install>
   <code class="install__cmd">
-    <span class="install__prompt" aria-hidden="true">$</span>
-    <span class="install__text">
+    <span class="install__prompt" aria-hidden="true" data-install-prompt>$</span>
+    <span class="install__text" aria-live="polite">
       <span class="install__variant" data-install-variant="Python" aria-hidden="true">{PIP}</span>
       <span class="install__variant" data-install-variant="TypeScript">{NPM}</span>
+      <span class="install__unavailable" data-install-unavailable aria-hidden="true"></span>
     </span>
   </code>
   <button type="button" class="install__copy" data-install-copy aria-label={copyAriaLabel}>
@@ -86,8 +89,14 @@ const {
     grid-area: 1 / 1;
   }
 
-  .install__variant[aria-hidden='true'] {
+  .install__variant[aria-hidden='true'],
+  .install__unavailable[aria-hidden='true'] {
     visibility: hidden;
+  }
+
+  .install__unavailable {
+    grid-area: 1 / 1;
+    color: var(--toggle-inactive-fg);
   }
 
   .install__copy {
@@ -105,6 +114,15 @@ const {
 
   .install__copy:hover {
     color: var(--toggle-hover-fg);
+  }
+
+  .install__copy:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .install__copy:disabled:hover {
+    color: var(--toggle-inactive-fg);
   }
 
   .install__copy.is-copied {
@@ -162,11 +180,26 @@ const {
     }
 
     function render(lang) {
-      var active = lang === 'Python' ? 'Python' : 'TypeScript';
+      var label = typeof lang === 'string' && lang.trim() ? lang.trim() : DEFAULT_LANG;
       blocks.forEach(function (block) {
+        var active = null;
         block.querySelectorAll('[data-install-variant]').forEach(function (variant) {
-          variant.setAttribute('aria-hidden', String(variant.dataset.installVariant !== active));
+          var matches = variant.dataset.installVariant === label;
+          variant.setAttribute('aria-hidden', String(!matches));
+          if (matches) active = variant;
         });
+
+        var unavailable = block.querySelector('[data-install-unavailable]');
+        if (unavailable) {
+          unavailable.textContent = active ? '' : 'No ' + label + ' install command is available yet.';
+          unavailable.setAttribute('aria-hidden', String(Boolean(active)));
+        }
+
+        var prompt = block.querySelector('[data-install-prompt]');
+        if (prompt) prompt.hidden = !active;
+
+        var copy = block.querySelector('[data-install-copy]');
+        if (copy) copy.disabled = !active;
       });
     }
 

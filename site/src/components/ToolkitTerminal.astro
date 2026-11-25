@@ -92,6 +92,7 @@ const languageNames = {
       <pre
         class="toolkit__card-terminal-code"
         data-lang-code={panel.language}
+        data-language-label={languageNames[panel.language]}
         hidden={panel.language !== initialLanguage}
       ><code>{panel.rows.map((row) => (
         <span class="toolkit__card-terminal-row">
@@ -105,6 +106,12 @@ const languageNames = {
       ))}</code></pre>
     ))
   }
+  <p
+    class="toolkit__card-terminal-unavailable"
+    data-toolkit-terminal-unavailable
+    aria-live="polite"
+    hidden
+  ></p>
 </div>
 
 <style>
@@ -194,6 +201,11 @@ const languageNames = {
     display: inline-block;
   }
 
+  .toolkit__card-terminal-copy:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
   .toolkit__card-terminal-code {
     margin: 0;
     padding: 16px 20px;
@@ -223,6 +235,15 @@ const languageNames = {
     word-break: break-word;
   }
 
+  .toolkit__card-terminal-unavailable {
+    margin: 0;
+    padding: 24px 20px;
+    color: var(--terminal-fg, var(--fg));
+    font-size: 12px;
+    line-height: 1.5;
+    text-align: center;
+  }
+
   @media (max-width: 767px) {
     .toolkit__card-terminal-code {
       padding: 12px 14px;
@@ -236,14 +257,6 @@ const languageNames = {
 
   function visibleCode(terminal: HTMLElement): HTMLElement | null {
     return terminal.querySelector<HTMLElement>('[data-lang-code]:not([hidden])')
-  }
-
-  const languageNames: Record<string, string> = {
-    policy: 'Policy',
-    shell: 'Shell',
-    toml: 'TOML',
-    typescript: 'TypeScript',
-    python: 'Python',
   }
 
   document.querySelectorAll<HTMLElement>('[data-toolkit-terminal]').forEach((terminal) => {
@@ -265,30 +278,28 @@ const languageNames = {
   })
 
   function applyToolkitLanguage(language: string) {
-    const activeLanguage = language === 'Python' ? 'python' : 'typescript'
+    const languageLabel = language.trim() || DEFAULT_LANGUAGE_LABEL
+    const activeLanguage = languageLabel.toLowerCase()
 
     document.querySelectorAll<HTMLElement>('[data-toolkit-terminal]').forEach((terminal) => {
+      const label = terminal.querySelector<HTMLElement>('[data-toolkit-terminal-language]')
+      const unavailable = terminal.querySelector<HTMLElement>('[data-toolkit-terminal-unavailable]')
+      const copyButton = terminal.querySelector<HTMLButtonElement>('[data-toolkit-terminal-copy]')
       const generic = terminal.querySelector<HTMLElement>(
         '[data-lang-code="policy"], [data-lang-code="shell"], [data-lang-code="toml"]'
       )
-      if (generic) {
-        terminal.querySelectorAll<HTMLElement>('[data-lang-code]').forEach((panel) => {
-          panel.hidden = panel !== generic
-        })
-        return
-      }
-
       const activePanel =
-        terminal.querySelector<HTMLElement>(`[data-lang-code="${activeLanguage}"]`) ??
-        terminal.querySelector<HTMLElement>('[data-lang-code]')
+        generic ?? terminal.querySelector<HTMLElement>(`[data-lang-code="${activeLanguage}"]`)
       terminal.querySelectorAll<HTMLElement>('[data-lang-code]').forEach((panel) => {
         panel.hidden = panel !== activePanel
       })
 
-      const languageLabel = terminal.querySelector<HTMLElement>('[data-toolkit-terminal-language]')
-      if (languageLabel && activePanel?.dataset.langCode) {
-        languageLabel.textContent = languageNames[activePanel.dataset.langCode] ?? activePanel.dataset.langCode
+      if (unavailable) {
+        unavailable.textContent = activePanel ? '' : `No ${languageLabel} example is available yet.`
+        unavailable.hidden = Boolean(activePanel)
       }
+      if (copyButton) copyButton.disabled = !activePanel
+      if (label) label.textContent = activePanel?.dataset.languageLabel ?? languageLabel
     })
   }
 
@@ -302,6 +313,7 @@ const languageNames = {
 
   applyToolkitLanguage(currentLanguage())
   window.addEventListener('lang-change', (event: Event) => {
-    applyToolkitLanguage((event as CustomEvent<string>).detail)
+    const language = (event as CustomEvent<unknown>).detail
+    applyToolkitLanguage(typeof language === 'string' ? language : DEFAULT_LANGUAGE_LABEL)
   })
 </script>

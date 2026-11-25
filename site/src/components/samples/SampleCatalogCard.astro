@@ -11,28 +11,27 @@ interface Props {
 
 const { family } = Astro.props
 const defaultLanguage = DEFAULT_LANGUAGE_LABEL.toLowerCase()
-const primary = family.guides.find((guide) => guide.data.language === defaultLanguage) ?? family.primary
 ---
 
-<article class="sl-link-card sample-link-card" data-sample-family={family.key}>
-  <div class="sample-link-card__stack">
-    <a class="title sample-link-card__title" href={pathWithBase(sampleGuidePath(primary))}>
-      {primary.data.title}
-    </a>
-    <p class="description sample-link-card__description">{primary.data.description}</p>
-    <nav class="sample-link-card__languages" aria-label={`${primary.data.title} languages`}>
-      {
-        family.guides.map((guide, index) => (
-          <>
-            {index > 0 && <span aria-hidden="true">·</span>}
-            <a href={pathWithBase(sampleGuidePath(guide))}>{languageLabel(guide.data.language)}</a>
-          </>
-        ))
-      }
-    </nav>
-  </div>
-  <Icon name="right-arrow" size="1.333em" class="sample-link-card__icon rtl:flip" />
-</article>
+{
+  family.guides.map((guide) => (
+    <article
+      class="sl-link-card sample-link-card"
+      data-sample-family={family.key}
+      data-sample-language={guide.data.language}
+      hidden={guide.data.language !== defaultLanguage}
+    >
+      <div class="sample-link-card__stack">
+        <a class="title sample-link-card__title" href={pathWithBase(sampleGuidePath(guide))}>
+          {guide.data.title}
+        </a>
+        <p class="description sample-link-card__description">{guide.data.description}</p>
+        <span class="sample-link-card__language">{languageLabel(guide.data.language)}</span>
+      </div>
+      <Icon name="right-arrow" size="1.333em" class="sample-link-card__icon rtl:flip" />
+    </article>
+  ))
+}
 
 <style>
   .sample-link-card {
@@ -45,6 +44,10 @@ const primary = family.guides.find((guide) => guide.data.language === defaultLan
     border: 1px solid var(--sl-color-gray-5);
     border-radius: 0.5rem;
     box-shadow: var(--sl-shadow-sm);
+  }
+
+  .sample-link-card[hidden] {
+    display: none;
   }
 
   .sample-link-card:hover {
@@ -83,26 +86,15 @@ const primary = family.guides.find((guide) => guide.data.language === defaultLan
     line-height: 1.5;
   }
 
-  .sample-link-card__languages {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
+  .sample-link-card__language {
+    align-self: flex-start;
     margin-top: auto;
-    padding-top: 0.25rem;
-    color: var(--sl-color-gray-3);
+    padding: 0.15rem 0.5rem;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 999px;
+    color: var(--sl-color-gray-2);
     font-size: var(--sl-text-sm);
-  }
-
-  .sample-link-card__languages a {
-    color: var(--sl-color-text-accent);
     font-weight: 600;
-    text-decoration: none;
-  }
-
-  .sample-link-card__languages a:hover {
-    text-decoration: underline;
   }
 
   :global(.sample-link-card__icon) {
