@@ -48,6 +48,8 @@ export interface EvalsOptimizeRecord {
   readonly split?: EvalsSplitShares
   readonly objective?: OptimizeObjective
   readonly decision?: OptimizeDecision
+  readonly maxRollouts?: number
+  readonly passed?: readonly string[]
   readonly startedAt: number
   readonly pid?: number
   /** The run is over and an edit of it waits for the developer's answer, so the record outlives the run. */
@@ -95,7 +97,11 @@ const isOptimizeRecord = (value: unknown): value is EvalsOptimizeRecord =>
   value.version === RECORD_VERSION &&
   ['experiment', 'record', 'space'].every((key) => typeof value[key] === 'string') &&
   Number.isInteger(value.iterations) &&
-  ['width', 'repetitions', 'workers'].every((key) => value[key] === undefined || Number.isInteger(value[key])) &&
+  ['width', 'repetitions', 'workers', 'maxRollouts'].every(
+    (key) => value[key] === undefined || Number.isInteger(value[key])
+  ) &&
+  (value.passed === undefined ||
+    (Array.isArray(value.passed) && value.passed.every((argument) => typeof argument === 'string'))) &&
   (value.split === undefined ||
     (Array.isArray(value.split) &&
       value.split.length === 3 &&

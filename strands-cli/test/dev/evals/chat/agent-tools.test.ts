@@ -109,6 +109,7 @@ const plan = (): OptimizePlan => ({
   width: 4,
   workers: 4,
   iterations: 4,
+  maxRollouts: 500,
   rollouts: 10,
   judgeCalls: 10,
 })
@@ -195,6 +196,9 @@ const fakeSessions = () => {
       setWorkers: vi.fn(),
       setObjective: vi.fn(),
       setDecision: vi.fn(),
+      setMaxRollouts: vi.fn(),
+      setSplit: vi.fn(),
+      setPassed: vi.fn(),
       start: vi.fn((): string => {
         finishRun({ step: 'running', progress: progress() })
         return 'run-1'
@@ -785,9 +789,16 @@ describe('background strands-evals runs', () => {
         'none',
         '--n-finalists',
         '7',
-        '--rich',
+        '--max-rollouts',
+        '900',
+        '--split',
+        '0.6,0.2,0.2',
         '--seed',
-        '0',
+        '3',
+        '--rerun-passes=1',
+        '--reflection-model',
+        'bedrock/proposer',
+        '--rich',
       ])
     )
 
@@ -802,13 +813,23 @@ describe('background strands-evals runs', () => {
       ['crashScore', 'none'],
       ['finalists', 7],
     ])
+    expect(sessions.optimize.setMaxRollouts).toHaveBeenCalledWith(900)
+    expect(sessions.optimize.setSplit).toHaveBeenCalledWith([0.6, 0.2, 0.2])
+    expect(sessions.optimize.setPassed).toHaveBeenCalledWith([
+      '--seed',
+      '3',
+      '--rerun-passes',
+      '1',
+      '--reflection-model',
+      'bedrock/proposer',
+    ])
     expect(started).toMatchObject({
       status: 'started',
       command: 'optimize run',
       experiment: 'refunds',
       run: 'run-1',
       file: REFUNDS.path,
-      ignored: ['--rich: strands dev reads the run itself', '--seed: strands dev sets the seed'],
+      ignored: ['--rich: strands dev reads the run itself'],
     })
   })
 
@@ -849,7 +870,9 @@ describe('background strands-evals runs', () => {
       ['--feasibility-threshold', '0.5'],
       '--feasibility-threshold must be one of 0.8, 0.9, 0.95, 0.99.',
     ],
-    ['a flag it cannot pass', ['--rerun-passes', '2'], 'strands dev cannot pass --rerun-passes'],
+    ['a flag it cannot pass', ['--pick-rule', 'mean'], 'strands dev cannot pass --pick-rule'],
+    ['a rollout budget of zero', ['--max-rollouts', '0'], '--max-rollouts must be a whole number of at least 1.'],
+    ['a split that does not sum to 1', ['--split', '0.5,0.5,0.5'], '--split takes TRAIN,VALIDATION,TEST shares'],
     ['a model knob without models', ['--tune', 'model'], 'Tuning the model needs'],
   ])('shouldRefuseToOptimizeWhenTheFlagsHave%s', async (_case, args, message) => {
     const { tool, sessions } = setup()
@@ -860,7 +883,8 @@ describe('background strands-evals runs', () => {
 
   it('shouldSayWhyAndNotStartWhenThePlanNeedsMoreRolloutsThanOneRunCanUse', async () => {
     const { tool, sessions, optimize } = setup()
-    const budgetProblem = 'Needs about 620 rollouts, but one run can use 500. Lower the steps, candidates, or runs.'
+    const budgetProblem =
+      'Needs about 620 rollouts, but this run can use 500. Lower the steps, candidates, or runs, or raise --max-rollouts.'
     sessions.optimize.setRepetitions.mockImplementation(() => {
       const current = optimize.snapshot()
       if (current.step === 'setup') optimize.set({ ...current, plan: { ...current.plan, budgetProblem } })

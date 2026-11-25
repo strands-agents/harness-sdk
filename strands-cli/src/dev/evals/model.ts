@@ -176,6 +176,9 @@ export interface OptimizePlan {
   readonly width: number
   readonly workers: number
   readonly iterations: number
+  readonly maxRollouts: number
+  /** Flags handed to strands-evals optimize run unchanged, such as --seed. */
+  readonly passed?: readonly string[]
   readonly rollouts: number
   readonly budgetProblem?: string
   readonly judgeCalls: number

@@ -50,7 +50,9 @@ describe('background flags', () => {
         'interventions',
       ],
       models: ['bedrock/a', 'bedrock/b'],
-      ignored: ['--max-rollouts: strands dev applies its own cap and says when a run needs more'],
+      maxRollouts: 500,
+      passed: [],
+      ignored: [],
     })
   })
 

@@ -589,10 +589,34 @@ describe('optimization session', () => {
     if (state.step !== 'setup') throw new Error('the plan closed')
     expect(state.plan.rollouts).toBeGreaterThan(500)
     expect(state.plan.budgetProblem).toBe(
-      `Needs about ${state.plan.rollouts} rollouts, but one run can use 500. Lower the steps, candidates, or runs.`
+      `Needs about ${state.plan.rollouts} rollouts, but this run can use 500. Lower the steps, candidates, or runs, or raise --max-rollouts.`
     )
     expect(started).toBeUndefined()
     expect(optimizing).not.toHaveBeenCalled()
+  })
+
+  it('shouldStartALargerRunAndGiveTheOptimizerItsRolloutCapSplitAndPassedFlagsWhenTheCapIsRaised', async () => {
+    const { optimizing, recorded } = recordingOptimizer()
+    const { sessions } = await plannedSessions({ spawnOptimizer: optimizing }, { names: TWENTY_CASES })
+    sessions.optimize.setRepetitions(5)
+    sessions.optimize.setWidth(8)
+    sessions.optimize.setIterations(8)
+    sessions.optimize.setMaxRollouts(5000)
+    sessions.optimize.setSplit([0.6, 0.2, 0.2])
+    sessions.optimize.setPassed(['--seed', '3', '--rerun-passes', '1'])
+
+    expect(sessions.optimize.start()).toBeDefined()
+
+    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
+    const { args } = optimizing.mock.calls[0]![0]
+    const last = (flag: string): string | undefined => args[args.lastIndexOf(flag) + 1]
+    expect(['--max-rollouts', '--split', '--seed', '--rerun-passes'].map(last)).toEqual([
+      '5000',
+      '0.6,0.2,0.2',
+      '3',
+      '1',
+    ])
+    expect(recorded()).toMatchObject({ maxRollouts: 5000, passed: ['--seed', '3', '--rerun-passes', '1'] })
   })
 
   it('shouldChangeADecisionSettingOnlyToOneOfItsChoicesAndCountTheFinalistsInTheEstimate', async () => {

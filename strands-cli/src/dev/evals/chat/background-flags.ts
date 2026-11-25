@@ -1,5 +1,6 @@
 import type { GenerationSettings, KnobKey } from '../model.js'
 import { EVALS_KNOB_NAMES } from '../tuning/knobs.js'
+import type { EvalsSplitShares } from '../tuning/plan.js'
 
 /** The strands-evals commands that strands dev runs in the background. */
 export const BACKGROUND_COMMANDS = ['run', 'optimize run', 'generate'] as const
@@ -18,6 +19,10 @@ export interface OptimizeFlagSettings {
   readonly workers?: number
   readonly feasibility?: number
   readonly crashScore?: string
+  readonly maxRollouts?: number
+  readonly split?: EvalsSplitShares
+  /** Flags strands dev hands to strands-evals optimize run unchanged. */
+  readonly passed: readonly string[]
   readonly ignored: readonly string[]
 }
 
@@ -29,21 +34,44 @@ interface Flag {
 // strands dev writes these itself, so a skill's command may carry them and they change nothing.
 const SET_BY_STRANDS_DEV: Readonly<Record<string, string>> = {
   '--agent': 'strands dev passes the agent of this workspace',
+  '--build-task': 'strands dev passes the agent of this workspace',
+  '--config': 'strands dev passes the agent of this workspace',
+  '--space': 'strands dev writes the search space from the tuned knobs',
+  '--rollout': 'strands dev runs each case with its own rollout',
+  '--environment': 'strands dev runs each case with its own rollout',
+  '--experiment': 'strands dev passes the experiment named in the call',
   '--base-dir': 'strands dev keeps the run under strands-dev/experiments/<name>/optimizations/',
   '--rich': 'strands dev reads the run itself',
   '--json': 'strands dev reads the run itself',
-  '--seed': 'strands dev sets the seed',
   '--name': 'strands dev names the run',
-  '--max-rollouts': 'strands dev applies its own cap and says when a run needs more',
-  '--reflection-model': 'strands dev sets the proposer model',
-  '--split': 'strands dev picks the split, which cannot be changed here',
   '--final-pick': 'a cautious pick needs hooks.py, which strands dev does not run',
   '--search': 'strands dev runs the default search',
   '-o': 'strands dev writes the report itself',
   '--output': 'strands dev writes the report itself',
 }
 
+// strands-evals checks these itself, so strands dev hands them on unchanged.
+const WHOLE_PASSED = ['--seed', '--rerun-passes']
+const TEXT_PASSED = ['--reflection-model', '--custom-evaluator', '--selection', '--score-model', '--on-iteration']
+
 const VALUE_FREE = new Set(['--rich', '--json', '--pareto', '--no-tune-instructions', '--tune-instructions'])
+
+const SHARE_TOLERANCE = 1e-6
+
+const splitOf = ({ name, value = '' }: Flag): EvalsSplitShares => {
+  const shares = value.split(',').map(Number)
+  const valid =
+    shares.length === 3 &&
+    shares.every((share) => Number.isFinite(share) && share >= 0) &&
+    shares[0]! > 0 &&
+    shares[1]! > 0 &&
+    Math.abs(shares.reduce((sum, share) => sum + share, 0) - 1) < SHARE_TOLERANCE
+  if (!valid)
+    throw new Error(
+      `${name} takes TRAIN,VALIDATION,TEST shares that sum to 1, train and validation above 0, such as 0.5,0.25,0.25.`
+    )
+  return shares as unknown as EvalsSplitShares
+}
 
 const OPTION_KEYS: Readonly<Record<string, KnobKey>> = {
   system_prompt: 'systemPrompt',
@@ -111,8 +139,9 @@ export const optimizeFlagSettings = (args: readonly string[]): OptimizeFlagSetti
   const goals: string[] = []
   const constraints: string[] = []
   const ignored: string[] = []
+  const passed: string[] = []
   let pareto = false
-  const settings: Record<string, number | string> = {}
+  const settings: Record<string, number | string | EvalsSplitShares> = {}
   for (const flag of flagsOf(args)) {
     const reason = SET_BY_STRANDS_DEV[flag.name]
     if (reason) ignored.push(`${flag.name}: ${reason}`)
@@ -132,6 +161,10 @@ export const optimizeFlagSettings = (args: readonly string[]): OptimizeFlagSetti
     else if (flag.name === '--max-workers') settings.workers = wholeOf(flag)
     else if (flag.name === '--feasibility-threshold') settings.feasibility = numberOf(flag)
     else if (flag.name === '--agent-failure-score') settings.crashScore = flag.value ?? ''
+    else if (flag.name === '--max-rollouts') settings.maxRollouts = wholeOf(flag)
+    else if (flag.name === '--split') settings.split = splitOf(flag)
+    else if (WHOLE_PASSED.includes(flag.name)) passed.push(flag.name, String(wholeOf(flag)))
+    else if (TEXT_PASSED.includes(flag.name)) passed.push(flag.name, flag.value ?? '')
     else throw new Error(`strands dev cannot pass ${flag.name} to strands-evals optimize run.`)
   }
   if (tune.size === 0) throw new Error('Tune at least one knob: --no-tune-instructions leaves nothing to tune.')
@@ -149,6 +182,7 @@ export const optimizeFlagSettings = (args: readonly string[]): OptimizeFlagSetti
     ...(objective === undefined ? {} : { objective }),
     ...(constraints.length === 0 ? {} : { constraints }),
     ...settings,
+    passed,
     ignored,
   }
 }

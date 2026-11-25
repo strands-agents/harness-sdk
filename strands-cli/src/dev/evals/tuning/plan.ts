@@ -77,11 +77,12 @@ export type EvalsBudgetSetting = keyof typeof EVALS_BUDGET_MINIMUMS
 export const isEvalsBudgetValue = (setting: EvalsBudgetSetting, value: number): boolean =>
   Number.isSafeInteger(value) && value >= EVALS_BUDGET_MINIMUMS[setting]
 
-const EVALS_ROLLOUT_CAP = 500
-
-export const evalsRolloutCapProblem = (rollouts: number): string | undefined =>
-  rollouts > EVALS_ROLLOUT_CAP
-    ? `Needs about ${rollouts} rollouts, but one run can use ${EVALS_ROLLOUT_CAP}. Lower the steps, candidates, or runs.`
+export const evalsRolloutCapProblem = (
+  rollouts: number,
+  cap: number = EVALS_OPTIMIZE_DEFAULTS.maxRollouts
+): string | undefined =>
+  rollouts > cap
+    ? `Needs about ${rollouts} rollouts, but this run can use ${cap}. Lower the steps, candidates, or runs, or raise --max-rollouts.`
     : undefined
 
 const EVALS_TRAIN_SHARES: readonly number[] = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]

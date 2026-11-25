@@ -293,6 +293,15 @@ describe('optimize run records', () => {
     expect(await readEvalsOptimizeRecords(workspace)).toEqual([record])
   })
 
+  it('shouldKeepTheRolloutCapAndPassedFlagsOfARecordSoThatTheRunResumesWithThem', async () => {
+    const workspace = await temporaryDirectory()
+    const record = { ...optimizeRecordIn(workspace), maxRollouts: 900, passed: ['--seed', '3'] }
+
+    await saveEvalsOptimizeRecord(record)
+
+    expect(await readEvalsOptimizeRecords(workspace)).toEqual([record])
+  })
+
   it('shouldReadTheConstraintsOfARecordThatSavedThemAsLimits', async () => {
     const workspace = await temporaryDirectory()
     const record = optimizeRecordIn(workspace)
