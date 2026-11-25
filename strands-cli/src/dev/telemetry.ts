@@ -1,8 +1,9 @@
-import { sendTelemetryPing, telemetryEnabled } from '../cli/telemetry.js'
+import { sendTelemetryPing, TELEMETRY_ENDPOINT, telemetryEnabled } from '../cli/telemetry.js'
 import { CliConfigStore } from '../config/store.js'
 import { readCliVersion } from '../package-version.js'
 
-export const DEV_TELEMETRY_ENDPOINT = 'https://telemetry.strandsagents.com/strands-dev/ping'
+// The strands-cli tenant accepts the step next to the launch ping (strands-agents/telemetry-service#26).
+export const DEV_TELEMETRY_ENDPOINT = TELEMETRY_ENDPOINT
 
 /** Funnel steps only: which stages of the dev workflow get used, never what they contained. */
 export type DevTelemetryEvent =
