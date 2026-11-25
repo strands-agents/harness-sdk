@@ -10,7 +10,7 @@ This guide optimizes a support-ticket triage agent end to end. The agent reads a
 ticket and should answer with one line naming its category and priority. Its starting
 prompt doesn't say that, so it starts out writing friendly paragraphs instead. You'll let the
 optimizer rewrite the prompt and tune the temperature, then read what won and why. The run
-takes about ten minutes and 120 rollouts.
+takes about ten minutes, on a budget of 120 rollouts.
 
 ## Install the SDK
 
@@ -18,7 +18,7 @@ The optimizer ships with the evals SDK behind the `optimization` extra, which ad
 scipy, Optuna, and the Strands harness:
 
 ```bash
-pip install 'strands-agents-evals[optimization]' strands-agents
+pip install 'strands-agents-evals[optimization]'
 ```
 
 Importing `strands_evals.optimization` without the extra raises an `ImportError` that names

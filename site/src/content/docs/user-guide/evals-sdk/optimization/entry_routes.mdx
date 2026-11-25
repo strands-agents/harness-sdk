@@ -17,9 +17,10 @@ reach.
 | A Strands harness config file (JSON) | `--config` and `--tune` | The CLI |
 | An agent file from the strands CLI's `/export` (Python or TypeScript) | `--agent agent.py` or `--agent agent.ts` | The CLI |
 
-**Use a tunable factory if you can.** It's the only route that reaches every marker and
-checks every candidate builds before spending a rollout on it. Reach for the others when
-your agent isn't a Python function, or when you'd rather not write optimizer code.
+**Use a tunable factory if you can.** It's the most direct route to every marker, and,
+like an agent file, it checks every candidate builds before spending a rollout on it.
+Reach for the others when your agent isn't a Python function, or when you'd rather not
+write optimizer code.
 
 All four routes need an [experiment](../how-evaluation-works.md#what-an-evaluation-is-made-of) to evaluate each configuration with: an existing one, or
 a new one with cases from the agent's task and evaluators for what you care about. On the
@@ -58,8 +59,9 @@ strands-evals optimize run experiment.json --agent agent.py:create_agent
 Two optional hooks change how each trial runs. A custom **rollout** runs one case with a
 fresh agent, for multi-turn conversations or a simulated user. An **environment** creates
 per-trial resources, such as a sandbox, and passes them to the factory by name. A tunable
-factory takes both. A config file takes a rollout, an exported agent file takes both, and
-your own task function takes neither, because the task is the rollout.
+factory takes both. A config file and an exported agent file take a rollout; an agent file
+accepts an environment too, but its resources don't reach the agent. Your own task
+function takes neither, because the task is the rollout.
 
 **Limitations:**
 
@@ -203,7 +205,8 @@ folder, so trials never see each other's state.
 - **No subagent prompts.** Subagents are module references, so their prompts aren't in the
   file.
 - **One skills folder.** `--tune skills` works only when `skills` is a single local folder.
-- **The config needs an `instructions` field**, even an empty one.
+- **The config needs an `instructions` field**, even an empty one, unless you pass
+  `--no-tune-instructions`.
 - **Built-in tools act on this machine.** `shell`, `write`, and `edit` run as configured, and
   concurrent trials share the working directory. Set a sandbox in the config or turn those
   tools off.
@@ -257,9 +260,9 @@ takes the same forms as for a config file, with paths naming the call's argument
     ```
 
     The optimizer itself is Python, so the command still runs from `strands-evals`. It
-    starts one Node.js worker per run and sends it each trial. The worker returns the
-    agent's output and its traces, so token counts and trace-level evaluators work as they
-    do for a Python agent. You need Node.js 22.18 or later, with
+    starts a Node.js worker for the agent file and sends it each trial. The worker returns
+    the agent's output and its traces, so token counts and trace-level evaluators work as
+    they do for a Python agent. You need Node.js 22.18 or later, with
     `@strands-agents/harness` installed next to the file.
   </Tab>
 </Tabs>
@@ -282,8 +285,7 @@ cost a rollout.
   harness rejects shows up as an invalid candidate.
 - **TypeScript:** a custom rollout gets a stand-in for the agent. Its invoke method asks a
   fresh agent once; for a multi-turn conversation, open its session and call `turn` once per
-  message, and the same agent answers every turn. Nothing else on the agent is reachable,
-  and an environment hook's resources don't reach the Node.js worker.
+  message, and the same agent answers every turn. Nothing else on the agent is reachable.
 
 ## Save a command as a run file
 
@@ -331,7 +333,8 @@ constraint is a named table; the name is only a label.
 
 A flag given on the command line wins over the file, so
 `strands-evals optimize run runs/triage.toml --max-rollouts 300` reruns with a bigger
-budget. An unknown key fails before the run starts and suggests the closest valid one.
+budget. An unknown key fails before the run starts, and suggests a valid key when one is
+close.
 
 ## What every route shares
 

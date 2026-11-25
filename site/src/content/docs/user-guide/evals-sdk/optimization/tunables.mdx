@@ -39,8 +39,8 @@ def create_agent(
 agent = create_agent()  # the baseline, with no optimizer involved
 ```
 
-The decorated function behaves exactly as before when you call it, so production code can
-keep using it. If you'd rather not import the optimizer in production code at all, leave
+Calling the decorated function builds the baseline agent, so production code can keep
+using it. If you'd rather not import the optimizer in production code at all, leave
 the factory undecorated and mount it from your eval script instead:
 
 ```python
@@ -55,7 +55,8 @@ tunable_agent = tunable(
 ```
 
 Mistakes fail at declaration, before any rollout: a marker naming no parameter, a
-component whose constructor rejects its own defaults, or two markers on the same file.
+component whose constructor rejects its own defaults, or two markers on the same text
+(one file declared twice, or the same JSON field).
 
 Declarations are flat: the optimizer tunes only the markers on the factory you pass it.
 Stacking a second `@tunable` on the same function fails at declaration. A marker declared
@@ -68,7 +69,7 @@ optimizer's space, so it stays at its baseline with no error.
 |---|---|---|
 | `TextValue()` | A text value, such as a system prompt | Text rewriter |
 | `FileText(path)` | Text whose source of truth is a file | Text rewriter |
-| `JsonField(path, pointer)` | One field of a JSON file, addressed by JSON pointer | Text rewriter for text, TPE for numbers and booleans |
+| `JsonField(path, pointer)` | One field of a JSON file, addressed by JSON pointer | Text rewriter for text, TPE for numbers, booleans, and a `OneOf` |
 | `SkillLibrary(path)` | Each skill's `SKILL.md` in a skills folder | Text rewriter |
 | `tool_descriptions(*tools)` | Each tool's description | Text rewriter |
 | `Int(min, max)` / `Float(min, max)` | A number, inclusive bounds | TPE |
@@ -105,10 +106,10 @@ def create_agent(system_prompt: str, greeting: str):
 ```
 
 The file's current text is the baseline, so to change where the search starts, edit the
-file: a default on the parameter is ignored. Your files are never written: each candidate
-gets its own copy of the folder around the file. If the agent needs a path rather than the
-text, pass `as_path=True` to `FileText` and the parameter receives the path of the
-candidate's copy.
+file: a default on the parameter is ignored. Your files are never written: the parameter
+receives the candidate's text. If the agent needs a path rather than the text, pass
+`as_path=True` to `FileText`: each candidate gets its own copy of the folder around the
+file, and the parameter receives the path of that copy.
 
 A `JsonField` can also hold a number or a boolean, and the parameter then receives a typed
 value rather than text. Give a number the `Int` or `Float` to search it with; a boolean
@@ -152,8 +153,8 @@ the factory, or use `--tune` on a config file.
 Two settings guard every text marker:
 
 - **`size_cap`**: the longest text a proposal may be, in characters. It defaults to the
-  larger of 2,000 and three times the baseline's length (800 for a tool description), and
-  stops prompt bloat before it costs a rollout.
+  larger of 2,000 and three times the baseline's length (800 and three times its length
+  for a tool description), and stops prompt bloat before it costs a rollout.
 - **`edit_instructions`**: guidance shown to the text rewriter next to this value, such as
   "keep the refund policy section unchanged".
 
@@ -328,7 +329,7 @@ and give it to `component()`:
 
 ```python
 from strands import Agent
-from strands.experimental.context_manager import Offload
+from strands.context_manager import Offload
 from strands_evals.optimization import Int, choice, component, tunable
 
 
@@ -451,8 +452,8 @@ example above, a custom-pipeline candidate looks like this:
 These keys are the names you'll see in the run's summary and `best.values.json`, and for
 numbers and choices in the effects table too. Keys under an alternative exist only when
 that alternative is chosen. Text values are the exception in the effects table: each
-proposer's text values share one row, `rewritten:<block>`, so with the default rewriter
-every prompt in the space is one row.
+block's text values share one row, `rewritten:<block>`, so with the default search every
+prompt in the space is one row, `rewritten:text`.
 
 ## Next steps
 

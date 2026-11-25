@@ -28,9 +28,10 @@ alternative, then tunes the rest of the values inside it.
 
 `Thompson` is an alternative proposer for choices (a `choice()` between components, or a
 `OneOf`). Instead of a separate search model, it samples each option's effect from the
-optimizer's own fit of everything measured so far, and proposes the option that looks best
-in that sample. An option keeps getting tried until the evidence rules it out, so it suits
-a few alternatives you want compared fairly, such as two models. It's never the default:
+optimizer's own fit of everything measured so far, and proposes the untried option that
+looks best in that sample. Once every option is measured, the draw picks which one the
+search keeps refining, so it suits a few alternatives you want compared fairly, such as
+two models. It's never the default:
 give it a block.
 
 ```python

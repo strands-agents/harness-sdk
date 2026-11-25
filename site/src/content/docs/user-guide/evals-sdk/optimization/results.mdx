@@ -21,14 +21,17 @@ result = optimizer.run()
 print(result.summary())
 ```
 
-The summary is a stack of tables, read top to bottom:
+The summary is a stack of tables, read top to bottom. A table with nothing to show is left
+out:
 
 | Section | Answers |
 |---|---|
 | Header | What ran and what won: the objective, why the search stopped, rollouts spent against the budget, the champion, and the outcome |
 | Validation | How the baseline and each finalist scored on cases the search never saw: the estimate, its sd, and the measured mean per metric, with P(met) for each constraint |
+| Not feasible | Each finalist that can't ship, and why |
 | Test vs baseline | Whether the win holds on cases nothing else read: both means, the difference, and its 90% interval |
-| Changed | The champion's new numbers and choices, next to the baseline's |
+| Front test vs baseline | Under `Pareto`, the same test comparison for each front member |
+| Changed | The champion's new numbers and choices, next to the baseline's, when it beat the baseline |
 | Tokens | What the run spent, by role and split: the agent, the judges, each proposer, and other agents, with each role's failed attempts |
 
 Notes at the end define each column. The [quickstart](quickstart.md#run-it) shows a full
@@ -37,7 +40,8 @@ summary from a real run.
 In the validation table, `measured` is the mean over the cases that have a value for that
 metric, and `n` is how many there are. It's usually every validation case, but a case isn't
 counted when its evaluator returned not applicable or raised, when every trial failed on
-infrastructure, or, with `agent_failure_score=None`, when the agent crashed. So `n` can
+infrastructure, or when the agent crashed and `agent_failure_score` gives the metric no
+value (always with `None`). So `n` can
 differ between metrics. When only one case has a value, `n` counts its runs instead.
 
 The header's **outcome** says how the pick ended:
@@ -99,9 +103,10 @@ runs against the same cases can slowly fit them.
 ## How sure the run is
 
 The **test report** compares the champion with your current agent on test cases that
-neither the search nor the pick ever read. For the objective and each metric, it gives
-both sides' means over the same cases, the paired difference with a 90% interval, and a
-ratio for metrics that can't go negative:
+neither the search nor the pick ever read. For each metric your objective and constraints
+use, it gives both sides' means over the same cases, the paired difference with a 90%
+interval, and a ratio for metrics that can't go negative. `report.objective` holds the
+same paired comparison for the objective itself:
 
 ```python
 def show(value):
@@ -187,10 +192,10 @@ of its role's figure, so there's no separate retry total.
 For anything the summary doesn't show, the result gives you rows and full reports:
 
 ```python
-import pandas as pd
+import pandas as pd  # pip install pandas
 
 proposals = pd.DataFrame(result.to_rows("proposal"))  # one row per candidate
-cases = pd.DataFrame(result.to_rows("case"))          # one row per case and run
+cases = pd.DataFrame(result.to_rows("case"))          # one row per trial
 result.reports[result.best.id]["test"].display()  # an EvaluationReport per split
 ```
 
@@ -224,6 +229,7 @@ soon as the run starts.
 | `events.jsonl` | The append-only log of everything the run did; resume replays it |
 | `transcripts/` | Each trial's conversation, stored once |
 | `candidates/` | Each candidate's copy of the files it edits, when it edits files |
+| `front/` | Each front member's diff and values (`Pareto` runs only) |
 | `cli.json` | The CLI's inputs, so `resume` needs only the folder (CLI runs only) |
 | `run.lock` | An empty file locked while a process writes the run, so two can't write it at once |
 

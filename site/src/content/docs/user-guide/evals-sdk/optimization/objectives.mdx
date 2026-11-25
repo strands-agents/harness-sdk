@@ -19,8 +19,9 @@ agent's traces.
   `"HelpfulnessEvaluator"` are the same metric. An evaluator's range is its
   `score_range` attribute, or 0 to 1 when it has none.
 - **Usage**: `tokens`, `input_tokens`, `output_tokens`, `cache_read_tokens`,
-  `cache_write_tokens`, `model_calls`, and `seconds`. These count the agent the factory
-  built and every agent under it, never the judges.
+  `cache_write_tokens`, `model_calls`, and `seconds`. With a factory, these count the
+  agent it built and every agent under it; with a task function, every model call in the
+  trial. They never count the judges.
 
 An unknown name fails when you build the optimizer, before any rollout.
 
@@ -52,8 +53,9 @@ evaluator's scale defaults to its range, so you only set it for usage metrics, w
 no upper bound.
 
 When you can't name an exchange rate between quality and cost, use `Pareto` with the same
-terms. The optimizer still picks one champion, but it validates and tests the whole front
-of trade-offs so you can pick another from `result.front`:
+terms. The optimizer still picks one champion, but it validates and tests up to five
+members of the front of trade-offs (or `n_finalists`, if larger) so you can pick another
+from `result.front`:
 
 ```python
 from strands_evals.optimization import Maximize, Minimize, Pareto
@@ -75,9 +77,10 @@ constraints = [
 ```
 
 During the search, constraints only rank: candidates likely to meet every constraint come
-first, but the others can still be parents. At the end, only a candidate that meets every
-constraint on validation can be the champion, and "meets" means the model puts the chance
-of meeting it at 90% or more. When no candidate qualifies, your current agent stays the champion.
+first, and the others become parents only when none is likely to meet them. At the end,
+only a candidate that meets every constraint on validation can be the champion, and
+"meets" means the model puts the chance of meeting it at 90% or more. When no candidate
+qualifies, your current agent stays the champion.
 
 Prefer a constraint over a cost term when you have a hard limit. A weighted cost term buys
 quality with tokens at a fixed rate; a constraint says "never above this".
@@ -85,8 +88,9 @@ quality with tokens at a fixed rate; a constraint says "never above this".
 ## Set the budget
 
 The budget is counted in **rollouts**: one case run once by the agent. A run stops when its
-budget is spent, and every stop still runs the end phase, because the end phase's share is
-held back from the start.
+budget is spent, and every such stop still runs the end phase, because the end phase's
+share is held back from the start. A run that stops on an error or an interrupt skips the
+end phase and can be resumed.
 
 ```python
 from strands_evals.optimization import Budget
@@ -148,8 +152,8 @@ and the result reports each one's tokens (see
 - **Other agents**: agents in the rollout that your factory didn't build, such as a
   simulated user.
 
-A retried attempt's tokens count in the role that spent them. Retrying itself is free
-only inside a trial, when the model call is throttled. A trial that fails on an outage or
+A retried attempt's tokens count in the role that spent them. Retries inside a model call
+(throttling, timeouts, server errors) are free. A trial that fails on an outage or
 expired credentials is run again by the optimizer, and each re-run costs a rollout.
 
 ## Other settings that change the pick
