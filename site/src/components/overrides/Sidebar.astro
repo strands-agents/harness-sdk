@@ -52,7 +52,8 @@ const staticSlug = isLearning
     function set(label) {
       if (SAMPLE_GUIDE_LANGUAGE === 'python') label = 'Python'
       if (SAMPLE_GUIDE_LANGUAGE === 'typescript') label = 'TypeScript'
-      document.documentElement.dataset.langPref = label === 'Python' ? 'python' : 'typescript'
+      document.documentElement.dataset.langPref =
+        typeof label === 'string' && label.trim() ? label.trim().toLowerCase() : 'typescript'
     }
     try {
       set(localStorage.getItem(KEY) || 'TypeScript')
@@ -178,16 +179,20 @@ const staticSlug = isLearning
 <style is:global>
   /* Language-scoped sidebar rows (Quickstart / API reference) follow the header
      language toggle via <html data-lang-pref>. Default (attr unset) = TypeScript.
-     One row of each pair is always shown; the other is collapsed. */
+     Unsupported languages hide both existing language rows. */
   html:not([data-lang-pref='python']) .sidebar-content li:has(> a[href*='/quickstart/python']),
-  html:not([data-lang-pref='python']) .sidebar-content li:has(> a[href*='/api/python']) {
+  html:not([data-lang-pref='python']) .sidebar-content li:has(> a[href*='/api/python']),
+  html:not([data-lang-pref='python']) .sidebar-content li:not(:only-child):has(> [data-sidebar-lang='python']) {
     display: none;
   }
 
-  html:not([data-lang-pref='python']) .sidebar-content li:not(:only-child):has(> [data-sidebar-lang='python']),
-  html[data-lang-pref='python'] .sidebar-content li:not(:only-child):has(> [data-sidebar-lang='typescript']),
-  html[data-lang-pref='python'] .sidebar-content li:has(> a[href*='/quickstart/typescript']),
-  html[data-lang-pref='python'] .sidebar-content li:has(> a[href*='/api/typescript']) {
+  html[data-lang-pref]:not([data-lang-pref='typescript'])
+    .sidebar-content
+    li:not(:only-child):has(> [data-sidebar-lang='typescript']),
+  html[data-lang-pref]:not([data-lang-pref='typescript'])
+    .sidebar-content
+    li:has(> a[href*='/quickstart/typescript']),
+  html[data-lang-pref]:not([data-lang-pref='typescript']) .sidebar-content li:has(> a[href*='/api/typescript']) {
     display: none;
   }
 </style>

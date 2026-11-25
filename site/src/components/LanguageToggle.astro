@@ -239,46 +239,62 @@ const typescriptDisabled = currentSampleGuide
       );
       // No toggle rendered on this page: the preference stands.
       if (enabled.length === 0) return lang;
-      var match = enabled.some(function (btn) { return btn.dataset.lang === lang; });
-      return match ? lang : enabled[0].dataset.lang;
+      var available = enabled.reduce(function (languages, btn) {
+        var option = btn.dataset.lang;
+        if (option && languages.indexOf(option) === -1) languages.push(option);
+        return languages;
+      }, []);
+      if (available.indexOf(lang) !== -1 || available.length > 1) return lang;
+      return available[0];
     }
 
     function updateToggle(lang) {
-      // Exactly one radio is always checked: `lang` is already the effective
-      // language, so it always names an enabled button when one exists.
-      document.querySelectorAll('language-toggle .lang-option').forEach(function (btn) {
-        if (btn.disabled) return;
-        btn.setAttribute('aria-checked', btn.dataset.lang === lang ? 'true' : 'false');
+      document.querySelectorAll('language-toggle').forEach(function (toggle) {
+        var enabled = Array.prototype.filter.call(toggle.querySelectorAll('.lang-option'), function (btn) {
+          return !btn.disabled;
+        });
+        var match = enabled.some(function (btn) { return btn.dataset.lang === lang; });
+        // Preserve preferences without a rendered radio (for example Rust);
+        // label the group while keeping each available option tabbable.
+        toggle.setAttribute(
+          'aria-label',
+          match ? 'Preferred language' : 'Preferred language: ' + lang + ' (not available in this selector)'
+        );
+        toggle.querySelectorAll('.lang-option').forEach(function (btn) {
+          btn.setAttribute('aria-checked', !btn.disabled && btn.dataset.lang === lang ? 'true' : 'false');
+        });
       });
     }
 
     /** Full UI sync: toggle state + inline tabs. */
     function syncAll(lang) {
       var effective = effectiveLanguage(lang);
+      document.documentElement.dataset.langPref = effective.toLowerCase();
       updateToggle(effective);
       syncStarlightTabs(effective);
+      return effective;
     }
 
     // Guard against feedback loops.
     var applying = false;
 
-    function applyLanguage(lang, notify) {
+    function applyLanguage(lang, persist, notify) {
       if (applying) return;
       applying = true;
-      setPreference(lang);
-      syncAll(lang);
+      if (persist) setPreference(lang);
+      var effective = syncAll(lang);
       if (notify) {
-        window.dispatchEvent(new CustomEvent('lang-change', { detail: lang }));
-        window.dispatchEvent(new CustomEvent('lang-preference-changed', { detail: { lang: lang } }));
+        window.dispatchEvent(new CustomEvent('lang-change', { detail: effective }));
+        window.dispatchEvent(new CustomEvent('lang-preference-changed', { detail: { lang: effective } }));
       }
       applying = false;
     }
 
     var current = PAGE_LANGUAGE || getPreference();
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () { applyLanguage(current, false); });
+      document.addEventListener('DOMContentLoaded', function () { applyLanguage(current, false, false); });
     } else {
-      applyLanguage(current, false);
+      applyLanguage(current, false, false);
     }
 
     document.addEventListener('click', function (e) {
@@ -286,7 +302,7 @@ const typescriptDisabled = currentSampleGuide
       if (!btn || btn.disabled) return;
       var lang = btn.dataset.lang;
       if (!lang) return;
-      applyLanguage(lang, true);
+      applyLanguage(lang, true, true);
 
       var switchHref = btn.dataset.switchHref;
       if (switchHref) {
@@ -296,17 +312,17 @@ const typescriptDisabled = currentSampleGuide
 
     window.addEventListener('storage', function (e) {
       if (e.key === STORAGE_KEY && e.newValue) {
-        applyLanguage(e.newValue, false);
+        applyLanguage(e.newValue, false, true);
       }
     });
 
     window.addEventListener('lang-change', function (e) {
       var lang = e && e.detail;
-      if (lang) applyLanguage(lang, false);
+      if (lang) applyLanguage(lang, false, false);
     });
     window.addEventListener('lang-preference-changed', function (e) {
       var lang = e && e.detail && e.detail.lang;
-      if (lang) applyLanguage(lang, false);
+      if (lang) applyLanguage(lang, false, false);
     });
   })();
 </script>

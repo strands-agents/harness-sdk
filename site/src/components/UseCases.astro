@@ -253,12 +253,7 @@ const useCases = [
       <!-- On mobile the terminal sits below all three use-case items (see the
            `order` in the mobile media query). On desktop it's the right-hand
            column, unaffected by `order`. -->
-      <div
-        class="terminal"
-        data-filenames={JSON.stringify(
-          Object.fromEntries(useCases.map((uc) => [uc.id, uc.filename]))
-        )}
-      >
+      <div class="terminal">
         <header class="terminal__header">
           <div class="terminal__dots" aria-hidden="true">
             <span class="terminal__dot terminal__dot--red"></span>
@@ -318,6 +313,7 @@ const useCases = [
               class="terminal__code terminal__code--ts"
               data-lang-code="typescript"
               data-use-case-code={uc.id}
+              data-filename={uc.filename.ts}
               hidden={!uc.active}
               tabindex="0"
               role="region"
@@ -334,6 +330,7 @@ const useCases = [
               class="terminal__code terminal__code--py"
               data-lang-code="python"
               data-use-case-code={uc.id}
+              data-filename={uc.filename.py}
               hidden
               tabindex="0"
               role="region"
@@ -348,6 +345,8 @@ const useCases = [
             ))}</code></pre>
           </Fragment>
         ))}
+
+        <p class="terminal__unavailable" data-use-cases-unavailable aria-live="polite" hidden></p>
 
         <div class="terminal__toggle">
           <LanguageToggle />
@@ -651,6 +650,11 @@ const useCases = [
     display: inline-block;
   }
 
+  .terminal__copy:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
   .terminal__code {
     margin: 0;
     padding: 20px;
@@ -669,6 +673,17 @@ const useCases = [
 
   .terminal__code::-webkit-scrollbar {
     display: none;
+  }
+
+  .terminal__unavailable {
+    margin: 0;
+    padding: 20px;
+    height: 419px;
+    color: var(--terminal-fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    text-align: center;
   }
 
   .terminal__row {
@@ -818,17 +833,25 @@ const useCases = [
   if (section) {
     const terminal = section.querySelector<HTMLElement>('.terminal');
     const filenameEl = terminal?.querySelector<HTMLElement>('[data-filename]');
-    const filenames: Record<string, { ts: string; py: string }> = JSON.parse(
-      terminal?.dataset.filenames || '{}'
-    );
+    const unavailableEl = terminal?.querySelector<HTMLElement>('[data-use-cases-unavailable]');
+    const copyButton = terminal?.querySelector<HTMLButtonElement>('.terminal__copy');
 
     const firstItem = section.querySelector<HTMLElement>('.use-cases__item.is-active');
-    let currentCase = firstItem?.dataset.useCase || Object.keys(filenames)[0] || '';
-    let currentLang: 'TypeScript' | 'Python' =
-      localStorage.getItem(LANGUAGE_STORAGE_KEY) === 'Python' ? 'Python' : DEFAULT_LANGUAGE_LABEL;
+    let currentCase = firstItem?.dataset.useCase || '';
+    let currentLang = currentLanguage();
+
+    function currentLanguage() {
+      try {
+        return localStorage.getItem(LANGUAGE_STORAGE_KEY) || DEFAULT_LANGUAGE_LABEL;
+      } catch {
+        return DEFAULT_LANGUAGE_LABEL;
+      }
+    }
 
     function render() {
-      const langCode = currentLang === 'Python' ? 'python' : 'typescript';
+      const languageLabel = currentLang.trim() || DEFAULT_LANGUAGE_LABEL;
+      const langCode = languageLabel.toLowerCase();
+      let activePanel: HTMLElement | undefined;
 
       // Show only the panel matching the current use case AND language.
       section!.querySelectorAll<HTMLElement>('.terminal__code').forEach((pre) => {
@@ -836,13 +859,16 @@ const useCases = [
           pre.dataset.useCaseCode === currentCase &&
           pre.dataset.langCode === langCode;
         pre.hidden = !match;
+        if (match) activePanel = pre;
       });
 
-      // Filename follows the use case + language.
-      if (filenameEl && filenames[currentCase]) {
-        filenameEl.textContent =
-          currentLang === 'Python' ? filenames[currentCase].py : filenames[currentCase].ts;
+      if (filenameEl) filenameEl.textContent = activePanel?.dataset.filename ?? `No ${languageLabel} example`;
+
+      if (unavailableEl) {
+        unavailableEl.textContent = activePanel ? '' : `No ${languageLabel} example is available yet.`;
+        unavailableEl.hidden = Boolean(activePanel);
       }
+      if (copyButton) copyButton.disabled = !activePanel;
 
       // Active use-case item styling + a11y state.
       section!.querySelectorAll<HTMLElement>('.use-cases__item').forEach((item) => {
@@ -867,8 +893,8 @@ const useCases = [
     // Language is driven by the shared <LanguageToggle/>, which broadcasts
     // lang-change site-wide; the terminal just re-renders to match.
     window.addEventListener('lang-change', (e: Event) => {
-      const lang = (e as CustomEvent).detail;
-      currentLang = lang === 'Python' ? 'Python' : 'TypeScript';
+      const lang = (e as CustomEvent<unknown>).detail;
+      currentLang = typeof lang === 'string' && lang.trim() ? lang.trim() : DEFAULT_LANGUAGE_LABEL;
       render();
     });
 

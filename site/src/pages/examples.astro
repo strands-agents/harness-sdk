@@ -15,8 +15,9 @@ import {
 const guides = sortSampleGuides(await getCollection('sampleGuides'))
 const catalogMode = guides[0]?.data.catalogMode
 const isLegacyCatalog = catalogMode === 'legacy'
+const defaultLanguage = DEFAULT_LANGUAGE_LABEL.toLowerCase()
 const defaultGuide = isLegacyCatalog
-  ? (guides.find((entry) => entry.data.language === DEFAULT_LANGUAGE_LABEL.toLowerCase()) ?? guides[0])
+  ? (guides.find((entry) => entry.data.language === defaultLanguage) ?? guides[0])
   : undefined
 const pythonGuide = isLegacyCatalog ? guides.find((entry) => entry.data.language === 'python') : undefined
 const defaultTarget = defaultGuide ? pathWithBase(sampleGuidePath(defaultGuide)) : undefined
@@ -80,8 +81,8 @@ const headings = catalogSections.map((section) => ({
       </>
     ) : guides.length > 0 ? (
       <>
-        <p class="sample-catalog__intro">
-          Explore complete examples, organized by what you want to learn or build.
+        <p class="sample-catalog__intro" data-sample-catalog-status aria-live="polite">
+          Showing {DEFAULT_LANGUAGE_LABEL} examples, organized by what you want to learn or build.
         </p>
 
         {catalogSections.map((section) => (
@@ -89,6 +90,7 @@ const headings = catalogSections.map((section) => ({
             class="sample-catalog__section"
             aria-labelledby={`sample-category-${section.key}`}
             data-sample-category={section.key}
+            hidden={!section.families.some((family) => family.guides.some((guide) => guide.data.language === defaultLanguage))}
           >
             <h2 id={`sample-category-${section.key}`}>{section.label}</h2>
             {section.description && <p>{section.description}</p>}
@@ -97,6 +99,70 @@ const headings = catalogSections.map((section) => ({
             </CardGrid>
           </section>
         ))}
+
+        <script
+          is:inline
+          define:vars={{
+            STORAGE_KEY: LANGUAGE_STORAGE_KEY,
+            DEFAULT_LANGUAGE: DEFAULT_LANGUAGE_LABEL,
+          }}
+        >
+          ;(function () {
+            if (window.__strandsSampleCatalogInit) return
+            window.__strandsSampleCatalogInit = true
+
+            var cards = Array.prototype.slice.call(document.querySelectorAll('[data-sample-language]'))
+            var sections = Array.prototype.slice.call(document.querySelectorAll('[data-sample-category]'))
+            var status = document.querySelector('[data-sample-catalog-status]')
+
+            function getPreference() {
+              try {
+                return localStorage.getItem(STORAGE_KEY) || DEFAULT_LANGUAGE
+              } catch {
+                return DEFAULT_LANGUAGE
+              }
+            }
+
+            function setTableOfContentsVisibility(sectionId, hidden) {
+              document.querySelectorAll('starlight-toc a[href], mobile-starlight-toc a[href]').forEach(function (link) {
+                var href = link.getAttribute('href')
+                if (!href || (href !== '#' + sectionId && !href.endsWith('#' + sectionId))) return
+                var item = link.closest('li')
+                if (item) item.hidden = hidden
+              })
+            }
+
+            function showLanguage(language) {
+              var code = language.toLowerCase()
+              var visibleCards = 0
+
+              cards.forEach(function (card) {
+                var visible = card.dataset.sampleLanguage === code
+                card.hidden = !visible
+                if (visible) visibleCards += 1
+              })
+
+              sections.forEach(function (section) {
+                var hasVisibleCard = Boolean(section.querySelector('[data-sample-language]:not([hidden])'))
+                section.hidden = !hasVisibleCard
+                setTableOfContentsVisibility(section.querySelector('h2').id, !hasVisibleCard)
+              })
+
+              if (status) {
+                status.textContent =
+                  visibleCards > 0
+                    ? 'Showing ' + language + ' examples, organized by what you want to learn or build.'
+                    : 'No ' + language + ' examples are available yet.'
+              }
+            }
+
+            showLanguage(getPreference())
+
+            window.addEventListener('lang-change', function (event) {
+              if (event && event.detail) showLanguage(event.detail)
+            })
+          })()
+        </script>
       </>
     ) : (
       <>
