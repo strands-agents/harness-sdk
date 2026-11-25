@@ -29,13 +29,20 @@ export function setTerminalTitle(title: string, output: TerminalOutput = process
   output.write(`\u001b]2;${text}\u0007`)
 }
 
+/** Names the terminal tab (the icon name), which a shell otherwise leaves as the command it ran. */
+export function setTerminalTabTitle(title: string, output: TerminalOutput = process.stdout): void {
+  if (!output.isTTY) return
+  const text = sanitizeTerminalText(title).replace(/\s+/gu, ' ').trim() || 'strands'
+  output.write(`\u001b]1;${text}\u0007`)
+}
+
 export function saveTerminalTitle(output: TerminalOutput = process.stdout): () => void {
   let saved = output.isTTY === true
-  if (saved) output.write('\u001b[22;2t')
+  if (saved) output.write('\u001b[22;0t')
   return (): void => {
     if (!saved) return
     saved = false
-    writeTerminalReset(output, '\u001b[23;2t')
+    writeTerminalReset(output, '\u001b[23;0t')
   }
 }
 

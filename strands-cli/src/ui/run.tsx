@@ -14,6 +14,7 @@ import {
   enterAlternateScreen,
   restoreTerminalModes,
   saveTerminalTitle,
+  setTerminalTabTitle,
   setTerminalTitle,
   setTerminalMouseMotion,
 } from '../terminal/terminal.js'
@@ -113,10 +114,17 @@ export async function runInkChat(source: ChatControllerSource, options: RunInkCh
   let restoreTerminalTitle = (): void => {}
   let stopWatchingTitle = (): void => {}
   let terminalTitle: string | undefined
+  let terminalTabTitle: string | undefined
   const watchTerminalTitle = (active: ChatControllerApi): void => {
     stopWatchingTitle()
     const update = (): void => {
-      const title = active.getSnapshot().runtime.sessionName ?? 'Strands'
+      const { runtime } = active.getSnapshot()
+      const tabTitle = runtime.devWorkspace ? 'strands dev' : 'strands'
+      if (tabTitle !== terminalTabTitle) {
+        terminalTabTitle = tabTitle
+        setTerminalTabTitle(tabTitle, output)
+      }
+      const title = runtime.sessionName ?? 'Strands'
       if (title === terminalTitle) return
       terminalTitle = title
       setTerminalTitle(title, output)

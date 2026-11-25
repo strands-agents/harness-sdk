@@ -9,6 +9,7 @@ import {
   pauseMouseReporting,
   saveTerminalTitle,
   setTerminalMouseMotion,
+  setTerminalTabTitle,
   setTerminalTitle,
 } from '../../src/terminal/terminal.js'
 
@@ -33,7 +34,15 @@ describe('terminal lifecycle', () => {
     setTerminalTitle('  Release\nplanning\u0007\u001b]2;injected\u0007  ', output)
     restore()
     restore()
-    expect(writes).toEqual(['\u001b[22;2t', '\u001b]2;Release planning\u0007', '\u001b[23;2t'])
+    expect(writes).toEqual(['\u001b[22;0t', '\u001b]2;Release planning\u0007', '\u001b[23;0t'])
+  })
+
+  it('names the terminal tab with a sanitized single-line title', () => {
+    const writes: string[] = []
+    const output = { isTTY: true, write: (value: string) => writes.push(value) }
+    setTerminalTabTitle(' strands\ndev\u0007\u001b]1;injected\u0007 ', output)
+    setTerminalTabTitle('strands dev', { isTTY: false, write: (value: string) => writes.push(value) })
+    expect(writes).toEqual(['\u001b]1;strands dev\u0007'])
   })
 
   it('does not write title controls to redirected output', () => {
