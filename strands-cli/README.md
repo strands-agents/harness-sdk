@@ -988,8 +988,8 @@ projects).
 Turn it off with `STRANDS_CLI_TELEMETRY=off` (or `DO_NOT_TRACK=1`), the **Usage ping** toggle in `/settings`
 (takes effect at the next launch), or `telemetry = false` under `[settings]` in `~/.strands/cli.toml`.
 
-`strands dev` does not send the launch ping. It sends one ping for each step of the dev workflow to
-`https://telemetry.strandsagents.com/strands-dev/ping`, with the same off switches. The whole payload is:
+`strands dev` does not send the launch ping. It sends one ping for each step of the dev workflow to the same
+endpoint, `https://telemetry.strandsagents.com/ping`, with the same off switches. The whole payload is:
 
 ```json
 {
