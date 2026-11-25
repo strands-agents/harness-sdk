@@ -26,6 +26,18 @@ export const CONTEXT_OFFLOAD_THRESHOLD_OPTIONS = [
 
 export type ContextOffloadThreshold = (typeof CONTEXT_OFFLOAD_THRESHOLD_OPTIONS)[number]['value']
 
+/** How many chat turns pass between the optimizations that strands dev starts by itself; 0 starts none. */
+export const AUTO_OPTIMIZE_OPTIONS = [
+  { label: 'Off', value: 0 },
+  { label: '5', value: 5 },
+  { label: '10', value: 10 },
+  { label: '20', value: 20 },
+  { label: '50', value: 50 },
+  { label: '100', value: 100 },
+] as const
+
+export type AutoOptimizeCadence = (typeof AUTO_OPTIMIZE_OPTIONS)[number]['value']
+
 export const SETTINGS_CATEGORIES = [
   {
     id: 'Appearance',
@@ -49,7 +61,7 @@ export const SETTINGS_CATEGORIES = [
   },
 ] as const
 
-export type SettingsCategory = (typeof SETTINGS_CATEGORIES)[number]['id']
+export type SettingsCategory = (typeof SETTINGS_CATEGORIES)[number]['id'] | 'Workspace'
 
 export const DEFAULT_SETTINGS_CATEGORY = 'Appearance' satisfies SettingsCategory
 
@@ -92,6 +104,10 @@ export interface ChatSettings {
   updatePrompts: boolean
   /** Tool-result token cutoff for context offloading, or the selected context-manager preset's default. */
   contextOffloadThreshold: ContextOffloadThreshold
+  /** Write the edits of a finished strands dev optimization to the agent source without showing them for review. */
+  autoAcceptOptimizationResults?: boolean
+  /** Start a strands dev optimization from the chat history every this many chat turns; 0 starts none. */
+  autoOptimize?: AutoOptimizeCadence
 }
 
 export type ThemeSettings = Pick<ChatSettings, 'frogTheme'>
@@ -111,6 +127,13 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   contextOffloadThreshold: 'default',
 }
 
+export const WORKSPACE_SETTING_DEFAULTS: Required<
+  Pick<ChatSettings, 'autoAcceptOptimizationResults' | 'autoOptimize'>
+> = {
+  autoAcceptOptimizationResults: false,
+  autoOptimize: 0,
+}
+
 export type SettingKey =
   | 'frogTheme'
   | 'transcriptSpacing'
@@ -123,6 +146,8 @@ export type SettingKey =
   | 'telemetry'
   | 'updatePrompts'
   | 'contextOffloadThreshold'
+  | 'autoAcceptOptimizationResults'
+  | 'autoOptimize'
 
 export interface SettingDefinition {
   key: SettingKey
@@ -229,6 +254,23 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     ],
   },
   {
+    key: 'autoOptimize',
+    label: 'Auto-optimize every N turns',
+    section: 'Workspace',
+    control: 'segmented',
+    options: AUTO_OPTIMIZE_OPTIONS,
+  },
+  {
+    key: 'autoAcceptOptimizationResults',
+    label: 'Auto-accept optimization results',
+    section: 'Workspace',
+    control: 'toggle',
+    options: [
+      { label: 'On', value: true },
+      { label: 'Off', value: false },
+    ],
+  },
+  {
     key: 'telemetry',
     label: 'Send anonymous usage data',
     section: 'Telemetry',
@@ -239,6 +281,9 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     ],
   },
 ]
+
+export const settingValue = (settings: ChatSettings, key: SettingKey): ChatSettings[SettingKey] =>
+  ({ ...WORKSPACE_SETTING_DEFAULTS, ...settings })[key]
 
 export function settingDescription(settings: ChatSettings, key: SettingKey): string {
   switch (key) {
@@ -268,6 +313,14 @@ export function settingDescription(settings: ChatSettings, key: SettingKey): str
       return settings.updatePrompts
         ? 'on · asks before installing an available update'
         : 'off · available updates remain visible in the footer'
+    case 'autoAcceptOptimizationResults':
+      return settingValue(settings, key)
+        ? 'on · the edits of a finished optimization are written to the agent without a review'
+        : 'off · a finished optimization shows its edits, and you apply or leave each one'
+    case 'autoOptimize':
+      return settingValue(settings, key) === 0
+        ? 'off · an optimization runs only when you start one'
+        : `every ${settings.autoOptimize} chat turns · in the background, makes an experiment from your chats and optimizes on it · paid`
     case 'contextOffloadThreshold':
       return `${CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value }) => value === settings.contextOffloadThreshold)!.label} · tool-result tokens · applies at next launch`
     default:
@@ -275,10 +328,26 @@ export function settingDescription(settings: ChatSettings, key: SettingKey): str
   }
 }
 
-export function parseSettings(value: unknown): ChatSettings {
-  if (!isRecord(value)) {
+/** Settings of a strands dev workspace, which its workspace layer saves and the user CLI config never holds. */
+export const WORKSPACE_SETTING_KEYS: ReadonlySet<string> = new Set(
+  SETTING_DEFINITIONS.filter(({ section }) => section === 'Workspace').map(({ key }) => key)
+)
+
+/**
+ * Saved settings in today's names. Until the two were split, autoOptimize was the on/off of what is now
+ * autoAcceptOptimizationResults; merge saved settings over others only after this, or the old value is lost.
+ */
+export function migrateSavedSettings(saved: Record<string, unknown>): Record<string, unknown> {
+  if (typeof saved.autoOptimize !== 'boolean') return saved
+  const { autoOptimize, ...rest } = saved
+  return { autoAcceptOptimizationResults: autoOptimize, ...rest }
+}
+
+export function parseSettings(saved: unknown): ChatSettings {
+  if (!isRecord(saved)) {
     return globalThis.structuredClone(DEFAULT_CHAT_SETTINGS)
   }
+  const value = migrateSavedSettings(saved)
   const booleanSetting = (key: keyof ChatSettings): boolean => {
     const selected = value[key]
     return typeof selected === 'boolean' ? selected : DEFAULT_CHAT_SETTINGS[key] === true
@@ -317,6 +386,19 @@ export function parseSettings(value: unknown): ChatSettings {
     telemetry: booleanSetting('telemetry'),
     updatePrompts: booleanSetting('updatePrompts'),
     contextOffloadThreshold,
+    ...savedWorkspaceSettings(value),
+  }
+}
+
+const savedWorkspaceSettings = (
+  value: Record<string, unknown>
+): Pick<ChatSettings, 'autoAcceptOptimizationResults' | 'autoOptimize'> => {
+  const autoOptimize = AUTO_OPTIMIZE_OPTIONS.find(({ value: option }) => option === value.autoOptimize)?.value
+  return {
+    ...(typeof value.autoAcceptOptimizationResults === 'boolean'
+      ? { autoAcceptOptimizationResults: value.autoAcceptOptimizationResults }
+      : {}),
+    ...(autoOptimize === undefined ? {} : { autoOptimize }),
   }
 }
 
@@ -340,6 +422,7 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     case 'agentMessaging':
     case 'telemetry':
     case 'updatePrompts':
+    case 'autoAcceptOptimizationResults':
       return { [name]: !current[name] }
     case 'toolOutput':
       if (selected !== undefined && selected !== 'hidden' && selected !== 'compact' && selected !== 'full') {
@@ -353,6 +436,10 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
     case 'frogTheme': {
       const frogTheme = FROG_THEMES.find((theme) => theme === selected)
       return frogTheme === undefined ? undefined : { frogTheme }
+    }
+    case 'autoOptimize': {
+      const cadence = AUTO_OPTIMIZE_OPTIONS.find(({ value }) => String(value) === selected)?.value
+      return cadence === undefined ? undefined : { autoOptimize: cadence }
     }
     case 'contextOffloadThreshold': {
       const threshold =

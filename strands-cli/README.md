@@ -76,6 +76,349 @@ lets you choose a provider and model, then launch. Customize lets you select too
 other capabilities individually or together, and edit the agent instructions, data paths, and approval
 controls. The CLI detects standard credential sources but never writes API keys to its config.
 
+## Local harness development
+
+`strands dev` runs a harness from a local workspace. It does not change the default agent for plain `strands`.
+
+```bash
+strands dev
+strands dev --search-root ../other-projects
+strands dev init --create cli --workspace ./strands-dev
+strands dev --workspace ./strands-dev
+strands dev --agent ./my-project/agent.py
+strands dev init --create python --workspace ./new-agent
+```
+
+The full TUI opens before discovery. Its picker lists the current CLI harness first, discovered harnesses next, and a new-harness option last.
+The selector separates Global Harness, Discovered Harnesses, and New Harness choices. Source details appear below the selected choice.
+Base CLI shows its source path and explains that changes in dev also change plain `strands`.
+Discovery omits the current CLI source and the base workspace already represented by that choice. Distinct projects with matching names remain separate.
+Creation errors stay in the picker so you can retry without restarting the CLI.
+Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
+It skips dependency folders, build output, private state, and copied harness libraries.
+It never lists an agent inside a `strands-dev/` or `strands-dev-N/` folder, for example an old agent copy in `strands-dev/tmp/`.
+Discovery lists a source file only in a shape that strands dev can load.
+In TypeScript, a top-level `agent` must come from one `createHarness(...)` call or from a call to a local function.
+In Python, `agent` must come from `create_harness(...)`. Or, the file must define `create_agent` and set `agent` from a local function.
+If a file calls `createHarness` or `create_harness` in a different shape, the picker shows that file and the expected shape.
+
+When the launch directory has no workspace, select an existing harness in the picker.
+When the suggested folder already holds the workspace of that harness, dev opens it. Dev does not ask for a folder.
+
+When that folder does not hold the workspace of the harness, the picker asks for a folder under **Create a workspace**.
+The folder field starts with the folder that contains the harness file. Dev creates `strands-dev/` in that folder.
+For example, `~/agents/support/agent.py` gives the field `~/agents/support` and the workspace `~/agents/support/strands-dev/`.
+The rule is the same when the file is in a source folder: `~/repo/src/agent.ts` gives `~/repo/src/strands-dev/`.
+
+When that `strands-dev/` holds the workspace of a different agent, a note under the field names that agent.
+Then Enter asks you to type DELETE before dev replaces that workspace. Dev never makes a numbered folder such as `strands-dev-2/`.
+
+For the Base CLI, the suggested workspace is `~/.strands/strands-dev/`, in the folder of the CLI config.
+When that folder does not contain the Base CLI workspace, the field starts with `~/.strands`.
+This rule also applies when the Base CLI has a saved project.
+That folder holds the Base CLI workspace only when dev made it from the current project or config of the CLI.
+
+You can edit the path before you continue.
+When the path that you type ends in `strands-dev` or `strands-dev-N`, the note names that folder.
+A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
+
+When you go back from a failed setup, dev deletes the folders that the failed setup made. The other choices keep their usual folders.
+If the failed setup used a folder that was there before, dev keeps that folder. The next selection suggests the same folder.
+
+Before dev replaces a workspace, it moves the old folder to a hidden backup. Dev deletes the backup when the chat starts.
+If you go back, cancel, or quit before the chat starts, dev puts the old folder back.
+
+**Create a new harness** does not ask for a folder. Dev creates the project in `strands-workspace/` in the launch directory.
+The harness file is `strands-workspace/agent.py` or `strands-workspace/agent.ts`, and its workspace is `strands-workspace/strands-dev/`.
+When `strands-workspace/` holds the same new harness, dev opens it.
+When it holds a different harness, dev asks you to type DELETE before it replaces that project.
+A new harness is a general-purpose agent. It gets the model settings of the saved profile (`model`, `modelModule`, `effort`, and `caching`) and its `dependencies`. The description, instructions, tools, skills, MCP servers, and other options of the profile stay with the Base CLI. Dev adds its own instructions, skills, and tools only to the dev chat, at runtime.
+If the model module of the saved profile is in the other language, the new harness uses the `model` of the profile. The form shows a note.
+The form shows the project folder under the name. The name is the harness name. It does not change the folder.
+A name can have letters, digits, `.`, `_`, and `-`, and at most 64 characters. The form removes other characters and shows a note.
+
+Dev creates `strands-dev/` inside the path that you type or give to `--workspace`.
+Dev uses the path as it is when the path ends in `strands-dev` or `strands-dev-N`, or when the path is already a workspace.
+For example, `--workspace ~/my-agents` gives the workspace `~/my-agents/strands-dev/`.
+With `--workspace`, the folder field of each choice starts in that folder. Then a new harness goes into `agent/` inside the workspace.
+
+The workspace folder must be new or empty, or it must hold a workspace.
+Dev opens the workspace of the selected agent. For the workspace of another agent, dev asks you to type DELETE first.
+A workspace named `strands-dev` reopens from its parent folder or from inside it.
+To reopen a workspace with a different name, run `strands dev` inside it, or give its folder to `--workspace`.
+
+`--agent` and `--create` do not show the picker. `--agent` uses `strands-dev/` in the folder that contains the agent file, or the ZIP.
+`--create typescript` and `--create python` create `strands-workspace/` in the launch directory. `--create cli` uses `~/.strands/strands-dev/`.
+With `--workspace`, the two flags use that folder.
+
+When that folder holds the workspace of another agent, the two flags stop with an error that names the folder and the agent. They do not replace it.
+
+Initialization records the persistent agent in `.config`. It does not copy the agent.
+When `--agent` names another entrypoint of the project that the workspace binds, that entrypoint runs for one launch. `.config` does not change.
+Without a terminal, select an existing workspace, an entrypoint, or a creation option explicitly.
+`strands dev init` prepares the workspace and exits without a model request.
+
+When `.config` names an agent that is missing, dev stops with an error that names the workspace and the agent.
+To bind the workspace to another agent, run `strands dev init` in a terminal and select the agent. Dev asks you to type DELETE before it replaces the workspace.
+Without the picker, dev never replaces the workspace.
+
+New agents use the same project exporter and dependency installer as exported agents.
+A new agent from the picker is in `strands-workspace/` in the launch directory, and its workspace is inside that project.
+With `--workspace`, or for a Base CLI that has only a saved profile, the new project is in `agent/` inside the workspace.
+Selecting an existing agent records its project path without copying or regenerating its source.
+Base CLI uses the saved source project when one exists. Otherwise, the agent is the saved profile in `~/.strands/cli.toml`.
+For a profile, the agent file in `strands-dev/agent/` is only a view of the profile. Dev writes it again at each start and after each change to `cli.toml`.
+Local model modules and static imports are packaged without changing the saved profile. Credentials remain external.
+
+### Prepare and validate the selected project
+
+Discovery identifies source files without executing them. Labels show `Needs setup`, `Manual setup`, or `Check setup`; discovery does not prove that an agent runs.
+After selection, dev prepares the project automatically. There is no preparation confirmation screen.
+Selecting a project permits its declared install and build commands to run. These commands can execute project code.
+Successful preparation is cached locally. Unchanged dependencies and build inputs reuse the existing environment and outputs.
+Source changes can trigger a build without reinstalling dependencies. Missing environments, changed manifests, or changed setup files invalidate the relevant cache.
+Dev still loads the selected entrypoint on every launch, so cached setup does not hide import errors.
+
+| Project                                   | Automatic preparation                                                                                                           |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Standalone npm project                    | `npm ci` with a lockfile, otherwise `npm install` without saving or creating a lockfile. Then the declared `build` script.      |
+| Python with `requirements.txt`            | Install requirements into the project `.venv`.                                                                                  |
+| Installable Python `pyproject.toml`       | Install the local package in editable mode, including its declared dependencies. This also runs when `requirements.txt` exists. |
+| Python with `uv.lock`                     | `uv sync --locked --inexact`, using the project environment without rewriting the lockfile.                                     |
+| Other package managers or Node workspaces | Show manual setup guidance, then validate the prepared environment.                                                             |
+
+A `pyproject.toml` that contains only tool settings is not treated as an installable package.
+For packages such as `src/refund_desk`, the local package must be installed, not only `strands-harness`.
+Dev never guesses a registry package name from a missing import.
+Python 3.10 or newer is required. `PYTHON` can select the interpreter used to create a new environment.
+Installation stays in the project environment. Destination overrides cannot redirect npm or pip into global locations.
+
+After preparation, the CLI loads the entrypoint in the same runtime used by chat. Validation makes no model request.
+Dependencies and resources loaded only during a later tool call can still fail at runtime.
+
+### When setup fails
+
+The TUI stays open and shows the failed stage, relevant error, suggested next action, and private log path.
+Enter or `r` retries. `v` validates after manual setup. `d` shows details. `b` returns to selection.
+Retry re-reads the project manifests and forces setup when repair is needed. Dev does not reset source or silently rewrite lockfiles.
+Logs live under the selected project's `.strands/state/setup/`. Known credential values and authenticated URL credentials are redacted.
+
+`f` opens the Strands CLI in a new terminal tab to fix the project. The first message has the error, the project folder, and how dev loads agents.
+In a dev chat, a failed turn opens the **Agent turn failed** panel. That panel and the **Agent reload failed** panel have the same key.
+The new tab uses the built-in agent, not a saved default agent.
+
+A turn that fails because the model credentials expired opens no panel. The failed turn tells you to refresh the credentials and restart.
+
+In tmux, dev opens a new tmux window. On macOS, dev opens an iTerm2 tab, a Ghostty tab (Ghostty 1.3 or later), or a Terminal window.
+In other terminals, dev copies a command and shows it. Run that command in a new tab.
+
+If a runtime or package manager is unsupported, prepare the project with its own tooling and then validate it in dev.
+If an import is missing, check the selected root and declared dependencies. For Python src-layout projects, check package metadata and editable installation.
+
+### Workspace binding
+
+`.config` is a JSON file. It identifies the persistent project and its entrypoint. `tmp/` is a sibling directory, not part of `.config`.
+Dev writes a `.gitignore` in a new workspace. It ignores `tmp/`, `.config`, and `.strands/state/`, because they hold personal settings, permissions, chats, and run files.
+Each `.strands/state/` folder that setup makes in a project also gets a `.gitignore` that ignores the folder.
+
+A new harness from the picker has this layout:
+
+```text
+strands-workspace/
+  agent.ts
+  package.json
+  strands-dev/
+    .config
+    tmp/
+```
+
+With `--workspace`, dev puts the new project in `agent/` inside the workspace:
+
+```text
+strands-dev/
+  .config
+  agent/
+    package.json
+    agent/agent.ts
+  tmp/
+```
+
+For Python, the project contains `agent.py` and its dependency files instead.
+In `strands-workspace/`, an `agent/` folder holds the packaged model module. Dev makes this folder only when the saved profile has a local model module.
+The top-level `agent/` in a workspace exists only when dev creates a new project inside the workspace. Existing projects can be outside the workspace.
+When the workspace is inside the project, dev keeps the workspace out of `/export` and the source watcher.
+
+The Base CLI view copies only the skills that the profile configures, as `/export` does. Skills that skill discovery finds, for example in `~/.codex/skills`, stay out of the view. Unlike `/export`, dev skips a configured skill folder that does not exist.
+
+```json
+{
+  "version": 1,
+  "name": "My harness",
+  "agent": {
+    "path": "agent",
+    "entrypoint": "agent/agent.ts",
+    "language": "typescript"
+  },
+  "origin": {
+    "kind": "created"
+  }
+}
+```
+
+In `strands-workspace/strands-dev/.config`, `agent.path` is `..`.
+
+`agent.path` resolves relative to `.config`, or can be absolute. `agent.entrypoint` resolves inside that project.
+`origin.kind` is `cli`, `discovered`, or `created`. Optional source metadata records where the binding came from.
+A binding cannot point into its own `tmp/`. Dev never changes the global CLI default during creation or startup.
+
+The dev session always runs the bound persistent agent. Editing its configuration changes that agent, not a temporary copy.
+Runtime state stays separate from the agent source. The existing watcher reloads the bound project when its source changes. After a successful reload, the status shows `↻ agent.ts reloaded · session kept` (or the Python filename).
+Dev reloads the agent only when one of its source files changes. Source files are code, instruction text (`.md` and `.txt`), configuration (`.yaml`, `.yml`, `.toml`), Cedar policies, skill files, MCP configuration, and dependency manifests.
+A change to another file, for example a log, a `.json` data file, or a `.jsonl` file, does not reload the agent.
+Files in `.agent/` and `.strands/` do not reload the agent, but skill files in their `skills/` folders do.
+Reload waits for active work to finish. A failed replacement keeps the previous agent and conversation active without showing a success message.
+Legacy `.strands/config.json` agents remain in place. Startup creates a `.config` binding without moving or rewriting their source.
+For the old `strands-dev/base-cli/` layout, select Base CLI and type the folder that contains `strands-dev/`.
+Dev then creates the control files in `strands-dev/` and binds the existing agent.
+
+The dev chat keeps its sessions and memory in the `.strands/state/` folder of the workspace, apart from the stores of the agent.
+When the agent sets its own session manager, memory manager, memory stores, or storage, dev deactivates them in the dev chat.
+A notice in the chat tells you what dev deactivated. Without the session manager, dev does not save the chat.
+
+### Changes in a dev session
+
+Dev saves each change that you make in the CLI during a dev session.
+
+- `/model` and `/effort` write `model` and `effort` into the `createHarness` or `create_harness` call of the agent file. Dev uses the same code writer as `/export`.
+- For a Base CLI that is a saved profile, `/model`, `/effort`, and the Apply step of `/optimize` write the profile in `~/.strands/cli.toml`. Then dev writes the view again. Plain `strands` reads the changed profile the next time it starts.
+- The harness ignores `effort` when the agent passes a model object, for example `new BedrockModel({...})`. For a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object, `/effort` writes the reasoning fields into the object instead. These are the same fields that the harness sends for that model id at that effort, in `additionalRequestFields` or `params`. Fields for other purposes do not change.
+- `/settings`, `/permissions`, `/mcp`, and the AWS profile go into the `cli` section of `strands-dev/.config`. This section has the same shape as `cli.toml`, and dev loads it at each start.
+- For a Base CLI that is a saved profile, the **Appearance** settings (theme, transcript spacing, animations, reasoning, and tool output) go into `[settings]` of `~/.strands/cli.toml` instead, so dev and plain `strands` look the same. An open dev session takes a change at once, without a reload. Plain `strands` takes it the next time it starts. An Appearance value that the Base CLI workspace still holds from an earlier save moves to `cli.toml` the next time dev starts.
+- Dev never saves provider credentials.
+
+If the agent file sets an option in code, for example from a variable, dev does not change the file.
+The change then applies to the current chat only, and an error tells you which option to change in the code.
+
+All programmatic edits to the agent files use one lock for each agent, in `.strands/state/`.
+Each edit reads the file again while it holds the lock, and it changes only its own option.
+Thus an option change and an optimization edit do not overwrite each other, also when they come from two processes.
+
+### Experiments, evaluations, and optimization
+
+Inside a `strands dev` chat, two commands start the evaluation workflow: `/experiment` and `/optimize`.
+In each command, the agent asks one question at a time on screen. Add words after the command to skip questions, for example `/experiment refunds` or `/optimize refunds for fewer tokens`.
+
+- `/experiment` makes, runs, and reviews experiments. An experiment is a set of test cases for the agent. Its evaluators give each answer a score.
+  - The agent lists the saved experiments, **Run several experiments**, and **Create a new experiment**. For a saved experiment, you can view its last report, run it, or edit its cases.
+  - For a new experiment, the agent asks what to test. You can also say "past chats". After your approval, `strands-evals generate` makes the cases with an AWS Bedrock model. Dev saves them in `strands-dev/experiments/<name>/<name>.json`.
+  - **Run it** starts the evaluation at once, because the selection is the approval. The report gives the passed and failed cases and the reason for each failure.
+  - A run continues when you cancel the chat turn or close strands dev. Dev continues a stopped run at the next start. Cases that finished before do not run again.
+  - From a shell, `strands dev evaluate <experiment>` runs the same evaluation and prints the result.
+- `/optimize` tunes the agent against an experiment.
+  - The agent asks which experiment to use, which knobs to tune, what the run must improve, what must stay true, and the budget. Then it prints a review in the chat. Reply to change a row, or approve the review to start the run.
+  - The run continues in the background. When it finishes, its proposed edits show on screen as a diff, one edit at a time. Select **Apply this change** or **Leave it as it is**. You can also write "approve this" or "leave it" in the chat.
+  - The agent source changes only with the edits that you apply. When **Auto-accept optimization results** (`autoAcceptOptimizationResults`) is on, a run that finishes writes its edits without a review. This setting is in the **Strands dev workspace** section of `/settings`, and it is off by default. A run that you stop early still shows its edits for review.
+  - From a shell, `strands dev optimize <experiment>` runs the optimizer and prints the result. It does not change the agent source.
+- **Auto-optimize every N turns** (`autoOptimize`, in the same section) starts an optimization by itself: every 5, 10, 20, 50, or 100 chat turns, dev makes an experiment from your chats with the agent and tunes the agent on that experiment. This happens in the background and not in your chat: the agent of the workspace makes the experiment in a process of its own, which keeps no session, and dev then starts the optimizer with the defaults of the plan. You are asked nothing. One notice in the chat says that it began and then what it started, or why it started nothing, and the line below the chat input shows the work. The process writes its log to `strands-dev/tmp/.state/auto-optimize/`, and it stops when dev closes or when you turn the setting off. Work that dev closed on starts again at your next turn. Each of these runs is paid. It is off by default. The count of turns is kept when dev closes, and it starts again when you change the number. A run that is due waits while another optimization runs or its edits wait for your answer. You can also ask for it in the chat, for example “optimize every 20 turns from my history”. When the optimization finishes, its edits wait for your review as those of any run do; with **Auto-accept optimization results** on as well, they are written without a review.
+- Effort tuning works for a model id string, and for a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object. For a model object, each trial sets the reasoning fields of that level on a copy of the object. An accepted change writes those fields into the object.
+
+You can also ask in plain words, for example "show my experiments", "rerun the failures", or "optimize the refund harness".
+Dev adds only two slash commands for this workflow: `/experiment` and `/optimize`. Reading cases or past results does not start a run.
+On request, the agent stops an optimization or discards its pending edits.
+
+Evaluation runs and optimization trials start the agent in its project folder. An agent with the shell, write, or edit tool can change files there. Then the agent tells you so before you approve the run.
+
+Generation, evaluation, and optimization call models and can incur charges. Dev starts a paid run only after your approval.
+Running jobs show below the chat input in one row, one job at a time, as background tasks do.
+With an empty input, ↓ selects the first background task or job, and ←→ selects the next one.
+Enter or a click on a job asks the agent about that job. For an optimization with edits to review, the diff shows again.
+
+Dev keeps each experiment and its history in one folder:
+
+```text
+strands-dev/
+  experiments/
+    .gitignore               keeps the history out of git
+    <name>/
+      <name>.json            the experiment, which you can commit
+      <name>.report.json     the latest evaluation report
+      runs/<time>/           one evaluation run, with report.json and run.log
+      optimizations/<time>/  one optimization run, with optimizer/ and run.log
+  tmp/
+    .state/                  drafts and the evals environment of the workspace
+```
+
+The `.gitignore` in `experiments/` ignores `runs/`, `optimizations/`, `.state/`, and the latest reports. Thus git keeps only the experiment files.
+Dev keeps the 20 newest evaluation runs of each experiment. A rerun of the failed cases replaces only those cases in `<name>.report.json`.
+At startup, dev moves experiments from the old `tmp/experiments/`, `tmp/reports/`, and `tmp/optimization/` folders into this layout. It does not move an experiment while one of its runs is active.
+
+### Optimization runs
+
+`/optimize` runs the `strands-evals optimize run` command of strands-agents-evals 1.12.1.
+For each run, dev writes `.state/task.py` in the folder of the run. The `--agent` and `--rollout` flags of the command refer to this file.
+The file imports `strands_dev_evals`, a Python package that the CLI includes. Then the file calls `optimize_task` with the agent file, the experiment, and the space file.
+
+Dev uses the `--agent` route for each agent, because only that route can tune every marker. That route also examines each candidate before the candidate uses a rollout.
+
+Dev gives each setting to the command explicitly. These settings are the split, the iterations, the candidates per step, the runs per case, the parallel trials, the rollout cap, and the seed.
+Thus the setup page and the estimate show the numbers of the run. A run with 0 iterations measures only the baseline.
+Dev gives the decision settings only when they are different from the optimizer defaults. These settings are `--feasibility-threshold`, `--agent-failure-score`, and `--n-finalists`.
+A cautious pick rule needs a `FinalPick` object. Thus `task.py` defines `final_pick`, and dev gives `--final-pick` instead of `--n-finalists`.
+The estimate counts the end phase like the optimizer. Under `Pareto`, at least 5 finalists go to validation, and each front member goes to test.
+Like strands-evals, the setup warns when the split leaves 1 to 4 test cases or 1 train case.
+
+The objective row of the setup sets what the run improves, for example `Minimize(tokens)`.
+The constraints row sets what the chosen candidate must meet, for example `tokens <= 4000, Correctness >= 0.8`.
+Dev gives each goal to the command as one `--objective` spec, and each constraint as one `--constraint` spec.
+A metric name with a colon cannot go into an objective spec. Thus the setup shows the problem before the run starts.
+
+A run continues after strands dev closes. When a run stops, for example after a restart, dev continues the run at the next start with `strands-evals optimize resume <run folder>`.
+The upstream command reads the inputs of the run again from `cli.json` in the run folder. Thus `task.py` must stay in its folder.
+
+When the proposer fails, the search stops before the end phase, and the optimizer selects no candidate. Then `/optimize` shows the proposer error. Correct the cause, then start the run again.
+
+Dev cannot write some edits into the agent file, for example when the agent file reads the text from a variable. When a run finishes, its notice names each of these edits and the reason. The full text of the edit is in `best.diff` in the folder of the run.
+
+From a shell, `strands dev optimize <experiment>` runs the same command and prints the result. The flags after `--` go to `strands-evals optimize run`.
+For example, `strands dev optimize refunds -- --max-iterations 2 --constraint 'tokens<=4000'` runs 2 iterations with a token constraint. `--max-iterations 0` measures only the baseline.
+Dev sets the agent, the record folder, and the output format itself. Thus dev rejects `--agent`, `--build-task`, `--space`, `--config`, `--rollout`, `--search`, `--base-dir`, `--name`, `--json`, and `--rich`.
+
+The flags of the earlier dev command also work. Dev changes `--iterations`, `--width`, `--repetitions`, `--max-concurrency`, `--rewriter-model`, `--at-most`, and `--at-least` to the upstream flags.
+Dev also changes an `--objective` expression, such as `Minimize(tokens)`, to the upstream specs. `--tune instructions,effort` selects the settings to tune, as before.
+When the search stops on a proposer error, the command writes the error and exits with 1.
+
+**Limits:**
+
+- Dev tunes only what its space file declares: `createHarness` options as text, choices, and switches, plus the instructions and the effort. Dev does not tune model parameters at this time, for example the temperature.
+- At this time, evaluation runs and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. In strands-agents-evals 1.12.1, `optimize run` can run a TypeScript agent file, but `run` cannot. Thus dev keeps its runner for the two commands at this time.
+- Dev applies the champion itself, in the Apply step of `/optimize`. The upstream CLI only writes the champion to `best.diff` and `best.values.json`.
+
+### Evals UI
+
+strands-agents-evals 1.12.1 includes the evals UI. When a dev chat starts, dev starts `strands-evals ui` for `strands-dev/experiments/`.
+The evals UI is a local web page. It shows experiments, reports, and optimization runs.
+When the page server is ready, a notice in the chat gives the link.
+Ask the agent to open an experiment, its last report, or an optimization run. The agent uses the `strands_dev_open_evals_ui` tool.
+The notices for a saved experiment, a completed evaluation, and a completed optimization also have a link.
+
+The page server listens on `127.0.0.1` only, on a free port. Each start makes a new random token.
+The link contains the token. The server rejects each request that does not have the token.
+When dev runs on a remote computer over SSH, dev does not open a browser. Instead, dev shows an `ssh -N -L` command and the link.
+
+You can edit cases on the page, and the page saves them to the experiment file. When the file changes, dev reads it again.
+If the evals UI cannot start, the chat continues to work. A message gives the cause. Then ask the chat to try again.
+
+The experiment skill, workspace instructions, and `strands_dev_*` tools are injected only into the dev chat at runtime. They are not added to the base harness, saved profile, or exported agent source. Exports preserve authored files; they do not remove dev instructions that someone explicitly writes into those files.
+
+**Evals dependency:** the evaluation workflow installs `strands-agents-evals[optimization]==1.12.1` from PyPI in a separate Python environment on first use.
+Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. Python 3.10 or later, access to your package index, and model credentials for the run are necessary.
+
+Dev installs strands-agents-evals one time for each release and Python version, in `~/.strands/evals/`. All workspaces share that environment.
+Dev deletes an environment that no workspace used for 7 days. The install uses the package index settings of your pip configuration.
+The `session-converter` skill comes from the installed package. Dev loads the `strands-evals` and `optimize` skills from the `v1.12.1` tag of strands-agents/evals.
+
+The checkout command `strands-dev` is separate: use `strands-dev dev` to run this workflow from a source checkout.
+
 ## Using it
 
 Run from the repository root with:
@@ -166,7 +509,7 @@ Run `strands --help` for the parser's current list.
 | `--prompt <text>`             | All             | Initial request; equivalent to the positional request                                                                                   |
 | `--acp-server`                | ACP server      | Serve the agent over ACP; cannot be combined with a request, `--print`, or `--setup`                                                    |
 | `--setup`                     | Ink             | Open the provider and default-agent setup wizard                                                                                        |
-| `--agent <path>`              | All             | Load an agent ZIP, project folder, or `agent.ts`/`agent.py`                                                                             |
+| `--agent <path>`              | All             | Load an agent ZIP, project folder, or `agent.ts`/`agent.py`, or `""` for the built-in agent                                             |
 | `--env-file <path>`           | All             | Load an explicitly trusted env file; repeat for several files, later files win                                                          |
 | `--set <field=value>`         | Harness backend | Override any portable config field; repeatable and JSON-aware                                                                           |
 | `--name <name>`               | Harness backend | Override the agent name for this invocation                                                                                             |
@@ -475,6 +818,9 @@ Tool names and descriptions come from the active backend; unreported tools or or
 marked as unknown rather than inferred from defaults. Command support follows the connection's
 capabilities, including Python and ACP backends.
 
+In a dev chat, press Ctrl+Y to copy the full text of an error message. This works in the chat error panel
+and on the dev setup screen.
+
 An available Agent Skill can also be invoked directly with `/skill-name [prompt]` or
 `$skill-name [prompt]`. The CLI activates it through the SDK's `skills` tool, then runs the trailing
 prompt with that skill's instructions active.
@@ -560,6 +906,10 @@ and startup with a saved session ID restore the saved system prompt along with t
 replacing the current prompt.
 Session files are trusted input: resume only sessions you created, not ones that came with a cloned repository.
 
+When a turn fails, the conversation stays as it was before the turn. The chat shows a command that resumes the session after a restart.
+In a dev chat, when the model provider reports expired credentials, refresh the credentials. Then restart the CLI, because the CLI process can keep the expired credentials.
+A dev chat keeps each failed message, and a resumed dev chat shows it again. Thus you can send it again.
+
 Sessions use the Harness default, `./.agent/sessions`. Set `session.dir` to keep them somewhere else;
 authored agents (`--agent`) keep their own session configuration. Relative paths resolve against
 the profile's base directory, or the current workspace when no base directory is set.
@@ -637,6 +987,22 @@ projects).
 
 Turn it off with `STRANDS_CLI_TELEMETRY=off` (or `DO_NOT_TRACK=1`), the **Usage ping** toggle in `/settings`
 (takes effect at the next launch), or `telemetry = false` under `[settings]` in `~/.strands/cli.toml`.
+
+`strands dev` does not send the launch ping. It sends one ping for each step of the dev workflow to
+`https://telemetry.strandsagents.com/strands-dev/ping`, with the same off switches. The whole payload is:
+
+```json
+{
+  "v": 1,
+  "event": "step/1",
+  "context": { "cli_version": "0.1.0", "harness": "python" },
+  "data": { "step": "optimize_run_started" }
+}
+```
+
+`harness` is `base-cli`, `typescript`, or `python`. `step` is one of `dev_launch`, `ask_shown`, `ask_answered`,
+`ask_cancelled`, `optimize_run_started`, `optimize_run_finished`, `optimize_edits_applied`, `evals_ui_opened`,
+`experiment_created`, and `evaluation_started`. The ping has no names, paths, prompts, scores, or identifiers.
 
 ## Beyond the CLI
 
