@@ -2,7 +2,14 @@ import * as acp from '@agentclientprotocol/sdk'
 import type { Agent, ContentBlockData, DocumentFormat, ImageFormat } from '@strands-agents/sdk'
 
 import { projectMediaContent, projectToolResultContent } from '../agent/events.js'
-import type { ChatEvent, ChatMediaContent, ChatTask, ChatToolResultContent, TokenUsage } from '../agent/types.js'
+import type {
+  ChatEvent,
+  ChatMediaContent,
+  ChatRunResult,
+  ChatTask,
+  ChatToolResultContent,
+  TokenUsage,
+} from '../agent/types.js'
 
 const IMAGE_FORMATS = ['png', 'jpg', 'jpeg', 'gif', 'webp'] satisfies readonly ImageFormat[]
 const DOCUMENT_FORMATS = [
@@ -290,6 +297,26 @@ export function toAcpStopReason(reason: string): acp.StopReason {
       return 'refusal'
     default:
       return 'end_turn'
+  }
+}
+
+export async function finishAcpPrompt(
+  client: acp.AgentContext,
+  sessionId: string,
+  result: Pick<ChatRunResult, 'stopReason' | 'usage' | 'context'>
+): Promise<acp.PromptResponse> {
+  const used = result.context?.projectedTokens ?? result.context?.currentTokens
+  if (used !== undefined && result.context?.contextWindow !== undefined) {
+    await sendSessionUpdate(client, sessionId, {
+      sessionUpdate: 'usage_update',
+      used,
+      size: result.context.contextWindow,
+    })
+  }
+  const usage = result.usage ? toAcpUsage(result.usage) : undefined
+  return {
+    stopReason: toAcpStopReason(result.stopReason),
+    ...(usage ? { usage } : {}),
   }
 }
 

@@ -446,6 +446,56 @@ def build(**overrides):`
     60_000
   )
 
+  // https://github.com/strands-agents/harness-sdk/issues/6224
+  it.each(['uninterrupted', 'allow', 'deny'])('reports per-turn usage with %s tool calls', async (permission) => {
+    const backend = await open(
+      baseSource.replace(
+        'agent = build()',
+        `
+from strands.hooks import BeforeToolCallEvent
+
+class UsageModel(SourceReloadModel):
+    async def stream(self, *args, **kwargs):
+        async for event in super().stream(*args, **kwargs):
+            if "metadata" in event:
+                event["metadata"]["usage"] = {
+                    "inputTokens": 7, "outputTokens": 3, "totalTokens": 10,
+                    "cacheReadInputTokens": 2, "cacheWriteInputTokens": 1,
+                }
+            yield event
+
+agent = build(model=UsageModel())
+
+def approve(event):
+    if not event.interrupt("approval", "Allow this tool?"):
+        event.cancel_tool = "Tool denied"
+
+${permission === 'uninterrupted' ? '' : 'agent.hooks.add_callback(BeforeToolCallEvent, approve)'}
+`
+      )
+    )
+    let approvals = 0
+    for (let turnIndex = 0; turnIndex < 2; turnIndex++) {
+      const stream = backend.stream(JSON.stringify({ tool: 'status' }))
+      let next = await stream.next()
+      while (!next.done) {
+        if (next.value.type === 'permission') {
+          approvals++
+          backend.respondPermission(next.value.request.id, permission)
+        }
+        next = await stream.next()
+      }
+      expect(next.value.usage).toEqual({
+        inputTokens: 14,
+        outputTokens: 6,
+        totalTokens: 20,
+        cacheReadInputTokens: 4,
+        cacheWriteInputTokens: 2,
+      })
+    }
+    expect(approvals).toBe(permission === 'uninterrupted' ? 0 : 2)
+  })
+
   it('reports the effective context composition for imported Python agents', async () => {
     const backend = await open(
       baseSource.replace(

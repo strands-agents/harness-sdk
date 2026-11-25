@@ -734,6 +734,7 @@ class Runtime:
         self.context_estimates = None
         self.context_usage = None
         snapshot = self.agent.take_snapshot(preset="session")
+        usage_before = dict(self.agent.event_loop_metrics.accumulated_usage)
         emitted_tool_results = set()
         try:
             while True:
@@ -796,7 +797,10 @@ class Runtime:
                             "usage": {
                                 "cacheReadInputTokens": 0,
                                 "cacheWriteInputTokens": 0,
-                                **result.metrics.accumulated_usage,
+                                **{
+                                    key: value - usage_before.get(key, 0)
+                                    for key, value in result.metrics.accumulated_usage.items()
+                                },
                             },
                         },
                         reload=self.reload_requested and not self.cancel_signal.is_set(),
