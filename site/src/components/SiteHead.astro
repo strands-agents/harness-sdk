@@ -1,6 +1,7 @@
 ---
 import Analytics from './Analytics.astro'
 import SiteScripts from './SiteScripts.astro'
+import SocialMeta from './SocialMeta.astro'
 import { pathWithBase } from '../util/links'
 import { baseSchemas, serializeJsonLd } from '../util/structured-data'
 import type { JsonLdNode } from '../util/structured-data'
@@ -47,18 +48,14 @@ const jsonLd = {
 <link rel="alternate" type="text/markdown" href={markdownHref} />
 {serviceDescriptionHref && <link rel="service-desc" type="application/json" href={serviceDescriptionHref} />}
 <link rel="icon" type="image/svg+xml" href={faviconHref} />
-<meta property="og:type" content="website" />
-<meta property="og:url" content={canonicalHref} />
-<meta property="og:title" content={title} />
-<meta property="og:description" content={description} />
-<meta property="og:image" content={ogImageHref} />
-<meta property="og:image:width" content="1200" />
-<meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content={ogImageAlt} />
-<meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content={title} />
-<meta name="twitter:description" content={description} />
-<meta name="twitter:image" content={ogImageHref} />
+<SocialMeta
+  {title}
+  {description}
+  {canonicalHref}
+  imageHref={ogImageHref}
+  imageType="image/png"
+  imageAlt={ogImageAlt}
+/>
 {Astro.site?.origin !== 'https://strandsagents.com' && <meta name="robots" content="noindex, nofollow" />}
 <script type="application/ld+json" set:html={serializeJsonLd(jsonLd)} />
 <script is:inline>
