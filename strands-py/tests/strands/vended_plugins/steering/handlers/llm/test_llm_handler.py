@@ -1,10 +1,12 @@
 """Unit tests for LLM steering handler."""
 
+import json
 from unittest.mock import Mock, patch
 
 import pytest
 
 from strands.agent.invocation_context import _create_invocation_context, _reached_limit
+from strands.models import BedrockModel, CacheConfig
 from strands.vended_plugins.steering.core.action import Guide, Interrupt, Proceed
 from strands.vended_plugins.steering.handlers.llm.llm_handler import LLMSteeringHandler, _LLMSteering
 from strands.vended_plugins.steering.handlers.llm.mappers import DefaultPromptMapper
@@ -186,6 +188,56 @@ async def test_steer_uses_agent_aux_model_when_no_custom_model(mock_agent_class)
     await handler.steer_before_tool(agent=agent, tool_use=tool_use)
 
     mock_agent_class.assert_called_once_with(system_prompt=system_prompt, model=agent.aux_model, callback_handler=None)
+
+
+def _proceed_reply(request):
+    """A Converse stream that answers through the request's structured output tool."""
+    name = request["toolConfig"]["tools"][0]["toolSpec"]["name"]
+    return {
+        "stream": [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "s1", "name": name}}}},
+            {
+                "contentBlockDelta": {
+                    "delta": {"toolUse": {"input": json.dumps({"decision": "proceed", "reason": "ok"})}}
+                }
+            },
+            {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "tool_use"}},
+            {
+                "metadata": {
+                    "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+                    "metrics": {"latencyMs": 1},
+                }
+            },
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    ("model_id", "cache_config", "exp_blocks"),
+    [
+        ("us.anthropic.claude-sonnet-4-5-20250929-v1:0", CacheConfig(strategy="auto"), ["text", "cachePoint", "text"]),
+        ("us.anthropic.claude-sonnet-4-5-20250929-v1:0", None, ["text", "text"]),
+        ("mistral.ministral-3-3b-instruct", CacheConfig(strategy="auto"), ["text", "text"]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_steer_before_tool_caches_only_the_instructions(model_id, cache_config, exp_blocks):
+    # guards against caching the per-call ledger with the instructions (#6356), and against a cache point
+    # reaching a model that takes none (#6342)
+    requests = []
+    model = BedrockModel(model_id=model_id, region_name="us-west-2", cache_config=cache_config)
+    model.client.converse_stream = lambda **request: requests.append(request) or _proceed_reply(request)
+    handler = LLMSteeringHandler("Test prompt", model=model)
+
+    for query in ("a", "b"):
+        await handler.steer_before_tool(agent=Mock(), tool_use={"name": "search", "input": {"q": query}})
+
+    first, second = (request["messages"][0]["content"] for request in requests)
+    tru_blocks = [next(iter(block)) for block in first]
+    assert tru_blocks == exp_blocks
+    assert second[0] == first[0]
 
 
 def test_llm_steering_model():
