@@ -793,6 +793,28 @@ describe('A2AExecutor context isolation', () => {
         expect(resumed.status).toStrictEqual({ state: 'completed' })
         expect(resumedWith).toStrictEqual([{ approved: true }])
       })
+
+      it('keeps the task history when an answer resumes it', async () => {
+        const taskStore = new InMemoryTaskStore()
+        const handler = new DefaultRequestHandler(
+          card,
+          taskStore,
+          new A2AExecutor({ agentFactory: () => campaignAgent() })
+        )
+        const parked = await park(handler)
+
+        await handler.sendMessage({
+          message: userMessage('msg-2', [answer(advertisedId(parked), { approved: true })], parked.id),
+        })
+
+        const stored = await taskStore.load(parked.id)
+        expect(stored?.status).toStrictEqual({ state: 'completed' })
+        expect(stored?.history?.map((message) => message.messageId)).toStrictEqual([
+          'msg-1',
+          parked.status.message?.messageId,
+          'msg-2',
+        ])
+      })
     })
   })
 })

@@ -306,17 +306,8 @@ export class A2AExecutor implements AgentExecutor {
     const artifactId = globalThis.crypto.randomUUID()
     let isFirstChunk = true
 
-    // Checked before the agent runs, so a refused answer leaves the interrupt parked and retryable.
-    if (isInterruptResume(prompt)) {
-      this._validateInterruptResume(agent, prompt)
-    } else if (interruptStateOf(agent)?.activated === true) {
-      throw A2AError.invalidParams('Task is awaiting an interrupt response and cannot accept a new message')
-    }
-
-    // Registered only once the request is known to be servable. Registering earlier would move a
-    // task parked in `input-required` to `working` before a refused answer threw, leaving the client
-    // unable to see that the task is still waiting on them.
-    eventBus.publish({ kind: 'task', id: taskId, contextId, status: { state: 'working' } })
+    this._validatePrompt(agent, prompt)
+    this._publishWorking(context, eventBus)
 
     try {
       const stream = agent.stream(prompt, {
@@ -372,6 +363,24 @@ export class A2AExecutor implements AgentExecutor {
   }
 
   /**
+   * Refuses a prompt the agent cannot take, before anything is published for the request.
+   *
+   * @param agent - The agent serving this context
+   * @param prompt - The content or interrupt responses the agent would be invoked with
+   * @throws A2AError when interrupt responses do not bind to a parked interrupt, or when new content
+   *   arrives while an interrupt is parked
+   */
+  private _validatePrompt(agent: InvokableAgent, prompt: AgentPrompt): void {
+    if (isInterruptResume(prompt)) {
+      this._validateInterruptResume(agent, prompt)
+      return
+    }
+    if (interruptStateOf(agent)?.activated === true) {
+      throw A2AError.invalidParams('Task is awaiting an interrupt response and cannot accept a new message')
+    }
+  }
+
+  /**
    * Verifies interrupt responses bind to interrupts actually parked on this context's agent.
    *
    * @param agent - The agent serving this context, with its interrupt state already restored
@@ -392,6 +401,26 @@ export class A2AExecutor implements AgentExecutor {
     if (unknownIds.length > 0) {
       throw A2AError.invalidParams(`No pending interrupt matches id(s): ${unknownIds.join(', ')}`)
     }
+  }
+
+  /**
+   * Moves the task to `working` once the request is known to be servable.
+   *
+   * The request handler stores a `task` event as the whole task, so a task that already exists moves
+   * by a status update instead, which keeps its history and artifacts.
+   *
+   * @param context - The A2A request context, holding the stored task when the message continues one
+   * @param eventBus - The event bus for publishing status events
+   */
+  private _publishWorking(context: RequestContext, eventBus: ExecutionEventBus): void {
+    const { taskId, contextId, task } = context
+    if (task !== undefined) {
+      eventBus.publish({ kind: 'status-update', taskId, contextId, status: { state: 'working' }, final: false })
+      return
+    }
+
+    // Register the task with the ResultManager; without this, later events are ignored as "unknown task".
+    eventBus.publish({ kind: 'task', id: taskId, contextId, status: { state: 'working' } })
   }
 
   /**
