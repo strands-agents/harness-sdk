@@ -194,7 +194,6 @@ const optimizationFiles = (workspace: DevWorkspace, stamp = '20261111-150405') =
 const chat = () => {
   const notices: { status: ChatNotice['status']; text: string }[] = []
   const context: DevChatCommandContext = {
-    signal: new AbortController().signal,
     report: (status, text) => {
       const notice = { status, text }
       notices.push(notice)
@@ -205,8 +204,6 @@ const chat = () => {
         },
       }
     },
-    fail: vi.fn(),
-    submit: vi.fn(),
     openPanel: vi.fn(() => true),
   }
   return { context, notices }
@@ -2016,8 +2013,7 @@ describe('dev sessions', () => {
       expect(before).toBe(0)
       expect(order).toEqual(['agent', 'optimizer'])
       expect(recordOf(optimizer.mock.calls[0]![0].args)).toContain(join('experiments', 'history-20261123-1502'))
-      // The chat is sent no request and asked nothing: it is told of the work in one notice, and of the run's end.
-      expect(context.submit).not.toHaveBeenCalled()
+      // The chat is told of the work in one notice, and of the run's end.
       expect(notices.map(({ text }) => text).filter((text) => text.startsWith('auto-optimize'))).toEqual([
         'auto-optimize · made history-20261123-1502 from your chats (4 cases) · optimizing on it in the background',
       ])

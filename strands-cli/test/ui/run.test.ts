@@ -544,7 +544,7 @@ describe('runInkChat', () => {
         expect(replacement?.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'optimize' })
       )
       expect(replacement?.getSnapshot().runtime.reloadStatus).toBe('↻ agent.ts reloaded · session kept')
-      expect(open.mock.calls.map(([, options]) => options)).toEqual([undefined, { restore: true }])
+      expect(open).toHaveBeenCalledTimes(2)
     } finally {
       await stop()
     }

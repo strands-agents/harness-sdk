@@ -78,13 +78,10 @@ const controlledGenerator = () => {
 const chat = () => {
   const notices: { status: ChatNotice['status']; text: string }[] = []
   const context: DevChatCommandContext = {
-    signal: new AbortController().signal,
     report: (status, text) => {
       notices.push({ status, text })
       return { update: vi.fn() }
     },
-    fail: vi.fn(),
-    submit: vi.fn(),
     openPanel: vi.fn(() => true),
   }
   return { context, notices }

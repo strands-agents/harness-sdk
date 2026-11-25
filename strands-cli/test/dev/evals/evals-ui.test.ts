@@ -56,13 +56,10 @@ const harness = async (dependencies: Partial<EvalsUiDependencies> = {}): Promise
     workspace,
     agent: () => ({}),
     context: {
-      signal: new AbortController().signal,
       report: (status, text) => {
         notices.push({ status, text })
         return { dismiss: () => undefined } as never
       },
-      fail: () => undefined,
-      submit: () => undefined,
       openPanel: () => true,
     },
   }

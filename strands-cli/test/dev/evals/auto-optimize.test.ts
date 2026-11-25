@@ -34,19 +34,15 @@ const MADE: AutoOptimizeOutcome = { experiment: 'history-20261123-1502', cases: 
 /** A chat as the dev sessions see it: what it was told, and nothing else it could be asked to do. */
 const chat = () => {
   const notices: { status: string; text: string }[] = []
-  const submit = vi.fn()
   const context: DevChatCommandContext = {
-    signal: new AbortController().signal,
     report: (status, text) => {
       const notice = { status, text }
       notices.push(notice)
       return { update: (next, changed): void => void Object.assign(notice, { status: next, text: changed }) }
     },
-    fail: vi.fn(),
-    submit,
     openPanel: vi.fn(() => true),
   }
-  return { context, notices, submit }
+  return { context, notices }
 }
 
 /**
@@ -98,7 +94,7 @@ describe('auto-optimize every N turns', () => {
     expect(run).toHaveBeenCalledOnce()
   })
 
-  it('shouldSendNothingToTheChatAndTellItOnlyOneNoticeThatItUpdates', async () => {
+  it('shouldTellTheChatOnlyOneNoticeThatItUpdates', async () => {
     const { auto, state, works, turns } = await counting(5)
 
     await turns(...FIVE)
@@ -106,8 +102,6 @@ describe('auto-optimize every N turns', () => {
     works[0]!.end()
     await auto.settled()
 
-    // The developer's conversation is asked nothing and holds none of the work: no request, no turn, no question.
-    expect(state.chat.submit).not.toHaveBeenCalled()
     expect(whileItWorks).toEqual([
       {
         status: 'running',

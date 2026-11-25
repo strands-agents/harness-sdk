@@ -685,7 +685,7 @@ export const WizardRequestPanel = ({
   close,
   active = true,
   blur,
-}: Omit<DevChatPanelProps, 'openCommand'> & { broker: WizardBroker }): ReactElement => {
+}: DevChatPanelProps & { broker: WizardBroker }): ReactElement => {
   const [request, setRequest] = useState(() => broker.pending())
   useEffect(() => broker.subscribe(setRequest), [broker])
   useEffect(() => {

@@ -28,10 +28,7 @@ const fixture = async (): Promise<{ workspace: DevWorkspace; project: ImportedAg
 }
 
 const context: DevChatCommandContext = {
-  signal: new AbortController().signal,
   report: () => ({ update: vi.fn() }),
-  fail: vi.fn(),
-  submit: vi.fn(),
   openPanel: vi.fn(() => true),
 }
 

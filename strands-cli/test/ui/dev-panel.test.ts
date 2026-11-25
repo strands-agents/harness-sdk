@@ -42,15 +42,19 @@ const experimentWithJobs = () => {
   const { command } = probe()
   const jobs = jobStore()
   const open = vi.fn(command.open)
+  // False: the command did not show the job itself, so its panel opens.
+  const openJob = vi.fn<NonNullable<DevChatCommand['openJob']>>(() => false)
   return {
     command: {
       ...command,
       spec: { name: 'experiment', usage: '/experiment', description: 'Experiments' },
       open,
+      openJob,
       jobs,
     } satisfies DevChatCommand,
     jobs,
     open,
+    openJob,
   }
 }
 
@@ -73,7 +77,7 @@ const backgroundTasks = (...labels: string[]) =>
   })
 
 const optimizeWithJobs = () => {
-  const { command, jobs } = experimentWithJobs()
+  const { command, jobs, openJob } = experimentWithJobs()
   return {
     command: {
       ...command,
@@ -81,6 +85,7 @@ const optimizeWithJobs = () => {
       backgroundTools: [OPTIMIZE_TOOL],
     } satisfies DevChatCommand,
     jobs,
+    openJob,
   }
 }
 
@@ -198,7 +203,7 @@ describe('dev jobs row', () => {
     ['no panel', undefined],
     ['another panel', '/help'],
   ])('shouldOpenTheShownJobWhenTheUserClicksTheRowOver%s', async (_case, before) => {
-    const { command, jobs, open } = experimentWithJobs()
+    const { command, jobs, openJob } = experimentWithJobs()
     const { controller, instance, click, screen } = await mount(command)
     jobs.set([{ id: 'a', label: 'refunds', done: 3, total: 20 }])
     if (before) await controller.submit(before)
@@ -208,7 +213,7 @@ describe('dev jobs row', () => {
 
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/experiment' }))
     await vi.waitFor(() => expect(screen()).toContain('probe panel'))
-    expect(open).toHaveBeenLastCalledWith(expect.anything(), { job: 'a' })
+    expect(openJob).toHaveBeenLastCalledWith(expect.anything(), 'a')
   })
 
   it.each([
@@ -233,7 +238,7 @@ describe('dev jobs row', () => {
   })
 
   it('shouldOpenTheChosenJobWhenTheUserPressesDownThenRightThenEnter', async () => {
-    const { command, jobs, open } = experimentWithJobs()
+    const { command, jobs, openJob } = experimentWithJobs()
     const { controller, instance, press, row } = await mount(command)
     jobs.set(TWO_JOBS)
     await instance.waitUntilRenderFlush()
@@ -245,7 +250,7 @@ describe('dev jobs row', () => {
     await press('\r')
 
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/experiment' }))
-    expect(open).toHaveBeenLastCalledWith(expect.anything(), { job: 'b' })
+    expect(openJob).toHaveBeenLastCalledWith(expect.anything(), 'b')
   })
 
   it('shouldGiveTheKeysBackToThePromptWhenTheUserPressesEscapeOnTheRow', async () => {
@@ -265,7 +270,7 @@ describe('dev jobs row', () => {
   })
 
   it('shouldMoveFromTheBackgroundTaskToTheJobWhenTheUserPressesRight', async () => {
-    const { command, jobs, open } = experimentWithJobs()
+    const { command, jobs, openJob } = experimentWithJobs()
     const { controller, press, row } = await mount(command, 40, backgroundTasks('Reviewer'))
     jobs.set([{ id: 'a', label: 'refunds', done: 3, total: 20 }])
     await vi.waitFor(() => expect(row('Background · ● Reviewer')).toBeGreaterThan(0))
@@ -277,7 +282,7 @@ describe('dev jobs row', () => {
     await press('\r')
 
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/experiment' }))
-    expect(open).toHaveBeenLastCalledWith(expect.anything(), { job: 'a' })
+    expect(openJob).toHaveBeenLastCalledWith(expect.anything(), 'a')
   })
 
   it('shouldNotListTheBackgroundRunOfAToolWhoseCommandShowsItsProgress', async () => {
@@ -315,9 +320,8 @@ describe('dev jobs row', () => {
   })
 
   it('shouldOpenTheJobAndNotAHiddenBackgroundTaskWhenTheUserPressesDownThenEnter', async () => {
-    const { command, jobs } = optimizeWithJobs()
-    const open = vi.fn(command.open)
-    const { controller, press, row } = await mount({ ...command, open }, 40, backgroundTasks(OPTIMIZE_TOOL))
+    const { command, jobs, openJob } = optimizeWithJobs()
+    const { controller, press, row } = await mount(command, 40, backgroundTasks(OPTIMIZE_TOOL))
     jobs.set([{ id: 'run-1', label: 'combined-all', done: 1, total: 17 }])
     await vi.waitFor(() => expect(row('/optimize · ● combined-all 1/17')).toBeGreaterThan(0))
 
@@ -326,7 +330,7 @@ describe('dev jobs row', () => {
     await press('\r')
 
     await vi.waitFor(() => expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/optimize' }))
-    expect(open).toHaveBeenLastCalledWith(expect.anything(), { job: 'run-1' })
+    expect(openJob).toHaveBeenLastCalledWith(expect.anything(), 'run-1')
   })
 
   it.each([40, 24])('shouldFitTheScreenWithTheRowAndAnOpenPanelAt%iRows', async (rows) => {

@@ -189,7 +189,6 @@ export class ChatController implements ChatControllerApi {
   private readonly _requestSetup: ChatControllerOptions['requestSetup']
   private readonly _workspaceAction: ChatControllerOptions['workspaceAction']
   private readonly _devCommands: readonly DevChatCommand[]
-  private readonly _devCommandAbort = new AbortController()
   private _fileOpener: ((path: string) => Promise<void>) | undefined
   private _stopWatchingDevJobs: readonly (() => void)[] = []
   private readonly _awsProfile: ChatControllerOptions['awsProfile']
@@ -1025,7 +1024,6 @@ export class ChatController implements ChatControllerApi {
     }
     this._closed = true
     this._sessionNaming?.abort()
-    this._devCommandAbort.abort()
     this._stopDevJobs()
     this._stopWatchingUsage()
     this._backgroundContinuationPending = false
@@ -1046,7 +1044,6 @@ export class ChatController implements ChatControllerApi {
   async dispose(): Promise<void> {
     this._closed = true
     this._sessionNaming?.abort()
-    this._devCommandAbort.abort()
     this._stopDevJobs()
     this._stopWatchingUsage()
     if (this._execution) {
@@ -3111,7 +3108,7 @@ export class ChatController implements ChatControllerApi {
       void this.submit(`/${devCommand.spec.name}${request ? ` ${request}` : ''}`)
       return true
     }
-    this._openDevPanel(devCommand, opening)
+    this._openDevPanel(devCommand)
     return true
   }
 
@@ -3121,24 +3118,22 @@ export class ChatController implements ChatControllerApi {
     if (!devCommand?.open || this._closed) return false
     const waiting = this._panelStack.at(-1)
     if (this._panel?.kind !== 'permission') this._openDevPanel(devCommand)
-    else if (waiting?.kind !== 'dev' || waiting.command !== devCommand.spec.name)
-      this._openDevPanel(devCommand, undefined, true)
+    else if (waiting?.kind !== 'dev' || waiting.command !== devCommand.spec.name) this._openDevPanel(devCommand, true)
     return true
   }
 
-  private _openDevPanel(devCommand: DevChatCommand, opening?: DevPanelOpening, underPermission = false): void {
+  private _openDevPanel(devCommand: DevChatCommand, underPermission = false): void {
     if (!devCommand.open) return
-    if (this._panel?.kind === 'dev' && this._panel.command === devCommand.spec.name && !opening?.job) return
+    if (this._panel?.kind === 'dev' && this._panel.command === devCommand.spec.name) return
     const panel: NewChatPanel = {
       kind: 'dev',
       command: devCommand.spec.name,
       title: `/${devCommand.spec.name}`,
       rows: [],
-      view: devCommand.open(this._devCommandContext(), opening),
+      view: devCommand.open(this._devCommandContext()),
       close: () => {
         if (this._panel?.id === opened.id) this._dismissPanel(false)
       },
-      openCommand: (name) => this.openDevCommand(name),
       ...(devCommand.sticky ? { sticky: true } : {}),
       ...(devCommand.dock ? { dock: (): boolean => devCommand.dock!() } : {}),
       ...(devCommand.dropPending ? { dropPending: (): boolean => devCommand.dropPending!() } : {}),
@@ -3185,7 +3180,6 @@ export class ChatController implements ChatControllerApi {
 
   private _devCommandContext(): DevChatCommandContext {
     return {
-      signal: this._devCommandAbort.signal,
       report: (status, text): DevChatNotice => {
         let notice = this._addNotice(status, text)
         this._emit()
@@ -3197,10 +3191,6 @@ export class ChatController implements ChatControllerApi {
             this._emit()
           },
         }
-      },
-      fail: (title, detail): void => this._openError(title, '', detail),
-      submit: (prompt): void => {
-        void this.submit(prompt)
       },
       openPanel: (name): boolean => this._openToolPanel(name),
       openFile: async (path): Promise<void> => {

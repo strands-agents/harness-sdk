@@ -4142,16 +4142,6 @@ describe('dev chat commands', () => {
     expect(JSON.stringify(controller.getSnapshot().panel)).toContain('The skill did not load.')
   })
 
-  it('shouldRunThePromptAsAUserTurnWhenTheDevCommandSubmitsIt', async () => {
-    const { command, context } = capture()
-    const { controller, prompts } = chat([command])
-    await controller.submit('/optimize')
-
-    context().submit('Help me create an experiment')
-
-    await vi.waitFor(() => expect(prompts).toEqual(['Help me create an experiment']))
-  })
-
   it('shouldUpdateTheSameNoticeWhenTheDevCommandReportsProgress', async () => {
     const { command, context } = capture()
     const controller = new ChatController(idleBackend(), { devCommands: [command] })
@@ -4203,16 +4193,6 @@ describe('dev chat commands', () => {
     expect(attach).toHaveBeenCalledTimes(1)
     expect(controller.getSnapshot().notices).toContainEqual(expect.objectContaining({ text: 'Resumed view' }))
   })
-
-  it('shouldAbortTheDevCommandSignalWhenTheControllerCloses', async () => {
-    const { command, context } = capture()
-    const controller = new ChatController(idleBackend(), { devCommands: [command] })
-    await controller.submit('/optimize')
-
-    controller.close()
-
-    expect(context().signal.aborted).toBe(true)
-  })
 })
 
 // A backend whose turns each wait until the test releases them.
@@ -4242,17 +4222,6 @@ describe('dev command jobs and panels', () => {
 
     expect(result).toBe(opened)
     expect(controller.getSnapshot().panel?.kind).toBe(kind)
-  })
-
-  it('shouldOpenAnotherDevPanelWhenAPanelAsksForIt', async () => {
-    const controller = new ChatController(idleBackend(), { devCommands: [named('test'), named('experiment')] })
-    await controller.submit('/test')
-    const panel = controller.getSnapshot().panel
-
-    const opened = panel?.kind === 'dev' ? panel.openCommand('experiment') : false
-
-    expect(opened).toBe(true)
-    expect(controller.getSnapshot().panel?.title).toBe('/experiment')
   })
 
   it('shouldListOnlyTheCommandsWithRunningJobsWhenJobsChange', () => {
@@ -4477,30 +4446,6 @@ describe('what a dev command hears and can change', () => {
       ['first message', 'complete'],
       ['second message', 'complete'],
     ])
-  })
-
-  it('shouldLetACommandSendARequestWhenATurnEndsWhichThenRunsAsATurn', async () => {
-    const sent: unknown[] = []
-    const command: DevChatCommand = {
-      ...devCommand(),
-      turnEnded: (context, { prompt }) => {
-        if (prompt === 'the turn that makes it due') context.submit('sent by the command')
-      },
-    }
-    const controller = new ChatController(
-      idleBackend({
-        async *stream(prompt) {
-          sent.push(prompt)
-          yield { type: 'textDelta', text: 'done' } as const
-          return { stopReason: 'endTurn' }
-        },
-      }),
-      { devCommands: [command] }
-    )
-
-    await controller.submit('the turn that makes it due')
-
-    await vi.waitFor(() => expect(sent).toEqual(['the turn that makes it due', 'sent by the command']))
   })
 
   it('shouldLetACommandChangeASettingAsTheSettingsPanelDoes', async () => {

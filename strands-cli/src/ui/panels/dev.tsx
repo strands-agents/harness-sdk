@@ -87,7 +87,7 @@ export const DevPanelFrame = ({
   clicks?: DevPanelClicks
 }): ReactElement => {
   const { border } = useTheme()
-  const { view: View, close, openCommand } = panel
+  const { view: View, close } = panel
   return (
     <Box
       {...(onElement ? { ref: onElement } : {})}
@@ -105,7 +105,6 @@ export const DevPanelFrame = ({
           width={Math.max(1, width - DEV_PANEL_FRAME_COLUMNS)}
           height={Math.max(1, height - FRAME_ROWS)}
           close={close}
-          openCommand={openCommand}
           active={active}
           {...(blur ? { blur } : {})}
         />

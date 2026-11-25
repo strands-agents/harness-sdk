@@ -73,10 +73,7 @@ export interface FailedTurnRecord {
 }
 
 export interface DevChatCommandContext {
-  readonly signal: AbortSignal
   report(status: ChatNotice['status'], text: string): DevChatNotice
-  fail(title: string, detail: string): void
-  submit(prompt: string): void
   /** Opens another dev command's panel, so a tool can put a question on screen. */
   openPanel(name: string): boolean
   /** Opens a file in the developer's editor, as /config opens the agent project. */
@@ -95,7 +92,6 @@ export interface DevChatPanelProps {
   readonly width: number
   readonly height: number
   readonly close: () => void
-  readonly openCommand: (name: string) => boolean
   /** False while the chat input holds the keyboard, so a sticky panel stays visible but idle. */
   readonly active?: boolean
   /** Hands the keyboard to the chat input without closing this panel. */
@@ -147,7 +143,7 @@ export interface DevChatSkillRun {
 
 export interface DevChatCommand {
   spec: LocalCommandSpec
-  open?(context: DevChatCommandContext, opening?: DevPanelOpening): DevChatPanelView
+  open?(context: DevChatCommandContext): DevChatPanelView
   skill?: DevChatSkillRun
   /** Not typed or listed as a slash command; a tool opens its panel. */
   hidden?: boolean
@@ -301,7 +297,6 @@ export type NewChatPanel =
         command: string
         view: DevChatPanelView
         close: () => void
-        openCommand: (name: string) => boolean
       })
 
 export type ChatPanel = NewChatPanel & { id: string }

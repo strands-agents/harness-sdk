@@ -386,7 +386,6 @@ export function makePanel(id: string, panel: NewChatPanel): ChatPanel {
         command: panel.command,
         view: panel.view,
         close: panel.close,
-        openCommand: panel.openCommand,
       }
     default:
       return { ...common, kind: panel.kind }
