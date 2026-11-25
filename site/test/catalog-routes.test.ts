@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { CATALOG_TYPES } from '../src/components/catalog/types'
-import { catalogTypePath, catalogTypePaths, isCatalogPath, legacyTypeRedirect } from '../src/util/catalog-routes'
+import {
+  catalogTypePath,
+  catalogTypePaths,
+  integrationPageType,
+  isCatalogPath,
+  legacyCatalogRedirect,
+} from '../src/util/catalog-routes'
 
 describe('catalogTypePath', () => {
   it('puts each type under /docs/integrations/ with its slug', () => {
@@ -34,29 +40,50 @@ describe('isCatalogPath', () => {
   })
 })
 
-describe('legacyTypeRedirect', () => {
-  const paths = catalogTypePaths()
-
-  it('moves a single type to its page', () => {
-    expect(legacyTypeRedirect('?type=storage', paths)).toBe('/docs/integrations/storage/')
+describe('integrationPageType', () => {
+  it('reads the type from the folder a docs page sits in', () => {
+    expect(integrationPageType('docs/integrations/storage/github')).toBe('storage')
+    expect(integrationPageType('docs/integrations/model-providers/cohere')).toBe('model-provider')
+    expect(integrationPageType('docs/integrations/storage/overview')).toBe('storage')
   })
 
-  it('keeps the other parameters, including an open docs drawer', () => {
-    expect(legacyTypeRedirect('?type=storage&entry=strands-github-storage&q=git', paths)).toBe(
-      '/docs/integrations/storage/?entry=strands-github-storage&q=git'
+  it('leaves pages outside a type folder alone', () => {
+    expect(integrationPageType('docs/integrations/get-featured')).toBeUndefined()
+    expect(integrationPageType('docs/integrations/storage')).toBeUndefined()
+    expect(integrationPageType('docs/integrations/unknown/page')).toBeUndefined()
+    expect(integrationPageType('docs/user-guide/sdk/tools/overview')).toBeUndefined()
+  })
+})
+
+describe('legacyCatalogRedirect', () => {
+  const types = catalogTypePaths()
+  const entries = { 'strands-github-storage': '/docs/integrations/storage/github/' }
+
+  it('moves a single type to its page', () => {
+    expect(legacyCatalogRedirect('?type=storage', types, entries)).toBe('/docs/integrations/storage/')
+  })
+
+  it('moves an open docs drawer to the entry page, keeping the filters', () => {
+    expect(legacyCatalogRedirect('?type=storage&entry=strands-github-storage&q=git', types, entries)).toBe(
+      '/docs/integrations/storage/github/?q=git'
     )
   })
 
-  it('stays on the catalog for several types, an unknown type, or none', () => {
-    expect(legacyTypeRedirect('?type=storage,tool', paths)).toBeNull()
-    expect(legacyTypeRedirect('?type=nope', paths)).toBeNull()
-    expect(legacyTypeRedirect('?type=toString', paths)).toBeNull()
-    expect(legacyTypeRedirect('?q=git', paths)).toBeNull()
-    expect(legacyTypeRedirect('', paths)).toBeNull()
+  it('falls back to the type for an unknown entry', () => {
+    expect(legacyCatalogRedirect('?type=storage&entry=gone', types, entries)).toBe('/docs/integrations/storage/')
   })
 
-  it('runs from its own source, as the catalog page inlines it', () => {
-    const inlined = new Function(`return (${legacyTypeRedirect.toString()})`)() as typeof legacyTypeRedirect
-    expect(inlined('?type=storage&q=git', paths)).toBe('/docs/integrations/storage/?q=git')
+  it('stays on the catalog for several types, an unknown type, or none', () => {
+    expect(legacyCatalogRedirect('?type=storage,tool', types, entries)).toBeNull()
+    expect(legacyCatalogRedirect('?type=nope', types, entries)).toBeNull()
+    expect(legacyCatalogRedirect('?type=toString', types, entries)).toBeNull()
+    expect(legacyCatalogRedirect('?entry=toString', types, entries)).toBeNull()
+    expect(legacyCatalogRedirect('?q=git', types, entries)).toBeNull()
+    expect(legacyCatalogRedirect('', types, entries)).toBeNull()
+  })
+
+  it('runs from its own source, as catalog pages inline it', () => {
+    const inlined = new Function(`return (${legacyCatalogRedirect.toString()})`)() as typeof legacyCatalogRedirect
+    expect(inlined('?entry=strands-github-storage', types, entries)).toBe('/docs/integrations/storage/github/')
   })
 })

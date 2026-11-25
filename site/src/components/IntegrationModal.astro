@@ -1,0 +1,297 @@
+---
+/**
+ * The dialog an integration's docs open in, over a catalog page. PageFrame
+ * renders it on every catalog page (empty) and on every integration docs page
+ * (holding the page's main column, with the type's catalog behind it, see
+ * catalog/CatalogBackdrop.astro).
+ *
+ * - Docs page loaded directly: the dialog is in the HTML already open, so the
+ *   first paint is the docs over the catalog. Closing hides it and puts the
+ *   catalog's URL in the address bar: the page behind already is that catalog,
+ *   so nothing loads.
+ * - Card clicked on a catalog page: the docs page is fetched and its dialog
+ *   content moved into this one, with a history entry. The catalog behind keeps
+ *   its search and scroll. Closing goes back.
+ *
+ * Without JS the dialog shows open (not modal) and the close button is a link
+ * to the catalog; card links navigate to the docs page.
+ */
+import '../styles/integration-modal.css'
+
+interface Props {
+  /** Server-render the dialog open (an integration docs page). */
+  open?: boolean
+  /** Where the close button goes without JS: the catalog behind the dialog. */
+  closeHref: string
+}
+const { open = false, closeHref } = Astro.props
+---
+
+<dialog
+  class="integ-modal"
+  data-integ-modal
+  open={open}
+  aria-labelledby={open ? '_top' : undefined}
+  aria-label={open ? undefined : 'Integration documentation'}
+>
+  <div class="integ-modal-scroll" data-integ-scroll tabindex="-1">
+    <div class="integ-modal-bar">
+      <a class="integ-modal-close" data-integ-close href={closeHref} aria-label="Close" title="Close (Esc)">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M18.3 5.7a1 1 0 0 0-1.4 0L12 10.6 7.1 5.7a1 1 0 0 0-1.4 1.4l4.9 4.9-4.9 4.9a1 1 0 1 0 1.4 1.4l4.9-4.9 4.9 4.9a1 1 0 0 0 1.4-1.4L13.4 12l4.9-4.9a1 1 0 0 0 0-1.4z"
+          ></path>
+        </svg>
+      </a>
+    </div>
+    <div data-integ-content><slot /></div>
+  </div>
+</dialog>
+
+<script>
+  import { isModalPath, catalogUrlFor, titleWithHeading } from '../util/integration-modal'
+  import { DEFAULT_LANGUAGE_LABEL, LANGUAGE_STORAGE_KEY } from '../util/language-preference'
+
+  const dialog = document.querySelector<HTMLDialogElement>('[data-integ-modal]')
+  const catalog = document.querySelector<HTMLElement>('.cat-page')
+  if (dialog && catalog) initModal(dialog, catalog)
+
+  function initModal(dialog: HTMLDialogElement, catalog: HTMLElement) {
+    const scroller = dialog.querySelector<HTMLElement>('[data-integ-scroll]')!
+    const content = dialog.querySelector<HTMLElement>('[data-integ-content]')!
+    const closeLink = dialog.querySelector<HTMLAnchorElement>('[data-integ-close]')!
+    const catalogPath = catalog.dataset.catPath || location.pathname
+    const typePaths = Object.values<string>(JSON.parse(catalog.dataset.catTypePaths || '{}'))
+    const catalogTitle = titleWithHeading(document.title, catalog.dataset.catHeading || '')
+    // Marks the history entries this script pushed, so closing can go back to the catalog.
+    const PUSHED = 'integModal'
+
+    // The docs path showing in the dialog, or null when closed.
+    let openPath: string | null = dialog.open ? location.pathname : null
+    let returnFocus: HTMLElement | null = null
+    let loadToken = 0
+    const pages = new Map<string, Promise<Document>>()
+
+    const modalPath = (url: URL) => url.origin === location.origin && isModalPath(url.pathname, typePaths)
+    const innerDialogOpen = () => !!document.querySelector('dialog[open]:not([data-integ-modal])')
+
+    function fetchPage(path: string): Promise<Document> {
+      let page = pages.get(path)
+      if (!page) {
+        page = fetch(path, { credentials: 'same-origin' }).then(async (res) => {
+          if (!res.ok) throw new Error(`status=<${res.status}> | integration page failed to load`)
+          return new DOMParser().parseFromString(await res.text(), 'text/html')
+        })
+        page.catch(() => pages.delete(path))
+        pages.set(path, page)
+      }
+      return page
+    }
+
+    // Styles and module scripts the docs page needs that this page doesn't load
+    // (e.g. code-block styles). Resolves once the styles apply.
+    function adoptAssets(page: Document): Promise<unknown> {
+      const loads: Promise<unknown>[] = []
+      for (const link of page.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')) {
+        if (document.querySelector(`link[rel="stylesheet"][href="${CSS.escape(link.getAttribute('href') || '')}"]`))
+          continue
+        const copy = document.createElement('link')
+        copy.rel = 'stylesheet'
+        copy.href = link.href
+        loads.push(new Promise((done) => copy.addEventListener('load', done, { once: true })))
+        copy.addEventListener('error', () => {}, { once: true })
+        document.head.append(copy)
+      }
+      for (const script of page.querySelectorAll<HTMLScriptElement>('script[type="module"][src]')) {
+        if (document.querySelector(`script[src="${CSS.escape(script.getAttribute('src') || '')}"]`)) continue
+        const copy = document.createElement('script')
+        copy.type = 'module'
+        copy.src = script.src
+        document.head.append(copy)
+      }
+      return Promise.race([Promise.all(loads), new Promise((done) => setTimeout(done, 1500))])
+    }
+
+    // Parsed scripts don't run; recreate the inline ones in the moved content.
+    // One that already ran here (e.g. a component's custom element definition)
+    // is dropped: running it twice would throw.
+    const ranScripts = new Set(Array.from(document.scripts, (s) => s.textContent || ''))
+    function runInlineScripts(root: HTMLElement) {
+      for (const old of root.querySelectorAll('script:not([src])')) {
+        const text = old.textContent || ''
+        if (ranScripts.has(text)) {
+          old.remove()
+          continue
+        }
+        ranScripts.add(text)
+        const script = document.createElement('script')
+        for (const { name, value } of old.attributes) script.setAttribute(name, value)
+        script.textContent = old.textContent
+        old.replaceWith(script)
+      }
+    }
+
+    // The header's language toggle locks to a single-language page's language,
+    // and that lock is built into each page. Give it the open docs page's lock,
+    // or none for the catalog (`source` null), then let the toggle re-sync the
+    // checked button and the docs' code tabs from the stored preference.
+    function lockLanguageToggle(source: Document | null) {
+      for (const btn of document.querySelectorAll<HTMLButtonElement>('language-toggle .lang-option')) {
+        const lang = btn.dataset.lang || ''
+        const match = source?.querySelector<HTMLButtonElement>(
+          `language-toggle .lang-option[data-lang="${CSS.escape(lang)}"]`
+        )
+        btn.disabled = !!match?.disabled
+        if (btn.disabled) btn.setAttribute('aria-checked', 'false')
+        if (match?.title) btn.title = match.title
+        else btn.removeAttribute('title')
+        if (match?.dataset.switchHref) btn.dataset.switchHref = match.dataset.switchHref
+        else delete btn.dataset.switchHref
+      }
+      let lang = DEFAULT_LANGUAGE_LABEL
+      try {
+        lang = localStorage.getItem(LANGUAGE_STORAGE_KEY) || lang
+      } catch {
+        // Storage blocked: the default stands.
+      }
+      window.dispatchEvent(new CustomEvent('lang-preference-changed', { detail: { lang } }))
+    }
+
+    function show(animate: boolean) {
+      if (dialog.open && !dialog.matches(':modal')) dialog.close()
+      if (!dialog.open) dialog.showModal()
+      if (animate) {
+        dialog.classList.add('integ-modal--enter')
+        dialog.addEventListener('animationend', () => dialog.classList.remove('integ-modal--enter'), { once: true })
+      }
+      scroller.focus({ preventScroll: true })
+    }
+
+    function scrollToHash(hash: string) {
+      const id = decodeURIComponent(hash.slice(1))
+      const target = id ? document.getElementById(id) : null
+      if (target && dialog.contains(target)) target.scrollIntoView()
+      else scroller.scrollTop = 0
+    }
+
+    async function open(url: URL, push: boolean) {
+      const token = ++loadToken
+      let page: Document
+      try {
+        page = await fetchPage(url.pathname)
+        await adoptAssets(page)
+      } catch {
+        location.assign(url.href)
+        return
+      }
+      const incoming = page.querySelector('[data-integ-content]')
+      if (token !== loadToken) return
+      if (!incoming) {
+        location.assign(url.href)
+        return
+      }
+      if (push) history.pushState({ [PUSHED]: true }, '', url.pathname + url.search + url.hash)
+      content.replaceChildren(...Array.from(document.importNode(incoming, true).childNodes))
+      runInlineScripts(content)
+      // The catalog's own title also carries id="_top", so label by text.
+      dialog.removeAttribute('aria-labelledby')
+      dialog.setAttribute('aria-label', content.querySelector('h1')?.textContent?.trim() || page.title)
+      document.title = page.title
+      closeLink.href = catalogUrlFor(catalogPath, location.search)
+      openPath = url.pathname
+      lockLanguageToggle(page)
+      show(push)
+      scrollToHash(url.hash)
+    }
+
+    function hide() {
+      loadToken++
+      openPath = null
+      dialog.close()
+      document.title = catalogTitle
+      lockLanguageToggle(null)
+      returnFocus?.focus({ preventScroll: true })
+      returnFocus = null
+    }
+
+    function requestClose() {
+      if (history.state?.[PUSHED]) {
+        history.back()
+        return
+      }
+      history.replaceState(history.state, '', catalogUrlFor(catalogPath, location.search))
+      hide()
+    }
+
+    // Back and forward between the catalog and docs it opened.
+    window.addEventListener('popstate', () => {
+      const url = new URL(location.href)
+      if (url.pathname === catalogPath) {
+        if (openPath) hide()
+      } else if (modalPath(url)) {
+        if (url.pathname !== openPath) open(url, false)
+        else scrollToHash(url.hash)
+      } else {
+        // An entry from another document (e.g. a different catalog before a reload).
+        location.reload()
+      }
+    })
+
+    // Docs links: catalog cards and links inside the dialog. Modified clicks
+    // (new tab, etc.) keep their browser behavior.
+    document.addEventListener('click', (e) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+      const link = (e.target as Element | null)?.closest<HTMLAnchorElement>('a[href]')
+      if (!link || link.target || link.hasAttribute('download')) return
+      if (link === closeLink) {
+        e.preventDefault()
+        requestClose()
+        return
+      }
+      const url = new URL(link.href)
+      const inDialog = dialog.contains(link)
+      if (inDialog && url.pathname === catalogPath && url.origin === location.origin) {
+        e.preventDefault()
+        requestClose()
+        return
+      }
+      if (!modalPath(url) || (inDialog && url.pathname === openPath)) return
+      e.preventDefault()
+      if (!inDialog) returnFocus = link
+      open(url, true)
+    })
+
+    // Start loading a docs page as soon as its card is pointed at or focused.
+    const prefetch = (e: Event) => {
+      const link = (e.target as Element | null)?.closest?.<HTMLAnchorElement>('a[data-cat-entry]')
+      if (link && modalPath(new URL(link.href))) fetchPage(new URL(link.href).pathname).catch(() => {})
+    }
+    catalog.addEventListener('pointerover', prefetch)
+    catalog.addEventListener('focusin', prefetch)
+
+    // Esc on keydown: without a prior user gesture Chrome closes a modal dialog
+    // without a cancelable `cancel` event. An inner dialog (image zoom) takes Esc first.
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !openPath || e.defaultPrevented || innerDialogOpen()) return
+      e.preventDefault()
+      requestClose()
+    })
+    dialog.addEventListener('cancel', (e) => {
+      e.preventDefault()
+      requestClose()
+    })
+    // A click on the dimmed area lands on the dialog element itself.
+    dialog.addEventListener('click', (e) => {
+      if (e.target === dialog) requestClose()
+    })
+
+    // Loaded directly: reopen as modal, so the page behind is inert and focus
+    // stays in the dialog, keeping the scroll position (e.g. from a #fragment).
+    if (openPath) {
+      const scrollTop = scroller.scrollTop
+      show(false)
+      scroller.scrollTop = scrollTop
+    }
+  }
+</script>

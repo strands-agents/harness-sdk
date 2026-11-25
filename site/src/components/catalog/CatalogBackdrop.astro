@@ -1,0 +1,73 @@
+---
+/**
+ * A type's catalog drawn behind an integration docs page's dialog
+ * (overrides/PageFrame.astro). It mirrors the main column of that type's own
+ * page (CatalogPage), so closing the dialog leaves what looks and works like
+ * the catalog page, with no load. Kept out of the site search: the docs page's
+ * own <main> is what gets indexed.
+ */
+import ContentPanel from 'virtual:starlight/components/ContentPanel'
+import CatalogBody from './CatalogBody.astro'
+import SiteFooter from '../SiteFooter.astro'
+import { CATALOG_TYPES } from './types'
+import { catalogTypePath } from '../../util/catalog-routes'
+import { pathWithBase } from '../../util/links'
+
+interface Props {
+  /** Catalog type value, e.g. `storage`. */
+  type: string
+}
+const { type } = Astro.props
+const heading = CATALOG_TYPES.find((t) => t.value === type)?.labelPlural
+if (!heading) throw new Error(`Unknown catalog type: ${type}`)
+---
+
+<div class="lg:sl-flex">
+  <div class="cat-backdrop-pane" data-pagefind-ignore>
+    <ContentPanel>
+      <div class="cat-backdrop-title-row"><h1>{heading}</h1></div>
+    </ContentPanel>
+    <ContentPanel>
+      <div class="sl-markdown-content"><CatalogBody type={type} /></div>
+      {/* Starlight's footer, empty on a catalog page, then the site footer. */}
+      <div class="cat-backdrop-footer"></div>
+      <SiteFooter pathname={pathWithBase(catalogTypePath(type))} />
+    </ContentPanel>
+  </div>
+</div>
+
+<style>
+  /* Starlight's TwoColumnContent .main-pane and PageTitle styles, which are scoped to those components. */
+  .cat-backdrop-pane {
+    isolation: isolate;
+    /* Starlight's padding on <main>. */
+    padding: var(--sl-main-pad);
+  }
+  @media (min-width: 72rem) {
+    .cat-backdrop-pane {
+      width: 100%;
+    }
+  }
+  /* A catalog page's markdown column follows Starlight's image-zoom element, so
+     ContentPanel's `* + *` rule spaces it from the panel's top. */
+  .cat-backdrop-pane .sl-markdown-content {
+    margin-top: 1.5rem;
+  }
+  /* An empty Starlight footer: its meta row's 3rem top margin plus the 1.5rem gap below it. */
+  .cat-backdrop-footer {
+    height: 4.5rem;
+  }
+  .cat-backdrop-title-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 1.5rem;
+  }
+  h1 {
+    margin-top: 0.15rem;
+    font-size: var(--sl-text-h1);
+    line-height: var(--sl-line-height-headings);
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+</style>

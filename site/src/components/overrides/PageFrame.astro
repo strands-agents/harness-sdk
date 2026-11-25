@@ -3,11 +3,21 @@
  * PageFrame override — matches Starlight's default PageFrame. The homepage
  * carries the full site footer; docs pages omit it to keep the reading view
  * focused.
+ *
+ * Integrations: catalog pages carry the (empty) dialog that integration docs
+ * open in. An integration docs page puts its main column in that dialog, with
+ * its type's catalog in the main frame behind it.
  */
 import MobileMenuToggle from 'virtual:starlight/components/MobileMenuToggle'
+import IntegrationModal from '../IntegrationModal.astro'
+import CatalogBackdrop from '../catalog/CatalogBackdrop.astro'
 import { currentProduct } from '../../util/current-product'
+import { catalogTypePath, integrationPageType, isCatalogPath } from '../../util/catalog-routes'
+import { pathWithBase } from '../../util/links'
 
-const { hasSidebar } = Astro.locals.starlightRoute
+const { hasSidebar, id } = Astro.locals.starlightRoute
+const integrationType = integrationPageType(id)
+const isCatalog = isCatalogPath(Astro.url.pathname)
 
 // Product accent for the docs chrome (styled in custom.css). Labs is not a
 // product; the path check mirrors the /labs slug in Sidebar.astro.
@@ -17,6 +27,15 @@ const accent =
 ---
 
 <div class="page sl-flex" data-accent={accent}>
+  {
+    /* An integration docs page leads with its dialog, so the docs stream in and
+       paint before the catalog behind them (which can be larger than the docs). */
+    integrationType && (
+      <IntegrationModal open closeHref={pathWithBase(catalogTypePath(integrationType))}>
+        <slot />
+      </IntegrationModal>
+    )
+  }
   <header class="header"><slot name="header" /></header>
   {hasSidebar && (
     <nav class="sidebar print:hidden" aria-label={Astro.locals.t('sidebarNav.accessibleLabel')}>
@@ -28,7 +47,18 @@ const accent =
       </div>
     </nav>
   )}
-  <div class="main-frame"><slot /></div>
+  {
+    integrationType ? (
+      <div class="main-frame">
+        <CatalogBackdrop type={integrationType} />
+      </div>
+    ) : (
+      <div class="main-frame">
+        <slot />
+      </div>
+    )
+  }
+  {isCatalog && <IntegrationModal closeHref={Astro.url.pathname} />}
 </div>
 
 <style>

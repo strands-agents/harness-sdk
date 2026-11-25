@@ -1,0 +1,110 @@
+/* The dialog an integration's docs open in (components/IntegrationModal.astro).
+   Same box whether the docs page was loaded directly or opened from a catalog. */
+
+dialog.integ-modal {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--sl-z-index-navbar) + 1);
+  margin: auto;
+  box-sizing: border-box;
+  width: min(60rem, calc(100vw - 4rem));
+  height: calc(100dvh - 4rem);
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.75rem;
+  background: var(--sl-color-bg);
+  color: var(--sl-color-text);
+  box-shadow: 0 24px 64px rgb(0 0 0 / 0.35);
+  overflow: hidden;
+
+  /* Starlight's layout offsets are for the page, not the dialog. */
+  --sl-content-inline-start: 0rem;
+  --sl-mobile-toc-height: 0rem;
+  --sl-content-pad-x: 1.5rem;
+}
+/* No blur: it must match the first paint's shadow dim below, which can't blur. */
+dialog.integ-modal::backdrop {
+  background: rgb(0 0 0 / 0.5);
+}
+/* Before the script makes it modal (and without JS) the open dialog has no
+   ::backdrop; the shadow dims the page the same way. */
+dialog.integ-modal[open]:not(:modal) {
+  box-shadow:
+    0 24px 64px rgb(0 0 0 / 0.35),
+    0 0 0 100vmax rgb(0 0 0 / 0.5);
+}
+dialog.integ-modal.integ-modal--enter {
+  animation: integ-modal-in 160ms ease-out;
+}
+@keyframes integ-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem) scale(0.99);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  dialog.integ-modal.integ-modal--enter {
+    animation: none;
+  }
+}
+
+/* The dialog scrolls its content; the catalog behind it stays put. */
+html:has(dialog.integ-modal[open]) {
+  overflow: hidden;
+}
+
+/* Below Starlight's sidebar breakpoint the dialog is a full-screen sheet. */
+@media (max-width: 50rem) {
+  dialog.integ-modal {
+    width: 100vw;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    --sl-content-pad-x: 1rem;
+  }
+}
+
+.integ-modal-scroll {
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  outline: none;
+}
+/* Starlight centres the text column against the viewport only from 72rem; in
+   the dialog, centre it at every width. */
+dialog.integ-modal .sl-container {
+  margin-inline: auto;
+}
+/* Wide tables and images size themselves against the viewport (custom.css);
+   in the dialog they keep to the text column. */
+:root[data-has-sidebar] dialog.integ-modal .sl-markdown-content {
+  --wide-grow: 0px;
+}
+
+/* Close button: pinned to the dialog's top-right corner while the content scrolls. */
+.integ-modal-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: flex-end;
+  height: 0;
+}
+.integ-modal-close {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin: 0.75rem 0.75rem 0 0;
+  border-radius: 999px;
+  border: 1px solid var(--sl-color-gray-5);
+  background: var(--sl-color-bg);
+  color: var(--sl-color-gray-2);
+}
+.integ-modal-close:hover,
+.integ-modal-close:focus-visible {
+  color: var(--sl-color-white);
+  border-color: var(--sl-color-gray-3);
+}
