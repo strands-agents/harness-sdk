@@ -19,7 +19,7 @@ from strands.types.tools import ToolResult
 
 
 class TestOffloadPlaceholder:
-    def test_appends_the_stash_ref_and_records_what_it_stands_for(self):
+    def test_appends_the_archive_ref_and_records_what_it_stands_for(self):
         block = offload_placeholder("drop", "[Dropped: earlier messages]", "removed-abc", 1200)
 
         assert block == ContentBlock(
@@ -27,7 +27,7 @@ class TestOffloadPlaceholder:
             offloaded={"method": "drop", "ref": "removed-abc", "tokens": 1200},
         )
 
-    def test_leaves_out_the_ref_when_the_original_was_not_stashed(self):
+    def test_leaves_out_the_ref_when_the_original_was_not_archived(self):
         assert offload_placeholder("drop", "[Dropped]", None) == ContentBlock(
             text="[Dropped]", offloaded={"method": "drop"}
         )

@@ -7,13 +7,10 @@ on:
         description: 'Deploy even if a published release has no changelog entry yet'
         type: boolean
         default: false
-      content_snapshot:
-        description: 'Upstream content: latest refs or CI-pinned baselines'
-        type: choice
-        options:
-          - latest
-          - locked
-        default: latest
+      content_ref_overrides:
+        description: 'Emergency only: source-id=<40-character SHA>, comma-separated'
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -32,15 +29,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Checkout samples snapshot
-        uses: actions/checkout@v7
-        with:
-          # Locked mode uses a reviewed Samples baseline; latest mode follows main.
-          repository: strands-agents/samples
-          ref: ${{ inputs.content_snapshot == 'locked' && '6226307ed8f6de1face333d3daec638593aeedf3' || 'main' }}
-          path: samples-source
-          persist-credentials: false
-
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
@@ -48,6 +36,20 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Resolve documentation source refs
+        id: content_refs
+        env:
+          CONTENT_REF_OVERRIDES: ${{ inputs.content_ref_overrides }}
+        run: npm run content-refs:resolve
+
+      - name: Checkout samples
+        uses: actions/checkout@v7
+        with:
+          repository: strands-agents/samples
+          ref: ${{ steps.content_refs.outputs.samples_ref }}
+          path: samples-source
+          persist-credentials: false
 
       # Releases must ship with their changelog: merge the open
       # "docs(changelog): sync release notes" PR first (see CHANGELOG-SYNC.md).
@@ -70,17 +72,25 @@ jobs:
           fi
           [ "$missing" = 0 ] && [ "$unverified" = 0 ]
 
-      - name: Resolve latest external documentation
-        if: ${{ inputs.content_snapshot != 'locked' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: npm run external-docs:update-lock
-
       - name: Resolve samples revision
         id: samples_snapshot
+        env:
+          REQUESTED_SAMPLES_REF: ${{ steps.content_refs.outputs.samples_ref }}
         run: |
           samples_revision="$(git -C "$GITHUB_WORKSPACE/samples-source" rev-parse HEAD)"
+          if [ "$REQUESTED_SAMPLES_REF" != "main" ] && [ "$samples_revision" != "$REQUESTED_SAMPLES_REF" ]; then
+            echo "::error::Samples checkout resolved $samples_revision, but the override requires $REQUESTED_SAMPLES_REF"
+            exit 1
+          fi
           echo "revision=$samples_revision" >> "$GITHUB_OUTPUT"
+
+      - name: Build CMS
+        run: npm run cms:build
+        env:
+          EXTERNAL_DOCS_REF_OVERRIDES: ${{ steps.content_refs.outputs.external_docs_ref_overrides }}
+          SAMPLES_SOURCE_DIR: ${{ github.workspace }}/samples-source
+          SAMPLES_REQUIRE_SOURCE: '1'
+          SITE_DOMAIN: https://strandsagents.com
 
       - name: Record documentation inputs snapshot
         id: content_snapshot
@@ -88,20 +98,19 @@ jobs:
           SAMPLES_REVISION: ${{ steps.samples_snapshot.outputs.revision }}
         run: |
           content_snapshot="$(node -e '
-            const { products } = require("./external-docs.lock.json")
-            const revisions = products.map(({ id, revision }) => `${id}@${revision}`)
+            const fs = require("node:fs")
+            const { products } = require("./external-docs.config.json")
+            const revisions = products.map(({ id }) => {
+              const navigation = JSON.parse(
+                fs.readFileSync(`.build/external-docs/${id}/navigation.json`, "utf8")
+              )
+              return `${id}@${navigation.revision}`
+            })
             revisions.push(`samples@${process.env.SAMPLES_REVISION}`)
             process.stdout.write(revisions.join(", "))
           ')"
           echo "snapshot=$content_snapshot" >> "$GITHUB_OUTPUT"
           printf 'Documentation snapshot: `%s`\n' "$content_snapshot" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Build CMS
-        run: npm run cms:build
-        env:
-          SAMPLES_SOURCE_DIR: ${{ github.workspace }}/samples-source
-          SAMPLES_REQUIRE_SOURCE: '1'
-          SITE_DOMAIN: https://strandsagents.com
 
       - name: Create latest/ symlinks for llms.txt files
         run: |

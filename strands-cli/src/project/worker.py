@@ -336,7 +336,14 @@ def local_storage_paths(storage):
 
 
 def agent_stash(agent):
-    return getattr(getattr(agent, "context_manager", None), "stash", None)
+    """The context manager's archive, read under whichever name the project's SDK has.
+
+    The SDK comes from the authored project's own environment, where it may predate the rename;
+    strands-agents 1.66.0 and earlier only have ``stash``, and reading it on later versions warns.
+    """
+    context_manager = getattr(agent, "context_manager", None)
+    name = "archive" if hasattr(type(context_manager), "archive") else "stash"
+    return getattr(context_manager, name, None)
 
 
 def agent_private_paths(agent):

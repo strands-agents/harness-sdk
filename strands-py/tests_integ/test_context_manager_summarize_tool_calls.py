@@ -9,7 +9,7 @@ import unittest.mock
 import pytest
 
 from strands import Agent
-from strands.experimental.context_manager import ContextState, Offload
+from strands.context_manager import ContextState, Offload
 from strands.types.content import ContentBlock, Message, Messages
 from strands.types.tools import ToolResult, ToolUse
 from tests_integ.models import providers

@@ -47,12 +47,12 @@ available in the repository but do not generate website routes.
 - Set `SAMPLES_SOURCE_DIR` to a checkout of the samples repository.
 - Set `SAMPLES_REQUIRE_SOURCE=1` to fail when the source checkout is missing or has no samples. Without it, the build clears generated guides and renders the local setup message at `/examples/`.
 
-At the start of a manual production deploy, the workflow checks out
-`strands-agents/samples@main` once and records the resulting commit SHA. If the dispatcher selects
-`locked`, it instead checks out the same Samples revision used by docs CI. `samples:sync` reads
-only that immutable checkout for the rest of the build. The workflow summary and resulting
-`gh-pages` commit record the samples revision alongside the external documentation snapshot.
-Samples commits and merges do not trigger site rebuilds.
+Docs CI and pull request previews check out `strands-agents/samples@main` once. Manual production
+deploys do the same by default, but an emergency `content_ref_overrides` input can select an exact
+Samples commit. `samples:sync` reads only that checkout for the rest of the build. Production
+records the resolved Samples revision alongside the external documentation revisions in the
+workflow summary and resulting `gh-pages` commit. Samples commits and merges do not trigger site
+rebuilds, but the next website build picks them up.
 
 The importer warns when a guide links to a missing file and fails when a guide references a missing image.
 
@@ -145,8 +145,8 @@ Strands Decider under `/docs/labs/strands-decider/`.
 
 **Why:** Product documentation changes with its implementation. Keeping the source Markdown
 in the product repository lets one commit update behavior and documentation together. The
-site owns the route prefix, publication status, navigation placement, presentation, tracked ref,
-and committed baseline; the upstream manifest owns each page's route suffix.
+site owns the route prefix, publication status, navigation placement, presentation, and tracked
+ref; the upstream manifest owns each page's route suffix.
 
 #### Upstream contract
 
@@ -191,32 +191,42 @@ is the publication authority: its `publicationStatus` determines whether importe
 preview or stable on this site. Preview pages render a documentation-preview caution and remain
 out of search and machine-readable publication surfaces. Stable imported pages are automatically
 included in `llms.txt`, `llms-full.txt`, search, and the sitemap; there is no separate
-machine-readable indexing switch. A lock-only update cannot promote pages.
+machine-readable indexing switch. Changing publication status does not require a coordinated
+source-repository change.
 
-#### Site registry and lock
+#### Site registry and source resolution
 
 `external-docs.config.json` owns the GitHub repository, tracked ref, manifest path, route
-prefix, sidebar label, and publication status. `external-docs.lock.json` maps product IDs to
-immutable baseline SHAs used by CI, local builds, and the production fallback.
-Ordinary CI and local site builds read the committed SHA, never the moving ref. At the start of a
-manual production deploy, `docs-deploy-github-pages.yml` defaults to resolving each tracked ref
-once and writes the result to the job's temporary lock file. The `content_snapshot` input applies
-the same choice to every upstream source: `latest` uses the tracked external documentation refs
-and Samples `main`, while `locked` uses the committed external documentation baseline and the
-Samples revision used by docs CI. The rest of the deploy generates and publishes from those
-immutable revisions, and any resulting `gh-pages` commit records them as one content snapshot.
-Upstream product commits do not trigger site rebuilds.
+prefix, sidebar label, and publication status. Box and Decider both track `main`; every other ref
+is rejected by the config schema.
 
-The manually dispatched `docs-external-sync.yml` workflow remains available to validate a newer
-snapshot with the same `npm run cms:build` path as docs CI and open or update a draft lock-only PR.
-This refreshes the committed baseline used by CI; it is not required for production deployment.
-Automatic refreshes are intentionally disabled so upstream activity does not create recurring
-lock PRs. There is no fixed refresh cadence: maintainers run the workflow on demand before site
-changes that affect federation compatibility, or when they intentionally want CI and local builds
-to adopt a newer upstream baseline.
-The deprecated upstream status does not gate publication. This lets the site promote or preview a
-pinned snapshot without requiring a coordinated source-repository change. The workflow summary and
-PR body link to each upstream old-to-new commit comparison.
+Every `external-docs:generate` invocation creates a fresh shallow checkout for each product,
+fetches its configured `main` branch, and resolves `FETCH_HEAD` once. The manifest, Markdown pages,
+and linked assets all come from that checkout. Local builds, CI, pull request previews, and
+production deploys therefore use the latest `main` commit available when each product is fetched.
+A failed fetch fails the build instead of falling back to stale content.
+
+Manual production deploys accept an emergency-only `content_ref_overrides` input. The value is a
+comma-separated list of source IDs and exact revisions, such as
+`samples=<40-character SHA>,strands-box=<40-character SHA>,strands-decider=<40-character SHA>`.
+Overrides apply only to that production run. CI, pull request previews, and production otherwise
+follow `main` for every source. Local builds follow `main` for external documentation products;
+Samples uses the `SAMPLES_SOURCE_DIR` behavior described above.
+
+If a documentation source's `main` revision breaks sample import, external documentation
+generation, or redirect validation:
+
+1. Copy the last known-good source revision from a successful deployment summary or `gh-pages`
+   commit message.
+2. Dispatch `Docs: Deploy to GitHub Pages` with that source and revision in
+   `content_ref_overrides`.
+3. Repair the upstream repository, then leave the input empty on the next production deploy.
+
+External product revisions are recorded in generated page provenance and generated navigation. The
+production deployment summary and resulting `gh-pages` commit record those revisions together with
+the resolved Samples revision. These are per-build records, not committed inputs. They also keep
+source and asset links internally consistent if a branch advances while a build is running.
+Upstream product commits do not trigger site rebuilds, but the next website build picks them up.
 
 #### Generated layout
 
@@ -242,7 +252,7 @@ The generator:
 - rewrites links to other published manifest pages as page-relative site routes so they work
   under production and preview base paths;
 - rewrites other relative links and same-repository `blob`, `tree`, and raw `main` URLs to the
-  pinned commit while keeping GitHub edit URLs on the configured editable ref;
+  resolved build commit while keeping GitHub edit URLs on the configured editable ref;
 - treats unsupported `dw` and `cedar` code fences as plain text;
 - passes JSX elements through to the `.mdx` output so Astro resolves them via
   auto-import, subject to the MDX safety rules above (no `import`/`export`, no
@@ -255,9 +265,7 @@ The generator:
 The importer core is reusable, but each product still requires explicit site wiring:
 
 1. Add the repository, tracked ref, manifest, route prefix, navigation label, and publication
-   status to
-   `external-docs.config.json`, plus its initial immutable revision to
-   `external-docs.lock.json`.
+   status to `external-docs.config.json`.
 2. Keep source files under `docs/`. The manifest page list explicitly selects which files the
    site publishes.
 3. Add a content symlink for the generated product directory and include its Markdown path in
@@ -272,11 +280,17 @@ machine-readable documentation endpoints also omit them until the site's publica
 changes to `stable`. Once stable, every page is included automatically.
 
 Build and development scripts generate external docs before Astro starts. To preview changes
-from a local product checkout instead of the lock, set its source environment variable:
+from a local product checkout instead of the configured remote ref, set its source environment
+variable:
 
 ```bash
-EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box npm run dev
+EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box \
+EXTERNAL_DOCS_STRANDS_DECIDER_SOURCE=/path/to/decider \
+npm run dev
 ```
+
+Remote generation replaces each cached checkout and requires network access. Set a local source
+for every configured product, as above, to start the development server offline.
 
 ### 8. Image Zoom (`starlight-image-zoom`)
 
@@ -285,6 +299,27 @@ EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box npm run dev
 **Site wiring:** The plugin normally installs its own `MarkdownContent` override, but it skips that when one already exists. Our `src/components/overrides/MarkdownContent.astro` therefore renders the plugin's `<ImageZoom />` element itself. The plugin also adds `rehype-raw` to the Markdown pipeline so it can see images written as raw HTML.
 
 **Limits:** It only wraps `<img>` and `<picture>` in Markdown. `<Diagram>` SVGs are inlined by a component and aren't zoomable.
+
+### 9. Docs Layout (`src/styles/custom.css`)
+
+**What it does:** Sets the docs text column to `--sl-content-width: 55rem` and, at 72rem and up on every page with both sidebars, gives the TOC a fixed column of `--sl-sidebar-width` (300px), matching the left sidebar, with the text centred between the two (`.right-sidebar-container` and `.main-pane` rules).
+
+**Why:** Starlight gives the TOC a column of the TOC width plus half the spare width and pushes the text against it, so on wide screens the text sits off centre with the spare space on its left. Centring the text balances the page, and gives wide tables and images equal room on both sides.
+
+**What readers see:** Below about 1480px there is no spare width, so the layout looks the same as Starlight's. Above that, the TOC stays pinned to the window's right edge, so it sits further from the text as the screen grows: about 220px away at 1920px and about 540px at 2560px, where Starlight keeps it 24px away.
+
+### 10. Wide Tables and Images (`src/styles/custom.css`)
+
+**What it does:** On large screens, a top-level table that doesn't fit the text column, or a Markdown image wider than it, grows into the spare room on both sides of the text, staying centred on it, up to `--wide-max` (72rem). Anything that fits keeps its normal width and position. Authors mark nothing, so imported product docs get it too. A component can opt in to the full wide width from its own styles with `--wide-grow` and `cqw`, as `FoundationComparison.astro` does, since the comparison wraps heavily at column width.
+
+**Why:** Tables with long cells wrap into tall rows at column width, and large screenshots are shrunk. A page-wide content width would make every paragraph harder to read, so only tables and images grow; prose and code blocks keep the column width.
+
+**How the width is worked out:** Only pages with the left sidebar get wider elements, and only at 72rem and up. Each side has `(100vw - sidebar - TOC - column) / 2 - panel padding` of room with a TOC (the text is centred between the sidebar and the TOC, see [Docs Layout](#9-docs-layout-srcstylescustomcss)), or `(100vw - sidebar - column) / 2 - panel padding` without one. With a 55rem column there is no room up to about 1536px screens; at 1728px each side gains 100px, and the 136px-per-side cap is reached at about 1850px.
+
+- **Tables** get `width: max-content` with `min-width: 100%` and the cap as `max-width`, so a table grows only as far as its unwrapped cells need, and a table too wide even at the cap still scrolls inside itself.
+- **Images** get the cap as `max-width`, so only an image wider than the column grows.
+- **Centring:** `.sl-markdown-content` is an inline-size container (which stops its first child's top margin collapsing through it, so that margin is set to 0), and each element is moved by `translateX(min(0px, 50cqw - 50%))`. That is 0 for an element no wider than the column and half its overhang for a wider one.
+- Only direct children of `.sl-markdown-content` widen. Inside an aside or a `<TabItem>` they stay at the width of their box. The block stops one 1.5rem panel padding short of the TOC, the sidebar or the window edge, which also absorbs the up to ~8px a classic scrollbar adds to `100vw`.
 
 ## Configuration (`astro.config.mjs`)
 
@@ -344,7 +379,7 @@ The documentation extends Starlight's default schema with custom fields that aut
 
 ### `externalDocs`
 
-Generated external pages record their product, repository, tracked ref, immutable revision,
+Generated external pages record their product, repository, tracked ref, resolved revision,
 and source file. Authors do not set this field by hand. The verified site publication status is
 recorded in the generated frontmatter: `preview` renders the upstream caution, while `stable`
 keeps the provenance without the caution.
@@ -477,10 +512,12 @@ Replaces the default anchor element to enable MkDocs-style relative linking. Res
 These override default Starlight components:
 
 - **`Head.astro`**: Adds Mermaid diagram support, loads `SiteScripts` (Shortbread + WebSDK), and emits the page JSON-LD `@graph` built by `src/util/structured-data.ts`. Non-docs pages add their own nodes (blog post, changelog release, integrations list, sample guide) by setting `Astro.locals.structuredData` in frontmatter.
+- **`EditLink.astro`**: Renders nothing, so Starlight's footer has no "Edit page" link; the edit link is in `PageActions` beside the title.
 - **`Header.astro`**: Custom header with navigation tabs and theme-aware logos (see [Header Navigation](#header-navigation) below).
 - **`Hero.astro`**: Suppresses the Starlight hero on `/blog/` paths. Blog pages pass a dummy `hero: { actions: [] }` to collapse Starlight's two-panel layout, and this override ensures that dummy hero has no visual output.
 - **`MarkdownContent.astro`**: Injects the custom frontmatter banners (experimental, external preview, community, languages) at the top of page content.
 - **`PageFrame.astro`**: Extends Starlight's default `PageFrame` to add a full-width site footer containing the `Copyright` component. The footer spans the content area (respecting sidebar offset) with `--sl-color-bg-nav` background to match the header.
+- **`PageTitle.astro`**: Renders the H1 (or the product hub hero) with `PageActions` beside it: small "View as Markdown" and "Edit on GitHub" links that sit next to the title when it fits and wrap below it otherwise. The Markdown link shows only on pages with an `/index.md` twin, decided by `src/util/markdown-twin.ts`, which `Head.astro` also uses for its `rel="alternate"` link.
 - **`Sidebar.astro`** and **`SidebarSublist.astro`**: Custom sidebar navigation that mimics MkDocs Material theme's `navigation.sections` behavior.
 
 #### Sidebar Navigation Style
