@@ -1,0 +1,69 @@
+---
+/**
+ * Small links under a docs page title: the page's raw markdown twin, and the
+ * source on GitHub. The markdown link shows only on pages with a twin (see
+ * util/markdown-twin.ts), and the edit link only where Starlight has an edit URL.
+ */
+import { Icon } from '@astrojs/starlight/components'
+import { getMarkdownTwinHref } from '../util/markdown-twin'
+
+const route = Astro.locals.starlightRoute
+const base = import.meta.env.BASE_URL || '/'
+// The 404 page has a twin for crawlers, but nothing on it is worth reading.
+const markdownHref = route.entry.id === '404' ? null : await getMarkdownTwinHref(route.entry, base)
+const editUrl = route.editUrl?.href
+---
+
+{
+  (markdownHref || editUrl) && (
+    <ul class="page-actions print:hidden" data-pagefind-ignore>
+      {markdownHref && (
+        <li>
+          <a href={markdownHref} type="text/markdown" data-page-action="view-markdown">
+            <Icon name="document" size="1em" />
+            View as Markdown
+          </a>
+        </li>
+      )}
+      {editUrl && (
+        <li>
+          <a href={editUrl} data-page-action="edit">
+            <Icon name="pencil" size="1em" />
+            Edit on GitHub
+          </a>
+        </li>
+      )}
+    </ul>
+  )
+}
+
+<style>
+  .page-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.25rem 1.25rem;
+    margin: 0 0 0 auto;
+    padding: 0;
+    list-style: none;
+  }
+
+  a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-xs);
+    line-height: 1.5;
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: var(--sl-color-white);
+  }
+
+  /* The /integrations drawer embeds the page; its own chrome links the page. */
+  :global(:root[data-embed]) .page-actions {
+    display: none;
+  }
+</style>

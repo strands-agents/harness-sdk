@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ChatController, type ChatPanelRow } from '../../src/ui/chat/controller.js'
 import { type ChatBackend } from '../../src/agent/types.js'
 import { commandAssistance } from '../../src/ui/chat/commands.js'
+import { detailLines } from '../../src/ui/presentation.js'
 import { ChatView } from '../../src/ui/chat/view.js'
 import { ChatApp } from '../../src/ui/chat/screen.js'
 import { render, captureFrame, mouseInputSequence, ttyInput, ttyOutput } from '../fixtures/terminal.js'
@@ -58,6 +59,52 @@ describe('help', () => {
     })
     expect(controller.dismissPanel()).toBe(true)
     expect(controller.getSnapshot().panel?.kind).toBe('help')
+    await controller.dispose()
+  })
+
+  it.each([
+    [true, ['Run this agent on', 'the cases of an', 'experiment.']],
+    [false, ['Run this agent on th', 'e cases of an experi', 'ment.']],
+  ])('shouldBreakAHelpPageAtSpacesOnlyWhenWrapWordsIs%s', (wrapWords, expected) => {
+    const lines = detailLines(
+      {
+        id: 'help',
+        kind: 'help-detail',
+        title: '/test',
+        rows: [],
+        body: 'Run this agent on the cases of an experiment.',
+        wrapWords,
+      },
+      20
+    )
+
+    expect(lines.map(({ text }) => text)).toEqual(expected)
+  })
+
+  it.each([
+    [
+      {
+        devWorkspace: {
+          root: '/dev',
+          entrypoint: '/dev/agent.ts',
+          boundEntrypoint: '/dev/agent.ts',
+          origin: 'discovered',
+        },
+      },
+      true,
+    ],
+    [{}, undefined],
+  ] as const)('shouldWrapHelpDetailsAtWordsOnlyInADevChat', async (runtime, wrapWords) => {
+    const controller = new ChatController(
+      idleBackend({ info: () => ({ tools: [{ name: 'custom_tool', description: 'Long tool documentation.' }] }) }),
+      { runtime }
+    )
+
+    await controller.submit('/help')
+    await controller.activatePanelRow(row(controller, 'custom_tool'))
+
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'help-detail' })
+    expect((controller.getSnapshot().panel as { wrapWords?: boolean }).wrapWords).toBe(wrapWords)
     await controller.dispose()
   })
 

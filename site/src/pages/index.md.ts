@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro'
 import { BOX_LANDING_DESCRIPTION } from '../config/box-landing'
+import { DECIDER_LANDING_DESCRIPTION } from '../config/decider-landing'
 import { siteLink } from '@util/links'
 
 export const GET: APIRoute = () => {
@@ -13,6 +14,7 @@ export const GET: APIRoute = () => {
     `- [Documentation](${siteLink('/docs/user-guide/sdk/quickstart/overview/index.md')}): Choose a model provider and build your first agent.`,
     `- [Harness quickstart](${siteLink('/docs/user-guide/harness/quickstart/index.md')}): Start with a fully assembled agent.`,
     `- [Strands Box](${siteLink('/box/index.md')}): ${BOX_LANDING_DESCRIPTION}`,
+    `- [Strands Decider](${siteLink('/decider/index.md')}): ${DECIDER_LANDING_DESCRIPTION}`,
     `- [Build with AI coding agents](${siteLink('/docs/user-guide/build-with-ai/index.md')}): Install the Strands plugin for Claude Code, Codex, or Cursor.`,
     `- [Examples](${siteLink('/examples/')}): Explore complete agent examples.`,
     `- [Frequently asked questions](${siteLink('/faq/index.md')}): Get practical answers about choosing, building, evaluating, and deploying with Strands.`,

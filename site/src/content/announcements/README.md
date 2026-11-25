@@ -19,6 +19,17 @@ date: 2026-10-01
 expires: 2026-10-19 # optional, pins the announcement through this day
 ```
 
+To link several posts at once (for example, two launches on the same day), add `links` instead of `href`. The banner
+then shows each link side by side instead of `title` and `linkText`, and screen readers announce `title` for the group.
+
+```yaml
+links:
+  - title: "Introducing Strands Decider v2"
+    href: "/blog/introducing-strands-decider-v2/"
+  - title: "Strands Box now supports Claude Code, Codex, and Kiro"
+    href: "/blog/strands-box-cli/"
+```
+
 ## When to add one
 
 Add a manual announcement for content outside the blog, or when a campaign should override a blog post:

@@ -1,13 +1,13 @@
 import { execFile } from 'node:child_process'
 import { createServer, type ServerResponse } from 'node:http'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { URL } from 'node:url'
 import { promisify } from 'node:util'
 import { ImageBlock, Message } from '@strands-agents/sdk'
-import { strToU8, zipSync } from 'fflate'
+import { strToU8, unzipSync, zipSync } from 'fflate'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { parseArgs } from '../../src/cli/arguments.js'
@@ -16,6 +16,7 @@ import { AgentMessaging } from '../../src/agent/messaging.js'
 import { importAgentProject } from '../../src/project/import.js'
 import { TypescriptBackend, type TypescriptInit } from '../../src/project/typescript-backend.js'
 import { createTypescriptChat } from '../../src/ui/chat/runtime.js'
+import { bindExistingAgent } from '../../src/dev/create.js'
 
 import { projectOptions } from '../../src/project/typescript.js'
 
@@ -36,12 +37,14 @@ const defaults = {
 let root: string
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'strands-source-reload-'))
+  root = await realpath(await mkdtemp(join(tmpdir(), 'strands-source-reload-')))
   await writeFile(join(root, 'package.json'), '{"type":"module"}')
+  vi.stubEnv('PYTHON', join(root, 'no-python'))
 })
 
 afterEach(async () => {
-  await rm(root, { recursive: true, force: true })
+  vi.unstubAllEnvs()
+  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 })
 
 function factorySource(name: string): string {
@@ -427,6 +430,27 @@ console.log(JSON.stringify(names))
     expect(loaded.agents[1]!.name).toBe('Rebuilt')
   })
 
+  it.each([
+    ['Folder', () => mkdir(join(root, '.config'))],
+    [
+      'LinkToAFolder',
+      async () => {
+        await mkdir(join(root, 'dotfiles'))
+        await symlink(join(root, 'dotfiles'), join(root, '.config'))
+      },
+    ],
+  ])('shouldLoadThePlainAgentWhenTheProjectHasAConfig%s', async (_kind, arrange) => {
+    await writeFile(
+      project().entrypoint,
+      `import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness({ ...${JSON.stringify(defaults)}, name: 'Beside config' })\n`
+    )
+    await arrange()
+
+    const loaded = await loadAgents([{}])
+
+    expect(loaded.agents[0]!.name).toBe('Beside config')
+  })
+
   it('uses the host harness without changing source', async () => {
     const packageRoot = join(root, 'node_modules/@strands-agents/harness')
     await mkdir(packageRoot, { recursive: true })
@@ -619,6 +643,244 @@ const timer = setInterval(() => {
     await stopped(previous)
   }, 30000)
 
+  it('shouldLeaveTheDevWorkspaceOutOfExportsWhenItIsInsideTheProject', async () => {
+    await writeFile(join(root, 'value.ts'), "export const value = 'exported'\n")
+    await writeFile(project().entrypoint, source())
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, project().entrypoint)
+    await writeFile(join(directory, 'tmp', 'sentinel.txt'), 'WORKSPACE SENTINEL')
+    const archiveDirectory = await mkdtemp(join(tmpdir(), 'strands-dev-export-'))
+    const archive = join(archiveDirectory, 'agent.zip')
+    const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+    const options = {
+      args: parseArgs(['dev', '--workspace', directory]),
+      cwd: root,
+      initialWorkspace: root,
+      mcpPaths: [],
+      mcpStrictPaths: [],
+    }
+    const chat = await createTypescriptChat(project().entrypoint, config, options, AbortSignal.timeout(30000), vi.fn())
+    try {
+      await chat.submit(`/export typescript "${archive}"`)
+
+      const names = Object.keys(unzipSync(await readFile(archive)))
+      expect(names.some((name) => name.endsWith('value.ts'))).toBe(true)
+      expect(names.filter((name) => name.includes('strands-dev'))).toEqual([])
+    } finally {
+      await chat.dispose()
+      await rm(archiveDirectory, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it.each([
+    ['TheBoundEntrypoint', 'agent.ts', false],
+    ['AnotherEntrypoint', 'other.ts', true],
+  ])(
+    'shouldResumeTheDevSessionInItsWorkspaceWhenItRuns%s',
+    async (_case, file, keepsAgent) => {
+      const agentSource = `import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness(${JSON.stringify({ ...defaults, session: true, name: 'Dev' })})\n`
+      await writeFile(project().entrypoint, agentSource)
+      await writeFile(join(root, 'other.ts'), agentSource)
+      const directory = join(root, 'strands-dev')
+      await bindExistingAgent(directory, project().entrypoint)
+      const entrypoint = join(root, file)
+      const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+      const options = {
+        args: parseArgs(['dev', '--workspace', directory, '--agent', entrypoint]),
+        cwd: root,
+        initialWorkspace: root,
+        mcpPaths: [],
+        mcpStrictPaths: [],
+      }
+
+      const chat = await createTypescriptChat(entrypoint, config, options, AbortSignal.timeout(30000), vi.fn())
+
+      try {
+        expect(chat.resumeSession?.devWorkspace).toBe(await realpath(directory))
+        expect(chat.resumeSession?.agentProject).toBe(keepsAgent ? await realpath(entrypoint) : undefined)
+      } finally {
+        await chat.dispose()
+      }
+    },
+    30000
+  )
+
+  it('shouldOfferOnlyTheDevCommandsAndNotTheDevSkillsWhenADevChatListsSlashCommands', async () => {
+    await writeFile(
+      project().entrypoint,
+      `import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness(${JSON.stringify({ ...defaults, name: 'Dev' })})\n`
+    )
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, project().entrypoint)
+    const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+    const options = {
+      args: parseArgs(['dev', '--workspace', directory, '--agent', project().entrypoint]),
+      cwd: root,
+      initialWorkspace: root,
+      mcpPaths: [],
+      mcpStrictPaths: [],
+    }
+    const devSkills = ['background-evals', 'strands-evals']
+
+    const chat = await createTypescriptChat(project().entrypoint, config, options, AbortSignal.timeout(30000), vi.fn())
+    const listed = (input: string): string[] => chat.commandAssistance(input)?.completions.map(({ name }) => name) ?? []
+
+    try {
+      await chat.submit('/skills')
+      await vi.waitFor(() => expect(chat.getSnapshot().panel?.title).toMatch(/^Skills \(\d+\)$/))
+      expect(chat.getSnapshot().panel?.rows.map(({ label }) => label)).toEqual(expect.arrayContaining(devSkills))
+      expect(listed('/')).toEqual(expect.arrayContaining(['experiment', 'optimize']))
+      expect(listed('/')).not.toContain('evaluate')
+      expect(listed('/').filter((name) => devSkills.includes(name))).toEqual([])
+      expect(listed('/opt')).toEqual(['optimize'])
+      expect(chat.actionableCommandToken('/background-evals')).toBeUndefined()
+    } finally {
+      await chat.dispose()
+    }
+  }, 30000)
+
+  it('shouldOfferTheStrandsDevWorkspaceInSettingsWhenADevChatOpensThem', async () => {
+    await writeFile(
+      project().entrypoint,
+      `import { createHarness } from '@strands-agents/harness'\nexport const agent = await createHarness(${JSON.stringify({ ...defaults, name: 'Dev' })})\n`
+    )
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, project().entrypoint)
+    const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+    const options = {
+      args: parseArgs(['dev', '--workspace', directory, '--agent', project().entrypoint]),
+      cwd: root,
+      initialWorkspace: root,
+      mcpPaths: [],
+      mcpStrictPaths: [],
+    }
+
+    const chat = await createTypescriptChat(project().entrypoint, config, options, AbortSignal.timeout(30000), vi.fn())
+
+    try {
+      await chat.submit('/settings')
+      expect(chat.getSnapshot().panel?.kind).toBe('settings')
+      expect(chat.getSnapshot().panel?.filters?.map(({ id }) => id)).toContain('settings:Workspace')
+      expect(await chat.activatePanelRow({ label: '', description: '', value: 'settings:Workspace' })).toBe(true)
+      expect(chat.getSnapshot().panel?.rows.map(({ value }) => value)).toEqual(
+        expect.arrayContaining(['workspace:edit', 'autoOptimize', 'autoAcceptOptimizationResults'])
+      )
+    } finally {
+      await chat.dispose()
+    }
+  }, 30000)
+
+  it('shouldTurnOffTheCustomSessionManagerWhenADevChatOpensTheAgent', async () => {
+    const ownSessions = join(root, 'own-sessions')
+    await writeFile(
+      project().entrypoint,
+      `import { createHarness } from '@strands-agents/harness'
+import { FileStorage, Model, SessionManager } from '@strands-agents/sdk'
+class LocalModel extends Model {
+  getConfig() { return { modelId: 'local', contextWindowLimit: 10000 } }
+  updateConfig() {}
+  async *stream() {
+    yield { type: 'modelMessageStartEvent', role: 'assistant' }
+    yield { type: 'modelContentBlockStartEvent' }
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'local answer' } }
+    yield { type: 'modelContentBlockStopEvent' }
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+  }
+}
+const sessionManager = new SessionManager({ sessionId: 'own', storage: { snapshot: new FileStorage(${JSON.stringify(ownSessions)}) }, saveLatestOn: 'message' })
+export const agent = await createHarness({ ...${JSON.stringify(defaults)}, name: 'Dev', sessionManager })
+agent.model = new LocalModel()
+`
+    )
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, project().entrypoint)
+    const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+    const options = {
+      args: parseArgs(['dev', '--workspace', directory, '--agent', project().entrypoint]),
+      cwd: root,
+      initialWorkspace: root,
+      mcpPaths: [],
+      mcpStrictPaths: [],
+    }
+    const chat = await createTypescriptChat(project().entrypoint, config, options, AbortSignal.timeout(30000), vi.fn())
+
+    try {
+      await chat.submit('hello')
+
+      expect(chat.getSnapshot().notices.map(({ text }) => text)).toContain(
+        'Dev deactivated the custom session manager of this agent in this chat. Thus the chat cannot write into the stores of the agent. Dev does not save this chat.'
+      )
+      expect(JSON.stringify(chat.getSnapshot().completedTurns)).toContain('local answer')
+      expect(existsSync(ownSessions)).toBe(false)
+    } finally {
+      await chat.dispose()
+    }
+  }, 30000)
+
+  it('shouldShowTheFailedMessageAgainWhenADevChatResumesItsSession', async () => {
+    await writeFile(
+      project().entrypoint,
+      `import { createHarness } from '@strands-agents/harness'
+import { Model } from '@strands-agents/sdk'
+class ExpiredModel extends Model {
+  getConfig() { return { modelId: 'local', contextWindowLimit: 10000 } }
+  updateConfig() {}
+  async *stream() {
+    throw new Error('The security token included in the request is expired')
+  }
+}
+export const agent = await createHarness(${JSON.stringify({ ...defaults, name: 'Dev', session: true })})
+agent.model = new ExpiredModel()
+`
+    )
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, project().entrypoint)
+    const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+    const options = (...extra: string[]) => ({
+      args: parseArgs(['dev', '--workspace', directory, '--agent', project().entrypoint, ...extra]),
+      cwd: root,
+      initialWorkspace: root,
+      mcpPaths: [],
+      mcpStrictPaths: [],
+    })
+    const first = await createTypescriptChat(
+      project().entrypoint,
+      config,
+      options(),
+      AbortSignal.timeout(30000),
+      vi.fn()
+    )
+    const session = await (async (): Promise<string> => {
+      try {
+        await first.submit('refund my order')
+        expect(first.getSnapshot().completedTurns.at(-1)).toMatchObject({ prompt: 'refund my order', status: 'error' })
+        return first.getSnapshot().runtime.session
+      } finally {
+        await first.dispose()
+      }
+    })()
+
+    const resumed = await createTypescriptChat(
+      project().entrypoint,
+      config,
+      options('--session-id', session),
+      AbortSignal.timeout(30000),
+      vi.fn()
+    )
+
+    try {
+      expect(resumed.getSnapshot().completedTurns).toContainEqual(
+        expect.objectContaining({
+          prompt: 'refund my order',
+          status: 'error',
+          recoveryHint: 'The conversation does not include this message. Send it again to retry.',
+        })
+      )
+    } finally {
+      await resumed.dispose()
+    }
+  }, 60000)
+
   it('keeps the old process usable after a replacement evaluates and fails', async () => {
     await writeFile(join(root, 'value.ts'), "export const value = 'original'\n")
     const authored = source()
@@ -769,7 +1031,7 @@ await agent.invoke('startup request')
     } finally {
       await Promise.all([first.dispose(), reloaded?.dispose()])
     }
-  }, 30000)
+  }, 60_000)
 
   it.each(['cancel', 'dispose'] as const)(
     'stops a pending replacement before its first model invocation on %s',

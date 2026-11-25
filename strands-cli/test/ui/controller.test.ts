@@ -1,9 +1,11 @@
 import { setImmediate } from 'node:timers'
 
-import type { ContentBlockData } from '@strands-agents/sdk'
+import { Message, TextBlock, type ContentBlockData } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ChatController } from '../../src/ui/chat/controller.js'
+import type { DevChatCommand, DevChatCommandContext, DevChatPanelView } from '../../src/ui/chat/controller.js'
+import { ConversationManager } from '../../src/ui/chat/conversations.js'
 import {
   type ChatBackend,
   type ChatConfigurationSource,
@@ -16,6 +18,7 @@ import {
 import type { BackgroundAgentActivity } from '../../src/agent/background.js'
 import { ModelControlError, resolveModelTarget } from '../../src/model/selection.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
+import { jobStore } from '../fixtures/chat-app.js'
 import type { McpServerInfo } from '../../src/agent/mcp.js'
 
 function backend(
@@ -1880,6 +1883,244 @@ describe('ChatController', () => {
     await controller.dispose()
   })
 
+  const failingBackend = (message: string): ChatBackend =>
+    idleBackend({
+      async *stream() {
+        yield* []
+        throw new Error(message)
+      },
+    })
+
+  const devChat = (backend: ChatBackend, options: ConstructorParameters<typeof ChatController>[1] = {}) =>
+    new ChatController(backend, {
+      streamPresentation: {},
+      runtime: {
+        devWorkspace: {
+          root: '/project/strands-dev',
+          entrypoint: '/project/agent.ts',
+          boundEntrypoint: '/project/agent.ts',
+          origin: 'discovered',
+        },
+        cwd: '/project',
+      },
+      ...options,
+    })
+
+  it('shouldOpenAFixPanelWhenATurnFailsInADevChat', async () => {
+    const controller = devChat(failingBackend('Python agent exited (1). Traceback: boom'))
+
+    await controller.submit('hello')
+
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'error',
+      title: 'Agent turn failed',
+      fixDirectory: '/project',
+      rows: [{ description: 'Python agent exited (1). Traceback: boom' }],
+    })
+    await controller.dispose()
+  })
+
+  it.each([
+    ['missing AWS credentials', 'Could not load credentials from any providers'],
+    ['an invalid security token', 'The security token included in the request is invalid.'],
+  ])('shouldOfferModelSetupWhenADevChatTurnFailsWith %s', async (_, message) => {
+    const controller = devChat(failingBackend(message), { requestSetup: vi.fn() })
+
+    await controller.submit('hello')
+
+    const panel = controller.getSnapshot().panel
+    expect(panel).toMatchObject({
+      kind: 'error',
+      title: 'Model provider needs setup',
+      modelSetup: true,
+      rows: [{ description: message }],
+    })
+    expect(panel).not.toHaveProperty('fixDirectory')
+    expect(controller.getSnapshot().completedTurns[0]?.recoveryHint).toContain(
+      'Press s to choose a model provider, then resend your message.'
+    )
+    await controller.dispose()
+  })
+
+  it('shouldKeepTheFixPanelForACredentialFailureWhenTheDevChatCannotOpenSetup', async () => {
+    const controller = devChat(failingBackend('Could not load credentials from any providers'))
+
+    await controller.submit('hello')
+
+    expect(controller.getSnapshot().panel).toMatchObject({ title: 'Agent turn failed', fixDirectory: '/project' })
+    expect(controller.getSnapshot().completedTurns[0]?.recoveryHint).toContain(
+      'Refresh your credentials, then resend your message.'
+    )
+    await controller.dispose()
+  })
+
+  it('shouldAdviseARestartWithoutAPanelWhenADevChatTurnFailsWithAnExpiredToken', async () => {
+    const backend = failingBackend('The security token included in the request is expired')
+    Object.assign(backend, {
+      sessionIdentity: {
+        sessionId: 'saved-session',
+        sessionDirectory: '/project/strands-dev/.strands/state/sessions',
+        workspace: '/project',
+        configured: { sessionId: null, sessionDir: '/project/strands-dev/.strands/state/sessions' },
+      },
+    })
+    const controller = devChat(backend, { requestSetup: vi.fn() })
+
+    await controller.submit('hello')
+
+    const hint = controller.getSnapshot().completedTurns[0]?.recoveryHint
+    expect(controller.getSnapshot().panel).toBeUndefined()
+    expect(hint).toContain('Refresh your credentials, then restart Strands so that it loads them.')
+    expect(hint).toMatch(/strands dev --workspace '?\S*strands-dev'? --session-id saved-session/u)
+    expect(hint).not.toContain('Press s')
+    await controller.dispose()
+  })
+
+  it('shouldSaveTheFailedPromptForAResumeWhenAUserTurnFails', async () => {
+    const saveFailedTurns = vi.fn(async () => {})
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield* []
+          throw new Error('The security token included in the request is expired')
+        },
+      }),
+      {
+        streamPresentation: {},
+        failedTurns: { saved: [], save: saveFailedTurns },
+        sessions: {
+          current: 'saved-session',
+          directory: '/sessions',
+          list: vi.fn(),
+          resolve: vi.fn(),
+        },
+      }
+    )
+
+    await controller.submit('first question')
+    await controller.submit('second question')
+
+    expect(saveFailedTurns).toHaveBeenLastCalledWith([
+      { prompt: 'first question', error: 'The security token included in the request is expired' },
+      { prompt: 'second question', error: 'The security token included in the request is expired' },
+    ])
+    await controller.dispose()
+  })
+
+  it('shouldClearTheSavedFailedPromptsWhenALaterTurnCompletes', async () => {
+    const saveFailedTurns = vi.fn(async () => {})
+    let fail = true
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield* []
+          if (fail) throw new Error('socket hang up')
+          return { stopReason: 'endTurn' }
+        },
+      }),
+      {
+        streamPresentation: {},
+        failedTurns: { saved: [], save: saveFailedTurns },
+        sessions: {
+          current: 'saved-session',
+          directory: '/sessions',
+          list: vi.fn(),
+          resolve: vi.fn(),
+        },
+      }
+    )
+
+    await controller.submit('first question')
+    fail = false
+    await controller.submit('first question')
+    await controller.submit('next question')
+
+    expect(saveFailedTurns.mock.calls).toEqual([[[{ prompt: 'first question', error: 'socket hang up' }]], [[]]])
+    await controller.dispose()
+  })
+
+  it('shouldReportANoticeWhenTheFailedPromptCannotBeSaved', async () => {
+    const saveFailedTurns = vi.fn(async () => Promise.reject(new Error('disk full')))
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield* []
+          throw new Error('socket hang up')
+        },
+      }),
+      {
+        streamPresentation: {},
+        failedTurns: { saved: [], save: saveFailedTurns },
+        sessions: {
+          current: 'saved-session',
+          directory: '/sessions',
+          list: vi.fn(),
+          resolve: vi.fn(),
+        },
+      }
+    )
+
+    await controller.submit('hello')
+
+    expect(controller.getSnapshot().notices).toContainEqual(
+      expect.objectContaining({
+        status: 'error',
+        text: 'The failed message could not be saved for a resume: disk full',
+      })
+    )
+    await controller.dispose()
+  })
+
+  it('shouldShowTheSavedFailedPromptsAfterTheRestoredConversationWhenASessionResumes', async () => {
+    const controller = new ChatController(idleBackend(), {
+      initialMessages: [
+        new Message({ role: 'user', content: [new TextBlock('earlier question')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('earlier answer')] }),
+      ],
+      failedTurns: {
+        saved: [{ prompt: 'failed question', error: 'The security token included in the request is expired' }],
+        save: vi.fn(async () => {}),
+      },
+    })
+
+    expect(controller.getSnapshot().completedTurns).toMatchObject([
+      { prompt: 'earlier question', status: 'complete' },
+      {
+        prompt: 'failed question',
+        status: 'error',
+        error: 'The security token included in the request is expired',
+        recoveryHint: 'The conversation does not include this message. Send it again to retry.',
+      },
+    ])
+    await controller.dispose()
+  })
+
+  it('shouldShowWhatDevDeactivatedWhenADevChatOpensAnAgentWithCustomState', async () => {
+    const controller = devChat(idleBackend(), {
+      devStateNotice: 'Dev deactivated the custom session manager and memory of this agent in this chat.',
+    })
+
+    expect(controller.getSnapshot().notices).toContainEqual({
+      id: 'dev-state',
+      status: 'error',
+      text: 'Dev deactivated the custom session manager and memory of this agent in this chat.',
+    })
+    await controller.dispose()
+  })
+
+  it('shouldNotOpenAFixPanelWhenATurnFailsOutsideADevChat', async () => {
+    const controller = new ChatController(failingBackend('The security token included in the request is expired'), {
+      streamPresentation: {},
+      runtime: { cwd: '/project' },
+    })
+
+    await controller.submit('hello')
+
+    expect(controller.getSnapshot().completedTurns[0]?.status).toBe('error')
+    expect(controller.getSnapshot().panel).toBeUndefined()
+    await controller.dispose()
+  })
+
   it('marks a silent response as delayed, clears on progress, and allows exit while cancellation is stuck', async () => {
     vi.useFakeTimers()
     let respond!: () => void
@@ -3329,6 +3570,71 @@ describe('ChatController', () => {
     expect(list).toHaveBeenCalledOnce()
   })
 
+  describe('skills without commands', () => {
+    const tune = { name: 'optimize-harness', description: 'Tune this agent', instructions: 'Tune.', active: false }
+    const review = { name: 'review', description: 'Review code', instructions: 'Inspect carefully.', active: false }
+    const setup = () => {
+      const prompts: string[] = []
+      const activate = vi.fn(async (name: string) => {
+        const skill = [tune, review].find((candidate) => candidate.name === name)
+        return skill ? { skill: { ...skill, active: true }, content: skill.instructions } : undefined
+      })
+      const controller = new ChatController(
+        backend(async function* (prompt) {
+          prompts.push(prompt)
+          yield { type: 'textDelta', text: 'done' }
+          return { stopReason: 'endTurn' }
+        }),
+        {
+          skills: { list: async () => [tune, review], activate },
+          skillNames: [tune.name, review.name],
+          skillsWithoutCommands: ['Optimize-Harness'],
+        }
+      )
+      return { controller, activate, prompts }
+    }
+    const listedCommands = (controller: ChatController, input: string): string[] =>
+      controller.commandAssistance(input)?.completions.map(({ name }) => name) ?? []
+
+    it('shouldLeaveTheSkillOutOfTheSlashCommandsWhenTheHostGivesItNoCommand', async () => {
+      const { controller } = setup()
+
+      await controller.start()
+
+      await vi.waitFor(() => expect(listedCommands(controller, '/')).toContain('review'))
+      expect(listedCommands(controller, '/')).not.toContain('optimize-harness')
+      expect(controller.commandAssistance('/optimize-harness')).toEqual({ message: 'not found', completions: [] })
+      expect(controller.actionableCommandToken('/optimize-harness')).toBeUndefined()
+      expect(controller.actionableCommandToken('/review')).toBe('/review')
+    })
+
+    it('shouldReportAnUnknownCommandWithoutActivatingTheSkillWhenTheDeveloperTypesItsSlashName', async () => {
+      const { controller, activate, prompts } = setup()
+
+      await controller.submit('/optimize-harness improve refunds')
+
+      expect(activate).not.toHaveBeenCalled()
+      expect(prompts).toEqual([])
+      expect(controller.getSnapshot().panel).toMatchObject({
+        kind: 'error',
+        title: 'unknown command',
+        rows: [{ label: '/optimize-harness' }],
+      })
+    })
+
+    it('shouldActivateTheSkillAndKeepItOutOfTheSlashCommandsWhenTheDeveloperUsesTheDollarPrefix', async () => {
+      const { controller, activate, prompts } = setup()
+
+      expect(controller.actionableCommandToken('$optimize-harness')).toBe('$optimize-harness')
+      await controller.submit('$optimize-harness improve refunds')
+
+      expect(activate).toHaveBeenCalledWith('optimize-harness')
+      expect(prompts).toHaveLength(1)
+      expect(prompts[0]).toContain('</strands_skill_activation>\n\n$optimize-harness improve refunds')
+      expect(listedCommands(controller, '/opt')).toEqual([])
+    })
+  })
+
   it('represents an empty MCP configuration as zero servers with its checked path', async () => {
     const list = vi.fn(async () => [])
     const controller = new ChatController(backend(), {
@@ -3482,5 +3788,676 @@ describe('ChatController', () => {
     expect(await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)).toBe(true)
     expect(setSettings).toHaveBeenLastCalledWith({ disabledMcpServers: [] })
     expect(controller.getSnapshot().panel?.rows[0]?.badge?.text).toBe('failed')
+  })
+})
+
+describe('saving model choices into the dev agent', () => {
+  const modelBackend = (mode: 'live' | 'restart') => {
+    const target = backend()
+    target.info = () => ({ model: 'bedrock/current-model' })
+    target.modelChangeMode = () => mode
+    target.switchModel = vi.fn(async (model: string) => model)
+    target.restartModel = vi.fn(async (model: string) => model)
+    target.listEfforts = () => [
+      { id: 'low', label: 'Low' },
+      { id: 'high', label: 'High', active: true },
+    ]
+    target.setEffort = vi.fn(async (effort: string) => effort)
+    return target
+  }
+
+  it.each(['live', 'restart'] as const)('shouldSaveTheChosenModelIntoTheAgentWhenTheModelChangeIs%s', async (mode) => {
+    const saveAgentOptions = vi.fn(async () => true)
+    const controller = new ChatController(modelBackend(mode), { saveAgentOptions })
+
+    await controller.submit('/model bedrock/next-model')
+
+    expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ model: 'bedrock/next-model' })
+    expect(controller.getSnapshot().panel?.kind).not.toBe('error')
+  })
+
+  it('shouldSaveTheChosenEffortIntoTheAgent', async () => {
+    const saveAgentOptions = vi.fn(async () => true)
+    const controller = new ChatController(modelBackend('live'), { saveAgentOptions })
+
+    await controller.submit('/effort LOW')
+
+    expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ effort: 'low' })
+  })
+
+  it('shouldKeepTheModelForThisSessionAndSayWhyWhenTheAgentCannotSaveIt', async () => {
+    const target = modelBackend('live')
+    const saveAgentOptions = vi.fn(async () => {
+      throw new Error('agent.ts sets model in code. Set it to "bedrock/next-model" there yourself.')
+    })
+    const controller = new ChatController(target, { saveAgentOptions })
+
+    await controller.submit('/model bedrock/next-model')
+
+    expect(target.switchModel).toHaveBeenCalledWith('bedrock/next-model')
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'error',
+      title: 'model kept for this session only',
+      rows: [{ description: 'agent.ts sets model in code. Set it to "bedrock/next-model" there yourself.' }],
+    })
+  })
+
+  it('shouldNotSaveTheModelWhenTheModelChangeFails', async () => {
+    const target = modelBackend('live')
+    target.switchModel = vi.fn(async () => {
+      throw new ModelControlError('Model unavailable.')
+    })
+    const saveAgentOptions = vi.fn(async () => true)
+    const controller = new ChatController(target, { saveAgentOptions })
+
+    await controller.submit('/model bedrock/next-model')
+
+    expect(saveAgentOptions).not.toHaveBeenCalled()
+    expect(controller.getSnapshot().panel?.title).toBe('model switch failed')
+  })
+})
+
+const EmptyPanel: DevChatPanelView = () => null
+
+const devCommand = (open: DevChatCommand['open'] = vi.fn(() => EmptyPanel)): DevChatCommand => ({
+  spec: { name: 'optimize', usage: '/optimize', description: 'Tune this agent' },
+  open,
+})
+
+const skillCommand = (): DevChatCommand => ({
+  spec: { name: 'evaluate', usage: '/evaluate [request]', description: 'Run the cases' },
+  skill: {
+    skill: 'strands-evals',
+    workflow: 'Run the cases.',
+    unavailable: 'The skill did not load.',
+    job: (id) => `how is ${id} going?`,
+  },
+})
+
+const evalsSkills = () => ({
+  list: async () => [],
+  activate: vi.fn(async (name: string) =>
+    name === 'strands-evals'
+      ? { skill: { name, description: 'Evals', instructions: 'Use evals.', active: true }, content: 'Use evals.' }
+      : undefined
+  ),
+})
+
+const capture = (): { command: DevChatCommand; context: () => DevChatCommandContext } => {
+  let received: DevChatCommandContext | undefined
+  const command = devCommand((context) => {
+    received = context
+    return EmptyPanel
+  })
+  return { command, context: () => received! }
+}
+
+// A chat that records what each turn sends to the agent.
+const chat = (commands: readonly DevChatCommand[], options?: ConstructorParameters<typeof ChatController>[1]) => {
+  const prompts: unknown[] = []
+  const controller = new ChatController(
+    idleBackend({
+      async *stream(prompt) {
+        prompts.push(prompt)
+        yield* []
+        return { stopReason: 'endTurn' }
+      },
+    }),
+    { devCommands: [...commands], ...options }
+  )
+  return { controller, prompts, shown: () => controller.getSnapshot().completedTurns.map(({ prompt }) => prompt) }
+}
+
+describe('dev chat commands', () => {
+  it('shouldOpenTheDevCommandPanelWhenTheUserTypesIt', async () => {
+    const stream = vi.fn()
+    const open = vi.fn(() => EmptyPanel)
+    const controller = new ChatController(idleBackend({ stream }), { devCommands: [devCommand(open)] })
+
+    await controller.submit('/optimize')
+
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/optimize', view: EmptyPanel })
+    expect(stream).not.toHaveBeenCalled()
+  })
+
+  it('shouldCloseTheDevPanelWhenTheViewAsksToClose', async () => {
+    const controller = new ChatController(idleBackend(), { devCommands: [devCommand()] })
+    await controller.submit('/optimize')
+    const panel = controller.getSnapshot().panel
+
+    if (panel?.kind === 'dev') panel.close()
+
+    expect(controller.getSnapshot().panel).toBeUndefined()
+  })
+
+  it('shouldKeepAnotherPanelWhenAnOldDevPanelAsksToClose', async () => {
+    const controller = new ChatController(idleBackend(), { devCommands: [devCommand()] })
+    await controller.submit('/optimize')
+    const panel = controller.getSnapshot().panel
+    await controller.submit('/help')
+
+    if (panel?.kind === 'dev') panel.close()
+
+    expect(controller.getSnapshot().panel?.kind).toBe('help')
+  })
+
+  it('shouldOfferTheDevCommandWhenTheUserTypesASlash', () => {
+    const controller = new ChatController(idleBackend(), { devCommands: [devCommand()] })
+
+    expect(controller.actionableCommandToken('/optimize')).toBe('/optimize')
+    expect(controller.commandAssistance('/opt')?.completions).toEqual([expect.objectContaining({ name: 'optimize' })])
+  })
+
+  it('shouldListTheDevCommandsBeforeTheBuiltInCommandsWhenTheUserTypesOnlyASlash', () => {
+    const experiment = {
+      ...devCommand(),
+      spec: { name: 'experiment', usage: '/experiment', description: 'Make cases' },
+    }
+    const controller = new ChatController(idleBackend(), { devCommands: [experiment, devCommand()] })
+
+    const names = controller.commandAssistance('/')?.completions.map((command) => command.name)
+
+    expect(names?.slice(0, 3)).toEqual(['experiment', 'optimize', 'help'])
+  })
+
+  it('shouldListTheDevCommandsInHelpWhenTheUserOpensIt', async () => {
+    const controller = new ChatController(idleBackend(), { devCommands: [devCommand()] })
+
+    await controller.submit('/help')
+
+    const rows = controller.getSnapshot().panel?.rows.filter((row) => row.section === 'Commands') ?? []
+    expect(rows[0]).toMatchObject({ label: '/optimize', description: 'Tune this agent' })
+  })
+
+  it('shouldShowTheUsageInsteadOfOpeningWhenTheUserPicksADevCommandInHelp', async () => {
+    const open = vi.fn(() => EmptyPanel)
+    const controller = new ChatController(idleBackend(), { devCommands: [devCommand(open)] })
+    await controller.submit('/help')
+    const row = controller.getSnapshot().panel!.rows.find((candidate) => candidate.label === '/optimize')!
+
+    await controller.activatePanelRow(row)
+
+    expect(open).not.toHaveBeenCalled()
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'help-detail', body: 'Tune this agent' })
+  })
+
+  it('shouldExplainTheDevCommandBelowItsSummaryWhenTheUserPicksItInHelp', async () => {
+    const explained: DevChatCommand = {
+      ...devCommand(),
+      spec: {
+        name: 'optimize',
+        usage: '/optimize',
+        description: 'Tune this agent',
+        details: 'Select an experiment.\n\nReview the edits.',
+      },
+    }
+    const controller = new ChatController(idleBackend(), { devCommands: [explained] })
+    await controller.submit('/help')
+    const row = controller.getSnapshot().panel!.rows.find((candidate) => candidate.label === '/optimize')!
+
+    await controller.activatePanelRow(row)
+
+    expect(row.description.split('\n')[0]).toBe('Tune this agent')
+    expect(controller.getSnapshot().panel).toMatchObject({
+      kind: 'help-detail',
+      title: '/optimize',
+      body: 'Tune this agent\n\nSelect an experiment.\n\nReview the edits.',
+    })
+  })
+
+  it('shouldTreatTheCommandAsUnknownWhenNoDevCommandsAreGiven', async () => {
+    const controller = new ChatController(idleBackend())
+
+    expect(controller.actionableCommandToken('/optimize')).toBeUndefined()
+  })
+
+  it('shouldActivateTheSkillAndSendTheWorkflowWhenTheUserTypesASkillCommand', async () => {
+    const skills = evalsSkills()
+    const { controller, prompts } = chat([skillCommand()], { skills })
+
+    await controller.submit('/evaluate refunds')
+    controller.openDevCommand('evaluate', { job: 'refunds.json' })
+    await vi.waitFor(() => expect(prompts).toHaveLength(2))
+
+    expect(skills.activate).toHaveBeenCalledWith('strands-evals')
+    expect(prompts[0]).toContain('<skill_instructions>\nUse evals.\n</skill_instructions>')
+    expect(prompts[0]).toContain('<strands_dev_command name="evaluate">\nRun the cases.\n</strands_dev_command>')
+    expect(String(prompts[0]).endsWith('\n\n/evaluate refunds')).toBe(true)
+    expect(String(prompts[1]).endsWith('\n\n/evaluate how is refunds.json going?')).toBe(true)
+    expect(controller.getSnapshot().completedTurns.map((turn) => turn.prompt)).toEqual([
+      '/evaluate refunds',
+      '/evaluate how is refunds.json going?',
+    ])
+    expect(controller.openDevCommand('evaluate', { restore: true })).toBe(false)
+    expect(controller.getSnapshot().panel).toBeUndefined()
+  })
+
+  it('shouldOpenTheSkillCommandPanelOnlyWhenItsToolAsks', async () => {
+    let context: DevChatCommandContext | undefined
+    const command: DevChatCommand = {
+      ...skillCommand(),
+      open: vi.fn(() => EmptyPanel),
+      attach: (received) => (context = received),
+    }
+    const controller = new ChatController(idleBackend(), { devCommands: [command] })
+    await controller.start()
+
+    expect(controller.openDevCommand('evaluate')).toBe(true)
+    expect(controller.getSnapshot().panel).toBeUndefined()
+    expect(context!.openPanel('evaluate')).toBe(true)
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'evaluate', view: EmptyPanel })
+  })
+
+  it('shouldOpenAFileThroughTheScreenOpenerUntilTheScreenRemovesIt', async () => {
+    let context: DevChatCommandContext | undefined
+    const controller = new ChatController(idleBackend(), {
+      devCommands: [{ ...skillCommand(), attach: (received) => (context = received) }],
+    })
+    await controller.start()
+    const opener = vi.fn(async (_path: string): Promise<void> => {})
+    const detach = controller.attachFileOpener(opener)
+
+    await context!.openFile!('/w/a.json')
+    const removeNewer = controller.attachFileOpener(vi.fn())
+    removeNewer()
+    // An older opener's removal leaves a newer state alone.
+    detach()
+
+    expect(opener).toHaveBeenCalledWith('/w/a.json')
+    await expect(context!.openFile!('/w/b.json')).rejects.toThrow('This terminal cannot open an editor.')
+  })
+
+  it('shouldKeepOnePanelWaitingUnderAPermissionPromptWhenTheToolAsksTwice', async () => {
+    let context: DevChatCommandContext | undefined
+    const open = vi.fn(() => EmptyPanel)
+    const command: DevChatCommand = { ...skillCommand(), open, attach: (received) => (context = received) }
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield {
+            type: 'permission',
+            request: {
+              id: 'permission-1',
+              toolName: 'shell',
+              input: {},
+              options: [{ id: 'allow', label: 'Allow once', kind: 'allow_once' }],
+            },
+          }
+          await new Promise(() => undefined)
+          return { stopReason: 'endTurn' }
+        },
+        respondPermission: vi.fn(async () => true),
+      }),
+      { devCommands: [command] }
+    )
+    await controller.start()
+    void controller.submit('hello')
+    await vi.waitFor(() => expect(controller.getSnapshot().panel?.kind).toBe('permission'))
+
+    expect([context!.openPanel('evaluate'), context!.openPanel('evaluate'), context!.openPanel('missing')]).toEqual([
+      true,
+      true,
+      false,
+    ])
+    await controller.activatePanelRow(controller.getSnapshot().panel!.rows[0]!)
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'evaluate' })
+    controller.dismissPanel()
+
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(controller.getSnapshot().panel).toBeUndefined()
+    controller.close()
+  })
+
+  it('shouldNeitherListNorRunAHiddenCommandButStillOpenItsPanelForATool', async () => {
+    let context: DevChatCommandContext | undefined
+    const hidden: DevChatCommand = {
+      ...devCommand(vi.fn(() => EmptyPanel)),
+      spec: { name: 'ask', usage: '/ask', description: 'Answer the question' },
+      hidden: true,
+      attach: (received) => (context = received),
+    }
+    const controller = new ChatController(idleBackend(), { devCommands: [hidden] })
+    await controller.start()
+
+    expect(controller.actionableCommandToken('/ask')).toBeUndefined()
+    expect(controller.commandAssistance('/as')?.completions ?? []).not.toContainEqual(
+      expect.objectContaining({ name: 'ask' })
+    )
+    expect(context!.openPanel('ask')).toBe(true)
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'ask' })
+  })
+
+  it('shouldExplainWhyWhenTheSkillOfASkillCommandIsMissing', async () => {
+    const stream = vi.fn()
+    const controller = new ChatController(idleBackend({ stream }), {
+      devCommands: [skillCommand()],
+      skills: { list: async () => [], activate: async () => undefined },
+    })
+
+    await controller.submit('/evaluate')
+
+    expect(stream).not.toHaveBeenCalled()
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'error' })
+    expect(JSON.stringify(controller.getSnapshot().panel)).toContain('The skill did not load.')
+  })
+
+  it('shouldUpdateTheSameNoticeWhenTheDevCommandReportsProgress', async () => {
+    const { command, context } = capture()
+    const controller = new ChatController(idleBackend(), { devCommands: [command] })
+    await controller.submit('/optimize')
+
+    const notice = context().report('running', 'Optimizing · candidate 0')
+    notice.update('success', 'Optimization finished')
+
+    const notices = controller.getSnapshot().notices.filter((candidate) => candidate.text.startsWith('Optimiz'))
+    expect(notices).toEqual([expect.objectContaining({ status: 'success', text: 'Optimization finished' })])
+  })
+
+  it('shouldShowTheNoticeAgainWhenTheConversationWasClearedBeforeAnUpdate', async () => {
+    const { command, context } = capture()
+    const controller = new ChatController(idleBackend({ clear: vi.fn(async () => {}) }), { devCommands: [command] })
+    await controller.submit('/optimize')
+    const notice = context().report('running', 'Optimizing')
+
+    await controller.submit('/clear')
+    expect(controller.getSnapshot().notices).not.toContainEqual(expect.objectContaining({ text: 'Optimizing' }))
+    notice.update('success', 'Optimization finished')
+
+    expect(controller.getSnapshot().notices).toContainEqual(expect.objectContaining({ text: 'Optimization finished' }))
+  })
+
+  it('shouldMoveTheNoticeBelowTheNewestTurnWhenTheDevCommandUpdatesIt', async () => {
+    const { command, context } = capture()
+    const controller = new ChatController(idleBackend(), { devCommands: [command] })
+    await controller.submit('/optimize')
+    const notice = context().report('running', 'Optimizing')
+
+    await controller.submit('first question')
+    notice.update('running', 'Optimizing · candidate 1')
+
+    const newest = controller.getSnapshot().completedTurns.at(-1)!.id
+    expect(controller.getSnapshot().notices).toContainEqual(
+      expect.objectContaining({ text: 'Optimizing · candidate 1', afterTurnId: newest })
+    )
+    expect(controller.getSnapshot().notices.filter((candidate) => candidate.text.startsWith('Optimiz'))).toHaveLength(1)
+  })
+
+  it('shouldLetTheDevCommandAttachWhenTheControllerStarts', () => {
+    const attach = vi.fn<NonNullable<DevChatCommand['attach']>>(
+      (context) => void context.report('running', 'Resumed view')
+    )
+
+    const controller = new ChatController(idleBackend(), { devCommands: [{ ...devCommand(), attach }] })
+
+    expect(attach).toHaveBeenCalledTimes(1)
+    expect(controller.getSnapshot().notices).toContainEqual(expect.objectContaining({ text: 'Resumed view' }))
+  })
+})
+
+// A backend whose turns each wait until the test releases them.
+const gatedBackend = () => {
+  const gates: (() => void)[] = []
+  const stream = vi.fn(async function* () {
+    await new Promise<void>((resolve) => gates.push(resolve))
+    yield* []
+    return { stopReason: 'endTurn' as const, context: {} }
+  })
+  return { backend: idleBackend({ stream }), stream, release: () => gates.shift()?.() }
+}
+
+const named = (name: string): DevChatCommand => ({
+  ...devCommand(),
+  spec: { name, usage: `/${name}`, description: name },
+})
+
+describe('dev command jobs and panels', () => {
+  it.each([
+    ['optimize', true, 'dev'],
+    ['missing', false, undefined],
+  ])('shouldOpenThePanelOf%sOnlyWhenTheCommandExists', (name, opened, kind) => {
+    const controller = new ChatController(idleBackend(), { devCommands: [devCommand()] })
+
+    const result = controller.openDevCommand(name)
+
+    expect(result).toBe(opened)
+    expect(controller.getSnapshot().panel?.kind).toBe(kind)
+  })
+
+  it('shouldListOnlyTheCommandsWithRunningJobsWhenJobsChange', () => {
+    const experiment = jobStore()
+    const commands = [
+      { ...named('experiment'), jobs: experiment },
+      { ...named('test'), jobs: jobStore() },
+    ]
+    const controller = new ChatController(idleBackend(), { devCommands: commands })
+
+    experiment.set([{ id: 'g1', label: 'refunds', done: 3, total: 20 }])
+    const running = controller.getSnapshot().devJobs
+    experiment.set([])
+
+    expect(running).toEqual([{ command: 'experiment', jobs: [{ id: 'g1', label: 'refunds', done: 3, total: 20 }] }])
+    expect(controller.getSnapshot().devJobs).toBeUndefined()
+  })
+
+  it('shouldStopListeningForJobsWhenTheControllerIsDisposed', async () => {
+    const jobs = jobStore()
+    const controller = new ChatController(idleBackend(), { devCommands: [{ ...devCommand(), jobs }] })
+
+    await controller.dispose()
+
+    expect(jobs.listeners()).toBe(0)
+  })
+
+  it('shouldOpenTheDevPanelAtOnceWhenTheUserTypesItDuringATurn', async () => {
+    const { backend, release } = gatedBackend()
+    const controller = new ChatController(backend, { devCommands: [devCommand()] })
+    const turn = controller.submit('a long question')
+    await vi.waitFor(() => expect(controller.getSnapshot().status).toBe('running'))
+
+    await controller.submit('/optimize')
+
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/optimize' })
+    expect(controller.getSnapshot().queuedPrompts).toEqual([])
+    release()
+    await turn
+  })
+
+  it('shouldOpenTheDevPanelOfTheActiveConversationWhenTheManagerIsAsked', () => {
+    const manager = new ConversationManager(new ChatController(idleBackend(), { devCommands: [devCommand()] }), {
+      fork: async () => new ChatController(idleBackend()),
+    })
+
+    const opened = manager.openDevCommand('optimize')
+
+    expect(opened).toBe(true)
+    expect(manager.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/optimize' })
+  })
+})
+
+describe('dev panels across turns and repeats', () => {
+  it('shouldKeepTheDevPanelOpenWhenAQueuedPromptStartsItsTurn', async () => {
+    const { backend, stream, release } = gatedBackend()
+    const controller = new ChatController(backend, { devCommands: [devCommand()] })
+    const first = controller.submit('first question')
+    await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(1))
+    const second = controller.submit('second question')
+    await controller.submit('/optimize')
+
+    release()
+    await vi.waitFor(() => expect(stream).toHaveBeenCalledTimes(2))
+
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', title: '/optimize' })
+    release()
+    await Promise.all([first, second])
+  })
+
+  it('shouldKeepTheOpenPanelWhenItsOwnCommandOpensAgain', async () => {
+    const open = vi.fn(() => EmptyPanel)
+    const controller = new ChatController(idleBackend(), { devCommands: [devCommand(open)] })
+    await controller.submit('/optimize')
+    const before = controller.getSnapshot().panel?.id
+
+    const opened = controller.openDevCommand('optimize')
+
+    expect(opened).toBe(true)
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(controller.getSnapshot().panel?.id).toBe(before)
+  })
+
+  it('shouldKeepTheManagerPanelWhenTheDevCommandCannotOpen', async () => {
+    const jobs = jobStore()
+    const manager = new ConversationManager(
+      new ChatController(idleBackend(), { devCommands: [{ ...devCommand(), jobs }] }),
+      { fork: async () => new ChatController(idleBackend()) }
+    )
+    await manager.submit('/agents')
+
+    const opened = manager.openDevCommand('missing')
+    jobs.set([{ id: 'a', label: 'refunds' }])
+
+    expect(opened).toBe(false)
+    expect(manager.getSnapshot().panel?.kind).toBe('agents')
+  })
+
+  it('shouldShowAJobLabelOnOneLineWhenItHasLineBreaksOrTabs', () => {
+    const jobs = jobStore()
+    const controller = new ChatController(idleBackend(), { devCommands: [{ ...devCommand(), jobs }] })
+
+    jobs.set([{ id: 'a', label: ' refunds\n\tsecond ', done: 1, total: 2 }])
+
+    expect(controller.getSnapshot().devJobs?.[0]?.jobs[0]?.label).toBe('refunds second')
+  })
+})
+
+describe('a message typed beside an open dev panel', () => {
+  const SHOWN = 'A diff of the run r1 is on screen: effort high → low.'
+
+  /** A panel that stays open while the developer types, such as the diff of a finished run. */
+  const standingPanel = (shown: () => string | undefined): DevChatCommand => ({
+    spec: { name: 'ask', usage: '/ask', description: 'Answer what is on screen' },
+    sticky: true,
+    open: () => EmptyPanel,
+    screenContext: shown,
+  })
+
+  it('shouldSendWhatThePanelShowsWithTheMessageAndShowOnlyTheMessageInTheChat', async () => {
+    const { controller, prompts, shown } = chat([standingPanel(() => SHOWN)])
+    await controller.submit('/ask')
+
+    await controller.submit('approve this')
+
+    expect(prompts).toEqual([`<strands_dev_screen>\n${SHOWN}\n</strands_dev_screen>\n\napprove this`])
+    expect(shown()).toEqual(['approve this'])
+    expect(controller.getSnapshot().panel).toMatchObject({ kind: 'dev', command: 'ask' })
+  })
+
+  it('shouldReadWhatThePanelShowsWhenTheMessageIsSentAndNotBefore', async () => {
+    let showing = 'edit 1 of 2'
+    const { controller, prompts } = chat([standingPanel(() => showing)])
+    await controller.submit('/ask')
+    showing = 'edit 2 of 2'
+
+    await controller.submit('apply it')
+
+    expect(prompts).toEqual(['<strands_dev_screen>\nedit 2 of 2\n</strands_dev_screen>\n\napply it'])
+  })
+
+  it.each([
+    ['the panel shows nothing a message could be about', [standingPanel(() => undefined)], '/ask'],
+    ['the panel is closed', [standingPanel(() => SHOWN)], undefined],
+    ['the open panel is another one', [standingPanel(() => SHOWN), devCommand()], '/optimize'],
+  ] as const)('shouldSendTheMessageAloneWhen%s', async (_case, commands, open) => {
+    const { controller, prompts } = chat(commands)
+    if (open) await controller.submit(open)
+
+    await controller.submit('approve this')
+
+    expect(prompts).toEqual(['approve this'])
+  })
+
+  it('shouldNotAddItToACommandThatBringsItsOwnRequest', async () => {
+    const { controller, prompts } = chat([standingPanel(() => SHOWN), skillCommand()], { skills: evalsSkills() })
+    await controller.submit('/ask')
+
+    await controller.submit('/evaluate refunds')
+
+    expect(prompts).toHaveLength(1)
+    expect(String(prompts[0])).not.toContain('<strands_dev_screen>')
+    expect(String(prompts[0]).endsWith('\n\n/evaluate refunds')).toBe(true)
+  })
+})
+
+describe('what a dev command hears and can change', () => {
+  const replying = (fail = false) =>
+    idleBackend({
+      async *stream() {
+        if (fail) throw new Error('The model did not answer.')
+        yield { type: 'textDelta', text: 'done' } as const
+        return { stopReason: 'endTurn' }
+      },
+    })
+
+  const listening = (): { command: DevChatCommand; heard: string[]; contexts: DevChatCommandContext[] } => {
+    const heard: string[] = []
+    const contexts: DevChatCommandContext[] = []
+    const command: DevChatCommand = {
+      ...devCommand(),
+      turnEnded: (context, { prompt }) => {
+        contexts.push(context)
+        heard.push(prompt)
+      },
+    }
+    return { command, heard, contexts }
+  }
+
+  it('shouldTellACommandOfEachTurnOfTheDeveloperThatEndedWithAReply', async () => {
+    const { command, heard } = listening()
+    const controller = new ChatController(replying(), { devCommands: [command] })
+
+    await controller.submit('first message')
+    await controller.submit('second message')
+
+    expect(heard).toEqual(['first message', 'second message'])
+  })
+
+  it('shouldNotTellACommandOfATurnThatFailed', async () => {
+    const { command, heard } = listening()
+    const controller = new ChatController(replying(true), { devCommands: [command] })
+
+    await controller.submit('a message the model does not answer')
+
+    expect(heard).toEqual([])
+  })
+
+  it('shouldKeepTheChatGoingWhenACommandFailsOnTheEndOfATurn', async () => {
+    const failing: DevChatCommand = {
+      ...devCommand(),
+      turnEnded: () => {
+        throw new Error('the command broke')
+      },
+    }
+    const controller = new ChatController(replying(), { devCommands: [failing] })
+
+    await controller.submit('first message')
+    await controller.submit('second message')
+
+    expect(controller.getSnapshot().completedTurns.map(({ prompt, status }) => [prompt, status])).toEqual([
+      ['first message', 'complete'],
+      ['second message', 'complete'],
+    ])
+  })
+
+  it('shouldLetACommandChangeASettingAsTheSettingsPanelDoes', async () => {
+    const { command, contexts } = listening()
+    const setSettings = vi.fn(async () => undefined)
+    const controller = new ChatController(replying(), { devCommands: [command], setSettings })
+    await controller.submit('a message')
+
+    const saved = await contexts[0]!.setSettings?.({ autoOptimize: 20 })
+
+    expect(saved).toBe(true)
+    expect(setSettings).toHaveBeenCalledExactlyOnceWith({ autoOptimize: 20 })
+    expect(controller.getSnapshot().settings.autoOptimize).toBe(20)
   })
 })

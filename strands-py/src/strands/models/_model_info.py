@@ -150,8 +150,9 @@ _PROMPT_CACHING_VALUES: dict[str, PromptCaching] = {
 
 # Bedrock appends a version to some ids (`claude-3-5-haiku-20241022-v1:0`); the base id carries the facts.
 _VERSION_SUFFIX = re.compile(r"-(?:v\d+(?::\d+)?|\d+:\d+)$")
-# Dated snapshots (`claude-opus-5-5-20260401`, `claude-haiku-4-5@20251001`) share the undated model's facts.
-_DATE_SUFFIX = re.compile(r"[-@]\d{8}$")
+# Dated snapshots (`claude-opus-5-5-20260401`, `claude-haiku-4-5@20251001`, `gpt-5.4-2026-03-05`) share the undated
+# model's facts.
+_DATE_SUFFIX = re.compile(r"[-@](?:\d{8}|\d{4}-\d{2}-\d{2})$")
 
 
 def _section(entry: dict[str, Any], name: str, field_names: dict[str, str], section: type[_SectionT]) -> _SectionT:

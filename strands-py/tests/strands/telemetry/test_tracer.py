@@ -1309,6 +1309,77 @@ def test_end_agent_span_uses_per_invocation_usage_when_opted_in(mock_span, monke
     assert call_args["gen_ai.usage.completion_tokens"] == 50
 
 
+def _agent_response_with_usage():
+    mock_metrics = mock.MagicMock()
+    mock_metrics.accumulated_usage = {"inputTokens": 300, "outputTokens": 30, "totalTokens": 330}
+    mock_response = mock.MagicMock()
+    mock_response.metrics = mock_metrics
+    mock_response.stop_reason = "end_turn"
+    mock_response.__str__ = mock.MagicMock(return_value="Agent response")
+    return mock_response
+
+
+def test_end_agent_span_omits_usage_when_usage_on_model_spans_only(mock_span, monkeypatch):
+    """With gen_ai_usage_on_model_spans_only, the agent span carries no usage, so summing spans counts calls once."""
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_usage_on_model_spans_only")
+    tracer = Tracer()
+
+    tracer.end_agent_span(mock_span, _agent_response_with_usage())
+
+    mock_span.set_attributes.assert_not_called()
+    mock_span.add_event.assert_any_call(
+        "gen_ai.choice",
+        attributes={"message": "Agent response", "finish_reason": "end_turn"},
+    )
+    mock_span.set_status.assert_called_once_with(StatusCode.OK)
+    mock_span.end.assert_called_once()
+
+
+def test_end_agent_span_keeps_langfuse_observation_type_when_usage_on_model_spans_only(mock_span, monkeypatch):
+    """The Langfuse observation type does not depend on usage being on the span."""
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://us.cloud.langfuse.com")
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_usage_on_model_spans_only")
+    tracer = Tracer()
+
+    tracer.end_agent_span(mock_span, _agent_response_with_usage())
+
+    mock_span.set_attributes.assert_called_once_with({"langfuse.observation.type": "span"})
+
+
+def test_usage_on_model_spans_only_overrides_latest_invocation_tokens(mock_span, monkeypatch, caplog):
+    """Both opt-ins set: the agent span carries no usage, and the ignored one is reported once."""
+    monkeypatch.setenv(
+        "OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_use_latest_invocation_tokens,gen_ai_usage_on_model_spans_only"
+    )
+    with caplog.at_level(logging.WARNING):
+        tracer = Tracer()
+
+    tracer.end_agent_span(mock_span, _agent_response_with_usage())
+
+    assert caplog.text.count("gen_ai_use_latest_invocation_tokens is ignored") == 1
+    mock_span.set_attributes.assert_not_called()
+
+
+def test_end_model_invoke_span_keeps_usage_when_usage_on_model_spans_only(mock_span, monkeypatch):
+    """The chat span still carries the call's usage."""
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_usage_on_model_spans_only")
+    tracer = Tracer()
+    message = {"role": "assistant", "content": [{"text": "Response"}]}
+
+    tracer.end_model_invoke_span(
+        mock_span, message, Usage(inputTokens=10, outputTokens=20, totalTokens=30), Metrics(latencyMs=20), "end_turn"
+    )
+
+    attributes = mock_span.set_attributes.call_args[0][0]
+    assert {key: value for key, value in attributes.items() if key.startswith("gen_ai.usage.")} == {
+        "gen_ai.usage.prompt_tokens": 10,
+        "gen_ai.usage.input_tokens": 10,
+        "gen_ai.usage.completion_tokens": 20,
+        "gen_ai.usage.output_tokens": 20,
+        "gen_ai.usage.total_tokens": 30,
+    }
+
+
 def test_end_agent_span_warns_when_opted_in_but_no_invocations(mock_span, monkeypatch, caplog):
     """Test warning and zero usage when opted in but no agent invocations exist."""
     monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_use_latest_invocation_tokens")

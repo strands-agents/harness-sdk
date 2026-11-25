@@ -443,4 +443,26 @@ describe('TurnProjector', () => {
       },
     ])
   })
+
+  it('restores the message that was typed beside an open panel without what the panel showed', () => {
+    const turns = projectMessages([
+      new Message({
+        role: 'user',
+        content: [
+          new TextBlock(
+            [
+              '<strands_dev_screen>',
+              "On the developer's screen as they sent this message: a diff from the finished optimization run r1.",
+              '</strands_dev_screen>',
+              '',
+              'approve this',
+            ].join('\n')
+          ),
+        ],
+      }),
+      new Message({ role: 'assistant', content: [new TextBlock('Applied.')] }),
+    ])
+
+    expect(turns).toMatchObject([{ prompt: 'approve this', entries: [{ type: 'assistant', text: 'Applied.' }] }])
+  })
 })

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from strands.experimental.context_manager import ContextManager, ContextManagerConfig
+from strands.context_manager import ContextManager, ContextManagerConfig
 from strands.memory import MemoryStore
 from strands.models import Model, ModelRouter
 from typing_extensions import TypedDict
