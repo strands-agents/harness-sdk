@@ -1,4 +1,5 @@
 ---
+import SocialMeta from '../components/SocialMeta.astro'
 import { pathWithBase } from '../util/links'
 import { baseSchemas, serializeJsonLd } from '../util/structured-data'
 
@@ -27,20 +28,14 @@ const structuredData = {
     <meta name="robots" content="noindex" />
     <link rel="canonical" href={canonicalHref} />
     <link rel="icon" type="image/svg+xml" href={faviconHref} />
-    <meta property="og:type" content="website" />
-    <meta property="og:url" content={canonicalHref} />
-    <meta property="og:title" content={title} />
-    <meta property="og:description" content={description} />
-    <meta property="og:image" content={ogImageHref} />
-    <meta property="og:image:type" content="image/jpeg" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content={ogImageAlt} />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content={title} />
-    <meta name="twitter:description" content={description} />
-    <meta name="twitter:image" content={ogImageHref} />
-    <meta name="twitter:image:alt" content={ogImageAlt} />
+    <SocialMeta
+      {title}
+      {description}
+      {canonicalHref}
+      imageHref={ogImageHref}
+      imageType="image/jpeg"
+      imageAlt={ogImageAlt}
+    />
     <script type="application/ld+json" set:html={serializeJsonLd(structuredData)} />
     <style>
       html,
