@@ -7,8 +7,12 @@ import type { DevWorkspace } from '../workspace.js'
 import { runTemporaryOptimization, type TemporaryOptimizationDependencies } from './optimize.js'
 import { temporaryWorkspaceDirectory } from './evals-process.js'
 import { temporaryWorkspaceReady } from './layout-migration.js'
-import { readTemporaryTestResults, rememberTemporaryTestResults } from './report.js'
-import { runTemporaryTest, type TemporaryTestDependencies } from './test.js'
+import {
+  readTemporaryTestResults,
+  rememberTemporaryTestResults,
+  runTemporaryTest,
+  type TemporaryTestDependencies,
+} from './test.js'
 
 interface TemporaryDevCommandDependencies extends TemporaryOptimizationDependencies, TemporaryTestDependencies {
   openWorkspace?: (args: ParsedArgs) => Promise<PreparedDevRun | undefined>

@@ -2,7 +2,6 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import { extname, join, relative, resolve } from 'node:path'
 
 import { isRecord } from '../../values.js'
-import { agentChoicesProblem, saveAgentChoices } from '../agent-choices.js'
 import {
   agentOptionEditsProblem,
   editAgentOptions,
@@ -10,13 +9,10 @@ import {
   type AgentWorkspace,
 } from '../agent-options.js'
 import { editFile } from '../file-edits.js'
-import type { ProfileEffort } from '../../config/store.js'
-import type { KnobKey } from '../panels/model.js'
 
 interface TemporaryEditRequest {
   readonly root: string
   readonly entrypoint: string
-  readonly knob: KnobKey
   readonly before: string
   readonly after?: string
 }
@@ -84,7 +80,6 @@ const CLOSING_BRACKETS = ')]}'
 const JAVASCRIPT_JOIN = /^\s*\+\s*$/u
 const PYTHON_JOIN = /^(?:[ \t\f]|\\\r?\n)*\+?(?:[ \t\f]|\\\r?\n)*$/u
 const PYTHON_BRACKETED_JOIN = /^\s*\+?\s*$/u
-const EFFORT_LEVEL = /^[A-Za-z0-9_-]+$/u
 const HEX = /^[0-9a-fA-F]+$/u
 const OCTAL_DIGIT = /[0-7]/u
 const DIGIT = /[0-9]/u
@@ -539,16 +534,22 @@ const addInstructions = async (
   }
 }
 
-const locateInstructions = async (
-  workspace: AgentWorkspace,
-  before: string,
-  after: string | undefined
-): Promise<TemporaryEditLocation> => {
-  const { root, entrypoint } = workspace
+export const locateTemporaryEdit = async ({
+  root,
+  entrypoint: file,
+  before,
+  after,
+}: TemporaryEditRequest): Promise<TemporaryEditLocation> => {
+  const entrypoint = resolve(root, file)
+  const workspace: AgentWorkspace = {
+    root,
+    entrypoint,
+    config: { language: isPython(entrypoint) ? 'python' : 'typescript' },
+  }
   const entry = relative(root, entrypoint)
   if (!before.trim()) return addInstructions(workspace, after)
   const files = await filesHolding(root, before)
-  const names = files.map((file) => relative(root, file))
+  const names = files.map((path) => relative(root, path))
   const source = await readFile(entrypoint, 'utf8')
   const [only] = files
   if (only && files.length === 1 && !source.includes(before))
@@ -561,44 +562,5 @@ const locateInstructions = async (
   if ('rewrite' in matcher(source) || files.length < 2) return located(root, entrypoint, matcher)
   return {
     unavailable: `The old instructions are in ${files.length} files (${names.join(', ')}). Paste the new instructions into the one the agent reads yourself.`,
-  }
-}
-
-const effortEdit = async (
-  workspace: AgentWorkspace,
-  before: string,
-  after: string | undefined
-): Promise<TemporaryEditLocation> => {
-  const problem =
-    after === undefined
-      ? undefined
-      : await agentChoicesProblem(workspace, { effort: after as ProfileEffort }, { effort: before as ProfileEffort })
-  if (problem) return { unavailable: problem }
-  return {
-    target: relative(workspace.root, workspace.entrypoint),
-    write: async (text): Promise<void> => {
-      if (!EFFORT_LEVEL.test(text)) throw new Error(`"${text}" is not a plain effort level.`)
-      await saveAgentChoices(workspace, { effort: text as ProfileEffort }, { effort: before as ProfileEffort })
-    },
-  }
-}
-
-export const locateTemporaryEdit = async ({
-  root,
-  entrypoint,
-  knob,
-  before,
-  after,
-}: TemporaryEditRequest): Promise<TemporaryEditLocation> => {
-  const file = resolve(root, entrypoint)
-  const workspace: AgentWorkspace = {
-    root,
-    entrypoint: file,
-    config: { language: isPython(file) ? 'python' : 'typescript' },
-  }
-  if (knob === 'instructions') return locateInstructions(workspace, before, after)
-  if (knob === 'effort') return effortEdit(workspace, before, after)
-  return {
-    unavailable: `Change the ${knob} in ${relative(root, file)} yourself; strands dev applies only instructions and effort.`,
   }
 }

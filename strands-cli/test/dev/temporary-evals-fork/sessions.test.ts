@@ -21,7 +21,7 @@ import type { TemporaryEvalsExit, TemporaryEvalsProcess } from '../../../src/dev
 import type { TemporarySessionDependencies } from '../../../src/dev/temporary-evals-fork/host.js'
 import { temporaryDevChatPart, temporaryDevCommands } from '../../../src/dev/temporary-evals-fork/command.js'
 import { TemporaryExperiments } from '../../../src/dev/temporary-evals-fork/experiments-session.js'
-import { readTemporaryTestResults, rememberTemporaryTestResults } from '../../../src/dev/temporary-evals-fork/report.js'
+import { readTemporaryTestResults, rememberTemporaryTestResults } from '../../../src/dev/temporary-evals-fork/test.js'
 import type { TemporarySessionHost } from '../../../src/dev/temporary-evals-fork/host.js'
 import type { AutoOptimizeRun, AutoOptimizeWorker } from '../../../src/dev/temporary-evals-fork/auto-optimize.js'
 import {
