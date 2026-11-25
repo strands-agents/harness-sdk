@@ -26,6 +26,7 @@ from mcp.types import ServerCapabilities, ToolListChangedNotification
 __all__ = [
     "MCP_V2",
     "GetSessionIdCallback",
+    "MCPClientTransport",
     "MCPError",
     "call_tool",
     "client_credentials_auth",
@@ -70,6 +71,14 @@ except ImportError:
     # mcp 2.x removed protocol sessions, so its transports never yield a
     # session-id callback; the alias survives only to type 1.x transports.
     GetSessionIdCallback = Callable[[], str | None]  # type: ignore[misc, assignment]
+
+try:
+    from mcp.client import Transport as MCPClientTransport  # type: ignore[attr-defined]
+except ImportError:
+    # mcp 1.x has no public Transport protocol; fall back to the 2-tuple MessageStream.
+    from mcp.shared.memory import MessageStream as _MessageStream
+
+    MCPClientTransport = AbstractAsyncContextManager[_MessageStream]  # type: ignore[misc, assignment]
 
 
 async def _drive_input_required(session: ClientSession, call_once: Callable[[Any, str | None], Any]) -> Any:

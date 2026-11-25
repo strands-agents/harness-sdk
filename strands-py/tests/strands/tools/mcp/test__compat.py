@@ -1255,3 +1255,16 @@ def test_wrap_auth_mirrors_body_flags_and_rejects_sync_flows():
 
     with pytest.raises(RuntimeError, match="async"):
         adapted.sync_auth_flow(MagicMock())
+
+
+@requires_mcp_v2
+def test_mcp_transport_includes_v2_transport_protocol():
+    """Test that MCPTransport includes mcp 2.x's public Transport protocol for static type checking."""
+    from typing import get_args
+
+    from mcp.client import Transport
+
+    from strands.tools.mcp.mcp_types import MCPTransport
+
+    assert _compat.MCPClientTransport is Transport
+    assert Transport in get_args(MCPTransport)
