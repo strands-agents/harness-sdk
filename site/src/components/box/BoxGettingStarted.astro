@@ -616,12 +616,13 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
     cursor: pointer;
   }
 
-  /* Tint the border while the tile or code button is hovered, so the card
-     reads as something that opens. */
+  /* Tint the border while the tile or code button is hovered or the code
+     button has keyboard focus, so the card reads as something that opens. */
   .box-start__body[data-capabilities-enhanced='true']
     .box-start__capability:not(.is-open):has(
       .box-start__capability-compact:hover,
-      .box-start__capability-toggle:hover
+      .box-start__capability-toggle:hover,
+      .box-start__capability-toggle:focus-visible
     ) {
     border-color: var(--box-purple);
   }
