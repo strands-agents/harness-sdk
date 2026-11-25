@@ -137,17 +137,20 @@ below 56 + 32 = 88 warns that it can't pay for one step. With `max_rollouts=120`
 which pays for two steps. The run then spent 108 of its 120 rollouts: it needed no re-runs,
 so the headroom went unused.
 
-Three costs aren't counted against the budget, and the result reports each one:
+The budget counts the agent's rollouts only. These model calls aren't counted against it,
+and the result reports each one's tokens (see
+[What the run cost](results.md#what-the-run-cost)):
 
 - **Judges**: every LLM evaluator call. On short answers, judges often use more tokens than
   the agent.
 - **Proposers**: the text rewriter's own model calls, which can exceed the agent's and the
   judges' spend together.
-- **Retries**: the agent's spend in attempts that failed and were tried again.
+- **Other agents**: agents in the rollout that your factory didn't build, such as a
+  simulated user.
 
-Retrying itself is free only inside a trial, when the model call is throttled. A trial
-that fails on an outage or expired credentials is run again by the optimizer, and each
-re-run costs a rollout.
+A retried attempt's tokens count in the role that spent them. Retrying itself is free
+only inside a trial, when the model call is throttled. A trial that fails on an outage or
+expired credentials is run again by the optimizer, and each re-run costs a rollout.
 
 ## Other settings that change the pick
 

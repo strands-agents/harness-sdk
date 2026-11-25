@@ -29,7 +29,7 @@ The summary is a stack of tables, read top to bottom:
 | Validation | How the baseline and each finalist scored on cases the search never saw: the estimate, its sd, and the measured mean per metric, with P(met) for each constraint |
 | Test vs baseline | Whether the win holds on cases nothing else read: both means, the difference, and its 90% interval |
 | Changed | The champion's new numbers and choices, next to the baseline's |
-| Tokens | What the run spent, by split: the agent, the proposers, and the judges |
+| Tokens | What the run spent, by role and split: the agent, the judges, each proposer, and other agents, with each role's failed attempts |
 
 Notes at the end define each column. The [quickstart](quickstart.md#run-it) shows a full
 summary from a real run.
@@ -158,17 +158,29 @@ temperature where it was, and stop spending budget on it.
 
 ## What the run cost
 
-The budget counts rollouts. Everything else is reported next to it, in the summary's
-Tokens table and on the result:
+The budget counts rollouts. The model usage behind them, and everything the budget doesn't
+count, is in the summary's Tokens table and in `result.cost`, by role and split (train is
+the search; validation and test are the end phase):
 
 ```python
-result.agent_cost["train"]   # the agent's tokens during the search
-result.judge_cost            # LLM judge calls
-result.search_cost           # the proposers' own model calls
-result.retry_cost            # spend in failed attempts
+cost = result.cost
+print(cost.total.tokens)                       # every model call in the run
+print(cost.agent["train"].usage.tokens)        # the agent during the search
+print(cost.judges["validation"].usage.tokens)  # the judges in the end phase
+for block, spend in cost.proposers.items():    # each proposer, by search block
+    print(block, spend.usage.tokens, spend.failed)
 ```
 
-Each is a usage record with token counts and model calls.
+| Role | Holds |
+|---|---|
+| `cost.agent[split]` | The agent's usage over every attempt, with `trials`, `attempts`, and `failed`. `attempts - trials` is how many times the agent ran again |
+| `cost.judges[split]` | The evaluators' usage, with `failed`: attempts where an evaluator failed |
+| `cost.proposers[block]` | Each proposer's own model calls, with `failed`: its retried and failed requests |
+| `cost.benchmark[split]` | Agents in the rollout that your factory didn't build, such as a simulated user |
+| `cost.total` | All of the above |
+
+Every attempt counts once, in the role that spent it. A retried attempt's tokens are part
+of its role's figure, so there's no separate retry total.
 
 ## Dig into the run
 
@@ -183,6 +195,10 @@ result.reports[result.best.id]["test"].display()  # an EvaluationReport per spli
 ```
 
 `to_rows` also takes `"iteration"`, one row per search step.
+
+The reports carry no trajectories. Each report row instead names its trial's conversation
+under `transcript`, a hash of the file in the run folder's `transcripts/`. To read a trial's
+conversation, open the run in [`strands-evals ui`](../cli/ui.md).
 
 ## What's in the run folder
 

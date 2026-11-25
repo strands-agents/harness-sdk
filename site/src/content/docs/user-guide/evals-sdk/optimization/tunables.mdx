@@ -68,7 +68,7 @@ optimizer's space, so it stays at its baseline with no error.
 |---|---|---|
 | `TextValue()` | A text value, such as a system prompt | Text rewriter |
 | `FileText(path)` | Text whose source of truth is a file | Text rewriter |
-| `JsonField(path, pointer)` | One field of a JSON file, addressed by JSON pointer | Text rewriter |
+| `JsonField(path, pointer)` | One field of a JSON file, addressed by JSON pointer | Text rewriter for text, TPE for numbers and booleans |
 | `SkillLibrary(path)` | Each skill's `SKILL.md` in a skills folder | Text rewriter |
 | `tool_descriptions(*tools)` | Each tool's description | Text rewriter |
 | `Int(min, max)` / `Float(min, max)` | A number, inclusive bounds | TPE |
@@ -109,6 +109,40 @@ file: a default on the parameter is ignored. Your files are never written: each 
 gets its own copy of the folder around the file. If the agent needs a path rather than the
 text, pass `as_path=True` to `FileText` and the parameter receives the path of the
 candidate's copy.
+
+A `JsonField` can also hold a number or a boolean, and the parameter then receives a typed
+value rather than text. Give a number the `Int` or `Float` to search it with; a boolean
+needs nothing. To search a field among set values instead, give it a `OneOf`:
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from strands_evals.optimization import Float, JsonField, OneOf, tunable
+
+MODELS = {
+    "haiku": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "sonnet": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+}
+
+
+@tunable(
+    temperature=JsonField("config/agent.json", "/temperature", Float(0.0, 1.0)),
+    streaming=JsonField("config/agent.json", "/streaming"),
+    model=JsonField("config/agent.json", "/model", OneOf("haiku", "sonnet")),
+)
+def create_agent(temperature: float, streaming: bool, model: str):
+    return Agent(
+        model=BedrockModel(
+            model_id=MODELS[model], temperature=temperature, streaming=streaming
+        ),
+        callback_handler=None,
+    )
+```
+
+The file's value is the baseline, so these markers take no `default=`, and an integer field
+takes an `Int` the same way. A number without a marker fails at declaration. Typed fields
+are searched with the numbers and choices, not by the text rewriter, and a change shows in
+its file's diff and in `best.values.json`.
 
 Two settings guard every text marker:
 
