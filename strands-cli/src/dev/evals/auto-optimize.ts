@@ -35,10 +35,13 @@ export interface AutoOptimizeStatus extends AutoOptimizeActivity {
   readonly turnsSince: number
 }
 
-/** What is kept on disk between turns. */
 interface Count {
+  /** The chat turns of this strands dev. One that opens later starts from none. */
   readonly turns: number
-  /** The cadence the turns were counted under. A different cadence starts the count again. */
+  /**
+   * The cadence the turns are counted under. A different cadence starts the count again. It is kept on disk, so
+   * the first turn after strands dev opens is counted, and the turn that sets a cadence is not.
+   */
   readonly every: number
 }
 
@@ -77,7 +80,8 @@ export const autoOptimizeJobs = ({ building }: AutoOptimizeActivity): readonly D
 /**
  * Counts the chat turns of a workspace and, every so many of them, has an experiment made from the chats and an
  * optimization started on it. None of that happens in the chat: the chat gets one notice, and the jobs line shows
- * the work. The count is kept on disk, so it carries on when strands dev opens again.
+ * the work. The turns are those of this strands dev: the ones of an earlier one are not counted, so a run never
+ * starts a turn or two after strands dev opens.
  */
 export class EvalsAutoOptimize extends Store<AutoOptimizeActivity> {
   private count: Count | undefined
@@ -137,10 +141,7 @@ export class EvalsAutoOptimize extends Store<AutoOptimizeActivity> {
     this.begin(turns, run)
   }
 
-  /**
-   * The count starts again when the work is over, not when it begins: strands dev may close in between, and the
-   * work is then due again at the next turn.
-   */
+  /** The count starts again when the work is over, not when it begins: the turns during the work are its own. */
   private begin(turns: number, run: AutoOptimizeRun): void {
     const stop = new AbortController()
     const began = `auto-optimize · ${turns} chat turns since the last one · making an experiment from your chats in the background`
@@ -217,19 +218,16 @@ export class EvalsAutoOptimize extends Store<AutoOptimizeActivity> {
     }
     const whole = (value: unknown): value is number =>
       typeof value === 'number' && Number.isInteger(value) && value >= 0
-    this.count =
-      isRecord(saved) && whole(saved.turns) && whole(saved.every)
-        ? { turns: saved.turns, every: saved.every }
-        : { turns: 0, every: 0 }
+    this.count = { turns: 0, every: isRecord(saved) && whole(saved.every) ? saved.every : 0 }
     return this.count
   }
 
   private async remember(count: Count): Promise<void> {
-    const { turns, every } = await this.counted()
-    if (turns === count.turns && every === count.every) return
+    const { every } = await this.counted()
     this.count = count
+    if (every === count.every) return
     await mkdir(dirname(this.path()), { recursive: true })
-    await writeFile(this.path(), `${JSON.stringify(count)}\n`)
+    await writeFile(this.path(), `${JSON.stringify({ every: count.every })}\n`)
   }
 }
 

@@ -169,15 +169,17 @@ describe('auto-optimize every N turns', () => {
     expect(run).toHaveBeenCalledTimes(2)
   })
 
-  it('shouldKeepTheWorkDueWhenStrandsDevClosesBeforeItEnds', async () => {
+  it('shouldNotStartTheWorkAgainWhenStrandsDevClosedBeforeItEnded', async () => {
     const first = await counting(5)
     await first.turns(...FIVE)
 
-    // Closed with the work unfinished: the count on disk still says a run is due.
+    // Closed with the work unfinished: the strands dev that opens next owes no run for it.
     const again = await counting(5, first.root)
-    await again.turns('/experiment')
+    await again.turns('one')
+    const afterOneTurn = [again.run.mock.calls.length, await again.auto.status()]
+    await again.turns('two', 'three', 'four', 'five')
 
-    expect(JSON.parse(await readFile(first.file, 'utf8'))).toEqual({ turns: 5, every: 5 })
+    expect(afterOneTurn).toEqual([0, { everyTurns: 5, turnsSince: 1 }])
     expect(again.run).toHaveBeenCalledOnce()
   })
 
@@ -273,7 +275,7 @@ describe('auto-optimize every N turns', () => {
 
     // The agent tells the developer that the first run comes 5 turns from now, so the turn that set it is not one.
     expect(afterTheTurnThatSetIt).toEqual({ everyTurns: 5, turnsSince: 0 })
-    expect(saved).toEqual({ turns: 0, every: 5 })
+    expect(saved).toEqual({ every: 5 })
     expect(beforeTheFifth).toBe(0)
     expect(run).toHaveBeenCalledOnce()
   })
@@ -291,16 +293,33 @@ describe('auto-optimize every N turns', () => {
     expect(run).not.toHaveBeenCalled()
   })
 
-  it('shouldCarryTheCountOverWhenStrandsDevOpensAgain', async () => {
+  it('shouldCountFromNoTurnsWhenStrandsDevOpensAgain', async () => {
     const first = await counting(5)
-    await first.turns('one', 'two', 'three')
-    expect(JSON.parse(await readFile(first.file, 'utf8'))).toEqual({ turns: 3, every: 5 })
+    await first.turns('one', 'two', 'three', 'four')
 
+    // The first turn after it opens is counted, and it is the first of five: the four before it are not.
     const again = await counting(5, first.root)
-    await again.turns('four', 'five')
+    await again.turns('one')
+    const afterOneTurn = [again.run.mock.calls.length, await again.auto.status()]
+    await again.turns('two', 'three', 'four')
+    const beforeTheFifth = again.run.mock.calls.length
+    await again.turns('five')
 
+    expect(afterOneTurn).toEqual([0, { everyTurns: 5, turnsSince: 1 }])
+    expect(beforeTheFifth).toBe(0)
     expect(again.run).toHaveBeenCalledOnce()
     expect(first.run).not.toHaveBeenCalled()
+  })
+
+  it('shouldNotCountTheTurnsThatWereSavedBeforeTheCountBelongedToOneStrandsDev', async () => {
+    const first = await counting(5)
+    await writeFile(first.file, '{"turns":4,"every":5}\n')
+
+    const again = await counting(5, first.root)
+    await again.turns('one')
+
+    expect(again.run).not.toHaveBeenCalled()
+    expect(await again.auto.status()).toEqual({ everyTurns: 5, turnsSince: 1 })
   })
 
   it('shouldWaitWhileAnOptimizationRunsOrItsEditsWaitAndThenStart', async () => {
