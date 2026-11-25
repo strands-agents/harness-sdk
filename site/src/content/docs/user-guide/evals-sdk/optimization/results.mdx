@@ -1,0 +1,296 @@
+---
+title: Reading the results
+description: Read an optimization run's summary, diff, effects, validation pick, and test report, apply the champion, and resume a run that was stopped.
+sidebar:
+  label: "Reading the results"
+---
+
+An optimization run ends with a **champion**: the configuration the optimizer picked for
+you to review and apply. This page
+covers how to read why it won, how sure the run is, which options mattered, and how to
+apply it. It also covers resuming a run that was stopped partway.
+
+## Start with the summary
+
+`result.summary()` is the overview. From the CLI, `strands-evals optimize run` prints the
+same summary when the run finishes in a terminal. When its output is piped, as in CI, it
+prints the whole result as JSON instead; `--json` asks for that anywhere.
+
+```python
+result = optimizer.run()
+print(result.summary())
+```
+
+The summary is a stack of tables, read top to bottom. A table with nothing to show is left
+out:
+
+| Section | Answers |
+|---|---|
+| Header | What ran and what won: the objective, why the search stopped, rollouts spent against the budget, the champion, and the outcome |
+| Validation | How the baseline and each finalist scored on cases the search never saw: the estimate, its sd, and the measured mean per metric, with P(met) for each constraint |
+| Not feasible | Each finalist that can't ship, and why |
+| Test vs baseline | Whether the win holds on cases nothing else read: both means, the difference, and its 90% interval |
+| Front test vs baseline | Under `Pareto`, the same test comparison for each front member |
+| Changed | The champion's new numbers and choices, next to the baseline's, when it beat the baseline |
+| Tokens | What the run spent, by role and split: the agent, the judges, each proposer, and other agents, with each role's failed attempts |
+
+Notes at the end define each column. The [quickstart](quickstart.md#run-it) shows a full
+summary from a real run.
+
+In the validation table, `measured` is the mean over the cases that have a value for that
+metric, and `n` is how many there are. It's usually every validation case, but a case isn't
+counted when its evaluator returned not applicable or raised, when every trial failed on
+infrastructure, or when the agent crashed and `agent_failure_score` gives the metric no
+value (always with `None`). So `n` can
+differ between metrics. When only one case has a value, `n` counts its runs instead.
+
+The header's **outcome** says how the pick ended:
+
+| Outcome | Means |
+|---|---|
+| `top_finalist` | A finalist beat your current agent and is the champion |
+| `baseline_best` | Your current agent ranked first among the feasible candidates and stays the champion |
+| `no_feasible_finalist` | No finalist met every constraint, so your current agent stays the champion |
+| `no_finalists` | The search produced nothing to validate, so your current agent stays the champion |
+
+Your current agent winning is a real answer: it's as good as anything the search found
+within the budget. `result.validation.outcome` holds the same value.
+
+## Browse a run in the browser
+
+To look through a run without writing code, serve its folder with
+[`strands-evals ui`](../cli/ui.md):
+
+```bash
+strands-evals ui .strands-evals/optimization/runs/
+```
+
+Each run gets a view with its result, its setup, the progress of every step, each
+candidate's diff against the baseline, and the trade-off front. The page refreshes while a
+run is in progress. Point it at the runs folder itself: started from your project folder,
+it doesn't look inside `.strands-evals/`.
+
+## What changed
+
+The champion's changes come in two parts, because text and settings are applied
+differently:
+
+```python
+champion = result.best
+print(champion.diff())             # changed text, as a unified diff
+print(champion.changed_values())   # numbers and choices: {key: {"old": ..., "new": ...}}
+champion.values                    # every value of the champion, changed or not
+```
+
+Text from a file marker appears in the diff on its real file path; text from your code
+appears as a hunk headed by its key. `result.improved` is `False` when the champion is
+your current agent.
+
+## Apply the champion
+
+The run folder holds both parts: `best.diff` for the text and `best.values.json` for the
+numbers and choices. Review them, then edit the values into your code or config. To get the same files for another
+candidate, such as a runner-up from the summary, look it up by id and call `write_diff`:
+
+```python
+runner_up = result.candidate("f1436f1cdb76")
+runner_up.write_diff("runner_up.diff")  # writes runner_up.diff and runner_up.values.json
+```
+
+Before you ship, rerun your experiment on a few cases the optimizer never saw. Repeated
+runs against the same cases can slowly fit them.
+
+## How sure the run is
+
+The **test report** compares the champion with your current agent on test cases that
+neither the search nor the pick ever read. For each metric your objective and constraints
+use, it gives both sides' means over the same cases, the paired difference with a 90%
+interval, and a ratio for metrics that can't go negative. `report.objective` holds the
+same paired comparison for the objective itself:
+
+```python
+def show(value):
+    return "n/a" if value is None else f"{value:+.3g}"
+
+
+report = result.test
+if report is None:
+    print(result.test_reason)
+else:
+    for metric, diff in report.difference.items():
+        print(
+            f"{metric}: {show(diff.reference_mean)} -> {show(diff.candidate_mean)}, "
+            f"{diff.mean_diff:+.3g} [{show(diff.ci_low)}, {show(diff.ci_high)}] "
+            f"over {diff.n_cases} cases"
+        )
+```
+
+The interval is `None` when only one test case was measured by both, and the means are
+`None` in a report saved by an older version.
+
+Read the interval, not the point. An interval that excludes zero is a change the test cases
+support. One that includes zero means the test cases can't tell, often because there are
+few of them. The report never changes which candidate is the champion.
+
+`result.validation` shows how the champion was picked: every finalist's estimate on
+validation, the pick rule, each constraint's P(met), and why any finalist was ruled out.
+
+## Which options mattered
+
+The champion's values include settings that happened to be where the search left them.
+The effects table separates those from the options that actually moved a metric. Each row
+is one option against its reference, per metric, with a 90% interval. Text values share
+one row per proposer block, `rewritten:<block>`:
+
+```python
+for row in result.effects["effects"]:
+    low, high = row["ci90"]
+    print(f'{row["metric"]}: {row["key"]}={row["level"]} vs {row["reference"]}: '
+          f'{row["mean"]:+.3g} [{low:+.3g}, {high:+.3g}]')
+```
+
+From the [quickstart](quickstart.md) run:
+
+| Option | Triage | Output tokens |
+|---|---|---|
+| system prompt rewritten vs the original | +0.74 [+0.64, +0.85] | -213 [-224, -202] |
+| temperature 0.31 to 0.59 vs above 0.59 | +0.009 [-0.053, +0.072] | -1.7 [-9.1, +5.7] |
+| temperature 0.31 or lower vs above 0.59 | +0.011 [-0.050, +0.072] | -2.5 [-11, +5.8] |
+
+The rewritten prompt did all the work; temperature did nothing measurable. That's worth
+more than the champion's exact values: it tells you to keep the rewrite, leave the
+temperature where it was, and stop spending budget on it.
+
+## What the run cost
+
+The budget counts rollouts. The model usage behind them, and everything the budget doesn't
+count, is in the summary's Tokens table and in `result.cost`, by role and split (train is
+the search; validation and test are the end phase):
+
+```python
+cost = result.cost
+print(cost.total.tokens)                       # every model call in the run
+print(cost.agent["train"].usage.tokens)        # the agent during the search
+print(cost.judges["validation"].usage.tokens)  # the judges in the end phase
+for block, spend in cost.proposers.items():    # each proposer, by search block
+    print(block, spend.usage.tokens, spend.failed)
+```
+
+| Role | Holds |
+|---|---|
+| `cost.agent[split]` | The agent's usage over every attempt, with `trials`, `attempts`, and `failed`. `attempts - trials` is how many times the agent ran again |
+| `cost.judges[split]` | The evaluators' usage, with `failed`: attempts where an evaluator failed |
+| `cost.proposers[block]` | Each proposer's own model calls, with `failed`: its retried and failed requests |
+| `cost.benchmark[split]` | Agents in the rollout that your factory didn't build, such as a simulated user |
+| `cost.total` | All of the above |
+
+Every attempt counts once, in the role that spent it. A retried attempt's tokens are part
+of its role's figure, so there's no separate retry total.
+
+## Dig into the run
+
+For anything the summary doesn't show, the result gives you rows and full reports:
+
+```python
+import pandas as pd  # pip install pandas
+
+proposals = pd.DataFrame(result.to_rows("proposal"))  # one row per candidate
+cases = pd.DataFrame(result.to_rows("case"))          # one row per trial
+result.reports[result.best.id]["test"].display()  # an EvaluationReport per split
+```
+
+`to_rows` also takes `"iteration"`, one row per search step.
+
+The reports carry no trajectories. Each report row, and each case row, instead names its
+trial's conversation under `transcript`. Load it with `load_transcript`, which reads it
+from the run folder:
+
+```python
+row = result.reports[result.best.id]["test"].cases[0]
+# a Session, or the list the rollout returned
+session = result.load_transcript(row["transcript"])
+```
+
+Pass `run_dir=` when the run folder has moved. To browse conversations instead, open the
+run in [`strands-evals ui`](../cli/ui.md).
+
+## What's in the run folder
+
+Every run writes to its own folder, by default under `.strands-evals/optimization/runs/`,
+named for the run's start time. `result.run_dir` gives its path, and the CLI prints it as
+soon as the run starts.
+
+| File | Holds |
+|---|---|
+| `best.diff`, `best.values.json` | The champion's changes, for you to review and apply |
+| `result.json` | The whole result, every candidate's reports included |
+| `effects.json` | What each option did to each metric |
+| `run.json` | The run's settings: the declared space, objective, constraints, and versions |
+| `events.jsonl` | The append-only log of everything the run did; resume replays it |
+| `transcripts/` | Each trial's conversation, stored once |
+| `candidates/` | Each candidate's copy of the files it edits, when it edits files |
+| `front/` | Each front member's diff and values (`Pareto` runs only) |
+| `cli.json` | The CLI's inputs, so `resume` needs only the folder (CLI runs only) |
+| `run.lock` | An empty file locked while a process writes the run, so two can't write it at once |
+
+`result.json` is the file to keep. Load it later, in a notebook or another process, without
+the optimizer or the agent:
+
+```python
+from strands_evals.optimization import OptimizationResult
+
+result = OptimizationResult.from_file(
+    ".strands-evals/optimization/runs/20261123-200351-8245db/result.json"
+)
+print(result.summary())
+```
+
+`events.jsonl` is the optimizer's own record, read by resume. Its format isn't a public API,
+so read the run through `result.json` and `to_rows` rather than parsing the log.
+
+## Resume a stopped run
+
+Every trial is saved the moment it finishes, so a run that was killed, interrupted, or
+stopped on an error picks up where it left off without paying for finished work again:
+
+```python
+from strands_evals.optimization import Maximize, Minimize, Optimizer, WeightedSum
+
+optimizer = Optimizer.resume(
+    ".strands-evals/optimization/runs/20261123-200351-8245db",
+    experiment=experiment,
+    factory=create_agent,
+    objective=WeightedSum(Maximize("Triage"), Minimize("output_tokens", scale=100)),
+)
+result = optimizer.run()
+```
+
+Pass the same experiment, factory, objective, constraints, and search the run started with.
+
+From the CLI, resume needs only the run folder, because the CLI saved its inputs there:
+
+```bash
+strands-evals optimize resume .strands-evals/optimization/runs/20261123-200351-8245db
+```
+
+A killed run may resume with a larger `--max-rollouts`. A finished run only prints its
+saved result again; to search more, start a new run.
+
+Resume checks the cases, the declared space, the objective, the constraints, and the
+search against the saved run, and refuses on a mismatch. It doesn't check your agent code,
+so leave it unchanged between a kill and a resume. The resumed run replays the same
+splits, parents, and proposals. The step that was cut off reuses the proposals it had
+already drawn, even the text rewriter's, so the candidates it scored come back with their
+trials. A step killed before it drew anything asks its proposers again.
+
+When a proposer fails in a way retrying can't fix (a wrong model id, no model access), the
+search halts before the end phase and raises `ProposerError`, so no validation or test
+rollouts are spent on a dead search. The CLI exits with code 3 and prints the resume
+command. Fix the cause and resume.
+
+## Next steps
+
+- [Declaring what can change](tunables.md): Narrow the next run to the options that
+  mattered
+- [Objectives, constraints, and budget](objectives.md): Add the constraint the champion
+  should have respected
