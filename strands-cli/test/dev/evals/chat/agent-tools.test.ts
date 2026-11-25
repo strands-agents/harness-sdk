@@ -109,6 +109,8 @@ const plan = (): OptimizePlan => ({
   width: 4,
   workers: 4,
   iterations: 4,
+  maxRollouts: 500,
+  rerunPasses: 2,
   rollouts: 10,
   judgeCalls: 10,
 })
@@ -195,6 +197,11 @@ const fakeSessions = () => {
       setWorkers: vi.fn(),
       setObjective: vi.fn(),
       setDecision: vi.fn(),
+      setMaxRollouts: vi.fn(),
+      setSplit: vi.fn(),
+      setPassed: vi.fn(),
+      setSeed: vi.fn(),
+      setRerunPasses: vi.fn(),
       start: vi.fn((): string => {
         finishRun({ step: 'running', progress: progress() })
         return 'run-1'
@@ -785,9 +792,16 @@ describe('background strands-evals runs', () => {
         'none',
         '--n-finalists',
         '7',
-        '--rich',
+        '--max-rollouts',
+        '900',
+        '--split',
+        '0.6,0.2,0.2',
         '--seed',
-        '0',
+        '3',
+        '--rerun-passes=1',
+        '--reflection-model',
+        'bedrock/proposer',
+        '--rich',
       ])
     )
 
@@ -802,13 +816,18 @@ describe('background strands-evals runs', () => {
       ['crashScore', 'none'],
       ['finalists', 7],
     ])
+    expect(sessions.optimize.setMaxRollouts).toHaveBeenCalledWith(900)
+    expect(sessions.optimize.setSplit).toHaveBeenCalledWith([0.6, 0.2, 0.2])
+    expect(sessions.optimize.setSeed).toHaveBeenCalledWith(3)
+    expect(sessions.optimize.setRerunPasses).toHaveBeenCalledWith(1)
+    expect(sessions.optimize.setPassed).toHaveBeenCalledWith(['--reflection-model', 'bedrock/proposer'])
     expect(started).toMatchObject({
       status: 'started',
       command: 'optimize run',
       experiment: 'refunds',
       run: 'run-1',
       file: REFUNDS.path,
-      ignored: ['--rich: strands dev reads the run itself', '--seed: strands dev sets the seed'],
+      ignored: ['--rich: strands dev reads the run itself'],
     })
   })
 
@@ -849,7 +868,15 @@ describe('background strands-evals runs', () => {
       ['--feasibility-threshold', '0.5'],
       '--feasibility-threshold must be one of 0.8, 0.9, 0.95, 0.99.',
     ],
-    ['a flag it cannot pass', ['--rerun-passes', '2'], 'strands dev cannot pass --rerun-passes'],
+    ['a flag it cannot pass', ['--pick-rule', 'mean'], 'strands dev cannot pass --pick-rule'],
+    ['a flag that loads code', ['--on-iteration', 'hooks:report'], 'strands dev cannot pass --on-iteration'],
+    ['a rollout budget of zero', ['--max-rollouts', '0'], '--max-rollouts must be a whole number of at least 1.'],
+    [
+      'a rollout budget past a safe integer',
+      ['--max-rollouts', '99999999999999999999'],
+      '--max-rollouts must be a whole number of at least 1.',
+    ],
+    ['a split that does not sum to 1', ['--split', '0.5,0.5,0.5'], '--split takes TRAIN,VALIDATION,TEST shares'],
     ['a model knob without models', ['--tune', 'model'], 'Tuning the model needs'],
   ])('shouldRefuseToOptimizeWhenTheFlagsHave%s', async (_case, args, message) => {
     const { tool, sessions } = setup()
@@ -860,7 +887,8 @@ describe('background strands-evals runs', () => {
 
   it('shouldSayWhyAndNotStartWhenThePlanNeedsMoreRolloutsThanOneRunCanUse', async () => {
     const { tool, sessions, optimize } = setup()
-    const budgetProblem = 'Needs about 620 rollouts, but one run can use 500. Lower the steps, candidates, or runs.'
+    const budgetProblem =
+      'Needs about 620 rollouts with re-run headroom, but this run can use 500. Lower the steps, candidates, or runs, or raise --max-rollouts.'
     sessions.optimize.setRepetitions.mockImplementation(() => {
       const current = optimize.snapshot()
       if (current.step === 'setup') optimize.set({ ...current, plan: { ...current.plan, budgetProblem } })
@@ -868,6 +896,21 @@ describe('background strands-evals runs', () => {
 
     await expect(tool('strands_dev_run_background').run(optimizeRun(['--runs-per-candidate', '5']))).rejects.toThrow(
       budgetProblem
+    )
+    expect(sessions.optimize.start).not.toHaveBeenCalled()
+  })
+
+  it('shouldSayWhyAndNotStartWhenTheSplitLeavesNoValidationCase', async () => {
+    const { tool, sessions, optimize } = setup()
+    const splitProblem =
+      'The split leaves 2 train cases and 0 validation cases of 2; the optimizer needs at least 1 of each.'
+    sessions.optimize.setSplit.mockImplementation(() => {
+      const current = optimize.snapshot()
+      if (current.step === 'setup') optimize.set({ ...current, plan: { ...current.plan, splitProblem } })
+    })
+
+    await expect(tool('strands_dev_run_background').run(optimizeRun(['--split', '0.9,0.05,0.05']))).rejects.toThrow(
+      splitProblem
     )
     expect(sessions.optimize.start).not.toHaveBeenCalled()
   })
@@ -1064,8 +1107,10 @@ describe('dev chat tool errors and states', () => {
     ['apply_optimization', { edits: [0] }, 'run is required.'],
     ['apply_optimization', { run: 'r', edits: ['first'] }, 'There is no edit first.'],
     ['apply_optimization', { run: 'r', edits: [-1] }, 'There is no edit -1.'],
-    ['auto_optimize', { everyTurns: 7 }, 'everyTurns must be one of 0, 5, 10, 20, 50, 100.'],
-    ['auto_optimize', { everyTurns: 'often' }, 'everyTurns must be one of 0, 5, 10, 20, 50, 100.'],
+    ['auto_optimize', { everyTurns: 7.5 }, 'everyTurns must be a whole number from 0 to 9999.'],
+    ['auto_optimize', { everyTurns: -1 }, 'everyTurns must be a whole number from 0 to 9999.'],
+    ['auto_optimize', { everyTurns: 10000 }, 'everyTurns must be a whole number from 0 to 9999.'],
+    ['auto_optimize', { everyTurns: 'often' }, 'everyTurns must be a whole number from 0 to 9999.'],
     ['auto_optimize', { acceptResults: 'yes' }, 'acceptResults must be true or false.'],
     ['answer_review', { edit: 0, answer: 'apply' }, 'run is required.'],
     ['answer_review', { run: 'r', answer: 'apply' }, 'edit must be the index of the edit'],
@@ -1249,7 +1294,7 @@ describe('dev chat tool errors and states', () => {
         autoOptimize: { everyTurns: 0, state: 'off: an optimization starts only when the developer asks for one' },
         autoAcceptOptimizationResults:
           'off: the edits of a finished run show as a diff, and the developer applies or leaves each one',
-        choices: { everyTurns: [0, 5, 10, 20, 50, 100] },
+        choices: { everyTurns: 'a whole number from 0 to 9999' },
         where: 'Both are in /settings, under Strands dev workspace.',
       })
       expect(sessions.setSettings).not.toHaveBeenCalled()

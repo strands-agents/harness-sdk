@@ -50,7 +50,9 @@ describe('background flags', () => {
         'interventions',
       ],
       models: ['bedrock/a', 'bedrock/b'],
-      ignored: ['--max-rollouts: strands dev applies its own cap and says when a run needs more'],
+      maxRollouts: 500,
+      passed: [],
+      ignored: [],
     })
   })
 
@@ -63,8 +65,31 @@ describe('background flags', () => {
     [['--tune', 'model={"a": 1}'], 'must list model ids as a JSON list of strings.'],
     [['--tune', 'session'], '--tune session is not a knob that strands dev tunes.'],
     [['--no-tune-instructions'], 'Tune at least one knob'],
+    [['--split', '0.5,0.5'], '--split takes TRAIN,VALIDATION,TEST shares'],
+    [['--split', '0,0.5,0.5'], '--split takes TRAIN,VALIDATION,TEST shares'],
+    [['--split', '0.5,0,0.5'], '--split takes TRAIN,VALIDATION,TEST shares'],
+    [['--split', 'a,b,c'], '--split takes TRAIN,VALIDATION,TEST shares'],
+    [['--split', 'pkg:split'], 'a MODULE:ATTR Split is not supported.'],
+    [['--seed', '1.5'], '--seed must be a whole number, not 1.5.'],
+    [['--seed='], '--seed must be a whole number, not nothing.'],
+    [['--seed', '99999999999999999999'], '--seed must be a whole number, not 99999999999999999999.'],
+    [['--split', '0.3333333,0.3333333,0.3333333'], '--split takes TRAIN,VALIDATION,TEST shares'],
+    [['--split', '0.5,,0.5'], '--split takes TRAIN,VALIDATION,TEST shares'],
   ])('shouldRefuseOptimizeFlags %j', (args, message) => {
     expect(() => optimizeFlagSettings(args)).toThrow(message)
+  })
+
+  it('shouldTakeASplitWithNoTestCasesANegativeSeedAndIgnoreTheLoggingFlags', () => {
+    expect(optimizeFlagSettings(['--split', '0.7,0.3,0', '--seed', '-3', '--verbose', '-v', '--debug'])).toMatchObject({
+      split: [0.7, 0.3, 0],
+      seed: -3,
+      passed: [],
+      ignored: [
+        '--verbose: strands dev reads the run itself',
+        '-v: strands dev reads the run itself',
+        '--debug: strands dev reads the run itself',
+      ],
+    })
   })
 
   it('shouldTakeOnlyTheTaskAndCaseCountOfStrandsEvalsGenerate', () => {

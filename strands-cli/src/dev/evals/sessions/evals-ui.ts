@@ -45,7 +45,7 @@ const UI_DEPTH = 6
 const EXPERIMENTS_ROUTE = '/experiments'
 const REPORTS_ROUTE = '/reports'
 const OPTIMIZATION_ROUTE = '/optimization'
-const OPTIMIZATION_VIEW = 'overview'
+const OPTIMIZATION_VIEW = 'result'
 const START_TIMEOUT_MS = 60_000
 const ERROR_LINES = 3
 const URL_LINE = /^\s*(http:\/\/127\.0\.0\.1:(\d+)\/\?t=[A-Za-z0-9_-]+)\s*$/u

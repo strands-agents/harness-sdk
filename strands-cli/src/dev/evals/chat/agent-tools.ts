@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import type { JSONValue } from '@strands-agents/sdk'
 
 import { errorMessage } from '../../../terminal/text.js'
-import { AUTO_OPTIMIZE_OPTIONS } from '../../../config/settings.js'
+import { AUTO_OPTIMIZE_MAX_TURNS, autoOptimizeCadence } from '../../../config/settings.js'
 import type { DevChatPart, DevChatTool } from '../../chat-extension.js'
 import { STRANDS_EVALS_OPTIMIZE_SKILL, STRANDS_EVALS_SKILL } from '../package.js'
 import { isGenerating, type CrashScore } from '../model.js'
@@ -19,7 +19,6 @@ import type {
   OptimizeReview,
   OptimizeRun,
   OptimizeState,
-  OptimizePhase,
   ProposedEdit,
   TestCheck,
   EvaluationRun,
@@ -52,7 +51,7 @@ import {
   type AppliedOptimizeEdits,
 } from '../sessions/review-run.js'
 import type { EvalsSessionHistory } from '../sessions/session-converter.js'
-import { evalsEditsAwaitingAnswer, type EvalsAppliedChange } from '../sessions/optimize-session.js'
+import { EVALS_RUN_PHASES, evalsEditsAwaitingAnswer, type EvalsAppliedChange } from '../sessions/optimize-session.js'
 import { type EvalsDevSessions } from '../sessions/sessions.js'
 
 type Input = Readonly<Record<string, JSONValue>>
@@ -319,14 +318,6 @@ const optimizationStatus = (state: OptimizeState): object =>
       : undefined,
   })
 
-const RUN_PHASES: Readonly<Record<OptimizePhase, string>> = {
-  baseline: 'measuring your agent as it is',
-  proposing: 'proposing new versions',
-  scoring: 'measuring the new versions',
-  validating: 'checking the finalists on the validation cases',
-  testing: 'checking the winner on the test cases',
-}
-
 const pageStatus = (state: OptimizeState): object => {
   switch (state.step) {
     case 'pick':
@@ -342,7 +333,7 @@ const pageStatus = (state: OptimizeState): object => {
         tried: state.progress.tried,
         planned: state.progress.planned,
         // Every version tried is not the end of the run: the finalists and the test are checked after the search.
-        phase: state.progress.phase ? RUN_PHASES[state.progress.phase] : undefined,
+        phase: state.progress.phase ? EVALS_RUN_PHASES[state.progress.phase] : undefined,
         rollouts: state.progress.rollouts,
       })
     case 'review':
@@ -409,7 +400,7 @@ const sessionConverterTool = (history: EvalsSessionHistory): DevChatTool => ({
   run: (): Promise<string> => history.converter(),
 })
 
-const AUTO_OPTIMIZE_TURNS = AUTO_OPTIMIZE_OPTIONS.map(({ value }) => value)
+const AUTO_OPTIMIZE_TURNS = `a whole number from 0 to ${AUTO_OPTIMIZE_MAX_TURNS}`
 
 const AUTO_OPTIMIZE_ON =
   'Every that many chat turns, strands dev works in the background, outside this chat: an agent in a process of ' +
@@ -453,7 +444,8 @@ const autoOptimizeTool = (sessions: Sessions): DevChatTool => ({
     properties: {
       everyTurns: {
         type: 'integer',
-        enum: [...AUTO_OPTIMIZE_TURNS],
+        minimum: 0,
+        maximum: AUTO_OPTIMIZE_MAX_TURNS,
         description: 'How many chat turns pass between the automatic optimizations. 0 turns them off.',
       },
       acceptResults: {
@@ -465,9 +457,9 @@ const autoOptimizeTool = (sessions: Sessions): DevChatTool => ({
   },
   run: async (input): Promise<string> => {
     const every = input.everyTurns
-    const cadence = AUTO_OPTIMIZE_OPTIONS.find(({ value }) => value === every)?.value
+    const cadence = autoOptimizeCadence(every)
     if (every !== undefined && every !== null && cadence === undefined)
-      throw new Error(`everyTurns must be one of ${AUTO_OPTIMIZE_TURNS.join(', ')}.`)
+      throw new Error(`everyTurns must be ${AUTO_OPTIMIZE_TURNS}.`)
     const accept = flag(input, 'acceptResults')
     if (cadence !== undefined || accept !== undefined)
       await sessions().setSettings({
@@ -567,6 +559,8 @@ const planTool = (sessions: Sessions): DevChatTool => ({
           runsPerCase: { value: plan.repetitions, min: EVALS_BUDGET_MINIMUMS.repetitions },
           parallelTrials: { value: plan.workers, min: EVALS_BUDGET_MINIMUMS.workers },
           finalists: { value: plan.decision.finalists, min: EVALS_BUDGET_MINIMUMS.finalists },
+          maxRollouts: { value: plan.maxRollouts, min: EVALS_BUDGET_MINIMUMS.maxRollouts },
+          rerunPasses: { value: plan.rerunPasses, min: EVALS_BUDGET_MINIMUMS.rerunPasses },
         },
         decision: {
           feasibility: { value: plan.decision.feasibility, choices: plan.decisionChoices.feasibility },
@@ -574,7 +568,7 @@ const planTool = (sessions: Sessions): DevChatTool => ({
           pick: { value: plan.decision.pickRule, choices: plan.decisionChoices.pickRule },
         },
         estimate: defined({ rollouts: plan.rollouts, judgeCalls: plan.judgeCalls, usage: plan.usage }),
-        problem: plan.budgetProblem ?? plan.objectiveProblem,
+        problem: plan.splitProblem ?? plan.budgetProblem ?? plan.objectiveProblem,
         warning: [plan.warning, plan.objectiveWarning, sessions().fileChanges()].filter(Boolean).join(' ') || undefined,
         autoAccept: optimize.autoApplies() ? AUTO_PLAN : undefined,
       })
@@ -614,7 +608,8 @@ const objectiveFor = async (
 const startOptimization = async (
   sessions: Sessions,
   experiment: ExperimentSummary,
-  settings: OptimizeFlagSettings
+  settings: OptimizeFlagSettings,
+  fromAutoOptimize = false
 ): Promise<string> => {
   const { optimize } = sessions()
   const iterations = budgetValue('--max-iterations', 'iterations', settings.iterations)
@@ -628,6 +623,8 @@ const startOptimization = async (
     settings.crashScore as CrashScore | undefined,
     EVALS_DECISION_CHOICES.crashScore
   )
+  const maxRollouts = budgetValue('--max-rollouts', 'maxRollouts', settings.maxRollouts)
+  const rerunPasses = budgetValue('--rerun-passes', 'rerunPasses', settings.rerunPasses)
   const objective = await objectiveFor(experiment, settings)
   const plan = await plannedSetup(sessions, experiment)
   tunedKnobs(plan.knobs, settings.tune)
@@ -643,16 +640,25 @@ const startOptimization = async (
   if (feasibility !== undefined) optimize.setDecision('feasibility', feasibility)
   if (crashScore !== undefined) optimize.setDecision('crashScore', crashScore)
   if (finalists !== undefined) optimize.setDecision('finalists', finalists)
+  if (maxRollouts !== undefined) optimize.setMaxRollouts(maxRollouts)
+  if (settings.seed !== undefined) optimize.setSeed(settings.seed)
+  if (rerunPasses !== undefined) optimize.setRerunPasses(rerunPasses)
+  if (settings.split !== undefined) optimize.setSplit(settings.split)
+  optimize.setPassed(settings.passed)
   const ready = optimize.snapshot()
-  if (ready.step === 'setup' && ready.plan.budgetProblem) throw new Error(ready.plan.budgetProblem)
-  const started = optimize.start()
+  const problem = ready.step === 'setup' ? (ready.plan.splitProblem ?? ready.plan.budgetProblem) : undefined
+  if (problem) throw new Error(problem)
+  const started = optimize.start({ fromAutoOptimize })
   if (started === undefined) throw new Error('The optimization did not start.')
   return started
 }
 
-/** Starts an optimization of a saved experiment as the background tool does with no flags: the defaults of its plan. */
+/**
+ * Starts the optimization of auto-optimize on the experiment it made, as the background tool does with no flags: the
+ * defaults of its plan.
+ */
 export const startEvalsOptimizationWithDefaults = async (sessions: Sessions, experiment: string): Promise<string> =>
-  startOptimization(sessions, await findExperiment(sessions, experiment), optimizeFlagSettings([]))
+  startOptimization(sessions, await findExperiment(sessions, experiment), optimizeFlagSettings([]), true)
 
 const caseNames = async (experiment: ExperimentSummary, names: readonly string[]): Promise<void> => {
   const { raw } = await readEvalsExperimentFile(experiment.path)
@@ -676,9 +682,10 @@ const backgroundTool = (sessions: Sessions): DevChatTool => ({
     'itself, so call it only after the developer answered yes, in an earlier turn, to the scope you named. ' +
     'Pass the command and the flags the skill would pass: run evaluates the agent on an experiment ' +
     '(--case NAME, repeatable, runs only those cases), optimize run takes the flags of the optimize skill ' +
-    '(--tune, --no-tune-instructions, --objective, --pareto, --constraint, --max-iterations, ' +
+    '(--tune, --no-tune-instructions, --objective, --pareto, --constraint, --max-rollouts, --max-iterations, ' +
     '--proposals-per-iteration, --runs-per-candidate, --n-finalists, --max-workers, --feasibility-threshold, ' +
-    '--agent-failure-score), and generate takes --task-description, --context, and --num-cases of ' +
+    '--agent-failure-score, --split as TRAIN,VALIDATION,TEST shares, --seed, --rerun-passes, ' +
+    '--reflection-model), and generate takes --task-description, --context, and --num-cases of ' +
     'strands-evals generate and saves experiments/<experiment>/<experiment>.json. strands dev runs it in its ' +
     'prepared evals environment with ' +
     'this agent, writes run.log and the records under strands-dev/experiments/<experiment>/, and continues ' +

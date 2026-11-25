@@ -326,6 +326,7 @@ function resolveBackgroundTasks(
 
   return {
     ...policy,
+    manageToolName: policy.manageToolName ?? 'manage_background_task',
     ...(policy.agentic !== undefined ? { agentic: omitForced(policy.agentic) } : {}),
     ...(always.length > 0 || policy.always !== undefined ? { always } : {}),
     ...(policy.never !== undefined ? { never: omitForced(policy.never) } : {}),

@@ -293,6 +293,21 @@ describe('optimize run records', () => {
     expect(await readEvalsOptimizeRecords(workspace)).toEqual([record])
   })
 
+  it('shouldKeepTheRolloutCapSeedRerunsAndPassedFlagsOfARecordSoThatTheRunResumesWithThem', async () => {
+    const workspace = await temporaryDirectory()
+    const record = {
+      ...optimizeRecordIn(workspace),
+      maxRollouts: 900,
+      rerunPasses: 1,
+      seed: -3,
+      passed: ['--reflection-model', 'bedrock/proposer'],
+    }
+
+    await saveEvalsOptimizeRecord(record)
+
+    expect(await readEvalsOptimizeRecords(workspace)).toEqual([record])
+  })
+
   it('shouldReadTheConstraintsOfARecordThatSavedThemAsLimits', async () => {
     const workspace = await temporaryDirectory()
     const record = optimizeRecordIn(workspace)

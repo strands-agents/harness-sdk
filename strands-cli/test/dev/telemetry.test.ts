@@ -91,7 +91,7 @@ describe('dev telemetry', () => {
       },
       { endpoint: DEV_TELEMETRY_ENDPOINT }
     )
-    expect(DEV_TELEMETRY_ENDPOINT).toBe('https://telemetry.strandsagents.com/strands-dev/ping')
+    expect(DEV_TELEMETRY_ENDPOINT).toBe('https://telemetry.strandsagents.com/ping')
   })
 
   it('shouldSendToTheEndpointThatTheEnvironmentNames', () => {

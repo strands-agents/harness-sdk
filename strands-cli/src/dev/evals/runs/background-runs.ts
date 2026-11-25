@@ -48,10 +48,16 @@ export interface EvalsOptimizeRecord {
   readonly split?: EvalsSplitShares
   readonly objective?: OptimizeObjective
   readonly decision?: OptimizeDecision
+  readonly maxRollouts?: number
+  readonly rerunPasses?: number
+  readonly seed?: number
+  readonly passed?: readonly string[]
   readonly startedAt: number
   readonly pid?: number
   /** The run is over and an edit of it waits for the developer's answer, so the record outlives the run. */
   readonly awaitsReview?: boolean
+  /** Auto-optimize started the run, on the experiment it made from the chats. */
+  readonly fromAutoOptimize?: boolean
 }
 
 const missing = (error: unknown): boolean => isRecord(error) && error.code === 'ENOENT'
@@ -95,7 +101,11 @@ const isOptimizeRecord = (value: unknown): value is EvalsOptimizeRecord =>
   value.version === RECORD_VERSION &&
   ['experiment', 'record', 'space'].every((key) => typeof value[key] === 'string') &&
   Number.isInteger(value.iterations) &&
-  ['width', 'repetitions', 'workers'].every((key) => value[key] === undefined || Number.isInteger(value[key])) &&
+  ['width', 'repetitions', 'workers', 'maxRollouts', 'rerunPasses', 'seed'].every(
+    (key) => value[key] === undefined || Number.isInteger(value[key])
+  ) &&
+  (value.passed === undefined ||
+    (Array.isArray(value.passed) && value.passed.every((argument) => typeof argument === 'string'))) &&
   (value.split === undefined ||
     (Array.isArray(value.split) &&
       value.split.length === 3 &&
@@ -104,7 +114,8 @@ const isOptimizeRecord = (value: unknown): value is EvalsOptimizeRecord =>
   (value.decision === undefined || isDecision(value.decision)) &&
   typeof value.startedAt === 'number' &&
   (value.pid === undefined || Number.isInteger(value.pid)) &&
-  (value.awaitsReview === undefined || typeof value.awaitsReview === 'boolean')
+  (value.awaitsReview === undefined || typeof value.awaitsReview === 'boolean') &&
+  (value.fromAutoOptimize === undefined || typeof value.fromAutoOptimize === 'boolean')
 
 /** Windows refuses to rename over a file held open, so the rename waits and tries again before it gives up. */
 const replaceFile = async (staging: string, path: string): Promise<void> => {

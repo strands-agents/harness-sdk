@@ -19,6 +19,7 @@ export interface EvalsOptimizeSettings {
   readonly iterations: number
   readonly concurrency: number
   readonly maxRollouts: number
+  readonly rerunPasses: number
   readonly seed: number
   readonly decision: OptimizeDecision
 }
@@ -31,6 +32,7 @@ interface EvalsRolloutPlan {
   readonly evaluators: number
   readonly finalists?: number
   readonly pareto?: boolean
+  readonly rerunPasses?: number
   readonly profile?: EvalsUsageProfile
 }
 
@@ -65,23 +67,33 @@ export const EVALS_OPTIMIZE_DEFAULTS: EvalsOptimizeSettings = {
   iterations: 4,
   concurrency: 4,
   maxRollouts: 500,
+  rerunPasses: 2,
   seed: 0,
   decision: EVALS_DECISION_DEFAULTS,
 }
 
 // The optimizer takes any whole number from these: 0 steps measures only the baseline (optimizer.py, budget.py).
-export const EVALS_BUDGET_MINIMUMS = { iterations: 0, width: 1, repetitions: 1, workers: 1, finalists: 1 } as const
+export const EVALS_BUDGET_MINIMUMS = {
+  iterations: 0,
+  width: 1,
+  repetitions: 1,
+  workers: 1,
+  finalists: 1,
+  maxRollouts: 1,
+  rerunPasses: 0,
+} as const
 
 export type EvalsBudgetSetting = keyof typeof EVALS_BUDGET_MINIMUMS
 
 export const isEvalsBudgetValue = (setting: EvalsBudgetSetting, value: number): boolean =>
   Number.isSafeInteger(value) && value >= EVALS_BUDGET_MINIMUMS[setting]
 
-const EVALS_ROLLOUT_CAP = 500
-
-export const evalsRolloutCapProblem = (rollouts: number): string | undefined =>
-  rollouts > EVALS_ROLLOUT_CAP
-    ? `Needs about ${rollouts} rollouts, but one run can use ${EVALS_ROLLOUT_CAP}. Lower the steps, candidates, or runs.`
+export const evalsRolloutCapProblem = (
+  rollouts: number,
+  cap: number = EVALS_OPTIMIZE_DEFAULTS.maxRollouts
+): string | undefined =>
+  rollouts > cap
+    ? `Needs about ${rollouts} rollouts with re-run headroom, but this run can use ${cap}. Lower the steps, candidates, or runs, or raise --max-rollouts.`
     : undefined
 
 const EVALS_TRAIN_SHARES: readonly number[] = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
@@ -132,23 +144,58 @@ const usageEstimate = (rollouts: number, { experiment, runs }: EvalsUsageProfile
   basedOn: { experiment, runs: runs.length },
 })
 
+// Each end-phase arm also holds back rerunPasses x ceil(5% of its trials) for re-runs (optimization/setup/budget.py).
+const RERUN_PERCENT = 5
+
+const endPhaseReserve = (arms: number, trials: number, rerunPasses: number): number =>
+  arms * (trials + rerunPasses * Math.ceil((trials * RERUN_PERCENT) / 100))
+
+// The candidates each check scores: the finalists and your agent on validation, and two on test unless it is a Pareto front.
+const endPhaseArms = (
+  finalists: number = EVALS_DECISION_DEFAULTS.finalists,
+  pareto = false
+): { validated: number; tested: number } => {
+  const validated = evalsValidatedFinalists(finalists, pareto) + 1
+  return { validated, tested: pareto ? validated : TESTED_WITHOUT_PARETO }
+}
+
+type EvalsRolloutShape = Omit<EvalsRolloutPlan, 'evaluators' | 'profile'>
+
 /** The rollouts of each part of a run: your agent and every candidate on the train cases, then the two checks. */
 export const evalsRolloutPhases = ({
   split: { train, validation, test },
   repetitions,
   iterations,
   width,
-  finalists = EVALS_DECISION_DEFAULTS.finalists,
-  pareto = false,
-}: Omit<EvalsRolloutPlan, 'evaluators' | 'profile'>): EvalsRolloutPhases => {
-  const validated = evalsValidatedFinalists(finalists, pareto) + 1
-  const tested = pareto ? validated : TESTED_WITHOUT_PARETO
+  finalists,
+  pareto,
+}: EvalsRolloutShape): EvalsRolloutPhases => {
+  const { validated, tested } = endPhaseArms(finalists, pareto)
   return {
     search: repetitions * (train + iterations * width * train),
     validation: repetitions * validated * validation,
     test: repetitions * tested * test,
   }
 }
+
+/** The rollouts the optimizer checks --max-rollouts against: the run plus each end-phase arm's re-run headroom. */
+export const evalsRolloutReserve = ({
+  rerunPasses = EVALS_OPTIMIZE_DEFAULTS.rerunPasses,
+  ...plan
+}: EvalsRolloutShape): number => {
+  const { validated, tested } = endPhaseArms(plan.finalists, plan.pareto)
+  return (
+    evalsRolloutPhases(plan).search +
+    endPhaseReserve(validated, plan.repetitions * plan.split.validation, rerunPasses) +
+    endPhaseReserve(tested, plan.repetitions * plan.split.test, rerunPasses)
+  )
+}
+
+/** Why the optimizer would refuse the split's case counts, before the run starts. */
+export const evalsSplitProblem = ({ train, validation, test }: CaseSplit): string | undefined =>
+  train < 1 || validation < 1
+    ? `The split leaves ${plural(train, 'train case')} and ${plural(validation, 'validation case')} of ${train + validation + test}; the optimizer needs at least 1 of each. Raise the train or validation share, or add cases.`
+    : undefined
 
 export const evalsRolloutEstimate = ({ evaluators, profile, ...plan }: EvalsRolloutPlan): EvalsRolloutEstimate => {
   const { search, validation, test } = evalsRolloutPhases(plan)
@@ -160,9 +207,9 @@ export const evalsRolloutEstimate = ({ evaluators, profile, ...plan }: EvalsRoll
   }
 }
 
-const sharesProblem = ([train, validation, test]: EvalsSplitShares): string | undefined => {
-  if ([train, validation, test].some((share) => !(share >= 0 && share <= 1)) || train <= 0)
-    return 'Each split share must be from 0 to 1, and the train share must be more than 0.'
+export const evalsSharesProblem = ([train, validation, test]: EvalsSplitShares): string | undefined => {
+  if ([train, validation, test].some((share) => !(share >= 0 && share <= 1)) || train <= 0 || validation <= 0)
+    return 'Each split share must be from 0 to 1, and the train and validation shares must be more than 0.'
   if (Math.abs(train + validation + test - 1) > SHARE_TOLERANCE) return 'The three split shares must add up to 1.'
   return undefined
 }
@@ -209,7 +256,7 @@ export const evalsOptimizeWarning = (
   caseCount: number,
   split: EvalsSplitShares = EVALS_OPTIMIZE_DEFAULTS.split
 ): string | undefined => {
-  const problem = sharesProblem(split)
+  const problem = evalsSharesProblem(split)
   if (problem) return `${problem} The optimizer refuses other shares.`
   const parts = evalsCaseSplit(caseCount, split)
   if (caseCount === 0) return `The experiment has no cases, so the optimizer refuses to run. ${casesToAdd(0, split)}`
