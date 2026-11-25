@@ -1,10 +1,9 @@
-// @ts-nocheck
-// NOTE: Type-checking is disabled because the examples reference remote services not available at build time.
-
+import { ClientFactory } from '@a2a-js/sdk/client'
 import { Agent, tool, SessionManager, FileStorage } from '@strands-agents/sdk'
 import { A2AAgent } from '@strands-agents/sdk/a2a'
 import { A2AExpressServer } from '@strands-agents/sdk/a2a/express'
 import { z } from 'zod'
+import type { Part } from '@a2a-js/sdk'
 
 async function basicUsageExample() {
   // --8<-- [start:basic_usage]
@@ -100,8 +99,55 @@ async function factoryServerExample() {
   // --8<-- [end:factory_server]
 }
 
+async function answerInterruptsExample() {
+  // --8<-- [start:answer_interrupts]
+  const client = await new ClientFactory().createFromUrl('http://localhost:9000')
+
+  const task = await client.sendMessage({
+    message: {
+      kind: 'message',
+      messageId: crypto.randomUUID(),
+      role: 'user',
+      parts: [{ kind: 'text', text: 'Create the spring-launch campaign' }],
+    },
+  })
+
+  if (task.kind === 'task' && task.status.state === 'input-required') {
+    // The task parked in input-required; read the interrupts it is waiting on.
+    const pending = (task.status.message?.parts ?? []).flatMap((part) =>
+      part.kind === 'data' && 'interrupts' in part.data
+        ? (part.data.interrupts as { interruptId: string }[])
+        : []
+    )
+
+    // Answer each one on the same taskId.
+    const answers: Part[] = pending.map((item) => ({
+      kind: 'data',
+      data: {
+        interruptResponse: {
+          interruptId: item.interruptId,
+          response: { approved: true },
+        },
+      },
+    }))
+
+    await client.sendMessage({
+      message: {
+        kind: 'message',
+        messageId: crypto.randomUUID(),
+        role: 'user',
+        taskId: task.id,
+        contextId: task.contextId,
+        parts: answers,
+      },
+    })
+  }
+  // --8<-- [end:answer_interrupts]
+}
+
 void basicUsageExample()
 void streamingExample()
 void asToolExample()
 void basicServerExample()
 void factoryServerExample()
+void answerInterruptsExample()
