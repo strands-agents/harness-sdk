@@ -57,9 +57,12 @@
 	--docs-hover-bg: color-mix(in srgb, var(--strands-green-3) 10%, transparent);
 }
 
-/* Link hover - green text color (uses same color in light & dark mode) */
+/* Link hover - green text color (uses same color in light & dark mode).
+   Body links are already this green, so the color alone shows no change on
+   them; thicken the underline too (same cue as the announcement banner). */
 a:hover {
 	color: var(--sl-color-link-hover);
+	text-decoration-thickness: 2px;
 }
 
 /* LinkCards (e.g. the quickstart cards on the Overview pages) are whole-card

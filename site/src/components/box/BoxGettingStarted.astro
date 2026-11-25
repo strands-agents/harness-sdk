@@ -450,7 +450,11 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
     color: var(--box-purple);
   }
 
-  .box-start__body[data-enhanced='true'] .box-start__agent-tabs a[aria-selected='false'] {
+  /* Skip hovered and focused tabs so the :hover and :focus-visible rules above
+     still apply; this selector outranks them. */
+  .box-start__body[data-enhanced='true']
+    .box-start__agent-tabs
+    a[aria-selected='false']:not(:hover, :focus-visible) {
     border-bottom-color: var(--use-case-muted);
     color: var(--use-case-muted);
   }
@@ -610,6 +614,20 @@ const capabilityCards = BOX_CAPABILITIES.map((capability, index) => {
 
   .box-start__body[data-capabilities-enhanced='true'] .box-start__capability-compact {
     cursor: pointer;
+  }
+
+  /* Tint the border while the tile or code button is hovered, so the card
+     reads as something that opens. */
+  .box-start__body[data-capabilities-enhanced='true']
+    .box-start__capability:not(.is-open):has(
+      .box-start__capability-compact:hover,
+      .box-start__capability-toggle:hover
+    ) {
+    border-color: var(--box-purple);
+  }
+
+  .box-start__capability-toggle:hover {
+    opacity: 0.8;
   }
 
   .box-start__capability-label {
