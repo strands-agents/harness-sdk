@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import type { JSONValue } from '@strands-agents/sdk'
 
 import { errorMessage } from '../../../terminal/text.js'
-import { AUTO_OPTIMIZE_OPTIONS } from '../../../config/settings.js'
+import { AUTO_OPTIMIZE_MAX_TURNS, autoOptimizeCadence } from '../../../config/settings.js'
 import type { DevChatPart, DevChatTool } from '../../chat-extension.js'
 import { STRANDS_EVALS_OPTIMIZE_SKILL, STRANDS_EVALS_SKILL } from '../package.js'
 import { isGenerating, type CrashScore } from '../model.js'
@@ -409,7 +409,7 @@ const sessionConverterTool = (history: EvalsSessionHistory): DevChatTool => ({
   run: (): Promise<string> => history.converter(),
 })
 
-const AUTO_OPTIMIZE_TURNS = AUTO_OPTIMIZE_OPTIONS.map(({ value }) => value)
+const AUTO_OPTIMIZE_TURNS = `a whole number from 0 to ${AUTO_OPTIMIZE_MAX_TURNS}`
 
 const AUTO_OPTIMIZE_ON =
   'Every that many chat turns, strands dev works in the background, outside this chat: an agent in a process of ' +
@@ -453,7 +453,8 @@ const autoOptimizeTool = (sessions: Sessions): DevChatTool => ({
     properties: {
       everyTurns: {
         type: 'integer',
-        enum: [...AUTO_OPTIMIZE_TURNS],
+        minimum: 0,
+        maximum: AUTO_OPTIMIZE_MAX_TURNS,
         description: 'How many chat turns pass between the automatic optimizations. 0 turns them off.',
       },
       acceptResults: {
@@ -465,9 +466,9 @@ const autoOptimizeTool = (sessions: Sessions): DevChatTool => ({
   },
   run: async (input): Promise<string> => {
     const every = input.everyTurns
-    const cadence = AUTO_OPTIMIZE_OPTIONS.find(({ value }) => value === every)?.value
+    const cadence = autoOptimizeCadence(every)
     if (every !== undefined && every !== null && cadence === undefined)
-      throw new Error(`everyTurns must be one of ${AUTO_OPTIMIZE_TURNS.join(', ')}.`)
+      throw new Error(`everyTurns must be ${AUTO_OPTIMIZE_TURNS}.`)
     const accept = flag(input, 'acceptResults')
     if (cadence !== undefined || accept !== undefined)
       await sessions().setSettings({

@@ -209,7 +209,7 @@ export function settingsRows(
   includeSetupAction = false
 ): ChatPanelRow[] {
   const rows = SETTING_DEFINITIONS.filter(({ section }) => category === undefined || section === category).map(
-    ({ key, label, section, control, options }): ChatPanelRow => ({
+    ({ key, label, section, control, options, max }): ChatPanelRow => ({
       label,
       description: settingDescription(settings, key),
       value: key,
@@ -218,14 +218,16 @@ export function settingsRows(
       control:
         control === 'toggle'
           ? { kind: 'toggle', checked: settingValue(settings, key) as boolean }
-          : {
-              kind: 'segmented',
-              options: options.map((option) => ({
-                label: option.label,
-                value: String(option.value),
-                ...(settingValue(settings, key) === option.value ? { active: true } : {}),
-              })),
-            },
+          : control === 'number'
+            ? { kind: 'number', value: String(settingValue(settings, key)), max: max ?? Number.MAX_SAFE_INTEGER }
+            : {
+                kind: 'segmented',
+                options: options.map((option) => ({
+                  label: option.label,
+                  value: String(option.value),
+                  ...(settingValue(settings, key) === option.value ? { active: true } : {}),
+                })),
+              },
     })
   )
   return includeSetupAction && category === 'Agent'
@@ -319,7 +321,16 @@ export function sanitizePanelRow(row: ChatPanelRow): ChatPanelRow {
               })),
             },
           }
-        : {}),
+        : row.control?.kind === 'number'
+          ? {
+              control: {
+                kind: 'number',
+                value: row.control.value.replace(/\D/gu, ''),
+                max: row.control.max,
+                ...(row.control.editing ? { editing: true } : {}),
+              },
+            }
+          : {}),
     ...(row.badge
       ? {
           badge: {

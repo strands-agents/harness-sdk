@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  AUTO_OPTIMIZE_OPTIONS,
+  AUTO_OPTIMIZE_MAX_TURNS,
   DEFAULT_CHAT_SETTINGS,
   parseSettings,
   parseSettingUpdate,
@@ -86,40 +86,49 @@ describe('autoOptimize setting', () => {
     expect(settingValue(DEFAULT_CHAT_SETTINGS, 'autoOptimize')).toBe(0)
   })
 
-  it('shouldAppearInTheWorkspaceSectionAsAChoiceOfHowManyTurns', () => {
+  it('shouldAppearInTheWorkspaceSectionAsAFieldForAWholeNumberOfTurns', () => {
     const definition = SETTING_DEFINITIONS.find(({ key }) => key === 'autoOptimize')
 
-    expect(definition).toMatchObject({
+    expect(definition).toEqual({
+      key: 'autoOptimize',
       label: 'Auto-optimize every N turns',
       section: 'Workspace',
-      control: 'segmented',
+      control: 'number',
+      options: [],
+      max: AUTO_OPTIMIZE_MAX_TURNS,
     })
-    expect(definition?.options).toBe(AUTO_OPTIMIZE_OPTIONS)
-    expect(AUTO_OPTIMIZE_OPTIONS.map(({ label, value }) => [label, value])).toEqual([
-      ['Off', 0],
-      ['5', 5],
-      ['10', 10],
-      ['20', 20],
-      ['50', 50],
-      ['100', 100],
-    ])
+    expect(AUTO_OPTIMIZE_MAX_TURNS).toBe(9999)
   })
 
-  it('shouldTakeTheChoiceThatIsPicked', () => {
+  it('shouldTakeAnyWholeNumberOfTurnsUpToTheMaximum', () => {
     expect(parseSettingUpdate('autoOptimize=20', DEFAULT_CHAT_SETTINGS)).toEqual({ autoOptimize: 20 })
+    expect(parseSettingUpdate('autoOptimize=7', DEFAULT_CHAT_SETTINGS)).toEqual({ autoOptimize: 7 })
+    expect(parseSettingUpdate('autoOptimize=9999', DEFAULT_CHAT_SETTINGS)).toEqual({ autoOptimize: 9999 })
     expect(parseSettingUpdate('autoOptimize=0', { ...DEFAULT_CHAT_SETTINGS, autoOptimize: 20 })).toEqual({
       autoOptimize: 0,
     })
   })
 
-  it.each(['autoOptimize', 'autoOptimize=7', 'autoOptimize=true'])('shouldChangeNothingFor %s', (update) => {
+  it.each([
+    'autoOptimize',
+    'autoOptimize=',
+    'autoOptimize=true',
+    'autoOptimize=7.5',
+    'autoOptimize=-5',
+    'autoOptimize=1e2',
+    'autoOptimize= 20',
+    'autoOptimize=10000',
+  ])('shouldChangeNothingFor %s', (update) => {
     expect(parseSettingUpdate(update, DEFAULT_CHAT_SETTINGS)).toBeUndefined()
   })
 
   it('shouldReadTheSavedCadenceAndTakeAnythingElseAsOff', () => {
     expect(effective({ autoOptimize: 50 }).autoOptimize).toBe(50)
     expect(effective({}).autoOptimize).toBe(0)
-    expect(effective({ autoOptimize: 7 }).autoOptimize).toBe(0)
+    expect(effective({ autoOptimize: 7 }).autoOptimize).toBe(7)
+    expect(effective({ autoOptimize: 7.5 }).autoOptimize).toBe(0)
+    expect(effective({ autoOptimize: -5 }).autoOptimize).toBe(0)
+    expect(effective({ autoOptimize: 10000 }).autoOptimize).toBe(0)
     expect(effective({ autoOptimize: '20' }).autoOptimize).toBe(0)
   })
 

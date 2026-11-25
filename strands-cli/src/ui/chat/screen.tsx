@@ -180,6 +180,14 @@ export function ChatApp({
   const [modelPanelFocus, setModelPanelFocus] = useState<ModelPanelFocus>('providers')
   const [modelProfileSelection, setModelProfileSelection] = useState(0)
   const [settingsPanelFocus, setSettingsPanelFocus] = useState<SettingsPanelFocus>('categories')
+  // The digits typed into a number setting and not saved yet, with the setting they belong to.
+  // The input handler reads the ref, because it outlives the render that set the state.
+  const [settingDraft, setSettingDraftState] = useState<{ key: string; text: string }>()
+  const settingDraftRef = useRef(settingDraft)
+  const setSettingDraft = useCallback((draft: { key: string; text: string } | undefined) => {
+    settingDraftRef.current = draft
+    setSettingDraftState(draft)
+  }, [])
   const [panelViewportStart, setPanelViewportStart] = useState(0)
   const [detailScroll, setDetailScroll] = useState(0)
   const [transcriptScroll, setTranscriptScroll] = useState(0)
@@ -490,10 +498,11 @@ export function ChatApp({
       ? rawAssistance
       : undefined
   const suggestions = assistance?.completions ?? []
+  const shownPanel = (settingDraft ? withSettingDraft(snapshot, settingDraft) : snapshot).panel
   const sourcePanelRows =
     snapshot.panel?.kind === 'settings' && snapshot.panel.settingsCategory === 'Updates'
       ? [settingsUpdateRow(cliVersion, settingsUpdateStatus), ...snapshot.panel.rows]
-      : snapshot.panel?.rows
+      : shownPanel?.rows
   const panelRows = snapshot.panel
     ? filterPanelRows(
         sourcePanelRows ?? [],
@@ -542,9 +551,14 @@ export function ChatApp({
     statusLayout.viewportHeight,
     statusLayout.maxScroll,
   ])
+  // A draft belongs to the row it was typed in: leaving the row, the category, or the panel drops it.
+  const settingsCategory = snapshot.panel?.kind === 'settings' ? snapshot.panel.settingsCategory : undefined
+  useEffect(() => {
+    setSettingDraft(undefined)
+  }, [snapshot.panel?.id, settingsCategory, panelSelection, settingsPanelFocus, setSettingDraft])
   const viewProps = {
     agentNameEditor,
-    snapshot,
+    snapshot: shownPanel && shownPanel !== snapshot.panel ? { ...snapshot, panel: shownPanel } : snapshot,
     input: editor.input,
     cursor: editor.cursor,
     terminalWidth: width,
@@ -1617,6 +1631,10 @@ export function ChatApp({
           return
         }
         if (key.escape) {
+          if (snapshot.panel.kind === 'settings' && settingDraftRef.current) {
+            setSettingDraft(undefined)
+            return
+          }
           if (snapshot.panel.kind === 'models' && snapshot.panel.awsProfile?.open) {
             void activateRow({ label: '', description: '', value: 'aws-profile:toggle' })
             return
@@ -1870,6 +1888,24 @@ export function ChatApp({
             return
           }
           const selected = rows[Math.min(panelSelectionRef.current, rows.length - 1)]
+          if (selected?.value && selected.control?.kind === 'number') {
+            const draft = settingDraftRef.current?.key === selected.value ? settingDraftRef.current.text : undefined
+            const text = numberSettingEdit(draft ?? selected.control.value, selected.control.max, character, key)
+            if (text !== undefined) {
+              setSettingDraft({ key: selected.value, text })
+              return
+            }
+            if (key.return) {
+              if (draft !== undefined) {
+                setSettingDraft(undefined)
+                void activateRow({ ...selected, value: `${selected.value}=${draft || '0'}` })
+              }
+              return
+            }
+            // Any other printable key is not a digit: the field takes whole numbers only.
+            if (character && !key.ctrl && !key.meta && !key.tab && !key.upArrow && !key.downArrow) return
+          }
+          setSettingDraft(undefined)
           if (key.leftArrow || key.rightArrow) {
             const value = selected && settingArrowValue(selected, key.leftArrow ? -1 : 1)
             if (selected && value) {
@@ -2280,7 +2316,7 @@ export function ChatApp({
       {...(restartedIntroAt.current !== undefined || introStartedAt !== undefined
         ? { introStartedAt: restartedIntroAt.current ?? introStartedAt }
         : {})}
-      snapshot={snapshot}
+      snapshot={viewProps.snapshot}
       onActionElement={registerFooterElement}
       {...(hoveredAction !== undefined ? { hoveredAction } : {})}
       {...(installableUpdate ? { availableUpdate: installableUpdate } : {})}
@@ -2408,6 +2444,34 @@ function queryEdit(character: string, key: Key, newline = ''): ((query: string) 
   if (key.ctrl || key.meta || key.super || !character) return undefined
   const clean = sanitizeTerminalText(character).replaceAll('\n', newline)
   return clean ? (query): string => query + clean : undefined
+}
+
+/**
+ * The digits of a number setting after a key, or `undefined` when the key does not edit them. Only digits go in:
+ * a key or a paste with anything else changes nothing, and a number over the maximum is not taken.
+ */
+export function numberSettingEdit(text: string, max: number, character: string, key: Partial<Key>): string | undefined {
+  if (key.backspace || key.delete || character === '\u007f') return text.slice(0, -1)
+  if (key.ctrl && character === 'u') return ''
+  if (key.ctrl || key.meta || key.super || !/^\d+$/u.test(character)) return undefined
+  const digits = `${text}${character}`.replace(/^0+(?=\d)/u, '')
+  return Number(digits) <= max ? digits : text
+}
+
+/** The snapshot with the unsaved digits of a number setting shown in its row. */
+function withSettingDraft(snapshot: ChatSnapshot, draft: { key: string; text: string }): ChatSnapshot {
+  if (snapshot.panel?.kind !== 'settings') return snapshot
+  return {
+    ...snapshot,
+    panel: {
+      ...snapshot.panel,
+      rows: snapshot.panel.rows.map((row) =>
+        row.value === draft.key && row.control?.kind === 'number'
+          ? { ...row, control: { ...row.control, value: draft.text, editing: true } }
+          : row
+      ),
+    },
+  }
 }
 
 function panelSlider(panel: ChatPanel | undefined): ChatPanelSlider | undefined {

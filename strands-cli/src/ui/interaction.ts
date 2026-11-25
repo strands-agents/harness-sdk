@@ -228,6 +228,9 @@ export function settingArrowValue(row: ChatPanelRow, direction: -1 | 1): string 
   if (control.kind === 'toggle') {
     return control.checked === direction > 0 ? undefined : value
   }
+  if (control.kind === 'number') {
+    return undefined
+  }
   const active = Math.max(
     0,
     control.options.findIndex((option) => option.active)
