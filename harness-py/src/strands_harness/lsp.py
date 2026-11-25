@@ -39,6 +39,15 @@ GUIDANCE = (
 """What the system prompt tells the agent when the language server is active, so it reads code the way the
 skeletons expect instead of working around them."""
 
+GUIDANCE_WITHOUT_SHELL = (
+    "Reading code: a whole-file read of a large code file returns its skeleton: imports and signatures with line"
+    " ranges. Then read the lines you need with read(path, offset, limit), get one definition with"
+    ' retrieve_context(symbol="<name>", path="<file>"), or search the workspace with'
+    ' retrieve_context(pattern="<regex>", path="<directory>"). Tool results may be shortened to save context;'
+    " follow any instructions in them to see more."
+)
+"""The guidance for an agent with no shell tool, which searches through ``retrieve_context`` instead."""
+
 STATE_KEY = "context_manager"
 """The ``agent.state`` key that records which context manager the ``"lsp"`` option ended up running."""
 
@@ -71,7 +80,12 @@ class LspContext:
 
 
 def resolve_lsp_context(
-    root: Path | str, read_tool: str = "read", shell_tool: str = "shell", sandbox: Sandbox | None = None
+    root: Path | str,
+    read_tool: str = "read",
+    shell_tool: str = "shell",
+    sandbox: Sandbox | None = None,
+    *,
+    has_shell: bool = True,
 ) -> LspContext:
     """Start the language server in ``root`` and build the context pipeline around it, or fall back to ``"auto"``.
 
@@ -81,6 +95,7 @@ def resolve_lsp_context(
         shell_tool: Name of the shell tool; code its read-only commands print is offloaded like a read.
         sandbox: The agent's sandbox. The language server reads the local filesystem, so any sandbox other than the
             local environment falls back to ``"auto"``.
+        has_shell: Whether the agent has the shell tool; picks the guidance the system prompt gets.
 
     Returns:
         The context manager and tools to use, and a record of which one is active.
@@ -118,7 +133,7 @@ def resolve_lsp_context(
         tools=[workspace_retrieval_tool(manager, WorkspaceSearch(client, root))],
         status={"requested": "lsp", "active": "lsp"},
         close=client.close,
-        guidance=GUIDANCE,
+        guidance=GUIDANCE if has_shell else GUIDANCE_WITHOUT_SHELL,
     )
 
 

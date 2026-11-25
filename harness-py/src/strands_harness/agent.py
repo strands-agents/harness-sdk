@@ -476,7 +476,8 @@ def create_harness(
     context_enabled = context_manager is not None and context_manager is not False
     lsp_context: LspContext | None = None
     if context_manager == "lsp":
-        lsp_context = resolve_lsp_context(os.getcwd(), sandbox=agent_kwargs.get("sandbox"))
+        has_shell = enabled_tools.get("shell", False) is not False
+        lsp_context = resolve_lsp_context(os.getcwd(), sandbox=agent_kwargs.get("sandbox"), has_shell=has_shell)
         agent_kwargs["context_manager"] = lsp_context.context_manager
         if harness_prompt and lsp_context.guidance:
             agent_kwargs["system_prompt"] = build_system_prompt(instructions, [lsp_context.guidance])

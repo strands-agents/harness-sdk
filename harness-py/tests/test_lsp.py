@@ -215,3 +215,11 @@ def test_lsp_guidance_is_left_out_on_fallback(workdir, monkeypatch):
 
     assert agent.state.get("context_manager")["active"] == "auto"
     assert lsp_module.GUIDANCE not in agent.system_prompt
+
+
+def test_lsp_guidance_without_a_shell_points_at_retrieve_context(workdir, fake_server):
+    agent = create_harness(context_manager="lsp", builtin_tools={"shell": False})
+
+    assert "shell" not in agent.tool_names
+    assert lsp_module.GUIDANCE_WITHOUT_SHELL in agent.system_prompt
+    assert lsp_module.GUIDANCE not in agent.system_prompt
