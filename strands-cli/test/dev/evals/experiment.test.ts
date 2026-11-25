@@ -3,7 +3,7 @@ import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { GenerationSettings } from '../../../src/dev/panels/model.js'
+import type { GenerationSettings } from '../../../src/dev/evals/model.js'
 import { prepareEvalsOptimizerEnvironment } from '../../../src/dev/evals/environment.js'
 import type { EvalsProcess } from '../../../src/dev/evals/evals-process.js'
 import {

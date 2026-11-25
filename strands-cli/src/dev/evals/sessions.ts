@@ -29,7 +29,7 @@ import {
   type TestResults,
   type TestRun,
   type TestState,
-} from '../panels/model.js'
+} from './model.js'
 import { locateEvalsEdit, type EvalsEditLocation, type EvalsEditTarget } from './apply.js'
 import { reviewOptimizeRun } from './review-run.js'
 import {

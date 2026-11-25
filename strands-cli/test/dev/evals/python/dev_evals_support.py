@@ -17,7 +17,7 @@ from strands_evals.evaluators.deterministic import Contains
 from strands_evals.types.evaluation import EvaluationData, EvaluationOutput
 from strands_evals.types.trace import EvaluationLevel, Session
 
-PACKAGE_FOLDER = Path(__file__).resolve().parents[2] / "src" / "dev" / "evals-agent"
+PACKAGE_FOLDER = Path(__file__).resolve().parents[4] / "src" / "dev" / "evals" / "python"
 FAKE_RUNNER = Path(__file__).resolve().parent / "fake_typescript_runner.py"
 RUNNER_COMMAND = f"{shlex.quote(sys.executable)} {shlex.quote(str(FAKE_RUNNER))}"
 DESCRIPTION = {"instructions": "Answer briefly.", "effort": "low", "model": "bedrock/test"}

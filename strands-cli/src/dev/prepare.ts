@@ -27,6 +27,7 @@ import {
   readWorkspaceBinding,
   entrypointWorkspaceFolder,
   updateWorkspaceCli,
+  initializeWorkspaceBinding,
   workspaceFolder,
   WORKSPACE_FOLDER,
   type DevWorkspace,
@@ -34,7 +35,6 @@ import {
 import type { StartupScreen } from '../ui/run.js'
 import type { FolderSuggestion, HarnessChoice } from './picker.js'
 import { comparePaths, discoverHarnesses, type DiscoveredHarness } from './search.js'
-import { initializeWorkspaceBinding } from './initialize.js'
 import type { ProjectSetupSession } from './project-setup.js'
 
 export interface PreparedDevRun {

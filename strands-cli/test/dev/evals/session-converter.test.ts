@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { STRANDS_EVALS_VERSION } from '../../../src/dev/evals-package.js'
+import { STRANDS_EVALS_VERSION } from '../../../src/dev/evals/package.js'
 import type { EvalsAgentFacts } from '../../../src/dev/evals/host.js'
 import { evalsSessionHistory } from '../../../src/dev/evals/session-converter.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'

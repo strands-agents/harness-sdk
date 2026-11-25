@@ -16,7 +16,7 @@ import type {
   OptimizeState,
   TestResults,
   TestState,
-} from '../../../src/dev/panels/model.js'
+} from '../../../src/dev/evals/model.js'
 import { evalsDevChatPart } from '../../../src/dev/evals/agent-tools.js'
 import { EVALS_DECISION_CHOICES, EVALS_DECISION_DEFAULTS, EVALS_TEST_SHARES } from '../../../src/dev/evals/plan.js'
 import type { AutoOptimizeStatus } from '../../../src/dev/evals/auto-optimize.js'

@@ -18,6 +18,7 @@ strands-cli/
 │   ├── cli/           # arguments, run modes, console rendering, ACP, updates
 │   ├── agent/         # agent runtime, tools, permissions, MCP, voice
 │   ├── config/        # configuration storage, settings, workspace trust
+│   ├── dev/           # strands dev: workspaces, agent source edits, and evals/
 │   ├── model/         # provider discovery, credentials, model selection
 │   ├── project/       # authored agents, workers, import/export
 │   ├── session/       # saved sessions and restoration
@@ -31,6 +32,29 @@ strands-cli/
 ├── package.json       # bin: { strands }
 └── vitest.config.ts
 ```
+
+### `src/dev/`
+
+`strands dev` lives in `src/dev/`. Plain `strands` runs none of it.
+
+```
+src/dev/
+├── workspace.ts, create.ts, search.ts, prepare.ts     # the workspace: its binding, new projects, discovery, the launch
+├── picker.tsx, project-setup.tsx                      # the screens before the chat
+├── base-cli.ts                                        # the cli.toml profile as a dev agent
+├── agent-options.ts, agent-choices.ts, file-edits.ts  # edits to the agent source
+├── chat-extension.ts, runtime.ts, failed-turns.ts     # what a dev chat adds to a chat
+├── errors.ts, fix-in-new-tab.ts, telemetry.ts         # failures and their fix, usage pings
+└── evals/                                             # /experiment and /optimize, on strands-agents-evals
+    ├── model.ts                                       # the types that the evals files share
+    ├── package.ts                                     # the pinned strands-agents-evals release and its skills
+    ├── *.ts                                           # commands, agent tools, sessions, runs, and their files on disk
+    └── python/                                        # strands_dev_evals, the Python package that strands-evals imports
+```
+
+- Code that needs strands-agents-evals goes in `src/dev/evals/`, and nothing outside `src/dev/` imports it except the chat runtime and the `strands dev` subcommands.
+- A test has the path of its source file: `src/dev/evals/plan.ts` has `test/dev/evals/plan.test.ts`. The pytest files of `strands_dev_evals` are in `test/dev/evals/python/`.
+- A file with one importer goes into the module that uses it.
 
 ## Development
 

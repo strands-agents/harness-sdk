@@ -1,6 +1,6 @@
 import { createDiffPreview } from '../../agent/file-changes.js'
 import { WizardInterruption, type WizardRequestSpec } from '../../ui/panels/wizard-request.js'
-import type { OptimizeReview, ProposedEdit } from '../panels/model.js'
+import type { OptimizeReview, ProposedEdit } from './model.js'
 import type { EvalsDevSessions } from './sessions.js'
 
 const ACCEPT = 'accept'

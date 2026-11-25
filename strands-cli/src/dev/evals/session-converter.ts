@@ -3,7 +3,7 @@ import { readdir } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
 
 import { savedSessionCount } from '../../session/sessions.js'
-import { STRANDS_EVALS_LABEL } from '../evals-package.js'
+import { STRANDS_EVALS_LABEL } from './package.js'
 import { devSessionsFolder } from '../runtime.js'
 import type { DevWorkspace } from '../workspace.js'
 import type { EvalsAgentFacts } from './host.js'

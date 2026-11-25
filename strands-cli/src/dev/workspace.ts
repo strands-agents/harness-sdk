@@ -365,6 +365,25 @@ export async function bindWorkspace(directory: string, binding: WorkspaceBinding
   }
 }
 
+/** Binds a workspace to its folder, which is `directory` when the workspace has none yet. */
+export const initializeWorkspaceBinding = async (workspace: DevWorkspace, directory: string): Promise<DevWorkspace> => {
+  const target = resolve(workspace.directory ?? directory)
+  await mkdir(target, { recursive: true })
+  return boundDevWorkspace(
+    await bindWorkspace(target, {
+      version: 1,
+      name: workspace.config.name,
+      agent: {
+        path: workspace.root,
+        entrypoint: relative(workspace.root, workspace.entrypoint).split(sep).join('/'),
+        language: workspace.config.language,
+      },
+      origin: workspace.config.origin,
+      ...(workspace.config.harness ? { harness: workspace.config.harness } : {}),
+    })
+  )
+}
+
 const storedAgentPath = (directory: string, agentRoot: string): string =>
   relative(directory, agentRoot).split(sep).join('/') || '.'
 

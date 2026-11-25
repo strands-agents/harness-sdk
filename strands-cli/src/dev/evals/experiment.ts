@@ -12,7 +12,7 @@ import {
   type ExperimentSummary,
   type GenerationError,
   type GenerationSettings,
-} from '../panels/model.js'
+} from './model.js'
 import type { DevWorkspace } from '../workspace.js'
 import { ignoreProgress, prepareEvalsOptimizerEnvironment, type EvalsCommandRunner } from './environment.js'
 import { runEvals, evalsFailure, evalsWorkspaceDirectory, type EvalsSpawner } from './evals-process.js'

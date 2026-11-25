@@ -4,8 +4,8 @@ import { basename, dirname, relative, resolve } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
 import { isRecord } from '../../values.js'
-import { writeEvalsRunEntry } from '../evals-agent/entry-files.js'
-import type { CaseResult, EvaluatorVerdict, TestResults } from '../panels/model.js'
+import { writeEvalsRunEntry } from './python/entry-files.js'
+import type { CaseResult, EvaluatorVerdict, TestResults } from './model.js'
 import type { DevWorkspace } from '../workspace.js'
 import { ignoreProgress, prepareEvalsOptimizerEnvironment, type EvalsCommandRunner } from './environment.js'
 import {

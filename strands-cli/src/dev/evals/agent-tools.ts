@@ -5,8 +5,8 @@ import type { JSONValue } from '@strands-agents/sdk'
 import { errorMessage } from '../../terminal/text.js'
 import { AUTO_OPTIMIZE_OPTIONS } from '../../config/settings.js'
 import type { DevChatPart, DevChatTool } from '../chat-extension.js'
-import { STRANDS_EVALS_OPTIMIZE_SKILL, STRANDS_EVALS_SKILL } from '../evals-skill.js'
-import { isGenerating, type CrashScore } from '../panels/model.js'
+import { STRANDS_EVALS_OPTIMIZE_SKILL, STRANDS_EVALS_SKILL } from './package.js'
+import { isGenerating, type CrashScore } from './model.js'
 import type {
   ExperimentSummary,
   Generation,
@@ -23,7 +23,7 @@ import type {
   ProposedEdit,
   TestCheck,
   TestRun,
-} from '../panels/model.js'
+} from './model.js'
 import { uiTools } from './ui-tools.js'
 import { evalsWorkflowSkills } from './workflow-skills.js'
 import { readEvalsExperimentFile } from './experiment.js'

@@ -3,12 +3,12 @@ import { join } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
-import { writeEvalsOptimizeEntry, writeEvalsRunEntry } from '../../src/dev/evals-agent/entry-files.js'
-import { temporaryDirectory } from '../fixtures/tempdir.js'
+import { writeEvalsOptimizeEntry, writeEvalsRunEntry } from '../../../src/dev/evals/python/entry-files.js'
+import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const PYTHON = process.env.STRANDS_TEST_EVALS_PYTHON ?? ''
-const PACKAGE_ROOT = fileURLToPath(new URL('../..', import.meta.url))
-const PYTEST_ARGUMENTS = ['-m', 'pytest', 'test/python', '-q', '-p', 'no:cacheprovider']
+const PACKAGE_ROOT = fileURLToPath(new URL('../../..', import.meta.url))
+const PYTEST_ARGUMENTS = ['-m', 'pytest', 'test/dev/evals/python', '-q', '-p', 'no:cacheprovider']
 const PYTEST_TIMEOUT_MS = 600_000
 const ENTRY_TIMEOUT_MS = 60_000
 const RUN_ENTRY_FILE = "import runpy, sys; runpy.run_path(sys.argv[1].rpartition(':')[0])"

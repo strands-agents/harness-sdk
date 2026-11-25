@@ -1,4 +1,4 @@
-import type { GenerationSettings, KnobKey } from '../panels/model.js'
+import type { GenerationSettings, KnobKey } from './model.js'
 import { EVALS_KNOB_NAMES } from './knobs.js'
 
 /** The strands-evals commands that strands dev runs in the background. */

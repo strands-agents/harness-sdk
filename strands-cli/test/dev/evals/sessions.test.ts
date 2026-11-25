@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { CliConfigStore } from '../../../src/config/store.js'
 import { createDevWorkspace } from '../../../src/dev/create.js'
-import type { ExperimentSummary, OptimizePlan } from '../../../src/dev/panels/model.js'
+import type { ExperimentSummary, OptimizePlan } from '../../../src/dev/evals/model.js'
 import * as installer from '../../../src/project/archive.js'
 import {
   readEvalsOptimizeRecords,

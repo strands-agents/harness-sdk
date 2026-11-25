@@ -3,7 +3,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { isRecord } from '../../values.js'
-import type { OptimizePhase, OptimizeProgress, TrialProgress } from '../panels/model.js'
+import type { OptimizePhase, OptimizeProgress, TrialProgress } from './model.js'
 import { tailEvalsLines, type EvalsTail } from './jobs.js'
 import { listEvalsOptimizations, evalsOptimizationFiles } from './layout.js'
 

@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { STRANDS_EVALS_REQUIREMENT, STRANDS_EVALS_VERSION } from '../../../src/dev/evals-package.js'
+import { STRANDS_EVALS_REQUIREMENT, STRANDS_EVALS_VERSION } from '../../../src/dev/evals/package.js'
 import {
   installedEvalsSkill,
   prepareEvalsOptimizerEnvironment,

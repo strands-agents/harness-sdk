@@ -9,7 +9,7 @@ import {
   type AgentOptionEdit,
   type AgentOptionValue,
 } from '../agent-options.js'
-import type { Knob, KnobGroup, KnobKind } from '../panels/model.js'
+import type { Knob, KnobGroup, KnobKind } from './model.js'
 import type { DevWorkspace } from '../workspace.js'
 
 type EvalsKnobValue = string | boolean | null

@@ -6,7 +6,7 @@ import {
   type PickRule,
   type UsageEstimate,
   type UsageRange,
-} from '../panels/model.js'
+} from './model.js'
 import { plural } from './host.js'
 import type { EvalsRolloutPhases, EvalsUsageProfile } from './study.js'
 

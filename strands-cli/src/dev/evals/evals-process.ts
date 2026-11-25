@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline'
 import { fileURLToPath, URL } from 'node:url'
 
 import { redactPreparationOutput } from '../../project/preparation.js'
-import type { EvalsRunEntry } from '../evals-agent/entry-files.js'
+import type { EvalsRunEntry } from './python/entry-files.js'
 import type { DevWorkspace } from '../workspace.js'
 import { tailEvalsLines } from './jobs.js'
 

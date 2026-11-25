@@ -22,7 +22,7 @@ import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const NOW = new Date('2026-11-11T15:04:05Z')
 const STAMP = '20261111-150405'
-const EVALS_AGENT_FOLDER = fileURLToPath(new URL('../../../src/dev/evals-agent', import.meta.url))
+const EVALS_AGENT_FOLDER = fileURLToPath(new URL('../../../src/dev/evals/python', import.meta.url))
 
 const supportHome = (workspace: DevWorkspace): string => join(workspace.directory!, 'experiments/support')
 

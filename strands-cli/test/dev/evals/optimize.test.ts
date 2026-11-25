@@ -7,7 +7,7 @@ import { evalsVenvPython } from '../../../src/dev/evals/environment.js'
 import type { EvalsProcess } from '../../../src/dev/evals/evals-process.js'
 import { runEvalsOptimization } from '../../../src/dev/evals/optimize.js'
 import { EVALS_DECISION_DEFAULTS } from '../../../src/dev/evals/plan.js'
-import type { OptimizeDecision } from '../../../src/dev/panels/model.js'
+import type { OptimizeDecision } from '../../../src/dev/evals/model.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import {
   environmentRunner,
@@ -21,7 +21,7 @@ import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const NOW = new Date('2026-11-11T15:04:05Z')
 const STAMP = '20261111-150405'
-const EVALS_AGENT_FOLDER = fileURLToPath(new URL('../../../src/dev/evals-agent', import.meta.url))
+const EVALS_AGENT_FOLDER = fileURLToPath(new URL('../../../src/dev/evals/python', import.meta.url))
 
 const evalsEnvironment = (workspace: DevWorkspace): string => join(workspace.directory!, 'tmp/.state/evals-env')
 

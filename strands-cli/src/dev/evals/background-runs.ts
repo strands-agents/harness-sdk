@@ -5,7 +5,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { promisify } from 'node:util'
 
 import { isRecord } from '../../values.js'
-import type { OptimizeDecision, OptimizeObjective } from '../panels/model.js'
+import type { OptimizeDecision, OptimizeObjective } from './model.js'
 import { stopEvalsProcessGroup } from './evals-process.js'
 import {
   listEvalsOptimizations,

@@ -1,6 +1,6 @@
 import type { ChatToolInfo } from '../../agent/types.js'
 import type { DevChatCommandContext } from '../../ui/chat/types.js'
-import type { EvalsBrowserPlace } from '../panels/model.js'
+import type { EvalsBrowserPlace } from './model.js'
 import type { DevWorkspace } from '../workspace.js'
 import type { EvalsUiDependencies } from './evals-ui.js'
 import type { EvalsExperimentDependencies } from './experiment.js'

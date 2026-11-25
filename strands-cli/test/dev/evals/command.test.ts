@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import { STRANDS_EVALS_LABEL } from '../../../src/dev/evals-package.js'
+import { STRANDS_EVALS_LABEL } from '../../../src/dev/evals/package.js'
 import { evalsDevCommands } from '../../../src/dev/evals/command.js'
 import { evalsDevSessions } from '../../../src/dev/evals/sessions.js'
 import { uiTools } from '../../../src/dev/evals/ui-tools.js'

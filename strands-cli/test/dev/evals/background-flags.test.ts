@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { GenerationSettings } from '../../../src/dev/panels/model.js'
+import type { GenerationSettings } from '../../../src/dev/evals/model.js'
 import { generateFlagSettings, optimizeFlagSettings, runFlagCases } from '../../../src/dev/evals/background-flags.js'
 
 const SUGGESTED: GenerationSettings = {

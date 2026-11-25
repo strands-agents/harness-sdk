@@ -8,7 +8,7 @@ import { strandsUserPath } from '../../paths.js'
 import { redactPreparationOutput } from '../../project/preparation.js'
 import { PIP_CONFIG_LIST_ARGUMENTS, pythonInstallEnvironment } from '../../project/python-runtime.js'
 import { isRecord } from '../../values.js'
-import { STRANDS_EVALS_LABEL, STRANDS_EVALS_REQUIREMENT, STRANDS_EVALS_VERSION } from '../evals-package.js'
+import { STRANDS_EVALS_LABEL, STRANDS_EVALS_REQUIREMENT, STRANDS_EVALS_VERSION } from './package.js'
 import { evalsEnvironmentFolder } from './layout.js'
 
 export interface EvalsCommandRequest {

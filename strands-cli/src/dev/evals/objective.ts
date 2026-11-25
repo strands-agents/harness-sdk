@@ -1,4 +1,4 @@
-import type { ObjectivePreset, OptimizeObjective } from '../panels/model.js'
+import type { ObjectivePreset, OptimizeObjective } from './model.js'
 
 export const EVALS_USAGE_METRICS: readonly string[] = [
   'tokens',

@@ -6,8 +6,12 @@ import type { DevChatCommand, DevChatCommandContext, DevChatPanelView, DevChatSk
 import { WizardRequestPanel } from '../../ui/panels/wizard-request-panel.js'
 import { wizardRequestHasDiff, wizardRequestRows } from '../../ui/panels/wizard-request.js'
 import type { DevChatPart } from '../chat-extension.js'
-import { STRANDS_EVALS_LABEL } from '../evals-package.js'
-import { evalsSkillUnavailable, STRANDS_EVALS_OPTIMIZE_SKILL, STRANDS_EVALS_SKILL } from '../evals-skill.js'
+import {
+  evalsSkillUnavailable,
+  STRANDS_EVALS_LABEL,
+  STRANDS_EVALS_OPTIMIZE_SKILL,
+  STRANDS_EVALS_SKILL,
+} from './package.js'
 import type { DevWorkspace } from '../workspace.js'
 import { startEvalsOptimizationWithDefaults, evalsDevChatPart as evalsAgentTools } from './agent-tools.js'
 import {

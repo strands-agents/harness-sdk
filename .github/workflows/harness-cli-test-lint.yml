@@ -102,7 +102,7 @@ jobs:
       - name: Prepare the pinned strands-agents-evals for the evals agent tests
         if: ${{ !matrix.shard }}
         run: |
-          requirement=$(node --input-type=module -e "const { STRANDS_EVALS_REQUIREMENT } = await import('./dist/src/dev/evals-package.js'); console.log(STRANDS_EVALS_REQUIREMENT)")
+          requirement=$(node --input-type=module -e "const { STRANDS_EVALS_REQUIREMENT } = await import('./dist/src/dev/evals/package.js'); console.log(STRANDS_EVALS_REQUIREMENT)")
           python -m venv "$RUNNER_TEMP/evals-venv"
           "$RUNNER_TEMP/evals-venv/bin/python" -m pip install --disable-pip-version-check --prefer-binary "$requirement" pytest
           echo "STRANDS_TEST_EVALS_PYTHON=$RUNNER_TEMP/evals-venv/bin/python" >> "$GITHUB_ENV"

@@ -12,7 +12,7 @@ import {
   type Generation,
   type GenerationPhase,
   type GenerationSettings,
-} from '../panels/model.js'
+} from './model.js'
 import { recordDevEvent } from '../telemetry.js'
 import type { DevWorkspace } from '../workspace.js'
 import {
