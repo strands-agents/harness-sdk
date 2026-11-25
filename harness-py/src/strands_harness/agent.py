@@ -230,7 +230,7 @@ def _resolve_background_tasks(
         ]
 
     always = [*omit_forced(policy.get("always", [])), *forced]
-    resolved: BackgroundTasksConfig = {**policy}
+    resolved: BackgroundTasksConfig = {"manage_tool_name": "manage_background_task", **policy}
     if "agentic" in policy:
         resolved["agentic"] = omit_forced(policy["agentic"])
     if always or "always" in policy:
