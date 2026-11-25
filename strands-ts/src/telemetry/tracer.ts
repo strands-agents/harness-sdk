@@ -57,7 +57,7 @@ import type { ContentBlock, Message, SystemPrompt } from '../types/messages.js'
 import type { JSONSerializable } from '../types/json.js'
 import { jsonReplacer } from './json.js'
 import { getServiceName } from './utils.js'
-import { totalPromptTokens } from '../models/streaming.js'
+import { createEmptyUsage, totalPromptTokens } from '../models/streaming.js'
 
 /**
  * JSON-serializable representation of LocalTrace.
@@ -238,6 +238,14 @@ export class Tracer {
    */
   private readonly _usageOnModelSpansOnly: boolean
 
+  /**
+   * Whether the agent span reports the usage of its own invocation instead of the agent's accumulated usage.
+   *
+   * Set via `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_use_latest_invocation_tokens`. The accumulated usage
+   * grows with every call to the same agent. Ignored when `gen_ai_usage_on_model_spans_only` is set.
+   */
+  private readonly _useLatestInvocationTokens: boolean
+
   /** In-memory execution trace state, collected independently of OTEL. */
   private readonly _traceState: AgentTraceState = { traces: [] }
 
@@ -260,6 +268,10 @@ export class Tracer {
     this._isLangfuse = Tracer._detectLangfuse()
     this._spanAttributesOnly = this._isLangfuse || optInValues.has('gen_ai_span_attributes_only')
     this._usageOnModelSpansOnly = optInValues.has('gen_ai_usage_on_model_spans_only')
+    this._useLatestInvocationTokens = optInValues.has('gen_ai_use_latest_invocation_tokens')
+    if (this._usageOnModelSpansOnly && this._useLatestInvocationTokens) {
+      logger.warn('gen_ai_use_latest_invocation_tokens is ignored because gen_ai_usage_on_model_spans_only is set')
+    }
 
     // Get tracer from global API to ensure ground truth
     this._tracer = trace.getTracer(getServiceName())
@@ -347,11 +359,20 @@ export class Tracer {
 
     if (!span) return
 
-    const { response, error, accumulatedUsage, stopReason } = options
+    const { response, error, accumulatedUsage, latestInvocationUsage, stopReason } = options
 
     try {
       const attributes: Record<string, AttributeValue> = {}
-      if (accumulatedUsage && !this._usageOnModelSpansOnly) this._setUsageAttributes(attributes, accumulatedUsage)
+      if (accumulatedUsage && !this._usageOnModelSpansOnly) {
+        let usage = accumulatedUsage
+        if (this._useLatestInvocationTokens) {
+          if (!latestInvocationUsage) {
+            logger.warn('latestInvocationUsage is undefined despite gen_ai_use_latest_invocation_tokens being set')
+          }
+          usage = latestInvocationUsage ?? createEmptyUsage()
+        }
+        this._setUsageAttributes(attributes, usage)
+      }
       // Langfuse auto-generates "generation" observations for spans with token usage,
       // which duplicates the token counts already reported on this agent span.
       // Setting observation.type to "span" prevents Langfuse from creating that

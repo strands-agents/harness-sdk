@@ -701,6 +701,31 @@ describe('Agent tracer integration', () => {
         })
       )
     })
+
+    it('passes the usage of each invocation to endAgentSpan alongside the accumulated usage', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'One' }, { usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } })
+        .addTurn({ type: 'textBlock', text: 'Two' }, { usage: { inputTokens: 20, outputTokens: 7, totalTokens: 27 } })
+      const agent = new Agent({ model })
+      const tracer = getLatestTracer()
+      // The meter hands out its live accumulated usage, so copy the options at call time.
+      const endOptions: unknown[] = []
+      tracer.endAgentSpan.mockImplementation((_span, options) => endOptions.push(JSON.parse(JSON.stringify(options))))
+
+      await agent.invoke('First')
+      await agent.invoke('Second')
+
+      expect(endOptions).toStrictEqual([
+        expect.objectContaining({
+          accumulatedUsage: expect.objectContaining({ inputTokens: 10, outputTokens: 5, totalTokens: 15 }),
+          latestInvocationUsage: expect.objectContaining({ inputTokens: 10, outputTokens: 5, totalTokens: 15 }),
+        }),
+        expect.objectContaining({
+          accumulatedUsage: expect.objectContaining({ inputTokens: 30, outputTokens: 12, totalTokens: 42 }),
+          latestInvocationUsage: expect.objectContaining({ inputTokens: 20, outputTokens: 7, totalTokens: 27 }),
+        }),
+      ])
+    })
   })
 
   describe('null span handling', () => {

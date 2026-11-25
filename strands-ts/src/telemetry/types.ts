@@ -42,8 +42,10 @@ export interface EndAgentSpanOptions {
   response?: Message
   /** Error that caused the agent invocation to fail. */
   error?: Error
-  /** Accumulated token usage across all model calls in this invocation. */
+  /** Token usage accumulated across every invocation of the agent. */
   accumulatedUsage?: Usage
+  /** Token usage of this invocation only, reported when `gen_ai_use_latest_invocation_tokens` is set. */
+  latestInvocationUsage?: Usage
   /** Reason the agent stopped (e.g., 'end_turn', 'tool_use'). */
   stopReason?: string
 }

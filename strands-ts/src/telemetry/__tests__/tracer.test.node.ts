@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from 'vitest'
 import type { Span, SpanAttributeValue } from '@opentelemetry/api'
 import { SpanStatusCode, trace, context } from '@opentelemetry/api'
 import { Tracer } from '../tracer.js'
+import { logger } from '../../logging/index.js'
 import {
   Message,
   ReasoningBlock,
@@ -1341,6 +1342,92 @@ describe('Tracer', () => {
 
       expect(mockSpan.getAttributeValue('langfuse.observation.type')).toBe('span')
       expect(usageKeys()).toStrictEqual([])
+    })
+  })
+
+  describe('latest invocation tokens', () => {
+    const accumulatedUsage = { inputTokens: 1000, outputTokens: 500, totalTokens: 1500 }
+    const latestInvocationUsage = { inputTokens: 100, outputTokens: 50, totalTokens: 150 }
+    const usageAttributes = (): Record<string, unknown> =>
+      Object.fromEntries(
+        mockSpan.calls.setAttribute
+          .filter((call) => call.key.startsWith('gen_ai.usage.'))
+          .map((call) => [call.key, call.value])
+      )
+    let warnSpy: MockInstance<typeof logger.warn>
+
+    beforeEach(() => {
+      warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      warnSpy.mockRestore()
+    })
+
+    it('reports the accumulated usage on the agent span by default', () => {
+      const tracer = new Tracer()
+      const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
+
+      tracer.endAgentSpan(span, { accumulatedUsage, latestInvocationUsage })
+
+      expect(usageAttributes()).toStrictEqual({
+        'gen_ai.usage.prompt_tokens': 1000,
+        'gen_ai.usage.input_tokens': 1000,
+        'gen_ai.usage.completion_tokens': 500,
+        'gen_ai.usage.output_tokens': 500,
+        'gen_ai.usage.total_tokens': 1500,
+      })
+    })
+
+    it('reports the latest invocation usage on the agent span when opted in', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_use_latest_invocation_tokens')
+      const tracer = new Tracer()
+      const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
+
+      tracer.endAgentSpan(span, { accumulatedUsage, latestInvocationUsage })
+
+      expect(usageAttributes()).toStrictEqual({
+        'gen_ai.usage.prompt_tokens': 100,
+        'gen_ai.usage.input_tokens': 100,
+        'gen_ai.usage.completion_tokens': 50,
+        'gen_ai.usage.output_tokens': 50,
+        'gen_ai.usage.total_tokens': 150,
+      })
+    })
+
+    it('warns and reports zero usage when opted in without a latest invocation', () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_use_latest_invocation_tokens')
+      const tracer = new Tracer()
+      const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
+
+      tracer.endAgentSpan(span, { accumulatedUsage })
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        'latestInvocationUsage is undefined despite gen_ai_use_latest_invocation_tokens being set'
+      )
+      expect(usageAttributes()).toStrictEqual({
+        'gen_ai.usage.prompt_tokens': 0,
+        'gen_ai.usage.input_tokens': 0,
+        'gen_ai.usage.completion_tokens': 0,
+        'gen_ai.usage.output_tokens': 0,
+        'gen_ai.usage.total_tokens': 0,
+      })
+    })
+
+    it('is ignored with a single warning when usage is recorded on model spans only', () => {
+      vi.stubEnv(
+        'OTEL_SEMCONV_STABILITY_OPT_IN',
+        'gen_ai_use_latest_invocation_tokens,gen_ai_usage_on_model_spans_only'
+      )
+      const tracer = new Tracer()
+      const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
+
+      tracer.endAgentSpan(span, { accumulatedUsage, latestInvocationUsage })
+
+      expect(warnSpy.mock.calls).toStrictEqual([
+        ['gen_ai_use_latest_invocation_tokens is ignored because gen_ai_usage_on_model_spans_only is set'],
+      ])
+      expect(usageAttributes()).toStrictEqual({})
     })
   })
 
