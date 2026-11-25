@@ -7,9 +7,8 @@ import { configurationSource } from '../../config/source.js'
 import { agentPrivatePaths, exportAgentProject, exportSourceProject } from '../../project/export.js'
 import { type ChatConfigurationSource, type ChatConversation, type ChatConversations } from '../../agent/types.js'
 import { type ChatSettings } from '../../config/settings.js'
-import { telemetryEnabled } from '../../cli/telemetry.js'
 import { ChatController, type ChatControllerOptions } from './controller.js'
-import type { ChatRuntimeInfo } from './types.js'
+import type { ChatRuntimeInfo, FailedTurnRecord } from './types.js'
 import { isUnresolvedBackgroundTask } from './state.js'
 import { ConversationManager, type InitialConversations } from './conversations.js'
 import type { ConversationManagerOptions } from './conversations.js'
@@ -73,6 +72,7 @@ interface DevChat {
   readonly runtime: Pick<ChatRuntimeInfo, 'devWorkspace'>
   controller(agent: () => TemporaryAgentFacts, turnedOff: readonly DevStateManager[]): Partial<ChatControllerOptions>
   readonly manager: Partial<ConversationManagerOptions>
+  failedTurns(sessionId: string): Promise<FailedTurnRecord>
 }
 
 const loadDevChat = async (
@@ -90,6 +90,7 @@ const loadDevChat = async (
     telemetry,
     { devStateNotice: stateNotice },
     { temporaryDevChatPart, temporaryDevCommands },
+    { devFailedTurnRecord },
   ] = await Promise.all([
     import('../../dev/workspace.js'),
     import('../../dev/base-cli.js'),
@@ -98,12 +99,13 @@ const loadDevChat = async (
     import('../../dev/telemetry.js'),
     import('../../dev/runtime.js'),
     import('../../dev/temporary-evals-fork/command.js'),
+    import('../../dev/failed-turns.js'),
   ])
   const workspace = await readDevWorkspace(path)
   if (!workspace) return undefined
   const baseCli = await profileBaseCliChat(workspace)
   telemetry.configureDevTelemetry({
-    enabled: telemetryEnabled(config.snapshot().settings),
+    enabled: await telemetry.savedTelemetryChoice(config),
     harness: baseCli ? 'base-cli' : project.language,
   })
   telemetry.recordDevEvent('dev_launch')
@@ -145,8 +147,15 @@ const loadDevChat = async (
           }
         : {}),
     },
+    failedTurns: (sessionId) => devFailedTurnRecord(workspace.directory ?? workspace.root, sessionId),
   }
 }
+
+const devFailedTurnsOption = async (
+  dev: DevChat | undefined,
+  { sessionId, sessionIdentity }: { readonly sessionId?: string | undefined; readonly sessionIdentity?: unknown }
+): Promise<{ failedTurns?: FailedTurnRecord }> =>
+  dev && sessionIdentity !== undefined && sessionId ? { failedTurns: await dev.failedTurns(sessionId) } : {}
 
 const nestedWorkspace = (project: ImportedAgentProject, workspace: DevWorkspace | undefined): string[] =>
   workspace?.directory && workspace.directory !== project.root && containsPath(project.root, workspace.directory)
@@ -203,6 +212,7 @@ export async function createTypescriptChat(
       })
       const conversation = initialOptions.conversation
       const { name: sessionName, agentName } = await restoreSessionNames(sessions, conversation)
+      const failedTurns = await devFailedTurnsOption(dev, backend)
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
       const controller = new ChatController(backend, {
         runtime: {
@@ -216,6 +226,7 @@ export async function createTypescriptChat(
         settings: { ...config.snapshot().settings, ...settings },
         initialMessages: messages,
         ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
+        ...failedTurns,
         ...(conversation?.configurationBaseline
           ? { initialConfigurationBaseline: conversation.configurationBaseline }
           : {}),
@@ -405,6 +416,7 @@ export async function createPythonChat(
       currentSessionResumable: backend.sessionIdentity !== undefined,
     })
     const { name: sessionName, agentName } = await restoreSessionNames(sessions, conversation)
+    const failedTurns = await devFailedTurnsOption(dev, backend)
     return new ChatController(backend, {
       runtime: {
         cwd: backend.cwd,
@@ -417,6 +429,7 @@ export async function createPythonChat(
       settings: snapshot.settings,
       initialMessages: backend.messages,
       ...(conversation ? { initialTurns: conversation.completedTurns } : {}),
+      ...failedTurns,
       ...(conversation?.configurationBaseline
         ? { initialConfigurationBaseline: conversation.configurationBaseline }
         : {}),

@@ -216,6 +216,7 @@ const fakeSessions = () => {
       settingChanged: vi.fn(async (): Promise<string | undefined> => undefined),
     },
     settings: vi.fn(() => settings),
+    fileChanges: vi.fn((): string | undefined => undefined),
     // As the settings panel does: what is set is what the workspace then goes by.
     setSettings: vi.fn(async (update: Partial<typeof settings>): Promise<void> => {
       Object.assign(settings, update)
@@ -659,6 +660,36 @@ describe('TEMPORARY dev chat part', () => {
     expect(planned.budget.iterations.min).toBe(0)
     expect(planned.budget.candidatesPerStep.min).toBe(1)
     expect(planned.estimate.rollouts).toBeDefined()
+  })
+
+  it('shouldGiveTheSplitWarningAndTheObjectiveWarningTogetherWhenItPlans', async () => {
+    const { tool, optimize, sessions } = setup()
+    vi.mocked(sessions.optimize.plan).mockImplementation(() =>
+      setTimeout(
+        () =>
+          optimize.set({
+            step: 'setup',
+            plan: { ...plan(), warning: 'The split warning.', objectiveWarning: 'The objective warning.' },
+          }),
+        0
+      )
+    )
+
+    const planned = JSON.parse(await tool('strands_dev_optimization_plan').run({ experiment: 'refunds' }))
+
+    expect(planned.warning).toBe('The split warning. The objective warning.')
+  })
+
+  it('shouldGiveTheFileChangeWarningInTheStatusAndInThePlanWhenTheAgentCanChangeFiles', async () => {
+    const { tool, call, sessions } = setup()
+    const warning = 'Evaluations and optimizations run this agent in /w, and its shell tool can change files there.'
+    vi.mocked(sessions.fileChanges).mockReturnValue(warning)
+
+    const status = await call('strands_dev_status')
+    const planned = JSON.parse(await tool('strands_dev_optimization_plan').run({ experiment: 'refunds' }))
+
+    expect(status).toMatchObject({ fileChanges: warning })
+    expect(planned.warning).toBe(warning)
   })
 
   it('shouldPlanWhileAnotherOptimizationIsRunning', async () => {

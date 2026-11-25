@@ -8,7 +8,6 @@ import { containsPath, strandsUserPath } from '../../src/paths.js'
 import { CliConfigStore } from '../../src/config/store.js'
 import { bindExistingAgent, createDevWorkspace } from '../../src/dev/create.js'
 import { DevFailure, WorkspaceFolderInUse } from '../../src/dev/errors.js'
-import { ensureInitialCandidate } from '../../src/dev/initialize.js'
 import type { FolderSuggestion, HarnessChoice } from '../../src/dev/picker.js'
 import {
   baseHarnessSelection,
@@ -202,17 +201,16 @@ describe('prepareDevRun', () => {
     expect(await readFile(join(root, '.strands/config.json'), 'utf8')).toBe(before)
   })
 
-  it('shouldKeepTheBindingAndTheInitialCopyWhenAgentRunsAnotherEntrypointOfTheBoundProject', async () => {
+  it('shouldKeepTheBindingWhenAgentRunsAnotherEntrypointOfTheBoundProject', async () => {
     const root = await fixture()
     await writeFile(join(root, 'other.ts'), 'export const agent = null')
     const folder = join(root, 'strands-dev')
-    const initial = await ensureInitialCandidate(await bindExistingAgent(folder, join(root, 'agent.ts')))
+    await bindExistingAgent(folder, join(root, 'agent.ts'))
     const before = await readFile(join(folder, '.config'), 'utf8')
 
     const prepared = await dev('--agent', join(root, 'other.ts'))
 
     expect(prepared?.args.agent).toBe(join(root, 'other.ts'))
-    expect(await ensureInitialCandidate(prepared!.workspace)).toBe(initial)
     expect(await readFile(join(folder, '.config'), 'utf8')).toBe(before)
   })
 

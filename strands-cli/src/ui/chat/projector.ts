@@ -18,8 +18,11 @@ import type {
   ChatVideoSource,
   TokenUsage,
 } from '../../agent/types.js'
+import type { FailedTurn } from './types.js'
 
 type MutableTextEntry = Extract<ChatEntry, { type: 'reasoning' | 'assistant' }>
+
+const RESTORED_FAILED_TURN_HINT = 'The conversation does not include this message. Send it again to retry.'
 
 interface MutableToolEntry extends Omit<Extract<ChatEntry, { type: 'tool' }>, 'result'> {
   result?: ChatToolResultContent[]
@@ -322,6 +325,17 @@ export class TurnProjector {
     return `${this._turn.id}:${this._turn.nextEntry++}`
   }
 }
+
+export const projectFailedTurns = (turns: readonly FailedTurn[], agentName: string): ChatTurn[] =>
+  turns.map(({ prompt, error }, index) => ({
+    id: `restored-failed-${index + 1}`,
+    prompt,
+    agentName: sanitizeTerminalText(agentName),
+    entries: [],
+    status: 'error',
+    error,
+    recoveryHint: RESTORED_FAILED_TURN_HINT,
+  }))
 
 export function projectMessages(messages: readonly Message[], agentName = 'Strands harness'): ChatTurn[] {
   const turns: ChatTurn[] = []

@@ -216,8 +216,6 @@ const chat = () => {
   return { context, notices }
 }
 
-const madeInitialCopy = async (): Promise<string> => 'initial-copy'
-
 const sessionsFor = async (
   dependencies: Partial<TemporarySessionDependencies> = {},
   settings: Pick<TemporarySessionHost, 'settings'> = {}
@@ -230,7 +228,6 @@ const sessionsFor = async (
     context,
     dependencies: {
       run: environmentRunner(),
-      initialCopy: madeInitialCopy,
       harnessDefaults: async () => ({ options: { ...DEFAULT_HARNESS_AGENT_CONFIG }, webSearch: false }),
       ...dependencies,
     },
@@ -282,7 +279,7 @@ const restartedHost =
   (workspace: DevWorkspace, dependencies?: Partial<TemporarySessionDependencies>) => (): TemporarySessionHost => ({
     workspace,
     agent: () => ({}),
-    ...(dependencies ? { dependencies: { initialCopy: madeInitialCopy, ...dependencies } } : {}),
+    ...(dependencies ? { dependencies } : {}),
   })
 
 const restartedTest = (
@@ -623,20 +620,38 @@ describe('TEMPORARY dev sessions', () => {
 
   const reviewWithMovedInstructions = async () => {
     let root = ''
-    const finished = optimizingProcess()
-    const optimizing = vi.fn(async (process: TemporaryEvalsProcess) => {
+    let bestDiff = ''
+    const optimizing = vi.fn(async ({ args }: TemporaryEvalsProcess) => {
       await writeFileAt(join(root, 'instructions.md'), 'Answer in many words.\n')
-      return finished(process)
+      const folder = await writeOptimizerRun(recordOf(args), [
+        ...studyLines(0.9),
+        optimizerStop(),
+        optimizerPicked('win'),
+      ])
+      bestDiff = join(folder, 'best.diff')
+      await writeFile(bestDiff, `-${BASELINE}\n+${WINNER}\n`)
+      return exit
     })
-    const { workspace, sessions } = await sessionsFor({ spawnOptimizer: optimizing })
+    const { workspace, sessions, notices } = await sessionsFor({ spawnOptimizer: optimizing })
     root = workspace.root
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
     sessions.optimize.plan(experiment)
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('setup'))
     sessions.optimize.start()
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
-    return { workspace, sessions }
+    return { workspace, sessions, notices, bestDiff: (): string => bestDiff }
   }
+
+  it('shouldNameTheEditThatCannotBeWrittenAndWhereItsTextIsWhenARunFinishes', async () => {
+    const { notices, bestDiff } = await reviewWithMovedInstructions()
+
+    await vi.waitFor(() => expect(notices.map(({ text }) => text)).toContainEqual(expect.stringContaining('finished')))
+    const finished = notices.map(({ text }) => text).find((text) => text.includes('finished'))!
+    expect(finished).toContain('strands dev cannot write 1 edit (instructions: ')
+    expect(finished).toContain('the old text is not a plain string there')
+    expect(finished).toContain(`its text is in ${bestDiff()}`)
+    expect(finished).not.toContain('no edits to apply')
+  })
 
   const firstEdit = (sessions: ReturnType<typeof temporaryDevSessions>) => {
     const state = sessions.optimize.snapshot()
@@ -708,7 +723,7 @@ describe('TEMPORARY dev sessions', () => {
       workspace,
       agent: () => ({ description: 'Answers capital city questions', tools: [] }),
       context,
-      dependencies: { run: environmentRunner(), initialCopy: madeInitialCopy, spawnOptimizer: optimizingProcess() },
+      dependencies: { run: environmentRunner(), spawnOptimizer: optimizingProcess() },
     })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
     sessions.optimize.plan(experiment)
@@ -1148,45 +1163,6 @@ describe('TEMPORARY dev sessions', () => {
         `then start the run again. The full optimizer output is in ${runLogOf(record)}.`,
       record,
     })
-  })
-
-  it('shouldMakeTheInitialCopyBeforeTheOptimizerStartsWhenARunStarts', async () => {
-    const order: string[] = []
-    const initialCopy = vi.fn(async (): Promise<string> => {
-      order.push('initial copy')
-      return 'initial-copy'
-    })
-    const optimizing = vi.fn(async (): Promise<TemporaryEvalsExit> => {
-      order.push('optimizer')
-      return { code: 1, stdout: '', stderrTail: ['stopped'] }
-    })
-    const { workspace, sessions } = await plannedSessions({ initialCopy, spawnOptimizer: optimizing })
-
-    sessions.optimize.start()
-
-    await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('failed'))
-    expect(order).toEqual(['initial copy', 'optimizer'])
-    expect(initialCopy).toHaveBeenCalledWith(workspace, expect.any(AbortSignal))
-  })
-
-  it('shouldStopBeforeTheOptimizerAndSayWhyWhenTheInitialCopyCannotBeMade', async () => {
-    const optimizing = vi.fn()
-    const { sessions } = await plannedSessions({
-      initialCopy: async () => {
-        throw new Error('npm install failed in the initial copy')
-      },
-      spawnOptimizer: optimizing,
-    })
-
-    sessions.optimize.start()
-
-    await vi.waitFor(() =>
-      expect(sessions.optimize.snapshot()).toMatchObject({
-        step: 'failed',
-        message: 'npm install failed in the initial copy',
-      })
-    )
-    expect(optimizing).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -1673,7 +1649,7 @@ describe('TEMPORARY dev sessions', () => {
       workspace,
       agent: () => ({}),
       context,
-      dependencies: { initialCopy: madeInitialCopy, run: environmentRunner(), spawnOptimizer: again },
+      dependencies: { run: environmentRunner(), spawnOptimizer: again },
       ...settings,
     })
     const optimize = new TemporaryOptimize(host, new TemporaryExperiments(host))

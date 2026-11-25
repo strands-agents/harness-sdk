@@ -817,6 +817,70 @@ agent.model = new LocalModel()
     }
   }, 30000)
 
+  it('shouldShowTheFailedMessageAgainWhenADevChatResumesItsSession', async () => {
+    await writeFile(
+      project().entrypoint,
+      `import { createHarness } from '@strands-agents/harness'
+import { Model } from '@strands-agents/sdk'
+class ExpiredModel extends Model {
+  getConfig() { return { modelId: 'local', contextWindowLimit: 10000 } }
+  updateConfig() {}
+  async *stream() {
+    throw new Error('The security token included in the request is expired')
+  }
+}
+export const agent = await createHarness(${JSON.stringify({ ...defaults, name: 'Dev', session: true })})
+agent.model = new ExpiredModel()
+`
+    )
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, project().entrypoint)
+    const config = CliConfigStore.memory({}, { mcpDiscovery: false, skillDiscovery: false, agentMessaging: false })
+    const options = (...extra: string[]) => ({
+      args: parseArgs(['dev', '--workspace', directory, '--agent', project().entrypoint, ...extra]),
+      cwd: root,
+      initialWorkspace: root,
+      mcpPaths: [],
+      mcpStrictPaths: [],
+    })
+    const first = await createTypescriptChat(
+      project().entrypoint,
+      config,
+      options(),
+      AbortSignal.timeout(30000),
+      vi.fn()
+    )
+    const session = await (async (): Promise<string> => {
+      try {
+        await first.submit('refund my order')
+        expect(first.getSnapshot().completedTurns.at(-1)).toMatchObject({ prompt: 'refund my order', status: 'error' })
+        return first.getSnapshot().runtime.session
+      } finally {
+        await first.dispose()
+      }
+    })()
+
+    const resumed = await createTypescriptChat(
+      project().entrypoint,
+      config,
+      options('--session-id', session),
+      AbortSignal.timeout(30000),
+      vi.fn()
+    )
+
+    try {
+      expect(resumed.getSnapshot().completedTurns).toContainEqual(
+        expect.objectContaining({
+          prompt: 'refund my order',
+          status: 'error',
+          recoveryHint: 'The conversation does not include this message. Send it again to retry.',
+        })
+      )
+    } finally {
+      await resumed.dispose()
+    }
+  }, 60000)
+
   it('keeps the old process usable after a replacement evaluates and fails', async () => {
     await writeFile(join(root, 'value.ts'), "export const value = 'original'\n")
     const authored = source()

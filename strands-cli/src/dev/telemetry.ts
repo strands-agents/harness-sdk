@@ -1,8 +1,11 @@
-import { sendTelemetryPing } from '../cli/telemetry.js'
+import { sendTelemetryPing, telemetryEnabled } from '../cli/telemetry.js'
+import { CliConfigStore } from '../config/store.js'
 import { readCliVersion } from '../package-version.js'
 
+export const DEV_TELEMETRY_ENDPOINT = 'https://telemetry.strandsagents.com/strands-dev/ping'
+
 /** Funnel steps only: which stages of the dev workflow get used, never what they contained. */
-type DevTelemetryEvent =
+export type DevTelemetryEvent =
   | 'dev_launch'
   | 'ask_shown'
   | 'ask_answered'
@@ -14,9 +17,18 @@ type DevTelemetryEvent =
   | 'experiment_created'
   | 'evaluation_started'
 
+export type DevHarnessKind = 'base-cli' | 'typescript' | 'python'
+
+export interface DevTelemetryPing {
+  v: 1
+  event: 'step/1'
+  context: { cli_version: string; harness: DevHarnessKind }
+  data: { step: DevTelemetryEvent }
+}
+
 interface DevTelemetryState {
   readonly enabled: boolean
-  readonly harness: 'base-cli' | 'typescript' | 'python'
+  readonly harness: DevHarnessKind
 }
 
 let state: DevTelemetryState | undefined
@@ -26,7 +38,22 @@ export const configureDevTelemetry = (next: DevTelemetryState | undefined): void
   state = next
 }
 
+export const devTelemetryPing = (step: DevTelemetryEvent, harness: DevHarnessKind): DevTelemetryPing => ({
+  v: 1,
+  event: 'step/1',
+  context: { cli_version: readCliVersion(), harness },
+  data: { step },
+})
+
 export const recordDevEvent = (event: DevTelemetryEvent): void => {
   if (!state?.enabled) return
-  void sendTelemetryPing({ v: 1, kind: 'dev', event, cli_version: readCliVersion(), harness: state.harness })
+  void sendTelemetryPing(devTelemetryPing(event, state.harness), {
+    endpoint: process.env.STRANDS_DEV_TELEMETRY_ENDPOINT ?? DEV_TELEMETRY_ENDPOINT,
+  })
+}
+
+export const savedTelemetryChoice = async (config: CliConfigStore, env = process.env): Promise<boolean> => {
+  const { path, settings } = config.snapshot()
+  if (path === 'in-memory') return telemetryEnabled(settings, env)
+  return telemetryEnabled((await CliConfigStore.load(path, { persist: false })).snapshot().settings, env)
 }

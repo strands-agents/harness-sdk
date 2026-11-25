@@ -1,5 +1,4 @@
 import type { ChatToolInfo } from '../../agent/types.js'
-import { hyperlinkEscapes } from '../../terminal/terminal.js'
 import type { DevChatCommandContext } from '../../ui/chat/types.js'
 import type { EvalsBrowserPlace } from '../panels/model.js'
 import type { DevWorkspace } from '../workspace.js'
@@ -18,9 +17,7 @@ export interface TemporaryAgentFacts {
 
 export type TemporarySessionDependencies = TemporaryExperimentDependencies &
   TemporaryTestDependencies &
-  TemporaryOptimizationDependencies & {
-    readonly initialCopy?: (workspace: DevWorkspace, signal: AbortSignal) => Promise<unknown>
-  }
+  TemporaryOptimizationDependencies & {}
 
 /** The settings of the workspace that the dev sessions go by. They are read when needed, so a change counts at once. */
 export interface TemporaryDevSettings {
@@ -47,12 +44,9 @@ export const announce = (host: TemporarySessionHost, status: 'success' | 'error'
   host.context?.report(status, text)
 }
 
-// The evals UI address of a generated file for a notice, linked where the terminal supports it; empty until the UI is ready.
 export const evalsLinkText = (host: TemporarySessionHost, place: EvalsBrowserPlace, runFolder?: string): string => {
   const link = host.evalsLink?.(place, runFolder)
-  if (!link) return ''
-  const escapes = hyperlinkEscapes(link)
-  return ` · evals UI ${escapes ? `${escapes.open}${link}${escapes.close}` : link}`
+  return link ? `\nevals UI: ${link}` : ''
 }
 
 export const firstLine = (text: string): string =>
@@ -62,3 +56,15 @@ export const firstLine = (text: string): string =>
     ?.trim() ?? text
 
 export const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`
+
+const FILE_TOOLS: ReadonlySet<string> = new Set(['shell', 'write', 'edit'])
+const listed = new Intl.ListFormat('en', { type: 'conjunction' })
+
+export const temporaryFileChangeWarning = ({ workspace, agent }: TemporarySessionHost): string | undefined => {
+  const tools = [...new Set((agent().tools ?? []).map(({ name }) => name).filter((name) => FILE_TOOLS.has(name)))]
+  if (tools.length === 0) return undefined
+  return (
+    `Evaluations and optimizations run this agent in ${workspace.root}, and its ${listed.format(tools)} ` +
+    `${tools.length === 1 ? 'tool' : 'tools'} can change files there.`
+  )
+}

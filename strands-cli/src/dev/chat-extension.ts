@@ -29,8 +29,8 @@ const workspaceInstructions = (workspace: DevWorkspace, project: ImportedAgentPr
     'strands dev owns the workspace folder:',
     '- .config: the workspace binding (agent path, entrypoint, and language). Do not edit it.',
     '- .strands/state/: the sessions and memory of this dev chat, kept apart from the agent itself.',
-    '- tmp/: generated files. The first optimization copies the agent to tmp/<id>/agent, and tmp/initial.json names that copy.',
-    'When the developer asks you to change this agent, change the agent source and the files it loads, not the copies in tmp/.',
+    '- tmp/: generated files.',
+    'When the developer asks you to change this agent, change the agent source and the files it loads, not the files in tmp/.',
   ].join('\n')
 }
 

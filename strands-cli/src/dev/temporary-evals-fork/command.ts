@@ -6,6 +6,7 @@ import type { DevChatCommand, DevChatCommandContext, DevChatPanelView, DevChatSk
 import { WizardRequestPanel } from '../../ui/panels/wizard-request-panel.js'
 import { wizardRequestHasDiff, wizardRequestRows } from '../../ui/panels/wizard-request.js'
 import type { DevChatPart } from '../chat-extension.js'
+import { STRANDS_EVALS_LABEL } from '../evals-package.js'
 import { evalsSkillUnavailable, STRANDS_EVALS_OPTIMIZE_SKILL, STRANDS_EVALS_SKILL } from '../evals-skill.js'
 import type { DevWorkspace } from '../workspace.js'
 import { startTemporaryOptimizationWithDefaults, temporaryDevChatPart as temporaryAgentTools } from './agent-tools.js'
@@ -43,7 +44,7 @@ const EXPERIMENT_DETAILS = paragraphs(
   'Edit opens the experiment in your editor ($STRANDS_EDITOR, $VISUAL, or $EDITOR, as /config uses), and the agent asks what to change. When a generation fails, the agent says why and offers to try again.',
   'A run continues when you cancel the chat turn or close strands dev, and continues from where it stopped at the next start. strands dev saves each report in strands-dev/experiments/<name>/runs/, and the latest as <name>.report.json. From a shell, strands dev evaluate <experiment> runs the same evaluation and prints the result.',
   'Use /optimize to tune the agent against an experiment. You can also ask the agent in plain words, for example "what experiments do I have?"',
-  'Experimental: a fork of strands-evals makes the cases for now.'
+  `Experimental: strands dev makes and runs the cases with ${STRANDS_EVALS_LABEL}.`
 )
 
 const OPTIMIZE_DETAILS = paragraphs(
@@ -59,7 +60,7 @@ const OPTIMIZE_DETAILS = paragraphs(
   'Esc closes a diff without an answer. The run stays on the line below the chat input, also after strands dev opens again, and clicking that line, or asking the agent, shows the diff again.',
   'With Auto-accept optimization results on in /settings, a run that finishes writes its edits to the agent source without showing them. A run that you stopped still shows its edits for review.',
   'strands dev saves the records in strands-dev/experiments/<name>/optimizations/. From a shell, strands dev optimize <experiment> runs the optimizer and prints the result, but it does not change the agent source.',
-  'Experimental: a fork of strands-evals runs the upstream optimizer for now, with strands-evals optimize run and strands-evals optimize resume.'
+  `Experimental: strands dev runs the optimizer of ${STRANDS_EVALS_LABEL}, with strands-evals optimize run and strands-evals optimize resume.`
 )
 
 const evalsSkill = (

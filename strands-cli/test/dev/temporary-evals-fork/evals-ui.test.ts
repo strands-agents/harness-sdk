@@ -12,14 +12,13 @@ import {
   type TemporaryUiProcess,
 } from '../../../src/dev/temporary-evals-fork/evals-ui.js'
 import type { TemporarySessionHost } from '../../../src/dev/temporary-evals-fork/host.js'
+import { sanitizeTerminalText } from '../../../src/terminal/text.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const URL = 'http://127.0.0.1:43210/?t=Secret_Token-1'
 const ORIGIN = 'http://127.0.0.1:43210'
 const TOKEN = '?t=Secret_Token-1'
 const page = (path: string): string => `${ORIGIN}${path}${TOKEN}`
-// The startup notice links a short label to the address, so the line stays short but still opens the UI.
-const linked = (url: string): string => `\u001b]8;;${url}\u0007open 127.0.0.1:43210\u001b]8;;\u0007`
 
 class FakeServer extends EventEmitter implements TemporaryUiProcess {
   readonly stdin = new PassThrough()
@@ -114,18 +113,21 @@ describe('TEMPORARY evals UI server', () => {
     expect(cwd).toBe(setup.workspace.directory)
     expect(env.PYTHONUNBUFFERED).toBe('1')
     expect(existsSync(folder)).toBe(true)
-    expect(setup.notices).toEqual([{ status: 'success', text: `Evals UI: ${linked(page('/experiments'))}` }])
+    expect(setup.notices).toEqual([{ status: 'success', text: `Evals UI:\n${URL}` }])
   })
 
-  it('shouldPrintTheWholeAddressWhenTheTerminalShowsHyperlinksAsText', async () => {
-    vi.stubEnv('TERM_PROGRAM', 'Apple_Terminal')
-    const setup = await harness()
+  it.each(['iTerm.app', 'Apple_Terminal', 'ghostty'])(
+    'shouldKeepTheTokenInTheVisibleLinkAfterTheChatCleansTheNoticeIn %s',
+    async (terminal) => {
+      vi.stubEnv('TERM_PROGRAM', terminal)
+      const setup = await harness()
 
-    await started(setup)
+      await started(setup)
 
-    vi.unstubAllEnvs()
-    expect(setup.notices).toEqual([{ status: 'success', text: `Evals UI: ${page('/experiments')}` }])
-  })
+      vi.unstubAllEnvs()
+      expect(sanitizeTerminalText(setup.notices[0]!.text).split('\n')).toContain(URL)
+    }
+  )
 
   it('shouldPrintTheLinkWithThePortForwardWhenItIsReadyOnAnotherMachine', async () => {
     const setup = await harness({ environment: { SSH_CONNECTION: '10.0.0.1 22 10.0.0.2 22' }, machine: () => 'devbox' })
@@ -136,7 +138,8 @@ describe('TEMPORARY evals UI server', () => {
       {
         status: 'success',
         text: [
-          `Evals UI: ${linked(page('/experiments'))}`,
+          'Evals UI:',
+          URL,
           'strands dev runs on another machine. Forward the port on your computer first:',
           'ssh -N -L 43210:127.0.0.1:43210 devbox',
         ].join('\n'),

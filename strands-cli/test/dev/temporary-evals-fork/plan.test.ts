@@ -184,8 +184,26 @@ describe('TEMPORARY optimize plan', () => {
     expect(temporaryOptimizeWarning(cases, split)).toContain(warning)
   })
 
-  it.each([7, 8, 40])('shouldNotWarnWhen%iCasesLeaveTwoOfEachPart', (cases) => {
+  it.each([19, 40])('shouldNotWarnWhen%iCasesLeaveFiveTestCasesOrMore', (cases) => {
     expect(temporaryOptimizeWarning(cases)).toBeUndefined()
+  })
+
+  it.each([
+    { cases: 7, tested: 2 },
+    { cases: 8, tested: 2 },
+    { cases: 16, tested: 4 },
+  ])('shouldSayTheTestIntervalIsWideWhen$casesCasesLeave$testedTestCases', ({ cases, tested }) => {
+    expect(temporaryOptimizeWarning(cases)).toBe(
+      `The split leaves ${tested} test cases, so the interval of the test check will be wide. ` +
+        `Add ${19 - cases} more case${19 - cases === 1 ? '' : 's'} to narrow it.`
+    )
+  })
+
+  it('shouldSayThatOneTrainCaseMakesTheEffectsLessCertain', () => {
+    const warning = temporaryOptimizeWarning(5, [0.2, 0.4, 0.4])
+
+    expect(warning).toContain('The split leaves 1 train case, so the score model cannot tell the cases apart')
+    expect(warning).toContain('The split leaves 2 test cases, so the interval of the test check will be wide.')
   })
 
   it('shouldNotAskForTestCasesWhenTheSplitChoosesNone', () => {

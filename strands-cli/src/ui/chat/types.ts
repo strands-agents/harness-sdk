@@ -62,6 +62,16 @@ export interface DevChatNotice {
   update(status: ChatNotice['status'], text: string): void
 }
 
+export interface FailedTurn {
+  readonly prompt: string
+  readonly error: string
+}
+
+export interface FailedTurnRecord {
+  readonly saved: readonly FailedTurn[]
+  save(turns: readonly FailedTurn[]): Promise<void>
+}
+
 export interface DevChatCommandContext {
   readonly signal: AbortSignal
   report(status: ChatNotice['status'], text: string): DevChatNotice
@@ -380,6 +390,7 @@ export interface ChatControllerOptions {
   initialMessages?: readonly Message[]
   initialTurns?: readonly ChatTurn[]
   devStateNotice?: string
+  failedTurns?: FailedTurnRecord
   initialConfigurationBaseline?: ChatConfigurationBaseline
   setSettings?: (settings: Partial<ChatSettings>) => Promise<void>
   requestSetup?: () => void

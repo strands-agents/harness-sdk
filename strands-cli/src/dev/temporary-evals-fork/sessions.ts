@@ -1,6 +1,6 @@
 import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { basename, dirname, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 
 import { errorMessage } from '../../terminal/text.js'
 import type { DevChatJob, DevChatNotice } from '../../ui/chat/types.js'
@@ -10,7 +10,6 @@ import { isRecord } from '../../values.js'
 import { editAgentOptions } from '../agent-options.js'
 import { baseCliEditProblem, editBaseCliProfile, isProfileBaseCli } from '../base-cli.js'
 import type { DevWorkspace } from '../workspace.js'
-import { ensureInitialCopy } from '../initialize.js'
 import { userConfigPath } from '../../config/store.js'
 import {
   measuredVersions,
@@ -72,6 +71,7 @@ import {
   plural,
   evalsLinkText,
   firstLine,
+  temporaryFileChangeWarning,
   type TemporaryDevSettings,
   type TemporaryHost,
   type TemporarySessionHost,
@@ -154,6 +154,7 @@ export interface TemporaryDevSessions {
   readonly setSettings: (update: Partial<ChatSettings>) => Promise<void>
   /** The settings of the workspace as they are now. */
   readonly settings: () => TemporaryDevSettings | undefined
+  readonly fileChanges: () => string | undefined
   readonly ui: TemporaryEvalsUi
   readonly ask: WizardBroker
   /** Opens a file in the developer's editor through the chat screen; a relative path is from the agent folder. */
@@ -207,6 +208,17 @@ export const temporaryEditsAwaitingAnswer = ({ reviewed, edits = [] }: OptimizeR
 
 const editsToReview = (state: OptimizeRunState): number =>
   state.step === 'review' ? temporaryEditsAwaitingAnswer(state.review) : 0
+
+const BEST_DIFF = 'best.diff'
+
+const unwritableEdits = (state: OptimizeRunState, folder: string | undefined): string | undefined => {
+  const edits = state.step === 'review' ? state.review.edits.filter(({ unavailable }) => unavailable !== undefined) : []
+  if (edits.length === 0) return undefined
+  const reasons = edits.map(({ label, unavailable }) => `${label}: ${unavailable}`).join(' · ')
+  const diff = folder === undefined ? undefined : join(folder, BEST_DIFF)
+  const text = diff !== undefined && existsSync(diff) ? ` · its text is in ${diff}` : ''
+  return `strands dev cannot write ${plural(edits.length, 'edit')} (${reasons})${text}`
+}
 
 /** Whether the run has an edit waiting for the developer's answer. */
 export const temporaryRunAwaitsReview = ({ runs = [] }: OptimizeState, id: string): boolean =>
@@ -1130,7 +1142,6 @@ export class TemporaryOptimize extends Store<OptimizeState> {
     let tail: TemporaryTail | undefined
     this.updateRun(entry, { step: 'running', progress: startingProgress(plan, startedAt) })
     try {
-      await (this.host().dependencies?.initialCopy ?? ensureInitialCopy)(this.host().workspace, abort.signal)
       const space = continuing?.space ?? (await this.writeSpace(plan, now, variables))
       const cases = await readTemporaryRunnableCases(plan.experiment.path).catch(() => [])
       await runTemporaryOptimization(
@@ -1238,15 +1249,19 @@ export class TemporaryOptimize extends Store<OptimizeState> {
     try {
       // Only a run that produced an edit worth applying opens the review; the rest just say they finished.
       ready = await this.enterReview(entry, outcome, record, knobs, auto)
+      const folder = await temporaryRunFolder(record).catch(() => undefined)
+      const unwritten = unwritableEdits(entry.state, folder)
       const ending =
         ready === 0
-          ? 'no edits to apply'
+          ? unwritten === undefined
+            ? 'no edits to apply'
+            : undefined
           : auto
             ? `auto-accept is on · applying ${plural(ready, 'edit')}`
             : `showing ${plural(ready, 'edit')}`
-      const folder = await temporaryRunFolder(record).catch(() => undefined)
+      const told = [ending, unwritten].filter((part) => part !== undefined).join(' · ')
       const link = evalsLinkText(this.host(), { view: 'optimization', record }, folder)
-      announce(this.host(), 'success', `optimize · run ${name} finished · ${ending}${link}`)
+      announce(this.host(), 'success', `optimize · run ${name} finished · ${told}${link}`)
     } catch (error) {
       if (cancelled) return this.reportCancelled(entry, plan, record)
       this.updateRun(entry, { step: 'failed', message: errorMessage(error), record })
@@ -1465,6 +1480,7 @@ export const temporaryDevSessions = (host: TemporarySessionHost): TemporaryDevSe
           signal.addEventListener('abort', aborted, { once: true })
         }),
     }),
+    fileChanges: (): string | undefined => temporaryFileChangeWarning(latest),
     setSettings: async (update: Partial<ChatSettings>): Promise<void> => {
       const set = latest.context?.setSettings
       if (!set) throw new Error('No chat is open to change the settings through.')

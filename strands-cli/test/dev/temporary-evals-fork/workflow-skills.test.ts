@@ -27,6 +27,7 @@ describe('skill command workflows', () => {
     expect(workflow).toContain('A cancelled question is a no.')
     expect(workflow).toContain('through the background-evals skill')
     expect(workflow).toContain('start it only when the developer approves in a later turn')
+    expect(workflow).toContain('When strands_dev_status gives fileChanges, say it in each question or message')
     expect(workflow.split('\n\n').length).toBeLessThanOrEqual(7)
   })
 
@@ -72,6 +73,7 @@ describe('/experiment runs and reports', () => {
     expect(experiment).toContain('"Run it again" (value run) when its lastTest is done, otherwise "Run it"')
     expect(experiment).toContain('Leave it out while its lastTest is running')
     expect(experiment).toContain('"Edit its cases" (value edit)')
+    expect(experiment).toContain('add it to this question and to the question of "Run several experiments"')
     expect(experiment).toContain('read it with strands_dev_evaluation_results')
     expect(experiment).toContain('strands_dev_open_evals_ui with the report view')
   })
