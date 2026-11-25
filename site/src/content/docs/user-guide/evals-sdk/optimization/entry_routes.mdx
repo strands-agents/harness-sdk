@@ -285,6 +285,54 @@ cost a rollout.
   message, and the same agent answers every turn. Nothing else on the agent is reachable,
   and an environment hook's resources don't reach the Node.js worker.
 
+## Save a command as a run file
+
+Once a command gets long, keep it in a `.toml` run file and pass the file where the
+experiment file would go. Each key is a flag name without the leading `--`, with `-`
+written as `_`:
+
+```toml
+# runs/triage.toml
+experiment = "../experiment.json"
+max_rollouts = 120
+name = "triage"  # prefix of the run folder's name
+
+[agent]
+factory = "../agent.py:create_agent"
+
+[objective.triage]
+maximize = "Triage"
+
+[objective.tokens]
+minimize = "output_tokens"
+scale = 100
+
+[constraint.latency]
+metric = "seconds"
+at_most = 30
+```
+
+```bash
+strands-evals optimize run runs/triage.toml
+```
+
+The `[agent]` table holds the route:
+
+| Route | `[agent]` keys |
+|---|---|
+| A tunable factory | `factory = "agent.py:create_agent"` |
+| Your own task function | `build_task = "tasks.py:build_task"` and `space = "tasks.py:space"` |
+| A config file | `config = "agent.json"`, and `tune = [...]` with one `--tune` value per entry |
+| An exported agent file | `factory = "agent.py"` (or `"agent.ts"`), and `tune = [...]` |
+
+Paths in the file (`experiment`, `config`, and file paths in `MODULE:ATTR` values) resolve
+against the file's own folder, so the run works from any directory. Each objective and
+constraint is a named table; the name is only a label.
+
+A flag given on the command line wins over the file, so
+`strands-evals optimize run runs/triage.toml --max-rollouts 300` reruns with a bigger
+budget. An unknown key fails before the run starts and suggests the closest valid one.
+
 ## What every route shares
 
 - **Resume trusts your code.** Resuming re-imports the agent code, rollout, and environment
