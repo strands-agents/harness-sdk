@@ -1067,8 +1067,33 @@ describe('optimization session', () => {
     const mixed = evalsOptimizeJobs(state([edit, { ...edit, unavailable: 'set in code' }]) as never)
     const none = evalsOptimizeJobs(state([{ ...edit, unavailable: 'set in code' }]) as never)
 
-    expect(mixed.map(({ label, waiting }) => [label, waiting])).toEqual([['r1 · 1 to review', true]])
+    expect(mixed).toEqual([{ id: 'run-1', label: 'r1 · 1 edit to review', waiting: true }])
     expect(none).toEqual([])
+  })
+
+  it('shouldSayInTheJobLineWhatTheRunIsDoingAndThatAutoOptimizeStartedIt', () => {
+    const progress = { run: 'r1', record: 'r1', planned: 17, tried: 0, rollouts: { done: 2, total: 101 } }
+    const state = (run: object) => ({
+      step: 'pick' as const,
+      runs: [
+        { id: 'run-1', experiment: 'history-20261125-1453', state: { step: 'running' as const, progress }, ...run },
+      ],
+    })
+
+    const asked = evalsOptimizeJobs(state({ state: { step: 'running', progress: { ...progress, phase: 'scoring' } } }))
+    const byItself = evalsOptimizeJobs(
+      state({ fromAutoOptimize: true, state: { step: 'running', progress: { ...progress, phase: 'baseline' } } })
+    )
+    const starting = evalsOptimizeJobs(state({}))
+
+    expect(asked).toEqual([{ id: 'run-1', label: 'r1 · measuring the new versions · 2/101 rollouts' }])
+    expect(byItself).toEqual([
+      {
+        id: 'run-1',
+        label: 'auto-optimize 2/2 · history-20261125-1453 · measuring your agent as it is · 2/101 rollouts',
+      },
+    ])
+    expect(starting).toEqual([{ id: 'run-1', label: 'r1 · 2/101 rollouts' }])
   })
 
   it('shouldShowTheTestCheckWithItsConfidenceRangeWhenTheRunReportsOne', async () => {
@@ -1350,7 +1375,7 @@ describe('optimization session', () => {
 
     expect(sessions.ask.pending()).toBe(question)
     expect(evalsOptimizeJobs(sessions.optimize.snapshot()).map(({ label }) => label)).toEqual([
-      expect.stringContaining('1 to review'),
+      expect.stringContaining('1 edit to review'),
     ])
   })
 
@@ -1388,7 +1413,7 @@ describe('optimization session', () => {
       { record, state: { step: 'review', review: { edits: [expect.objectContaining({ after: WINNER })] } } },
     ])
     expect(evalsOptimizeJobs(optimize.snapshot()).map(({ label }) => label)).toEqual([
-      expect.stringContaining('1 to review'),
+      expect.stringContaining('1 edit to review'),
     ])
     expect(notices).toContainEqual({
       status: 'success',
@@ -1490,7 +1515,7 @@ describe('optimization session', () => {
 
     expect(sessions.ask.pending()).toBeUndefined()
     expect(evalsOptimizeJobs(sessions.optimize.snapshot()).map(({ label }) => label)).toEqual([
-      expect.stringContaining('1 to review'),
+      expect.stringContaining('1 edit to review'),
     ])
     expect(sessions.optimize.snapshot()).not.toMatchObject({ review: { reviewed: true } })
     expect(sessions.optimize.appliedChanges()).toEqual([])
@@ -1534,7 +1559,7 @@ describe('optimization session', () => {
     expect(await readFile(join(workspace.root, 'instructions.md'), 'utf8')).toBe(`${BASELINE}\n`)
     expect(sessions.optimize.appliedChanges()).toEqual([])
     expect(evalsOptimizeJobs(sessions.optimize.snapshot()).map(({ label }) => label)).toEqual([
-      expect.stringContaining('1 to review'),
+      expect.stringContaining('1 edit to review'),
     ])
     expect(notices.at(-1)).toEqual({
       status: 'success',
@@ -1673,8 +1698,11 @@ describe('optimization session', () => {
 
     // The search stopped with both versions measured, which the count of versions would call done.
     const afterSearch = plan.split.validation * (plan.decision.finalists + 1) + plan.split.test * 2
-    await vi.waitFor(() => expect(job()).toMatchObject({ done: 2, total: 2 + afterSearch }), { timeout: 5000 })
-    expect(starting).toMatchObject({ done: 0, total: plan.rollouts })
+    await vi.waitFor(
+      () => expect(job()).toMatchObject({ label: expect.stringContaining(` · 2/${2 + afterSearch} rollouts`) }),
+      { timeout: 5000 }
+    )
+    expect(starting).toMatchObject({ label: expect.stringContaining(` · 0/${plan.rollouts} rollouts`) })
     expect(afterSearch).toBeGreaterThan(0)
     end.resolve()
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
@@ -1746,10 +1774,17 @@ describe('optimization session', () => {
       expect(before).toBe(0)
       expect(order).toEqual(['agent', 'optimizer'])
       expect(recordOf(optimizer.mock.calls[0]![0].args)).toContain(join('experiments', 'history-20261123-1502'))
-      // The chat is told of the work in one notice, and of the run's end.
+      // The chat is told of the work in one notice, and of the run's end in a second one, which alone has the tick.
       await vi.waitFor(() =>
-        expect(notices.map(({ text }) => text).filter((text) => text.startsWith('auto-optimize'))).toEqual([
-          'auto-optimize · made history-20261123-1502 from your chats (4 cases) · optimizing on it in the background',
+        expect(notices.filter(({ text }) => text.startsWith('auto-optimize'))).toEqual([
+          {
+            status: 'delivered',
+            text: 'auto-optimize 1/2 done · history-20261123-1502 (4 cases) · 2/2 optimizing now · agent unchanged so far',
+          },
+          {
+            status: 'success',
+            text: 'auto-optimize 2/2 · history-20261123-1502 finished · score 0.50 → 0.90 on the training cases · showing 1 edit',
+          },
         ])
       )
     })
@@ -1894,8 +1929,8 @@ describe('optimization session', () => {
       expect(evalsOptimizeJobs(sessions.optimize.snapshot())).toEqual([])
       const record = recordOf(optimizing.mock.calls[0]![0].args)
       expect(notices.map(({ text }) => text).filter((text) => text.startsWith('optimize · '))).toEqual([
-        `optimize · run ${optimizationName(record)} finished · auto-accept is on · applying 1 edit`,
-        'optimize · auto-accept applied instructions.md · run the experiment again from /experiment to check your agent',
+        `optimize · run ${optimizationName(record)} finished · score 0.50 → 0.90 on the training cases · ` +
+          'auto-accept applied instructions.md · run the experiment again from /experiment to check your agent',
       ])
       expect(sessions.optimize.appliedChanges()).toEqual([
         expect.objectContaining({ auto: true, edits: [expect.objectContaining({ after: WINNER })] }),
@@ -1905,7 +1940,9 @@ describe('optimization session', () => {
 
     const APPLIED = {
       status: 'success',
-      text: 'optimize · auto-accept applied instructions.md · run the experiment again from /experiment to check your agent',
+      text: expect.stringMatching(
+        /^optimize · run \S+ finished · score 0\.50 → 0\.90 on the training cases · auto-accept applied instructions\.md · run the experiment again from \/experiment to check your agent$/u
+      ),
     }
 
     /** The chat that opens `after` milliseconds past the write of a run's edits, and what it was told. */
@@ -1987,7 +2024,9 @@ describe('optimization session', () => {
       })
       expect(sessions.optimize.snapshot()).not.toMatchObject({ review: { auto: true } })
       expect(await instructionsOf(workspace)).toBe(`${BASELINE}\n`)
-      expect(notices.map(({ text }) => text)).toContainEqual(expect.stringContaining('finished · showing 1 edit'))
+      expect(notices.map(({ text }) => text)).toContainEqual(
+        expect.stringContaining('finished · score 0.50 → 0.80 on the training cases · showing 1 edit')
+      )
     })
 
     it('shouldLeaveAReviewThatWaitedWhenStrandsDevClosedWaitingWhenItOpensAgain', async () => {
@@ -1999,7 +2038,7 @@ describe('optimization session', () => {
       expect(optimize.snapshot().runs).toMatchObject([{ record, state: { step: 'review' } }])
       expect(optimize.snapshot().runs).not.toMatchObject([{ state: { review: { auto: true } } }])
       expect(evalsOptimizeJobs(optimize.snapshot()).map(({ label }) => label)).toEqual([
-        expect.stringContaining('1 to review'),
+        expect.stringContaining('1 edit to review'),
       ])
       expect(notices).toContainEqual({
         status: 'success',
@@ -2032,7 +2071,9 @@ describe('optimization session', () => {
       expect(optimize.onReview).not.toHaveBeenCalled()
       expect(again).not.toHaveBeenCalled()
       expect(notices.map(({ text }) => text)).toContainEqual(
-        'optimize · auto-accept applied instructions.md · run the experiment again from /experiment to check your agent'
+        expect.stringContaining(
+          'finished · score 0.50 → 0.90 on the training cases · auto-accept applied instructions.md · run the experiment again from /experiment to check your agent'
+        )
       )
     })
   })

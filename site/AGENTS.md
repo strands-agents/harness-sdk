@@ -78,6 +78,7 @@ When authoring or reviewing documentation pages, follow the voice guide and the 
 │   │   ├── ProductContent.astro  # Project-filtered video and blog cards for product pages
 │   │   ├── ProductContentPlaceholder.astro # Accent-aware fallback artwork for product article cards
 │   │   ├── SiteHead.astro        # Shared metadata, scripts, and analytics for standalone pages
+│   │   ├── SocialMeta.astro      # Shared Open Graph and Twitter preview tags
 │   │   ├── box/                  # Sections of the standalone /box/ product landing page
 │   │   ├── decider/              # Sections of the standalone /decider/ product landing page
 │   │   ├── community/            # Sections of the /community/ hub page (hero, courses, events, blog)
