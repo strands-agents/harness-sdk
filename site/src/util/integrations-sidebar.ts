@@ -4,6 +4,7 @@ import { CATALOG_TYPES } from '../components/catalog/types'
 import { toCardModel, sortEntries, type CatalogStatsFile } from './catalog'
 import statsFile from '../data/catalog-stats.json'
 import { pathWithBase } from './links'
+import { CATALOG_PATH, catalogTypePath } from './catalog-routes'
 
 type SidebarEntry = StarlightRouteData['sidebar'][number]
 
@@ -43,8 +44,8 @@ export async function buildIntegrationsSidebar(currentSlug: string): Promise<Sid
       collapsed: false,
       badge: undefined,
       entries: [
-        link('All integrations', '/integrations/'),
-        ...typeFacets.map((t) => link(t.label, `/integrations/?type=${t.value}`)),
+        link('All integrations', CATALOG_PATH),
+        ...typeFacets.map((t) => link(t.label, catalogTypePath(t.value))),
       ],
     },
     link('Add your integration', '/docs/integrations/get-featured/', currentSlug === GET_FEATURED_SLUG),
