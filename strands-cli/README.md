@@ -413,7 +413,7 @@ The experiment skill, workspace instructions, and `strands_dev_*` tools are inje
 **Evals dependency:** the evaluation workflow installs `strands-agents-evals[optimization]==1.12.1` from PyPI in a separate Python environment on first use.
 Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. Python 3.10 or later, access to your package index, and model credentials for the run are necessary.
 
-Dev installs strands-agents-evals one time for each release and Python version, in `~/.strands/temporary-evals/`. All workspaces share that environment.
+Dev installs strands-agents-evals one time for each release and Python version, in `~/.strands/evals/`. All workspaces share that environment.
 Dev deletes an environment that no workspace used for 7 days. The install uses the package index settings of your pip configuration.
 The `session-converter` skill comes from the installed package. Dev loads the `strands-evals` and `optimize` skills from the `v1.12.1` tag of strands-agents/evals.
 

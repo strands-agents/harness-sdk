@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { vi } from 'vitest'
 
-import { temporaryVenvPython, type TemporaryCommandRequest } from '../../src/dev/temporary-evals-fork/environment.js'
+import { evalsVenvPython, type EvalsCommandRequest } from '../../src/dev/evals/environment.js'
 import type { DevWorkspace } from '../../src/dev/workspace.js'
 import { temporaryDirectory } from './tempdir.js'
 
@@ -23,7 +23,7 @@ export const workspaceFixture = async (
 ): Promise<DevWorkspace> => {
   const root = await temporaryDirectory()
   const directory = join(root, 'strands-dev')
-  await writeFileAt(temporaryVenvPython(join(root, '.venv')), 'fixture interpreter')
+  await writeFileAt(evalsVenvPython(join(root, '.venv')), 'fixture interpreter')
   await Promise.all(experiments.map((name) => writeFileAt(experimentFile(directory, name), EXPERIMENT)))
   return {
     directory,
@@ -35,9 +35,9 @@ export const workspaceFixture = async (
 
 /** The commands that prepare the evals environment, answered without a Python. */
 export const environmentRunner = () =>
-  vi.fn(async ({ command, args }: TemporaryCommandRequest): Promise<string> => {
+  vi.fn(async ({ command, args }: EvalsCommandRequest): Promise<string> => {
     if (args[1]?.includes('platform.python_version')) return JSON.stringify({ version: '3.12.4', paths: [] })
-    if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(temporaryVenvPython(args[3]!), 'fixture interpreter')
+    if (args[0] === '-m' && args[1] === 'venv') await writeFileAt(evalsVenvPython(args[3]!), 'fixture interpreter')
     if (args[1]?.includes('site.getsitepackages()[0]')) {
       const sitePackages = join(dirname(dirname(command)), 'lib', 'site-packages')
       await mkdir(sitePackages, { recursive: true })

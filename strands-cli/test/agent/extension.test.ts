@@ -19,7 +19,7 @@ import { AgentMessaging } from '../../src/agent/messaging.js'
 import type { ChatEvent } from '../../src/agent/types.js'
 import { parseArgs } from '../../src/cli/arguments.js'
 import { CliConfigStore } from '../../src/config/store.js'
-import { temporaryWorkflowSkills } from '../../src/dev/temporary-evals-fork/workflow-skills.js'
+import { evalsWorkflowSkills } from '../../src/dev/evals/workflow-skills.js'
 import { exportSourceProject } from '../../src/project/export.js'
 import { importAgentProject } from '../../src/project/import.js'
 import { PythonBackend, type PythonOptions } from '../../src/project/python.js'
@@ -158,7 +158,7 @@ const withInstructions = (host: AgentExtensionHost, instructions: string): Agent
 const extensionHost = (calls: [string, JSONValue][]): AgentExtensionHost => ({
   extension: {
     instructions: '<strands_dev>\nWorkspace folder: /work/strands-dev\n</strands_dev>',
-    skills: temporaryWorkflowSkills(),
+    skills: evalsWorkflowSkills(),
     tools: [
       {
         name: 'strands_dev_status',
@@ -238,7 +238,7 @@ describe.skipIf(!existsSync(python))('Python agent extension', () => {
     const dev = await open([])
     expect(dev.skills.map(({ name }) => name)).toContain('background-evals')
     expect(dev.skills.map(({ name }) => name)).toEqual(
-      expect.arrayContaining(temporaryWorkflowSkills().map(({ name }) => name))
+      expect.arrayContaining(evalsWorkflowSkills().map(({ name }) => name))
     )
     expect(text(await turn(dev, 'echo system'))).toContain('<strands_dev>')
 
@@ -254,14 +254,13 @@ describe.skipIf(!existsSync(python))('Python agent extension', () => {
     const exported = await readFile(join(destination, 'agent.py'), 'utf8')
     expect(exported).toBe(pythonSource)
     expect(exported).not.toContain('background-evals')
-    for (const { name } of temporaryWorkflowSkills()) expect(exported).not.toContain(name)
+    for (const { name } of evalsWorkflowSkills()) expect(exported).not.toContain(name)
     expect(exported).not.toContain('strands_dev')
 
     const plain = await open([], {}, pythonSource, null)
     expect(text(await turn(plain, 'echo system'))).not.toContain('<strands_dev>')
     expect(plain.skills.map(({ name }) => name)).not.toContain('background-evals')
-    for (const { name } of temporaryWorkflowSkills())
-      expect(plain.skills.map((skill) => skill.name)).not.toContain(name)
+    for (const { name } of evalsWorkflowSkills()) expect(plain.skills.map((skill) => skill.name)).not.toContain(name)
     expect(plain.info().tools?.some(({ name }) => name.startsWith('strands_dev_'))).toBe(false)
     expect(await readFile(join(root, 'agent.py'), 'utf8')).toBe(pythonSource)
   })
@@ -436,7 +435,7 @@ describe('TypeScript agent extension', () => {
     const dev = await open([])
     expect((await dev.skills.list()).map(({ name }) => name)).toContain('background-evals')
     expect((await dev.skills.list()).map(({ name }) => name)).toEqual(
-      expect.arrayContaining(temporaryWorkflowSkills().map(({ name }) => name))
+      expect.arrayContaining(evalsWorkflowSkills().map(({ name }) => name))
     )
     expect(text(await turn(dev, 'echo system'))).toContain('<strands_dev>')
     expect(JSON.stringify(dev.state.profile)).not.toContain('background-evals')
@@ -454,13 +453,13 @@ describe('TypeScript agent extension', () => {
     const exported = await readFile(join(destination, 'agent.ts'), 'utf8')
     expect(exported).toBe(typescriptSource)
     expect(exported).not.toContain('background-evals')
-    for (const { name } of temporaryWorkflowSkills()) expect(exported).not.toContain(name)
+    for (const { name } of evalsWorkflowSkills()) expect(exported).not.toContain(name)
     expect(exported).not.toContain('strands_dev')
 
     const plain = await open([], false)
     expect(text(await turn(plain, 'echo system'))).not.toContain('<strands_dev>')
     expect((await plain.skills.list()).map(({ name }) => name)).not.toContain('background-evals')
-    for (const { name } of temporaryWorkflowSkills())
+    for (const { name } of evalsWorkflowSkills())
       expect((await plain.skills.list()).map((skill) => skill.name)).not.toContain(name)
     expect(plain.info().tools?.some(({ name }) => name.startsWith('strands_dev_'))).toBe(false)
     expect(await readFile(join(root, 'agent.ts'), 'utf8')).toBe(typescriptSource)

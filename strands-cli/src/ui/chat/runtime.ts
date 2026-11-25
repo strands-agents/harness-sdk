@@ -33,7 +33,7 @@ import { PythonBackend, type PythonOptions } from '../../project/python.js'
 import { TypescriptBackend, type TypescriptInit } from '../../project/typescript-backend.js'
 import type { AgentExtensionHost } from '../../agent/extension.js'
 import type { profileBaseCliChat } from '../../dev/base-cli.js'
-import type { TemporaryAgentFacts } from '../../dev/temporary-evals-fork/host.js'
+import type { EvalsAgentFacts } from '../../dev/evals/host.js'
 import type { DevWorkspace } from '../../dev/workspace.js'
 import type { DevStateManager } from '../../dev/runtime.js'
 import {
@@ -70,7 +70,7 @@ interface DevChat {
   readonly baseCli: Awaited<ReturnType<typeof profileBaseCliChat>>
   readonly extension: AgentExtensionHost
   readonly runtime: Pick<ChatRuntimeInfo, 'devWorkspace'>
-  controller(agent: () => TemporaryAgentFacts, turnedOff: readonly DevStateManager[]): Partial<ChatControllerOptions>
+  controller(agent: () => EvalsAgentFacts, turnedOff: readonly DevStateManager[]): Partial<ChatControllerOptions>
   readonly manager: Partial<ConversationManagerOptions>
   failedTurns(sessionId: string): Promise<FailedTurnRecord>
 }
@@ -80,7 +80,7 @@ const loadDevChat = async (
   project: ImportedAgentProject,
   config: CliConfigStore,
   requestSetup: RequestSetup,
-  agent: () => TemporaryAgentFacts
+  agent: () => EvalsAgentFacts
 ): Promise<DevChat | undefined> => {
   const [
     { readDevWorkspace },
@@ -89,7 +89,7 @@ const loadDevChat = async (
     { saveAgentChoices },
     telemetry,
     { devStateNotice: stateNotice },
-    { temporaryDevChatPart, temporaryDevCommands },
+    { evalsDevChatPart, evalsDevCommands },
     { devFailedTurnRecord },
   ] = await Promise.all([
     import('../../dev/workspace.js'),
@@ -98,7 +98,7 @@ const loadDevChat = async (
     import('../../dev/agent-choices.js'),
     import('../../dev/telemetry.js'),
     import('../../dev/runtime.js'),
-    import('../../dev/temporary-evals-fork/command.js'),
+    import('../../dev/evals/command.js'),
     import('../../dev/failed-turns.js'),
   ])
   const workspace = await readDevWorkspace(path)
@@ -109,7 +109,7 @@ const loadDevChat = async (
     harness: baseCli ? 'base-cli' : project.language,
   })
   telemetry.recordDevEvent('dev_launch')
-  const extension = devChatExtension(workspace, project, [temporaryDevChatPart(workspace, project, agent)])
+  const extension = devChatExtension(workspace, project, [evalsDevChatPart(workspace, project, agent)])
   return {
     workspace,
     baseCli,
@@ -127,7 +127,7 @@ const loadDevChat = async (
       return {
         ...(devStateNotice ? { devStateNotice } : {}),
         workspaceAction: (action): void => requestSetup({ workspaceAction: action }),
-        devCommands: temporaryDevCommands(workspace, project, info, () => config.snapshot().settings),
+        devCommands: evalsDevCommands(workspace, project, info, () => config.snapshot().settings),
         skillsWithoutCommands: extension.extension.skills.map(({ name }) => name),
         saveAgentOptions: (change) =>
           baseCli ? baseCli.saveAgentOptions(change) : saveAgentChoices(workspace, change),
@@ -172,7 +172,7 @@ export async function createTypescriptChat(
   conversationId = conversations?.activeId
 ): Promise<ConversationManager> {
   const project = importAgentProject(path)
-  let devAgent = (): TemporaryAgentFacts => ({})
+  let devAgent = (): EvalsAgentFacts => ({})
   const dev = options.args.dev?.workspace
     ? await loadDevChat(options.args.dev.workspace, project, config, requestSetup, () => devAgent())
     : undefined
@@ -201,7 +201,7 @@ export async function createTypescriptChat(
       signal,
       extension
     )
-    devAgent = (): TemporaryAgentFacts => ({ ...backend.info?.(), sessionDirectory: backend.sessionDirectory })
+    devAgent = (): EvalsAgentFacts => ({ ...backend.info?.(), sessionDirectory: backend.sessionDirectory })
     try {
       signal.throwIfAborted()
       if (disposed) throw new Error('Runtime was disposed while building an agent.')
@@ -401,7 +401,7 @@ export async function createPythonChat(
   conversationId = conversations?.activeId
 ): Promise<ConversationManager> {
   const project = importAgentProject(path)
-  let devAgent = (): TemporaryAgentFacts => ({})
+  let devAgent = (): EvalsAgentFacts => ({})
   const dev = options.devWorkspace
     ? await loadDevChat(options.devWorkspace, project, config, requestSetup, () => devAgent())
     : undefined
@@ -409,7 +409,7 @@ export async function createPythonChat(
   const baseCli = dev?.baseCli
   const extension = dev?.extension
   const createController = async (backend: PythonBackend, conversation?: ChatConversation): Promise<ChatController> => {
-    devAgent = (): TemporaryAgentFacts => ({ ...backend.info?.(), sessionDirectory: backend.sessionDirectory })
+    devAgent = (): EvalsAgentFacts => ({ ...backend.info?.(), sessionDirectory: backend.sessionDirectory })
     const snapshot = config.snapshot()
     const sessions = new FileSessionRuntime(backend, backend.sessionDirectory, {
       workspace: backend.cwd,

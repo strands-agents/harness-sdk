@@ -2,11 +2,7 @@ import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-
 import { EFFORT_LEVELS, normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
 import { Command, Option } from 'commander'
 
-import {
-  isTemporaryDevCommand,
-  parseTemporaryDevCommandArguments,
-  type TemporaryDevCommandName,
-} from '../dev/temporary-evals-fork/arguments.js'
+import { isEvalsDevCommand, parseEvalsDevCommandArguments, type EvalsDevCommandName } from '../dev/evals/arguments.js'
 import { readCliVersion } from '../package-version.js'
 import { isRecord } from '../values.js'
 
@@ -16,7 +12,7 @@ export interface DevArgs {
   workspace?: string
   searchRoots: string[]
   create?: 'cli' | 'typescript' | 'python'
-  temporaryCommand?: { name: TemporaryDevCommandName; experiment?: string; forkArguments: string[] }
+  evalsCommand?: { name: EvalsDevCommandName; experiment?: string; evalsArguments: string[] }
 }
 
 export interface ParsedArgs {
@@ -50,7 +46,7 @@ export type CliRunMode = 'acp' | 'ink' | 'plain' | 'print'
 
 type ChatCommandName = 'strands' | 'strands dev' | 'strands dev init'
 
-type DevSubcommandName = 'init' | TemporaryDevCommandName
+type DevSubcommandName = 'init' | EvalsDevCommandName
 
 type CommandSummary = readonly [usage: string, summary: string]
 
@@ -58,7 +54,7 @@ const DIRECT_CONFIG_FLAGS = ['name', 'description', 'effort', 'instructions', 'i
 
 const COMMAND_USAGE_WIDTH = 26
 
-const TEMPORARY_DEV_COMMAND_SUMMARIES: readonly CommandSummary[] = [
+const EVALS_DEV_COMMAND_SUMMARIES: readonly CommandSummary[] = [
   ['evaluate [experiment]', 'experimental: run the agent on an experiment'],
   ['optimize [experiment]', 'experimental: tune the agent against an experiment'],
 ]
@@ -73,7 +69,7 @@ const COMMAND_HELP: Record<ChatCommandName, { description: string; commands: rea
   },
   'strands dev': {
     description: 'Chat with the agent of a local harness workspace. Plain strands keeps its default agent.',
-    commands: [['init', 'set up a workspace and exit'], ...TEMPORARY_DEV_COMMAND_SUMMARIES],
+    commands: [['init', 'set up a workspace and exit'], ...EVALS_DEV_COMMAND_SUMMARIES],
   },
   'strands dev init': {
     description: 'Set up a local harness workspace, then exit without a model request.',
@@ -95,13 +91,13 @@ const parseDevArgs = (argv: string[]): ParsedArgs => {
   const subcommand = findDevSubcommand(argv)
   if (subcommand === undefined) return parseChatArgs(argv, 'strands dev')
   if (subcommand.name === 'init') return parseChatArgs(subcommand.argv, 'strands dev init')
-  const { workspace, ...temporaryCommand } = parseTemporaryDevCommandArguments(subcommand.name, subcommand.argv)
+  const { workspace, ...evalsCommand } = parseEvalsDevCommandArguments(subcommand.name, subcommand.argv)
   const parsed = parseChatArgs(workspace ? ['--workspace', workspace] : [], 'strands dev')
-  return { ...parsed, dev: { ...parsed.dev!, temporaryCommand } }
+  return { ...parsed, dev: { ...parsed.dev!, evalsCommand } }
 }
 
 const isDevSubcommand = (token: string | undefined): token is DevSubcommandName =>
-  token === 'init' || isTemporaryDevCommand(token)
+  token === 'init' || isEvalsDevCommand(token)
 
 const findDevSubcommand = (argv: string[]): { name: DevSubcommandName; argv: string[] } | undefined => {
   const { operands: fromFirstArgument } = chatProgram('strands dev').passThroughOptions().parseOptions(argv)

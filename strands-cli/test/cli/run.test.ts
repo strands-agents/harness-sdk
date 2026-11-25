@@ -937,14 +937,14 @@ describe('dev arguments', () => {
     [
       'Evaluate',
       ['dev', '--workspace', 'desk', 'evaluate', 'refunds'],
-      { workspace: 'desk', temporaryCommand: { name: 'evaluate', experiment: 'refunds', forkArguments: [] } },
+      { workspace: 'desk', evalsCommand: { name: 'evaluate', experiment: 'refunds', evalsArguments: [] } },
     ],
     [
       'Optimize',
       ['dev', '--workspace=desk', 'optimize', 'support', '--', '--tune', 'effort'],
       {
         workspace: 'desk',
-        temporaryCommand: { name: 'optimize', experiment: 'support', forkArguments: ['--tune', 'effort'] },
+        evalsCommand: { name: 'optimize', experiment: 'support', evalsArguments: ['--tune', 'effort'] },
       },
     ],
     [
@@ -968,7 +968,7 @@ describe('dev arguments', () => {
     const args = parseArgs(argv)
 
     expect(args).toMatchObject(expected)
-    expect(args.dev?.temporaryCommand).toBeUndefined()
+    expect(args.dev?.evalsCommand).toBeUndefined()
   })
 
   it.each([
