@@ -634,7 +634,7 @@ describe('workspace Settings', () => {
       expect(toggle()).toMatchObject({ label: 'Auto-accept optimization results', control: { checked: false } })
       expect(dev.getSnapshot().panel?.rows.find(({ value }) => value === 'autoOptimize')).toMatchObject({
         label: 'Auto-optimize every N turns',
-        control: { kind: 'segmented', options: expect.arrayContaining([{ label: 'Off', value: '0', active: true }]) },
+        control: { kind: 'number', value: '0', max: 9999 },
       })
 
       await dev.activatePanelRow(toggle()!)
