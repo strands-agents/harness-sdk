@@ -70,7 +70,14 @@ export const EVALS_OPTIMIZE_DEFAULTS: EvalsOptimizeSettings = {
 }
 
 // The optimizer takes any whole number from these: 0 steps measures only the baseline (optimizer.py, budget.py).
-export const EVALS_BUDGET_MINIMUMS = { iterations: 0, width: 1, repetitions: 1, workers: 1, finalists: 1 } as const
+export const EVALS_BUDGET_MINIMUMS = {
+  iterations: 0,
+  width: 1,
+  repetitions: 1,
+  workers: 1,
+  finalists: 1,
+  maxRollouts: 1,
+} as const
 
 export type EvalsBudgetSetting = keyof typeof EVALS_BUDGET_MINIMUMS
 

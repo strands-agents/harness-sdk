@@ -116,7 +116,16 @@ const WORKERS = 4
 
 type RunPlan = Pick<
   OptimizePlan,
-  'experiment' | 'iterations' | 'width' | 'repetitions' | 'workers' | 'split' | 'decision' | 'maxRollouts' | 'passed'
+  | 'experiment'
+  | 'iterations'
+  | 'width'
+  | 'repetitions'
+  | 'workers'
+  | 'split'
+  | 'decision'
+  | 'maxRollouts'
+  | 'seed'
+  | 'passed'
 > & {
   readonly objective?: OptimizeObjective
 }
@@ -332,8 +341,12 @@ export class EvalsOptimize extends Store<OptimizeState> {
 
   setMaxRollouts(maxRollouts: number): void {
     this.updatePlan((plan) =>
-      Number.isSafeInteger(maxRollouts) && maxRollouts >= 1 ? this.estimate({ ...plan, maxRollouts }) : plan
+      isEvalsBudgetValue('maxRollouts', maxRollouts) ? this.estimate({ ...plan, maxRollouts }) : plan
     )
+  }
+
+  setSeed(seed: number): void {
+    this.updatePlan((plan) => (Number.isSafeInteger(seed) ? { ...plan, seed } : plan))
   }
 
   setSplit(shares: EvalsSplitShares): void {
@@ -797,6 +810,7 @@ export class EvalsOptimize extends Store<OptimizeState> {
             repetitions: plan.repetitions,
             concurrency: plan.workers,
             maxRollouts: plan.maxRollouts,
+            ...(plan.seed === undefined ? {} : { seed: plan.seed }),
             decision: plan.decision,
             ...(shares ? { split: shares } : {}),
           },

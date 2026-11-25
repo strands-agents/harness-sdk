@@ -603,20 +603,21 @@ describe('optimization session', () => {
     sessions.optimize.setIterations(8)
     sessions.optimize.setMaxRollouts(5000)
     sessions.optimize.setSplit([0.6, 0.2, 0.2])
-    sessions.optimize.setPassed(['--seed', '3', '--rerun-passes', '1'])
+    sessions.optimize.setSeed(-3)
+    sessions.optimize.setPassed(['--rerun-passes', '1'])
 
     expect(sessions.optimize.start()).toBeDefined()
 
     await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'))
     const { args } = optimizing.mock.calls[0]![0]
-    const last = (flag: string): string | undefined => args[args.lastIndexOf(flag) + 1]
-    expect(['--max-rollouts', '--split', '--seed', '--rerun-passes'].map(last)).toEqual([
+    expect(args.filter((argument) => argument === '--seed')).toHaveLength(1)
+    expect(['--max-rollouts', '--split', '--seed', '--rerun-passes'].map((flag) => flagValue(args, flag))).toEqual([
       '5000',
       '0.6,0.2,0.2',
-      '3',
+      '-3',
       '1',
     ])
-    expect(recorded()).toMatchObject({ maxRollouts: 5000, passed: ['--seed', '3', '--rerun-passes', '1'] })
+    expect(recorded()).toMatchObject({ maxRollouts: 5000, passed: ['--rerun-passes', '1'] })
   })
 
   it('shouldChangeADecisionSettingOnlyToOneOfItsChoicesAndCountTheFinalistsInTheEstimate', async () => {

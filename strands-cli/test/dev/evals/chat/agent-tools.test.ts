@@ -199,6 +199,7 @@ const fakeSessions = () => {
       setMaxRollouts: vi.fn(),
       setSplit: vi.fn(),
       setPassed: vi.fn(),
+      setSeed: vi.fn(),
       start: vi.fn((): string => {
         finishRun({ step: 'running', progress: progress() })
         return 'run-1'
@@ -815,9 +816,8 @@ describe('background strands-evals runs', () => {
     ])
     expect(sessions.optimize.setMaxRollouts).toHaveBeenCalledWith(900)
     expect(sessions.optimize.setSplit).toHaveBeenCalledWith([0.6, 0.2, 0.2])
+    expect(sessions.optimize.setSeed).toHaveBeenCalledWith(3)
     expect(sessions.optimize.setPassed).toHaveBeenCalledWith([
-      '--seed',
-      '3',
       '--rerun-passes',
       '1',
       '--reflection-model',
@@ -871,7 +871,13 @@ describe('background strands-evals runs', () => {
       '--feasibility-threshold must be one of 0.8, 0.9, 0.95, 0.99.',
     ],
     ['a flag it cannot pass', ['--pick-rule', 'mean'], 'strands dev cannot pass --pick-rule'],
+    ['a flag that loads code', ['--on-iteration', 'hooks:report'], 'strands dev cannot pass --on-iteration'],
     ['a rollout budget of zero', ['--max-rollouts', '0'], '--max-rollouts must be a whole number of at least 1.'],
+    [
+      'a rollout budget past a safe integer',
+      ['--max-rollouts', '99999999999999999999'],
+      '--max-rollouts must be a whole number of at least 1.',
+    ],
     ['a split that does not sum to 1', ['--split', '0.5,0.5,0.5'], '--split takes TRAIN,VALIDATION,TEST shares'],
     ['a model knob without models', ['--tune', 'model'], 'Tuning the model needs'],
   ])('shouldRefuseToOptimizeWhenTheFlagsHave%s', async (_case, args, message) => {
@@ -892,6 +898,20 @@ describe('background strands-evals runs', () => {
 
     await expect(tool('strands_dev_run_background').run(optimizeRun(['--runs-per-candidate', '5']))).rejects.toThrow(
       budgetProblem
+    )
+    expect(sessions.optimize.start).not.toHaveBeenCalled()
+  })
+
+  it('shouldRefuseASplitThatLeavesNoValidationCaseBeforeTheRunStarts', async () => {
+    const { tool, sessions, optimize } = setup()
+    sessions.optimize.setSplit.mockImplementation(() => {
+      const current = optimize.snapshot()
+      if (current.step === 'setup')
+        optimize.set({ ...current, plan: { ...current.plan, split: { train: 2, validation: 0, test: 0 } } })
+    })
+
+    await expect(tool('strands_dev_run_background').run(optimizeRun(['--split', '0.9,0.05,0.05']))).rejects.toThrow(
+      '--split 0.9,0.05,0.05 leaves no train or validation case among'
     )
     expect(sessions.optimize.start).not.toHaveBeenCalled()
   })

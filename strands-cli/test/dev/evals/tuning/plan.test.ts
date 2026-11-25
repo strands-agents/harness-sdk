@@ -9,6 +9,7 @@ import {
   EVALS_TEST_SHARES,
   evalsCaseSplit,
   evalsOptimizeWarning,
+  evalsRolloutCapProblem,
   evalsRolloutEstimate,
   evalsRolloutPhases,
   evalsSplitChoices,
@@ -20,6 +21,12 @@ import {
 const DEFAULT_SPLIT: EvalsSplitShares = [0.5, 0.25, 0.25]
 
 describe('optimize plan', () => {
+  it('shouldMeasureTheRolloutsAgainstTheCapOfTheRun', () => {
+    expect(evalsRolloutCapProblem(600)).toContain('this run can use 500')
+    expect(evalsRolloutCapProblem(600, 1000)).toBeUndefined()
+    expect(evalsRolloutCapProblem(1200, 1000)).toContain('this run can use 1000')
+  })
+
   it.each([
     { cases: 0, split: DEFAULT_SPLIT, counts: [0, 0, 0] },
     { cases: 1, split: DEFAULT_SPLIT, counts: [1, 0, 0] },

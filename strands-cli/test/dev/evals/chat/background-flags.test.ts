@@ -65,8 +65,27 @@ describe('background flags', () => {
     [['--tune', 'model={"a": 1}'], 'must list model ids as a JSON list of strings.'],
     [['--tune', 'session'], '--tune session is not a knob that strands dev tunes.'],
     [['--no-tune-instructions'], 'Tune at least one knob'],
+    [['--split', '0.5,0.5'], '--split takes TRAIN,VALIDATION,TEST shares'],
+    [['--split', '0,0.5,0.5'], '--split takes TRAIN,VALIDATION,TEST shares'],
+    [['--split', '0.5,0,0.5'], '--split takes TRAIN,VALIDATION,TEST shares'],
+    [['--split', 'a,b,c'], '--split takes TRAIN,VALIDATION,TEST shares'],
+    [['--split', 'pkg:split'], 'a MODULE:ATTR Split is not supported.'],
+    [['--seed', '1.5'], '--seed must be a whole number, not 1.5.'],
   ])('shouldRefuseOptimizeFlags %j', (args, message) => {
     expect(() => optimizeFlagSettings(args)).toThrow(message)
+  })
+
+  it('shouldTakeASplitWithNoTestCasesANegativeSeedAndIgnoreTheLoggingFlags', () => {
+    expect(optimizeFlagSettings(['--split', '0.7,0.3,0', '--seed', '-3', '--verbose', '-v', '--debug'])).toMatchObject({
+      split: [0.7, 0.3, 0],
+      seed: -3,
+      passed: [],
+      ignored: [
+        '--verbose: strands dev reads the run itself',
+        '-v: strands dev reads the run itself',
+        '--debug: strands dev reads the run itself',
+      ],
+    })
   })
 
   it('shouldTakeOnlyTheTaskAndCaseCountOfStrandsEvalsGenerate', () => {

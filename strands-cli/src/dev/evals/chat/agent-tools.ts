@@ -568,6 +568,7 @@ const planTool = (sessions: Sessions): DevChatTool => ({
           runsPerCase: { value: plan.repetitions, min: EVALS_BUDGET_MINIMUMS.repetitions },
           parallelTrials: { value: plan.workers, min: EVALS_BUDGET_MINIMUMS.workers },
           finalists: { value: plan.decision.finalists, min: EVALS_BUDGET_MINIMUMS.finalists },
+          maxRollouts: { value: plan.maxRollouts, min: EVALS_BUDGET_MINIMUMS.maxRollouts },
         },
         decision: {
           feasibility: { value: plan.decision.feasibility, choices: plan.decisionChoices.feasibility },
@@ -629,8 +630,7 @@ const startOptimization = async (
     settings.crashScore as CrashScore | undefined,
     EVALS_DECISION_CHOICES.crashScore
   )
-  if (settings.maxRollouts !== undefined && settings.maxRollouts < 1)
-    throw new Error('--max-rollouts must be a whole number of at least 1.')
+  const maxRollouts = budgetValue('--max-rollouts', 'maxRollouts', settings.maxRollouts)
   const objective = await objectiveFor(experiment, settings)
   const plan = await plannedSetup(sessions, experiment)
   tunedKnobs(plan.knobs, settings.tune)
@@ -646,10 +646,19 @@ const startOptimization = async (
   if (feasibility !== undefined) optimize.setDecision('feasibility', feasibility)
   if (crashScore !== undefined) optimize.setDecision('crashScore', crashScore)
   if (finalists !== undefined) optimize.setDecision('finalists', finalists)
-  if (settings.maxRollouts !== undefined) optimize.setMaxRollouts(settings.maxRollouts)
+  if (maxRollouts !== undefined) optimize.setMaxRollouts(maxRollouts)
+  if (settings.seed !== undefined) optimize.setSeed(settings.seed)
   if (settings.split !== undefined) optimize.setSplit(settings.split)
   optimize.setPassed(settings.passed)
   const ready = optimize.snapshot()
+  if (
+    settings.split !== undefined &&
+    ready.step === 'setup' &&
+    (ready.plan.split.train < 1 || ready.plan.split.validation < 1)
+  )
+    throw new Error(
+      `--split ${settings.split.join(',')} leaves no train or validation case among ${ready.plan.experiment.caseCount}; raise the train or validation share.`
+    )
   if (ready.step === 'setup' && ready.plan.budgetProblem) throw new Error(ready.plan.budgetProblem)
   const started = optimize.start()
   if (started === undefined) throw new Error('The optimization did not start.')
@@ -685,7 +694,7 @@ const backgroundTool = (sessions: Sessions): DevChatTool => ({
     '(--tune, --no-tune-instructions, --objective, --pareto, --constraint, --max-rollouts, --max-iterations, ' +
     '--proposals-per-iteration, --runs-per-candidate, --n-finalists, --max-workers, --feasibility-threshold, ' +
     '--agent-failure-score, --split as TRAIN,VALIDATION,TEST shares, --seed, --rerun-passes, ' +
-    '--reflection-model, --custom-evaluator, --selection, --score-model, --on-iteration), and generate takes --task-description, --context, and --num-cases of ' +
+    '--reflection-model), and generate takes --task-description, --context, and --num-cases of ' +
     'strands-evals generate and saves experiments/<experiment>/<experiment>.json. strands dev runs it in its ' +
     'prepared evals environment with ' +
     'this agent, writes run.log and the records under strands-dev/experiments/<experiment>/, and continues ' +

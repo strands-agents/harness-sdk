@@ -20,6 +20,7 @@ export interface OptimizeFlagSettings {
   readonly feasibility?: number
   readonly crashScore?: string
   readonly maxRollouts?: number
+  readonly seed?: number
   readonly split?: EvalsSplitShares
   /** Flags strands dev hands to strands-evals optimize run unchanged. */
   readonly passed: readonly string[]
@@ -43,6 +44,9 @@ const SET_BY_STRANDS_DEV: Readonly<Record<string, string>> = {
   '--base-dir': 'strands dev keeps the run under strands-dev/experiments/<name>/optimizations/',
   '--rich': 'strands dev reads the run itself',
   '--json': 'strands dev reads the run itself',
+  '-v': 'strands dev reads the run itself',
+  '--verbose': 'strands dev reads the run itself',
+  '--debug': 'strands dev reads the run itself',
   '--name': 'strands dev names the run',
   '--final-pick': 'a cautious pick needs hooks.py, which strands dev does not run',
   '--search': 'strands dev runs the default search',
@@ -51,14 +55,24 @@ const SET_BY_STRANDS_DEV: Readonly<Record<string, string>> = {
 }
 
 // strands-evals checks these itself, so strands dev hands them on unchanged.
-const WHOLE_PASSED = ['--seed', '--rerun-passes']
-const TEXT_PASSED = ['--reflection-model', '--custom-evaluator', '--selection', '--score-model', '--on-iteration']
+const WHOLE_PASSED = ['--rerun-passes']
+const TEXT_PASSED = ['--reflection-model']
 
-const VALUE_FREE = new Set(['--rich', '--json', '--pareto', '--no-tune-instructions', '--tune-instructions'])
+const VALUE_FREE = new Set([
+  '--rich',
+  '--json',
+  '-v',
+  '--verbose',
+  '--debug',
+  '--pareto',
+  '--no-tune-instructions',
+  '--tune-instructions',
+])
 
 const SHARE_TOLERANCE = 1e-6
 
 const splitOf = ({ name, value = '' }: Flag): EvalsSplitShares => {
+  if (value.includes(':')) throw new Error(`strands dev takes ${name} as shares; a MODULE:ATTR Split is not supported.`)
   const shares = value.split(',').map(Number)
   const valid =
     shares.length === 3 &&
@@ -102,6 +116,11 @@ const flagsOf = (args: readonly string[]): Flag[] => {
 
 const wholeOf = ({ name, value = '' }: Flag): number => {
   if (!/^\d+$/u.test(value)) throw new Error(`${name} must be a whole number, not ${value || 'nothing'}.`)
+  return Number(value)
+}
+
+const integerOf = ({ name, value = '' }: Flag): number => {
+  if (!/^-?\d+$/u.test(value)) throw new Error(`${name} must be a whole number, not ${value || 'nothing'}.`)
   return Number(value)
 }
 
@@ -163,6 +182,7 @@ export const optimizeFlagSettings = (args: readonly string[]): OptimizeFlagSetti
     else if (flag.name === '--agent-failure-score') settings.crashScore = flag.value ?? ''
     else if (flag.name === '--max-rollouts') settings.maxRollouts = wholeOf(flag)
     else if (flag.name === '--split') settings.split = splitOf(flag)
+    else if (flag.name === '--seed') settings.seed = integerOf(flag)
     else if (WHOLE_PASSED.includes(flag.name)) passed.push(flag.name, String(wholeOf(flag)))
     else if (TEXT_PASSED.includes(flag.name)) passed.push(flag.name, flag.value ?? '')
     else throw new Error(`strands dev cannot pass ${flag.name} to strands-evals optimize run.`)
