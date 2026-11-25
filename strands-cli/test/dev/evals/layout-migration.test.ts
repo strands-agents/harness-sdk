@@ -69,10 +69,10 @@ const oldOptimizationRecord = (directory: string, stamp: string) => ({
 })
 
 describe('workspace layout migration', () => {
-  it.each<[string, Record<string, string>, number]>([
-    ['an experiment', { 'experiments/refunds.json': 'experiments/refunds/refunds.json' }, 1],
-    ['a draft', { [`experiments/drafts/${STAMP}-refunds.json`]: `.state/drafts/${STAMP}-refunds.json` }, 1],
-    ['a downloaded skill', { 'skills/session-converter/SKILL.md': '.state/skills/session-converter/SKILL.md' }, 1],
+  it.each<[string, Record<string, string>]>([
+    ['an experiment', { 'experiments/refunds.json': 'experiments/refunds/refunds.json' }],
+    ['a draft', { [`experiments/drafts/${STAMP}-refunds.json`]: `.state/drafts/${STAMP}-refunds.json` }],
+    ['a downloaded skill', { 'skills/session-converter/SKILL.md': '.state/skills/session-converter/SKILL.md' }],
     [
       'a finished test run',
       {
@@ -82,7 +82,6 @@ describe('workspace layout migration', () => {
         [`reports/${STAMP}-refunds.cases/c0.json`]: `experiments/refunds/runs/${STAMP}/.state/cases/c0.json`,
         [`reports/${STAMP}-refunds.experiment.json`]: `experiments/refunds/runs/${STAMP}/.state/experiment.json`,
       },
-      5,
     ],
     [
       'a finished optimization',
@@ -93,7 +92,6 @@ describe('workspace layout migration', () => {
         [`optimization/${STAMP}-refunds.space.json`]: `experiments/refunds/optimizations/${STAMP}/.state/space.json`,
         [`optimization/${STAMP}-refunds.experiment.json`]: `experiments/refunds/optimizations/${STAMP}/.state/experiment.json`,
       },
-      5,
     ],
     [
       'runs of an experiment that no longer exists',
@@ -102,16 +100,15 @@ describe('workspace layout migration', () => {
         [`reports/${STAMP}-retired.log`]: `.state/outside-experiments/retired/runs/${STAMP}/run.log`,
         [`optimization/${STAMP}-retired/candidates.jsonl`]: `.state/outside-experiments/retired/optimizations/${STAMP}/optimizer/candidates.jsonl`,
       },
-      3,
     ],
-  ])('shouldMoveEachFileToItsNewPlaceWhenTheWorkspaceHas %s', async (_case, moves, moved) => {
+  ])('shouldMoveEachFileToItsNewPlaceWhenTheWorkspaceHas %s', async (_case, moves) => {
     const directory = await workspace()
     const [from, to] = [Object.keys(moves), Object.values(moves)]
     await writeEach(directory, from)
 
     const migration = await evalsWorkspaceReady(directory)
 
-    expect(migration).toEqual({ moved, problems: [] })
+    expect(migration).toEqual({ problems: [] })
     expect(await Promise.all(to.map((path) => readFile(newPlace(directory, path), 'utf8')))).toEqual(from)
     expect(from.filter((path) => existsSync(inTmp(directory, path)))).toEqual([])
   })
@@ -128,7 +125,7 @@ describe('workspace layout migration', () => {
     const migration = await evalsWorkspaceReady(directory)
 
     const home = inWorkspace(directory, 'experiments/refunds')
-    expect(migration).toEqual({ moved: 2, problems: [] })
+    expect(migration).toEqual({ problems: [] })
     expect(await readFile(join(home, 'refunds.report.json'), 'utf8')).toBe('the report')
     expect(await readFile(join(home, 'runs', STAMP, 'report.json'), 'utf8')).toBe('the report')
     expect(await readJson(join(home, '.state/latest.json'))).toEqual({ run: join('runs', STAMP), seconds: 12 })
@@ -188,7 +185,7 @@ describe('workspace layout migration', () => {
 
     const migration = await evalsWorkspaceReady(directory)
 
-    expect(migration).toEqual({ moved: 0, problems: [] })
+    expect(migration).toEqual({ problems: [] })
     expect(existsSync(inTmp(directory, 'optimization'))).toBe(false)
   })
 
@@ -201,7 +198,7 @@ describe('workspace layout migration', () => {
     const migration = await evalsWorkspaceReady(directory)
 
     const run = inWorkspace(directory, `experiments/refunds/optimizations/${STAMP}`)
-    expect(migration).toEqual({ moved: 3, problems: [] })
+    expect(migration).toEqual({ problems: [] })
     expect(await readFile(join(run, 'run.log'), 'utf8')).toBe('setup failed')
     expect(await readFile(join(run, '.state/experiment.json'), 'utf8')).toBe('{"cases": []}')
     expect(existsSync(inTmp(directory, 'optimization'))).toBe(false)
@@ -302,7 +299,7 @@ describe('workspace layout migration', () => {
 
     expect(again).toBe(first)
     expect(existsSync(inTmp(directory, 'experiments/billing.json'))).toBe(true)
-    expect(elsewhere).toEqual({ moved: 1, problems: [] })
+    expect(elsewhere).toEqual({ problems: [] })
     expect(await readFile(inWorkspace(other, 'experiments/billing/billing.json'), 'utf8')).toBe('billing')
   })
 })
@@ -325,7 +322,7 @@ describe.skipIf(process.platform === 'win32')('workspace layout migration of run
 
     const migration = await evalsWorkspaceReady(directory)
 
-    expect(migration).toEqual({ moved: 1, problems: [] })
+    expect(migration).toEqual({ problems: [] })
     expect(await readFile(report, 'utf8')).toBe('partial report')
     expect(await readFile(inTmp(directory, `reports/running/${STAMP}-refunds.json`), 'utf8')).toBe(record)
     expect(existsSync(inWorkspace(directory, `experiments/refunds/runs/${STAMP}`))).toBe(false)
@@ -373,7 +370,7 @@ describe.skipIf(process.platform === 'win32')('workspace layout migration of run
 
     const migration = await evalsWorkspaceReady(directory)
 
-    expect(migration).toEqual({ moved: 1, problems: [] })
+    expect(migration).toEqual({ problems: [] })
     expect(await readFile(join(folder, 'candidates.jsonl'), 'utf8')).toBe('candidate')
     expect(await readFile(inTmp(directory, `optimization/running/${STAMP}-refunds.json`), 'utf8')).toBe(record)
     expect(existsSync(inWorkspace(directory, `experiments/refunds/optimizations/${STAMP}`))).toBe(false)

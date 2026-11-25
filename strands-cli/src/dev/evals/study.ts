@@ -62,7 +62,6 @@ type Event = Record<string, unknown>
 type Split = 'train' | 'validation' | 'test'
 
 interface Candidate {
-  readonly id: string
   readonly number: number
   readonly values: EvalsStudyParams
 }
@@ -289,7 +288,7 @@ class RunState {
     const number = finite(event.number)
     if (id === undefined || number === undefined) return
     if (texts(event.origin).includes('baseline')) this.baselineId = id
-    this.candidates.set(id, { id, number, values: isRecord(event.values) ? event.values : {} })
+    this.candidates.set(id, { number, values: isRecord(event.values) ? event.values : {} })
   }
 
   private readTrial({ record }: Event): void {

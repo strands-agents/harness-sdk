@@ -20,7 +20,6 @@ import {
 } from './layout.js'
 
 interface EvalsMigration {
-  readonly moved: number
   readonly problems: readonly string[]
 }
 
@@ -41,7 +40,6 @@ interface Migration {
 }
 
 const migration = (directory: string): Migration => {
-  let moved = 0
   const problems: string[] = []
   const attempt = async (what: string, work: () => Promise<void>): Promise<void> => {
     try {
@@ -58,9 +56,8 @@ const migration = (directory: string): Migration => {
         if (!existsSync(from) || existsSync(to)) return
         await mkdir(dirname(to), { recursive: true })
         await rename(from, to)
-        moved += 1
       }),
-    result: () => ({ moved, problems }),
+    result: () => ({ problems }),
   }
 }
 

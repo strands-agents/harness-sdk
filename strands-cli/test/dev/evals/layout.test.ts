@@ -151,7 +151,6 @@ describe('run lists', () => {
       name: 'legacy',
       folder: join(outside, kind, '20261110-090000'),
       stamp: '20261110-090000',
-      startedAt: Date.parse('2026-11-10T09:00:00Z'),
     })
   })
 

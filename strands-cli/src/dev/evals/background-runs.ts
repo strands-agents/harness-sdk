@@ -28,7 +28,6 @@ export interface EvalsTestRecord {
   readonly version: typeof RECORD_VERSION
   readonly experiment: string
   readonly cases: string
-  readonly rerun: boolean
   readonly only?: readonly string[]
   readonly report: string
   readonly log: string
@@ -66,7 +65,6 @@ const isTestRecord = (value: unknown): value is EvalsTestRecord =>
   isRecord(value) &&
   value.version === RECORD_VERSION &&
   ['experiment', 'cases', 'report', 'log', 'store'].every((key) => typeof value[key] === 'string') &&
-  typeof value.rerun === 'boolean' &&
   (value.only === undefined || (Array.isArray(value.only) && value.only.every((name) => typeof name === 'string'))) &&
   typeof value.startedAt === 'number' &&
   (value.pid === undefined || Number.isInteger(value.pid))

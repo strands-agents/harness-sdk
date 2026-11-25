@@ -134,15 +134,13 @@ export const evalsGenerationJobs = ({ generations }: ExperimentsState): DevChatJ
 export class EvalsExperiments extends Store<ExperimentsState> {
   private readonly jobs = new Map<string, Job>()
   private saved: readonly ExperimentSummary[] = []
-  private loaded = false
-  private error: string | undefined
   private summary = ''
   private reloading: Promise<readonly ExperimentSummary[]> | undefined
   private stopWatching: (() => void) | undefined
   private nextId = 1
 
   constructor(private readonly host: EvalsHost) {
-    super({ loaded: false, folder: '', saved: [], generations: [] })
+    super({ folder: '', generations: [] })
   }
 
   refresh(): void {
@@ -166,12 +164,10 @@ export class EvalsExperiments extends Store<ExperimentsState> {
       ])
       this.saved = saved
       this.summary = context.summary
-      this.error = undefined
       this.watch(folder)
-    } catch (error) {
-      this.error = `Could not read the experiments in ${folder}: ${errorMessage(error)}`
+    } catch {
+      // The folder cannot be read now. The last list stays, and the next reload reads again.
     }
-    this.loaded = true
     this.publish()
     return this.saved
   }
@@ -217,19 +213,13 @@ export class EvalsExperiments extends Store<ExperimentsState> {
       this.stopWatching = watchEvalsExperiments(
         folder,
         () => void this.reload(),
-        (error) => {
+        () => {
           this.stopWatching = undefined
-          this.error = this.cannotWatch(folder, error)
-          this.publish()
         }
       )
-    } catch (error) {
-      this.error = this.cannotWatch(folder, error)
+    } catch {
+      // Without a watch, each reload still reads the folder.
     }
-  }
-
-  private cannotWatch(folder: string, error: unknown): string {
-    return `strands dev cannot watch ${resolve(folder)} for changes (${errorMessage(error)}).`
   }
 
   private folder(): string {
@@ -238,11 +228,8 @@ export class EvalsExperiments extends Store<ExperimentsState> {
 
   private publish(): void {
     this.set({
-      loaded: this.loaded,
       folder: resolve(this.folder()),
-      saved: this.saved,
       generations: [...this.jobs.values()].map(({ generation }) => generation).reverse(),
-      ...(this.error ? { error: this.error } : {}),
     })
   }
 
@@ -293,8 +280,6 @@ export class EvalsExperiments extends Store<ExperimentsState> {
         made: 0,
         failed: 0,
         total: settings.cases,
-        startedAt: Date.now(),
-        status: 'Preparing the evals environment',
         log: resolve(files.log),
       },
       files,
@@ -314,10 +299,8 @@ export class EvalsExperiments extends Store<ExperimentsState> {
   }
 
   private discardDraft(job: Job): void {
-    void rm(job.files.draft, { force: true }).catch((error: unknown) => {
-      this.error = `Could not delete the draft ${job.files.draft}: ${errorMessage(error)}`
-      this.publish()
-    })
+    // A draft that stays is in the drafts folder of the workspace, and nothing reads it again.
+    void rm(job.files.draft, { force: true }).catch(() => undefined)
   }
 
   private update(job: Job, change: Partial<Generation>): void {
@@ -340,8 +323,7 @@ export class EvalsExperiments extends Store<ExperimentsState> {
           files: job.files,
           signal: job.abort.signal,
           background: true,
-          onStatus: (status) => this.update(job, { status }),
-          onGenerating: () => this.update(job, { phase: 'cases', status: 'Writing cases' }),
+          onGenerating: () => this.update(job, { phase: 'cases' }),
         },
         dependencies
       )
@@ -355,7 +337,6 @@ export class EvalsExperiments extends Store<ExperimentsState> {
         phase: 'ready',
         made: raw.cases.length,
         failed: job.generation.failed + outcome.dropped,
-        endedAt: Date.now(),
       })
       recordDevEvent('experiment_created')
       return this.jobs.get(job.generation.id) === job
@@ -365,8 +346,7 @@ export class EvalsExperiments extends Store<ExperimentsState> {
         return false
       }
       job.cause = errorMessage(error)
-      const failure = evalsGenerationError(error, { settings, log: job.generation.log })
-      this.update(job, { phase: 'failed', error: failure, endedAt: Date.now() })
+      this.update(job, { phase: 'failed', error: evalsGenerationError(error, settings) })
       return false
     }
   }

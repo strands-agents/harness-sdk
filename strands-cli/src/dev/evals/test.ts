@@ -304,7 +304,6 @@ export const readEvalsTestResults = async (
   return {
     experiment,
     cases: [...groupByCase(rows)].map(([name, group]) => caseResult(name, group)),
-    evaluators: [...new Set(rows.map((row) => row.evaluator))],
     overall,
     report: path,
     seconds,

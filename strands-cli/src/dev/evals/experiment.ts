@@ -321,12 +321,10 @@ interface EvalsGenerationRequest {
   readonly signal?: AbortSignal
   readonly background?: boolean
   readonly onGenerating?: () => void
-  readonly onStatus?: (line: string) => void
 }
 
 interface EvalsGenerationOutcome {
   readonly path: string
-  readonly cases: number
   readonly dropped: number
 }
 
@@ -390,7 +388,6 @@ export const generateEvalsExperiment = async (
     {
       ...(dependencies.run ? { run: dependencies.run } : {}),
       ...(signal ? { signal } : {}),
-      onProgress: request.onStatus ?? ignoreProgress,
     }
   )
   signal?.throwIfAborted()
@@ -414,13 +411,12 @@ export const generateEvalsExperiment = async (
         : `strands-evals generate wrote no cases, because every case failed${cause ? `: ${cause}` : '.'}`
     )
   }
-  return { path: files.draft, cases: complete, dropped }
+  return { path: files.draft, dropped }
 }
 
 interface Diagnosis {
   readonly pattern: RegExp
   readonly summary: (model: string, cause: string) => string
-  readonly next: string
 }
 
 const REJECTED_FLAGS = /strands-evals generate stopped with exit code 2: (?:argument --[\w-]+: )?/u
@@ -429,35 +425,29 @@ const DIAGNOSES: readonly Diagnosis[] = [
   {
     pattern: REJECTED_FLAGS,
     summary: (_model, cause) => firstSentence(cause.replace(REJECTED_FLAGS, '')),
-    next: 'Change the setting that the error below names in the chat, then generate again.',
   },
   {
     pattern:
       /ExpiredToken|security token included in the request is (?:invalid|expired)|InvalidClientTokenId|UnrecognizedClientException|NoCredentialsError|Unable to locate credentials|CredentialRetrievalError|credentials? (?:have|has) expired/iu,
     summary: () => 'AWS credentials are missing or expired',
-    next: 'Refresh your AWS credentials, then press r to retry.',
   },
   {
     pattern: /AccessDeniedException|not authorized to perform|(?:do not|don't) have access to the model/iu,
     summary: (model) => `Bedrock denied access to ${model}`,
-    next: 'Press Enter and choose a model that your AWS account can use, then generate again.',
   },
   {
     pattern: /ThrottlingException|Too many requests|ModelThrottledException|Rate exceeded/iu,
     summary: () => 'Bedrock throttled the requests',
-    next: 'Press r to retry in a few minutes.',
   },
   {
     pattern:
       /model identifier is invalid|ResourceNotFoundException|on-demand throughput isn.t supported|ValidationException/iu,
     summary: (model) => `Bedrock cannot use ${model}`,
-    next: 'Press Enter and fix the Model, then generate again.',
   },
   {
     pattern:
       /EndpointConnectionError|Could not connect to the endpoint|getaddrinfo|Name or service not known|ReadTimeout/iu,
     summary: () => 'Could not reach Bedrock',
-    next: 'Check your network and your AWS region, then press r to retry.',
   },
 ]
 
@@ -470,20 +460,9 @@ const firstLine = (text: string): string => {
 
 const firstSentence = (text: string): string => firstLine(text.split('. ')[0] ?? text).replace(/\.$/u, '')
 
-export const evalsGenerationError = (
-  error: unknown,
-  { settings, log }: { settings: GenerationSettings; log: string }
-): GenerationError => {
+export const evalsGenerationError = (error: unknown, settings: GenerationSettings): GenerationError => {
   const cause = errorMessage(error)
   const diagnosis = DIAGNOSES.find(({ pattern }) => pattern.test(cause))
   const model = settings.model || REFUSED_MODEL.exec(cause)?.[1] || 'the default model'
-  return {
-    summary: diagnosis?.summary(model, cause) ?? firstLine(cause),
-    detail: [
-      diagnosis?.next ?? 'Read the log for the cause, then press r to retry.',
-      `Log: ${log}`,
-      '',
-      `strands-evals said: ${cause}`,
-    ].join('\n'),
-  }
+  return { summary: diagnosis?.summary(model, cause) ?? firstLine(cause) }
 }

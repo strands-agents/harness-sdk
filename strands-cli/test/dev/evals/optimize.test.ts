@@ -107,7 +107,6 @@ describe('dev optimization', () => {
     expect(env.PATH?.startsWith(dirname(command))).toBe(true)
     expect(log).toBe(optimizationFile(workspace, 'run.log'))
     expect(outcome).toEqual({
-      experiment,
       record,
       summary: ['ships candidate 3', 'record: somewhere'],
     })

@@ -535,9 +535,7 @@ describe('dev sessions', () => {
 
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
     expect(rerunning.map(({ label, total }) => [label, total])).toEqual([['capital', 2]])
-    expect(recorded).toEqual([
-      expect.objectContaining({ experiment: experiment.path, rerun: true, only: ['c1', 'c2'] }),
-    ])
+    expect(recorded).toEqual([expect.objectContaining({ experiment: experiment.path, only: ['c1', 'c2'] })])
     expect(finished(sessions, experiment.path).cases).toHaveLength(4)
   })
 
@@ -944,7 +942,6 @@ describe('dev sessions', () => {
 
     const plan = setupPlan(sessions)
     expect(plan.decision).toEqual({ feasibility: 0.9, crashScore: 'worst', pickRule: 'mean', finalists: 5 })
-    expect(plan.validatedFinalists).toBe(5)
     expect(plan.rollouts).toBe(before + 2)
   })
 
@@ -957,7 +954,7 @@ describe('dev sessions', () => {
       constraints: '',
     })
 
-    expect(setupPlan(sessions)).toMatchObject({ validatedFinalists: 5, rollouts: before + 6 })
+    expect(setupPlan(sessions).rollouts).toBe(before + 6)
   })
 
   it('shouldGiveTheOptimizerTheDecisionAndRecordItWhenTheRunStarts', async () => {
@@ -1944,7 +1941,7 @@ describe('dev sessions', () => {
     begin.resolve()
 
     // The search stopped with both versions measured, which the count of versions would call done.
-    const afterSearch = plan.split.validation * (plan.validatedFinalists + 1) + plan.split.test * 2
+    const afterSearch = plan.split.validation * (plan.decision.finalists + 1) + plan.split.test * 2
     await vi.waitFor(() => expect(job()).toMatchObject({ done: 2, total: 2 + afterSearch }), { timeout: 5000 })
     expect(starting).toMatchObject({ done: 0, total: plan.rollouts })
     expect(afterSearch).toBeGreaterThan(0)
@@ -2368,9 +2365,8 @@ describe('dev sessions on open', () => {
     await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
 
     sessions.test.show()
-    await sessions.experiments.reload()
 
-    expect(sessions.experiments.snapshot().saved).toHaveLength(1)
+    expect(await sessions.experiments.reload()).toHaveLength(1)
     expect(tests).not.toHaveBeenCalled()
     expect(sessions.optimize.snapshot().step).toBe('pick')
   })

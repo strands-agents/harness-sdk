@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { hostname } from 'node:os'
 import { relative, sep } from 'node:path'
-import type { Readable, Writable } from 'node:stream'
+import type { Readable } from 'node:stream'
 import { URL } from 'node:url'
 
 import { containsPath } from '../../paths.js'
@@ -22,9 +22,7 @@ import { evalsRunFolder } from './study.js'
 import { evalsWorkspaceReady } from './layout-migration.js'
 
 export interface EvalsUiProcess {
-  readonly stdin: Writable | null
   readonly stderr: Readable | null
-  readonly pid?: number | undefined
   kill(): boolean
   on(event: 'exit', listener: (code: number | null) => void): this
   on(event: 'error', listener: (error: Error) => void): this
@@ -136,7 +134,6 @@ export class EvalsUi extends Store<EvalsBrowserState> implements EvalsBrowser {
     if (state.status === 'off' || state.status === 'unavailable') {
       this.start()
       return {
-        tone: 'warning',
         lines: [
           ...(state.status === 'unavailable' ? [`The evals UI stopped: ${state.detail}`] : []),
           'strands dev is starting the evals UI. Try again in a moment.',
@@ -148,14 +145,13 @@ export class EvalsUi extends Store<EvalsBrowserState> implements EvalsBrowser {
     const url = this.link(place, runFolder)
     if (state.status === 'starting' || !url || this.port === undefined)
       return {
-        tone: 'muted',
         lines: [`The evals UI is starting: ${state.detail ?? 'please wait'}. Try again in a moment.`],
       }
     const forward = this.forwardLines(this.port)
-    if (forward) return { tone: 'normal', lines: [...forward, `Then open ${url}`] }
+    if (forward) return { lines: [...forward, `Then open ${url}`] }
     recordDevEvent('evals_ui_opened')
     const opened = await (this.dependencies.openBrowser ?? openBrowser)(url).catch(() => false)
-    return opened ? undefined : { tone: 'normal', lines: ['Open this link in a browser:', url] }
+    return opened ? undefined : { lines: ['Open this link in a browser:', url] }
   }
 
   // On a remote machine the developer forwards the port before a link opens.

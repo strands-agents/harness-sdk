@@ -51,7 +51,6 @@ const results = (): TestResults => ({
   overall: 0.5,
   report: '/w/strands-dev/tmp/reports/20261112-120000-refunds.json',
   seconds: 12.4,
-  evaluators: ['OutputEvaluator'],
   cases: [
     { name: 'late-refund', input: 'Refund an order from May?', passed: true, verdicts: [] },
     {
@@ -99,10 +98,8 @@ const plan = (): OptimizePlan => ({
   split: { train: 1, validation: 1, test: 0 },
   splitChoices: [{ train: 1, validation: 1, test: 0 }],
   testShare: EVALS_TEST_SHARES[0]!,
-  testShareChoices: EVALS_TEST_SHARES,
   decision: EVALS_DECISION_DEFAULTS,
   decisionChoices: EVALS_DECISION_CHOICES,
-  validatedFinalists: EVALS_DECISION_DEFAULTS.finalists,
   repetitions: 1,
   width: 4,
   workers: 4,
@@ -141,22 +138,21 @@ const review = (): OptimizeReview => ({
 })
 
 const fakeSessions = () => {
-  const experiments = state<ExperimentsState>({
-    loaded: true,
-    folder: '/w/strands-dev/experiments',
-    saved: [REFUNDS],
-    generations: [],
-  })
+  const experiments = {
+    ...state<ExperimentsState>({ folder: '/w/strands-dev/experiments', generations: [] }),
+    // The saved experiments that reload gives; a test sets them.
+    saved: [REFUNDS] as readonly ExperimentSummary[],
+  }
   const test = state<TestState>({ runs: [] })
   const optimize = state<OptimizeState>({ step: 'pick' })
   const ui = state<EvalsBrowserState>({ status: 'ready' })
   const settings = { autoAcceptOptimizationResults: false, autoOptimize: 0 }
   const finishRun = (run: OptimizeRunState): void =>
-    optimize.set({ ...run, runs: [{ id: 'run-1', experiment: 'refunds', startedAt: 0, state: run }] })
+    optimize.set({ ...run, runs: [{ id: 'run-1', experiment: 'refunds', state: run }] })
   const sessions = {
     experiments: {
       ...experiments,
-      reload: vi.fn(async () => experiments.snapshot().saved),
+      reload: vi.fn(async () => experiments.saved),
       suggested: vi.fn(() => generationSettings({ name: 'experiment-2', task: 'Answer refund questions' })),
       agentSummary: vi.fn(() => 'agent.py · 1 tool'),
       generateInBackground: vi.fn((_settings: GenerationSettings): string | undefined => undefined),
@@ -171,7 +167,7 @@ const fakeSessions = () => {
             ...test.snapshot().runs.filter(({ experiment }) => !chosen.includes(experiment)),
             ...chosen.map((experiment) => ({
               experiment,
-              run: { status: 'running' as const, cases: 2, evaluators: [], done: 0, startedAt: 0, rerun: false },
+              run: { status: 'running' as const, cases: 2, done: 0 },
             })),
           ],
         })
@@ -291,7 +287,8 @@ const saveExperimentFile = async (
       ],
     })
   )
-  experiments.set({ loaded: true, folder, saved: [{ ...REFUNDS, path }], generations: [] })
+  experiments.saved = [{ ...REFUNDS, path }]
+  experiments.set({ folder, generations: [] })
 }
 
 const APPLIED: EvalsAppliedChange = {
@@ -689,7 +686,7 @@ describe('dev chat part', () => {
     const { tool, optimize } = setup()
     optimize.set({
       step: 'pick',
-      runs: [{ id: 'run-1', experiment: 'refunds', startedAt: 0, state: { step: 'running', progress: {} } }],
+      runs: [{ id: 'run-1', experiment: 'refunds', state: { step: 'running', progress: {} } }],
     } as never)
 
     const planned = JSON.parse(await tool('strands_dev_optimization_plan').run({ experiment: 'refunds' }))
@@ -928,7 +925,7 @@ describe('background strands-evals runs', () => {
   it('shouldRunOnlyTheNamedCasesAndRefuseAnUnknownCaseOrASecondRun', async () => {
     const { call, tool, sessions, experiments, test } = setup()
     await saveExperimentFile(experiments, ['OutputEvaluator'])
-    const [saved] = experiments.snapshot().saved
+    const [saved] = experiments.saved
     await expect(
       tool('strands_dev_run_background').run({ command: 'run', experiment: 'refunds', args: ['--case', 'third'] })
     ).rejects.toThrow('refunds has no case third.')
@@ -942,7 +939,7 @@ describe('background strands-evals runs', () => {
       runs: [
         {
           experiment: saved!,
-          run: { status: 'running', cases: 1, evaluators: [], done: 0, startedAt: 0, rerun: true },
+          run: { status: 'running', cases: 1, done: 0 },
         },
       ],
     })
@@ -961,7 +958,7 @@ describe('background strands-evals runs', () => {
       const generation = { id: 'generation-1', name: 'billing', settings, phase: 'preparing' as const, log }
       experiments.set({
         ...experiments.snapshot(),
-        generations: [{ ...generation, made: 0, failed: 0, total: 3, startedAt: 0, status: '' }],
+        generations: [{ ...generation, made: 0, failed: 0, total: 3 }],
       })
       return undefined
     })
@@ -1013,13 +1010,13 @@ describe('background strands-evals runs', () => {
       runs: [
         {
           experiment: REFUNDS,
-          run: { status: 'running', cases: 2, evaluators: [], done: 0, startedAt: 0, rerun: false },
+          run: { status: 'running', cases: 2, done: 0 },
         },
       ],
     })
     optimize.set({
       step: 'pick',
-      runs: [{ id: 'run-4', experiment: 'refunds', startedAt: 0, state: { step: 'running', progress: progress() } }],
+      runs: [{ id: 'run-4', experiment: 'refunds', state: { step: 'running', progress: progress() } }],
     })
     experiments.set({
       ...experiments.snapshot(),
@@ -1032,8 +1029,6 @@ describe('background strands-evals runs', () => {
           made: 1,
           failed: 0,
           total: 3,
-          startedAt: 0,
-          status: 'Writing cases',
           log: 'billing.log',
         },
       ],
@@ -1084,7 +1079,7 @@ describe('dev chat tool errors and states', () => {
       experiment: 'refunds',
       status: 'not_run',
     })
-    experiments.set({ ...experiments.snapshot(), saved: [] })
+    experiments.saved = []
     await expect(tool('strands_dev_evaluation_results').run({ experiment: 'refunds' })).rejects.toThrow(
       'no experiment is saved yet'
     )
@@ -1097,7 +1092,7 @@ describe('dev chat tool errors and states', () => {
       runs: [
         {
           experiment: REFUNDS,
-          run: { status: 'running', cases: 2, evaluators: [], done: 1, startedAt: 0, rerun: false },
+          run: { status: 'running', cases: 2, done: 1 },
         },
       ],
     })
@@ -1118,9 +1113,9 @@ describe('dev chat tool errors and states', () => {
       step: 'setup',
       plan: plan(),
       runs: [
-        { id: 'run-3', experiment: 'refunds', startedAt: 3, state: { step: 'running', progress: progress() } },
-        { id: 'run-2', experiment: 'refunds', startedAt: 2, state: { step: 'review', review: review() } },
-        { id: 'run-1', experiment: 'refunds', startedAt: 1, state: { step: 'failed', message: 'It crashed.' } },
+        { id: 'run-3', experiment: 'refunds', state: { step: 'running', progress: progress() } },
+        { id: 'run-2', experiment: 'refunds', state: { step: 'review', review: review() } },
+        { id: 'run-1', experiment: 'refunds', state: { step: 'failed', message: 'It crashed.' } },
       ],
     })
 

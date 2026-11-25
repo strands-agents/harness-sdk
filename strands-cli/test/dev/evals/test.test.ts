@@ -415,7 +415,6 @@ describe('evaluation report', () => {
           ],
         },
       ],
-      evaluators: ['Equals', 'judge'],
       overall: 0.375,
       report: path,
       seconds: 12.5,

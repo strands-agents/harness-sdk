@@ -95,7 +95,6 @@ import {
   evalsRolloutPhases,
   evalsSplitChoices,
   evalsSplitShares,
-  evalsValidatedFinalists,
 } from './plan.js'
 import {
   hasEvalsRunResult,
@@ -308,16 +307,16 @@ export class EvalsTest extends Store<TestState> {
   run(experiments: readonly ExperimentSummary[]): void {
     for (const experiment of experiments) {
       if (this.isRunning(experiment.path)) continue
-      this.starting(experiment, experiment.caseCount, false)
+      this.starting(experiment, experiment.caseCount)
       recordDevEvent('evaluation_started')
-      void this.execute(experiment, experiment.path, false)
+      void this.execute(experiment, experiment.path)
     }
   }
 
   runOnly(experiment: ExperimentSummary, names: readonly string[]): void {
     if (this.isRunning(experiment.path) || names.length === 0) return
-    this.starting(experiment, names.length, true)
-    void this.execute(experiment, experiment.path, true, undefined, names)
+    this.starting(experiment, names.length)
+    void this.execute(experiment, experiment.path, undefined, names)
   }
 
   stop(path: string): void {
@@ -359,13 +358,13 @@ export class EvalsTest extends Store<TestState> {
         return await dropEvalsRunRecord(record)
       }
       await clearUnreadableCaseResults(record.store)
-      this.starting(experiment, record.only?.length ?? experiment.caseCount, record.rerun)
+      this.starting(experiment, record.only?.length ?? experiment.caseCount)
       announce(
         this.host(),
         'success',
         `evaluate · ${experiment.name} · resumed the run that stopped when strands dev closed`
       )
-      await this.execute(experiment, record.cases, record.rerun, record, record.only)
+      await this.execute(experiment, record.cases, record, record.only)
     } catch (error) {
       if (experiment) this.update(experiment, { status: 'failed', message: errorMessage(error) })
       announce(
@@ -385,10 +384,7 @@ export class EvalsTest extends Store<TestState> {
       const running = {
         status: 'running' as const,
         cases: loaded.cases.length,
-        evaluators: loaded.evaluators,
         done: 0,
-        startedAt: record.startedAt,
-        rerun: record.rerun,
       }
       this.update(experiment, running)
       stopCounting = watchEvalsFileCount(record.store, (done) => {
@@ -488,14 +484,13 @@ export class EvalsTest extends Store<TestState> {
     this.set({ runs: [...this.runs.values()] })
   }
 
-  private starting(experiment: ExperimentSummary, cases: number, rerun: boolean): void {
-    this.update(experiment, { status: 'running', cases, evaluators: [], done: 0, startedAt: Date.now(), rerun })
+  private starting(experiment: ExperimentSummary, cases: number): void {
+    this.update(experiment, { status: 'running', cases, done: 0 })
   }
 
   private async execute(
     experiment: ExperimentSummary,
     cases: string,
-    rerun: boolean,
     resumed?: EvalsTestRecord,
     only?: readonly string[]
   ): Promise<void> {
@@ -523,10 +518,7 @@ export class EvalsTest extends Store<TestState> {
       const running = {
         status: 'running' as const,
         cases: only?.length ?? loaded.cases.length,
-        evaluators: loaded.evaluators,
         done: 0,
-        startedAt,
-        rerun,
       }
       this.update(experiment, running)
       const outcome = await runEvalsTest(
@@ -543,7 +535,6 @@ export class EvalsTest extends Store<TestState> {
             await save({
               version: 1,
               experiment: experiment.path,
-              rerun,
               startedAt,
               ...(only ? { only } : {}),
               ...files,
@@ -823,10 +814,9 @@ export class EvalsOptimize extends Store<OptimizeState> {
   private publish(): void {
     const runs = [...this.entries.values()]
       .sort((left, right) => right.startedAt - left.startedAt)
-      .map(({ id, experiment, startedAt, record, state }) => ({
+      .map(({ id, experiment, record, state }) => ({
         id,
         experiment,
-        startedAt,
         ...(record ? { record } : {}),
         state,
       }))
@@ -898,7 +888,6 @@ export class EvalsOptimize extends Store<OptimizeState> {
     const budgetProblem = evalsRolloutCapProblem(rollouts)
     return {
       ...plan,
-      validatedFinalists: evalsValidatedFinalists(plan.decision.finalists, pareto),
       rollouts,
       judgeCalls,
       ...(usage ? { usage } : {}),
@@ -931,10 +920,8 @@ export class EvalsOptimize extends Store<OptimizeState> {
           split,
           splitChoices,
           testShare: EVALS_TEST_SHARES[0]!,
-          testShareChoices: EVALS_TEST_SHARES,
           decision: EVALS_DECISION_DEFAULTS,
           decisionChoices: EVALS_DECISION_CHOICES,
-          validatedFinalists: EVALS_DECISION_DEFAULTS.finalists,
           repetitions: REPETITIONS,
           width: WIDTH,
           workers: WORKERS,

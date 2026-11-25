@@ -52,7 +52,6 @@ const recordIn = (workspace: string, { home = INSIDE_HOME, stamp = STAMP, pid }:
     version: 1,
     experiment: experimentOf(workspace, home),
     cases: join(run, '.state/experiment.json'),
-    rerun: false,
     report: join(run, 'report.json'),
     log: join(run, 'run.log'),
     store: join(run, '.state/cases'),

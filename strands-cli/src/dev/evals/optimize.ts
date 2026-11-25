@@ -46,7 +46,6 @@ interface EvalsOptimizationRequest extends EvalsRequest {
 }
 
 interface EvalsOptimizationOutcome {
-  experiment: string
   record: string
   summary: string[]
   proposerFailure?: string
@@ -357,5 +356,5 @@ export const runEvalsOptimization = async (
       failureNextStep(exit, log)
     )
   const summary = exit.stdout.split('\n').filter((line) => line.trim().length > 0)
-  return { experiment, record, summary, ...(proposerFailure ? { proposerFailure } : {}) }
+  return { record, summary, ...(proposerFailure ? { proposerFailure } : {}) }
 }

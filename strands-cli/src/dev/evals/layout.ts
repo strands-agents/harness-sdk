@@ -55,7 +55,6 @@ interface EvalsRunFolder {
   readonly name: string
   readonly folder: string
   readonly stamp: string
-  readonly startedAt: number
 }
 
 const missing = (error: unknown): boolean => isRecord(error) && error.code === 'ENOENT'
@@ -261,12 +260,9 @@ const stampOrder = (stamp: string): number => {
 const homeRuns = async (home: string, kind: string): Promise<EvalsRunFolder[]> => {
   const parent = join(home, kind)
   return (await folderNames(parent))
-    .flatMap((stamp) => {
-      const startedAt = evalsStampTime(stamp)
-      return startedAt === undefined
-        ? []
-        : [{ home, name: basename(home), folder: join(parent, stamp), stamp, startedAt }]
-    })
+    .flatMap((stamp) =>
+      evalsStampTime(stamp) === undefined ? [] : [{ home, name: basename(home), folder: join(parent, stamp), stamp }]
+    )
     .sort((left, right) => stampOrder(left.stamp) - stampOrder(right.stamp))
 }
 

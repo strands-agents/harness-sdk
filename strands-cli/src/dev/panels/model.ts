@@ -33,7 +33,6 @@ export type GenerationPhase = 'preparing' | 'cases' | 'ready' | 'failed'
 
 export interface GenerationError {
   readonly summary: string
-  readonly detail: string
 }
 
 export interface Generation {
@@ -44,19 +43,13 @@ export interface Generation {
   readonly made: number
   readonly failed: number
   readonly total: number
-  readonly startedAt: number
-  readonly endedAt?: number
-  readonly status: string
   readonly log: string
   readonly error?: GenerationError
 }
 
 export interface ExperimentsState {
-  readonly loaded: boolean
   readonly folder: string
-  readonly saved: readonly ExperimentSummary[]
   readonly generations: readonly Generation[]
-  readonly error?: string
 }
 
 export const isGenerating = ({ phase }: Generation): boolean => phase !== 'ready' && phase !== 'failed'
@@ -80,7 +73,6 @@ export interface CaseResult {
 export interface TestResults {
   readonly experiment: string
   readonly cases: readonly CaseResult[]
-  readonly evaluators: readonly string[]
   readonly overall: number
   readonly report: string
   readonly seconds: number
@@ -90,10 +82,7 @@ export type TestRun =
   | {
       readonly status: 'running'
       readonly cases: number
-      readonly evaluators: readonly string[]
       readonly done: number
-      readonly startedAt: number
-      readonly rerun: boolean
     }
   | { readonly status: 'done'; readonly results: TestResults }
   | { readonly status: 'failed'; readonly message: string }
@@ -181,10 +170,8 @@ export interface OptimizePlan {
   readonly split: CaseSplit
   readonly splitChoices: readonly CaseSplit[]
   readonly testShare: number
-  readonly testShareChoices: readonly number[]
   readonly decision: OptimizeDecision
   readonly decisionChoices: DecisionChoices
-  readonly validatedFinalists: number
   readonly repetitions: number
   readonly width: number
   readonly workers: number
@@ -266,7 +253,6 @@ export type OptimizeRunState =
 export interface OptimizeRun {
   readonly id: string
   readonly experiment: string
-  readonly startedAt: number
   readonly record?: string
   readonly state: OptimizeRunState
 }
@@ -283,7 +269,6 @@ export type EvalsBrowserPlace =
   | { readonly view: 'optimization'; readonly record: string }
 
 export interface EvalsBrowserNotice {
-  readonly tone: 'normal' | 'muted' | 'warning'
   readonly lines: readonly string[]
 }
 

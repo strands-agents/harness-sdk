@@ -166,7 +166,7 @@ describe('experiment generation session', () => {
     expect(live).toEqual([{ id, label: 'refunds writing cases' }])
     expect(JSON.parse(await readFile(path, 'utf8')).cases).toHaveLength(3)
     await vi.waitFor(() => expect(existsSync(draft)).toBe(false))
-    expect(experiments.snapshot().saved).toEqual([{ name: 'refunds', path, caseCount: 3 }])
+    expect(await experiments.reload()).toEqual([{ name: 'refunds', path, caseCount: 3 }])
     expect(notices.at(-1)).toEqual({
       status: 'success',
       text: `experiment · refunds · 3 cases saved to ${path}`,
@@ -228,9 +228,7 @@ describe('experiment generation session', () => {
 
     const { error } = onlyGeneration(experiments)
     expect(error?.summary).toBe('Bedrock denied access to the default model')
-    expect(error?.detail).toContain('choose a model that your AWS account can use')
     const drafts = join(workspace.directory!, 'tmp', '.state', 'drafts')
-    expect(error?.detail).toContain(`Log: ${drafts}`)
     expect(onlyGeneration(experiments).log).toMatch(/refunds\.log$/u)
     expect(onlyGeneration(experiments).log.startsWith(drafts)).toBe(true)
     expect(notices.at(-1)?.text).toMatch(

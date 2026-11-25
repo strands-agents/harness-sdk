@@ -138,7 +138,7 @@ describe('experiment generation', () => {
       { run: environmentRunner(), spawnGenerator: generating(completeCases(2)) }
     )
 
-    expect(outcome).toEqual({ path: files.draft, cases: 2, dropped: 0 })
+    expect(outcome).toEqual({ path: files.draft, dropped: 0 })
     expect(onGenerating).toHaveBeenCalledTimes(1)
   })
 
@@ -172,7 +172,7 @@ describe('experiment generation', () => {
       { run: environmentRunner(), spawnGenerator: generating(written) }
     )
 
-    expect(outcome).toEqual({ path: files.draft, cases: 1, dropped: 3 })
+    expect(outcome).toEqual({ path: files.draft, dropped: 3 })
     expect(JSON.parse(await readFile(files.draft, 'utf8')).cases).toEqual([complete])
   })
 
@@ -252,45 +252,30 @@ describe('experiment generation', () => {
         'Change the setting that the error names, then try again.'
     )
 
-    const failure = evalsGenerationError(error, { settings: settings(), log: '/d/refunds.log' })
-
-    expect(failure.summary).toBe("invalid int value: 'many'")
-    expect(failure.detail.split('\n')[0]).toBe(
-      'Change the setting that the error below names in the chat, then generate again.'
-    )
-    expect(failure.detail).toContain('strands-evals said: strands-evals generate stopped with exit code 2')
+    expect(evalsGenerationError(error, settings()).summary).toBe("invalid int value: 'many'")
   })
 
   it.each([
     [
       'ExpiredTokenException: The security token included in the request is expired',
       'AWS credentials are missing or expired',
-      'Refresh your AWS credentials',
     ],
-    [
-      "AccessDeniedException: You don't have access to the model",
-      'Bedrock denied access to us.model',
-      'choose a model that your AWS account can use',
-    ],
-    ['ThrottlingException: Too many requests', 'Bedrock throttled the requests', 'retry in a few minutes'],
-    ['ValidationException: The provided model identifier is invalid.', 'Bedrock cannot use us.model', 'fix the Model'],
-    ['EndpointConnectionError: Could not connect to the endpoint URL', 'Could not reach Bedrock', 'Check your network'],
-    ['ZeroDivisionError: division by zero', 'ZeroDivisionError: division by zero', 'Read the log for the cause'],
+    ["AccessDeniedException: You don't have access to the model", 'Bedrock denied access to us.model'],
+    ['ThrottlingException: Too many requests', 'Bedrock throttled the requests'],
+    ['ValidationException: The provided model identifier is invalid.', 'Bedrock cannot use us.model'],
+    ['EndpointConnectionError: Could not connect to the endpoint URL', 'Could not reach Bedrock'],
+    ['ZeroDivisionError: division by zero', 'ZeroDivisionError: division by zero'],
     [
       'AccessDeniedException: not authorized to perform: bedrock:InvokeModel on resource: arn:aws:bedrock:us-west-2:1:inference-profile/global.anthropic.claude-sonnet-4-6 because no policy allows it',
       'Bedrock denied access to global.anthropic.claude-sonnet-4-6',
-      'choose a model that your AWS account can use',
     ],
-  ])('shouldExplainTheFailureCleanlyWhenTheGeneratorReports%s', (reported, summary, next) => {
-    const failure = evalsGenerationError(new Error(reported), {
-      settings: settings({ model: reported.includes('inference-profile') ? '' : 'us.model' }),
-      log: 'strands-dev/tmp/.state/drafts/refunds.log',
-    })
+  ])('shouldExplainTheFailureCleanlyWhenTheGeneratorReports%s', (reported, summary) => {
+    const failure = evalsGenerationError(
+      new Error(reported),
+      settings({ model: reported.includes('inference-profile') ? '' : 'us.model' })
+    )
 
     expect(failure.summary).toBe(summary)
-    expect(failure.detail).toContain(next)
-    expect(failure.detail).toContain('Log: strands-dev/tmp/.state/drafts/refunds.log')
-    expect(failure.detail.match(/strands-evals said/gu)).toHaveLength(1)
   })
 })
 
