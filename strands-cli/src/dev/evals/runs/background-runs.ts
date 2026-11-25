@@ -52,6 +52,8 @@ export interface EvalsOptimizeRecord {
   readonly pid?: number
   /** The run is over and an edit of it waits for the developer's answer, so the record outlives the run. */
   readonly awaitsReview?: boolean
+  /** Auto-optimize started the run, on the experiment it made from the chats. */
+  readonly fromAutoOptimize?: boolean
 }
 
 const missing = (error: unknown): boolean => isRecord(error) && error.code === 'ENOENT'
@@ -104,7 +106,8 @@ const isOptimizeRecord = (value: unknown): value is EvalsOptimizeRecord =>
   (value.decision === undefined || isDecision(value.decision)) &&
   typeof value.startedAt === 'number' &&
   (value.pid === undefined || Number.isInteger(value.pid)) &&
-  (value.awaitsReview === undefined || typeof value.awaitsReview === 'boolean')
+  (value.awaitsReview === undefined || typeof value.awaitsReview === 'boolean') &&
+  (value.fromAutoOptimize === undefined || typeof value.fromAutoOptimize === 'boolean')
 
 /** Windows refuses to rename over a file held open, so the rename waits and tries again before it gives up. */
 const replaceFile = async (staging: string, path: string): Promise<void> => {

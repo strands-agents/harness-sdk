@@ -75,7 +75,7 @@ export type AutoOptimizeRun = (work: {
 const isChatMessage = (prompt: string): boolean => prompt.trim() !== '' && !/^[!/$]/u.test(prompt.trimStart())
 
 export const autoOptimizeJobs = ({ building }: AutoOptimizeActivity): readonly DevChatJob[] =>
-  building ? [{ id: AUTO_OPTIMIZE_JOB, label: `auto-optimize · making ${building} from your chats` }] : []
+  building ? [{ id: AUTO_OPTIMIZE_JOB, label: 'auto-optimize 1/2 · making the experiment from your chats' }] : []
 
 /**
  * Counts the chat turns of a workspace and, every so many of them, has an experiment made from the chats and an
@@ -137,9 +137,9 @@ export class EvalsAutoOptimize extends Store<AutoOptimizeActivity> {
   /** The count starts again when the work is over, not when it begins: the turns during the work are its own. */
   private begin(turns: number, run: AutoOptimizeRun): void {
     const stop = new AbortController()
-    const began = `auto-optimize · ${turns} chat turns since the last one · making an experiment from your chats in the background`
+    const began = `auto-optimize 1/2 · ${turns} chat turns since the last one · making the experiment from your chats in the background`
     // The notice is the one of the chat that is open when the work ends, which a reload may have replaced.
-    const tell = (status: 'success' | 'error', text: string): void => this.running?.notice?.update(status, text)
+    const tell = (status: 'delivered' | 'error', text: string): void => this.running?.notice?.update(status, text)
     const done = run({
       signal: stop.signal,
       building: (building, log): void => this.set({ building, log }),
@@ -147,9 +147,10 @@ export class EvalsAutoOptimize extends Store<AutoOptimizeActivity> {
     })
       .then(
         ({ experiment, cases }) =>
+          // Half of the work is done and the agent is as it was, so this is not the tick of a finished run.
           tell(
-            'success',
-            `auto-optimize · made ${experiment} from your chats (${cases} cases) · optimizing on it in the background`
+            'delivered',
+            `auto-optimize 1/2 done · ${experiment} (${cases} cases) · 2/2 optimizing now · agent unchanged so far`
           ),
         (error: unknown) =>
           tell(
@@ -330,7 +331,7 @@ const TASK =
 export interface AutoOptimizeRunOptions {
   readonly workspace: DevWorkspace
   readonly history: Pick<EvalsSessionHistory, 'unattendedConverter'>
-  /** Starts an optimization of the saved experiment with the defaults of its plan. */
+  /** Starts an optimization of the saved experiment with the defaults of its plan, marked as auto-optimize's own. */
   readonly start: (experiment: string) => Promise<unknown>
   readonly worker?: AutoOptimizeWorker
   readonly now?: () => Date

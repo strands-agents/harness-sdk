@@ -19,7 +19,6 @@ import type {
   OptimizeReview,
   OptimizeRun,
   OptimizeState,
-  OptimizePhase,
   ProposedEdit,
   TestCheck,
   EvaluationRun,
@@ -52,7 +51,7 @@ import {
   type AppliedOptimizeEdits,
 } from '../sessions/review-run.js'
 import type { EvalsSessionHistory } from '../sessions/session-converter.js'
-import { evalsEditsAwaitingAnswer, type EvalsAppliedChange } from '../sessions/optimize-session.js'
+import { EVALS_RUN_PHASES, evalsEditsAwaitingAnswer, type EvalsAppliedChange } from '../sessions/optimize-session.js'
 import { type EvalsDevSessions } from '../sessions/sessions.js'
 
 type Input = Readonly<Record<string, JSONValue>>
@@ -319,14 +318,6 @@ const optimizationStatus = (state: OptimizeState): object =>
       : undefined,
   })
 
-const RUN_PHASES: Readonly<Record<OptimizePhase, string>> = {
-  baseline: 'measuring your agent as it is',
-  proposing: 'proposing new versions',
-  scoring: 'measuring the new versions',
-  validating: 'checking the finalists on the validation cases',
-  testing: 'checking the winner on the test cases',
-}
-
 const pageStatus = (state: OptimizeState): object => {
   switch (state.step) {
     case 'pick':
@@ -342,7 +333,7 @@ const pageStatus = (state: OptimizeState): object => {
         tried: state.progress.tried,
         planned: state.progress.planned,
         // Every version tried is not the end of the run: the finalists and the test are checked after the search.
-        phase: state.progress.phase ? RUN_PHASES[state.progress.phase] : undefined,
+        phase: state.progress.phase ? EVALS_RUN_PHASES[state.progress.phase] : undefined,
         rollouts: state.progress.rollouts,
       })
     case 'review':
@@ -615,7 +606,8 @@ const objectiveFor = async (
 const startOptimization = async (
   sessions: Sessions,
   experiment: ExperimentSummary,
-  settings: OptimizeFlagSettings
+  settings: OptimizeFlagSettings,
+  fromAutoOptimize = false
 ): Promise<string> => {
   const { optimize } = sessions()
   const iterations = budgetValue('--max-iterations', 'iterations', settings.iterations)
@@ -646,14 +638,17 @@ const startOptimization = async (
   if (finalists !== undefined) optimize.setDecision('finalists', finalists)
   const ready = optimize.snapshot()
   if (ready.step === 'setup' && ready.plan.budgetProblem) throw new Error(ready.plan.budgetProblem)
-  const started = optimize.start()
+  const started = optimize.start({ fromAutoOptimize })
   if (started === undefined) throw new Error('The optimization did not start.')
   return started
 }
 
-/** Starts an optimization of a saved experiment as the background tool does with no flags: the defaults of its plan. */
+/**
+ * Starts the optimization of auto-optimize on the experiment it made, as the background tool does with no flags: the
+ * defaults of its plan.
+ */
 export const startEvalsOptimizationWithDefaults = async (sessions: Sessions, experiment: string): Promise<string> =>
-  startOptimization(sessions, await findExperiment(sessions, experiment), optimizeFlagSettings([]))
+  startOptimization(sessions, await findExperiment(sessions, experiment), optimizeFlagSettings([]), true)
 
 const caseNames = async (experiment: ExperimentSummary, names: readonly string[]): Promise<void> => {
   const { raw } = await readEvalsExperimentFile(experiment.path)

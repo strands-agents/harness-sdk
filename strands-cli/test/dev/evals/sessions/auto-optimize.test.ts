@@ -112,13 +112,13 @@ describe('auto-optimize every N turns', () => {
     expect(whileItWorks).toEqual([
       {
         status: 'running',
-        text: 'auto-optimize · 5 chat turns since the last one · making an experiment from your chats in the background',
+        text: 'auto-optimize 1/2 · 5 chat turns since the last one · making the experiment from your chats in the background',
       },
     ])
     expect(state.chat.notices).toEqual([
       {
-        status: 'success',
-        text: 'auto-optimize · made history-20261123-1502 from your chats (5 cases) · optimizing on it in the background',
+        status: 'delivered',
+        text: 'auto-optimize 1/2 done · history-20261123-1502 (5 cases) · 2/2 optimizing now · agent unchanged so far',
       },
     ])
   })
@@ -132,7 +132,7 @@ describe('auto-optimize every N turns', () => {
     await ended()
 
     expect(whileItWorks).toEqual([
-      [{ id: 'auto-optimize', label: 'auto-optimize · making history-20261123-1502 from your chats' }],
+      [{ id: 'auto-optimize', label: 'auto-optimize 1/2 · making the experiment from your chats' }],
       {
         everyTurns: 5,
         turnsSince: 5,
@@ -244,8 +244,8 @@ describe('auto-optimize every N turns', () => {
     expect(whileItWorks).toEqual(['running'])
     expect(reloaded.notices).toEqual([
       {
-        status: 'success',
-        text: 'auto-optimize · made history-20261123-1502 from your chats (5 cases) · optimizing on it in the background',
+        status: 'delivered',
+        text: 'auto-optimize 1/2 done · history-20261123-1502 (5 cases) · 2/2 optimizing now · agent unchanged so far',
       },
     ])
   })
