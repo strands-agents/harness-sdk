@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { vi } from 'vitest'
 
-import { evalsVenvPython, type EvalsCommandRequest } from '../../src/dev/evals/environment.js'
+import { evalsVenvPython, type EvalsCommandRequest } from '../../src/dev/evals/runs/environment.js'
 import type { DevWorkspace } from '../../src/dev/workspace.js'
 import { temporaryDirectory } from './tempdir.js'
 

@@ -2,7 +2,11 @@ import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-
 import { EFFORT_LEVELS, normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
 import { Command, Option } from 'commander'
 
-import { isEvalsDevCommand, parseEvalsDevCommandArguments, type EvalsDevCommandName } from '../dev/evals/arguments.js'
+import {
+  isEvalsDevCommand,
+  parseEvalsDevCommandArguments,
+  type EvalsDevCommandName,
+} from '../dev/evals/shell/arguments.js'
 import { readCliVersion } from '../package-version.js'
 import { isRecord } from '../values.js'
 

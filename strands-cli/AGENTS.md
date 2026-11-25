@@ -46,15 +46,20 @@ src/dev/
 ├── chat-extension.ts, runtime.ts, failed-turns.ts     # what a dev chat adds to a chat
 ├── errors.ts, fix-in-new-tab.ts, telemetry.ts         # failures and their fix, usage pings
 └── evals/                                             # /experiment and /optimize, on strands-agents-evals
-    ├── model.ts                                       # the types that the evals files share
-    ├── package.ts                                     # the pinned strands-agents-evals release and its skills
-    ├── *.ts                                           # commands, agent tools, sessions, runs, and their files on disk
+    ├── model.ts, package.ts                           # the shared types; the pinned release and its skills
+    ├── host.ts, jobs.ts, layout.ts                    # what a session is given, its store and jobs line, the files on disk
+    ├── tuning/                                        # what an optimization can change and how it is scored and applied
+    ├── runs/                                          # the strands-evals processes: generate, evaluate, optimize
+    ├── sessions/                                      # the state of the experiments, evaluations, and optimizations of a chat
+    ├── chat/                                          # the slash commands, the agent tools, and the questions on screen
+    ├── shell/                                         # strands dev evaluate and strands dev optimize
     └── python/                                        # strands_dev_evals, the Python package that strands-evals imports
 ```
 
 - Code that needs strands-agents-evals goes in `src/dev/evals/`, and nothing outside `src/dev/` imports it except the chat runtime and the `strands dev` subcommands.
-- A test has the path of its source file: `src/dev/evals/plan.ts` has `test/dev/evals/plan.test.ts`. The pytest files of `strands_dev_evals` are in `test/dev/evals/python/`.
+- A test has the path of its source file: `src/dev/evals/tuning/plan.ts` has `test/dev/evals/tuning/plan.test.ts`. The pytest files of `strands_dev_evals` are in `test/dev/evals/python/`.
 - A file with one importer goes into the module that uses it.
+- In `src/dev/evals/`, a folder imports only from the folders above it in the list, and from the files beside the folders. `chat/` and `shell/` are the two ways in. `host.ts` names types of `runs/` and `sessions/`, as types only.
 
 ## Development
 

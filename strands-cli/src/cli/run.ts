@@ -40,7 +40,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return
   }
   if (args.dev?.evalsCommand) {
-    const { runEvalsDevCommand } = await import('../dev/evals/cli.js')
+    const { runEvalsDevCommand } = await import('../dev/evals/shell/cli.js')
     process.exitCode = await runEvalsDevCommand(args)
     return
   }

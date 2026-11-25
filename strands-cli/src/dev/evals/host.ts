@@ -2,10 +2,10 @@ import type { ChatToolInfo } from '../../agent/types.js'
 import type { DevChatCommandContext } from '../../ui/chat/types.js'
 import type { EvalsBrowserPlace } from './model.js'
 import type { DevWorkspace } from '../workspace.js'
-import type { EvalsUiDependencies } from './evals-ui.js'
-import type { EvalsExperimentDependencies } from './experiment.js'
-import type { EvalsOptimizationDependencies } from './optimize.js'
-import type { EvaluationDependencies } from './evaluate.js'
+import type { EvalsUiDependencies } from './sessions/evals-ui.js'
+import type { EvalsExperimentDependencies } from './runs/experiment.js'
+import type { EvalsOptimizationDependencies } from './runs/optimize.js'
+import type { EvaluationDependencies } from './runs/evaluate.js'
 
 export interface EvalsAgentFacts {
   description?: string

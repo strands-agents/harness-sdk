@@ -98,7 +98,7 @@ const loadDevChat = async (
     import('../../dev/agent-choices.js'),
     import('../../dev/telemetry.js'),
     import('../../dev/runtime.js'),
-    import('../../dev/evals/command.js'),
+    import('../../dev/evals/chat/command.js'),
     import('../../dev/failed-turns.js'),
   ])
   const workspace = await readDevWorkspace(path)
