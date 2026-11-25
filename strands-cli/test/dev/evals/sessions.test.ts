@@ -2008,15 +2008,16 @@ describe('dev sessions', () => {
       const before = worker.mock.calls.length
       optimize.turnEnded?.(context, { prompt: 'five' })
       await vi.waitFor(() => expect(sessions.optimize.snapshot().step).toBe('review'), { timeout: 5000 })
-      await sessions.auto.settled()
 
       expect(before).toBe(0)
       expect(order).toEqual(['agent', 'optimizer'])
       expect(recordOf(optimizer.mock.calls[0]![0].args)).toContain(join('experiments', 'history-20261123-1502'))
       // The chat is told of the work in one notice, and of the run's end.
-      expect(notices.map(({ text }) => text).filter((text) => text.startsWith('auto-optimize'))).toEqual([
-        'auto-optimize · made history-20261123-1502 from your chats (4 cases) · optimizing on it in the background',
-      ])
+      await vi.waitFor(() =>
+        expect(notices.map(({ text }) => text).filter((text) => text.startsWith('auto-optimize'))).toEqual([
+          'auto-optimize · made history-20261123-1502 from your chats (4 cases) · optimizing on it in the background',
+        ])
+      )
     })
 
     it('shouldWaitUntilTheEditsOfAFinishedRunHaveTheirAnswer', async () => {
@@ -2052,9 +2053,8 @@ describe('dev sessions', () => {
       })
 
       for (const prompt of ['optimize every 5 turns', ...FIVE]) await sessions.auto.turnEnded({ prompt }, work)
-      await sessions.auto.settled()
 
-      expect(reached).toEqual(['waited', 'idle'])
+      await vi.waitFor(() => expect(reached).toEqual(['waited', 'idle']))
     })
 
     it('shouldChangeASettingThroughTheChatThatIsOpenAndSayWhenItCannot', async () => {

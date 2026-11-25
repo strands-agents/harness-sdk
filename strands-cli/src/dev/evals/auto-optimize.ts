@@ -115,13 +115,6 @@ export class EvalsAutoOptimize extends Store<AutoOptimizeActivity> {
     return this.work
   }
 
-  /** Resolves when the background work that is going, if any, is over. */
-  async settled(): Promise<void> {
-    await this.work
-    await this.running?.done
-    await this.work
-  }
-
   private everyTurns(): number {
     return this.host().settings?.().autoOptimize ?? 0
   }

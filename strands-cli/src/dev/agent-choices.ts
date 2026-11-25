@@ -389,23 +389,3 @@ export const saveAgentChoices = async (
     return effortSource(source, reading.model, { entry, effort, expected: expected.effort })
   })
 }
-
-export const agentChoicesProblem = async (
-  workspace: AgentWorkspace,
-  change: AgentOptions,
-  expected: AgentOptions = {}
-): Promise<string | undefined> => {
-  const { effort } = change
-  if (effort === undefined || change.model !== undefined) return undefined
-  const entry = entryOf(workspace)
-  try {
-    const source = await readFile(workspace.entrypoint, 'utf8')
-    const reading = await modelReader(workspace, entry)(source)
-    if (reading.kind === 'object')
-      await effortSource(source, reading.model, { entry, effort, expected: expected.effort })
-    return undefined
-  } catch (error) {
-    if (error instanceof AgentOptionsNotEditable || error instanceof AgentOptionConflict) return error.message
-    throw error
-  }
-}

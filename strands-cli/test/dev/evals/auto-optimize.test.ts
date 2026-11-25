@@ -77,7 +77,14 @@ const counting = async (every = 5, root?: string) => {
   const file = join(workspace.directory!, 'tmp', '.state', 'auto-optimize.json')
   // In a workspace that has counted nothing yet, the cadence was set in a turn, and that turn is not counted.
   if (every > 0 && root === undefined) await turns(`optimize every ${every} turns from my history`)
-  return { auto, state, run, works, turns, file, root: workspace.root }
+  // The work is over when the notice of the chat no longer says that it goes; status() then waits for the count.
+  const ended = async (): Promise<void> => {
+    await vi.waitFor(() => expect(state.chat.notices.some(({ status }) => status === 'running')).toBe(false), {
+      timeout: 3000,
+    })
+    await auto.status()
+  }
+  return { auto, state, run, works, turns, ended, file, root: workspace.root }
 }
 
 const FIVE = ['one', 'two', 'three', 'four', 'five']
@@ -95,12 +102,12 @@ describe('auto-optimize every N turns', () => {
   })
 
   it('shouldTellTheChatOnlyOneNoticeThatItUpdates', async () => {
-    const { auto, state, works, turns } = await counting(5)
+    const { state, works, turns, ended } = await counting(5)
 
     await turns(...FIVE)
     const whileItWorks = state.chat.notices.map((notice) => ({ ...notice }))
     works[0]!.end()
-    await auto.settled()
+    await ended()
 
     expect(whileItWorks).toEqual([
       {
@@ -117,12 +124,12 @@ describe('auto-optimize every N turns', () => {
   })
 
   it('shouldShowTheWorkOnTheJobsLineWhileItGoesAndTakeItOffWhenItEnds', async () => {
-    const { auto, works, turns } = await counting(5)
+    const { auto, works, turns, ended } = await counting(5)
 
     await turns(...FIVE)
     const whileItWorks = [autoOptimizeJobs(auto.snapshot()), await auto.status()]
     works[0]!.end()
-    await auto.settled()
+    await ended()
 
     expect(whileItWorks).toEqual([
       [{ id: 'auto-optimize', label: 'auto-optimize · making history-20261123-1502 from your chats' }],
@@ -138,11 +145,11 @@ describe('auto-optimize every N turns', () => {
   })
 
   it('shouldSayWhyNoOptimizationStartedAndCountFromNoTurnsAgain', async () => {
-    const { auto, state, run, works, turns } = await counting(5)
+    const { auto, state, run, works, turns, ended } = await counting(5)
 
     await turns(...FIVE)
     works[0]!.fail(new Error('history-20261123-1502 has 2 of the 3 cases an optimization needs'))
-    await auto.settled()
+    await ended()
     await turns('one')
 
     expect(state.chat.notices).toEqual([
@@ -157,12 +164,12 @@ describe('auto-optimize every N turns', () => {
   })
 
   it('shouldStartNoSecondWorkWhileOneGoes', async () => {
-    const { auto, run, works, turns } = await counting(5)
+    const { run, works, turns, ended } = await counting(5)
 
     await turns(...FIVE, ...FIVE)
     const whileItWorks = run.mock.calls.length
     works[0]!.end()
-    await auto.settled()
+    await ended()
     await turns(...FIVE)
 
     expect(whileItWorks).toBe(1)
@@ -184,12 +191,12 @@ describe('auto-optimize every N turns', () => {
   })
 
   it('shouldStopTheWorkWhenItIsTurnedOffAndSaySo', async () => {
-    const { auto, state, works, turns } = await counting(5)
+    const { auto, state, works, turns, ended } = await counting(5)
     await turns(...FIVE)
 
     state.every = 0
     await turns('turn auto-optimize off')
-    await auto.settled()
+    await ended()
 
     expect(works[0]!.signal.aborted).toBe(true)
     expect(state.chat.notices).toEqual([{ status: 'error', text: 'auto-optimize · stopped, as it was turned off' }])
@@ -212,11 +219,11 @@ describe('auto-optimize every N turns', () => {
   })
 
   it('shouldStopTheWorkWithinAMomentWhenTheSettingsPanelTurnedItOff', async () => {
-    const { auto, state, works, turns } = await counting(5)
+    const { state, works, turns, ended } = await counting(5)
     await turns(...FIVE)
 
     state.every = 0
-    await auto.settled()
+    await ended()
 
     // No turn ended and no tool ran: the setting alone stops it.
     expect(works[0]!.signal.aborted).toBe(true)
@@ -224,7 +231,7 @@ describe('auto-optimize every N turns', () => {
   })
 
   it('shouldTellTheChatThatAReloadOpenedOfTheWorkThatGoesAndOfItsEnd', async () => {
-    const { auto, state, works, turns } = await counting(5)
+    const { auto, state, works, turns, ended } = await counting(5)
     await turns(...FIVE)
     const reloaded = chat()
 
@@ -232,7 +239,7 @@ describe('auto-optimize every N turns', () => {
     auto.reannounce()
     const whileItWorks = reloaded.notices.map(({ status }) => status)
     works[0]!.end()
-    await auto.settled()
+    await ended()
 
     expect(whileItWorks).toEqual(['running'])
     expect(reloaded.notices).toEqual([

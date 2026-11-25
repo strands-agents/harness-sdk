@@ -280,17 +280,6 @@ export class CliConfigStore {
     })
   }
 
-  async reload(): Promise<boolean> {
-    if (this._layer) throw new Error('A CLI config with a workspace layer cannot reload from disk.')
-    let changed = false
-    await this._enqueueWrite(async () => {
-      const before = this._profile
-      this._adopt(withoutProviderCredentials((await readConfigDocument(this._path)).document))
-      changed = !isDeepStrictEqual(before, this._profile)
-    })
-    return changed
-  }
-
   updateProfile(update: (profile: HarnessAgentConfig) => HarnessAgentConfig): Promise<void> {
     if (!this._persistent || this._layer) throw new Error('Only a saved CLI config can update its profile.')
     return this._enqueueWrite(async () => {

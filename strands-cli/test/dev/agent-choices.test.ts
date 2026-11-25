@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { agentChoicesProblem, saveAgentChoices } from '../../src/dev/agent-choices.js'
+import { saveAgentChoices } from '../../src/dev/agent-choices.js'
 import { AgentOptionConflict, AgentOptionsNotEditable } from '../../src/dev/agent-options.js'
 import { pythonExecutable } from '../fixtures/python-runtime.js'
 import { temporaryDirectory } from '../fixtures/tempdir.js'
@@ -125,14 +125,7 @@ const model = new BedrockModel({
     const workspace = await agent('typescript', source)
 
     await expect(saveAgentChoices(workspace, { effort: 'low' })).rejects.toThrow(new AgentOptionsNotEditable(message))
-    expect(await agentChoicesProblem(workspace, { effort: 'low' })).toBe(message)
     expect(await readFile(workspace.entrypoint, 'utf8')).toBe(source)
-  })
-
-  it('shouldReportNoProblemWhenTheEffortCanBeSaved', async () => {
-    const workspace = await agent('typescript', typescriptAgent(`model: new BedrockModel({ modelId: '${SONNET}' })`))
-
-    expect(await agentChoicesProblem(workspace, { effort: 'low' }, { effort: 'off' })).toBeUndefined()
   })
 })
 

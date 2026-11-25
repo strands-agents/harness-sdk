@@ -1097,20 +1097,6 @@ describe('CliConfigStore shared writes', () => {
     expect((await onDisk(path)).agentProject).toBe(AGENT)
   })
 
-  it('shouldReportAProfileChangeOnlyWhenAnotherProcessChangedTheProfile', async () => {
-    const path = await configFile()
-    const store = await CliConfigStore.load(path)
-    await store.setSettings({ frogTheme: 'merlin' })
-    expect(await store.reload()).toBe(false)
-
-    await (
-      await CliConfigStore.load(path)
-    ).updateProfile((profile) => ({ ...profile, instructions: 'Answer in full.' }))
-
-    expect(await store.reload()).toBe(true)
-    expect(store.snapshot().profile.instructions).toBe('Answer in full.')
-  })
-
   it('shouldUpdateTheProfileFromTheFileOnDiskWhenUpdateProfileRuns', async () => {
     const path = await configFile()
     const store = await CliConfigStore.load(path)
