@@ -196,7 +196,7 @@ A filesystem list entry is a path. So is a `command` element that is the program
 2.  Each later placeholder fills one folder or file name. Its value holds no `/`, and it is not `.` or `..`.
 3.  The result is an absolute path, or a path that starts with `~/` for your home directory, and it holds no `..`.
 
-`box` refuses a path that goes through a link inside a folder the box can write, because the agent could change that link. Those folders are your project, the run’s storage, `~/.strands/box`, and each folder that a `write` entry names. Name the real path instead. A link above such a folder is fine, such as `/tmp` on macOS. An entry whose path does not exist stops the run, so mark an entry that some machines lack `optional = true`. [Values](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/cli/profile-language.md#values) says how `box` writes each value safely into the run’s files.
+`box` refuses a path that goes through a link inside a folder the box can write, because the agent could change that link. Those folders are your project, the run’s storage, `~/.strands/box`, and each folder that a `write` entry names. Name the real path instead. A link above such a folder is fine, such as `/tmp` on macOS. An entry whose path does not exist stops the run, so mark an entry that some machines lack `optional = true`. [Values](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#values) says how `box` writes each value safely into the run’s files.
 
 ## `when`
 
@@ -246,7 +246,7 @@ box = ">=0.3.0"
 
 `box` merges each name in `packs` after its own `extend`, left to right, each pack once, then each [plugin](/docs/user-guide/box/plugins/index.md) in `plugins`, and your profile last, so the profile wins. Tables merge key by key, and a later file can change a key but cannot remove one. These lists join: the filesystem lists, `dependency`, `[storage] directories`, the `[[storage.files]]` and `[[storage.hooks]]` rows, the `[[mcp-servers]]` rows, and a tool’s own `directories` and `files` in `[tool.<name>.storage]`. Every other list is replaced, `command` included, so add arguments to the agent with `agent-args`.
 
-Each route and each `env://` variable a route reads comes from one pack, though your profile can change a route’s keys. To replace a tool that `box` finds, write its `[tool.<name>]` in your profile, or in your own pack, with a `command` and no `program`, as [A tool table in the full form](#a-tool-table-in-the-full-form) says. [Composition](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/cli/profile-language.md#composition) has the full rules.
+Each route and each `env://` variable a route reads comes from one pack, though your profile can change a route’s keys. To replace a tool that `box` finds, write its `[tool.<name>]` in your profile, or in your own pack, with a `command` and no `program`, as [A tool table in the full form](#a-tool-table-in-the-full-form) says. [Composition](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#composition) has the full rules.
 
 ## Routes and other hosts
 
@@ -261,7 +261,7 @@ secret.ref = "env://GITHUB_TOKEN"
 | Key | What it does |
 | --- | --- |
 | `destinations` | Required. Up to 100 hosts, each with an optional `:port`, such as `api.github.com`. Not a URL. On a route with a credential, an entry can also hold a path, such as `api.example.com/v1`, and `*.example.com` matches every host below `example.com`, but not `example.com` itself. A route with no credential takes neither, as the list below says. |
-| `secret.ref` | Where the credential comes from: `env://<NAME>` for a variable in the shell where you run `box run`, `aws://<profile>` for an AWS profile, `aws://` with no profile to sign with your default AWS identity, or a reference in a scheme that a [plugin](/docs/user-guide/box/plugins/index.md) or your profile declares, such as `op://`, which that source’s program reads when the box starts. An input’s `from` spells a variable `env:<NAME>`, with no `//`. Without it, the route has no credential. |
+| `secret.ref` | Where the credential comes from: `env://<NAME>` for a variable in the shell where you run `box run`, `aws://<profile>` for an AWS profile, `aws://` with no profile to sign with your default AWS identity, `credsd://<credential>` for a credential in the [credentials daemon](/docs/user-guide/box/credentials/index.md#the-credentials-daemon), or a reference in a scheme that a [plugin](/docs/user-guide/box/plugins/index.md) or your profile declares, such as `op://`, which that source’s program reads when the box starts. [Credentials](/docs/user-guide/box/credentials/index.md) explains each source. An input’s `from` spells a variable `env:<NAME>`, with no `//`. Without it, the route has no credential. |
 | `secret.header` | The request header that carries the credential, such as `x-api-key`. The default is `Authorization`. |
 | `secret.prefix` | The text before the credential in the header, such as `"token "` for `gh`. The default is `Bearer` on `Authorization`, and nothing on another header. |
 | `secret.phantom_prefix` | The start of the placeholder key, such as `sk-ant-`, for an agent that checks the format of its key. The default is `strands_box_`. |
@@ -282,24 +282,6 @@ destinations = ["oidc.us-east-1.amazonaws.com"]
 -   If the agent signs in through one of these hosts inside the box, its login stays in the box’s storage, where every program in the box can read it.
 
 A route with any other key is a route with a credential, so a typo such as `secrets.ref` stops the run instead of opening the hosts. For the same reason, a route’s `secret` takes no `when`: to use a credential on one system only, write two routes, each with its own `when`. Your profile can replace a pack’s `destinations`, or add `secret.ref` to give a route a credential.
-
-### `aws://` credentials
-
-A provider pack’s route names where its key comes from. Your profile can point it elsewhere with `[egress.<route>.secret] ref`, and `box profile show --full` names the routes.
-
-`aws://<PROFILE>` works only on a route that takes a signed request. It signs with the profile’s static keys, `credential_process`, assume-role, or web identity. `aws://` with no profile name signs with the first credentials that the AWS SDK finds outside the box, in this order:
-
-1.  The `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` variables in the shell where you run `box run`.
-2.  The profile in `~/.aws/config` and `~/.aws/credentials` that `AWS_PROFILE` names, or `default`.
-3.  Web identity, such as an EKS service account.
-4.  The ECS or EKS container credentials endpoint.
-5.  EC2 instance metadata.
-
-So on a cloud machine, `aws://` can sign as the machine’s own role. The box prints a [warning](/docs/user-guide/box/guides/network-and-credentials/index.md#credential-sources) about it.
-
-Neither form signs with an AWS SSO or `aws login` profile ([AWS credentials resolve to nothing](/docs/user-guide/box/troubleshooting/index.md#aws-credentials-resolve-to-nothing)).
-
-Both `aws://` forms run any `credential_process` in your AWS configuration outside the box. The box can’t write `~/.aws`, but if you move that configuration with `AWS_CONFIG_FILE` or `AWS_SHARED_CREDENTIALS_FILE`, keep the new place out of your project and every other folder the box can write.
 
 ## Project access
 
@@ -363,7 +345,7 @@ The server can read every credential in that file, though the agent can’t, and
 
 A tool is a program that the agent runs from its shell, such as `git` or `npm`. A [tool pack](/docs/user-guide/box/packs/index.md#tool-packs) writes one tool, and a `[tool.<name>]` table in a profile or a pack adds to a tool or writes one. [Add or remove a toolchain](/docs/user-guide/box/profiles/index.md#add-or-remove-a-toolchain) shows how a profile picks its tools. Local MCP servers reuse the launcher packs, such as `@box/npx`, without the pack in `packs`.
 
-When a run starts, `box` finds each tool’s `program` on your `PATH`, the same one the agent gets when it types the name. It skips a tool whose program is missing, or is in your project, the run’s storage, `~/.strands/box`, or a folder the agent can write, and prints a line such as `box: skipped tool cargo (@box/cargo): cargo is not on PATH`. In a tool table with a `program`, a grant whose path is not on your machine is dropped, and a `*` in one part of a path matches each name that is there, so `${{ root.parent }}/share/node-*` finds `share/node-20`. A `deny` entry stays as written and holds no `*`. `box profile show` lists each skipped tool and each path it dropped. [Resolution](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/cli/profile-language.md#resolution) has the background, including scripts whose `#!` line names another tool.
+When a run starts, `box` finds each tool’s `program` on your `PATH`, the same one the agent gets when it types the name. It skips a tool whose program is missing, or is in your project, the run’s storage, `~/.strands/box`, or a folder the agent can write, and prints a line such as `box: skipped tool cargo (@box/cargo): cargo is not on PATH`. In a tool table with a `program`, a grant whose path is not on your machine is dropped, and a `*` in one part of a path matches each name that is there, so `${{ root.parent }}/share/node-*` finds `share/node-20`. A `deny` entry stays as written and holds no `*`. `box profile show` lists each skipped tool and each path it dropped. [Resolution](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#resolution) has the background, including scripts whose `#!` line names another tool.
 
 Each tool with a `program` gets `PATH = "/usr/bin:/bin"` and its own empty `TMPDIR`, unless its table sets them, and reads and writes your project as [Project access](#project-access) says.
 
@@ -405,7 +387,7 @@ A tool’s connections go through the box’s gateway, where your policy decides
 contain_egress = false
 ```
 
-This doesn’t make SSH work for git: the box has no `ssh`, as the [`@box/git` README](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/resources/packs/git/README.md#limitations) says.
+This doesn’t make SSH work for git: the box has no `ssh`, as the [`@box/git` README](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/resources/packs/git/README.md#limitations) says.
 
 Know what that gives away. The tool, and every program it starts, can then connect to any host, outside your policy, and no credential from a route reaches it. The agent picks the tool’s arguments, so it can aim those connections wherever it likes. Don’t set it on a general client such as `curl`, or on an interpreter. The tool still reaches only the files it’s granted, so a client such as `ssh` needs grants for its program and for what it reads, such as an SSH agent socket, and the box refuses a grant in `~/.ssh`.
 
@@ -415,10 +397,12 @@ To turn the gateway off on one system only, put `when` on the value: `contain_eg
 
 With native filesystem policy, your policy also decides the file operations that the agent, its tools, and its local MCP servers make directly, on top of their filesystem grants. It needs a `box` built with the `native-filesystem-policy` Cargo feature, and:
 
--   On macOS: macOS 27 or later, and a `box` built with the macOS 27 SDK or later, with a valid signature and Apple’s Endpoint Security entitlement.
+-   On macOS: the [native policy requirements](/docs/user-guide/box/security/native-filesystem-policy/index.md#macos-requirements).
 -   On Linux: an ARM64 machine with the required kernel support, and the `CAP_BPF` and `CAP_PERFMON` capabilities for `box`, which a normal install does not give it. Linux x86-64 refuses selection.
 
-See the [prerequisites in Box’s own guide](/docs/user-guide/box/security/native-filesystem-policy/index.md) and the [build instructions](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/dev/manual-testing.md#build-the-native-filesystem-policy-experiment).
+See the [prerequisites in Box’s own guide](/docs/user-guide/box/security/native-filesystem-policy/index.md) and the [build instructions](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/dev/manual-testing.md#build-the-native-filesystem-policy-experiment).
+
+These prerequisites apply only when you enable this feature. With it disabled, the [standard installation requirements](/docs/user-guide/box/install/index.md#requirements) apply.
 
 Turn it on in `profile.toml`. Only a profile holds this table:
 
@@ -440,7 +424,7 @@ The box refuses to start a run that turns it on when it cannot check, so a `box`
 
 On macOS, native policy checks need the `box` process to stay alive. If an uncatchable signal such as `SIGKILL` terminates it, programs in the box can survive. Those programs can then perform new file operations within their existing filesystem grants without native policy checks, so previously denied operations can succeed. Because `box` cannot catch that signal, it cannot run its normal shutdown cleanup.
 
-[Experimental native filesystem policy](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/cli/profile-language.md#experimental-native-filesystem-policy) has the background.
+[Experimental native filesystem policy](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#experimental-native-filesystem-policy) has the background.
 
 ## Errors
 

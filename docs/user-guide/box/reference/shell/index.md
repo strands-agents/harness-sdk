@@ -224,16 +224,16 @@ When `[tool]` tables whose commands resolve to different paths answer to one nam
 Any other name resolves on the `PATH` of the host OS’s shell that runs `box run`, else on `/usr/bin:/bin`. When the file of a `[tool]` is gone, its name is not found, and the Shell doesn’t look for another file on `PATH`. `run` prints the file each name runs:
 
 ```text
-strands-box: [tool.git]: a bare `git` in the Shell runs /Applications/Xcode.app/Contents/Developer/usr/bin/git
-strands-box: [tool.brew_git]: runs another program path, so a bare `git` in the Shell runs the file of `[tool.git]`, whose label is that name
-strands-box: [tool.brew_node], [tool.node]: these tables run different program paths, so a bare `node` in the Shell runs the file that `PATH` finds
+strands-box: note[B0208]: [tool.git]: a bare `git` in the Shell runs /Applications/Xcode.app/Contents/Developer/usr/bin/git
+strands-box: note[B0208]: [tool.brew_git]: runs another program path, so a bare `git` in the Shell runs the file of `[tool.git]`, whose label is that name
+strands-box: note[B0208]: [tool.brew_node], [tool.node]: these tables run different program paths, so a bare `node` in the Shell runs the file that `PATH` finds
 ```
 
 A name changes only which file runs. The spawn still needs a `shell:spawn` permit, or a grammar action permit when a tool grammar binds the file, and `program` is still the name the agent typed.
 
 ## `curl`
 
-`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/egress.md)). A request the gateway refuses makes `curl` exit `1` and print the reason, even with `-s`. A request the gateway doesn’t refuse but can’t complete makes `curl` exit `6` and print `curl: (6)` and the reason, unless `-s` hides errors.
+`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/egress.md)). A request the gateway refuses makes `curl` exit `1` and print the reason, even with `-s`. A request the gateway doesn’t refuse but can’t complete makes `curl` exit `6` and print `curl: (6)` and the reason, unless `-s` hides errors.
 
 A response body is at most [`limits.shell.max_output`](/docs/user-guide/box/reference/configuration/index.md#limits) bytes, 1 MiB by default. Past it, `curl` exits with status `6`, writes none of the body, and prints `curl: (6) response body too large` unless `-s` hides errors. The request was already sent, so its effect at the server stays.
 
@@ -244,11 +244,11 @@ A response body is at most [`limits.shell.max_output`](/docs/user-guide/box/refe
 | `1` | Submitted command text exceeds 256 KiB, including text with line breaks. Split the text across several calls, for example by appending to a file. | `strands-shell: input too large` |
 | `1` | The Shell call exceeded its execution allowance. | `strands-shell: execution timeout exceeded` |
 | `125` | Box failed to serve the command. | The failure |
-| `125` | The alias can’t tell which directory it was run from. Set `PWD` to it. | `strands-box-sock-alias: read the working directory: <error>; set PWD to it` |
-| `125` | The name of the directory the alias was run from isn’t valid UTF-8. Run the command from another directory. | `strands-box-sock-alias: the working directory is not valid UTF-8` |
-| `125` | The call exceeded the broker’s backup deadline, five seconds after its finite Shell allowance. | `strands-box: the call exceeded its deadline` |
-| `125` | The deadline exceeds the platform’s clock range. Reduce `limits.shell.timeout`. | `strands-box: the call deadline exceeds this platform's clock range` |
-| `126` | Policy refused the directory the alias was run from, it isn’t a directory, or it is outside the operator’s home, the agent’s home, and the workspace. Nothing ran. | `strands-box: cannot start in <directory>: <error>` |
+| `125` | The alias can’t tell which directory it was run from. Set `PWD` to it. | `strands-box-sock-alias: error[H0203]: read the working directory: <error>; set PWD to it` |
+| `125` | The name of the directory the alias was run from isn’t valid UTF-8. Run the command from another directory. | `strands-box-sock-alias: error[H0203]: the working directory is not valid UTF-8` |
+| `125` | The call exceeded the broker’s backup deadline, five seconds after its finite Shell allowance. | `strands-box-sock-alias: error[H0105]: the call exceeded its deadline` |
+| `125` | The deadline exceeds the platform’s clock range. Reduce `limits.shell.timeout`. | `strands-box-sock-alias: error[H0106]: the call deadline exceeds this platform's clock range` |
+| `126` | Policy refused the directory the alias was run from, it isn’t a directory, or it is outside the operator’s home, the agent’s home, and the workspace. Nothing ran. | `strands-box: error[B1202]: cannot start in <directory>: <error>` |
 | `126` | Policy refused the command. | `strands-shell: effect denied: policy denied this operation on '<program>'`, then `[policy: <id>]` or `[default-deny]`. A tool grammar action reads the same way. |
 | `126` | A tool grammar binds the program file, and Box refused the spawn before any rule decided it. | `strands-shell: effect denied: policy denied this operation on '<program>' [tool-grammar]: <reason>. No policy can permit it.` |
 | `126` | Policy permitted a program that a `[tool.<name>]` table names, and its arguments match no table’s fixed arguments. | ``strands-shell: <program>: no tool runs <path>: no `[tool.<name>] command` matches this program and its leading arguments`` |
@@ -265,6 +265,6 @@ A response body is at most [`limits.shell.max_output`](/docs/user-guide/box/refe
 ## See also
 
 -   [Write policy for shell commands](/docs/user-guide/box/guides/write-shell-policy/index.md): rules for commands, programs, and paths.
--   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
--   [A tool’s sandbox](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
+-   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
+-   [A tool’s sandbox](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
 -   [The `[egress.<name>]` table](/docs/user-guide/box/guides/network-and-credentials/index.md): credentials for the requests `curl` sends.

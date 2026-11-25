@@ -2,7 +2,7 @@
 
 `box.toml` is Box Core’s stable interface. A program that runs Box Core, such as the `box` CLI, writes it, and each key keeps its meaning across releases. If you use the `box` CLI, you don’t write this file: the CLI builds it from your [profile](/docs/user-guide/box/profiles/index.md).
 
-Audience: an operator who runs an agent or another command under a box, and who declares the paths, hosts, credentials, MCP servers, and telemetry targets it can use. The example on this page is the box that [getting started](/docs/user-guide/box/core/quickstart/index.md) builds: the Strands CLI on a Mac. Each section below annotates it. To write the policy the file points at, read [policy](/docs/user-guide/box/reference/policy/index.md), and point a coding agent at [the policy-authoring skill](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/.agents/skills/authoring-box-policy/SKILL.md).
+Audience: an operator who runs an agent or another command under a box, and who declares the paths, hosts, credentials, MCP servers, and telemetry targets it can use. The example on this page is the box that [getting started](/docs/user-guide/box/core/quickstart/index.md) builds: the Strands CLI on a Mac. Each section below annotates it. To write the policy the file points at, read [policy](/docs/user-guide/box/reference/policy/index.md), and point a coding agent at [the policy-authoring skill](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/.agents/skills/authoring-box-policy/SKILL.md).
 
 ## Example
 
@@ -10,7 +10,7 @@ Getting started builds this macOS example one file at a time, and the block is t
 
 ```toml
 # To author or change the policy next to this file, point your coding agent at the skill:
-#   https://raw.githubusercontent.com/strands-agents/box/cfff47d5824aaa8de76c93011680f278de5e696b/.agents/skills/authoring-box-policy/SKILL.md
+#   https://raw.githubusercontent.com/strands-agents/box/28071d0dad40cbd428ffb920adbb1a4920c252b4/.agents/skills/authoring-box-policy/SKILL.md
 
 # The box's name, and where it keeps its own state. The agent can't reach box_dir.
 name = "strands"
@@ -117,7 +117,7 @@ The default is `false`, and the switch applies to the agent, every tool, and eve
 
 With the switch on, a process in a write folder can set the times of a file there. It can also set the file’s set-user-ID and set-group-ID bits, change its group, store an access control list on it, and, in a box that runs as root, give it to another user. macOS has no rule that allows the times and refuses these. See [file attributes on macOS](/docs/user-guide/box/security/index.md#file-attributes-on-macos) for what that means and how to undo it. Flags such as `uchg`, ownership changes through `chown`, and `chmod` of the set-ID bits stay refused. A path outside the write folders, and a file the box protects, stay unwritable. `tar -x` restores times with the switch, but an archive that macOS `tar` made with its default metadata still fails to restore the owner and the flags. Extract it with `tar -x --no-mac-metadata`.
 
-The box prints one line for each process the switch applies to, in the startup disclosure: `strands-box: [agent] file attributes: may set file times, set-user-ID and set-group-ID bits, the group, the owner, and access control lists on files in its writable grants`. Linux prints no line.
+The box prints one line for each process the switch applies to, in the startup disclosure: `strands-box: note[B0201]: [agent] file attributes: may set file times, set-user-ID and set-group-ID bits, the group, the owner, and access control lists on files in its writable grants`. Linux prints no line.
 
 ## `[limits]`
 
@@ -142,7 +142,7 @@ The timeout setting applies to the calls forwarded by `zsh`, `bash`, `sh`, `pyth
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `upgrade_http` | string array | empty | Host names whose plain `http://` request to port 80 the gateway decides and sends as `https://` on port 443. A host name alone: no scheme, port, path, `*` wildcard, or IP address. |
+| `upgrade_http` | string array | empty | Host names whose plain `http://` request to port 80 the gateway decides and sends as `https://` on port 443. A host name alone: no scheme, port, path, `*` wildcard, or IP address, and no name that ends in a number, such as `0x7f.1`. |
 
 ```toml
 [gateway]
@@ -207,6 +207,8 @@ On Linux, startup can report `this kernel cannot transfer O_PATH handles; path-o
 
 `secret-sources = true` turns on [`[secret-source.<scheme>]`](#secret-sourcescheme) and the `secret.env` key of a route or a remote MCP server, which are experimental and off by default.
 
+The former `linux-storage-mounts` key is rejected even when its value is `false`. Remove that key; this build has no replacement that enables incoming mount forwarding.
+
 ## `[agent]` and `[tool.<name>]`
 
 Both tables hold one process, in one shape:
@@ -222,9 +224,9 @@ Both tables hold one process, in one shape:
 | `[tool.<name>.grammar]` | table | Experimental, and `[tool.<name>]` only. The tool grammar for the program this tool runs. See [`[tool.<name>.grammar]`](#toolnamegrammar). |
 | `[[agent.ingress]]` | list of tables | `[agent]` only. Where callers reach the agent’s servers, one entry per port. See [`[[agent.ingress]]`](#agentingress). |
 
-The box adds the runtime minimum to every process; see [the runtime minimum](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/containment.md#the-runtime-minimum).
+The box adds the runtime minimum to every process; see [the runtime minimum](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/containment.md#the-runtime-minimum).
 
-The program is a full path or a bare name. A bare name uses `env.PATH` when set. Otherwise, Box uses the operator’s `PATH`, or `/usr/bin:/bin` if it is absent. In the Shell, the last part of a `[tool]`’s program is the name that runs it, before the operator’s `PATH`, and `run` prints ``strands-box: [tool.git]: a bare `git` in the Shell runs <file>`` for each. See [`PATH` in the Shell reference](/docs/user-guide/box/reference/shell/index.md#path). A relative path with more than one component is refused: `` `command` element 0 "<program>" is a relative path; write an absolute path, or a bare name that `env.PATH` resolves ``. Scripts on Linux require [interpreter grants](#script-commands-on-linux). The example’s `command` runs Homebrew’s `node`, which loads the preload file and then the CLI’s script; the arguments after the script are the CLI’s own.
+The program is a full path or a bare name. A bare name uses `env.PATH` when set. Otherwise, Box uses the operator’s `PATH`, or `/usr/bin:/bin` if it is absent. In the Shell, the last part of a `[tool]`’s program is the name that runs it, before the operator’s `PATH`, and `run` prints ``strands-box: note[B0208]: [tool.git]: a bare `git` in the Shell runs <file>`` for each. See [`PATH` in the Shell reference](/docs/user-guide/box/reference/shell/index.md#path). A relative path with more than one component is refused: `` `command` element 0 "<program>" is a relative path; write an absolute path, or a bare name that `env.PATH` resolves ``. Scripts on Linux require [interpreter grants](#script-commands-on-linux). The example’s `command` runs Homebrew’s `node`, which loads the preload file and then the CLI’s script; the arguments after the script are the CLI’s own.
 
 `workspace` is absolute, and it is optional: when absent, the box uses the directory `run` was started from. The directory must exist, and it may not be the operator’s home. The box enters it. The process reads nothing in it until a list in `filesystem` names it: the example’s `workspace` is the project, and the `list` entry below is what lets the CLI see the names in it.
 
@@ -234,7 +236,7 @@ When the box declares an MCP server, it also protects directories on the `PATH` 
 
 `env` is literal. Four kinds of name have their own rule:
 
--   **Names Box sets itself, which a table cannot claim:** `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, `https_proxy`, `NO_PROXY`, `no_proxy`, `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `NODE_USE_ENV_PROXY`, `CODEX_CA_CERTIFICATE`, `AWS_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`, `PWD`, `USER`, and every name that starts with `OTEL_EXPORTER_OTLP_`. A `[tool.<name>]` or stdio `[mcp.<name>]` table with `contain_egress = false` may set the first thirteen, because Box sets none of them there; see [a native-egress process keeps its own proxy and trust settings](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/decisions.md#a-native-egress-process-keeps-its-own-proxy-and-trust-settings).
+-   **Names Box sets itself, which a table cannot claim:** `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, `https_proxy`, `NO_PROXY`, `no_proxy`, `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `NODE_USE_ENV_PROXY`, `CODEX_CA_CERTIFICATE`, `AWS_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`, `PWD`, `USER`, and every name that starts with `OTEL_EXPORTER_OTLP_`. A `[tool.<name>]` or stdio `[mcp.<name>]` table with `contain_egress = false` may set the first thirteen, because Box sets none of them there; see [a native-egress process keeps its own proxy and trust settings](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/decisions.md#a-native-egress-process-keeps-its-own-proxy-and-trust-settings).
 -   **Names the dynamic loader reads, refused:** every name that starts with `LD_` or `DYLD_`. Box’s own aliases run in the box, so their loader would read the value too. A runtime’s own option variables, such as `NODE_OPTIONS`, `BASH_ENV`, `RUBYOPT`, `JAVA_TOOL_OPTIONS`, and `PYTHONPATH`, are the operator’s to set, and they reach only the process whose table names them. The `zsh`, `bash`, `sh`, `python3`, and `python` aliases run in Box and do not read them, so a shell or Python option variable reaches a real interpreter that the table runs or spawns, and not an alias call.
 -   **`HOME`:** an absolute path. It stays the operator’s own home unless `[agent] env.HOME` names another directory; the example names `strands-home`, so the CLI reads its settings and writes its sessions there. A home inside `box_dir` is refused with `` `env.HOME` is <path>, which lies in trusted Box state. The box directory holds `bin`, `run`, `trust`, and `private`, and none of them is a home. Name a directory outside it, or omit `env.HOME` for the operator's own home ``, and a home that encloses `box_dir` is refused with `` `env.HOME` is <path>, which encloses the box directory <path>. A declared home is reachable, so a home above the box directory would put this box's own state, and any sibling box's, inside the reachable set. Name a home beside the box directory rather than above it, or omit `env.HOME` for the operator's own home ``.
 -   **`TMPDIR`:** an absolute path.
@@ -243,7 +245,7 @@ A name Box sets is refused with `` `env` name "<name>" is set by the box itself,
 
 `TERM` and `COLORTERM` reach the process only when `env` names them, so a program that picks colors from them renders plain otherwise. The example names `TERM`; an operator who wants a program’s colors writes their own terminal’s values for both.
 
-The agent reaches every `[egress.<name>]` route, every `[tool.<name>]`, and every `[mcp.<name>]` the file declares. A tool or MCP server reaches every egress route and starts no tool or MCP server of its own. All of them share one egress gateway, so the box is the credential boundary: a process that must not hold a credential goes in another box. Each tool and each `stdio` MCP server runs in its own separate sandbox (see [the sandboxes for tools and local MCP servers](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/containment.md#the-agents-box-and-leaf-boxes)).
+The agent reaches every `[egress.<name>]` route, every `[tool.<name>]`, and every `[mcp.<name>]` the file declares. A tool or MCP server reaches every egress route and starts no tool or MCP server of its own. All of them share one egress gateway, so the box is the credential boundary: a process that must not hold a credential goes in another box. Each tool and each `stdio` MCP server runs in its own separate sandbox (see [the sandboxes for tools and local MCP servers](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/containment.md#the-agents-box-and-leaf-boxes)).
 
 ### File watching
 
@@ -270,7 +272,7 @@ Use this option only when these limitations are acceptable. Keep it disabled whe
 On macOS, the startup disclosure names each selected process before the agent starts. This includes stdio MCP servers that remain unstarted; Box repeats their disclosure when they start.
 
 ```text
-strands-box: [tool.dev] file watching: macOS FSEvents may disclose denied names and event metadata, including outside the workspace and from past events, as well as the host-wide event count and each volume's history identifier; file-content and write restrictions still apply, except that a root process can delete any volume's event history
+strands-box: note[B0206]: [tool.dev] file watching: macOS FSEvents may disclose denied names and event metadata, including outside the workspace and from past events, as well as the host-wide event count and each volume's history identifier; file-content and write restrictions still apply, except that a root process can delete any volume's event history
 ```
 
 A record with any selected process requires version 35. For rollback, remove the key from every process table, then follow the [rollback steps](/docs/user-guide/box/security/native-filesystem-policy/index.md#stored-configuration-and-rollback). Older builds do not recognize the key, even when its value is `false`.
@@ -365,8 +367,8 @@ The agent listens on `workload_port` on `127.0.0.1` or `0.0.0.0`, because the re
 At startup the box prints each listener:
 
 ```text
-strands-box: [ingress] 0.0.0.0:8080 is relayed to the agent's port 8081, at most 640 callers at once
-strands-box: [ingress] 0.0.0.0:8000 is relayed to the agent's port 8001, at most 640 callers at once
+strands-box: note[B0701]: [ingress] 0.0.0.0:8080 is relayed to the agent's port 8081, at most 640 callers at once
+strands-box: note[B0701]: [ingress] 0.0.0.0:8000 is relayed to the agent's port 8001, at most 640 callers at once
 ```
 
 On Linux, the box starts no listener’s relay until the agent’s sandbox reports that it is ready, and a caller that arrives earlier waits in the listen queue. A sandbox that does not report ready within 60 seconds refuses the run.
@@ -375,7 +377,7 @@ The box raises its own open-file limit as far as the system allows, and holds at
 
 ## `[agent.filesystem]` and `[tool.<name>.filesystem]`
 
-Each list, and what one entry in it grants. `[agent.filesystem]` takes all nine; `[tool.<name>.filesystem]` takes seven. A `metadata` or `exec` list there is refused by name at load. [A tool’s sandbox](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/containment.md#a-tools-leaf-box) states what a tool reaches in their place.
+Each list, and what one entry in it grants. `[agent.filesystem]` takes all nine; `[tool.<name>.filesystem]` takes seven. A `metadata` or `exec` list there is refused by name at load. [A tool’s sandbox](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/containment.md#a-tools-leaf-box) states what a tool reaches in their place.
 
 Every process’s writable grants must exclude the installed Box programs, their hard-link names, mounted aliases, and enclosing directories. [Installation integrity](#installation-integrity) describes the checks and refusals.
 
@@ -413,6 +415,16 @@ These filesystem lists govern sandbox access. Shell and Python requests through 
 
 On Linux, write access permits ordinary file writes. Permission changes, including executable-bit changes, require a requested mode without set-user-ID or set-group-ID bits. Changing a file’s owner or group, or requesting either special bit during creation, remains forbidden. These requests fail with `EPERM` (operation not permitted). Opening an existing file without creation flags does not use its supplied creation mode. Existing shared-group directories retain Linux’s normal group inheritance for new subdirectories. A permission change also fails if its requested mode keeps a set-user-ID or set-group-ID bit that the file or directory already has. The request must clear both bits to succeed. This includes directories that inherited their group bit: GNU `chmod g+w` and even `chmod 755` preserve that bit and fail. A refused request leaves the existing permissions unchanged.
 
+### Incoming mount declarations
+
+In `box.toml`, the optional `receive_mounts` array in `[agent.filesystem]`, `[tool.<name>.filesystem]`, or a local `[mcp.<name>.filesystem]` selects paths where that sandbox would receive externally attached filesystems after startup. It does not tell Box to create or attach a filesystem. Omitting the array selects no paths. Each process has its own array; tools and local servers do not inherit the agent’s entries. Listing a path grants no read, write, or execution access.
+
+**Incoming mount forwarding is unavailable in this build.** Linux requires no additional experimental setting, but a nonempty array still rejects configuration loading until forwarding is implemented. On Linux, an empty or omitted array leaves ordinary filesystem behavior unchanged.
+
+On macOS, the presence of `receive_mounts` rejects configuration loading, including `receive_mounts = []`. Omit the key on macOS. Both platform refusals happen before Box creates its state directory or starts a workload.
+
+The declaration checks require absolute, literal paths other than `/`. Entries cannot be home-relative, such as `~/data`, or contain patterns, control characters, or `..`. Within one process’s array, paths cannot repeat or contain one another: `/mnt/data` and `/mnt/data/child` conflict, while `/mnt/data` and `/mnt/database` do not. Different processes may name the same path. A nonempty array also conflicts with enabled [native filesystem policy checks](/docs/user-guide/box/security/native-filesystem-policy/index.md) for the same process. These checks do not validate a future filesystem’s contents or establish that storage is available.
+
 ### Direct access by operating system
 
 The read and write lists state separate permissions. These rules also apply to local servers under `[mcp.<name>.filesystem]`.
@@ -433,7 +445,7 @@ An agent’s read grant on a recognized Linux loader directory also permits shar
 
 Startup output states `read-only`, `write-only`, or `read-write` for each content-access grant. For partial overlaps, the parent entry also identifies the overlapping grants that allow both. Denials and protected paths still restrict access. Duplicate or nested grants of the same operation still cause startup refusal.
 
-The example uses four lists. `read` covers the CLI’s install tree and `strands-home`, `read_file` names the preload file and Homebrew’s OpenSSL settings, `write` covers `strands-home`, and `list` names the project. `strands-home` is in both `read` and `write` to request read-write access explicitly. On macOS, the project is in `list` alone, so the CLI sees its names while policy decides each file its shell opens. Linux refuses this example’s `list` entry. See the [platform comparison](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/platform-differences.md).
+The example uses four lists. `read` covers the CLI’s install tree and `strands-home`, `read_file` names the preload file and Homebrew’s OpenSSL settings, `write` covers `strands-home`, and `list` names the project. `strands-home` is in both `read` and `write` to request read-write access explicitly. On macOS, the project is in `list` alone, so the CLI sees its names while policy decides each file its shell opens. Linux refuses this example’s `list` entry. See the [platform comparison](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/platform-differences.md).
 
 Each entry is absolute, or is `~` or starts with `~/`. An entry carries no pattern, no control character, and no `..` component. A directory entry that encloses this box’s `box.toml` and `policy.dw` grants everything below it except the directory that holds those two files.
 
@@ -450,16 +462,16 @@ A `read` or `read_file` entry is the one exception: it may name a symbolic link 
 -   A link to a directory, and a link in `write`, `write_file`, `exec`, `list` or `metadata`, is still refused.
 -   The disclosure shows the entry as `read_file /usr/bin/cc -> /usr/bin/gcc`.
 
-**No policy decision covers a filesystem list**, so `run` discloses each entry on stderr before the workload starts, under `strands-box: [agent] runs <program> with no policy decision over these paths:`. Getting started shows the example’s disclosure. A credential store, such as `~/.aws` or `~/.ssh`, is disclosed by name as well, as `strands-box: [tool.<name>]: exposes ~/.ssh (read)` for a tool granted the operator’s SSH directory.
+**No policy decision covers a filesystem list**, so `run` discloses each entry on stderr before the workload starts, under `strands-box: note[B0201]: [agent] runs <program> with no policy decision over these paths:`. Getting started shows the example’s disclosure. A credential store, such as `~/.aws` or `~/.ssh`, is disclosed by name as well, as `strands-box: note[B0202]: [tool.<name>]: exposes ~/.ssh (read)` for a tool granted the operator’s SSH directory.
 
 On Linux, preserved interpreter spellings appear in a separate section before the runtime minimum:
 
 ```text
-strands-box: [tool.check] interpreter aliases for configured access:
+strands-box: note[B0201]: [tool.check] interpreter aliases for configured access:
   alias       /bin/sh -> /usr/bin/dash  (interpreter spelling)
 ```
 
-The arrow maps the script’s spelling to the file its configured grants already authorize. The section appears only when Box preserves an interpreter spelling.
+The arrow maps the script’s spelling to the file its configured grants already authorize. The section appears only when Box preserves an interpreter spelling. [Message codes](/docs/user-guide/box/reference/message-codes/index.md) explains the code in each line of the disclosure, such as `B0201`.
 
 With no `filesystem` table, the process reaches its `command` and the runtime minimum. The command’s own exec grant is implicit: a process may always run its `command`, and the startup disclosure shows that grant as `exec <command> (command, implicit)`. So removing a directory from `exec` does not refuse the process’s own command. The controls on a host binary are the `shell:spawn` permit and the `[tool.<name>]` table; [shell policy](/docs/user-guide/box/guides/write-shell-policy/index.md) states how a rule spells `program_path`.
 
@@ -493,7 +505,7 @@ Create the path first, or name the existing directory above it. A `[tool.<name>]
 
 On Linux, `filesystem grant object changed while loading config` means a granted path selected a different object during that launch’s preparation. Let the filesystem update finish, then retry the launch.
 
-**A `write` grant alone is not runnable.** The agent’s sandbox refuses to map code from a writable grant. When the agent’s `command` or one of its interpreters lies inside a writable grant, the startup disclosure carries a warning: `strands-box: warning: [agent] command <path> lies inside the writable grant <path>, so the process can replace the program it runs`.
+**A `write` grant alone is not runnable.** The agent’s sandbox refuses to map code from a writable grant. When the agent’s `command` or one of its interpreters lies inside a writable grant, the startup disclosure carries a warning: `strands-box: warning[B0212]: [agent] command <path> lies inside the writable grant <path>, so the process can replace the program it runs`.
 
 On Linux, an agent also needs an explicit `exec` grant for an automatically discovered writable loader or shared library. Otherwise, startup fails with `writable dependency <path> needed by <program> has no explicit execution grant`. A `read` or `read_file` entry does not resolve this error. Remove write access to the library, or grant execution if the agent should run code it can change.
 
@@ -517,13 +529,13 @@ A symbolic link to a file that doesn’t exist counts as nothing. A symbolic lin
 `run` prints one line for each tool it leaves out, before the workload starts:
 
 ```text
-strands-box: [tool.tsx] left out: tsx not found
+strands-box: note[B0207]: [tool.tsx] left out: tsx not found
 ```
 
 A left-out tool gets no filesystem grants, and Box does not check its lists. It runs nothing for the agent. Its grammar stays, so a policy that names its actions still loads. A grammar decides spawns by program name, so it still decides another `[tool]` or stdio `[mcp.<name>]` with the same program name. The startup line for that table says so:
 
 ```text
-strands-box: [tool.system_git]: a spawn of `git` is decided by its tool grammar, and no `shell:spawn` rule applies to it
+strands-box: note[B0208]: [tool.system_git]: a spawn of `git` is decided by its tool grammar, and no `shell:spawn` rule applies to it
 ```
 
 The set of tools is fixed when the run starts. A program installed during the run, or a file that appears later at the tool’s path, does not run with the tool’s grants.
@@ -601,7 +613,7 @@ End every active run before installation updates. Update the installation from t
 This table holds the tool grammar for the program its `[tool]` runs, and it loads only when `[experimental-features] tool-grammars = true`. The feature is experimental. A spawn of the program is decided as a grammar action in place of `shell:spawn`, as [`shell:spawn`](/docs/user-guide/box/reference/shell/index.md#shellspawn) states. [Tool grammars](/docs/user-guide/box/guides/tool-grammars/index.md) shows how to write one and the rules that use it. `run` prints one line for each `[tool]` and stdio `[mcp.<name>]` whose program a grammar decides, so you can move its `shell:spawn` rules. A `shell:spawn` rule still decides each other name of that program file, such as `make` through macOS `/usr/bin/git`, except in the cases that [`shell:spawn`](/docs/user-guide/box/reference/shell/index.md#shellspawn) refuses:
 
 ```text
-strands-box: [tool.git]: a spawn of `git` is decided by its tool grammar, and no `shell:spawn` rule applies to it
+strands-box: note[B0208]: [tool.git]: a spawn of `git` is decided by its tool grammar, and no `shell:spawn` rule applies to it
 ```
 
 A copy of that program at another path is a different file, and `shell:spawn` still decides it. Keep `shell:spawn` permits narrow, or a copy gets past a forbid on the grammar’s actions.
@@ -639,11 +651,13 @@ Each table binds one secret to a set of destinations, and its name is the operat
 
 The example takes every default: the key lands in the `Authorization` header with a `Bearer` prefix, and only a request that carries the placeholder gets it.
 
+A destination host, and a backend `url` host, must be a spelling that a connection can match. The loader removes a trailing dot, so `api.example.com.` loads as `api.example.com`. It refuses a host with an empty label, a character other than an ASCII letter, a digit, `.`, `-`, or `_`, a label over 63 bytes, or a name over 253 bytes. It also refuses a name that ends in a number, such as `10.5` or `0x7f.1`, because a resolver reads it as an IPv4 address; write the address as four decimal numbers, such as `10.0.0.5`. The message names the host as written: `destination host "10.5" is not the spelling the gateway matches a connection against: <reason>`. A backend `url` host may not be a host that another entry re-routes, or a remote MCP server’s host. See [destinations](/docs/user-guide/box/guides/network-and-credentials/index.md#destinations).
+
 An entry needs a `secret` or a backend. One with neither is refused: `an entry with no secret declares only a destination, which policy already decides; give it a secret, add a backend, or set protocol = "mcp" for a remote MCP server`. `protocol` on this table takes `http` alone; declare a remote MCP server as `[mcp.<name>]` with `type = "http"`, which the next section describes.
 
 An `aws://` route signs inside the box, so it takes no `header`, `prefix`, `placement`, `param`, `inject`, or `phantom_prefix`. Setting one is refused when the configuration loads. A bare `aws://` (no profile) signs with the host’s ambient identity; [Credential sources](/docs/user-guide/box/guides/network-and-credentials/index.md#credential-sources) describes the default chain, the profiles it does not resolve (AWS SSO), the warning and when it prints, and the writable-`~/.aws` rule.
 
-An entry re-routes to a backend with one `[[egress.<name>.backends]]` table, holding a `url` (`scheme://host[:port][/prefix]`, `https` or `http`) and an optional `auth`, which is the backend’s own credential: an `env://` token, a token in a declared scheme, or an `aws://` profile SigV4-signed over the backend host (with an explicit `auth.aws.service` and `auth.aws.region`, since a gateway host carries no derivable scope). An `auth` takes no `env` key, because the workload holds no placeholder for it. The backend `url`’s path prefix joins in front of the agent’s request path. An entry may keep its own `env://` `secret` beside a backend, phantom-only: the box provisions the placeholder and strips it, never injecting the real destination credential, so the named variable need not be set. The loader refuses more than one backend, a destination that is not one exact host, a host with a backend that another entry also names (on any port), a `url` with a query, fragment, or a non-`http(s)` scheme, a `credsd://` `auth`, an `aws://` `auth` without a valid `auth.aws.service`/`auth.aws.region` (each non-empty and only lowercase `[a-z0-9-]`, or those keys on a non-`aws://` auth), a signed (`aws://` or `credsd://`) destination `secret`, a destination `secret` in a declared scheme, a destination `secret` beside an `http` backend, a destination `secret.inject` beside a backend (the re-routed secret is phantom-only, so `inject` has no effect), and an `auth` on an `http` backend. [The egress table](/docs/user-guide/box/guides/network-and-credentials/index.md#backends) describes the backend, and [egress design](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/egress.md) describes how the box dials it.
+An entry re-routes to a backend with one `[[egress.<name>.backends]]` table, holding a `url` (`scheme://host[:port][/prefix]`, `https` or `http`) and an optional `auth`, which is the backend’s own credential: an `env://` token, a token in a declared scheme, or an `aws://` profile SigV4-signed over the backend host (with an explicit `auth.aws.service` and `auth.aws.region`, since a gateway host carries no derivable scope). An `auth` takes no `env` key, because the workload holds no placeholder for it. The backend `url`’s path prefix joins in front of the agent’s request path. An entry may keep its own `env://` `secret` beside a backend, phantom-only: the box provisions the placeholder and strips it, never injecting the real destination credential, so the named variable need not be set. The loader refuses more than one backend, a destination that is not one exact host, a host with a backend that another entry also names (on any port), a `url` with a query, fragment, or a non-`http(s)` scheme, a `credsd://` `auth`, an `aws://` `auth` without a valid `auth.aws.service`/`auth.aws.region` (each non-empty and only lowercase `[a-z0-9-]`, or those keys on a non-`aws://` auth), a signed (`aws://` or `credsd://`) destination `secret`, a destination `secret` in a declared scheme, a destination `secret` beside an `http` backend, a destination `secret.inject` beside a backend (the re-routed secret is phantom-only, so `inject` has no effect), and an `auth` on an `http` backend. [The egress table](/docs/user-guide/box/guides/network-and-credentials/index.md#backends) describes the backend, and [egress design](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/egress.md) describes how the box dials it.
 
 One placeholder variable holds one secret. Two entries that place a placeholder in one variable must name the same reference, and an `env://NAME` entry counts under `NAME`. Otherwise the load is refused, and the message names both tables: `` `[egress.b]` and `[egress.a]` both hold a placeholder in the variable TOKEN, and they name different secrets; one placeholder variable holds one secret, so give one of them another variable ``. An `aws://` route fills `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` with its own placeholders, so beside one, no other route can hold a placeholder in either variable. The own `secret` of an entry with a backend is not such a route, because Box strips that placeholder.
 
@@ -704,7 +718,7 @@ A box that declares a source stores its record at version 39, and so does a box 
 When the box starts, it checks the program file of each table and prints one line for each on stderr:
 
 ```text
-strands-box: [secret-source.op]: reads each op:// secret with /opt/homebrew/bin/op, which runs outside every sandbox
+strands-box: note[B0203]: [secret-source.op]: reads each op:// secret with /opt/homebrew/bin/op, which runs outside every sandbox
 ```
 
 Box then runs the program once for each secret that the configuration names, before the workload starts. Two references that differ only in `#FIELD` name one secret, so they share one run. Box reads the secrets of telemetry targets first and opens its records. Then it reads the others. It keeps each secret in memory for the run and writes none to disk. It reads no secret again during the run, so a secret that changes in the vault takes effect at the next start.
@@ -722,8 +736,8 @@ Each of these stops the box before the workload starts:
 -   The program returns no secret: it exits with another status, runs too long, or prints a value that Box can’t use. Box prints two lines. The first holds the reason and the last words of the program on its stderr. The second names the entry that holds the reference:
     
     ```text
-    strands-box: [egress.github] secret.ref: credential error: the secret source "op" ("/opt/homebrew/bin/op") for op://[REDACTED] exited unsuccessfully (exit status: 1): [ERROR] "GitHub" isn't an item in the "Personal" vault
-    strands-box: error: `[egress.github] secret.ref` names a secret that the secret source `op` (/opt/homebrew/bin/op) did not return, so the box does not start
+    strands-box: error[B0113]: [egress.github] secret.ref: credential error: the secret source "op" ("/opt/homebrew/bin/op") for op://[REDACTED] exited unsuccessfully (exit status: 1): [ERROR] "GitHub" isn't an item in the "Personal" vault
+    strands-box: error[B0104]: `[egress.github] secret.ref` names a secret that the secret source `op` (/opt/homebrew/bin/op) did not return, so the box does not start
     ```
     
     Sign in to the vault or correct the reference, then start the box again. When the entry is a `[telemetry.<name>]` target and the run is the first one of a new box directory, also remove the box directory before you start the box again. Box stores the box record before it reads that secret, so the next run otherwise stops and says that [the history is absent](/docs/user-guide/box/reference/policy/index.md#a-reused-box-whose-history-and-record-disagree).
@@ -756,7 +770,7 @@ A workload must not go around Box to the vault. So Box protects the files and th
 **The `reads` and `deny` paths.** No grant can reach one of these paths. Box refuses a filesystem entry in any list except `deny` and `deny_write` that names the path, a path inside it, or a folder that holds it. That includes a credential store that a grant can otherwise name exactly: with `reads = ["~/.aws"]`, a tool can’t take `read = ["~/.aws"]`. A `deny_write` entry at such a path grants nothing, and Box refuses the `write` entry that it needs around it. Each sandbox also denies these paths, as it denies an entry of its own `deny` list. An entry that is a symbolic link protects the link and the path that it names. On macOS, a path that is absent when the box starts stays closed if it appears later. That includes a path behind a link, such as a socket that an app makes when it starts. On Linux, a sandbox gets an empty, read-only folder or an empty file in place of each path that exists when the box starts. Box skips an entry whose path doesn’t exist then, or whose symbolic link names a target that doesn’t exist: the box starts, and no sandbox denies that path in this run. No grant can reach it, as on macOS. Box prints one line for the entry after the line of its source:
 
 ```text
-strands-box: [secret-source.op]: `reads` entry "~/.op" names /home/me/.op, which does not exist when the box starts, so no sandbox denies it in this run
+strands-box: note[B0203]: [secret-source.op]: `reads` entry "~/.op" names /home/me/.op, which does not exist when the box starts, so no sandbox denies it in this run
 ```
 
 So one table can name each place that a vault can have, and a box starts on a machine that has only some of them. `policy generate-schema` prints the same line when a remote MCP server names a secret in that scheme. Read these lines when you write a table: on Linux a path with a typing error doesn’t stop the box, and the line is how you see it. No write grant can reach the folder that holds a symbolic link on the way to the path, because a change to the link writes that folder. This protection is for the sandboxes. Strands Shell and Monty run outside every sandbox, and the first limit below is about them.
@@ -780,7 +794,7 @@ These limits remain:
     when { context.input.path == "~/.config/op" || context.input.path like "~/.config/op/*" };
     ```
     
-    The rule names the path and each path inside it. It compares each letter exactly, so it doesn’t match another case of a name. The path conditions of your `fs:*` permits protect the vault, and this rule is a second check. From Strands Shell, [policy reads a path](/docs/user-guide/box/reference/policy-actions/index.md#filesystem) with each symbolic link resolved. So when the path is a symbolic link or passes through one, write the rule for the path that it resolves to, and for each link on the way. The rule doesn’t match a move or a deletion of a folder above the path or above a link on the way, so don’t permit those on your home, on `~/.config`, or on a folder that holds such a link. No check beneath policy refuses these paths in the Shell or Monty. The [limits page](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/limitations.md#a-secret-source-runs-outside-every-sandbox) says more.
+    The rule names the path and each path inside it. It compares each letter exactly, so it doesn’t match another case of a name. The path conditions of your `fs:*` permits protect the vault, and this rule is a second check. From Strands Shell, [policy reads a path](/docs/user-guide/box/reference/policy-actions/index.md#filesystem) with each symbolic link resolved. So when the path is a symbolic link or passes through one, write the rule for the path that it resolves to, and for each link on the way. The rule doesn’t match a move or a deletion of a folder above the path or above a link on the way, so don’t permit those on your home, on `~/.config`, or on a folder that holds such a link. No check beneath policy refuses these paths in the Shell or Monty. The [limits page](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/limitations.md#a-secret-source-runs-outside-every-sandbox) says more.
     
 -   Box doesn’t compare the `env` or the `command` of a table with your values of the `pass-secret-env` variables. A workload holds one of those values only when you write the value in a table of `box.toml` or type it after `box run`. Don’t do either. A workload can use the same name for a value of its own, such as the placeholder of a signed `aws://` route in `AWS_ACCESS_KEY_ID`.
     
@@ -793,7 +807,7 @@ These limits remain:
 
 ## `[mcp.<name>]`
 
-Each table declares one MCP server. `type` selects the transport. A `stdio` server is a local program that the box starts in its own separate sandbox. It starts only when a `shell:spawn` permit covers its `command`; [MCP policy](/docs/user-guide/box/guides/write-mcp-policy/index.md) lists the fields that decision carries. When no permit covers it, the open fails with `MCP server "<name>" may not start: <decision>` and the server does not run. An `http` server is a remote server the workload reaches through the egress gateway. Each request is an `mcp:call` decision, and a rule reads the table’s name as `context.input.server`. The current reference for this table is [`mcp.md`](/docs/user-guide/box/guides/add-an-mcp-server/index.md). The box adds the runtime minimum to the server’s process; see [the runtime minimum](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/containment.md#the-runtime-minimum).
+Each table declares one MCP server. `type` selects the transport. A `stdio` server is a local program that the box starts in its own separate sandbox. It starts only when a `shell:spawn` permit covers its `command`; [MCP policy](/docs/user-guide/box/guides/write-mcp-policy/index.md) lists the fields that decision carries. When no permit covers it, the open fails with `MCP server "<name>" may not start: <decision>` and the server does not run. An `http` server is a remote server the workload reaches through the egress gateway. Each request is an `mcp:call` decision, and a rule reads the table’s name as `context.input.server`. The current reference for this table is [`mcp.md`](/docs/user-guide/box/guides/add-an-mcp-server/index.md). The box adds the runtime minimum to the server’s process; see [the runtime minimum](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/containment.md#the-runtime-minimum).
 
 The example box declares no MCP server. To give the Strands CLI one, declare it here, and add it under `mcpServers` in the file the CLI reads through its `--mcp-config` option. Use the executable’s filename and the same arguments, in the same order. The box places an alias with that filename on the agent’s `PATH`, so when the CLI starts `mcp-server-fetch`, the box runs this table’s `command` in a separate sandbox:
 
@@ -812,7 +826,7 @@ read = ["~/.local/share/uv/tools/mcp-server-fetch", "~/.local/share/uv/python"]
 | `command` | string array | For `stdio`: a bare program name or absolute executable path, followed by its arguments. The executable’s filename names the alias in the box’s `bin/`. The harness runs that alias with the arguments. Two tables can share an alias when their arguments distinguish them. See [executable paths](/docs/user-guide/box/guides/add-an-mcp-server/index.md#select-an-executable-by-path). |
 | `workspace` | string | For `stdio`: the server’s initial working directory. It grants nothing. |
 | `env` | table | For `stdio`: the literal environment the server receives. `HOME` and `PATH` default to the operator’s own, as for `[agent]`. |
-| `filesystem` | table | For `stdio`: the six lists the server’s own syscalls reach, the same six a `[tool.<name>.filesystem]` takes; a `metadata` or `exec` list is refused by name. An absent table grants nothing, so the server’s sandbox has the runtime minimum and the reach that [a local MCP server’s sandbox](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/containment.md#local-mcp-servers) states. |
+| `filesystem` | table | For `stdio`: the six lists the server’s own syscalls reach, the same six a `[tool.<name>.filesystem]` takes; a `metadata` or `exec` list is refused by name. An absent table grants nothing, so the server’s sandbox has the runtime minimum and the reach that [a local MCP server’s sandbox](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/containment.md#local-mcp-servers) states. |
 | `argument_wildcards` | bool | For `stdio`: `false` by default. `true` lets this server’s whole-argument `*` entries match and forward caller-supplied values. See [argument wildcards](/docs/user-guide/box/guides/add-an-mcp-server/index.md#argument-wildcards). |
 | `network.contain_egress` | bool | For `stdio`: `true` by default. `false` gives this one server direct network access, with no gateway, no policy decision per request, and no credential injection. |
 | `native-filesystem-policy` | boolean | For `stdio`: override the global experimental filesystem policy setting. Remote `http` entries refuse this field. See [workload selection](/docs/user-guide/box/security/native-filesystem-policy/index.md#select-workloads). |
@@ -835,7 +849,7 @@ Each table declares one export target. The label is your own, and a refusal name
 | `include` | string array | Which records reach this target: `deny`, `permit`, `trace`, `logs`, `metrics`, or `mcp_tool_calls`. `trace` names the agent’s own spans and the box’s control-plane records. `logs` includes unmatched MCP routing diagnostics. `mcp_tool_calls` names each MCP tool call’s arguments and output in clear text, and how it ended. **Absent means every signal except `mcp_tool_calls`**, which a target receives only when it names it. An empty list is refused, and so is a repeated word. |
 | `accepts` | string array | For `otlp`: which OTLP payloads the endpoint takes, from `traces`, `logs`, and `metrics`. Absent means all three. The box sends no batch of a payload the list leaves out. |
 | `headers` | table | For `otlp`: fixed headers sent on every request. A header that carries a credential or a signature is refused here. |
-| `secret.ref` | string | `env://NAME`, `secret://NAME`, `aws://PROFILE`, `credsd://ENVIRONMENT`, or a reference in a [declared scheme](#secret-sourcescheme). `aws://` and `credsd://` sign each request with SigV4. A literal value is refused. The box attaches this secret itself, so the target takes no `secret.env`. |
+| `secret.ref` | string | `env://NAME`, `secret://NAME`, `aws://PROFILE`, `credsd://CREDENTIAL`, or a reference in a [declared scheme](#secret-sourcescheme). `aws://` and `credsd://` sign each request with SigV4. A literal value is refused. The box attaches this secret itself, so the target takes no `secret.env`. |
 | `secret.placement` | string | For `otlp`: `header` (default) or `basic_auth`. `basic_auth` sends a `user:password` secret as `Authorization: Basic`. |
 | `secret.header` | string | For `otlp`: the header the secret lands in. Defaults to `Authorization`. |
 | `secret.prefix` | string | For `otlp`: text before the secret in the header. Defaults to `Bearer` on `Authorization`, and empty elsewhere. |
@@ -880,7 +894,7 @@ A `langfuse` or `langsmith` target also takes a reference in a [declared scheme]
 
 A vendor kind refuses each key it sets itself: `headers`, `accepts`, `secret.header`, `secret.prefix`, and `secret.placement`. The message is ``a `<kind>` target sets `<key>` itself, so leave it out``. A key that belongs to another kind is refused with `` `<key>` does not apply to a `<kind>` target ``. Box stores each vendor target as the `otlp` target it stands for. For a vendor Box does not know, write `kind = "otlp"` with `accepts`, `headers`, and `secret` yourself.
 
-A secret needs an `https://` destination unless the destination is loopback. Box checks each `aws://` and `credsd://` telemetry credential before the workload starts, so a profile that cannot sign or a daemon that does not answer stops the run.
+A secret needs an `https://` destination unless the destination is loopback. Box checks each `aws://` and `credsd://` telemetry credential before the workload starts. A profile that can’t sign, a daemon that doesn’t answer, or a credential the daemon doesn’t list stops the run.
 
 When the run ends, Box prints one stderr line if an export to a configured target failed, or if the final export did not finish in time. Set `STRANDS_BOX_TELEMETRY_DEBUG` to any non-empty value in the environment of `strands-box run` to also print each failed export as it happens, with its full cause and the start of the endpoint’s answer, with each credential Box attached redacted.
 
@@ -932,13 +946,15 @@ A value never carries the policy engine’s own spelling: read `fs:read`, not `B
 | Correlation | `strands.box.request.id` (egress only), `jsonrpc.request.id` (an MCP request), and `strands.box.trace.parent_span_id`, `.parent_sampled`, `.state` on the log record |
 | What it was about | `server.address` and `server.port` on a `net:*` decision, `http.request.method` on a request, `file.path` on `fs:*` |
 
-The shipped example under [`examples/strands-box/strands-sdk-agent/`](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/examples/strands-box/strands-sdk-agent/README.md) writes a `@description` on its rules. It runs a Strands Agents SDK agent written in Python, which is a different workload from the Strands CLI on this page.
+The shipped example under [`examples/strands-box/strands-sdk-agent/`](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/examples/strands-box/strands-sdk-agent/README.md) writes a `@description` on its rules. It runs a Strands Agents SDK agent written in Python, which is a different workload from the Strands CLI on this page.
 
 The record omits `url.full` and `process.command_line`.
 
 ## Errors
 
 A refusal of the file’s shape happens at parse, before any box state exists: an unknown key, an absent or invalid `name`, an absent or relative `box_dir`, an empty or relative `command` program, a relative `workspace`, an `env` name the box owns, a relative `env.HOME` or `env.TMPDIR`, a patterned or relative `filesystem` path, a `filesystem` path carrying `..`, a duplicated `filesystem` path, an overlapping or all-hosts egress destination, a secretless egress entry, a literal egress secret, each [`[secret-source.<scheme>]`](#secret-sourcescheme) refusal, each [`[tool.<name>.grammar]`](#toolnamegrammar) refusal, an `ingress` outside `[agent]`, an `[[agent.ingress]]` while `ingress` is off in `[experimental-features]`, more than five `[[agent.ingress]]` entries, an `[[agent.ingress]] listen` that is not an IP address and port, a port of 0, two entries with one `listen` port or one `workload_port`, and on macOS a `listen` port equal to any entry’s `workload_port`. An invalid `limits.shell.timeout`, `limits.shell.max_input`, `limits.shell.max_output`, or `limits.shell.max_stdin` is also a parse error.
+
+[Incoming mount declarations](#incoming-mount-declarations) also fail before Box creates state: invalid or overlapping `receive_mounts` paths, or a nonempty array combined with native filesystem policy for that process. This build rejects nonempty arrays on Linux because forwarding is unavailable. On macOS, any `receive_mounts` key is rejected, including `receive_mounts = []`. The removed `[experimental-features] linux-storage-mounts` key is an error regardless of its value.
 
 A `box_dir` whose parent does not exist is refused before anything is created. Every other refusal that needs the surrounding OS happens after `run` has created `box_dir`, and before the workload starts: a `workspace` that does not exist, an `env.HOME` inside or enclosing `box_dir`, a telemetry file destination inside the box directory and outside `private/`, a `filesystem` entry whose path does not exist or is a symbolic link, a `deny_write` entry that is not a directory inside a `write` directory, an `[[agent.ingress]] listen` address that cannot be bound, and on macOS a `workload_port` that another process already listens on. A `[tool.<name>]` whose program is not installed is [left out](#a-tool-whose-program-is-not-installed) rather than refused. The box directory stays behind. It is empty when the refusal came before the record was written, and it holds the record when the refusal came after. The next `run` against it judges the file again and reports the same refusal until the file is fixed.
 

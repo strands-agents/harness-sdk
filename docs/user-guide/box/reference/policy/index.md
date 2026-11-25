@@ -433,7 +433,7 @@ Do not copy generated box state or `private/dogwood.redb` into the new directory
 The box validates `policy.dw` before it starts. It refuses to start on a policy it cannot read, or on a policy with a rule it can prove will never match (the refusals call such a rule inert). `box run` prints the refusal on stderr and exits with status `1`. No workload starts, and a box that has run before keeps its state.
 
 ```text
-strands-box: error: policy file /Users/you/box-tutorial/my-box/policy.dw will not load: <refusal>
+strands-box: error[B0103]: policy file /Users/you/box-tutorial/my-box/policy.dw will not load: <refusal>
 ```
 
 Each refusal below is the text after `will not load:` . Two numberings appear. `rule N` counts from `1` in file order. `policy_N` is the engine’s own name and counts from `0`, so `policy_0` is rule
@@ -443,7 +443,7 @@ Each refusal below is the text after `will not load:` . Two numberings appear. `
 When the box suspects a rule is inert but cannot prove it, it prints a warning and starts:
 
 ```text
-strands-box: warning: <finding>
+policy: warning[<code>]: <finding>
 ```
 
 ### The rule does not parse
@@ -802,7 +802,7 @@ policy writes a cap as a permit: rule @id("write_budget") (rule 2) carries a tem
 **Warned**, when the other permit has a `when` condition. The box starts, and prints this at startup:
 
 ```text
-strands-box: warning: rule @id("write_budget") (rule 2) carries a temporal clause beside rule @id("project_writes") (rule 1), which also permits that action; the budget is inert for every request the other rule admits, so write a cap as a forbid
+policy: warning[P0103]: rule @id("write_budget") (rule 2) carries a temporal clause beside rule @id("project_writes") (rule 1), which also permits that action; the budget is inert for every request the other rule admits, so write a cap as a forbid
 ```
 
 **Loads**, with no warning, when the temporal `permit` is the only permit for its action, or when every other permit for the action is temporal too. Alone, it admits the action whenever its clause holds.
@@ -821,7 +821,7 @@ The box refuses what it can prove inert. Two shapes load and decide nothing:
 A box keeps its decision history in `<box_dir>/private/dogwood.redb`. The box record, a file under `<box_dir>/private` that says whether this box has run, must agree with the history file. The run refuses when the record says the box has run but the history is missing or empty, and when the record says it has not run but the history holds events:
 
 ```text
-strands-box: error: policy staging failed: the box record is committed, but the history /Users/dev/.box/<name>/private/dogwood.redb is absent. Wipe the box directory to start again.
+strands-box: error[B0105]: policy staging failed: the box record is committed, but the history /Users/dev/.box/<name>/private/dogwood.redb is absent. Wipe the box directory to start again.
 ```
 
 A first run that stops after Box stores the record and before it opens the history leaves the box in this state too.
@@ -831,10 +831,10 @@ The text varies: the record `is committed` or `is not committed`, and the histor
 The run also refuses history stamped more than five minutes ahead of the system clock. This happens when the clock moved back after the box last ran, or when someone edited the history file:
 
 ```text
-strands-box: error: policy staging failed: policy staging history failure: durable timestamp <t> is <n> ns ahead of the current clock <now>, exceeding the maximum allowed future skew of 300000000000 ns; refusing the operation rather than issuing future-dated timestamps
+strands-box: error[B0103]: policy staging failed: policy staging history failure: durable timestamp <t> is <n> ns ahead of the current clock <now>, exceeding the maximum allowed future skew of 300000000000 ns; refusing the operation rather than issuing future-dated timestamps
 ```
 
-If the clock moves back more than five minutes during a run, the box denies each request and prints `policy: warn: durable timestamp ...; denying` on stderr. Requests are decided again once the clock is within five minutes of the newest history timestamp. If an action finished while the clock was that far back, the box keeps its record and prints `policy: warn: an earlier outcome is not recorded yet: ...; denying` for each request until the record is saved. Once the clock is within five minutes again, the box retries it when another request or completed outcome arrives, or when the run shuts down. Requests are decided normally after the record is saved. If the run ends while the clock is still more than five minutes behind, or the process is killed, that action doesn’t count toward any limit after a restart. A time-zone change does not move this clock.
+If the clock moves back more than five minutes during a run, the box denies each request and prints `policy: warning[P0202]: durable timestamp ...; denying` on stderr. Requests are decided again once the clock is within five minutes of the newest history timestamp. If an action finished while the clock was that far back, the box keeps its record and prints `policy: warning[P0202]: an earlier outcome is not recorded yet: ...; denying` for each request until the record is saved. Once the clock is within five minutes again, the box retries it when another request or completed outcome arrives, or when the run shuts down. Requests are decided normally after the record is saved. If the run ends while the clock is still more than five minutes behind, or the process is killed, that action doesn’t count toward any limit after a restart. A time-zone change does not move this clock.
 
 In the default build, the background history timer also retries the kept record after the clock recovers. With batching disabled, retry occurs on a later request, another completed outcome, or shutdown. The timer does not stop the run for this clock delay. Each timer call still persists events the engine already accepted while it waits to record the completed action. Storage failures still stop the run. Shutdown reports an error if a completed action remains unrecorded after its final attempt.
 
@@ -845,4 +845,4 @@ Correct the system clock, or remove the box directory to start again, as [gettin
 -   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): a first policy, a denial, and the decision log.
 -   [The action vocabulary](/docs/user-guide/box/reference/policy-actions/index.md): every action, its fields, and which part of the box raises it.
 -   [Security](/docs/user-guide/box/security/index.md): what `box.toml` governs, what `policy.dw` governs, and what a policy cannot do today.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/policy.md): how one engine per box decides, and why.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/policy.md): how one engine per box decides, and why.

@@ -103,6 +103,7 @@ Choose the migration path that matches your current foundation. For a new agent,
 ## Related pages
 
 - [Get started](/docs/user-guide/sdk/quickstart/overview/index.md) (1 shared tag)
+- [Optimization quickstart](/docs/user-guide/evals-sdk/optimization/quickstart/index.md) (1 shared tag)
 - [Python Quickstart](/docs/user-guide/sdk/quickstart/python/index.md) (1 shared tag)
 - [Strands evaluation quickstart](/docs/user-guide/evals-sdk/quickstart/index.md) (1 shared tag)
 - [Strands Shell quickstart](/docs/user-guide/shell/quickstart/index.md) (1 shared tag)

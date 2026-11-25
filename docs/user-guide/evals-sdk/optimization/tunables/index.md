@@ -1,0 +1,381 @@
+Before the optimizer can search, you tell it what it’s allowed to change. You do that by writing the agent as a factory function and attaching a **marker** to each parameter that may vary. Everything without a marker is passed through unchanged. This page covers every marker and then the patterns that combine them: context strategies, component swaps, and multi-agent systems.
+
+All examples need `pip install 'strands-agents-evals[optimization]'`.
+
+## Mark a factory’s parameters
+
+Decorate the factory with `@tunable` and pass one marker per tunable parameter. The parameter defaults are the baseline:
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from strands_evals.optimization import Float, TextValue, tunable
+
+
+@tunable(system_prompt=TextValue(), temperature=Float(0.0, 1.0))
+def create_agent(
+    system_prompt="You are a support agent for Acme Shop.", temperature=0.3
+):
+    return Agent(
+        system_prompt=system_prompt,
+        model=BedrockModel(temperature=temperature),
+        callback_handler=None,
+    )
+
+
+agent = create_agent()  # the baseline, with no optimizer involved
+```
+
+Calling the decorated function builds the baseline agent, so production code can keep using it. If you’d rather not import the optimizer in production code at all, leave the factory undecorated and mount it from your eval script instead:
+
+```python
+from strands_evals.optimization import Float, TextValue, tunable
+
+from my_app.agents import create_agent  # a plain, undecorated factory
+
+tunable_agent = tunable(
+    create_agent,
+    inject={"system_prompt": TextValue(), "temperature": Float(0.0, 1.0)},
+)
+```
+
+Mistakes fail at declaration, before any rollout: a marker naming no parameter, a component whose constructor rejects its own defaults, or two markers on the same text (one file declared twice, or the same JSON field).
+
+Declarations are flat: the optimizer tunes only the markers on the factory you pass it. Stacking a second `@tunable` on the same function fails at declaration. A marker declared only on a tunable factory called from inside another one is never tuned: it isn’t in the optimizer’s space, so it stays at its baseline with no error.
+
+## The markers
+
+| Marker | Declares | Default proposer |
+| --- | --- | --- |
+| `TextValue()` | A text value, such as a system prompt | Text rewriter |
+| `FileText(path)` | Text whose source of truth is a file | Text rewriter |
+| `JsonField(path, pointer)` | One field of a JSON file, addressed by JSON pointer | Text rewriter for text, TPE for numbers, booleans, and a `OneOf` |
+| `SkillLibrary(path)` | Each skill’s `SKILL.md` in a skills folder | Text rewriter |
+| `tool_descriptions(*tools)` | Each tool’s description | Text rewriter |
+| `Int(min, max)` / `Float(min, max)` | A number, inclusive bounds | TPE |
+| `OneOf(*options)` | One of several plain values | TPE |
+| `JsonChoice(*options)` | One of several JSON values, lists and objects included | TPE |
+| `choice(...)` of `component(...)` | A swap between constructed objects, each with its own tuned arguments | TPE |
+
+Each marker’s baseline, the value the search starts from, comes from one place:
+
+-   **`Int`, `Float`, `TextValue`**: `default=` if you pass it, else the parameter’s default. Leave `default=` off when the parameter has one, so you write the baseline once.
+-   **`OneOf`, `JsonChoice`**: `default=` if you pass it, else the parameter’s default, which must be one of the options. With neither, the **first option** is the baseline.
+-   **`choice()`**: always the **first alternative**. A default on the parameter is ignored, even when you call the factory yourself, so list the alternative you run today first.
+-   **File markers** (`FileText`, `JsonField`, `SkillLibrary`): the file’s current text.
+
+## Text values
+
+A plain `TextValue` holds text that lives in your code. Text that lives in files gets a file marker, so the diff the optimizer returns lands on the real file:
+
+```python
+from strands import Agent
+from strands_evals.optimization import FileText, JsonField, tunable
+
+
+@tunable(
+    system_prompt=FileText("prompts/support.md"),
+    greeting=JsonField("config/agent.json", "/greeting"),
+)
+def create_agent(system_prompt: str, greeting: str):
+    return Agent(system_prompt=f"{system_prompt}\n\n{greeting}", callback_handler=None)
+```
+
+The file’s current text is the baseline, so to change where the search starts, edit the file: a default on the parameter is ignored. Your files are never written: the parameter receives the candidate’s text. If the agent needs a path rather than the text, pass `as_path=True` to `FileText`: each candidate gets its own copy of the folder around the file, and the parameter receives the path of that copy.
+
+A `JsonField` can also hold a number or a boolean, and the parameter then receives a typed value rather than text. Give a number the `Int` or `Float` to search it with; a boolean needs nothing. To search a field among set values instead, give it a `OneOf`:
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from strands_evals.optimization import Float, JsonField, OneOf, tunable
+
+MODELS = {
+    "haiku": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "sonnet": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+}
+
+
+@tunable(
+    temperature=JsonField("config/agent.json", "/temperature", Float(0.0, 1.0)),
+    streaming=JsonField("config/agent.json", "/streaming"),
+    model=JsonField("config/agent.json", "/model", OneOf("haiku", "sonnet")),
+)
+def create_agent(temperature: float, streaming: bool, model: str):
+    return Agent(
+        model=BedrockModel(
+            model_id=MODELS[model], temperature=temperature, streaming=streaming
+        ),
+        callback_handler=None,
+    )
+```
+
+The file’s value is the baseline, so these markers take no `default=`, and an integer field takes an `Int` the same way. A number without a marker fails at declaration. Typed fields are searched with the numbers and choices, not by the text rewriter, and a change shows in its file’s diff and in `best.values.json`.
+
+A `JsonField` takes a `OneOf`, never a `JsonChoice`, and an array or object field takes no marker at all: it stays a text value holding its JSON text, which the text rewriter edits. To choose among lists, such as tool sets, declare a [`JsonChoice`](#choose-a-tool-set) on the factory, or use `--tune` on a config file.
+
+Two settings guard every text marker:
+
+-   **`size_cap`**: the longest text a proposal may be, in characters. It defaults to the larger of 2,000 and three times the baseline’s length (800 and three times its length for a tool description), and stops prompt bloat before it costs a rollout.
+-   **`edit_instructions`**: guidance shown to the text rewriter next to this value, such as “keep the refund policy section unchanged”.
+
+## Skills
+
+To let the optimizer edit your agent’s skills, point `SkillLibrary` at the skills folder. Each skill’s `SKILL.md` becomes a tunable text, and the parameter receives the path of the candidate’s copy:
+
+```python
+from strands import Agent
+from strands.vended_plugins.skills import AgentSkills
+from strands_evals.optimization import SkillLibrary, tunable
+
+
+@tunable(skills=SkillLibrary("skills", only=("returns", "shipping")))
+def create_agent(skills="skills"):
+    return Agent(plugins=[AgentSkills(skills=str(skills))], callback_handler=None)
+```
+
+`only=` limits editing to the named skills; the others are copied unedited. Scripts and reference files next to a `SKILL.md` are copied but never edited, and a proposal must keep the skill’s frontmatter `name`.
+
+## Tool descriptions
+
+A tool’s description is often the most influential text in an agent: the model reads it on every call. `tool_descriptions` makes each tool’s description tunable, and the parameter receives fresh copies of the tools with the candidate’s descriptions:
+
+```python
+from strands import Agent, tool
+from strands_evals.optimization import tool_descriptions, tunable
+
+
+@tool
+def lookup_order(order_id: str) -> str:
+    """Look up an order by its id."""
+    return f"Order {order_id}: shipped on Monday"
+
+
+@tunable(tools=tool_descriptions(lookup_order))
+def create_agent(tools=(lookup_order,)):
+    return Agent(tools=list(tools), callback_handler=None)
+```
+
+Your tool objects are never modified, so concurrent trials can’t leak descriptions into each other. MCP tools can’t be declared this way: their specs can’t be set on a copy.
+
+## Choose a tool set
+
+Sometimes the question isn’t how to describe a tool but whether the agent should have it at all: extra tools cost tokens on every call and give the model more ways to go wrong. To search over which tools the agent gets, make each option a list with `JsonChoice`:
+
+```python
+from strands import Agent, tool
+from strands_evals.optimization import JsonChoice, tunable
+
+
+@tool
+def lookup_order(order_id: str) -> str:
+    """Look up an order by its id."""
+    return f"Order {order_id}: shipped on Monday"
+
+
+@tool
+def issue_refund(order_id: str) -> str:
+    """Refund an order in full."""
+    return f"Order {order_id}: refunded"
+
+
+TOOLS = {"lookup_order": lookup_order, "issue_refund": issue_refund}
+
+
+@tunable(tool_names=JsonChoice([], ["lookup_order"], ["lookup_order", "issue_refund"]))
+def create_agent(tool_names=("lookup_order",)):
+    return Agent(tools=[TOOLS[name] for name in tool_names], callback_handler=None)
+```
+
+The factory receives the chosen list itself. `JsonChoice` takes any JSON value as an option (strings, numbers, lists, objects, or a mix), so the same marker fits any setting whose value is a structure.
+
+Each option is one whole set, not a subset search: the optimizer picks among exactly the lists you write, so list the combinations worth comparing. Options are stored as canonical JSON text, which is what you’ll see in the run’s summary and `best.values.json`. List order matters: `["lookup_order", "issue_refund"]` and `["issue_refund", "lookup_order"]` are different options, so write the baseline’s list in the same order as its option. A `JsonChoice` can’t be an argument of a `component()`; declare it on the factory itself.
+
+## Choose which skills load
+
+The same idea works for skills, and it combines with rewriting them. `SkillLibrary` makes each skill’s `SKILL.md` tunable, its frontmatter description included, and a `JsonChoice` picks which of those skills the agent loads:
+
+```python
+from pathlib import Path
+
+from strands import Agent
+from strands.vended_plugins.skills import AgentSkills
+from strands_evals.optimization import JsonChoice, SkillLibrary, tunable
+
+
+@tunable(
+    skills=SkillLibrary("skills"),
+    enabled=JsonChoice(
+        ["returns"], ["returns", "shipping"], ["returns", "shipping", "billing"]
+    ),
+)
+def create_agent(skills="skills", enabled=("returns", "shipping", "billing")):
+    folders = [str(Path(skills) / name) for name in enabled]
+    return Agent(plugins=[AgentSkills(skills=folders)], callback_handler=None)
+```
+
+`skills` is the candidate’s copy of the folder, so the chosen skills load with the candidate’s rewrites. The baseline loads all three, as written today. A rewrite to a skill the candidate doesn’t load has no effect but still costs the rewriter’s calls, so when only some skills are worth rewriting, name them with `SkillLibrary(..., only=...)`.
+
+## Swap components
+
+To compare constructed objects, use `choice()` with one `component()` per alternative. Each component’s `Int`, `Float`, and `OneOf` arguments are tuned under that alternative only. Here two models each get their own temperature range, so the search learns a good temperature per model instead of one compromise for both:
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from strands_evals.optimization import Float, choice, component, tunable
+
+
+@tunable(
+    model=choice(
+        haiku=component(
+            BedrockModel,
+            model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            temperature=Float(0.0, 1.0, default=0.3),
+        ),
+        sonnet=component(
+            BedrockModel,
+            model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            temperature=Float(0.0, 0.7, default=0.3),
+        ),
+    )
+)
+def create_agent(model=None):
+    return Agent(model=model, callback_handler=None)
+```
+
+The first alternative is the baseline, and it replaces the parameter’s default. Every trial builds a fresh component through its real constructor, so hooks register and no state carries over.
+
+When the only difference is the model id, a `OneOf` of ids is enough. Either way, pair a model choice with a cost term or a constraint. An objective that only rewards quality picks the larger model whenever it is no worse, because nothing tells it the larger model costs more. See [Objectives, constraints, and budget](/docs/user-guide/evals-sdk/optimization/objectives/index.md).
+
+An alternative can also be a fixed value, given by keyword. That’s how you make something optional: `choice(on=component(...), off=None)`.
+
+## Tune context strategies
+
+Context management is a good fit for optimization: the right summarization point and the number of recent messages to keep depend on your workload, and nobody guesses them well. An `Offload` strategy takes its conditions through `.when(...)`, and the agent takes a whole configuration, so write a small function whose parameters are the numbers to tune, and give it to `component()`:
+
+```python
+from strands import Agent
+from strands.context_manager import Offload
+from strands_evals.optimization import Int, choice, component, tunable
+
+
+def offload_config(summarize_at=85, keep_recent=4, tool_result_tokens=2000):
+    return {
+        "strategies": [
+            Offload.truncate("tool_results", {"preview_tokens": 500}).when(
+                block_threshold=tool_result_tokens
+            ),
+            Offload.summarize("*").when(
+                context_utilization=f"{summarize_at}%", preserve_recent=keep_recent
+            ),
+        ],
+    }
+
+
+@tunable(
+    context_manager=choice(
+        auto="auto",
+        presets={"strategies": ["large_tool_offloading", "proactive_summarization"]},
+        custom=component(
+            offload_config,
+            summarize_at=Int(50, 95),
+            keep_recent=Int(2, 20),
+            tool_result_tokens=Int(500, 8000),
+        ),
+    )
+)
+def create_agent(context_manager="auto"):
+    return Agent(context_manager=context_manager, callback_handler=None)
+```
+
+This declares three alternatives: the built-in `"auto"` mode (the baseline), a fixed pair of presets, and a custom pipeline with three tuned numbers. The custom numbers are searched only when the custom pipeline is chosen, and the search learns them separately from the other alternatives. `offload_config` runs again for every agent, so no strategy object is shared between trials.
+
+To compare only the built-in modes, a plain `OneOf("auto", "agentic", False)` is enough.
+
+See [Custom strategies](/docs/user-guide/sdk/context-management/custom-strategies/index.md) for every `Offload` target and condition.
+
+## Tune a multi-agent system
+
+One factory builds every agent in the system, and each agent’s prompt carries its own marker. Keep the declaration flat: put every marker on the one tunable factory, and write the agents it builds as plain functions that take those values as parameters. Here an orchestrator calls a billing specialist as a tool:
+
+```python
+from strands import Agent
+from strands_evals.optimization import TextValue, tunable
+
+
+def billing_agent(billing_prompt):  # a plain builder: no @tunable here
+    return Agent(
+        name="billing",
+        description="Answers billing questions.",
+        system_prompt=billing_prompt,
+        callback_handler=None,
+    )
+
+
+@tunable(orchestrator_prompt=TextValue(), billing_prompt=TextValue())
+def create_agent(
+    orchestrator_prompt="Route each customer question to the right specialist.",
+    billing_prompt="You resolve billing questions: charges, refunds, and invoices.",
+):
+    return Agent(
+        system_prompt=orchestrator_prompt,
+        tools=[billing_agent(billing_prompt)],
+        callback_handler=None,
+    )
+```
+
+Declare `billing_prompt` on `create_agent`, not on `billing_agent`. A marker only the inner builder declares never reaches the optimizer, so the specialist would run its baseline prompt in every trial with no error to tell you.
+
+If the builders live in production code you’d rather not touch, leave them undecorated and mount the outer factory from your eval script, with every marker in one call:
+
+```python
+from strands_evals.optimization import TextValue, tunable
+
+from my_app.agents import create_support_agent  # builds both agents
+
+tunable_agent = tunable(
+    create_support_agent,
+    inject={"orchestrator_prompt": TextValue(), "billing_prompt": TextValue()},
+)
+```
+
+Token and latency metrics count the agent the factory returns and every agent running under it, so the specialist’s spend is part of the candidate’s cost.
+
+## Pass fixed objects safely
+
+A fixed (non-marker) argument to `component()`, and a fixed alternative in `choice()`, is deep-copied for every build so concurrent trials never share it. An object that can’t be copied, such as an `Agent` or a `BedrockModel`, fails at declaration. Build it inside the function you pass to `component()` instead: that function is never copied, so anything it creates is fresh, and anything it refers to is shared on purpose.
+
+## What the optimizer sees
+
+Your declaration becomes a flat mapping of dotted keys, the **candidate**. For the context example above, a custom-pipeline candidate looks like this:
+
+```python
+{
+    "context_manager": "custom",
+    "context_manager.custom.summarize_at": 85,
+    "context_manager.custom.keep_recent": 4,
+    "context_manager.custom.tool_result_tokens": 2000,
+}
+```
+
+These keys are the names you’ll see in the run’s summary and `best.values.json`, and for numbers and choices in the effects table too. Keys under an alternative exist only when that alternative is chosen. Text values are the exception in the effects table: each block’s text values share one row, `rewritten:<block>`, so with the default search every prompt in the space is one row, `rewritten:text`.
+
+## Next steps
+
+-   [Choosing an entry route](/docs/user-guide/evals-sdk/optimization/entry_routes/index.md): Declare the same space without a Python factory
+-   [Objectives, constraints, and budget](/docs/user-guide/evals-sdk/optimization/objectives/index.md): Say what “better” means
+-   [Reading the results](/docs/user-guide/evals-sdk/optimization/results/index.md): See which of these options actually mattered
+
+## Related pages
+
+- [Skills](/docs/user-guide/sdk/plugins/skills/index.md) (2 shared tags)
+- [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
+- [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
+- [Objectives, constraints, and budget](/docs/user-guide/evals-sdk/optimization/objectives/index.md) (1 shared tag)
+- [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
+- [Instruction following evaluator](/docs/user-guide/evals-sdk/evaluators/instruction_following_evaluator/index.md) (1 shared tag)
+- [Built-in Modes](/docs/user-guide/sdk/context-management/built-in-modes/index.md) (1 shared tag)
+- [Context Estimation](/docs/user-guide/sdk/context-management/context-estimation/index.md) (1 shared tag)
+- [Context management](/docs/user-guide/sdk/context-management/index.md) (1 shared tag)
+- [Custom Strategies](/docs/user-guide/sdk/context-management/custom-strategies/index.md) (1 shared tag)

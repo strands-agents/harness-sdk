@@ -1,6 +1,6 @@
 A box runs the agent’s Python scripts in [Monty](https://github.com/pydantic/monty), an interpreter for a subset of Python. Policy decides each file operation a script makes, and the egress gateway decides each request a script sends with `fetch()`.
 
-Audience: an operator with a working box from [getting started](/docs/user-guide/box/core/quickstart/index.md) whose agent runs Python. For how Box runs a script and why a script cannot act on its own, read [how Box runs Python scripts](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/monty.md).
+Audience: an operator with a working box from [getting started](/docs/user-guide/box/core/quickstart/index.md) whose agent runs Python. For how Box runs a script and why a script cannot act on its own, read [how Box runs Python scripts](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/monty.md).
 
 ## Example
 
@@ -208,13 +208,13 @@ The egress gateway decides each `fetch()` with `net:connect` and `http:request`,
 | `PermissionError: policy denied this operation on '<path>' [policy: <id>]` | The rule with that `@id` refused the operation. | Change the rule, or the path. |
 | `fetch()` returns status `403` with header `x-strands-box-egress: refused` | The gateway refused the request. The body says why. | Permit `net:connect` and `http:request` for the host. |
 | `strands-shell: effect denied: policy denied this operation on 'python'`, exit status `126` | No `shell:exec` permit names the command. | Permit `shell:exec` for `python` and `python3`. |
-| `strands-box: cannot start in <directory>: ...`, exit status `126` | Policy refused `fs:read` with operation `change_dir` on the directory the alias was run from, or the directory is outside the operator’s home, the agent’s home, and the workspace, such as `/tmp`. | Permit `fs:read` on that directory, or run the script from the workspace. |
-| `strands-box-sock-alias: read the working directory: ...; set PWD to it`, exit status `125` | The alias could not read which directory it was run from. | Set `PWD` to that directory before running `python3`. |
+| `strands-box: error[B1202]: cannot start in <directory>: ...`, exit status `126` | Policy refused `fs:read` with operation `change_dir` on the directory the alias was run from, or the directory is outside the operator’s home, the agent’s home, and the workspace, such as `/tmp`. | Permit `fs:read` on that directory, or run the script from the workspace. |
+| `strands-box-sock-alias: error[H0203]: read the working directory: ...; set PWD to it`, exit status `125` | The alias could not read which directory it was run from. | Set `PWD` to that directory before running `python3`. |
 | `python3: -m is not supported by Monty, Box's built-in Python subset. ...`, or `ModuleNotFoundError` for a package | The script needs real Python, such as `-m pytest` or a package from a venv. | Have the operator set [`monty = false`](/docs/user-guide/box/reference/configuration/index.md#monty), declare a `[tool]` whose command file is named `python3`, grant it `read` on the venv and Python’s install, and permit `shell:spawn` on its file. The `monty` section has a working setup. |
 
 The decision log records each decision with the rule’s `@id` ([getting started](/docs/user-guide/box/core/quickstart/index.md#step-7-read-the-decision-log)).
 
 ## See also
 
--   [How Box runs Python scripts](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/monty.md): the routes, the steps for each file operation, and the residual risk.
+-   [How Box runs Python scripts](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/monty.md): the routes, the steps for each file operation, and the residual risk.
 -   [The `[egress.<name>]` table](/docs/user-guide/box/guides/network-and-credentials/index.md): the rules for a host, and a credential that the gateway adds to a request.

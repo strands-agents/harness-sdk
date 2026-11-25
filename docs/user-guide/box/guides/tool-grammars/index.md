@@ -118,7 +118,7 @@ Start the box as you do now, for example:
 `run` prints one line for each `[tool]` and each stdio `[mcp.<name>]` whose program a grammar decides:
 
 ```text
-strands-box: [tool.git]: a spawn of `git` is decided by its tool grammar, and no `shell:spawn` rule applies to it
+strands-box: note[B0208]: [tool.git]: a spawn of `git` is decided by its tool grammar, and no `shell:spawn` rule applies to it
 ```
 
 Read these lines when you add a grammar to a box you already run. Every `shell:spawn` rule about that program stops applying to it, as [A grammar action replaces `shell:spawn`](#a-grammar-action-replaces-shellspawn) explains.

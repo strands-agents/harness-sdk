@@ -64,4 +64,4 @@ project = "write"
 | `description` | Required. What the policy menu shows beside the label. |
 | `project` | The [`[project] access`](/docs/user-guide/box/profiles/index.md#project-access) that a profile made from this policy gets: `"write"`, `"read"`, or `"none"`. Without it, the profile gets no `[project]` table, so the agent can’t reach your project until you add one. |
 
-[Starters](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/cli/starters.md) and [Detection](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/design/cli/detection.md) explain how `box` reads a starter and answers its questions, for background.
+[Starters](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/starters.md) and [Detection](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/detection.md) explain how `box` reads a starter and answers its questions, for background.

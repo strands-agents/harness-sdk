@@ -94,14 +94,14 @@ Each reminder adds the rendered list to a model call and changes the tail of tha
 
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
 - [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
+- [Objectives, constraints, and budget](/docs/user-guide/evals-sdk/optimization/objectives/index.md) (1 shared tag)
 - [Built-in Modes](/docs/user-guide/sdk/context-management/built-in-modes/index.md) (1 shared tag)
 - [Context Estimation](/docs/user-guide/sdk/context-management/context-estimation/index.md) (1 shared tag)
 - [Context management](/docs/user-guide/sdk/context-management/index.md) (1 shared tag)
 - [Custom Strategies](/docs/user-guide/sdk/context-management/custom-strategies/index.md) (1 shared tag)
 - [Strategy Presets](/docs/user-guide/sdk/context-management/presets/index.md) (1 shared tag)
+- [Declaring what can change](/docs/user-guide/evals-sdk/optimization/tunables/index.md) (1 shared tag)
 - [Skills](/docs/user-guide/sdk/plugins/skills/index.md) (1 shared tag)
-- [Context Offloader](/docs/user-guide/sdk/plugins/context-offloader/index.md) (1 shared tag)
-- [Conversation Management](/docs/user-guide/sdk/agents/conversation-management/index.md) (1 shared tag)
 
 
 ## Implementation

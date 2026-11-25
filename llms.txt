@@ -269,6 +269,7 @@
   - [Policies](https://strandsagents.com/docs/user-guide/box/policies/index.md): What a policy checks, where a run's rules come from, and how to write your own.
   - [Starters](https://strandsagents.com/docs/user-guide/box/starters/index.md): Make a profile from a starter, and write starters so a team gets one standard setup.
   - [Box plugins](https://strandsagents.com/docs/user-guide/box/plugins/index.md): What a plugin is, how to read a key from a password manager with one, and how to write one.
+  - [Credentials](https://strandsagents.com/docs/user-guide/box/credentials/index.md): Where a route's key comes from: a shell variable, AWS credentials, the credentials daemon, or a password manager.
 - Help
   - [Troubleshooting](https://strandsagents.com/docs/user-guide/box/troubleshooting/index.md): What a box error means, and how to fix it.
   - [What a box does not protect](https://strandsagents.com/docs/user-guide/box/limitations/index.md): What a box doesn't protect you from, and what to check before you trust a run.
@@ -288,6 +289,7 @@
   - [Python in a box](https://strandsagents.com/docs/user-guide/box/reference/python/index.md): Run Python through Monty and control its file and network operations with policy.
   - [macOS requirements](https://strandsagents.com/docs/user-guide/box/reference/macos-requirements/index.md): Check the macOS release package, program dependencies, sandbox startup, and requirements for optional native filesystem policy.
   - [Linux requirements](https://strandsagents.com/docs/user-guide/box/reference/linux-requirements/index.md): Check Linux libraries, permissions to create the sandbox, startup errors, and tested configurations.
+  - [Message codes](https://strandsagents.com/docs/user-guide/box/reference/message-codes/index.md): Read the message format Box writes to stderr, and what each message code means and asks you to do.
 - Box Core
   - [Run an agent with box.toml](https://strandsagents.com/docs/user-guide/box/core/quickstart/index.md): Run the Strands CLI under box.toml and policy.dw with Box Core, observe a refused write, and permit it.
   - [box.toml configuration reference](https://strandsagents.com/docs/user-guide/box/reference/configuration/index.md): Configure every Box input, process, filesystem grant, credential, MCP server, and telemetry target.
@@ -382,6 +384,14 @@
     - [custom_task](https://strandsagents.com/docs/user-guide/evals-sdk/red-teaming/custom_task/index.md): Replace the built-in red-team task with your own, to wrap the target in a guardrail, add a check between turns, or build the target yourself.
     - [evaluators](https://strandsagents.com/docs/user-guide/evals-sdk/red-teaming/evaluators/index.md): How AttackSuccessEvaluator scores a red-team attack from 0.0 to 1.0, what counts as a breach, and how to tune the threshold.
     - [reading_the_report](https://strandsagents.com/docs/user-guide/evals-sdk/red-teaming/reading_the_report/index.md): Understand what a RedTeamReport prints, how to read the breach matrix and per-attack table, and what to do when an attack breaches.
+  - Optimization
+    - [Overview](https://strandsagents.com/docs/user-guide/evals-sdk/optimization/index.md): Improve a Strands agent's prompts, components, and settings from your own evaluation cases, and get back a reviewable diff plus the values to apply.
+    - [quickstart](https://strandsagents.com/docs/user-guide/evals-sdk/optimization/quickstart/index.md): Optimize a Strands support-ticket triage agent end to end, rewriting its system prompt and tuning its temperature against a rubric judge and a token budget.
+    - [tunables](https://strandsagents.com/docs/user-guide/evals-sdk/optimization/tunables/index.md): Mark prompts, files, skills, tool descriptions, numbers, and components as tunable, including context strategies, component swaps, and multi-agent factories.
+    - [entry_routes](https://strandsagents.com/docs/user-guide/evals-sdk/optimization/entry_routes/index.md): Optimize an agent from a Python factory, your own task function, a Strands harness config file, or an exported agent file, and see what each route can't tune.
+    - [objectives](https://strandsagents.com/docs/user-guide/evals-sdk/optimization/objectives/index.md): Tell the optimizer what "better" means with objectives and constraints over evaluator scores and token usage, and size the rollout budget for a run.
+    - [search](https://strandsagents.com/docs/user-guide/evals-sdk/optimization/search/index.md): Choose which proposer changes which part of an agent, opt in to Thompson sampling for choices, and change the model that rewrites text during an optimization run.
+    - [results](https://strandsagents.com/docs/user-guide/evals-sdk/optimization/results/index.md): Read an optimization run's summary, diff, effects, validation pick, and test report, apply the champion, and resume a run that was stopped.
   - [chaos_testing](https://strandsagents.com/docs/user-guide/evals-sdk/chaos_testing/index.md): Test agent resilience by injecting controlled tool failures with ChaosPlugin: simulate timeouts, network errors, and corrupted responses safely.
 - CLI
   - [Overview](https://strandsagents.com/docs/user-guide/evals-sdk/cli/index.md): Run agent evaluations from the command line with strands-evals: execute experiments, generate test cases, render reports, and diagnose failures in CI.

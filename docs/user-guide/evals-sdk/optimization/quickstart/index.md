@@ -1,0 +1,409 @@
+This guide optimizes a support-ticket triage agent end to end. The agent reads a customer ticket and should answer with one line naming its category and priority. Its starting prompt doesn’t say that, so it starts out writing friendly paragraphs instead. You’ll let the optimizer rewrite the prompt and tune the temperature, then read what won and why. The run takes about ten minutes, on a budget of 120 rollouts.
+
+## Install the SDK
+
+The optimizer ships with the evals SDK behind the `optimization` extra, which adds numpy, scipy, Optuna, and the Strands harness:
+
+```bash
+pip install 'strands-agents-evals[optimization]'
+```
+
+Importing `strands_evals.optimization` without the extra raises an `ImportError` that names this command.
+
+The agent, the judge, and the default text rewriter all call Claude on Amazon Bedrock. Configure AWS credentials with permission to invoke them: see the [evals quickstart](/docs/user-guide/evals-sdk/quickstart/index.md#configure-credentials). Refresh short-lived credentials before a long run. Trials that fail on expired credentials are retried, never scored, but they keep spending rollouts.
+
+### Optional: install the agent skills
+
+The evals SDK ships agent skills, including `optimize`, that let your coding assistant set up and run an optimization for you. This guide does the same steps by hand, so you can follow it either way.
+
+**Using a coding agent?** Copy this prompt into Codex, Claude Code, Kiro, or any coding assistant and it will install strands-agents-evals and set up its skills in that assistant.
+
+Copy prompt
+
+To install them yourself instead, run this from the environment where you installed the package:
+
+```bash
+npx skills add "$(python -c 'import strands_evals, pathlib; print(pathlib.Path(strands_evals.__file__).parent / ".agents" / "skills")')" --copy
+```
+
+See [Install the skills](/docs/user-guide/evals-sdk/optimization/index.md#install-the-skills) for the options.
+
+## Write the experiment
+
+The optimizer judges every configuration with an ordinary [experiment](/docs/user-guide/evals-sdk/how-evaluation-works/index.md#what-an-evaluation-is-made-of): its cases are the work the agent should do well, and its evaluators score how well it did. If you already evaluate your agent, reuse that experiment. This guide builds a new one: twenty tickets, each with the label it should get, and a rubric judge that scores the agent’s line against that label.
+
+```python
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import OutputEvaluator
+
+TICKETS = [
+    (
+        "I was charged twice for order #4821, please refund the duplicate.",
+        "billing",
+        "high",
+    ),
+    (
+        "My card was charged $250 but the order was cancelled yesterday.",
+        "billing",
+        "high",
+    ),
+    (
+        "Can I get an invoice with my company's tax ID for last month's order?",
+        "billing",
+        "normal",
+    ),
+    ("My discount code SAVE10 didn't apply at checkout.", "billing", "normal"),
+    ("Do you accept PayPal?", "billing", "low"),
+    ("My package was marked delivered a week ago but never arrived.", "shipping", "high"),
+    (
+        "Can I change the delivery address on order #5520? It hasn't shipped yet.",
+        "shipping",
+        "normal",
+    ),
+    ("Tracking for order #6013 hasn't updated in five days.", "shipping", "normal"),
+    ("Do you ship to Canada?", "shipping", "low"),
+    ("How long does standard shipping usually take?", "shipping", "low"),
+    ("The blender arrived cracked and leaking.", "returns", "high"),
+    (
+        "I returned my laptop three weeks ago and still haven't been refunded.",
+        "returns",
+        "high",
+    ),
+    ("The jacket I got is the wrong size. How do I exchange it?", "returns", "normal"),
+    ("I want to return two unopened books from order #7710.", "returns", "normal"),
+    ("What's your return policy for sale items?", "returns", "low"),
+    ("Someone changed my account email and I can't log in.", "account", "high"),
+    ("I see orders on my account that I didn't place.", "account", "high"),
+    ("The password reset email never arrives.", "account", "normal"),
+    ("How do I change the name shown on my profile?", "account", "low"),
+    ("Can I turn off marketing emails?", "account", "low"),
+]
+
+triage_judge = OutputEvaluator(
+    name="Triage",
+    rubric=(
+        "The response must be exactly one line: 'category: "
+        "<billing|shipping|returns|account>, priority: <high|normal|low>'. Priority is "
+        "high when the customer lost money, got a damaged item, or has an account "
+        "security problem; low for a general question that needs no action; normal "
+        "otherwise. Score 1.0 if the line matches the expected output, 0.5 if only the "
+        "category matches or the format is off, and 0.0 otherwise."
+    ),
+)
+
+experiment = Experiment(
+    cases=[
+        Case(
+            name=f"ticket-{i:02d}",
+            input=ticket,
+            expected_output=f"category: {category}, priority: {priority}",
+        )
+        for i, (ticket, category, priority) in enumerate(TICKETS)
+    ],
+    evaluators=[triage_judge],
+)
+```
+
+Every case needs a unique name, because candidates are compared case by case. Twenty cases split into 8 for the search, 6 for picking the winner, and 6 for the final test.
+
+To reuse the experiment from the command line, or to rerun the same cases later, save it to a file:
+
+```python
+experiment.to_file("experiment.json")
+```
+
+To browse and edit its cases in the browser, run [`strands-evals ui`](/docs/user-guide/evals-sdk/cli/ui/index.md) in the folder that holds the file.
+
+## Declare what may change
+
+Write the agent as a factory function and mark the parameters the optimizer may change. The parameter defaults are the **baseline**: the agent you have today.
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from strands_evals.optimization import Float, TextValue, tunable
+
+
+@tunable(system_prompt=TextValue(), temperature=Float(0.0, 1.0))
+def create_agent(system_prompt="You are a helpful support assistant.", temperature=0.9):
+    return Agent(
+        model=BedrockModel(
+            model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            temperature=temperature,
+        ),
+        system_prompt=system_prompt,
+        callback_handler=None,
+    )
+```
+
+The optimizer rewrites the system prompt with a model (Claude Sonnet 5.5 on Amazon Bedrock by default) that reads the agent’s own conversations and the judge’s reasons, and searches the temperature alongside it. The rewriter works in a temporary folder through a confined shell that isn’t a sandbox, so run it on a machine without production credentials.
+
+`@tunable` doesn’t change how the function behaves when you call it: `create_agent()` still returns the baseline agent. During a run, the optimizer builds a fresh agent for every trial through this same function, so no state leaks between trials.
+
+## Say what “better” means
+
+Without an objective, the optimizer maximizes the mean of your evaluators. Here the goal is the right label in as few words as possible:
+
+```python
+from strands_evals.optimization import Budget, Maximize, Minimize, Optimizer, WeightedSum
+
+optimizer = Optimizer(
+    experiment,
+    create_agent,
+    objective=WeightedSum(Maximize("Triage"), Minimize("output_tokens", scale=100)),
+    budget=Budget(max_rollouts=120),
+)
+```
+
+`scale=100` means a change of 100 output tokens weighs as much as the whole 0 to 1 Triage range. Token counts come from the agent’s traces, so you don’t measure anything yourself. A rollout is one case run once; the default budget is 500.
+
+## Run it
+
+```python
+result = optimizer.run()
+print(result.summary())
+```
+
+`run()` writes everything to a run folder under `.strands-evals/optimization/runs/` and returns the result when the run ends. To watch the run fill in as it goes, open that folder in the browser with `strands-evals ui .strands-evals/optimization/runs/`. Use `await optimizer.run_async()` inside an event loop.
+
+```text
+# Example output (abridged):
+Optimization result: 20261123-200351-8245db
+===================================================================================
+Objective:    WeightedSum(Maximize(Triage), Minimize(output_tokens, scale=100))
+Stop reason:  budget                  Rollouts:   108 / 120
+Iterations:   2                       Pick rule:  Mean
+Champion:     candidate 6             Outcome:    top_finalist
+Parent:       candidate 4
+Proposers:    text (Reflection), numbers (TPE)
+Changed:      system_prompt, temperature
+===================================================================================
+Validation     id            objective  goal           estimate     sd  measured  n
+-----------------------------------------------------------------------------------
+baseline       e8f41ba9c90b     -0.909  Triage            0.056  0.069     0.000  6
+                                        output_tokens     187.4    9.5     192.8  6
+candidate 5    f1436f1cdb76      0.289  Triage            0.672  0.068     0.667  6
+                                        output_tokens       9.4    7.9      10.0  6
+candidate 4    50e6d7c2701e      0.268  Triage            0.655  0.065     0.667  6
+                                        output_tokens      11.9    7.3      10.0  6
+candidate 6 *  7153e597806d      0.332  Triage            0.793  0.071     0.833  6
+                                        output_tokens      12.9    7.8      10.0  6
+===================================================================================
+Test vs baseline  baseline  champion    diff            90% CI  n
+-----------------------------------------------------------------------------------
+objective           -0.998     0.325  +1.323  [+1.133, +1.512]  6
+Triage               0.083     0.750  +0.667  [+0.454, +0.879]  6
+output_tokens        207.8      10.0  -197.8  [-234.9, -160.8]  6
+===================================================================================
+Changed      baseline  champion
+-----------------------------------------------------------------------------------
+temperature  0.9       0.500304
+===================================================================================
+Tokens             search  validation    test    total  failed
+-----------------------------------------------------------------------------------
+agent              22,577       7,735   3,685   33,997       0
+judges            192,516      62,808  31,952  287,276       0
+proposer text     426,851           0       0  426,851       0
+proposer numbers        0           0       0        0       0
+other agents            0           0       0        0       -
+total             641,944      70,543  35,637  748,124       -
+```
+
+## Read what won
+
+The summary answers three questions:
+
+-   **What won.** The header names the champion, candidate 6, and the outcome `top_finalist`: a finalist beat your current agent on validation. In the validation table (marked `*`), the baseline scored about 0 on Triage because it answered every ticket with a paragraph. The champion scores 0.79 and writes about 13 tokens instead of 187.
+-   **Whether it holds up.** Yes. On the six test cases, which neither the search nor the pick ever read, Triage went from 0.08 to 0.75 and output tokens from 208 to 10, both with intervals far from zero.
+-   **What to change.** The header’s `Changed` line lists the system prompt and the temperature. Numbers and choices are in the `Changed` table; text changes are in the diff.
+
+The effects file tells you which of those changes did the work:
+
+```python
+for row in result.effects["effects"]:
+    low, high = row["ci90"]
+    print(f'{row["metric"]}: {row["key"]}={row["level"]} vs {row["reference"]}: '
+          f'{row["mean"]:+.3g} [{low:+.3g}, {high:+.3g}]')
+```
+
+```text
+# Example output (abridged):
+Triage: rewritten:text=rewritten vs default: +0.743 [+0.641, +0.846]
+Triage: temperature=(0.308522, 0.594614] vs (0.594614, 0.975872]: +0.00917 [-0.0531, +0.0715]
+output_tokens: rewritten:text=rewritten vs default: -213 [-224, -202]
+```
+
+The rewritten prompt did all of it: +0.74 Triage and 213 fewer tokens. Temperature made no difference, so the champion’s `0.50` is where the search happened to be, not a finding: keep your current value. See [Reading the results](/docs/user-guide/evals-sdk/optimization/results/index.md#which-options-mattered) for the full effects table.
+
+## Apply the result
+
+Nothing in your code changed. The run folder holds what you need to apply by hand:
+
+-   `best.diff`: a unified diff of every changed text value, here the system prompt
+-   `best.values.json`: every changed number and choice, with its old and new value
+
+The rewritten prompt, from `best.diff` (abridged):
+
+```diff
+--- system_prompt
++++ system_prompt
+@@ -1 +1,20 @@
+-You are a helpful support assistant.
++You are a support-ticket triage classifier. You do NOT answer, advise, or ask questions.
++Whatever the customer message says (question, complaint, request), your only job is to
++classify it.
++
++Output exactly one line, nothing else:
++category: <category>, priority: <priority>
++
++category (pick one, lowercase):
++- billing: charges, duplicate charges, invoices, tax IDs, payment methods, pricing
++- returns: returning items, return policy, damaged or defective items, exchanges
++- account: login, password, profile settings, unauthorized access or orders
++- shipping: delivery status, lost or late packages, tracking, address
++- technical: product or app malfunction, bugs, how-to for product use
++- other: anything that fits none of the above
++
++priority (pick one, lowercase):
++- high: money lost or at risk, security or unauthorized activity, damaged goods
++- normal: routine requests needing action but not urgent
++- low: general questions, policy info, cosmetic or minor settings changes
+```
+
+Review the rewrite before you copy it in. This one added two categories, `technical` and `other`, that none of the tickets use. They’re harmless here, but you might drop them, or keep them if your real tickets need somewhere to go. Then rerun your experiment on a few fresh tickets to confirm.
+
+## Full example
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import OutputEvaluator
+from strands_evals.optimization import (
+    Budget,
+    Float,
+    Maximize,
+    Minimize,
+    Optimizer,
+    TextValue,
+    WeightedSum,
+    tunable,
+)
+
+TICKETS = [
+    (
+        "I was charged twice for order #4821, please refund the duplicate.",
+        "billing",
+        "high",
+    ),
+    (
+        "My card was charged $250 but the order was cancelled yesterday.",
+        "billing",
+        "high",
+    ),
+    (
+        "Can I get an invoice with my company's tax ID for last month's order?",
+        "billing",
+        "normal",
+    ),
+    ("My discount code SAVE10 didn't apply at checkout.", "billing", "normal"),
+    ("Do you accept PayPal?", "billing", "low"),
+    ("My package was marked delivered a week ago but never arrived.", "shipping", "high"),
+    (
+        "Can I change the delivery address on order #5520? It hasn't shipped yet.",
+        "shipping",
+        "normal",
+    ),
+    ("Tracking for order #6013 hasn't updated in five days.", "shipping", "normal"),
+    ("Do you ship to Canada?", "shipping", "low"),
+    ("How long does standard shipping usually take?", "shipping", "low"),
+    ("The blender arrived cracked and leaking.", "returns", "high"),
+    (
+        "I returned my laptop three weeks ago and still haven't been refunded.",
+        "returns",
+        "high",
+    ),
+    ("The jacket I got is the wrong size. How do I exchange it?", "returns", "normal"),
+    ("I want to return two unopened books from order #7710.", "returns", "normal"),
+    ("What's your return policy for sale items?", "returns", "low"),
+    ("Someone changed my account email and I can't log in.", "account", "high"),
+    ("I see orders on my account that I didn't place.", "account", "high"),
+    ("The password reset email never arrives.", "account", "normal"),
+    ("How do I change the name shown on my profile?", "account", "low"),
+    ("Can I turn off marketing emails?", "account", "low"),
+]
+
+triage_judge = OutputEvaluator(
+    name="Triage",
+    rubric=(
+        "The response must be exactly one line: 'category: "
+        "<billing|shipping|returns|account>, priority: <high|normal|low>'. Priority is "
+        "high when the customer lost money, got a damaged item, or has an account "
+        "security problem; low for a general question that needs no action; normal "
+        "otherwise. Score 1.0 if the line matches the expected output, 0.5 if only the "
+        "category matches or the format is off, and 0.0 otherwise."
+    ),
+)
+
+experiment = Experiment(
+    cases=[
+        Case(
+            name=f"ticket-{i:02d}",
+            input=ticket,
+            expected_output=f"category: {category}, priority: {priority}",
+        )
+        for i, (ticket, category, priority) in enumerate(TICKETS)
+    ],
+    evaluators=[triage_judge],
+)
+
+
+@tunable(system_prompt=TextValue(), temperature=Float(0.0, 1.0))
+def create_agent(system_prompt="You are a helpful support assistant.", temperature=0.9):
+    return Agent(
+        model=BedrockModel(
+            model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            temperature=temperature,
+        ),
+        system_prompt=system_prompt,
+        callback_handler=None,
+    )
+
+
+if __name__ == "__main__":
+    optimizer = Optimizer(
+        experiment,
+        create_agent,
+        objective=WeightedSum(Maximize("Triage"), Minimize("output_tokens", scale=100)),
+        budget=Budget(max_rollouts=120),
+    )
+    result = optimizer.run()
+    print(result.summary())
+```
+
+The same run from a shell, with this file saved as `agent.py` and the experiment saved by `experiment.to_file("experiment.json")`. The `__main__` guard keeps the CLI from starting a second run when it imports the file:
+
+```bash
+strands-evals optimize run experiment.json --agent agent.py:create_agent \
+  --objective maximize:Triage --objective minimize:output_tokens:scale=100 \
+  --max-rollouts 120
+```
+
+## Next steps
+
+-   [Declaring what can change](/docs/user-guide/evals-sdk/optimization/tunables/index.md): Rewrite prompts, swap components, tune context strategies
+-   [Objectives, constraints, and budget](/docs/user-guide/evals-sdk/optimization/objectives/index.md): Add constraints and size the budget
+-   [Reading the results](/docs/user-guide/evals-sdk/optimization/results/index.md): The effects table, the test report, and resuming
+
+## Related pages
+
+- [Choosing an Agent Foundation](/docs/user-guide/migrate/choosing-an-agent-foundation/index.md) (1 shared tag)
+- [Get started](/docs/user-guide/sdk/quickstart/overview/index.md) (1 shared tag)
+- [Python Quickstart](/docs/user-guide/sdk/quickstart/python/index.md) (1 shared tag)
+- [Strands evaluation quickstart](/docs/user-guide/evals-sdk/quickstart/index.md) (1 shared tag)
+- [Strands Shell quickstart](/docs/user-guide/shell/quickstart/index.md) (1 shared tag)
+- [TypeScript Quickstart](/docs/user-guide/sdk/quickstart/typescript/index.md) (1 shared tag)
+- [Use Strands with AI coding agents](/docs/user-guide/build-with-ai/index.md) (1 shared tag)
+- [Red teaming quickstart](/docs/user-guide/evals-sdk/red-teaming/quickstart/index.md) (1 shared tag)
+- [Build a Voice Agent](/docs/user-guide/sdk/bidi/quickstart/index.md) (1 shared tag)
+- [Decision models quickstart](/docs/user-guide/sdk/decision-models/quickstart/index.md) (1 shared tag)

@@ -424,7 +424,7 @@ TIME (UTC)  RESULT  ACTION  RESOURCE  RULE  REASON
 
 ## box telemetry
 
-Turn usage telemetry on or off. [Usage telemetry](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/CLI_TELEMETRY.md) says what `box` sends.
+Turn usage telemetry on or off. [Usage telemetry](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/CLI_TELEMETRY.md) says what `box` sends.
 
 ```sh
 box telemetry off
@@ -468,7 +468,9 @@ It works before you have a profile, and `box --help` tells a coding agent to run
 | --- | --- |
 | `BOX_HOME` | Use another folder in place of `~/.strands/box`, such as to try `box` with no profiles. It takes a full path, and an empty value counts as not set. Without it, `box` refuses a link at `~/.strands` or `~/.strands/box`. Only `installation.toml` and `packages/` stay in `~/.strands/box` ([Where Box keeps its files](/docs/user-guide/box/reference/files/index.md)). |
 | `BOX_TELEMETRY`, `DO_NOT_TRACK` | Turn usage telemetry off for one shell, with `BOX_TELEMETRY=0` or `DO_NOT_TRACK=1`. |
+| `BOX_TEST_TELEMETRY_ENDPOINT` | Developer capture: send usage telemetry to an HTTP URL with a literal loopback address and no credentials. Invalid values, including empty or non-UTF-8 values, disable delivery. Consent still applies. See [local capture](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/dev/manual-testing.md#check-telemetry-delivery). |
 | `NO_COLOR` | Turn off color in the output of `box`. |
+| `CREDSD_SOCKET` | The socket of the credentials daemon, for a `credsd://` route ([Where the box finds the daemon](/docs/user-guide/box/credentials/index.md#where-the-box-finds-the-daemon)). |
 | `BOX_RESOURCES` | Use the packs, plugins, starters, policy starters, and agent guide in another folder in place of the ones that come with `box`. |
 
 The model key’s variable is the one `box profile create` named. The installer reads its own variables, listed in [Installer variables](/docs/user-guide/box/install/index.md#installer-variables).
@@ -478,7 +480,7 @@ The model key’s variable is the one `box profile create` named. The installer 
 | Status | When |
 | --- | --- |
 | `0` | The command succeeded. |
-| `1` | An error. An error from `box` starts with `box: error:`, and one that stops a box as it starts begins with `strands-box: error:`. Most name their own fix. For the rest, see [Troubleshooting](/docs/user-guide/box/troubleshooting/index.md). `box runs history` also exits with `1` when it can’t read a line of the run’s log, after it shows the rest. |
+| `1` | An error. An error from `box` starts with `box: error:`, and one that stops a box as it starts is a Box message with the severity `error`, such as `strands-box: error[<code>]:`. Box’s [message codes](/docs/user-guide/box/reference/message-codes/index.md) explain each code. Most name their own fix. For the rest, see [Troubleshooting](/docs/user-guide/box/troubleshooting/index.md). `box runs history` also exits with `1` when it can’t read a line of the run’s log, after it shows the rest. |
 | `2` | The command line is wrong, such as an unknown flag. |
 | `130` | You pressed Ctrl+C at a prompt. |
 

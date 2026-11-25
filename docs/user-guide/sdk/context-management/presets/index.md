@@ -109,8 +109,8 @@ The preset handles large tool results eagerly, and the custom summarization stra
 - [Conversation Management](/docs/user-guide/sdk/agents/conversation-management/index.md) (2 shared tags)
 - [Context Injector](/docs/user-guide/sdk/plugins/context-injector/index.md) (1 shared tag)
 - [GenAI Prices Estimator](/docs/user-guide/sdk/plugins/genai-prices-estimator/index.md) (1 shared tag)
+- [Objectives, constraints, and budget](/docs/user-guide/evals-sdk/optimization/objectives/index.md) (1 shared tag)
 - [Todos](/docs/user-guide/sdk/plugins/todos/index.md) (1 shared tag)
-- [Coherence evaluator](/docs/user-guide/evals-sdk/evaluators/coherence_evaluator/index.md) (1 shared tag)
 
 
 ## Implementation

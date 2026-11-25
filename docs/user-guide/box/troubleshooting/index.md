@@ -1,6 +1,6 @@
 Use this page when `box` stops with an error, or when the agent can’t do something in the box. Most messages that start with `box: error:` name their own fix, so this page covers the ones that don’t, and the failures that show up after the box starts. Search the page for a few words of your message. The examples use `/Users/you` for your home folder.
 
-This page covers what every [pack](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/cli/README.md#packs) and [plugin](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/docs/cli/README.md#plugins) can hit, such as `@box/claude`, which runs Claude Code. An error that only one pack or plugin prints, and its fix, is in the **Troubleshooting** section of its README, and its own limits are in its **Limitations** section.
+This page covers what every [pack](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/cli/README.md#packs) and [plugin](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/cli/README.md#plugins) can hit, such as `@box/claude`, which runs Claude Code. An error that only one pack or plugin prints, and its fix, is in the **Troubleshooting** section of its README, and its own limits are in its **Limitations** section.
 
 ## Before the box starts
 
@@ -53,7 +53,7 @@ To stop the note for a toolchain you don’t need, delete its pack from the `pac
 Some tools are one file with several names, such as rustup’s `cargo` and `rustc`. Before a run, the box checks that no name of the tool is in your project. On a Mac, and on Linux in Docker or on btrfs, it reads every folder to do that, and if it can’t finish, the run stops:
 
 ```text
-strands-box: error: `[agent]` filesystem entry "<project>" is refused: this write grant cannot be inspected for configured command hard links: directory inspection failed: Permission denied (os error 13).
+strands-box: error[B0102]: `[agent]` filesystem entry "<project>" is refused: this write grant cannot be inspected for configured command hard links: directory inspection failed: Permission denied (os error 13).
 ```
 
 That happens when a folder in your project is one you can’t read, such as a database folder another user owns, when a folder changes while the box reads it, such as `.git` while your editor runs `git status`, or when the project is too big to read in 30 seconds. Make the folder readable or move it out of the project, or close the program that changes it, and run again. You can also take the tool’s pack off the `packs` line in `profile.toml`.
@@ -119,7 +119,7 @@ Box Core reports this when the full socket path is too long. With the default `~
 ### A run in an earlier box stops on a clock error
 
 ```text
-strands-box: error: policy staging failed: policy staging history failure: durable timestamp 1795305600000000000 is 3600000000000 ns ahead of the current clock 1795302000000000000, exceeding the maximum allowed future skew of 300000000000 ns; refusing the operation rather than issuing future-dated timestamps
+strands-box: error[B0103]: policy staging failed: policy staging history failure: durable timestamp 1795305600000000000 is 3600000000000 ns ahead of the current clock 1795302000000000000, exceeding the maximum allowed future skew of 300000000000 ns; refusing the operation rather than issuing future-dated timestamps
 ```
 
 The box’s history is stamped more than five minutes ahead of the clock. This happens after the clock moves back, such as after a clock reset or a restored virtual machine. Box refuses, because a history that looks like the future would let rules that count over time count wrongly.
@@ -276,7 +276,7 @@ box profile create claude-api --with claude,anthropic --option claude.host=anthr
 ### The credential variable isn’t set
 
 ```text
-strands-box: error: credential setup failed: credential variable AWS_BEARER_TOKEN_BEDROCK is not set, or holds only whitespace
+strands-box: error[B0104]: credential setup failed: credential variable AWS_BEARER_TOKEN_BEDROCK is not set, or holds only whitespace
 ```
 
 The box reads the model key from the variable the message names, in the shell you ran `box run` in, and the variable isn’t set there. Did you open a new terminal window? An `export` lasts only in the window you ran it in. Run the `export` command from [Get started](/docs/user-guide/box/quickstart/index.md) in this window, then start the run again.
@@ -287,13 +287,30 @@ The box reads the model key from the variable the message names, in the shell yo
 AWS default credential chain resolved no credentials
 ```
 
-A route with `aws://` found no AWS credentials, or the AWS profile signs in with SSO or `aws login`, which the box doesn’t read. Export the profile’s temporary keys in the shell where you run `box run`. A route that names an AWS profile, such as `aws://your-profile`, also needs its `secret.ref` set to `aws://` with no profile name ([`aws://` credentials](/docs/user-guide/box/reference/profiles/index.md#aws-credentials)):
+A route with `aws://` found no AWS credentials, or the AWS profile signs in with SSO or `aws login`, which the box doesn’t read. Export the profile’s temporary keys in the shell where you run `box run`. A route that names an AWS profile, such as `aws://your-profile`, also needs its `secret.ref` set to `aws://` with no profile name ([`aws://` credentials](/docs/user-guide/box/credentials/index.md#aws-credentials)):
 
 ```sh
 eval "$(aws configure export-credentials --profile your-profile --format env)"
 ```
 
-The keys expire with the SSO session, so a later run needs a fresh export.
+The keys expire with the SSO session, so a later run needs a fresh export. To sign in with SSO without an export, keep the sign-in in [the credentials daemon](/docs/user-guide/box/credentials/index.md#the-credentials-daemon).
+
+### The credentials daemon refuses the run
+
+Before the agent starts, the box checks that the [credentials daemon](/docs/user-guide/box/credentials/index.md#the-credentials-daemon) answers and lists each credential that a `credsd://` route names. If it doesn’t, the run stops, and the message says why:
+
+| The message says | What to do |
+| --- | --- |
+| `cannot reach the credsd socket /run/credsd/credsd.sock` | The daemon isn’t running, or it listens on another socket. Run `credsd status`. If the daemon is running, set `CREDSD_SOCKET` to its socket in the shell where you run `box run` ([Where the box finds the daemon](/docs/user-guide/box/credentials/index.md#where-the-box-finds-the-daemon)). |
+| `credsd has no credential "work", or this box is not authorized for it` | The route names a credential that the daemon doesn’t list for you. Run `creds list` to see your credentials, then fix the name in `secret.ref`, or create the credential with `creds bootstrap --credential work`. |
+| `credsd speaks protocol version 2, but this box requires version 1` | The daemon and `box` don’t speak the same version. Upgrade the older one. |
+
+After the run starts, the box asks the daemon for the credential on each request. A request it can’t get one for fails with a 403. You can fix the cause while the run goes on, and the next request works:
+
+| The message says | What to do |
+| --- | --- |
+| `credsd needs re-authentication for credential "work"; run creds login --credential work` | The sign-in behind the credential has ended. Run the `creds login` command the message names. |
+| `credsd rejected the request for credential "work" (protocol code -32602)` | The daemon is older than 0.2.0, which names credentials another way. Upgrade credsd. |
 
 ### The agent can’t reach a file or a host
 

@@ -69,7 +69,7 @@ A list entry names one exact path, with no wildcards, and either hides it or mak
 
 ## Check every process with native filesystem policy
 
-Box’s experimental native filesystem policy lets your policy decide the file operations that the agent, its tools, and its local MCP servers make directly. Your file rules then hold for all of them, and each of their reads goes into the run history. It needs macOS 27 or later, or Linux on ARM64 with extra capabilities, and a `box` built for it. The `box` you install isn’t built that way. [Experimental native filesystem policy](/docs/user-guide/box/reference/profiles/index.md#experimental-native-filesystem-policy) says what each system needs, how to build such a `box`, and what the checks don’t cover.
+Box’s experimental native filesystem policy lets your policy decide the file operations that the agent, its tools, and its local MCP servers make directly. Your file rules then hold for all of them, and each of their reads goes into the run history. It needs a `box` built for it. The `box` you install isn’t built that way. [Experimental native filesystem policy](/docs/user-guide/box/reference/profiles/index.md#experimental-native-filesystem-policy) says what each system needs, how to build such a `box`, and what the checks don’t cover.
 
 To try it, turn it on in `profile.toml`:
 

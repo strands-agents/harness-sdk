@@ -66,7 +66,7 @@ What the rules do, beyond what their comments say:
 ./box-core/box run --config my-box/box.toml
 ```
 
-The box validates the policy before it starts. When the policy loads, the box prints `strands-box: starting workload` and the paths the agent reaches, as in getting started. A policy that cannot load stops the run, with the file and the reason on stderr. For example, when the file holds only this rule, which names the action `fs:raed`:
+The box validates the policy before it starts. When the policy loads, the box prints `strands-box: note[B0302]: starting workload` and the paths the agent reaches, as in getting started. A policy that cannot load stops the run, with the file and the reason on stderr. For example, when the file holds only this rule, which names the action `fs:raed`:
 
 ```text
 permit (principal, action == Box::Action::"fs:raed", resource);
@@ -75,7 +75,7 @@ permit (principal, action == Box::Action::"fs:raed", resource);
 the box prints:
 
 ```text
-strands-box: error: policy file /Users/you/box-tutorial/my-box/policy.dw will not load: policy references unknown action: for policy `policy_0`, unrecognized action `Box::Action::"fs:raed"` at line 1, column 30 (did you mean `Box::Action::"fs:read"`?); for policy `policy_0`, unable to find an applicable action given the policy scope constraints
+strands-box: error[B0103]: policy file /Users/you/box-tutorial/my-box/policy.dw will not load: policy references unknown action: for policy `policy_0`, unrecognized action `Box::Action::"fs:raed"` at line 1, column 30 (did you mean `Box::Action::"fs:read"`?); for policy `policy_0`, unable to find an applicable action given the policy scope constraints
 ```
 
 [Troubleshooting load failures](/docs/user-guide/box/reference/policy/index.md#troubleshooting-load-failures) lists each refusal.

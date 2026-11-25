@@ -1,6 +1,6 @@
 An agent you write with the [Strands Agents SDK](https://github.com/strands-agents/sdk-python) runs in a box like any other program. In this example each of its three tools runs a command through the box’s shell, so the policy decides every command and every file a command touches. By the end of this page you have the agent working on the project from getting started, and you have watched the policy permit two tasks and refuse two, with the refusal text the agent read.
 
-Audience: an operator who has run [getting started](/docs/user-guide/box/core/quickstart/index.md) and [write a policy](/docs/user-guide/box/guides/write-a-policy/index.md) on a Mac. The files are in [`examples/strands-box/strands-sdk-agent`](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/examples/strands-box/strands-sdk-agent/) in the repository, and this page walks through them.
+Audience: an operator who has run [getting started](/docs/user-guide/box/core/quickstart/index.md) and [write a policy](/docs/user-guide/box/guides/write-a-policy/index.md) on a Mac. The files are in [`examples/strands-box/strands-sdk-agent`](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/examples/strands-box/strands-sdk-agent/) in the repository, and this page walks through them.
 
 ## Before you start
 
@@ -187,9 +187,9 @@ Each run starts the box, runs one task, and ends when the agent answers. The mod
 The box prints what the agent’s own process can touch, then the agent works. The runtime minimum lines are cut here:
 
 ```text
-strands-box: box box-6b8ee845f22b265a created · config strands-agent/box.toml
-strands-box: starting workload
-strands-box: [agent] runs /opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/bin/python3.14 with no policy decision over these paths:
+strands-box: note[B0301]: box box-6b8ee845f22b265a created · config strands-agent/box.toml
+strands-box: note[B0302]: starting workload
+strands-box: note[B0201]: [agent] runs /opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/bin/python3.14 with no policy decision over these paths:
   read        /Users/you/box-tutorial/strands-agent/runtime/.venv
   read        /opt/homebrew/Cellar/python@3.14
   read        /opt/homebrew/Cellar/openssl@3
@@ -200,9 +200,9 @@ strands-box: [agent] runs /opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Pyt
   metadata    /opt/homebrew/opt
   exec        /opt/homebrew/Cellar/python@3.14
   exec        /opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/bin/python3.14  (command, implicit)
-strands-box: [agent] runtime minimum, added by Core:
+strands-box: note[B0201]: [agent] runtime minimum, added by Core:
   ...
-strands-box: [agent] HOME=/Users/you PATH=/Users/you/box-tutorial/strands-agent/state/bin:/usr/bin:/bin
+strands-box: note[B0201]: [agent] HOME=/Users/you PATH=/Users/you/box-tutorial/strands-agent/state/bin:/usr/bin:/bin
 I'll read the README.md file.
 Tool #1: read_file
 [tool] cat README.md (exit 0)
@@ -348,4 +348,4 @@ A Strands Agents SDK agent that sends every tool call through the box’s shell,
 -   [Write a policy and read what it decided](/docs/user-guide/box/guides/write-a-policy/index.md): each part of a rule, and the record of each decision.
 -   [Strands Shell](/docs/user-guide/box/reference/shell/index.md): what the agent’s `zsh -c` runs, where, and the fields a rule reads.
 -   [Security](/docs/user-guide/box/security/index.md#the-two-tiers): what `box.toml` governs, what `policy.dw` governs, and why the project stays out of the agent’s `read` list.
--   [The example directory](https://github.com/strands-agents/box/blob/cfff47d5824aaa8de76c93011680f278de5e696b/examples/strands-box/strands-sdk-agent/): the files this page walks through.
+-   [The example directory](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/examples/strands-box/strands-sdk-agent/): the files this page walks through.
