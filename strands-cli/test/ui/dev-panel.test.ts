@@ -345,6 +345,8 @@ describe('dev jobs row', () => {
 })
 
 describe('a dev panel that asks for the dock', () => {
+  // The dock's share of the terminal's width.
+  const DOCK = 0.62
   const widthAt = async (columns: number, dock: boolean): Promise<number> => {
     const { command, sizes } = probe()
     const { controller, instance } = await mountChat({
@@ -360,15 +362,15 @@ describe('a dev panel that asks for the dock', () => {
     const width = await widthAt(120, true)
 
     expect(width).toBeGreaterThan(0)
-    expect(width).toBeLessThan(120 / 2)
+    expect(width).toBeLessThan(120 * DOCK)
   })
 
   it('shouldTakeTheFullWidthWhenItDoesNotAskForTheDock', async () => {
-    expect(await widthAt(120, false)).toBeGreaterThan(120 / 2)
+    expect(await widthAt(120, false)).toBeGreaterThan(120 * DOCK)
   })
 
   it('shouldFallBackToTheInlinePanelOnANarrowTerminal', async () => {
-    expect(await widthAt(70, true)).toBeGreaterThan(70 / 2)
+    expect(await widthAt(70, true)).toBeGreaterThan(70 * DOCK)
   })
 })
 

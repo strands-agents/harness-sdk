@@ -147,10 +147,8 @@ export interface DevChatCommand {
   backgroundTools?: readonly string[]
   /** Keeps the panel open when the developer clicks away, for a panel something is waiting on. */
   sticky?: boolean
-  /** Renders beside the transcript at the dock's width, when its content needs that width right now. */
+  /** Renders beside the transcript in the wide dock, when it holds lines to read right now. */
   dock?(): boolean
-  /** Widens that dock, for a panel holding lines to read rather than rows to pick. */
-  wideDock?(): boolean
   /** A chat message is sent instead of an answer; says whether it let go of a question a turn was waiting on. */
   dropPending?(): boolean
   /**
@@ -288,7 +286,7 @@ export type NewChatPanel =
       language: ChatConfigurationLanguage
     })
   | (ChatPanelBase &
-      Pick<DevChatCommand, 'sticky' | 'dock' | 'wideDock' | 'dropPending' | 'contentRows'> & {
+      Pick<DevChatCommand, 'sticky' | 'dock' | 'dropPending' | 'contentRows'> & {
         kind: 'dev'
         command: string
         view: DevChatPanelView

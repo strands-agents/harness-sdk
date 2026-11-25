@@ -185,8 +185,8 @@ describe('TEMPORARY dev commands', () => {
       await vi.waitFor(() => expect(broker.pending()).toBeDefined())
       const panel = controller.getSnapshot().panel
       expect(panel).toMatchObject({ kind: 'dev', command: 'ask' })
-      const { id, steps } = broker.pending()!
-      broker.respond(id, { [steps[0]!.fields[0]!.key]: 'a' })
+      const { id, fields } = broker.pending()!
+      broker.respond(id, { [fields[0]!.key]: 'a' })
       // The panel closes itself once its question is answered.
       if (panel?.kind === 'dev') panel.close()
     }

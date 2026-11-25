@@ -20,6 +20,7 @@ import { mouseInputSequence } from '../fixtures/terminal.js'
 const ENTER = '\r'
 const UP = '\u001b[A'
 const DOWN = '\u001b[B'
+const RIGHT = '\u001b[C'
 const ESCAPE = '\u001b'
 const BACKSPACE = '\u007f'
 const CTRL_A = '\u0001'
@@ -27,7 +28,7 @@ const CTRL_A = '\u0001'
 const question = (fields: readonly WizardFieldSpec[], name = 'optimize'): WizardRequestSpec => ({
   name,
   question: 'What should the run tune?',
-  steps: [{ key: 'question', title: 'Question', fields }],
+  fields,
 })
 
 const tune: WizardFieldSpec = {
@@ -79,15 +80,13 @@ describe('defaultAnswers', () => {
   it('shouldSeedEveryFieldFromItsSpecAndLeaveOutAnUnavailablePick', () => {
     const blocked: WizardFieldSpec = { ...tune, selected: ['instructions', 'model'] } as WizardFieldSpec
 
-    expect(
-      defaultAnswers([
-        {
-          key: 'q',
-          title: 'Q',
-          fields: [blocked, objective, ...budget, { kind: 'text', key: 'notes', label: 'notes' }],
-        },
-      ])
-    ).toEqual({ tune: ['instructions'], objective: 'mean', iterations: 4, workers: 4, notes: '' })
+    expect(defaultAnswers([blocked, objective, ...budget, { kind: 'number', key: 'notes', label: 'notes' }])).toEqual({
+      tune: ['instructions'],
+      objective: 'mean',
+      iterations: 4,
+      workers: 4,
+      notes: '',
+    })
   })
 })
 
@@ -156,8 +155,8 @@ describe('WizardBroker', () => {
     expect(open).toHaveBeenCalledOnce()
   })
 
-  it('shouldResolveWithNothingWhenTheRequestHasNoStep', async () => {
-    await expect(new WizardBroker().ask({ name: 'optimize', steps: [] })).resolves.toBeUndefined()
+  it('shouldResolveWithNothingWhenTheRequestHasNoField', async () => {
+    await expect(new WizardBroker().ask({ name: 'optimize', fields: [] })).resolves.toBeUndefined()
   })
 })
 
@@ -168,7 +167,6 @@ describe('WizardRequestPanel', () => {
     expect(screen()).toContain('What should the run tune?')
     expect(screen()).toContain('☑ instructions')
     expect(screen()).toContain('☐ caching')
-    expect(screen()).not.toContain('Tab next tab')
     await press(DOWN, ENTER, DOWN, ENTER)
     expect(screen()).toContain('not available')
     await press(DOWN, ENTER)
@@ -184,6 +182,7 @@ describe('WizardRequestPanel', () => {
     const editing = screen().split('\n')
     expect(editing.find((line) => line.includes('something else'))).toContain('tokens <= 4000▏')
     expect(editing.filter((line) => line.includes('tokens <= 4000'))).toHaveLength(1)
+    expect(screen()).toContain('Enter save · Esc cancel')
     await press(ENTER)
     expect(screen()).toContain('◉ something else')
     expect(screen()).toContain('tokens <= 4000')
@@ -208,6 +207,7 @@ describe('WizardRequestPanel', () => {
     expect(screen()).toContain('steps must be at least 1.')
     await press(DOWN, DOWN, ENTER)
     expect(broker.pending()).toBeDefined()
+    expect(screen()).toContain('fix the problem to finish')
     await press(ESCAPE)
     await expect(asked).resolves.toBeUndefined()
 
@@ -231,14 +231,94 @@ describe('WizardRequestPanel', () => {
     expect(screen()).toContain('instructions')
   })
 
-  it('shouldTakeWhatIsTypedOnATextRowAsTheStartOfItsAnswer', async () => {
-    const { asked, screen, press } = await panel(question([{ kind: 'text', key: 'notes', label: 'notes' }]))
+  it('shouldTakeWhatIsTypedOnANumberRowAsTheStartOfItsAnswer', async () => {
+    const { asked, screen, press } = await panel(question([{ kind: 'number', key: 'notes', label: 'notes' }]))
 
-    await press(...'1 step')
-    expect(screen()).toContain('1 step▌')
+    await press(...'12')
+    expect(screen()).toContain('12▌')
     await press(ENTER, DOWN, ENTER)
 
-    await expect(asked).resolves.toEqual({ notes: '1 step' })
+    await expect(asked).resolves.toEqual({ notes: 12 })
+  })
+
+  it('shouldNotTypeTheMouseReportsOfTheTerminalIntoARowOrItsEditor', async () => {
+    const size: WizardFieldSpec = { kind: 'number', key: 'size', label: 'size', value: 1 }
+    const { asked, screen, press } = await panel(question([size, { ...objective, selected: [] } as WizardFieldSpec]))
+    // The mouse moves, moves with Shift and Alt held, and the wheel turns: each is a report on the same input.
+    const mouse = async (): Promise<void> => {
+      for (const button of [35, 47, 64, 65]) await press(mouseInputSequence(button, 49, 19, 'M'))
+    }
+
+    await mouse()
+    const onTheRow = screen()
+    await press(DOWN, DOWN, ENTER, 'h')
+    await mouse()
+    await press('i')
+    const inTheEditor = screen()
+    await press(ENTER, DOWN, ENTER)
+
+    expect(onTheRow).not.toContain('[<')
+    expect(onTheRow).not.toContain('Enter save')
+    expect(inTheEditor).not.toContain('[<')
+    await expect(asked).resolves.toEqual({ size: 1, objective: 'hi' })
+  })
+
+  it('shouldDropTheEditWhenTheUserPressesEscInTheEditor', async () => {
+    const { asked, broker, screen, press } = await panel(question(budget))
+
+    await press(ENTER, '7', ESCAPE)
+    await vi.waitFor(() => expect(screen()).not.toContain('Enter save'))
+    expect(broker.pending()).toBeDefined()
+    await press(DOWN, DOWN, ENTER)
+
+    await expect(asked).resolves.toEqual({ iterations: 4, workers: 4 })
+  })
+
+  it('shouldGoBackFromTheCancelButtonButStillCancelOnEscWhenTheRequestOffersBack', async () => {
+    const back = await panel({ ...question([tune]), back: true })
+    await back.press(DOWN, DOWN, DOWN, RIGHT)
+    expect(back.screen()).toContain('Enter back')
+    await back.press(ENTER)
+    const cancelled = await panel({ ...question([tune]), back: true })
+    await cancelled.press(ESCAPE)
+
+    await expect(back.asked).resolves.toBe('back')
+    await expect(cancelled.asked).resolves.toBeUndefined()
+  })
+
+  it('shouldLineUpTheValuesWhenALabelIsLongerThanTheDefaultWidth', async () => {
+    const { screen } = await panel(
+      question([
+        { kind: 'number', key: 'steps', label: 'steps', value: 7 },
+        { kind: 'number', key: 'trials', label: 'trials at once', value: 7 },
+      ])
+    )
+
+    const columns = screen()
+      .split('\n')
+      .filter((line) => /steps|trials at once/u.test(line))
+      .map((line) => line.indexOf('7'))
+
+    expect(columns).toHaveLength(2)
+    expect(new Set(columns).size).toBe(1)
+  })
+
+  it('shouldKeepTheDeclaredOrderWhenAQuestionMixesNumbersAndOptions', async () => {
+    const { screen } = await panel(question([budget[0]!, tune]))
+    const rows = screen().split('\n')
+
+    expect(rows.findIndex((row) => row.includes('steps'))).toBeLessThan(
+      rows.findIndex((row) => row.includes('caching'))
+    )
+  })
+
+  it('shouldToggleTheRowTheCursorIsOnWithSpace', async () => {
+    const { asked, screen, press } = await panel(question([budget[0]!, tune]))
+
+    expect(screen()).toContain('set in code')
+    await press(DOWN, DOWN, ' ', DOWN, DOWN, ENTER)
+
+    await expect(asked).resolves.toEqual({ iterations: 4, tune: ['instructions', 'caching'] })
   })
 
   it('shouldStayIdleWithoutACursorWhileTheChatInputHoldsTheKeyboard', async () => {
@@ -300,29 +380,22 @@ const review = (before = OLD_PROMPT, after = NEW_PROMPT): WizardRequestSpec => (
   titleParts: ['edit 1 of 2', '20261122-162600-prefix-smoke'],
   question: 'Apply this change to instructions?',
   standing: true,
-  finishLabel: '[ OK ]',
-  steps: [
+  fields: [
     {
-      key: 'review',
-      title: 'Review',
-      fields: [
-        {
-          kind: 'select',
-          key: 'verdict',
-          multiple: false,
-          options: [
-            { value: 'accept', label: 'Apply this change' },
-            { value: 'reject', label: 'Leave it as it is' },
-          ],
-        },
-        {
-          kind: 'diff',
-          key: 'change',
-          label: 'instructions',
-          path: 'agent.ts',
-          diff: createDiffPreview('agent.ts', before, after),
-        },
+      kind: 'select',
+      key: 'verdict',
+      multiple: false,
+      options: [
+        { value: 'accept', label: 'Apply this change' },
+        { value: 'reject', label: 'Leave it as it is' },
       ],
+    },
+    {
+      kind: 'diff',
+      key: 'change',
+      label: 'instructions',
+      path: 'agent.ts',
+      diff: createDiffPreview('agent.ts', before, after),
     },
   ],
 })
@@ -413,11 +486,6 @@ const pickOne = (key: string, labels: readonly string[]): WizardFieldSpec => ({
   options: labels.map((label) => ({ value: label, label, detail: '5 cases' })),
 })
 
-const walked = (...steps: (readonly WizardFieldSpec[])[]): WizardRequestSpec => ({
-  ...question([]),
-  steps: steps.map((fields, index) => ({ key: `step${index}`, title: `step${index}`, fields })),
-})
-
 describe('wizardRequestRows', () => {
   it('shouldCountTheQuestionItsOptionsAndOnePaddingRow', () => {
     expect(wizardRequestRows(undefined)).toBeUndefined()
@@ -426,12 +494,6 @@ describe('wizardRequestRows', () => {
 
   it('shouldGrowWithTheOptionCount', () => {
     expect(wizardRequestRows({ ...question([pickOne('mode', ['a', 'b', 'c', 'd', 'e'])]), id: 'r2' })).toBe(11)
-  })
-
-  it('shouldSizeAWalkedFormToItsTallestStepPlusItsStepBar', () => {
-    const request = walked([pickOne('mode', ['a', 'b'])], [pickOne('more', ['a', 'b', 'c', 'd'])])
-
-    expect(wizardRequestRows({ ...request, id: 'r4' })).toBe(8 + 2 + 2)
   })
 })
 
@@ -451,7 +513,6 @@ const askCommand = (broker: WizardBroker): DevChatCommand => ({
   spec: { name: 'ask', usage: '/ask', description: 'Ask' },
   sticky: true,
   dock: () => wizardRequestHasDiff(broker.pending()),
-  wideDock: () => wizardRequestHasDiff(broker.pending()),
   dropPending: () => broker.dropForTurn(),
   contentRows: (width) => wizardRequestRows(broker.pending(), width),
   attach: (context) => broker.attachOpener(() => context.openPanel('ask')),
@@ -474,13 +535,9 @@ describe('the panel around one question', () => {
     expect(row('╰') - row('╭')).toBeLessThanOrEqual(9)
   })
 
-  it.each([
-    ['one step', 1],
-    ['a walked form', 2],
-  ])('shouldShowEveryOptionOfALongListIn%s', async (_name, stepCount) => {
+  it('shouldShowEveryOptionOfALongList', async () => {
     const labels = Array.from({ length: 10 }, (_, index) => `experiment-${index + 1}`)
-    const steps = Array.from({ length: stepCount }, (_, index) => [pickOne(`step${index}`, labels)])
-    const { screen } = await ask(walked(...steps), 50)
+    const { screen } = await ask(question([pickOne('step0', labels)]), 50)
 
     for (const label of labels) expect(screen()).toContain(label)
     expect(screen()).not.toMatch(/↓ \d+ more/u)
@@ -489,7 +546,7 @@ describe('the panel around one question', () => {
 
 describe('a real ask call with its question on screen', () => {
   const asked: WizardRequestSpec = {
-    ...question([{ kind: 'text', key: 'request', label: 'request' }]),
+    ...question([{ kind: 'number', key: 'request', label: 'request' }]),
     question: 'Describe the optimization you want, or answer "step by step".',
   }
   const call = (toolUseId: string, name: string, input = {}): never =>

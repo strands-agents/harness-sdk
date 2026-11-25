@@ -21,31 +21,24 @@ const question = (
   // The run is over and no turn waits on this, so asking the agent about the change must not answer it.
   standing: true,
   topic: id,
-  steps: [
+  fields: [
     {
-      key: 'review',
-      title: 'Review',
-      fields: [
-        {
-          kind: 'select',
-          key: 'verdict',
-          options: [
-            { value: ACCEPT, label: 'Apply this change' },
-            { value: REJECT, label: 'Leave it as it is' },
-          ],
-          multiple: false,
-        },
-        {
-          kind: 'diff',
-          key: 'change',
-          label: edit.label,
-          path: target(edit),
-          diff: createDiffPreview(target(edit), edit.before, edit.after),
-        },
+      kind: 'select',
+      key: 'verdict',
+      options: [
+        { value: ACCEPT, label: 'Apply this change' },
+        { value: REJECT, label: 'Leave it as it is' },
       ],
+      multiple: false,
+    },
+    {
+      kind: 'diff',
+      key: 'change',
+      label: edit.label,
+      path: target(edit),
+      diff: createDiffPreview(target(edit), edit.before, edit.after),
     },
   ],
-  finishLabel: '[ OK ]',
 })
 
 // Walks a finished run's edits one at a time and writes the accepted ones once every edit has an answer.

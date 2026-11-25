@@ -22,13 +22,6 @@ export interface WizardSelectSpec {
   readonly selected?: readonly string[]
 }
 
-interface WizardTextSpec {
-  readonly kind: 'text'
-  readonly key: string
-  readonly label: string
-  readonly value?: string
-}
-
 /** A whole number typed in its own row; finishing waits until it fits min and max. */
 export interface WizardNumberSpec {
   readonly kind: 'number'
@@ -49,21 +42,14 @@ export interface WizardDiffSpec {
   readonly diff: ChatDiffPreview
 }
 
-export type WizardFieldSpec = WizardTextSpec | WizardSelectSpec | WizardNumberSpec | WizardDiffSpec
-
-export interface WizardStepSpec {
-  readonly key: string
-  readonly title: string
-  readonly fields: readonly WizardFieldSpec[]
-}
+export type WizardFieldSpec = WizardSelectSpec | WizardNumberSpec | WizardDiffSpec
 
 export interface WizardRequest {
   readonly id: string
   readonly name: string
   readonly question?: string
   readonly titleParts?: readonly string[]
-  readonly steps: readonly WizardStepSpec[]
-  readonly finishLabel?: string
+  readonly fields: readonly WizardFieldSpec[]
   /** Offer Back instead of Cancel; picking it resolves the request with 'back'. */
   readonly back?: boolean
   /** Asked outside a turn, so no turn waits on it: a chat message or a cancelled turn leaves it on screen. */
@@ -102,9 +88,7 @@ const cleanField = (field: WizardFieldSpec): WizardFieldSpec => {
     }
   const label = sanitizeTerminalText(field.label)
   if (field.kind === 'diff') return { ...field, label, path: sanitizeTerminalText(field.path) }
-  if (field.kind === 'number')
-    return { ...field, label, ...(field.detail === undefined ? {} : { detail: sanitizeTerminalText(field.detail) }) }
-  return { ...field, label }
+  return { ...field, label, ...(field.detail === undefined ? {} : { detail: sanitizeTerminalText(field.detail) }) }
 }
 
 const cleanRequest = (request: WizardRequest): WizardRequest => ({
@@ -112,19 +96,13 @@ const cleanRequest = (request: WizardRequest): WizardRequest => ({
   name: sanitizeTerminalText(request.name),
   ...(request.question === undefined ? {} : { question: sanitizeTerminalText(request.question) }),
   ...(request.titleParts === undefined ? {} : { titleParts: request.titleParts.map(sanitizeTerminalText) }),
-  steps: request.steps.map((step) => ({
-    ...step,
-    title: sanitizeTerminalText(step.title),
-    fields: step.fields.map(cleanField),
-  })),
+  fields: request.fields.map(cleanField),
 })
 
 const DIFF_INDENT = 2
 const DIFF_MARK_COLUMNS = 2
 // The title, the question, the gap under it, the row under the fields, the buttons, and the key hints.
 const CHROME_ROWS = 6
-// The step bar of a walked request and the gap under it.
-const STEP_BAR_ROWS = 2
 // The file and its counts above the lines, and the gap that sets the change apart from the fields.
 const DIFF_FRAME_ROWS = 2
 
@@ -166,33 +144,27 @@ const fieldRows = (field: WizardFieldSpec, width: number | undefined): number =>
 
 /** A question that carries a change needs the wide dock to be read; everything else fits above the chat input. */
 export const wizardRequestHasDiff = (request: WizardRequest | undefined): boolean =>
-  request?.steps.some((step) => step.fields.some((field) => field.kind === 'diff')) === true
+  request?.fields.some((field) => field.kind === 'diff') === true
 
 /** The rows a question needs at a panel `width` wide, so its panel is not half the terminal with the rest empty. */
 export const wizardRequestRows = (request: WizardRequest | undefined, width?: number): number | undefined => {
   if (!request) return undefined
-  // A walked request sizes to its tallest step, plus its step bar, so moving between steps keeps one frame.
-  const fields = Math.max(
-    ...request.steps.map((step) => step.fields.reduce((rows, field) => rows + fieldRows(field, width), 0))
-  )
-  return (
-    CHROME_ROWS - (request.question === undefined ? 1 : 0) + (request.steps.length > 1 ? STEP_BAR_ROWS : 0) + fields
-  )
+  const fields = request.fields.reduce((rows, field) => rows + fieldRows(field, width), 0)
+  return CHROME_ROWS - (request.question === undefined ? 1 : 0) + fields
 }
 
-export const defaultAnswers = (steps: readonly WizardStepSpec[]): Record<string, WizardAnswer> => {
+export const defaultAnswers = (fields: readonly WizardFieldSpec[]): Record<string, WizardAnswer> => {
   const answers: Record<string, WizardAnswer> = {}
-  for (const step of steps)
-    for (const field of step.fields) {
-      if (field.kind === 'diff') continue
-      if (field.kind === 'select') {
-        const open = field.options.filter(({ unavailable }) => unavailable === undefined).map(({ value }) => value)
-        const picked = (field.selected ?? []).filter((value) => open.includes(value))
-        answers[field.key] = field.multiple === false ? (picked[0] ?? '') : picked
-        continue
-      }
-      answers[field.key] = field.value ?? ''
+  for (const field of fields) {
+    if (field.kind === 'diff') continue
+    if (field.kind === 'select') {
+      const open = field.options.filter(({ unavailable }) => unavailable === undefined).map(({ value }) => value)
+      const picked = (field.selected ?? []).filter((value) => open.includes(value))
+      answers[field.key] = field.multiple === false ? (picked[0] ?? '') : picked
+      continue
     }
+    answers[field.key] = field.value ?? ''
+  }
   return answers
 }
 
@@ -206,25 +178,22 @@ export const numberProblem = (field: WizardNumberSpec, answer: WizardAnswer | un
 
 /** The answers as the asker reads them: a picked input row answers with its typed text. */
 export const finishedAnswers = (
-  steps: readonly WizardStepSpec[],
+  fields: readonly WizardFieldSpec[],
   answers: Readonly<Record<string, WizardAnswer>>,
   typed: Readonly<Record<string, string>>
 ): Record<string, WizardAnswer> => {
   const done: Record<string, WizardAnswer> = { ...answers }
-  for (const step of steps)
-    for (const field of step.fields) {
-      if (field.kind !== 'select' || !field.options.some(({ input }) => input)) continue
-      const typedOf = (value: string): string =>
-        field.options.find((option) => option.value === value)?.input
-          ? (typed[inputKey(field.key, value)] ?? '')
-          : value
-      const answer = answers[field.key]
-      done[field.key] = Array.isArray(answer)
-        ? answer.map(typedOf)
-        : typeof answer === 'string' && answer
-          ? typedOf(answer)
-          : ''
-    }
+  for (const field of fields) {
+    if (field.kind !== 'select' || !field.options.some(({ input }) => input)) continue
+    const typedOf = (value: string): string =>
+      field.options.find((option) => option.value === value)?.input ? (typed[inputKey(field.key, value)] ?? '') : value
+    const answer = answers[field.key]
+    done[field.key] = Array.isArray(answer)
+      ? answer.map(typedOf)
+      : typeof answer === 'string' && answer
+        ? typedOf(answer)
+        : ''
+  }
   return done
 }
 
@@ -252,7 +221,7 @@ export class WizardBroker {
   }
 
   ask(spec: WizardRequestSpec): Promise<WizardOutcome> {
-    if (spec.steps.length === 0) return Promise.resolve(undefined)
+    if (spec.fields.length === 0) return Promise.resolve(undefined)
     const request = cleanRequest({ ...spec, id: `strands-wizard-${this._next++}` })
     this._track?.('shown')
     return new Promise((resolve) => {

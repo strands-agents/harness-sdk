@@ -1398,8 +1398,8 @@ describe('TEMPORARY dev sessions', () => {
     const { sessions } = await reviewOnScreen()
 
     const question = sessions.ask.pending()!
-    expect(question.steps[0]?.fields.map(({ kind }) => kind)).toEqual(['select', 'diff'])
-    expect(question.steps[0]?.fields[1]).toMatchObject({ kind: 'diff', path: expect.any(String) })
+    expect(question.fields.map(({ kind }) => kind)).toEqual(['select', 'diff'])
+    expect(question.fields[1]).toMatchObject({ kind: 'diff', path: expect.any(String) })
   })
 
   it('shouldApplyOnlyWhatTheDeveloperAcceptsInThatQuestion', async () => {
@@ -1463,7 +1463,7 @@ describe('TEMPORARY dev sessions', () => {
       void sessions.ask.ask({
         name: 'experiment',
         question: 'Which experiment?',
-        steps: [{ key: 'one', title: 'One', fields: [{ kind: 'text', key: 'answer', label: 'answer' }] }],
+        fields: [{ kind: 'number', key: 'answer', label: 'answer' }],
       })
 
       expect(sessions.ask.pending()?.question).toBe('Which experiment?')

@@ -164,7 +164,6 @@ const askCommand = (sessions: Sessions): DevChatCommand => ({
   sticky: true,
   // A change is read line by line beside the chat, so it takes the wide dock.
   dock: () => wizardRequestHasDiff(sessions().ask.pending()),
-  wideDock: () => wizardRequestHasDiff(sessions().ask.pending()),
   dropPending: () => sessions().ask.interruptForTurn(),
   // A finished run's diff stays on screen when a message is sent, so the message says which diff that was.
   screenContext: () => optimizeReviewContext(sessions()),
