@@ -254,6 +254,8 @@ export interface OptimizeRun {
   readonly id: string
   readonly experiment: string
   readonly record?: string
+  /** Auto-optimize started the run: it is the second of its two stages, after the experiment was made. */
+  readonly fromAutoOptimize?: boolean
   readonly state: OptimizeRunState
 }
 

@@ -16,9 +16,11 @@ import {
   type OptimizeDecision,
   type OptimizeObjective,
   type OptimizePage,
+  type OptimizePhase,
   type OptimizePlan,
   type OptimizeProgress,
   type OptimizeReview,
+  type OptimizeRun,
   type OptimizeRunState,
   type OptimizeState,
   type ProposedEdit,
@@ -162,17 +164,51 @@ const unwritableEdits = (state: OptimizeRunState, folder: string | undefined): s
 export const evalsRunAwaitsReview = ({ runs = [] }: OptimizeState, id: string): boolean =>
   runs.some((run) => run.id === id && editsToReview(run.state) > 0)
 
+/** What a run is doing, as the line below the chat input and the status of the agent's tools say it. */
+export const EVALS_RUN_PHASES: Readonly<Record<OptimizePhase, string>> = {
+  baseline: 'measuring your agent as it is',
+  proposing: 'proposing new versions',
+  scoring: 'measuring the new versions',
+  validating: 'checking the finalists on the validation cases',
+  testing: 'checking the winner on the test cases',
+}
+
+/** What the notice of a finished run opens and closes with, kept for the one that auto-accept writes after it. */
+interface RunEnding {
+  readonly lead: string
+  readonly unwritten?: string
+  readonly link: string
+}
+
+/** The score of the agent as it was and of the best version, on the cases the review measured them on. */
+const scoreChange = (state: OptimizeRunState): string | undefined => {
+  if (state.step !== 'review') return undefined
+  const { baseline, best, measuredOn } = state.review
+  const scores = best === baseline ? baseline.toFixed(2) : `${baseline.toFixed(2)} → ${best.toFixed(2)}`
+  return `score ${scores} on the ${measuredOn}`
+}
+
+/** A run of auto-optimize is the second of its two stages, and is named by the experiment that the first one made. */
+const runTitle = (run: Pick<OptimizeRun, 'experiment' | 'fromAutoOptimize'>, name: string): string =>
+  run.fromAutoOptimize ? `auto-optimize 2/2 · ${run.experiment}` : name
+
 /** A finished run stays listed while an edit of it waits for an answer on screen; with nothing waiting, it goes. */
 export const evalsOptimizeJobs = ({ runs = [] }: OptimizeState): DevChatJob[] =>
-  runs.flatMap(({ id, state }) => {
+  runs.flatMap((run) => {
+    const { id, state } = run
     if (state.step === 'running') {
       // The whole run in rollouts, so the count is full only when the finalists and the test have run too.
-      const { done, total } = state.progress.rollouts
-      return [{ id, label: state.progress.run, done, total }]
+      const { phase, rollouts } = state.progress
+      const parts = [
+        runTitle(run, state.progress.run),
+        ...(phase ? [EVALS_RUN_PHASES[phase]] : []),
+        `${rollouts.done}/${rollouts.total} rollouts`,
+      ]
+      return [{ id, label: parts.join(' · ') }]
     }
     const edits = editsToReview(state)
     return edits > 0 && state.step === 'review'
-      ? [{ id, label: `${state.review.run} · ${edits} to review`, done: 1, total: 1, waiting: true }]
+      ? [{ id, label: `${state.review.run} · ${plural(edits, 'edit')} to review`, waiting: true }]
       : []
   })
 
@@ -196,6 +232,8 @@ interface RunEntry {
   writers: Map<number, EvalsEditTarget['write']>
   changes: readonly EvalsKnobChange[]
   sources: FSWatcher | undefined
+  /** Auto-optimize started the run, so its line and its notices say so. */
+  fromAutoOptimize: boolean
   /** The notice that a review came back with strands dev, kept so it stops asking once the review is over. */
   reminder?: DevChatNotice | undefined
 }
@@ -347,7 +385,7 @@ export class EvalsOptimize extends Store<OptimizeState> {
     )
   }
 
-  start(): string | undefined {
+  start({ fromAutoOptimize = false }: { fromAutoOptimize?: boolean } = {}): string | undefined {
     const page = this.page
     if (page.step !== 'setup' || page.plan.objectiveProblem || page.plan.budgetProblem) return undefined
     const knobs = this.catalog.map((knob) => ({
@@ -361,6 +399,7 @@ export class EvalsOptimize extends Store<OptimizeState> {
       step: 'running',
       progress: startingProgress(page.plan),
     })
+    entry.fromAutoOptimize = fromAutoOptimize
     this.showPage(entry.state, entry.id)
     recordDevEvent('optimize_run_started')
     void this.run(entry, page.plan, knobs, variables)
@@ -477,6 +516,7 @@ export class EvalsOptimize extends Store<OptimizeState> {
       writers: new Map(),
       changes: [],
       sources: undefined,
+      fromAutoOptimize: false,
     }
     this.entries.set(entry.id, entry)
     return entry
@@ -497,10 +537,11 @@ export class EvalsOptimize extends Store<OptimizeState> {
   private publish(): void {
     const runs = [...this.entries.values()]
       .sort((left, right) => right.startedAt - left.startedAt)
-      .map(({ id, experiment, record, state }) => ({
+      .map(({ id, experiment, record, fromAutoOptimize, state }) => ({
         id,
         experiment,
         ...(record ? { record } : {}),
+        ...(fromAutoOptimize ? { fromAutoOptimize } : {}),
         state,
       }))
     this.set({ ...this.page, runs })
@@ -646,6 +687,7 @@ export class EvalsOptimize extends Store<OptimizeState> {
         progress: startingProgress(plan),
       })
       entry.record = saved.record
+      entry.fromAutoOptimize = saved.fromAutoOptimize ?? false
       this.publish()
       if (saved.awaitsReview) return await this.restoreReview(entry, saved, knobs)
       if (await isEvalsOptimizeAlive(saved)) return await this.follow(entry, plan, knobs, saved)
@@ -806,6 +848,7 @@ export class EvalsOptimize extends Store<OptimizeState> {
               ...(plan.objective ? { objective: plan.objective } : {}),
               decision: plan.decision,
               startedAt,
+              ...(entry.fromAutoOptimize ? { fromAutoOptimize: true } : {}),
             })
             tail = this.track(entry, plan, path)
           },
@@ -870,22 +913,26 @@ export class EvalsOptimize extends Store<OptimizeState> {
     // Read as the run ends; a stopped run's best version was never validated, so it is never applied unasked.
     const auto = !cancelled && outcome.ended === 'finished' && this.autoApplies()
     let ready: number
+    let ended: RunEnding
     try {
       // Only a run that produced an edit worth applying opens the review; the rest just say they finished.
       ready = await this.enterReview(entry, outcome, record, knobs, auto)
       const folder = await evalsRunFolder(record).catch(() => undefined)
       const unwritten = unwritableEdits(entry.state, folder)
-      const ending =
-        ready === 0
-          ? unwritten === undefined
-            ? 'no edits to apply'
-            : undefined
-          : auto
-            ? `auto-accept is on · applying ${plural(ready, 'edit')}`
-            : `showing ${plural(ready, 'edit')}`
-      const told = [ending, unwritten].filter((part) => part !== undefined).join(' · ')
-      const link = evalsLinkText(this.host(), { view: 'optimization', record }, folder)
-      announce(this.host(), 'success', `optimize · run ${name} finished · ${told}${link}`)
+      ended = {
+        lead: [`${runTitle(entry, `optimize · run ${name}`)} finished`, scoreChange(entry.state)]
+          .filter((part) => part !== undefined)
+          .join(' · '),
+        ...(unwritten === undefined ? {} : { unwritten }),
+        link: evalsLinkText(this.host(), { view: 'optimization', record }, folder),
+      }
+      // Auto-accept writes the edits next, and that notice is the one of the end: the score with what was written.
+      if (!auto || ready === 0) {
+        const ending =
+          ready > 0 ? `showing ${plural(ready, 'edit')}` : unwritten === undefined ? 'no edits to apply' : undefined
+        const told = [ended.lead, ending, unwritten].filter((part) => part !== undefined).join(' · ')
+        announce(this.host(), 'success', `${told}${ended.link}`)
+      }
     } catch (error) {
       if (cancelled) return this.reportCancelled(entry, plan, record)
       this.updateRun(entry, { step: 'failed', message: errorMessage(error), record })
@@ -894,7 +941,7 @@ export class EvalsOptimize extends Store<OptimizeState> {
     }
     if (ready === 0) return
     // With auto-accept the edits are answered already, so there is nothing to show: they are written here.
-    if (auto) await this.applyAccepted(entry)
+    if (auto) await this.applyAccepted(entry, ended)
     else this.onReview?.(entry.id)
   }
 
@@ -995,7 +1042,8 @@ export class EvalsOptimize extends Store<OptimizeState> {
     }
   }
 
-  private async applyAccepted(entry: RunEntry): Promise<void> {
+  /** `ended` is the run that just finished under auto-accept, which this notice then tells the end of as well. */
+  private async applyAccepted(entry: RunEntry, ended?: RunEnding): Promise<void> {
     // A run's edits are written once: the walk on screen and the agent's apply tool can both reach here for one run.
     if (entry.state.step !== 'review' || entry.state.review.applied) return
     const { review } = entry.state
@@ -1043,11 +1091,15 @@ export class EvalsOptimize extends Store<OptimizeState> {
     const did = applied.length > 0 ? `applied ${applied.join(', ')}` : 'changed nothing'
     // Nobody saw these edits before they were written, so the notice says who applied them.
     const changed = review.auto ? `auto-accept ${did}` : did
+    const told = [
+      ended?.lead ?? 'optimize',
+      changed,
+      ended?.unwritten,
+      applyError ?? 'run the experiment again from /experiment to check your agent',
+    ].filter((part) => part !== undefined)
     const notice = {
       status: applyError ? ('error' as const) : ('success' as const),
-      text: applyError
-        ? `optimize · ${changed} · ${applyError}`
-        : `optimize · ${changed} · run the experiment again from /experiment to check your agent`,
+      text: `${told.join(' · ')}${ended?.link ?? ''}`,
     }
     if (applied.length > 0)
       this.carried = { ...notice, at: Date.now(), lasts: review.auto ? AUTO_RELOAD_WINDOW_MS : RELOAD_WINDOW_MS }
