@@ -14,8 +14,8 @@ import type {
   OptimizeReview,
   OptimizeRunState,
   OptimizeState,
-  TestResults,
-  TestState,
+  EvaluationResults,
+  EvaluationState,
 } from '../../../src/dev/evals/model.js'
 import { evalsDevChatPart } from '../../../src/dev/evals/agent-tools.js'
 import { EVALS_DECISION_CHOICES, EVALS_DECISION_DEFAULTS, EVALS_TEST_SHARES } from '../../../src/dev/evals/plan.js'
@@ -46,7 +46,7 @@ const state = <State>(initial: State) => {
   }
 }
 
-const results = (): TestResults => ({
+const results = (): EvaluationResults => ({
   experiment: 'refunds',
   overall: 0.5,
   report: '/w/strands-dev/tmp/reports/20261112-120000-refunds.json',
@@ -143,7 +143,7 @@ const fakeSessions = () => {
     // The saved experiments that reload gives; a test sets them.
     saved: [REFUNDS] as readonly ExperimentSummary[],
   }
-  const test = state<TestState>({ runs: [] })
+  const evaluate = state<EvaluationState>({ runs: [] })
   const optimize = state<OptimizeState>({ step: 'pick' })
   const ui = state<EvalsBrowserState>({ status: 'ready' })
   const settings = { autoAcceptOptimizationResults: false, autoOptimize: 0 }
@@ -158,13 +158,13 @@ const fakeSessions = () => {
       generateInBackground: vi.fn((_settings: GenerationSettings): string | undefined => undefined),
       cancel: vi.fn(),
     },
-    test: {
-      ...test,
+    evaluate: {
+      ...evaluate,
       show: vi.fn(async (): Promise<void> => undefined),
       run: vi.fn((chosen: readonly ExperimentSummary[]) =>
-        test.set({
+        evaluate.set({
           runs: [
-            ...test.snapshot().runs.filter(({ experiment }) => !chosen.includes(experiment)),
+            ...evaluate.snapshot().runs.filter(({ experiment }) => !chosen.includes(experiment)),
             ...chosen.map((experiment) => ({
               experiment,
               run: { status: 'running' as const, cases: 2, done: 0 },
@@ -214,7 +214,7 @@ const fakeSessions = () => {
       Object.assign(settings, update)
     }),
   }
-  return { sessions, experiments, test, optimize, ui, finishRun }
+  return { sessions, experiments, evaluate, optimize, ui, finishRun }
 }
 
 const generationSettings = (overrides: Partial<GenerationSettings> = {}): GenerationSettings => ({
@@ -434,8 +434,8 @@ describe('dev chat part', () => {
   })
 
   it('shouldListTheExperimentsTheirLastTestAndTheSuggestedSettingsWhenItShowsTheStatus', async () => {
-    const { call, test } = setup()
-    test.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] })
+    const { call, evaluate } = setup()
+    evaluate.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] })
 
     const status = await call('strands_dev_status')
 
@@ -478,12 +478,12 @@ describe('dev chat part', () => {
   })
 
   it('shouldGiveTheLastResultFromAnEarlierSessionWhenTheStatusFollowsARestart', async () => {
-    const { call, test, sessions } = setup()
-    sessions.test.show.mockImplementation(
+    const { call, evaluate, sessions } = setup()
+    sessions.evaluate.show.mockImplementation(
       () =>
         new Promise<void>((resolve) =>
           setTimeout(() => {
-            test.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] })
+            evaluate.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] })
             resolve()
           }, 0)
         )
@@ -517,7 +517,7 @@ describe('dev chat part', () => {
       offset: 1,
       cases: [{ name: 'second', input: 'Second request' }],
     })
-    expect(sessions.test.run).not.toHaveBeenCalled()
+    expect(sessions.evaluate.run).not.toHaveBeenCalled()
   })
 
   it('shouldOpenAnExperimentOrAnyFileInTheEditorAndSayWhatToOfferWhenNoEditorOpens', async () => {
@@ -578,9 +578,9 @@ describe('dev chat part', () => {
   })
 
   it('shouldReadSavedTestDetailsWithoutRerunning', async () => {
-    const { call, test, sessions } = setup()
+    const { call, evaluate, sessions } = setup()
     expect(await call('strands_dev_evaluation_results', { experiment: 'refunds' })).toMatchObject({ status: 'not_run' })
-    test.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] })
+    evaluate.set({ runs: [{ experiment: REFUNDS, run: { status: 'done', results: results() } }] })
     expect(await call('strands_dev_evaluation_results', { experiment: 'refunds', offset: 1, limit: 1 })).toMatchObject({
       status: 'done',
       passed: 1,
@@ -594,8 +594,8 @@ describe('dev chat part', () => {
         },
       ],
     })
-    expect(sessions.test.run).not.toHaveBeenCalled()
-    expect(sessions.test.runOnly).not.toHaveBeenCalled()
+    expect(sessions.evaluate.run).not.toHaveBeenCalled()
+    expect(sessions.evaluate.runOnly).not.toHaveBeenCalled()
   })
 
   it.each<[OptimizeRunState, object]>([
@@ -919,11 +919,11 @@ describe('background strands-evals runs', () => {
       cases: 2,
       file: REFUNDS.path,
     })
-    expect(sessions.test.run).toHaveBeenCalledWith([REFUNDS])
+    expect(sessions.evaluate.run).toHaveBeenCalledWith([REFUNDS])
   })
 
   it('shouldRunOnlyTheNamedCasesAndRefuseAnUnknownCaseOrASecondRun', async () => {
-    const { call, tool, sessions, experiments, test } = setup()
+    const { call, tool, sessions, experiments, evaluate } = setup()
     await saveExperimentFile(experiments, ['OutputEvaluator'])
     const [saved] = experiments.saved
     await expect(
@@ -935,7 +935,7 @@ describe('background strands-evals runs', () => {
       experiment: 'refunds',
       args: ['--case', 'second', '--max-workers', '2'],
     })
-    test.set({
+    evaluate.set({
       runs: [
         {
           experiment: saved!,
@@ -945,7 +945,7 @@ describe('background strands-evals runs', () => {
     })
 
     expect(only).toMatchObject({ cases: 1, ignored: ['--max-workers: strands dev sets it'] })
-    expect(sessions.test.runOnly).toHaveBeenCalledWith(saved, ['second'])
+    expect(sessions.evaluate.runOnly).toHaveBeenCalledWith(saved, ['second'])
     await expect(tool('strands_dev_run_background').run({ command: 'run', experiment: 'refunds' })).rejects.toThrow(
       'refunds is already running.'
     )
@@ -998,7 +998,7 @@ describe('background strands-evals runs', () => {
   })
 
   it('shouldStopOnlyTheRunThatIsGoingWhenTheDeveloperAsks', async () => {
-    const { call, tool, sessions, experiments, test, optimize } = setup()
+    const { call, tool, sessions, experiments, evaluate, optimize } = setup()
     const stop = (command: string, experiment = 'refunds') =>
       tool('strands_dev_stop_background').run({ command, experiment })
 
@@ -1006,7 +1006,7 @@ describe('background strands-evals runs', () => {
     await expect(stop('optimize run')).rejects.toThrow('No optimization of refunds is running.')
     await expect(stop('generate', 'billing')).rejects.toThrow('No generation of billing is running.')
 
-    test.set({
+    evaluate.set({
       runs: [
         {
           experiment: REFUNDS,
@@ -1045,7 +1045,7 @@ describe('background strands-evals runs', () => {
     expect(await call('strands_dev_stop_background', { command: 'generate', experiment: 'billing' })).toMatchObject({
       status: 'stopped',
     })
-    expect(sessions.test.stop).toHaveBeenCalledWith(REFUNDS.path)
+    expect(sessions.evaluate.stop).toHaveBeenCalledWith(REFUNDS.path)
     expect(sessions.optimize.stop).toHaveBeenCalledWith('run-4')
     expect(sessions.experiments.cancel).toHaveBeenCalledWith('generation-2')
   })
@@ -1086,9 +1086,9 @@ describe('dev chat tool errors and states', () => {
   })
 
   it('shouldReportARunningOrFailedEvaluationWithoutItsCases', async () => {
-    const { call, test } = setup()
+    const { call, evaluate } = setup()
 
-    test.set({
+    evaluate.set({
       runs: [
         {
           experiment: REFUNDS,
@@ -1097,7 +1097,7 @@ describe('dev chat tool errors and states', () => {
       ],
     })
     const running = await call('strands_dev_evaluation_results', { experiment: 'refunds' })
-    test.set({ runs: [{ experiment: REFUNDS, run: { status: 'failed', message: 'It stopped.' } }] })
+    evaluate.set({ runs: [{ experiment: REFUNDS, run: { status: 'failed', message: 'It stopped.' } }] })
 
     expect(running).toEqual({ experiment: 'refunds', status: 'running', done: 1, cases: 2 })
     expect(await call('strands_dev_evaluation_results', { experiment: 'refunds' })).toEqual({

@@ -9,11 +9,11 @@ import type { OptimizeDecision, OptimizeObjective } from './model.js'
 import { stopEvalsProcessGroup } from './evals-process.js'
 import {
   listEvalsOptimizations,
-  listEvalsTestRuns,
+  listEvaluationRuns,
   evalsOptimizationFiles,
   evalsOptimizationOf,
-  evalsTestRunFiles,
-  evalsTestRunOf,
+  evaluationRunFiles,
+  evaluationRunOf,
 } from './layout.js'
 import { EVALS_DECISION_CHOICES, type EvalsSplitShares } from './plan.js'
 
@@ -24,7 +24,7 @@ const REPLACE_ATTEMPTS = 6
 const REPLACE_WAIT_MS = 20
 const HELD_OPEN: ReadonlySet<unknown> = new Set(['EPERM', 'EACCES', 'EBUSY'])
 
-export interface EvalsTestRecord {
+export interface EvaluationRecord {
   readonly version: typeof RECORD_VERSION
   readonly experiment: string
   readonly cases: string
@@ -56,12 +56,12 @@ export interface EvalsOptimizeRecord {
 
 const missing = (error: unknown): boolean => isRecord(error) && error.code === 'ENOENT'
 
-const testRecordPath = ({ report }: EvalsTestRecord): string => evalsTestRunOf(report).record
+const evaluationRecordPath = ({ report }: EvaluationRecord): string => evaluationRunOf(report).record
 
 const optimizeRecordPath = ({ record }: Pick<EvalsOptimizeRecord, 'record'>): string =>
   evalsOptimizationOf(record).resume
 
-const isTestRecord = (value: unknown): value is EvalsTestRecord =>
+const isEvaluationRecord = (value: unknown): value is EvaluationRecord =>
   isRecord(value) &&
   value.version === RECORD_VERSION &&
   ['experiment', 'cases', 'report', 'log', 'store'].every((key) => typeof value[key] === 'string') &&
@@ -130,11 +130,11 @@ const writeEvalsRecord = async (path: string, record: object): Promise<void> => 
   }
 }
 
-export const saveEvalsRunRecord = (record: EvalsTestRecord): Promise<void> =>
-  writeEvalsRecord(testRecordPath(record), record)
+export const saveEvalsRunRecord = (record: EvaluationRecord): Promise<void> =>
+  writeEvalsRecord(evaluationRecordPath(record), record)
 
-export const dropEvalsRunRecord = (record: EvalsTestRecord): Promise<void> =>
-  rm(testRecordPath(record), { force: true })
+export const dropEvalsRunRecord = (record: EvaluationRecord): Promise<void> =>
+  rm(evaluationRecordPath(record), { force: true })
 
 export const saveEvalsOptimizeRecord = (record: EvalsOptimizeRecord): Promise<void> =>
   writeEvalsRecord(optimizeRecordPath(record), record)
@@ -153,10 +153,10 @@ const readRecord = async <Kind>(path: string, isKind: (value: unknown) => value 
   return isKind(value) ? [value] : []
 }
 
-export const readEvalsRunRecords = async (workspaceDirectory: string): Promise<EvalsTestRecord[]> => {
-  const runs = await listEvalsTestRuns(workspaceDirectory)
+export const readEvalsRunRecords = async (workspaceDirectory: string): Promise<EvaluationRecord[]> => {
+  const runs = await listEvaluationRuns(workspaceDirectory)
   const records = await Promise.all(
-    runs.map(({ home, stamp }) => readRecord(evalsTestRunFiles(home, stamp).record, isTestRecord))
+    runs.map(({ home, stamp }) => readRecord(evaluationRunFiles(home, stamp).record, isEvaluationRecord))
   )
   return records.flat()
 }
@@ -190,7 +190,7 @@ export const isEvalsProcessAlive = async (pid: number | undefined, marker: strin
   return listed.stdout.includes(marker)
 }
 
-export const isEvalsRunAlive = ({ pid, report }: EvalsTestRecord): Promise<boolean> => isEvalsProcessAlive(pid, report)
+export const isEvalsRunAlive = ({ pid, report }: EvaluationRecord): Promise<boolean> => isEvalsProcessAlive(pid, report)
 
 export const isEvalsOptimizeAlive = ({ pid, record }: EvalsOptimizeRecord): Promise<boolean> =>
   isEvalsProcessAlive(pid, record)
@@ -208,7 +208,7 @@ const waitForProcess = async (pid: number | undefined, marker: string, signal?: 
   }
 }
 
-export const waitForEvalsRun = ({ pid, report }: EvalsTestRecord, signal?: AbortSignal): Promise<void> =>
+export const waitForEvalsRun = ({ pid, report }: EvaluationRecord, signal?: AbortSignal): Promise<void> =>
   waitForProcess(pid, report, signal)
 
 export const waitForEvalsOptimize = ({ pid, record }: EvalsOptimizeRecord, signal?: AbortSignal): Promise<void> =>

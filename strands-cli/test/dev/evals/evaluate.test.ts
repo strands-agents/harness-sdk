@@ -5,11 +5,11 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { EvalsProcess } from '../../../src/dev/evals/evals-process.js'
 import {
-  readEvalsLatestTestResults,
-  readEvalsTestResults,
-  rememberEvalsTestResults,
-  runEvalsTest,
-} from '../../../src/dev/evals/test.js'
+  readLatestEvaluationResults,
+  readEvaluationResults,
+  rememberEvaluationResults,
+  runEvaluation,
+} from '../../../src/dev/evals/evaluate.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import {
   environmentRunner,
@@ -41,11 +41,11 @@ const reporting = (passes: boolean[], overall: number) =>
 describe('/evaluate', () => {
   it('shouldRunTheExperimentAndSaveTheReportInItsRunFolder', async () => {
     const workspace = await workspaceFixture()
-    const spawnTests = reporting([true, false], 0.5)
+    const spawnEvaluation = reporting([true, false], 0.5)
     const progress: string[] = []
     const onStart = vi.fn()
 
-    const outcome = await runEvalsTest(
+    const outcome = await runEvaluation(
       {
         workspace,
         evalsArguments: ['--max-workers', '2'],
@@ -53,7 +53,7 @@ describe('/evaluate', () => {
         onProgress: (line) => progress.push(line),
         onStart,
       },
-      { run: environmentRunner(), spawnTests }
+      { run: environmentRunner(), spawnEvaluation }
     )
 
     const experiment = experimentFile(workspace.directory!, 'support')
@@ -68,7 +68,7 @@ describe('/evaluate', () => {
       checks: 2,
       overall: 0.5,
     })
-    const [{ args, log }] = spawnTests.mock.calls[0]!
+    const [{ args, log }] = spawnEvaluation.mock.calls[0]!
     expect(args).toEqual([
       '-m',
       'strands_evals.cli',
@@ -100,9 +100,9 @@ describe('/evaluate', () => {
   it('shouldWriteAnEntryFileThatRunsTheAgentFromTheShippedPackageWhenATestStarts', async () => {
     const workspace = await workspaceFixture()
 
-    await runEvalsTest(
+    await runEvaluation(
       { workspace, now: () => NOW },
-      { run: environmentRunner(), spawnTests: reporting([true, true], 1) }
+      { run: environmentRunner(), spawnEvaluation: reporting([true, true], 1) }
     )
 
     expect(await readFile(runFile(workspace, '.state/task.py'), 'utf8')).toBe(
@@ -126,20 +126,23 @@ describe('/evaluate', () => {
     'shouldGiveTheEntryFileTheCustomEvaluatorsWhenTestGets$given',
     async ({ given }) => {
       const workspace = await workspaceFixture()
-      const spawnTests = reporting([true, true], 1)
+      const spawnEvaluation = reporting([true, true], 1)
 
-      await runEvalsTest({ workspace, evalsArguments: given, now: () => NOW }, { run: environmentRunner(), spawnTests })
+      await runEvaluation(
+        { workspace, evalsArguments: given, now: () => NOW },
+        { run: environmentRunner(), spawnEvaluation }
+      )
 
       expect(await readFile(runFile(workspace, '.state/task.py'), 'utf8')).toContain(
         '    custom_evaluators=("evals.py:Tone",),\n'
       )
-      expect(spawnTests.mock.calls[0]![0].args.slice(-given.length)).toEqual(given)
+      expect(spawnEvaluation.mock.calls[0]![0].args.slice(-given.length)).toEqual(given)
     }
   )
 
   it('shouldWriteTheEntryFileInTheRunFolderWhenAStoppedRunResumes', async () => {
     const workspace = await workspaceFixture()
-    const spawnTests = reporting([true, true], 1)
+    const spawnEvaluation = reporting([true, true], 1)
     const resume = {
       cases: experimentFile(workspace.directory!, 'support'),
       report: runFile(workspace, 'report.json', `${STAMP}-3`),
@@ -147,31 +150,31 @@ describe('/evaluate', () => {
       store: runFile(workspace, '.state/cases', `${STAMP}-3`),
     }
 
-    await runEvalsTest({ workspace, resume }, { run: environmentRunner(), spawnTests })
+    await runEvaluation({ workspace, resume }, { run: environmentRunner(), spawnEvaluation })
 
     const task = runFile(workspace, '.state/task.py', `${STAMP}-3`)
-    const { args } = spawnTests.mock.calls[0]![0]
+    const { args } = spawnEvaluation.mock.calls[0]![0]
     expect(args.slice(args.indexOf('--task'), args.indexOf('--task') + 2)).toEqual(['--task', `${task}:task`])
     expect(await readFile(task, 'utf8')).toContain(`    experiment_file=${JSON.stringify(resume.cases)},\n`)
   })
 
   it('shouldRunFourCasesAtOnceWhenNoWorkerCountIsGiven', async () => {
     const workspace = await workspaceFixture()
-    const spawnTests = reporting([true, false], 0.5)
+    const spawnEvaluation = reporting([true, false], 0.5)
 
-    await runEvalsTest({ workspace, now: () => NOW }, { run: environmentRunner(), spawnTests })
+    await runEvaluation({ workspace, now: () => NOW }, { run: environmentRunner(), spawnEvaluation })
 
-    const [{ args }] = spawnTests.mock.calls[0]!
+    const [{ args }] = spawnEvaluation.mock.calls[0]!
     expect(args.slice(args.indexOf('--max-workers'))).toEqual(['--max-workers', '4'])
   })
 
   it('shouldStartANewRunFolderWhenAnotherRunStartedInTheSameSecond', async () => {
     const workspace = await workspaceFixture()
     const run = environmentRunner()
-    const spawnTests = reporting([true, false], 0.5)
+    const spawnEvaluation = reporting([true, false], 0.5)
 
-    const first = await runEvalsTest({ workspace, now: () => NOW }, { run, spawnTests })
-    const second = await runEvalsTest({ workspace, now: () => NOW }, { run, spawnTests })
+    const first = await runEvaluation({ workspace, now: () => NOW }, { run, spawnEvaluation })
+    const second = await runEvaluation({ workspace, now: () => NOW }, { run, spawnEvaluation })
 
     expect(first.report).toBe(runFile(workspace, 'report.json'))
     expect(second.report).toBe(runFile(workspace, 'report.json', `${STAMP}-2`))
@@ -180,9 +183,9 @@ describe('/evaluate', () => {
   it('shouldCountTheSecondsFromTheGivenStartWhenTheRunStartedEarlier', async () => {
     const workspace = await workspaceFixture()
 
-    const outcome = await runEvalsTest(
+    const outcome = await runEvaluation(
       { workspace, startedAt: Date.now() - 90_000 },
-      { run: environmentRunner(), spawnTests: reporting([true], 1) }
+      { run: environmentRunner(), spawnEvaluation: reporting([true], 1) }
     )
 
     expect(outcome.seconds).toBeGreaterThanOrEqual(90)
@@ -194,12 +197,12 @@ describe('/evaluate', () => {
     const experiment = experimentFile(workspace.directory!, 'support')
     const document = JSON.stringify({ cases: [{ name: 'refund' }, { name: 'refund' }, {}], evaluators: [] })
     await writeFileAt(experiment, document)
-    const spawnTests = reporting([true, true, true], 1)
+    const spawnEvaluation = reporting([true, true, true], 1)
 
-    const outcome = await runEvalsTest({ workspace, now: () => NOW }, { run: environmentRunner(), spawnTests })
+    const outcome = await runEvaluation({ workspace, now: () => NOW }, { run: environmentRunner(), spawnEvaluation })
 
     const copy = runFile(workspace, '.state/experiment.json')
-    expect(spawnTests.mock.calls[0]![0].args[3]).toBe(copy)
+    expect(spawnEvaluation.mock.calls[0]![0].args[3]).toBe(copy)
     expect(JSON.parse(await readFile(copy, 'utf8'))).toEqual({
       cases: [{ name: 'refund' }, { name: 'refund-2' }, { name: 'case_2' }],
       evaluators: [],
@@ -210,12 +213,12 @@ describe('/evaluate', () => {
 
   it('shouldRunACopyWithOnlyTheNamedCasesWhenSomeCasesRunAgain', async () => {
     const workspace = await workspaceFixture()
-    const spawnTests = reporting([true], 1)
+    const spawnEvaluation = reporting([true], 1)
 
-    await runEvalsTest({ workspace, now: () => NOW, only: ['b'] }, { run: environmentRunner(), spawnTests })
+    await runEvaluation({ workspace, now: () => NOW, only: ['b'] }, { run: environmentRunner(), spawnEvaluation })
 
     const copy = runFile(workspace, '.state/experiment.json')
-    expect(spawnTests.mock.calls[0]![0].args[3]).toBe(copy)
+    expect(spawnEvaluation.mock.calls[0]![0].args[3]).toBe(copy)
     expect(JSON.parse(await readFile(copy, 'utf8'))).toEqual({ cases: [{ name: 'b' }], evaluators: [] })
     expect(await readFile(experimentFile(workspace.directory!, 'support'), 'utf8')).toBe(EXPERIMENT)
   })
@@ -224,11 +227,11 @@ describe('/evaluate', () => {
     const workspace = await workspaceFixture([])
     const experiment = join(workspace.root, 'cases', 'refunds.json')
     await writeFileAt(experiment, EXPERIMENT)
-    const spawnTests = reporting([true, true], 1)
+    const spawnEvaluation = reporting([true, true], 1)
 
-    const outcome = await runEvalsTest(
+    const outcome = await runEvaluation(
       { workspace, experiment, now: () => NOW },
-      { run: environmentRunner(), spawnTests }
+      { run: environmentRunner(), spawnEvaluation }
     )
 
     const home = join(workspace.directory!, 'tmp/.state/outside-experiments/refunds')
@@ -242,15 +245,15 @@ describe('/evaluate', () => {
 
   it('shouldWriteTheTemporaryTypescriptRunnerIntoTheEntryFileWhenTheAgentIsTypeScript', async () => {
     const workspace = await workspaceFixture(['support'], 'typescript')
-    const spawnTests = reporting([true], 1)
+    const spawnEvaluation = reporting([true], 1)
 
-    await runEvalsTest({ workspace, now: () => NOW }, { run: environmentRunner(), spawnTests })
+    await runEvaluation({ workspace, now: () => NOW }, { run: environmentRunner(), spawnEvaluation })
 
     const entry = await readFile(runFile(workspace, '.state/task.py'), 'utf8')
     const runner = JSON.parse(/^ {4}temporary_typescript_runner=(".*"),$/mu.exec(entry)![1]!) as string
     expect(runner).toMatch(/^'.+' '.+typescript-runner-main\.js'$/u)
     expect(entry).toContain(`    ${JSON.stringify(workspace.entrypoint)},\n`)
-    expect(spawnTests.mock.calls[0]![0].args).not.toContain('--typescript-runner')
+    expect(spawnEvaluation.mock.calls[0]![0].args).not.toContain('--typescript-runner')
   })
 
   it.each([
@@ -259,15 +262,15 @@ describe('/evaluate', () => {
     { experiments: ['a', 'b'], requested: undefined, message: 'for example strands dev evaluate a' },
   ])('shouldGuideTheUserToAnExperimentWhen$message', async ({ experiments, requested, message }) => {
     const workspace = await workspaceFixture(experiments)
-    const spawnTests = reporting([true], 1)
+    const spawnEvaluation = reporting([true], 1)
 
     await expect(
-      runEvalsTest(
+      runEvaluation(
         { workspace, ...(requested ? { experiment: requested } : {}) },
-        { run: environmentRunner(), spawnTests }
+        { run: environmentRunner(), spawnEvaluation }
       )
     ).rejects.toThrow(message)
-    expect(spawnTests).not.toHaveBeenCalled()
+    expect(spawnEvaluation).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -278,7 +281,7 @@ describe('/evaluate', () => {
   ])('shouldRejectFlagsThatTestSetsItselfWhen%sIsPassed', async (...evalsArguments) => {
     const workspace = await workspaceFixture()
 
-    await expect(runEvalsTest({ workspace, evalsArguments })).rejects.toThrow('strands dev sets')
+    await expect(runEvaluation({ workspace, evalsArguments })).rejects.toThrow('strands dev sets')
   })
 
   it.each([
@@ -286,13 +289,13 @@ describe('/evaluate', () => {
     { code: 3, step: 'Fix the error above, then run the evaluation again' },
   ])('shouldReportTheRunErrorAndTheNextStepWhenRunExitsWith$code', async ({ code, step }) => {
     const workspace = await workspaceFixture()
-    const spawnTests = vi.fn(async () => ({
+    const spawnEvaluation = vi.fn(async () => ({
       code,
       stdout: '',
       stderrTail: ['strands-evals: error: Unable to locate credentials'],
     }))
 
-    await expect(runEvalsTest({ workspace }, { run: environmentRunner(), spawnTests })).rejects.toThrow(
+    await expect(runEvaluation({ workspace }, { run: environmentRunner(), spawnEvaluation })).rejects.toThrow(
       new RegExp(`exit code ${code}: Unable to locate credentials\\n${step}`, 'u')
     )
   })
@@ -309,17 +312,17 @@ describe('/evaluate', () => {
   ])('shouldExplainWhatToFixWhenTheExperimentFileCannotBeTested', async ({ content, message }) => {
     const workspace = await workspaceFixture([])
     await writeFileAt(experimentFile(workspace.directory!, 'support'), content)
-    const spawnTests = reporting([true], 1)
+    const spawnEvaluation = reporting([true], 1)
 
-    await expect(runEvalsTest({ workspace }, { run: environmentRunner(), spawnTests })).rejects.toThrow(message)
-    expect(spawnTests).not.toHaveBeenCalled()
+    await expect(runEvaluation({ workspace }, { run: environmentRunner(), spawnEvaluation })).rejects.toThrow(message)
+    expect(spawnEvaluation).not.toHaveBeenCalled()
   })
 
   it('shouldSayTheExperimentNeedsEvaluatorsWhenTheReportHasNoChecks', async () => {
     const workspace = await workspaceFixture()
 
     await expect(
-      runEvalsTest({ workspace }, { run: environmentRunner(), spawnTests: reporting([], 0) })
+      runEvaluation({ workspace }, { run: environmentRunner(), spawnEvaluation: reporting([], 0) })
     ).rejects.toThrow(/has no results\. Check that .+support\.json lists evaluators/u)
   })
 })
@@ -388,7 +391,7 @@ describe('evaluation report', () => {
   it('shouldGroupTheVerdictsByCaseWhenTheReportHasSeveralEvaluators', async () => {
     const path = await writeReport(report(ROWS, 0.375))
 
-    const results = await readEvalsTestResults(path, RUN)
+    const results = await readEvaluationResults(path, RUN)
 
     expect(results).toEqual({
       experiment: 'refunds',
@@ -429,7 +432,7 @@ describe('evaluation report', () => {
       ])
     )
 
-    const { cases } = await readEvalsTestResults(path, RUN)
+    const { cases } = await readEvaluationResults(path, RUN)
 
     expect(cases.map(({ name, passed }) => ({ name, passed }))).toEqual([{ name: 'c0', passed: true }])
   })
@@ -449,7 +452,7 @@ describe('evaluation report', () => {
       ])
     )
 
-    const [result] = (await readEvalsTestResults(path, RUN)).cases
+    const [result] = (await readEvaluationResults(path, RUN)).cases
 
     expect(result).toMatchObject({ input: '{"order":7,"items":["shoe"]}', actual: '{"refund":true}' })
   })
@@ -459,7 +462,7 @@ describe('evaluation report', () => {
     const testCase = { ...graded.testCase, expected_output: null, expected_assertion: 'The agent refunds order 7.' }
     const path = await writeReport({ ...report([graded]), cases: [testCase] })
 
-    const [result] = (await readEvalsTestResults(path, RUN)).cases
+    const [result] = (await readEvaluationResults(path, RUN)).cases
 
     expect(result).toMatchObject({ expected: 'The agent refunds order 7.', actual: 'done' })
   })
@@ -474,7 +477,7 @@ describe('evaluation report', () => {
       ])
     )
 
-    const { cases } = await readEvalsTestResults(path, RUN)
+    const { cases } = await readEvaluationResults(path, RUN)
 
     expect(cases.map(({ name, verdicts }) => [name, verdicts.length])).toEqual([
       ['case_0', 2],
@@ -502,7 +505,7 @@ describe('evaluation report', () => {
   ])('shouldAskForANewTestRunWhenTheReportHas$detail', async ({ content, detail }) => {
     const path = content === undefined ? join(await temporaryDirectory(), 'missing.json') : await writeReport(content)
 
-    await expect(readEvalsTestResults(path, RUN)).rejects.toThrow(
+    await expect(readEvaluationResults(path, RUN)).rejects.toThrow(
       new RegExp(
         `^${literal(path)} is not a usable evaluation report \\(.*${detail}.*\\)\\. Run the evaluation again\\.$`,
         'u'
@@ -521,18 +524,18 @@ const readJson = async (path: string): Promise<unknown> => JSON.parse(await read
 
 const rememberRun = async (home: string, content: unknown, stamp: string, only?: string[]) => {
   const path = await writeRunReport(home, content, stamp)
-  return rememberEvalsTestResults(home, await readEvalsTestResults(path, RUN), only)
+  return rememberEvaluationResults(home, await readEvaluationResults(path, RUN), only)
 }
 
 describe('last evaluation run', () => {
   it('shouldReadTheRememberedResultsWhenTheExperimentRanBefore', async () => {
     const home = await experimentHome()
-    const results = await readEvalsTestResults(await writeRunReport(home, report(ROWS)), RUN)
+    const results = await readEvaluationResults(await writeRunReport(home, report(ROWS)), RUN)
 
-    const remembered = await rememberEvalsTestResults(home, results)
+    const remembered = await rememberEvaluationResults(home, results)
 
     expect(remembered).toEqual({ ...results, report: latestReport(home) })
-    expect(await readEvalsLatestTestResults(home)).toEqual(remembered)
+    expect(await readLatestEvaluationResults(home)).toEqual(remembered)
   })
 
   it('shouldReplaceTheLatestReportAndRecordTheRunWhenAFullRunFollowsAnother', async () => {
@@ -628,7 +631,7 @@ describe('last evaluation run', () => {
   })
 
   it('shouldReturnNothingWhenTheExperimentNeverRan', async () => {
-    expect(await readEvalsLatestTestResults(await experimentHome())).toBeUndefined()
+    expect(await readLatestEvaluationResults(await experimentHome())).toBeUndefined()
   })
 
   it.each([
@@ -639,7 +642,7 @@ describe('last evaluation run', () => {
     await mkdir(dirname(latestRecord(home)), { recursive: true })
     await writeFile(latestRecord(home), record)
 
-    await expect(readEvalsLatestTestResults(home)).rejects.toThrow(
+    await expect(readLatestEvaluationResults(home)).rejects.toThrow(
       new RegExp(
         `^${literal(latestRecord(home))} is not a usable record of the last evaluation run \\(.*${detail}.*\\)\\. Run the evaluation again\\.$`,
         'u'
@@ -652,7 +655,7 @@ describe('last evaluation run', () => {
     await rememberRun(home, report(ROWS), REPORT_STAMP)
     await rm(latestReport(home))
 
-    await expect(readEvalsLatestTestResults(home)).rejects.toThrow(
+    await expect(readLatestEvaluationResults(home)).rejects.toThrow(
       `${latestReport(home)} is not a usable evaluation report`
     )
   })

@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   listEvalsOptimizations,
-  listEvalsTestRuns,
-  pruneEvalsTestRuns,
+  listEvaluationRuns,
+  pruneEvaluationRuns,
   evalsExperimentHome,
   evalsFreeStamp,
   evalsOptimizationFiles,
@@ -13,9 +13,9 @@ import {
   evalsOptimizationRunName,
   evalsRunStamp,
   evalsStampTime,
-  evalsTestRunFiles,
-  evalsTestRunOf,
-  type EvalsTestRunFiles,
+  evaluationRunFiles,
+  evaluationRunOf,
+  type EvaluationRunFiles,
 } from '../../../src/dev/evals/layout.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
@@ -46,7 +46,7 @@ describe('run files', () => {
   it('shouldKeepEveryFileOfATestRunInItsStampFolderWhenGivenAStamp', () => {
     const folder = join(HOME, 'runs', STAMP)
 
-    expect(evalsTestRunFiles(HOME, STAMP)).toEqual({
+    expect(evaluationRunFiles(HOME, STAMP)).toEqual({
       folder,
       report: join(folder, 'report.json'),
       log: join(folder, 'run.log'),
@@ -75,9 +75,9 @@ describe('run files', () => {
     { where: 'AnExperimentFolder', home: HOME, stamp: STAMP },
     { where: 'AnOutsideHome', home: OUTSIDE_HOME, stamp: `${STAMP}-2` },
   ])('shouldFindTheTestRunFilesAgainWhenGivenTheReportOfARunIn$where', ({ home, stamp }) => {
-    const files = evalsTestRunFiles(home, stamp)
+    const files = evaluationRunFiles(home, stamp)
 
-    expect(evalsTestRunOf(files.report)).toEqual(files)
+    expect(evaluationRunOf(files.report)).toEqual(files)
   })
 
   it.each([
@@ -120,7 +120,7 @@ describe('run stamps', () => {
 
 describe('run lists', () => {
   it.each([
-    { label: 'TestRuns', kind: 'runs', other: 'optimizations', list: listEvalsTestRuns },
+    { label: 'TestRuns', kind: 'runs', other: 'optimizations', list: listEvaluationRuns },
     { label: 'Optimizations', kind: 'optimizations', other: 'runs', list: listEvalsOptimizations },
   ])('shouldListEveryHomeOldestFirstWhenTheWorkspaceHas$label', async ({ kind, other, list }) => {
     const directory = await temporaryDirectory()
@@ -155,7 +155,7 @@ describe('run lists', () => {
   })
 
   it.each([
-    { label: 'TestRuns', list: listEvalsTestRuns },
+    { label: 'TestRuns', list: listEvaluationRuns },
     { label: 'Optimizations', list: listEvalsOptimizations },
   ])('shouldListNothingWhenTheWorkspaceHasNoTemporaryFolder ($label)', async ({ list }) => {
     expect(await list(await temporaryDirectory())).toEqual([])
@@ -182,17 +182,17 @@ describe('test run pruning', () => {
   ])('shouldKeepTheNewestTwentyRunsWhenAHomeHas$count', async ({ count, removed }) => {
     const home = await homeWithRuns(count)
 
-    const removedCount = await pruneEvalsTestRuns(home, [])
+    const removedCount = await pruneEvaluationRuns(home, [])
 
     expect(removedCount).toBe(removed)
     expect(await remainingStamps(home)).toEqual(stampsFrom(removed, 20))
   })
 
   it.each([
-    { when: 'TheCallerKeepsIt', protect: async ({ folder }: EvalsTestRunFiles) => [folder] },
+    { when: 'TheCallerKeepsIt', protect: async ({ folder }: EvaluationRunFiles) => [folder] },
     {
       when: 'ItHasNotFinished',
-      protect: async ({ record }: EvalsTestRunFiles) => {
+      protect: async ({ record }: EvaluationRunFiles) => {
         await mkdir(dirname(record), { recursive: true })
         await writeFile(record, '{}')
         return []
@@ -200,9 +200,9 @@ describe('test run pruning', () => {
     },
   ])('shouldKeepTheOldestRunWhen$when', async ({ protect }) => {
     const home = await homeWithRuns(22)
-    const kept = await protect(evalsTestRunFiles(home, stampAt(0)))
+    const kept = await protect(evaluationRunFiles(home, stampAt(0)))
 
-    const removedCount = await pruneEvalsTestRuns(home, kept)
+    const removedCount = await pruneEvaluationRuns(home, kept)
 
     expect(removedCount).toBe(1)
     expect(await remainingStamps(home)).toEqual([stampAt(0), ...stampsFrom(2, 20)])

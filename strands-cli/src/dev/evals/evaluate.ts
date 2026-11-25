@@ -5,7 +5,7 @@ import { basename, dirname, relative, resolve } from 'node:path'
 import { errorMessage } from '../../terminal/text.js'
 import { isRecord } from '../../values.js'
 import { writeEvalsRunEntry } from './python/entry-files.js'
-import type { CaseResult, EvaluatorVerdict, TestResults } from './model.js'
+import type { CaseResult, EvaluatorVerdict, EvaluationResults } from './model.js'
 import type { DevWorkspace } from '../workspace.js'
 import { ignoreProgress, prepareEvalsOptimizerEnvironment, type EvalsCommandRunner } from './environment.js'
 import {
@@ -31,31 +31,31 @@ import {
   type EvalsRawCase,
 } from './experiment.js'
 import {
-  pruneEvalsTestRuns,
+  pruneEvaluationRuns,
   evalsExperimentHome,
   evalsExperimentsFolder,
   evalsFreeStamp,
   evalsLatestRecord,
   evalsLatestReport,
-  evalsTestRunFiles,
-  evalsTestRunOf,
+  evaluationRunFiles,
+  evaluationRunOf,
 } from './layout.js'
 
-interface EvalsTestFiles {
+interface EvaluationFiles {
   readonly cases: string
   readonly report: string
   readonly log: string
   readonly store: string
 }
 
-interface EvalsTestRequest extends EvalsRequest {
-  onStart?: (files: EvalsTestFiles) => void | Promise<void>
-  resume?: EvalsTestFiles
+interface EvaluationRequest extends EvalsRequest {
+  onStart?: (files: EvaluationFiles) => void | Promise<void>
+  resume?: EvaluationFiles
   only?: readonly string[]
   startedAt?: number
 }
 
-interface EvalsTestOutcome {
+interface EvaluationOutcome {
   experiment: string
   name: string
   home: string
@@ -66,16 +66,16 @@ interface EvalsTestOutcome {
   overall: number
 }
 
-export interface EvalsTestDependencies {
+export interface EvaluationDependencies {
   run?: EvalsCommandRunner
-  spawnTests?: EvalsSpawner
+  spawnEvaluation?: EvalsSpawner
 }
 
-const TEST_WORKERS = 4
+const EVALUATION_WORKERS = 4
 const MILLISECONDS_PER_SECOND = 1000
 const CUSTOM_EVALUATOR_FLAG = '--custom-evaluator'
 
-const TEST_OWNED_FLAGS = [
+const EVALUATION_OWNED_FLAGS = [
   '--agent',
   '--task',
   '-o',
@@ -101,7 +101,7 @@ const readScores = async (report: string): Promise<{ passed: number; checks: num
   return { passed: passes.filter(Boolean).length, checks: passes.length, overall }
 }
 
-const testNextStep = (code: number, log: string): string =>
+const evaluationNextStep = (code: number, log: string): string =>
   code === 2
     ? 'Fix the cause above (it is in the agent file, the experiment file, or the flags after --), then run the ' +
       `evaluation again. The full output is in ${log}.`
@@ -113,14 +113,14 @@ const onlyCases = async (experiment: string, copy: string, names: readonly strin
   return copy
 }
 
-const newTestFiles = async (
+const newEvaluationFiles = async (
   experiment: string,
   home: string,
   now: Date,
   only: readonly string[] | undefined
-): Promise<EvalsTestFiles> => {
-  const stamp = evalsFreeStamp((candidate) => existsSync(evalsTestRunFiles(home, candidate).folder), now)
-  const { folder, report, log, store, copy } = evalsTestRunFiles(home, stamp)
+): Promise<EvaluationFiles> => {
+  const stamp = evalsFreeStamp((candidate) => existsSync(evaluationRunFiles(home, candidate).folder), now)
+  const { folder, report, log, store, copy } = evaluationRunFiles(home, stamp)
   await mkdir(folder, { recursive: true })
   return {
     cases: only ? await onlyCases(experiment, copy, only) : await evalsRunnableExperiment(experiment, copy),
@@ -132,23 +132,23 @@ const newTestFiles = async (
 
 const writeRunEntry = (
   workspace: DevWorkspace,
-  { cases, report }: EvalsTestFiles,
+  { cases, report }: EvaluationFiles,
   evalsArguments: readonly string[]
 ): Promise<string[]> =>
-  writeEvalsRunEntry(evalsTestRunOf(report).task, {
+  writeEvalsRunEntry(evaluationRunOf(report).task, {
     agentFile: resolve(workspace.entrypoint),
     experimentFile: resolve(cases),
     customEvaluators: evalsFlagValues(evalsArguments, CUSTOM_EVALUATOR_FLAG),
     ...temporaryTypescriptRunnerOf(workspace),
   })
 
-export const runEvalsTest = async (
-  request: EvalsTestRequest,
-  dependencies: EvalsTestDependencies = {}
-): Promise<EvalsTestOutcome> => {
+export const runEvaluation = async (
+  request: EvaluationRequest,
+  dependencies: EvaluationDependencies = {}
+): Promise<EvaluationOutcome> => {
   const { workspace, evalsArguments = [], signal, onProgress = ignoreProgress } = request
   const directory = evalsWorkspaceDirectory(workspace)
-  assertEvalsArguments(evalsArguments, TEST_OWNED_FLAGS, 'strands dev')
+  assertEvalsArguments(evalsArguments, EVALUATION_OWNED_FLAGS, 'strands dev')
   const experiment = await resolveEvalsExperiment(evalsExperimentsFolder(directory), request.experiment, 'evaluate')
   const cases = await evalsCaseCount(experiment)
   if (cases === 0)
@@ -163,7 +163,8 @@ export const runEvalsTest = async (
   )
   const home = evalsExperimentHome(directory, experiment)
   const startedAt = request.startedAt ?? Date.now()
-  const files = request.resume ?? (await newTestFiles(experiment, home, request.now?.() ?? new Date(), request.only))
+  const files =
+    request.resume ?? (await newEvaluationFiles(experiment, home, request.now?.() ?? new Date(), request.only))
   const { report, log } = files
   const task = await writeRunEntry(workspace, files, evalsArguments)
   onProgress(`Testing ${workspace.entrypoint} on the ${cases} cases of ${experiment}`)
@@ -171,7 +172,7 @@ export const runEvalsTest = async (
   onProgress('Running the cases. The summary appears when every case has finished.')
   await request.onStart?.(files)
   const exit = await runEvals(
-    dependencies.spawnTests,
+    dependencies.spawnEvaluation,
     request,
     {
       python,
@@ -188,14 +189,14 @@ export const runEvalsTest = async (
         '--data-store',
         files.store,
         '--max-workers',
-        String(TEST_WORKERS),
+        String(EVALUATION_WORKERS),
         ...evalsArguments,
       ],
       log,
     },
     onProgress
   )
-  if (exit.code !== 0) throw evalsFailure('strands-evals run', exit, process.env, testNextStep(exit.code, log))
+  if (exit.code !== 0) throw evalsFailure('strands-evals run', exit, process.env, evaluationNextStep(exit.code, log))
   if (!existsSync(report))
     throw new Error(`strands-evals run finished without writing ${report}. The full output is in ${log}.`)
   const scores = await readScores(report)
@@ -296,10 +297,10 @@ const caseResult = (name: string, { testCase, verdicts }: CaseGroup): CaseResult
   }
 }
 
-export const readEvalsTestResults = async (
+export const readEvaluationResults = async (
   path: string,
-  { experiment, seconds }: Pick<TestResults, 'experiment' | 'seconds'>
-): Promise<TestResults> => {
+  { experiment, seconds }: Pick<EvaluationResults, 'experiment' | 'seconds'>
+): Promise<EvaluationResults> => {
   const { overall, rows } = (await readDocument(path)).report
   return {
     experiment,
@@ -401,7 +402,7 @@ const mergedDocument = (
 
 const writeLatest = async (
   latest: string,
-  results: TestResults,
+  results: EvaluationResults,
   only: readonly string[] | undefined
 ): Promise<void> => {
   const staging = `${latest}.${process.pid}.tmp`
@@ -414,22 +415,22 @@ const writeLatest = async (
   await rename(staging, latest)
 }
 
-export const rememberEvalsTestResults = async (
+export const rememberEvaluationResults = async (
   home: string,
-  results: TestResults,
+  results: EvaluationResults,
   only?: readonly string[]
-): Promise<TestResults> => {
+): Promise<EvaluationResults> => {
   const latest = evalsLatestReport(home)
   const record = evalsLatestRecord(home)
-  const run = evalsTestRunOf(results.report).folder
+  const run = evaluationRunOf(results.report).folder
   await writeLatest(latest, results, only)
   await mkdir(dirname(record), { recursive: true })
   await writeFile(record, `${JSON.stringify({ run: relative(home, run), seconds: results.seconds })}\n`)
-  await pruneEvalsTestRuns(home, [run]).catch(() => 0)
-  return readEvalsTestResults(latest, { experiment: results.experiment, seconds: results.seconds })
+  await pruneEvaluationRuns(home, [run]).catch(() => 0)
+  return readEvaluationResults(latest, { experiment: results.experiment, seconds: results.seconds })
 }
 
-export const readEvalsLatestTestResults = async (home: string): Promise<TestResults | undefined> => {
+export const readLatestEvaluationResults = async (home: string): Promise<EvaluationResults | undefined> => {
   const path = evalsLatestRecord(home)
   let record: unknown
   try {
@@ -439,5 +440,5 @@ export const readEvalsLatestTestResults = async (home: string): Promise<TestResu
     throw unusableRecord(path, errorMessage(error), error)
   }
   if (!isRecord(record) || typeof record.seconds !== 'number') throw unusableRecord(path, 'it has no run time')
-  return readEvalsTestResults(evalsLatestReport(home), { experiment: basename(home), seconds: record.seconds })
+  return readEvaluationResults(evalsLatestReport(home), { experiment: basename(home), seconds: record.seconds })
 }

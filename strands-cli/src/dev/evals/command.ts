@@ -31,7 +31,7 @@ import {
   evalsDevSessions,
   evalsOptimizeJobs,
   evalsRunAwaitsReview,
-  evalsTestJobs,
+  evalsEvaluateJobs,
   type EvalsDevSessions,
 } from './sessions.js'
 
@@ -85,7 +85,7 @@ const generationName = (sessions: Sessions, id: string): string | undefined =>
 
 const evaluationName = (sessions: Sessions, path: string): string | undefined =>
   sessions()
-    .test.snapshot()
+    .evaluate.snapshot()
     .runs.find(({ experiment }) => experiment.path === path)?.experiment.name
 
 const optimizationName = (sessions: Sessions, id: string): string | undefined =>
@@ -113,11 +113,11 @@ const EVALS_COMMANDS: readonly ((sessions: Sessions, auto: AutoOptimizeRun) => D
     attach: (context): void => {
       const opened = sessions(context)
       void opened.ui.start()
-      void opened.test.resume()
+      void opened.evaluate.resume()
     },
     jobs: mergedJobsFeed(
       evalsJobsFeed(sessions().experiments, evalsGenerationJobs),
-      evalsJobsFeed(sessions().test, evalsTestJobs)
+      evalsJobsFeed(sessions().evaluate, evalsEvaluateJobs)
     ),
     backgroundTools: BACKGROUND_TOOLS,
   }),

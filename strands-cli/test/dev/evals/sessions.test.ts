@@ -14,23 +14,23 @@ import {
   readEvalsOptimizeRecords,
   readEvalsRunRecords,
   saveEvalsRunRecord,
-  type EvalsTestRecord,
+  type EvaluationRecord,
 } from '../../../src/dev/evals/background-runs.js'
 import { evalsVenvPython } from '../../../src/dev/evals/environment.js'
 import type { EvalsExit, EvalsProcess } from '../../../src/dev/evals/evals-process.js'
 import type { EvalsSessionDependencies } from '../../../src/dev/evals/host.js'
 import { evalsDevChatPart, evalsDevCommands } from '../../../src/dev/evals/command.js'
 import { EvalsExperiments } from '../../../src/dev/evals/experiments-session.js'
-import { readEvalsTestResults, rememberEvalsTestResults } from '../../../src/dev/evals/test.js'
+import { readEvaluationResults, rememberEvaluationResults } from '../../../src/dev/evals/evaluate.js'
 import type { EvalsSessionHost } from '../../../src/dev/evals/host.js'
 import type { AutoOptimizeRun, AutoOptimizeWorker } from '../../../src/dev/evals/auto-optimize.js'
 import { answerOptimizeReview, applyOptimizeEdits, optimizeReviewContext } from '../../../src/dev/evals/review-run.js'
 import {
   EvalsOptimize,
-  EvalsTest,
+  EvalsEvaluate,
   evalsDevSessions,
   evalsOptimizeJobs,
-  evalsTestJobs,
+  evalsEvaluateJobs,
 } from '../../../src/dev/evals/sessions.js'
 import type { DevWorkspace } from '../../../src/dev/workspace.js'
 import { watchAgentProject } from '../../../src/project/watch.js'
@@ -250,23 +250,23 @@ const savedExperiment = async (
 }
 
 const finished = (sessions: ReturnType<typeof evalsDevSessions>, path: string) => {
-  const run = sessions.test.snapshot().runs.find(({ experiment }) => experiment.path === path)?.run
+  const run = sessions.evaluate.snapshot().runs.find(({ experiment }) => experiment.path === path)?.run
   if (run?.status !== 'done') throw new Error(`expected finished results, got ${run?.status}`)
   return run.results
 }
 
 // The chat reruns the failed cases by passing their names to strands-evals run --case.
 const rerunFailed = (sessions: ReturnType<typeof evalsDevSessions>, path: string): void => {
-  const entry = sessions.test.snapshot().runs.find(({ experiment }) => experiment.path === path)!
+  const entry = sessions.evaluate.snapshot().runs.find(({ experiment }) => experiment.path === path)!
   if (entry.run.status !== 'done') throw new Error('expected a finished run')
-  sessions.test.runOnly(
+  sessions.evaluate.runOnly(
     entry.experiment,
     entry.run.results.cases.filter(({ passed }) => !passed).map(({ name }) => name)
   )
 }
 
 const runStatus = (sessions: ReturnType<typeof evalsDevSessions>, path: string) =>
-  sessions.test.snapshot().runs.find(({ experiment }) => experiment.path === path)?.run.status
+  sessions.evaluate.snapshot().runs.find(({ experiment }) => experiment.path === path)?.run.status
 
 const restartedHost =
   (workspace: DevWorkspace, dependencies?: Partial<EvalsSessionDependencies>) => (): EvalsSessionHost => ({
@@ -275,9 +275,9 @@ const restartedHost =
     ...(dependencies ? { dependencies } : {}),
   })
 
-const restartedTest = (workspace: DevWorkspace, dependencies?: Partial<EvalsSessionDependencies>): EvalsTest => {
+const restartedTest = (workspace: DevWorkspace, dependencies?: Partial<EvalsSessionDependencies>): EvalsEvaluate => {
   const host = restartedHost(workspace, dependencies)
-  return new EvalsTest(host, new EvalsExperiments(host))
+  return new EvalsEvaluate(host, new EvalsExperiments(host))
 }
 
 const restartedOptimize = (
@@ -411,10 +411,10 @@ describe('dev sessions', () => {
   })
 
   it('shouldShowTheFailedCaseAndPostANoticeWhenATestRunFinishes', async () => {
-    const { workspace, sessions, notices } = await sessionsFor({ spawnTests: testingProcess() })
+    const { workspace, sessions, notices } = await sessionsFor({ spawnEvaluation: testingProcess() })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
 
-    sessions.test.run([experiment])
+    sessions.evaluate.run([experiment])
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
 
     const results = finished(sessions, experiment.path)
@@ -428,9 +428,9 @@ describe('dev sessions', () => {
 
   it('shouldPointAtTheRunLogOrGiveTheErrorWhenATestRunStopsWithoutAReport', async () => {
     const crashing = vi.fn(async () => ({ code: 1, stdout: '', stderrTail: ['boom'] }))
-    const { workspace, sessions, notices } = await sessionsFor({ spawnTests: crashing })
+    const { workspace, sessions, notices } = await sessionsFor({ spawnEvaluation: crashing })
     const experiment = await savedExperiment(workspace, ['c0'])
-    sessions.test.run([experiment, { name: 'gone', path: join(workspace.root, 'gone.json'), caseCount: 1 }])
+    sessions.evaluate.run([experiment, { name: 'gone', path: join(workspace.root, 'gone.json'), caseCount: 1 }])
 
     await vi.waitFor(() => expect(notices).toHaveLength(2))
 
@@ -446,30 +446,30 @@ describe('dev sessions', () => {
   })
 
   it('shouldStopARunningTestWithoutAnErrorNoticeWhenTheUserStopsIt', async () => {
-    const spawnTests = vi.fn(
+    const spawnEvaluation = vi.fn(
       ({ signal }: EvalsProcess) =>
         new Promise<EvalsExit>((resolve) =>
           signal?.addEventListener('abort', () => resolve({ code: 143, stdout: '', stderrTail: [] }), { once: true })
         )
     )
-    const { workspace, sessions, notices } = await sessionsFor({ spawnTests })
+    const { workspace, sessions, notices } = await sessionsFor({ spawnEvaluation })
     const experiment = await savedExperiment(workspace, ['c0', 'c1'])
-    sessions.test.run([experiment])
-    await vi.waitFor(() => expect(spawnTests).toHaveBeenCalledTimes(1))
+    sessions.evaluate.run([experiment])
+    await vi.waitFor(() => expect(spawnEvaluation).toHaveBeenCalledTimes(1))
 
-    sessions.test.stop(experiment.path)
+    sessions.evaluate.stop(experiment.path)
 
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('failed'))
-    const run = sessions.test.snapshot().runs.find((entry) => entry.experiment.path === experiment.path)?.run
+    const run = sessions.evaluate.snapshot().runs.find((entry) => entry.experiment.path === experiment.path)?.run
     expect(run).toEqual({ status: 'failed', message: 'You stopped the run.' })
     expect(notices).toEqual([])
   })
 
   it('shouldRerunOnlyTheFailedCasesWhenAsked', async () => {
     const testing = testingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnTests: testing })
+    const { workspace, sessions } = await sessionsFor({ spawnEvaluation: testing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
-    sessions.test.run([experiment])
+    sessions.evaluate.run([experiment])
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
 
     rerunFailed(sessions, experiment.path)
@@ -484,9 +484,9 @@ describe('dev sessions', () => {
 
   it('shouldMergeTheRerunCasesIntoTheFullResultWhenTheFailedCasesRunAgain', async () => {
     const testing = testingProcess([['c1', 'c4', 'c6'], ['c6']])
-    const { workspace, sessions, notices } = await sessionsFor({ spawnTests: testing })
+    const { workspace, sessions, notices } = await sessionsFor({ spawnEvaluation: testing })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7'])
-    sessions.test.run([experiment])
+    sessions.evaluate.run([experiment])
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
 
     rerunFailed(sessions, experiment.path)
@@ -515,18 +515,18 @@ describe('dev sessions', () => {
   it('shouldCountAndRecordOnlyTheRerunCasesWhileTheFailedCasesRunAgain', async () => {
     const gate = held()
     const testing = testingProcess([['c1', 'c2']])
-    const spawnTests = vi.fn(async (process: EvalsProcess) => {
-      if (spawnTests.mock.calls.length > 1) await gate.promise
+    const spawnEvaluation = vi.fn(async (process: EvalsProcess) => {
+      if (spawnEvaluation.mock.calls.length > 1) await gate.promise
       return testing(process)
     })
-    const { workspace, sessions } = await sessionsFor({ spawnTests })
+    const { workspace, sessions } = await sessionsFor({ spawnEvaluation })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
-    sessions.test.run([experiment])
+    sessions.evaluate.run([experiment])
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
 
     rerunFailed(sessions, experiment.path)
-    await vi.waitFor(() => expect(spawnTests).toHaveBeenCalledTimes(2))
-    const rerunning = evalsTestJobs(sessions.test.snapshot())
+    await vi.waitFor(() => expect(spawnEvaluation).toHaveBeenCalledTimes(2))
+    const rerunning = evalsEvaluateJobs(sessions.evaluate.snapshot())
     const recorded = await readEvalsRunRecords(workspace.directory!)
     gate.resolve()
 
@@ -2357,10 +2357,10 @@ describe('dev sessions', () => {
 describe('dev sessions on open', () => {
   it('shouldWaitForAChoiceWhenTheTestPanelOpensWithOneExperiment', async () => {
     const tests = testingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnTests: tests })
+    const { workspace, sessions } = await sessionsFor({ spawnEvaluation: tests })
     await savedExperiment(workspace, ['c0', 'c1', 'c2', 'c3'])
 
-    sessions.test.show()
+    sessions.evaluate.show()
 
     expect(await sessions.experiments.reload()).toHaveLength(1)
     expect(tests).not.toHaveBeenCalled()
@@ -2382,15 +2382,15 @@ describe('dev sessions on open', () => {
           void gate.then(() => (process.signal?.aborted ? undefined : resolve(testing(process))))
         })
     )
-    const { workspace, sessions } = await sessionsFor({ spawnTests: held })
+    const { workspace, sessions } = await sessionsFor({ spawnEvaluation: held })
     const capital = await savedExperiment(workspace, ['c0', 'c1'])
     const cities = await savedExperiment(workspace, ['c0', 'c1', 'c2'], 'cities')
 
-    sessions.test.run([capital, cities])
+    sessions.evaluate.run([capital, cities])
     await vi.waitFor(() => expect(held).toHaveBeenCalledTimes(2))
-    const jobs = evalsTestJobs(sessions.test.snapshot())
+    const jobs = evalsEvaluateJobs(sessions.evaluate.snapshot())
     // Each experiment is its own run, so stopping one leaves the other running.
-    sessions.test.stop(capital.path)
+    sessions.evaluate.stop(capital.path)
     await vi.waitFor(() => expect(runStatus(sessions, capital.path)).toBe('failed'))
     expect(runStatus(sessions, cities.path)).toBe('running')
     release()
@@ -2402,11 +2402,11 @@ describe('dev sessions on open', () => {
 
   it('shouldStartOneRunWhenTheSameExperimentIsPickedTwiceQuickly', async () => {
     const testing = testingProcess()
-    const { workspace, sessions } = await sessionsFor({ spawnTests: testing })
+    const { workspace, sessions } = await sessionsFor({ spawnEvaluation: testing })
     const experiment = await savedExperiment(workspace, ['c0'])
 
-    sessions.test.run([experiment])
-    sessions.test.run([experiment])
+    sessions.evaluate.run([experiment])
+    sessions.evaluate.run([experiment])
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
 
     expect(testing).toHaveBeenCalledTimes(1)
@@ -2432,7 +2432,7 @@ describe('dev sessions on open', () => {
       )
       return exit
     })
-    const { workspace, sessions } = await sessionsFor({ spawnTests: testing })
+    const { workspace, sessions } = await sessionsFor({ spawnEvaluation: testing })
     const path = experimentFile(workspace, 'plain')
     await writeFileAt(
       path,
@@ -2441,7 +2441,7 @@ describe('dev sessions on open', () => {
         evaluators: [{ evaluator_type: 'OutputEvaluator' }],
       })
     )
-    sessions.test.run([{ name: 'plain', path, caseCount: 5 }])
+    sessions.evaluate.run([{ name: 'plain', path, caseCount: 5 }])
     await vi.waitFor(() => expect(runStatus(sessions, path)).toBe('done'))
 
     rerunFailed(sessions, path)
@@ -2465,9 +2465,9 @@ describe('dev sessions on open', () => {
   })
 
   it('shouldShowTheLastReportWhenTheTestPanelOpensAfterARestart', async () => {
-    const { workspace, sessions } = await sessionsFor({ spawnTests: testingProcess() })
+    const { workspace, sessions } = await sessionsFor({ spawnEvaluation: testingProcess() })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
-    sessions.test.run([experiment])
+    sessions.evaluate.run([experiment])
     await remembered(sessions, workspace, experiment)
     const restarted = restartedTest(workspace)
 
@@ -2480,9 +2480,9 @@ describe('dev sessions on open', () => {
   })
 
   it('shouldShowWhyTheLastReportCannotBeReadWhenTheTestPanelOpensAfterARestart', async () => {
-    const { workspace, sessions } = await sessionsFor({ spawnTests: testingProcess() })
+    const { workspace, sessions } = await sessionsFor({ spawnEvaluation: testingProcess() })
     const experiment = await savedExperiment(workspace, ['c0'])
-    sessions.test.run([experiment])
+    sessions.evaluate.run([experiment])
     await remembered(sessions, workspace, experiment)
     await writeFileAt(join(experimentHome(workspace), 'capital.report.json'), '{"overall_score": ')
     const restarted = restartedTest(workspace)
@@ -2502,9 +2502,9 @@ describe('dev sessions on open', () => {
       earlier,
       JSON.stringify({ overall_score: 1, scores: [1], test_passes: [true], cases: [{ name: 'c0' }] })
     )
-    await rememberEvalsTestResults(
+    await rememberEvaluationResults(
       experimentHome(workspace),
-      await readEvalsTestResults(earlier, { experiment: experiment.name, seconds: 1 })
+      await readEvaluationResults(earlier, { experiment: experiment.name, seconds: 1 })
     )
     let release = (): void => undefined
     const gate = new Promise<void>((resolve) => {
@@ -2515,7 +2515,7 @@ describe('dev sessions on open', () => {
       await gate
       return testing(process)
     })
-    const restarted = restartedTest(workspace, { run: environmentRunner(), spawnTests: held })
+    const restarted = restartedTest(workspace, { run: environmentRunner(), spawnEvaluation: held })
     await restarted.show()
     restarted.run([experiment])
     await vi.waitFor(() => expect(held).toHaveBeenCalled())
@@ -2528,11 +2528,11 @@ describe('dev sessions on open', () => {
   })
 
   it('shouldKeepTheResultsAndWarnWhenTheLastReportCannotBeSaved', async () => {
-    const { workspace, sessions, notices } = await sessionsFor({ spawnTests: testingProcess() })
+    const { workspace, sessions, notices } = await sessionsFor({ spawnEvaluation: testingProcess() })
     const experiment = await savedExperiment(workspace, ['c0', 'c1'])
     await writeFileAt(join(experimentHome(workspace), '.state'), 'a file where the folder goes')
 
-    sessions.test.run([experiment])
+    sessions.evaluate.run([experiment])
 
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
     expect(finished(sessions, experiment.path).cases).toHaveLength(2)
@@ -2556,7 +2556,7 @@ describe('dev sessions on open', () => {
 
   it('shouldRunAndRerunCasesThatShareANameWhenTheDataStoreNeedsUniqueNames', async () => {
     const testing = strictTestingProcess(new Set(['question refund']))
-    const { workspace, sessions } = await sessionsFor({ spawnTests: testing })
+    const { workspace, sessions } = await sessionsFor({ spawnEvaluation: testing })
     const path = experimentFile(workspace, 'starter')
     await writeFileAt(
       path,
@@ -2568,7 +2568,7 @@ describe('dev sessions on open', () => {
         evaluators: [{ evaluator_type: 'OutputEvaluator' }],
       })
     )
-    sessions.test.run([{ name: 'starter', path, caseCount: 2 }])
+    sessions.evaluate.run([{ name: 'starter', path, caseCount: 2 }])
     await vi.waitFor(() => expect(runStatus(sessions, path)).toBe('done'))
     const first = finished(sessions, path).cases.map(({ name, passed }) => [name, passed])
 
@@ -2646,7 +2646,7 @@ const recordFor = async (
   workspace: DevWorkspace,
   experiment: ExperimentSummary,
   pid?: number
-): Promise<EvalsTestRecord> => {
+): Promise<EvaluationRecord> => {
   const run = testRunOf(workspace)
   const record = {
     version: 1 as const,
@@ -2663,7 +2663,7 @@ const recordFor = async (
   return record
 }
 
-const finishRun = (record: EvalsTestRecord, failing: readonly string[] = ['c1']): Promise<EvalsExit> =>
+const finishRun = (record: EvaluationRecord, failing: readonly string[] = ['c1']): Promise<EvalsExit> =>
   testingProcess([failing])({
     command: 'python',
     args: ['-m', 'strands_evals.cli', 'run', record.cases, '--output', record.report, '--data-store', record.store],
@@ -2676,22 +2676,22 @@ describe('/evaluate runs after strands dev closes', () => {
   it('shouldResumeARunThatEndedWhenStrandsDevClosedWithTheCasesItAlreadyFinished', async () => {
     const testing = testingProcess()
     let cutAtResume: boolean | undefined
-    let record: EvalsTestRecord | undefined
-    const spawnTests = vi.fn(async (request: EvalsProcess) => {
+    let record: EvaluationRecord | undefined
+    const spawnEvaluation = vi.fn(async (request: EvalsProcess) => {
       cutAtResume = existsSync(join(record!.store, 'c1.json'))
       return testing(request)
     })
-    const { workspace, sessions, notices } = await sessionsFor({ spawnTests })
+    const { workspace, sessions, notices } = await sessionsFor({ spawnEvaluation })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
     record = await recordFor(workspace, experiment, await deadProcessId())
     await writeFileAt(join(record.store, 'c0.json'), '{"output": "Paris"}')
     await writeFileAt(join(record.store, 'c1.json'), '{"outp')
 
-    await Promise.all([sessions.test.resume(), sessions.test.resume()])
+    await Promise.all([sessions.evaluate.resume(), sessions.evaluate.resume()])
 
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'))
-    expect(spawnTests).toHaveBeenCalledTimes(1)
-    const [{ args, detached }] = spawnTests.mock.calls[0]!
+    expect(spawnEvaluation).toHaveBeenCalledTimes(1)
+    const [{ args, detached }] = spawnEvaluation.mock.calls[0]!
     expect([flagValue(args, '--output'), flagValue(args, '--data-store'), detached]).toEqual([
       record.report,
       record.store,
@@ -2706,16 +2706,16 @@ describe('/evaluate runs after strands dev closes', () => {
   })
 
   it('shouldShowTheResultsOfARunThatFinishedWhileStrandsDevWasClosed', async () => {
-    const spawnTests = vi.fn()
-    const { workspace, sessions, notices } = await sessionsFor({ spawnTests })
+    const spawnEvaluation = vi.fn()
+    const { workspace, sessions, notices } = await sessionsFor({ spawnEvaluation })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
     const record = await recordFor(workspace, experiment, await deadProcessId())
     await finishRun(record)
 
-    await sessions.test.resume()
+    await sessions.evaluate.resume()
 
     expect(runStatus(sessions, experiment.path)).toBe('done')
-    expect(spawnTests).not.toHaveBeenCalled()
+    expect(spawnEvaluation).not.toHaveBeenCalled()
     expect(notices.at(-1)).toEqual({
       status: 'success',
       text: `evaluate · capital · 2 of 3 cases passed · report in ${join(experimentHome(workspace), 'capital.report.json')}`,
@@ -2724,9 +2724,9 @@ describe('/evaluate runs after strands dev closes', () => {
   })
 
   it('shouldMergeARerunThatFinishedWhileStrandsDevWasClosedIntoTheFullResult', async () => {
-    const { workspace, sessions, notices } = await sessionsFor({ spawnTests: testingProcess() })
+    const { workspace, sessions, notices } = await sessionsFor({ spawnEvaluation: testingProcess() })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
-    sessions.test.run([experiment])
+    sessions.evaluate.run([experiment])
     await remembered(sessions, workspace, experiment)
     const cases = join(testRunOf(workspace), '.state/experiment.json')
     await writeFileAt(cases, JSON.stringify(experimentDocument(['c1'])))
@@ -2739,7 +2739,7 @@ describe('/evaluate runs after strands dev closes', () => {
     await saveEvalsRunRecord(record)
     await finishRun(record, [])
 
-    await sessions.test.resume()
+    await sessions.evaluate.resume()
 
     expect(finished(sessions, experiment.path).cases.map(({ name, passed }) => [name, passed])).toEqual([
       ['c0', true],
@@ -2754,39 +2754,39 @@ describe('/evaluate runs after strands dev closes', () => {
   })
 
   it.skipIf(process.platform === 'win32')('shouldFollowARunThatIsStillGoingAndShowItsResultsWhenItEnds', async () => {
-    const spawnTests = vi.fn()
-    const { workspace, sessions } = await sessionsFor({ spawnTests })
+    const spawnEvaluation = vi.fn()
+    const { workspace, sessions } = await sessionsFor({ spawnEvaluation })
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
     const report = join(testRunOf(workspace), 'report.json')
     const live = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)', report], { stdio: 'ignore' })
     await once(live, 'spawn')
     const record = await recordFor(workspace, experiment, live.pid)
 
-    void sessions.test.resume()
+    void sessions.evaluate.resume()
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('running'))
     await finishRun(record)
     live.kill()
 
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'), { timeout: 10_000 })
-    expect(spawnTests).not.toHaveBeenCalled()
+    expect(spawnEvaluation).not.toHaveBeenCalled()
     await vi.waitFor(async () => expect(await readEvalsRunRecords(workspace.directory!)).toEqual([]))
   })
 
   it('shouldRecordTheProcessOfARunWhileItGoesAndForgetItWhenTheRunEnds', { timeout: 3 * RECORD_WAIT_MS }, async () => {
     const testing = testingProcess()
     let directory = ''
-    const spawnTests = vi.fn(async (request: EvalsProcess) => {
+    const spawnEvaluation = vi.fn(async (request: EvalsProcess) => {
       request.onSpawn?.(4242)
       await vi.waitFor(async () => expect((await readEvalsRunRecords(directory))[0]?.pid).toBe(4242), {
         timeout: RECORD_WAIT_MS,
       })
       return testing(request)
     })
-    const { workspace, sessions } = await sessionsFor({ spawnTests })
+    const { workspace, sessions } = await sessionsFor({ spawnEvaluation })
     directory = workspace.directory!
     const experiment = await savedExperiment(workspace, ['c0', 'c1', 'c2'])
 
-    sessions.test.run([experiment])
+    sessions.evaluate.run([experiment])
 
     await vi.waitFor(() => expect(runStatus(sessions, experiment.path)).toBe('done'), { timeout: RECORD_WAIT_MS })
     await vi.waitFor(async () => expect(await readEvalsRunRecords(directory)).toEqual([]))

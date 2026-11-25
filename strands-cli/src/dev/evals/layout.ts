@@ -28,9 +28,9 @@ const EXPERIMENTS_IGNORE_FILE = '.gitignore'
 const STAMP = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:-(\d+))?$/u
 const EXPERIMENT_CHANGE_DEBOUNCE_MS = 200
 
-const EVALS_KEPT_TEST_RUNS = 20
+const KEPT_EVALUATION_RUNS = 20
 
-export interface EvalsTestRunFiles {
+export interface EvaluationRunFiles {
   readonly folder: string
   readonly report: string
   readonly log: string
@@ -121,7 +121,7 @@ export const evalsStampTime = (stamp: string): number | undefined => {
   return Date.UTC(year, month - 1, day, hour, minute, second)
 }
 
-export const evalsTestRunFiles = (home: string, stamp: string): EvalsTestRunFiles => {
+export const evaluationRunFiles = (home: string, stamp: string): EvaluationRunFiles => {
   const folder = join(home, RUNS_FOLDER, stamp)
   const state = join(folder, STATE_FOLDER)
   return {
@@ -154,9 +154,9 @@ const runOf = (file: string): { home: string; stamp: string } => {
   return { home: dirname(dirname(folder)), stamp: basename(folder) }
 }
 
-export const evalsTestRunOf = (report: string): EvalsTestRunFiles => {
+export const evaluationRunOf = (report: string): EvaluationRunFiles => {
   const { home, stamp } = runOf(report)
-  return evalsTestRunFiles(home, stamp)
+  return evaluationRunFiles(home, stamp)
 }
 
 export const evalsOptimizationOf = (record: string): EvalsOptimizationFiles => {
@@ -271,16 +271,16 @@ const runFolders = async (workspaceDirectory: string, kind: string): Promise<Eva
     .flat()
     .sort((left, right) => stampOrder(left.stamp) - stampOrder(right.stamp))
 
-export const listEvalsTestRuns = (workspaceDirectory: string): Promise<EvalsRunFolder[]> =>
+export const listEvaluationRuns = (workspaceDirectory: string): Promise<EvalsRunFolder[]> =>
   runFolders(workspaceDirectory, RUNS_FOLDER)
 
 export const listEvalsOptimizations = (workspaceDirectory: string): Promise<EvalsRunFolder[]> =>
   runFolders(workspaceDirectory, OPTIMIZATIONS_FOLDER)
 
-export const pruneEvalsTestRuns = async (
+export const pruneEvaluationRuns = async (
   home: string,
   kept: readonly string[],
-  keep = EVALS_KEPT_TEST_RUNS
+  keep = KEPT_EVALUATION_RUNS
 ): Promise<number> => {
   const runs = await homeRuns(home, RUNS_FOLDER)
   const protectedFolders = new Set(kept.map((path) => resolve(path)))
@@ -288,7 +288,7 @@ export const pruneEvalsTestRuns = async (
     .slice(0, Math.max(0, runs.length - keep))
     .filter(
       ({ folder, stamp }) =>
-        !protectedFolders.has(resolve(folder)) && !existsSync(evalsTestRunFiles(home, stamp).record)
+        !protectedFolders.has(resolve(folder)) && !existsSync(evaluationRunFiles(home, stamp).record)
     )
   await Promise.all(old.map(({ folder }) => rm(folder, { recursive: true, force: true })))
   return old.length

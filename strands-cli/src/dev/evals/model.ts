@@ -70,7 +70,7 @@ export interface CaseResult {
   readonly verdicts: readonly EvaluatorVerdict[]
 }
 
-export interface TestResults {
+export interface EvaluationResults {
   readonly experiment: string
   readonly cases: readonly CaseResult[]
   readonly overall: number
@@ -78,21 +78,21 @@ export interface TestResults {
   readonly seconds: number
 }
 
-export type TestRun =
+export type EvaluationRun =
   | {
       readonly status: 'running'
       readonly cases: number
       readonly done: number
     }
-  | { readonly status: 'done'; readonly results: TestResults }
+  | { readonly status: 'done'; readonly results: EvaluationResults }
   | { readonly status: 'failed'; readonly message: string }
 
 export interface ExperimentRun {
   readonly experiment: ExperimentSummary
-  readonly run: TestRun
+  readonly run: EvaluationRun
 }
 
-export interface TestState {
+export interface EvaluationState {
   readonly runs: readonly ExperimentRun[]
 }
 

@@ -58,7 +58,7 @@ const evaluated = async (report: unknown, flags: readonly string[] = []) => {
       openWorkspace: async () => opened(workspace),
       prepareProject: vi.fn(async () => {}),
       run: environmentRunner(),
-      spawnTests: reportingTests(report),
+      spawnEvaluation: reportingTests(report),
     }
   )
   return { workspace, exit, stdout: stdout.text(), stderr: stderr.text() }

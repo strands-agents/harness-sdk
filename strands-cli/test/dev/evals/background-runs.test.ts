@@ -18,7 +18,7 @@ import {
   waitForEvalsOptimize,
   waitForEvalsRun,
   type EvalsOptimizeRecord,
-  type EvalsTestRecord,
+  type EvaluationRecord,
 } from '../../../src/dev/evals/background-runs.js'
 import { writeFileAt } from '../../fixtures/optimizer-run.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
@@ -46,7 +46,7 @@ const runFolder = (workspace: string, home: string, stamp: string): string => jo
 const experimentOf = (workspace: string, home: string): string =>
   home === INSIDE_HOME ? join(workspace, INSIDE_HOME, 'capital.json') : join(dirname(workspace), 'capital.json')
 
-const recordIn = (workspace: string, { home = INSIDE_HOME, stamp = STAMP, pid }: RunPlace = {}): EvalsTestRecord => {
+const recordIn = (workspace: string, { home = INSIDE_HOME, stamp = STAMP, pid }: RunPlace = {}): EvaluationRecord => {
   const run = runFolder(workspace, home, stamp)
   return {
     version: 1,

@@ -5,7 +5,7 @@ import type { DevWorkspace } from '../workspace.js'
 import type { EvalsUiDependencies } from './evals-ui.js'
 import type { EvalsExperimentDependencies } from './experiment.js'
 import type { EvalsOptimizationDependencies } from './optimize.js'
-import type { EvalsTestDependencies } from './test.js'
+import type { EvaluationDependencies } from './evaluate.js'
 
 export interface EvalsAgentFacts {
   description?: string
@@ -16,7 +16,7 @@ export interface EvalsAgentFacts {
 }
 
 export type EvalsSessionDependencies = EvalsExperimentDependencies &
-  EvalsTestDependencies &
+  EvaluationDependencies &
   EvalsOptimizationDependencies & {}
 
 /** The settings of the workspace that the dev sessions go by. They are read when needed, so a change counts at once. */

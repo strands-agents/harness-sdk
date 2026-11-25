@@ -7,9 +7,14 @@ import type { DevWorkspace } from '../workspace.js'
 import { runEvalsOptimization, type EvalsOptimizationDependencies } from './optimize.js'
 import { evalsWorkspaceDirectory } from './evals-process.js'
 import { evalsWorkspaceReady } from './layout-migration.js'
-import { readEvalsTestResults, rememberEvalsTestResults, runEvalsTest, type EvalsTestDependencies } from './test.js'
+import {
+  readEvaluationResults,
+  rememberEvaluationResults,
+  runEvaluation,
+  type EvaluationDependencies,
+} from './evaluate.js'
 
-interface EvalsDevCommandDependencies extends EvalsOptimizationDependencies, EvalsTestDependencies {
+interface EvalsDevCommandDependencies extends EvalsOptimizationDependencies, EvaluationDependencies {
   openWorkspace?: (args: ParsedArgs) => Promise<PreparedDevRun | undefined>
   prepareProject?: (workspace: DevWorkspace) => Promise<void>
 }
@@ -58,9 +63,9 @@ const evaluate = async (
   shared: Shared,
   dependencies: EvalsDevCommandDependencies
 ): Promise<{ lines: string[]; code: number }> => {
-  const { home, report, seconds, passed, checks, overall, name } = await runEvalsTest(shared, dependencies)
+  const { home, report, seconds, passed, checks, overall, name } = await runEvaluation(shared, dependencies)
   try {
-    await rememberEvalsTestResults(home, await readEvalsTestResults(report, { experiment: basename(home), seconds }))
+    await rememberEvaluationResults(home, await readEvaluationResults(report, { experiment: basename(home), seconds }))
   } catch (error) {
     shared.onProgress(`warning: this result is not kept as the latest report: ${errorMessage(error)}`)
   }

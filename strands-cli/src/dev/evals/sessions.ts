@@ -26,9 +26,9 @@ import {
   type OptimizeState,
   type ProposedEdit,
   type TestCheck,
-  type TestResults,
-  type TestRun,
-  type TestState,
+  type EvaluationResults,
+  type EvaluationRun,
+  type EvaluationState,
 } from './model.js'
 import { locateEvalsEdit, type EvalsEditLocation, type EvalsEditTarget } from './apply.js'
 import { reviewOptimizeRun } from './review-run.js'
@@ -45,7 +45,7 @@ import {
   waitForEvalsOptimize,
   waitForEvalsRun,
   type EvalsOptimizeRecord,
-  type EvalsTestRecord,
+  type EvaluationRecord,
 } from './background-runs.js'
 import { evalsWorkspaceDirectory } from './evals-process.js'
 import {
@@ -109,7 +109,12 @@ import {
   type EvalsStudyOutcome,
   type EvalsTestDifference,
 } from './study.js'
-import { readEvalsLatestTestResults, readEvalsTestResults, rememberEvalsTestResults, runEvalsTest } from './test.js'
+import {
+  readLatestEvaluationResults,
+  readEvaluationResults,
+  rememberEvaluationResults,
+  runEvaluation,
+} from './evaluate.js'
 
 export interface EvalsAppliedChange {
   readonly run: string
@@ -127,7 +132,7 @@ export interface EvalsAppliedChange {
 
 export interface EvalsDevSessions {
   readonly experiments: EvalsExperiments
-  readonly test: EvalsTest
+  readonly evaluate: EvalsEvaluate
   readonly optimize: EvalsOptimize
   /** Starts an optimization from the chats every so many chat turns, when the developer set that. */
   readonly auto: EvalsAutoOptimize
@@ -178,7 +183,7 @@ const MEASURED_ON: Record<EvalsMeasurement, string> = {
   test: 'test cases',
 }
 
-export const evalsTestJobs = ({ runs }: TestState): DevChatJob[] =>
+export const evalsEvaluateJobs = ({ runs }: EvaluationState): DevChatJob[] =>
   runs.flatMap(({ experiment, run }) =>
     run.status === 'running' ? [{ id: experiment.path, label: experiment.name, done: run.done, total: run.cases }] : []
   )
@@ -292,7 +297,7 @@ const locateBaseCliEdit = (workspace: DevWorkspace, change: EvalsKnobChange): Ev
   }
 }
 
-export class EvalsTest extends Store<TestState> {
+export class EvalsEvaluate extends Store<EvaluationState> {
   private readonly runs = new Map<string, ExperimentRun>()
   private readonly stops = new Map<string, AbortController>()
   private resumed: Promise<void> | undefined
@@ -336,7 +341,7 @@ export class EvalsTest extends Store<TestState> {
         'error',
         `strands dev could not move ${plural(problems.length, 'item')} to the new workspace layout · first: ${problems[0]}`
       )
-    let records: EvalsTestRecord[]
+    let records: EvaluationRecord[]
     try {
       records = await readEvalsRunRecords(this.workspaceDirectory())
     } catch (error) {
@@ -346,7 +351,7 @@ export class EvalsTest extends Store<TestState> {
     await Promise.all(records.map((record) => this.continueRun(record)))
   }
 
-  private async continueRun(record: EvalsTestRecord): Promise<void> {
+  private async continueRun(record: EvaluationRecord): Promise<void> {
     let experiment: ExperimentSummary | undefined
     try {
       const caseCount = await evalsCaseCount(record.experiment).catch(() => evalsCaseCount(record.cases))
@@ -375,7 +380,7 @@ export class EvalsTest extends Store<TestState> {
     }
   }
 
-  private async follow(experiment: ExperimentSummary, record: EvalsTestRecord): Promise<void> {
+  private async follow(experiment: ExperimentSummary, record: EvaluationRecord): Promise<void> {
     const abort = new AbortController()
     this.stops.set(experiment.path, abort)
     let stopCounting = (): void => undefined
@@ -413,7 +418,7 @@ export class EvalsTest extends Store<TestState> {
     startedAt: number,
     only?: readonly string[]
   ): Promise<void> {
-    const run = await readEvalsTestResults(report, {
+    const run = await readEvaluationResults(report, {
       experiment: experiment.name,
       seconds: (Date.now() - startedAt) / 1000,
     })
@@ -430,7 +435,7 @@ export class EvalsTest extends Store<TestState> {
   }
 
   // A run without a report points at its log, or gives the error when it never started one.
-  private whereWhy(record: EvalsTestRecord | undefined, error: unknown): string {
+  private whereWhy(record: EvaluationRecord | undefined, error: unknown): string {
     return record ? `run log in ${resolve(record.log)}` : firstLine(errorMessage(error))
   }
 
@@ -453,11 +458,11 @@ export class EvalsTest extends Store<TestState> {
 
   private async remember(
     experiment: ExperimentSummary,
-    results: TestResults,
+    results: EvaluationResults,
     only: readonly string[] | undefined
-  ): Promise<TestResults> {
+  ): Promise<EvaluationResults> {
     try {
-      return await rememberEvalsTestResults(this.home(experiment), results, only)
+      return await rememberEvaluationResults(this.home(experiment), results, only)
     } catch (error) {
       announce(
         this.host(),
@@ -469,9 +474,9 @@ export class EvalsTest extends Store<TestState> {
   }
 
   private async restoreRun(experiment: ExperimentSummary): Promise<void> {
-    let run: TestRun | undefined
+    let run: EvaluationRun | undefined
     try {
-      const results = await readEvalsLatestTestResults(this.home(experiment))
+      const results = await readLatestEvaluationResults(this.home(experiment))
       if (results) run = { status: 'done', results }
     } catch (error) {
       run = { status: 'failed', message: errorMessage(error) }
@@ -479,7 +484,7 @@ export class EvalsTest extends Store<TestState> {
     if (run && !this.runs.has(experiment.path)) this.update(experiment, run)
   }
 
-  private update(experiment: ExperimentSummary, run: TestRun): void {
+  private update(experiment: ExperimentSummary, run: EvaluationRun): void {
     this.runs.set(experiment.path, { experiment, run })
     this.set({ runs: [...this.runs.values()] })
   }
@@ -491,16 +496,16 @@ export class EvalsTest extends Store<TestState> {
   private async execute(
     experiment: ExperimentSummary,
     cases: string,
-    resumed?: EvalsTestRecord,
+    resumed?: EvaluationRecord,
     only?: readonly string[]
   ): Promise<void> {
     const startedAt = resumed?.startedAt ?? Date.now()
     const abort = new AbortController()
     this.stops.set(experiment.path, abort)
     let stopCounting = (): void => undefined
-    let record: EvalsTestRecord | undefined
+    let record: EvaluationRecord | undefined
     let saving: Promise<void> = Promise.resolve()
-    const save = (next: EvalsTestRecord): Promise<void> => {
+    const save = (next: EvaluationRecord): Promise<void> => {
       record = next
       saving = saving
         .then(() => saveEvalsRunRecord(next))
@@ -521,7 +526,7 @@ export class EvalsTest extends Store<TestState> {
         done: 0,
       }
       this.update(experiment, running)
-      const outcome = await runEvalsTest(
+      const outcome = await runEvaluation(
         {
           workspace: this.host().workspace,
           experiment: cases,
@@ -1388,7 +1393,7 @@ export const evalsDevSessions = (host: EvalsSessionHost): EvalsDevSessions => {
   const optimizing = (): boolean => evalsOptimizeJobs(optimize.snapshot()).length > 0
   const sessions = {
     experiments,
-    test: new EvalsTest(current, experiments),
+    evaluate: new EvalsEvaluate(current, experiments),
     optimize,
     // A run that is going, or one whose edits still wait for an answer, is done with before the next one starts.
     auto: new EvalsAutoOptimize(current, {

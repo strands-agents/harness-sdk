@@ -121,7 +121,7 @@ describe('dev commands', () => {
     const { workspace, project } = await fixture()
     const announced = vi.fn(() => ({ update: vi.fn() }))
     const sessions = evalsDevSessions({ workspace, agent: () => ({}) })
-    const resume = vi.spyOn(sessions.test, 'resume')
+    const resume = vi.spyOn(sessions.evaluate, 'resume')
 
     evalsDevCommands(workspace, project)[0]!.attach?.({ ...context, report: announced })
 

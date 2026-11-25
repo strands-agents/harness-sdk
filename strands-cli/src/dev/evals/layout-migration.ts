@@ -16,7 +16,7 @@ import {
   evalsOptimizationFiles,
   evalsOutsideExperimentHome,
   evalsSkillsFolder,
-  evalsTestRunFiles,
+  evaluationRunFiles,
 } from './layout.js'
 
 interface EvalsMigration {
@@ -24,7 +24,7 @@ interface EvalsMigration {
 }
 
 const OLD_RUN = /^(\d{8}-\d{6})-(.+)$/u
-const TEST_SUFFIXES = ['.experiment.json', '.json', '.log', '.cases'] as const
+const EVALUATION_SUFFIXES = ['.experiment.json', '.json', '.log', '.cases'] as const
 const OPTIMIZATION_FILE_SUFFIXES = ['.experiment.json', '.space.json', '.log'] as const
 const RUNNING_FOLDER = 'running'
 const LATEST_FOLDER = 'latest'
@@ -195,9 +195,13 @@ const moveExperiments = async (work: Migration): Promise<void> => {
   await work.move(join(folder, DRAFTS), evalsDraftsFolder(work.directory))
 }
 
-const moveTestRecord = async (work: Migration, reports: string, { path, record, stem }: Running): Promise<void> => {
+const moveEvaluationRecord = async (
+  work: Migration,
+  reports: string,
+  { path, record, stem }: Running
+): Promise<void> => {
   const [, stamp = '', name = ''] = OLD_RUN.exec(stem) ?? []
-  const files = evalsTestRunFiles(homeOf(work.directory, name, record.experiment), stamp)
+  const files = evaluationRunFiles(homeOf(work.directory, name, record.experiment), stamp)
   const experiment = newExperiment(work.directory, name, record.experiment)
   const cases =
     record.cases === join(reports, `${stem}.experiment.json`)
@@ -225,7 +229,7 @@ const moveLatest = async (work: Migration, reports: string): Promise<void> => {
     const stamp = typeof saved?.report === 'string' ? OLD_RUN.exec(basename(saved.report, '.json'))?.[1] : undefined
     if (!name || !stamp) continue
     const home = homeOf(work.directory, name)
-    const { folder, report } = evalsTestRunFiles(home, stamp)
+    const { folder, report } = evaluationRunFiles(home, stamp)
     if (!existsSync(report) || existsSync(evalsLatestRecord(home))) continue
     await work.attempt(join(reports, LATEST_FOLDER, file), async () => {
       await copyFile(report, evalsLatestReport(home))
@@ -235,20 +239,20 @@ const moveLatest = async (work: Migration, reports: string): Promise<void> => {
   }
 }
 
-const moveTests = async (work: Migration): Promise<number> => {
+const moveEvaluations = async (work: Migration): Promise<number> => {
   const reports = oldFolder(work.directory, 'reports')
   const records = await runningRecords(reports, 'report')
   const live = new Set<string>()
   for (const running of records) {
     if (await isAlive(running, 'report')) live.add(running.stem)
-    else await moveTestRecord(work, reports, running)
+    else await moveEvaluationRecord(work, reports, running)
   }
   const recorded = new Map(records.map(({ stem, record }) => [stem, record.experiment]))
-  const stems = new Set((await entries(reports)).flatMap((name) => stemOf(name, TEST_SUFFIXES) ?? []))
+  const stems = new Set((await entries(reports)).flatMap((name) => stemOf(name, EVALUATION_SUFFIXES) ?? []))
   for (const stem of stems) {
     const [, stamp, name] = OLD_RUN.exec(stem) ?? []
     if (!stamp || !name || live.has(stem)) continue
-    const files = evalsTestRunFiles(homeOf(work.directory, name, recorded.get(stem)), stamp)
+    const files = evaluationRunFiles(homeOf(work.directory, name, recorded.get(stem)), stamp)
     await work.move(join(reports, `${stem}.json`), files.report)
     await work.move(join(reports, `${stem}.log`), files.log)
     await work.move(join(reports, `${stem}.cases`), files.store)
@@ -322,7 +326,7 @@ const migrate = async (directory: string): Promise<EvalsMigration> => {
   await work.attempt('experiment folders', () => moveExperimentHomes(work))
   await work.attempt('experiments', () => moveExperiments(work))
   await work.attempt('test reports', async () => {
-    liveRuns += await moveTests(work)
+    liveRuns += await moveEvaluations(work)
   })
   await work.attempt('optimization runs', async () => {
     liveRuns += await moveOptimizations(work)
