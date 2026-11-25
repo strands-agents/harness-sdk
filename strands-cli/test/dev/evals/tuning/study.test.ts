@@ -172,15 +172,18 @@ describe('optimization rollouts', () => {
     expect(rolloutsAfter(yourAgentWon)).toEqual({ done: 8, total: 10 })
   })
 
-  it('shouldCountACaseOnceWhenItRanAgain', () => {
+  it.each([
+    { ran: 'the agent ran again', rollouts: 1, done: 2 },
+    { ran: 'only the judges ran again', rollouts: 0, done: 1 },
+  ])('shouldCountTheRolloutsTheOptimizerSpentWhen$ran', ({ rollouts, done }) => {
     const again = [
       optimizerConfig({ cases: SPLIT }),
       ...optimizerCandidate(base),
       optimizerTrial({ candidate: 'base', caseName: 'a', status: 'infrastructure_invalid', error: 'throttled' }),
-      optimizerTrial({ candidate: 'base', caseName: 'a', score: 1 }),
+      optimizerTrial({ candidate: 'base', caseName: 'a', rollouts, previousRollouts: [1] }),
     ]
 
-    expect(rolloutsAfter(again)).toEqual({ done: 1, total: 30 })
+    expect(rolloutsAfter(again)).toEqual({ done, total: 29 + done })
   })
 })
 

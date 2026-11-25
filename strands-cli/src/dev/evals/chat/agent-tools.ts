@@ -519,16 +519,27 @@ const planTool = (sessions: Sessions): DevChatTool => ({
     'Read what an optimization of one experiment could tune, and what it would cost, without starting anything. ' +
     'Call it before you ask the developer to set up a run, so the knobs, the choices, and the estimate you show ' +
     'them are this agent’s own and not a guess. A knob with a reason cannot be tuned: show the reason and do not ' +
-    'offer it. Call it again after the developer changes a setting if you want a fresh estimate.',
+    'offer it. After the developer changes a setting, call it again with the flags of the run for its estimate.',
   inputSchema: {
     type: 'object',
-    properties: { experiment: { type: 'string', description: 'The name of a saved experiment.' } },
+    properties: {
+      experiment: { type: 'string', description: 'The name of a saved experiment.' },
+      args: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'The flags of strands-evals optimize run, as strands_dev_run_background takes them.',
+      },
+    },
     required: ['experiment'],
     additionalProperties: false,
   },
   run: async (input): Promise<string> => {
     const { optimize } = sessions()
-    const plan = await plannedSetup(sessions, await findExperiment(sessions, requiredText(input, 'experiment')))
+    const experiment = await findExperiment(sessions, requiredText(input, 'experiment'))
+    const args = textList(input, 'args')
+    const plan = args
+      ? await flaggedSetup(sessions, experiment, optimizeFlagSettings(args))
+      : await plannedSetup(sessions, experiment)
     return reply(
       defined({
         experiment: { name: plan.experiment.name, cases: plan.experiment.caseCount },
@@ -611,12 +622,12 @@ const objectiveFor = async (
   return picked
 }
 
-// Plans a fresh run, applies the flags of the skill, and starts it without waiting.
-const startOptimization = async (
+/** Plans a fresh run with the flags of the skill applied. */
+const flaggedSetup = async (
   sessions: Sessions,
   experiment: ExperimentSummary,
   settings: OptimizeFlagSettings
-): Promise<string> => {
+): Promise<OptimizePlan> => {
   const { optimize } = sessions()
   const iterations = budgetValue('--max-iterations', 'iterations', settings.iterations)
   const width = budgetValue('--proposals-per-iteration', 'width', settings.width)
@@ -644,9 +655,18 @@ const startOptimization = async (
   if (feasibility !== undefined) optimize.setDecision('feasibility', feasibility)
   if (crashScore !== undefined) optimize.setDecision('crashScore', crashScore)
   if (finalists !== undefined) optimize.setDecision('finalists', finalists)
-  const ready = optimize.snapshot()
-  if (ready.step === 'setup' && ready.plan.budgetProblem) throw new Error(ready.plan.budgetProblem)
-  const started = optimize.start()
+  return until(optimize, (state) => (state.step === 'setup' ? state.plan : undefined))
+}
+
+// Plans a fresh run, applies the flags of the skill, and starts it without waiting.
+const startOptimization = async (
+  sessions: Sessions,
+  experiment: ExperimentSummary,
+  settings: OptimizeFlagSettings
+): Promise<string> => {
+  const { budgetProblem } = await flaggedSetup(sessions, experiment, settings)
+  if (budgetProblem) throw new Error(budgetProblem)
+  const started = sessions().optimize.start()
   if (started === undefined) throw new Error('The optimization did not start.')
   return started
 }

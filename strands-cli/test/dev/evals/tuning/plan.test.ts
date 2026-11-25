@@ -98,7 +98,8 @@ describe('optimize plan', () => {
   it.each([
     { repetitions: 1, iterations: 4, width: 4, evaluators: 1, rollouts: 80, judgeCalls: 80 },
     { repetitions: 2, iterations: 4, width: 4, evaluators: 3, rollouts: 160, judgeCalls: 480 },
-    { repetitions: 1, iterations: 0, width: 4, evaluators: 2, rollouts: 16, judgeCalls: 32 },
+    { repetitions: 1, iterations: 0, width: 4, evaluators: 2, rollouts: 8, judgeCalls: 16 },
+    { repetitions: 1, iterations: 1, width: 2, evaluators: 1, rollouts: 22, judgeCalls: 22 },
   ])(
     'shouldCountEveryRolloutWhenTheStudyRuns$iterationsIterationsOf$repetitionsRepetitions',
     ({ repetitions, iterations, width, evaluators, rollouts, judgeCalls }) => {

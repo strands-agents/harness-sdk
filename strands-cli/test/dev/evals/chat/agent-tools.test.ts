@@ -657,6 +657,24 @@ describe('dev chat part', () => {
     expect(planned.estimate.rollouts).toBeDefined()
   })
 
+  it('shouldEstimateTheRunOfTheFlagsWhenItPlansWithThem', async () => {
+    const { tool, sessions } = setup()
+    const run = tool('strands_dev_optimization_plan').run
+
+    await run({
+      experiment: 'refunds',
+      args: ['--max-iterations', '0', '--runs-per-candidate=3', '--n-finalists', '1'],
+    })
+
+    expect(sessions.optimize.setIterations).toHaveBeenCalledWith(0)
+    expect(sessions.optimize.setRepetitions).toHaveBeenCalledWith(3)
+    expect(sessions.optimize.setWidth).not.toHaveBeenCalled()
+    expect(sessions.optimize.setDecision).toHaveBeenCalledWith('finalists', 1)
+    await expect(run({ experiment: 'refunds', args: ['--proposals-per-iteration', '0'] })).rejects.toThrow(
+      '--proposals-per-iteration'
+    )
+  })
+
   it('shouldGiveTheSplitWarningAndTheObjectiveWarningTogetherWhenItPlans', async () => {
     const { tool, optimize, sessions } = setup()
     vi.mocked(sessions.optimize.plan).mockImplementation(() =>

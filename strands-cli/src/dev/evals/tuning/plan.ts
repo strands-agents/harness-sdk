@@ -141,8 +141,9 @@ export const evalsRolloutPhases = ({
   finalists = EVALS_DECISION_DEFAULTS.finalists,
   pareto = false,
 }: Omit<EvalsRolloutPlan, 'evaluators' | 'profile'>): EvalsRolloutPhases => {
-  const validated = evalsValidatedFinalists(finalists, pareto) + 1
-  const tested = pareto ? validated : TESTED_WITHOUT_PARETO
+  // The baseline and at most one finalist per candidate the search proposes.
+  const validated = Math.min(evalsValidatedFinalists(finalists, pareto), iterations * width) + 1
+  const tested = pareto ? validated : Math.min(TESTED_WITHOUT_PARETO, validated)
   return {
     search: repetitions * (train + iterations * width * train),
     validation: repetitions * validated * validation,

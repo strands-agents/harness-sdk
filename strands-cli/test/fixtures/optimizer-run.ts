@@ -114,6 +114,9 @@ export interface OptimizerTrial {
   readonly error?: string
   readonly evaluator?: string
   readonly scores?: Readonly<Record<string, number>>
+  /** What each attempt the record replaced cost the budget, as the optimizer's previous_attempts carry it. */
+  readonly previousRollouts?: readonly number[]
+  readonly rollouts?: number
 }
 
 export const optimizerTrial = ({
@@ -128,6 +131,8 @@ export const optimizerTrial = ({
   error,
   evaluator = 'OutputEvaluator',
   scores = { [evaluator]: value },
+  previousRollouts,
+  rollouts,
 }: OptimizerTrial): string =>
   JSON.stringify({
     event: 'trial',
@@ -151,6 +156,12 @@ export const optimizerTrial = ({
             )
           : {},
       usage: { tokens: 12, seconds: 0.5, model_calls: 1 },
+      ...(rollouts === undefined ? {} : { rollouts }),
+      ...(previousRollouts
+        ? {
+            previous_attempts: previousRollouts.map((spent) => ({ status: 'infrastructure_invalid', rollouts: spent })),
+          }
+        : {}),
     },
   })
 

@@ -72,6 +72,11 @@ type Step =
   | { readonly kind: 'validating'; readonly versions: number; readonly trials: TrialProgress }
   | { readonly kind: 'testing'; readonly trials: TrialProgress }
 
+interface FinishedTrial {
+  readonly split: Split
+  readonly spent: number
+}
+
 const SPLITS: readonly Split[] = ['train', 'validation', 'test']
 
 const isSplit = (value: unknown): value is Split => SPLITS.includes(value as Split)
@@ -106,6 +111,13 @@ const text = (value: unknown): string | undefined => (typeof value === 'string' 
 
 const texts = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+
+/** What a trial cost the budget: its last attempt and every attempt it replaced, one each in older records. */
+const spentRollouts = (record: Event): number =>
+  [record, ...(Array.isArray(record.previous_attempts) ? record.previous_attempts : [])].reduce<number>(
+    (sum, attempt: Partial<Event> | null) => sum + (finite(attempt?.rollouts) ?? 1),
+    0
+  )
 
 const mean = (values: readonly number[]): number | undefined =>
   values.length === 0 ? undefined : values.reduce((sum, value) => sum + value, 0) / values.length
@@ -150,8 +162,8 @@ class RunState {
   private test: TestReport | undefined
   private readonly candidates = new Map<string, Candidate>()
   private readonly scores = new Map<string, Map<Split, number>>()
-  /** The split of each finished trial of a candidate. A case that ran again has one entry. */
-  private readonly trials = new Map<string, Map<string, Split>>()
+  /** Each finished trial of a candidate, by case and run: a later record of the same key replaces it. */
+  private readonly trials = new Map<string, Map<string, FinishedTrial>>()
   private splitCases: Readonly<Record<Split, readonly string[]>> = { train: [], validation: [], test: [] }
   private runs = 1
   private finalists: readonly string[] | undefined
@@ -200,9 +212,10 @@ class RunState {
 
   /** The rollouts done and still to come: the current part by what it needs, the later parts by the plan. */
   private rollouts(step: Step | undefined, planned: EvalsRolloutPhases): TrialProgress {
-    const everyone = [...this.trials.keys()]
-    const train = this.finishedIn(everyone, 'train')
-    const done = train + this.finishedIn(everyone, 'validation') + this.finishedIn(everyone, 'test')
+    const finished = [...this.trials.values()].flatMap((byKey) => [...byKey.values()])
+    // As the optimizer counts its budget: a re-run of a trial is a rollout too.
+    const done = finished.reduce((sum, { spent }) => sum + spent, 0)
+    const train = finished.filter(({ split }) => split === 'train').length
     return { done, total: done + this.rolloutsLeft(step, train, planned) }
   }
 
@@ -217,7 +230,7 @@ class RunState {
 
   private finishedIn(ids: readonly string[], split: Split): number {
     return ids.reduce(
-      (sum, id) => sum + [...(this.trials.get(id)?.values() ?? [])].filter((done) => done === split).length,
+      (sum, id) => sum + [...(this.trials.get(id)?.values() ?? [])].filter((done) => done.split === split).length,
       0
     )
   }
@@ -295,9 +308,13 @@ class RunState {
     if (!isRecord(record)) return
     const id = text(record.candidate_id)
     const caseName = text(record.case_name)
-    if (id === undefined || caseName === undefined || !isSplit(record.split)) return
-    const byKey = this.trials.get(id) ?? new Map<string, Split>()
-    byKey.set(`${record.split}\u0000${caseName}\u0000${finite(record.run_index) ?? 0}`, record.split)
+    const { split } = record
+    if (id === undefined || caseName === undefined || !isSplit(split)) return
+    const byKey = this.trials.get(id) ?? new Map<string, FinishedTrial>()
+    byKey.set(`${split}\u0000${caseName}\u0000${finite(record.run_index) ?? 0}`, {
+      split,
+      spent: spentRollouts(record),
+    })
     this.trials.set(id, byKey)
   }
 
