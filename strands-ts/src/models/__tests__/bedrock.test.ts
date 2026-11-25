@@ -4404,7 +4404,7 @@ describe('BedrockModel', () => {
         {
           name: 'a GPT id marked as taking cache points',
           config: {
-            modelId: 'us.openai.gpt-5.5',
+            modelId: 'us.openai.gpt-5.2',
             modelInfo: { capabilities: { promptCaching: 'cachePoints' as const } },
           },
           stream: true,
