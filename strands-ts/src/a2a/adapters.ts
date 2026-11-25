@@ -19,11 +19,13 @@ import { logger } from '../logging/logger.js'
  * Key identifying a data part that carries a Strands interrupt response. The A2A payload mirrors
  * the `InterruptResponseContent` type verbatim, so the wire contract and the SDK type cannot drift.
  */
-export const INTERRUPT_RESPONSE_KEY = 'interruptResponse'
+const INTERRUPT_RESPONSE_KEY = 'interruptResponse'
 
 /**
  * Key under which an `input-required` status message advertises the interrupts awaiting an answer.
  * Each entry carries the `interruptId` that the matching interrupt response must echo back.
+ *
+ * @internal
  */
 export const INTERRUPTS_KEY = 'interrupts'
 
@@ -37,14 +39,14 @@ export const INTERRUPTS_KEY = 'interrupts'
  * { "kind": "data", "data": { "interruptResponse": { "interruptId": "<id>", "response": <any> } } }
  * ```
  *
- * Recognition is deliberately narrow: only the explicit shape above is treated as a resume, so an
- * ordinary data part still reaches the generic content-block path unchanged.
+ * Only a data part with its own `interruptResponse` key counts as an interrupt response.
  *
  * @param parts - Array of A2A protocol parts from the inbound message
  * @returns The interrupt responses carried by `parts`, or undefined when none are present and the
  *   caller should fall back to generic content-block conversion
  * @throws A2AError when an interrupt response is malformed, carries a null response, repeats an
  *   interrupt id, or is accompanied by unrelated content in the same message
+ * @internal
  */
 export function extractInterruptResponses(parts: Part[]): InterruptResponseContent[] | undefined {
   const responses: InterruptResponseContent[] = []
@@ -52,43 +54,27 @@ export function extractInterruptResponses(parts: Part[]): InterruptResponseConte
   let unrelatedParts = 0
 
   for (const part of parts) {
-    if (part.kind !== 'data' || !(INTERRUPT_RESPONSE_KEY in part.data)) {
+    const response = parseInterruptResponse(part)
+    if (response === undefined) {
       unrelatedParts += 1
       continue
     }
 
-    const payload = part.data[INTERRUPT_RESPONSE_KEY]
-    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-      throw A2AError.invalidParams(`'${INTERRUPT_RESPONSE_KEY}' must be an object with 'interruptId' and 'response'`)
-    }
-
-    const { interruptId, response } = payload as { interruptId?: unknown; response?: unknown }
-    if (typeof interruptId !== 'string' || interruptId.length === 0) {
-      throw A2AError.invalidParams("Interrupt response is missing a non-empty 'interruptId'")
-    }
-
-    // An interrupt whose response is null reads as "not yet answered", so a null answer would leave
-    // the interrupt unsatisfied and re-raise it: the client would see an identical input-required
-    // and no error. Falsy answers such as false are fine.
-    if (response === undefined || response === null) {
-      throw A2AError.invalidParams(`Interrupt response for '${interruptId}' must provide a non-null 'response'`)
-    }
-
-    // Two answers for one interrupt are ambiguous; reject rather than silently choosing one.
+    // Two answers for one interrupt are ambiguous.
+    const { interruptId } = response.interruptResponse
     if (seenIds.has(interruptId)) {
       throw A2AError.invalidParams(`Duplicate interrupt response for '${interruptId}'`)
     }
 
     seenIds.add(interruptId)
-    responses.push(new InterruptResponseContent({ interruptId, response: response as JSONValue }))
+    responses.push(response)
   }
 
   if (responses.length === 0) {
     return undefined
   }
 
-  // The agent resumes from interrupt responses alone, so delivering both would mean dropping the
-  // conversational content — exactly the silent behaviour the resume path must avoid.
+  // The agent resumes from interrupt responses alone and would silently drop any other content.
   if (unrelatedParts > 0) {
     throw A2AError.invalidParams('A message carrying interrupt responses must not contain other content parts')
   }
@@ -160,6 +146,42 @@ export function contentBlocksToParts(blocks: ContentBlock[]): Part[] {
   }
 
   return parts
+}
+
+/**
+ * Reads one inbound A2A part as an interrupt response.
+ *
+ * @param part - A part of the inbound message
+ * @returns The interrupt response the part carries, or undefined for any other part
+ * @throws A2AError when the part carries a malformed interrupt response or a null response
+ */
+function parseInterruptResponse(part: Part): InterruptResponseContent | undefined {
+  // `data` is unvalidated wire input and can arrive as null or a primitive.
+  if (
+    part.kind !== 'data' ||
+    typeof part.data !== 'object' ||
+    part.data === null ||
+    !Object.hasOwn(part.data, INTERRUPT_RESPONSE_KEY)
+  ) {
+    return undefined
+  }
+
+  const payload = part.data[INTERRUPT_RESPONSE_KEY]
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw A2AError.invalidParams(`'${INTERRUPT_RESPONSE_KEY}' must be an object with 'interruptId' and 'response'`)
+  }
+
+  const { interruptId, response } = payload as { interruptId?: unknown; response?: unknown }
+  if (typeof interruptId !== 'string' || interruptId.length === 0) {
+    throw A2AError.invalidParams("Interrupt response is missing a non-empty 'interruptId'")
+  }
+
+  // Null is refused for parity with the Python server, where a null response means "not answered yet".
+  if (response === undefined || response === null) {
+    throw A2AError.invalidParams(`Interrupt response for '${interruptId}' must provide a non-null 'response'`)
+  }
+
+  return new InterruptResponseContent({ interruptId, response: response as JSONValue })
 }
 
 /**
