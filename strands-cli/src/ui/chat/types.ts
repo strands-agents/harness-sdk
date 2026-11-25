@@ -195,6 +195,13 @@ export interface ChatPanelRow {
           active?: boolean
         }[]
       }
+    | {
+        /** A field for a whole number: `value` holds its digits, and `editing` marks an unsaved draft. */
+        kind: 'number'
+        value: string
+        max: number
+        editing?: boolean
+      }
   badge?: {
     text: string
     tone: 'normal' | 'success' | 'warning' | 'danger'

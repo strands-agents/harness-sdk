@@ -1064,8 +1064,10 @@ describe('dev chat tool errors and states', () => {
     ['apply_optimization', { edits: [0] }, 'run is required.'],
     ['apply_optimization', { run: 'r', edits: ['first'] }, 'There is no edit first.'],
     ['apply_optimization', { run: 'r', edits: [-1] }, 'There is no edit -1.'],
-    ['auto_optimize', { everyTurns: 7 }, 'everyTurns must be one of 0, 5, 10, 20, 50, 100.'],
-    ['auto_optimize', { everyTurns: 'often' }, 'everyTurns must be one of 0, 5, 10, 20, 50, 100.'],
+    ['auto_optimize', { everyTurns: 7.5 }, 'everyTurns must be a whole number from 0 to 9999.'],
+    ['auto_optimize', { everyTurns: -1 }, 'everyTurns must be a whole number from 0 to 9999.'],
+    ['auto_optimize', { everyTurns: 10000 }, 'everyTurns must be a whole number from 0 to 9999.'],
+    ['auto_optimize', { everyTurns: 'often' }, 'everyTurns must be a whole number from 0 to 9999.'],
     ['auto_optimize', { acceptResults: 'yes' }, 'acceptResults must be true or false.'],
     ['answer_review', { edit: 0, answer: 'apply' }, 'run is required.'],
     ['answer_review', { run: 'r', answer: 'apply' }, 'edit must be the index of the edit'],
@@ -1249,7 +1251,7 @@ describe('dev chat tool errors and states', () => {
         autoOptimize: { everyTurns: 0, state: 'off: an optimization starts only when the developer asks for one' },
         autoAcceptOptimizationResults:
           'off: the edits of a finished run show as a diff, and the developer applies or leaves each one',
-        choices: { everyTurns: [0, 5, 10, 20, 50, 100] },
+        choices: { everyTurns: 'a whole number from 0 to 9999' },
         where: 'Both are in /settings, under Strands dev workspace.',
       })
       expect(sessions.setSettings).not.toHaveBeenCalled()
