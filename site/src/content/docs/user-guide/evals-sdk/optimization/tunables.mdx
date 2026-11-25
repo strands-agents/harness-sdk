@@ -144,6 +144,11 @@ takes an `Int` the same way. A number without a marker fails at declaration. Typ
 are searched with the numbers and choices, not by the text rewriter, and a change shows in
 its file's diff and in `best.values.json`.
 
+A `JsonField` takes a `OneOf`, never a `JsonChoice`, and an array or object field takes no
+marker at all: it stays a text value holding its JSON text, which the text rewriter edits.
+To choose among lists, such as tool sets, declare a [`JsonChoice`](#choose-a-tool-set) on
+the factory, or use `--tune` on a config file.
+
 Two settings guard every text marker:
 
 - **`size_cap`**: the longest text a proposal may be, in characters. It defaults to the
