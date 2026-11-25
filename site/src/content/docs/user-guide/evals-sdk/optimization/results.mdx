@@ -196,9 +196,18 @@ result.reports[result.best.id]["test"].display()  # an EvaluationReport per spli
 
 `to_rows` also takes `"iteration"`, one row per search step.
 
-The reports carry no trajectories. Each report row instead names its trial's conversation
-under `transcript`, a hash of the file in the run folder's `transcripts/`. To read a trial's
-conversation, open the run in [`strands-evals ui`](../cli/ui.md).
+The reports carry no trajectories. Each report row, and each case row, instead names its
+trial's conversation under `transcript`. Load it with `load_transcript`, which reads it
+from the run folder:
+
+```python
+row = result.reports[result.best.id]["test"].cases[0]
+# a Session, or the list the rollout returned
+session = result.load_transcript(row["transcript"])
+```
+
+Pass `run_dir=` when the run folder has moved. To browse conversations instead, open the
+run in [`strands-evals ui`](../cli/ui.md).
 
 ## What's in the run folder
 
