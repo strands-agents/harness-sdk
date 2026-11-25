@@ -14,8 +14,11 @@ import { PythonBackend, type PythonOptions } from '../../src/project/python.js'
 import { createPythonChat } from '../../src/ui/chat/runtime.js'
 import { exportSourceProject } from '../../src/project/export.js'
 import { watchAgentProject } from '../../src/project/watch.js'
+import { bindExistingAgent } from '../../src/dev/create.js'
 import type { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { pythonExecutable as python } from '../fixtures/python-runtime.js'
+import { pythonEnvironment } from '../fixtures/python-runtime.js'
+import { temporaryDirectory } from '../fixtures/tempdir.js'
 
 const baseSource = `from strands import tool
 from strands_harness import create_harness
@@ -186,6 +189,90 @@ ${(name === 'memory store'
     },
     30_000
   )
+
+  it('shouldLeaveTheDevWorkspaceOutOfExportsWhenItIsInsideTheProject', { timeout: 30_000 }, async () => {
+    const entrypoint = join(root, 'agent.py')
+    await writeFile(entrypoint, factorySource)
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, entrypoint)
+    await writeFile(join(directory, 'tmp', 'sentinel.txt'), 'WORKSPACE SENTINEL')
+    const archiveDirectory = await mkdtemp(join(tmpdir(), 'strands-dev-export-'))
+    const archive = join(archiveDirectory, 'agent.zip')
+    const chat = await createPythonChat(
+      entrypoint,
+      CliConfigStore.memory(),
+      { cwd: root, devWorkspace: directory, prepared: true },
+      AbortSignal.timeout(15_000),
+      vi.fn()
+    )
+    chats.push(chat)
+    try {
+      await chat.submit(`/export python "${archive}"`)
+
+      const names = Object.keys(unzipSync(await readFile(archive)))
+      expect(names.some((name) => name.endsWith('agent.py'))).toBe(true)
+      expect(names.filter((name) => name.includes('strands-dev'))).toEqual([])
+    } finally {
+      await rm(archiveDirectory, { recursive: true, force: true })
+    }
+  })
+
+  it('shouldOfferOnlyTheDevCommandsAndNotTheDevSkillsWhenADevChatListsSlashCommands', { timeout: 30_000 }, async () => {
+    const entrypoint = join(root, 'agent.py')
+    await writeFile(entrypoint, factorySource)
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, entrypoint)
+    const devSkills = ['background-evals', 'strands-evals']
+    const chat = await createPythonChat(
+      entrypoint,
+      CliConfigStore.memory(),
+      { cwd: root, devWorkspace: directory, prepared: true },
+      AbortSignal.timeout(15_000),
+      vi.fn()
+    )
+    chats.push(chat)
+    const listed = (input: string): string[] => chat.commandAssistance(input)?.completions.map(({ name }) => name) ?? []
+
+    await chat.submit('/skills')
+
+    await vi.waitFor(() => expect(chat.getSnapshot().panel?.title).toMatch(/^Skills \(\d+\)$/))
+    expect(chat.getSnapshot().panel?.rows.map(({ label }) => label)).toEqual(expect.arrayContaining(devSkills))
+    expect(listed('/')).toEqual(expect.arrayContaining(['experiment', 'optimize']))
+    expect(listed('/')).not.toContain('evaluate')
+    expect(listed('/').filter((name) => devSkills.includes(name))).toEqual([])
+    expect(listed('/opt')).toEqual(['optimize'])
+    expect(chat.actionableCommandToken('/background-evals')).toBeUndefined()
+  })
+
+  it('shouldTurnOffTheCustomSessionManagerWhenADevChatOpensTheAgent', { timeout: 30_000 }, async () => {
+    const entrypoint = join(root, 'agent.py')
+    await writeFile(
+      entrypoint,
+      `from strands.session import SnapshotSessionManager
+from strands.storage import LocalFileStorage
+${factorySource.replace('"session": False,', '"session": False, "session_manager": SnapshotSessionManager("own", storage=LocalFileStorage("own-sessions")),')}`
+    )
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, entrypoint)
+    const config = CliConfigStore.memory()
+    await config.setPermissionMode('bypassPermissions')
+    const chat = await createPythonChat(
+      entrypoint,
+      config,
+      { cwd: root, devWorkspace: directory, prepared: true },
+      AbortSignal.timeout(15_000),
+      vi.fn()
+    )
+    chats.push(chat)
+
+    await chat.submit('{"tool":"status"}')
+
+    expect(chat.getSnapshot().notices.map(({ text }) => text)).toContain(
+      'Dev deactivated the custom session manager of this agent in this chat. Thus the chat cannot write into the stores of the agent. Dev does not save this chat.'
+    )
+    expect(JSON.stringify(chat.getSnapshot().completedTurns)).toContain('Turn complete.')
+    expect(existsSync(join(root, 'own-sessions'))).toBe(false)
+  })
 
   it.each([
     '{"dir": "custom-memory"}',
@@ -942,6 +1029,35 @@ agent = create_agent()`
     expect(backend.name).toBe('Generated')
   })
 
+  it.each([
+    ['from strands_harness import create_harness as make_harness', 'make_harness'],
+    ['import strands_harness as harness', 'harness.create_harness'],
+    ['import strands_harness', 'strands_harness.create_harness'],
+  ])('shouldReconstructTheAgentInADevChatWhenTheDirectCallUses %s', { timeout: 30_000 }, async (binding, callee) => {
+    const authored = baseSource
+      .replace('from strands_harness import create_harness', binding)
+      .replace('def build(**overrides):', 'def build_options():')
+      .replace('    options.update(overrides)\n    return create_harness(**options)', '    return options')
+      .replace('agent = build()', `agent = ${callee}(**build_options())`)
+    const backend = await open(authored, { overrides: { name: 'Generated', session: false }, devWorkspace: root })
+
+    expect(backend.reconstructable()).toBe(true)
+    await backend.clear()
+    expect(backend.name).toBe('Generated')
+  })
+
+  it('shouldNotReconstructAnAliasedDirectCallOutsideADevChat', async () => {
+    const authored = baseSource
+      .replace('from strands_harness import create_harness', 'import strands_harness as harness')
+      .replace('def build(**overrides):', 'def build_options():')
+      .replace('    options.update(overrides)\n    return create_harness(**options)', '    return options')
+      .replace('agent = build()', 'agent = harness.create_harness(**build_options())')
+
+    await expect(open(authored, { overrides: { name: 'Generated', session: false } })).rejects.toThrow(
+      'recreation controls are unavailable'
+    )
+  })
+
   it.each(['bom-crlf', 'latin1-cookie'])('loads non-ASCII %s source without changing its bytes', async (encoding) => {
     const text = `${baseSource}\nagent.name = "café"\n`
     const authored =
@@ -953,4 +1069,44 @@ agent = create_agent()`
     expect(backend.name).toBe('café')
     expect(await readFile(join(root, 'agent.py'))).toEqual(authored)
   })
+})
+
+describe.skipIf(!existsSync(python))('Python installed package loading', () => {
+  const backends: PythonBackend[] = []
+  afterEach(async () => {
+    await Promise.all(backends.splice(0).map((backend) => backend.dispose()))
+    vi.unstubAllEnvs()
+  })
+
+  it('shouldImportTheRealPackageWhenAnInstalledEntrypointUsesSrcLayout', async () => {
+    const root = await temporaryDirectory()
+    const sourceRoot = join(root, 'src')
+    const packageRoot = join(sourceRoot, 'refund_desk')
+    await mkdir(packageRoot, { recursive: true })
+    await symlink(pythonEnvironment, join(root, '.venv'), 'junction')
+    await writeFile(join(packageRoot, '__init__.py'), '')
+    await writeFile(join(packageRoot, 'tools.py'), 'NAME = "Refund desk package"\n')
+    await copyFile(new URL('../fixtures/source-reload-model.py', import.meta.url), join(packageRoot, 'model.py'))
+    const source = `from strands_harness import create_harness
+from refund_desk.tools import NAME
+from .model import SourceReloadModel
+agent = create_harness(name=NAME, model=SourceReloadModel(), memory=False, session=False, skills=False, builtin_tools=[], builtin_plugins=[], context_manager=False, background_tasks=False)
+`
+    const entrypoint = join(packageRoot, 'agent.py')
+    await writeFile(entrypoint, source)
+    vi.stubEnv('PYTHONPATH', sourceRoot)
+    vi.stubEnv('PYTHONDONTWRITEBYTECODE', '1')
+    vi.stubEnv('AWS_EC2_METADATA_DISABLED', 'true')
+
+    const backend = await PythonBackend.open(
+      { root, entrypoint, language: 'python' },
+      CliConfigStore.memory(),
+      { cwd: root, devWorkspace: root, prepared: true },
+      AbortSignal.timeout(20000)
+    )
+    backends.push(backend)
+
+    expect(backend.name).toBe('Refund desk package')
+    expect(await readFile(entrypoint, 'utf8')).toBe(source)
+  }, 25000)
 })

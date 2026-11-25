@@ -2,6 +2,7 @@ export interface LocalCommandSpec {
   name: string
   usage: string
   description: string
+  details?: string
   replacement?: string
 }
 
@@ -57,16 +58,15 @@ export interface CommandAssistance {
 export function commandAssistance(
   input: string,
   actionableCommandToken?: string,
-  additionalCommands: readonly LocalCommandSpec[] = []
+  additionalCommands: readonly LocalCommandSpec[] = [],
+  leadingCommands: readonly LocalCommandSpec[] = []
 ): CommandAssistance | undefined {
   const match = input.match(/^\/([^\s]*)(?:\s([\s\S]*))?$/)
   if (!match) {
     return undefined
   }
-  const commands = [
-    ...LOCAL_COMMANDS,
-    ...additionalCommands.filter((command) => !LOCAL_COMMAND_NAMES.has(command.name.toLowerCase())),
-  ]
+  const notLocal = (command: LocalCommandSpec): boolean => !LOCAL_COMMAND_NAMES.has(command.name.toLowerCase())
+  const commands = [...leadingCommands.filter(notLocal), ...LOCAL_COMMANDS, ...additionalCommands.filter(notLocal)]
   const name = (match[1] ?? '').toLowerCase()
   const argument = match[2]
   if (name === 'frog' || name === 'strands' || name === 'party') {

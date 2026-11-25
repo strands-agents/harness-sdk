@@ -31,7 +31,7 @@ import {
   type NewChatPanel,
   type SettingsCategory,
 } from './types.js'
-import { SETTINGS_CATEGORIES, SETTING_DEFINITIONS, settingDescription } from '../../config/settings.js'
+import { SETTINGS_CATEGORIES, SETTING_DEFINITIONS, settingDescription, settingValue } from '../../config/settings.js'
 
 export const SETTINGS_SETUP_ACTION = 'settings-action:setup'
 export const SETTINGS_UPDATE_ACTION = 'settings-action:update'
@@ -196,8 +196,11 @@ function formatDate(value: string): string {
     .replace(',', '')
 }
 
-export function settingsCategoryFilters(): ChatPanelFilter[] {
-  return SETTINGS_CATEGORIES.map(({ id, label }) => ({ id: `settings:${id}`, label }))
+export function settingsCategoryFilters(includeWorkspace = false): ChatPanelFilter[] {
+  return [
+    ...SETTINGS_CATEGORIES.map(({ id, label }) => ({ id: `settings:${id}`, label })),
+    ...(includeWorkspace ? [{ id: 'settings:Workspace', label: 'Strands dev workspace' }] : []),
+  ]
 }
 
 export function settingsRows(
@@ -214,13 +217,13 @@ export function settingsRows(
       ...(category ? { filter: `settings:${category}` } : {}),
       control:
         control === 'toggle'
-          ? { kind: 'toggle', checked: settings[key] as boolean }
+          ? { kind: 'toggle', checked: settingValue(settings, key) as boolean }
           : {
               kind: 'segmented',
               options: options.map((option) => ({
                 label: option.label,
                 value: String(option.value),
-                ...(settings[key] === option.value ? { active: true } : {}),
+                ...(settingValue(settings, key) === option.value ? { active: true } : {}),
               })),
             },
     })
@@ -375,6 +378,14 @@ export function makePanel(id: string, panel: NewChatPanel): ChatPanel {
         kind: panel.kind,
         configuration: panel.configuration,
         language: panel.language,
+      }
+    case 'dev':
+      return {
+        ...common,
+        kind: panel.kind,
+        command: panel.command,
+        view: panel.view,
+        close: panel.close,
       }
     default:
       return { ...common, kind: panel.kind }

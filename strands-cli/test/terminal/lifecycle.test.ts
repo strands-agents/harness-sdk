@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   copyTerminalText,
   enterAlternateScreen,
+  pauseMouseReporting,
   saveTerminalTitle,
   setTerminalMouseMotion,
   setTerminalTitle,
@@ -69,6 +70,15 @@ describe('terminal lifecycle', () => {
     setTerminalMouseMotion(false, output)
 
     expect(writes).toEqual(['\u001b[?1002l\u001b[?1003h', '\u001b[?1003l\u001b[?1002h'])
+  })
+
+  it('shouldStopMouseReportsUntilResumedWhenMouseReportingIsPaused', () => {
+    const writes: string[] = []
+
+    const resume = pauseMouseReporting({ write: (value) => writes.push(value) })
+    resume()
+
+    expect(writes).toEqual(['\u001b[?1003l\u001b[?1002l', '\u001b[?1003l\u001b[?1002h'])
   })
 })
 

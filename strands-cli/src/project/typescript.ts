@@ -24,7 +24,8 @@ let typescriptRegistered = false
 
 export async function loadTypescriptProject(
   project: ImportedAgentProject,
-  configureEnvironment?: () => void
+  configureEnvironment?: () => void,
+  { devWorkspace = false }: { devWorkspace?: boolean } = {}
 ): Promise<{
   options: HarnessAgentOptions
   createAgent: AgentFactory
@@ -33,6 +34,17 @@ export async function loadTypescriptProject(
   configureEnvironment?.()
   const root = realpathSync(project.root)
   const sourcePath = realpathSync(project.entrypoint)
+  const workspace = devWorkspace ? await (await import('../dev/workspace.js')).findDevWorkspace(root) : undefined
+  const localHarness = workspace?.config.harness
+    ? pathToFileURL(`${resolve(root, workspace.config.harness.path)}/`).href
+    : undefined
+  if (localHarness) {
+    const manifest = JSON.parse(readFileSync(new URL('package.json', localHarness), 'utf8')) as { version?: string }
+    if (manifest.version !== workspace?.config.harness?.version) {
+      throw new Error('The workspace harness version does not match its configuration.')
+    }
+    for (const file of ['src/index.ts', 'src/internal.ts']) readFileSync(new URL(file, localHarness))
+  }
   if (!typescriptRegistered) {
     registerTypescript()
     typescriptRegistered = true
@@ -49,6 +61,7 @@ export async function loadTypescriptProject(
         projectRoot: pathToFileURL(`${root}/`).href,
         runtimeSdkRoot: new URL('.', import.meta.resolve('@strands-agents/sdk')).href,
         entrypoint: pathToFileURL(sourcePath).href,
+        ...(localHarness ? { localHarness } : {}),
       },
     })
     registeredProjects.add(sourcePath)
