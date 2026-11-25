@@ -110,6 +110,7 @@ const plan = (): OptimizePlan => ({
   workers: 4,
   iterations: 4,
   maxRollouts: 500,
+  rerunPasses: 2,
   rollouts: 10,
   judgeCalls: 10,
 })
@@ -200,6 +201,7 @@ const fakeSessions = () => {
       setSplit: vi.fn(),
       setPassed: vi.fn(),
       setSeed: vi.fn(),
+      setRerunPasses: vi.fn(),
       start: vi.fn((): string => {
         finishRun({ step: 'running', progress: progress() })
         return 'run-1'
@@ -817,12 +819,8 @@ describe('background strands-evals runs', () => {
     expect(sessions.optimize.setMaxRollouts).toHaveBeenCalledWith(900)
     expect(sessions.optimize.setSplit).toHaveBeenCalledWith([0.6, 0.2, 0.2])
     expect(sessions.optimize.setSeed).toHaveBeenCalledWith(3)
-    expect(sessions.optimize.setPassed).toHaveBeenCalledWith([
-      '--rerun-passes',
-      '1',
-      '--reflection-model',
-      'bedrock/proposer',
-    ])
+    expect(sessions.optimize.setRerunPasses).toHaveBeenCalledWith(1)
+    expect(sessions.optimize.setPassed).toHaveBeenCalledWith(['--reflection-model', 'bedrock/proposer'])
     expect(started).toMatchObject({
       status: 'started',
       command: 'optimize run',
@@ -890,7 +888,7 @@ describe('background strands-evals runs', () => {
   it('shouldSayWhyAndNotStartWhenThePlanNeedsMoreRolloutsThanOneRunCanUse', async () => {
     const { tool, sessions, optimize } = setup()
     const budgetProblem =
-      'Needs about 620 rollouts, but this run can use 500. Lower the steps, candidates, or runs, or raise --max-rollouts.'
+      'Needs about 620 rollouts with re-run headroom, but this run can use 500. Lower the steps, candidates, or runs, or raise --max-rollouts.'
     sessions.optimize.setRepetitions.mockImplementation(() => {
       const current = optimize.snapshot()
       if (current.step === 'setup') optimize.set({ ...current, plan: { ...current.plan, budgetProblem } })
@@ -902,16 +900,17 @@ describe('background strands-evals runs', () => {
     expect(sessions.optimize.start).not.toHaveBeenCalled()
   })
 
-  it('shouldRefuseASplitThatLeavesNoValidationCaseBeforeTheRunStarts', async () => {
+  it('shouldSayWhyAndNotStartWhenTheSplitLeavesNoValidationCase', async () => {
     const { tool, sessions, optimize } = setup()
+    const splitProblem =
+      'The split leaves 2 train cases and 0 validation cases of 2; the optimizer needs at least 1 of each.'
     sessions.optimize.setSplit.mockImplementation(() => {
       const current = optimize.snapshot()
-      if (current.step === 'setup')
-        optimize.set({ ...current, plan: { ...current.plan, split: { train: 2, validation: 0, test: 0 } } })
+      if (current.step === 'setup') optimize.set({ ...current, plan: { ...current.plan, splitProblem } })
     })
 
     await expect(tool('strands_dev_run_background').run(optimizeRun(['--split', '0.9,0.05,0.05']))).rejects.toThrow(
-      '--split 0.9,0.05,0.05 leaves no train or validation case among'
+      splitProblem
     )
     expect(sessions.optimize.start).not.toHaveBeenCalled()
   })

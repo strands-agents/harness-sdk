@@ -49,6 +49,8 @@ export interface EvalsOptimizeRecord {
   readonly objective?: OptimizeObjective
   readonly decision?: OptimizeDecision
   readonly maxRollouts?: number
+  readonly rerunPasses?: number
+  readonly seed?: number
   readonly passed?: readonly string[]
   readonly startedAt: number
   readonly pid?: number
@@ -97,7 +99,7 @@ const isOptimizeRecord = (value: unknown): value is EvalsOptimizeRecord =>
   value.version === RECORD_VERSION &&
   ['experiment', 'record', 'space'].every((key) => typeof value[key] === 'string') &&
   Number.isInteger(value.iterations) &&
-  ['width', 'repetitions', 'workers', 'maxRollouts'].every(
+  ['width', 'repetitions', 'workers', 'maxRollouts', 'rerunPasses', 'seed'].every(
     (key) => value[key] === undefined || Number.isInteger(value[key])
   ) &&
   (value.passed === undefined ||

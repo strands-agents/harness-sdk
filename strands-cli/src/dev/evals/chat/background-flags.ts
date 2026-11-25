@@ -1,6 +1,6 @@
 import type { GenerationSettings, KnobKey } from '../model.js'
 import { EVALS_KNOB_NAMES } from '../tuning/knobs.js'
-import type { EvalsSplitShares } from '../tuning/plan.js'
+import { evalsSharesProblem, type EvalsSplitShares } from '../tuning/plan.js'
 
 /** The strands-evals commands that strands dev runs in the background. */
 export const BACKGROUND_COMMANDS = ['run', 'optimize run', 'generate'] as const
@@ -21,6 +21,7 @@ export interface OptimizeFlagSettings {
   readonly crashScore?: string
   readonly maxRollouts?: number
   readonly seed?: number
+  readonly rerunPasses?: number
   readonly split?: EvalsSplitShares
   /** Flags strands dev hands to strands-evals optimize run unchanged. */
   readonly passed: readonly string[]
@@ -54,8 +55,7 @@ const SET_BY_STRANDS_DEV: Readonly<Record<string, string>> = {
   '--output': 'strands dev writes the report itself',
 }
 
-// strands-evals checks these itself, so strands dev hands them on unchanged.
-const WHOLE_PASSED = ['--rerun-passes']
+// strands-evals checks this itself, so strands dev hands it on unchanged.
 const TEXT_PASSED = ['--reflection-model']
 
 const VALUE_FREE = new Set([
@@ -69,18 +69,10 @@ const VALUE_FREE = new Set([
   '--tune-instructions',
 ])
 
-const SHARE_TOLERANCE = 1e-6
-
 const splitOf = ({ name, value = '' }: Flag): EvalsSplitShares => {
   if (value.includes(':')) throw new Error(`strands dev takes ${name} as shares; a MODULE:ATTR Split is not supported.`)
-  const shares = value.split(',').map(Number)
-  const valid =
-    shares.length === 3 &&
-    shares.every((share) => Number.isFinite(share) && share >= 0) &&
-    shares[0]! > 0 &&
-    shares[1]! > 0 &&
-    Math.abs(shares.reduce((sum, share) => sum + share, 0) - 1) < SHARE_TOLERANCE
-  if (!valid)
+  const shares = value.split(',').map((share) => (share.trim() ? Number(share) : Number.NaN))
+  if (shares.length !== 3 || evalsSharesProblem(shares as unknown as EvalsSplitShares))
     throw new Error(
       `${name} takes TRAIN,VALIDATION,TEST shares that sum to 1, train and validation above 0, such as 0.5,0.25,0.25.`
     )
@@ -120,7 +112,8 @@ const wholeOf = ({ name, value = '' }: Flag): number => {
 }
 
 const integerOf = ({ name, value = '' }: Flag): number => {
-  if (!/^-?\d+$/u.test(value)) throw new Error(`${name} must be a whole number, not ${value || 'nothing'}.`)
+  if (!/^-?\d+$/u.test(value) || !Number.isSafeInteger(Number(value)))
+    throw new Error(`${name} must be a whole number, not ${value || 'nothing'}.`)
   return Number(value)
 }
 
@@ -183,7 +176,7 @@ export const optimizeFlagSettings = (args: readonly string[]): OptimizeFlagSetti
     else if (flag.name === '--max-rollouts') settings.maxRollouts = wholeOf(flag)
     else if (flag.name === '--split') settings.split = splitOf(flag)
     else if (flag.name === '--seed') settings.seed = integerOf(flag)
-    else if (WHOLE_PASSED.includes(flag.name)) passed.push(flag.name, String(wholeOf(flag)))
+    else if (flag.name === '--rerun-passes') settings.rerunPasses = wholeOf(flag)
     else if (TEXT_PASSED.includes(flag.name)) passed.push(flag.name, flag.value ?? '')
     else throw new Error(`strands dev cannot pass ${flag.name} to strands-evals optimize run.`)
   }

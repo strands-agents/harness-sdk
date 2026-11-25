@@ -12,6 +12,7 @@ import {
   evalsRolloutCapProblem,
   evalsRolloutEstimate,
   evalsRolloutPhases,
+  evalsRolloutReserve,
   evalsSplitChoices,
   evalsSplitShares,
   evalsValidatedFinalists,
@@ -21,6 +22,29 @@ import {
 const DEFAULT_SPLIT: EvalsSplitShares = [0.5, 0.25, 0.25]
 
 describe('optimize plan', () => {
+  it.each([
+    { finalists: 3, pareto: false, rerunPasses: 2, reserve: 92 },
+    { finalists: 1, pareto: false, rerunPasses: 2, reserve: 84 },
+    { finalists: 3, pareto: true, rerunPasses: 2, reserve: 116 },
+    { finalists: 3, pareto: false, rerunPasses: 0, reserve: 80 },
+    { finalists: 3, pareto: false, rerunPasses: 5, reserve: 110 },
+  ])(
+    'shouldReserveTheReRunHeadroomOfTheOptimizerWith$rerunPassesPassesWhen$finalistsFinalistsAndParetoIs$pareto',
+    ({ finalists, pareto, rerunPasses, reserve }) => {
+      const split = { train: 4, validation: 2, test: 2 }
+
+      expect(
+        evalsRolloutReserve({ split, repetitions: 1, iterations: 4, width: 4, finalists, pareto, rerunPasses })
+      ).toBe(reserve)
+    }
+  )
+
+  it('shouldReserveForTheDefaultFinalistsAndReRunsWhenThePlanNamesNeither', () => {
+    expect(
+      evalsRolloutReserve({ split: { train: 4, validation: 2, test: 2 }, repetitions: 1, iterations: 4, width: 4 })
+    ).toBe(92)
+  })
+
   it('shouldMeasureTheRolloutsAgainstTheCapOfTheRun', () => {
     expect(evalsRolloutCapProblem(600)).toContain('this run can use 500')
     expect(evalsRolloutCapProblem(600, 1000)).toBeUndefined()
@@ -55,6 +79,7 @@ describe('optimize plan', () => {
       iterations: 4,
       concurrency: 4,
       maxRollouts: 500,
+      rerunPasses: 2,
       seed: 0,
       decision: { feasibility: 0.9, crashScore: 'worst', pickRule: 'mean', finalists: 3 },
     })
@@ -184,9 +209,10 @@ describe('optimize plan', () => {
       warning: 'leaves 1 validation case and 1 test case, so the scores can be luck. Add 2',
     },
     { cases: 6, split: DEFAULT_SPLIT, warning: 'leaves 2 validation cases and 1 test case' },
-    { cases: 10, split: [1, 0, 0], warning: 'Give the validation and test shares more of the cases.' },
+    { cases: 10, split: [1, 0, 0], warning: 'the train and validation shares must be more than 0' },
+    { cases: 10, split: [0.9998, 0.0001, 0.0001], warning: 'Give the validation and test shares more of the cases.' },
     { cases: 8, split: [0.5, 0.5, 0.5], warning: 'The three split shares must add up to 1.' },
-    { cases: 8, split: [0, 0.5, 0.5], warning: 'the train share must be more than 0' },
+    { cases: 8, split: [0, 0.5, 0.5], warning: 'the train and validation shares must be more than 0' },
   ] as const)('shouldWarnWhen$casesCasesUse$split', ({ cases, split, warning }) => {
     expect(evalsOptimizeWarning(cases, split)).toContain(warning)
   })

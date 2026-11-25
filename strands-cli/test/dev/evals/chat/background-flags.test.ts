@@ -71,6 +71,10 @@ describe('background flags', () => {
     [['--split', 'a,b,c'], '--split takes TRAIN,VALIDATION,TEST shares'],
     [['--split', 'pkg:split'], 'a MODULE:ATTR Split is not supported.'],
     [['--seed', '1.5'], '--seed must be a whole number, not 1.5.'],
+    [['--seed='], '--seed must be a whole number, not nothing.'],
+    [['--seed', '99999999999999999999'], '--seed must be a whole number, not 99999999999999999999.'],
+    [['--split', '0.3333333,0.3333333,0.3333333'], '--split takes TRAIN,VALIDATION,TEST shares'],
+    [['--split', '0.5,,0.5'], '--split takes TRAIN,VALIDATION,TEST shares'],
   ])('shouldRefuseOptimizeFlags %j', (args, message) => {
     expect(() => optimizeFlagSettings(args)).toThrow(message)
   })
