@@ -249,12 +249,17 @@ export class A2AExecutor implements AgentExecutor {
    * @param eventBus - The event bus for publishing A2A artifact and status events
    */
   private async _executeMessage(context: RequestContext, eventBus: ExecutionEventBus): Promise<void> {
-    const { userMessage } = context
+    const { taskId, contextId, task, userMessage } = context
 
     // The generic conversion would flatten interrupt responses into text.
     const prompt: AgentPrompt = extractInterruptResponses(userMessage.parts) ?? partsToContentBlocks(userMessage.parts)
     if (prompt.length === 0) {
       throw A2AError.invalidRequest('No content blocks available')
+    }
+
+    if (task === undefined) {
+      // Register the task with the ResultManager; without this, later events are ignored as "unknown task".
+      eventBus.publish({ kind: 'task', id: taskId, contextId, status: { state: 'working' } })
     }
 
     if (this._agentFactory !== undefined) {
@@ -363,7 +368,7 @@ export class A2AExecutor implements AgentExecutor {
   }
 
   /**
-   * Refuses a prompt the agent cannot take, before anything is published for the request.
+   * Refuses a prompt the agent cannot take, before the agent runs.
    *
    * @param agent - The agent serving this context
    * @param prompt - The content or interrupt responses the agent would be invoked with
@@ -404,23 +409,20 @@ export class A2AExecutor implements AgentExecutor {
   }
 
   /**
-   * Moves the task to `working` once the request is known to be servable.
+   * Moves a task that already exists to `working` once the request is known to be servable.
    *
-   * The request handler stores a `task` event as the whole task, so a task that already exists moves
-   * by a status update instead, which keeps its history and artifacts.
+   * The request handler stores a `task` event as the whole task, so the task moves by a status update
+   * instead, which keeps its history and artifacts.
    *
    * @param context - The A2A request context, holding the stored task when the message continues one
    * @param eventBus - The event bus for publishing status events
    */
   private _publishWorking(context: RequestContext, eventBus: ExecutionEventBus): void {
     const { taskId, contextId, task } = context
-    if (task !== undefined) {
-      eventBus.publish({ kind: 'status-update', taskId, contextId, status: { state: 'working' }, final: false })
+    if (task === undefined) {
       return
     }
-
-    // Register the task with the ResultManager; without this, later events are ignored as "unknown task".
-    eventBus.publish({ kind: 'task', id: taskId, contextId, status: { state: 'working' } })
+    eventBus.publish({ kind: 'status-update', taskId, contextId, status: { state: 'working' }, final: false })
   }
 
   /**

@@ -626,7 +626,7 @@ describe('A2AExecutor context isolation', () => {
       expect(statuses.map((event) => event.status.state)).toStrictEqual(['completed'])
     })
 
-    it('refuses an answer on a new task without publishing any event', async () => {
+    it('refuses an answer on a new task, publishing only the initial task event', async () => {
       const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
       await parkAndReadId(executor)
 
@@ -635,7 +635,9 @@ describe('A2AExecutor context isolation', () => {
         'No pending interrupt matches id(s): guessed-id'
       )
 
-      expect(eventBus.events).toStrictEqual([])
+      expect(eventBus.events).toStrictEqual([
+        { kind: 'task', id: 'task-1', contextId: 'ctx-1', status: { state: 'working' } },
+      ])
     })
 
     it('rethrows a failed run even when the task was waiting for input', async () => {
@@ -758,6 +760,39 @@ describe('A2AExecutor context isolation', () => {
           .interruptId
       }
 
+      /** Builds a handler whose first run holds the context until the test finishes. */
+      async function createBusyHandler(): Promise<DefaultRequestHandler> {
+        let finishRun!: () => void
+        const runCanFinish = new Promise<void>((resolve) => {
+          finishRun = resolve
+        })
+        onTestFinished(() => finishRun())
+        const agent: InvokableAgent = {
+          id: 'busy-agent',
+          name: 'Busy Agent',
+          invoke: vi.fn(),
+          // eslint-disable-next-line require-yield
+          async *stream() {
+            await runCanFinish
+            return new AgentResult({
+              stopReason: 'endTurn',
+              lastMessage: new Message({ role: 'assistant', content: [new TextBlock('done')] }),
+              invocationState: {},
+            })
+          },
+        }
+        const handler = new DefaultRequestHandler(
+          card,
+          new InMemoryTaskStore(),
+          new A2AExecutor({ agentFactory: () => agent })
+        )
+        await handler.sendMessage({
+          message: userMessage('msg-1', [{ kind: 'text', text: 'first' }]),
+          configuration: { blocking: false },
+        })
+        return handler
+      }
+
       it.each([
         ['an unknown id', (_interruptId: string) => [answer('guessed-id', { approved: true })]],
         ['a null response', (interruptId: string) => [answer(interruptId, null)]],
@@ -814,6 +849,43 @@ describe('A2AExecutor context isolation', () => {
           parked.status.message?.messageId,
           'msg-2',
         ])
+      })
+
+      it('acknowledges a new message while an earlier run holds the context', async () => {
+        const handler = await createBusyHandler()
+        const message = userMessage('msg-2', [{ kind: 'text', text: 'second' }])
+
+        let acknowledgement: unknown
+        void handler.sendMessage({ message, configuration: { blocking: false } }).then((result) => {
+          acknowledgement = result
+        })
+
+        await expect.poll(() => acknowledgement).toBeDefined()
+        expect(acknowledgement).toStrictEqual({
+          kind: 'task',
+          id: expect.any(String),
+          contextId: 'ctx-1',
+          status: { state: 'working' },
+          history: [message],
+        })
+      })
+
+      it('streams the task event first while an earlier run holds the context', async () => {
+        const handler = await createBusyHandler()
+        const stream = handler.sendMessageStream({ message: userMessage('msg-2', [{ kind: 'text', text: 'second' }]) })
+
+        let firstEvent: unknown
+        void stream.next().then((result) => {
+          firstEvent = result.value
+        })
+
+        await expect.poll(() => firstEvent).toBeDefined()
+        expect(firstEvent).toStrictEqual({
+          kind: 'task',
+          id: expect.any(String),
+          contextId: 'ctx-1',
+          status: { state: 'working' },
+        })
       })
     })
   })
