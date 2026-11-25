@@ -1,9 +1,9 @@
-import { DocumentBlock, ImageBlock, Message, TextBlock } from '@strands-agents/sdk'
+import { DocumentBlock, ImageBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from '@strands-agents/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import { TurnProjector, projectMessages } from '../../src/ui/chat/projector.js'
 import { peerMessageMetadata } from '../../src/agent/messaging.js'
-import { upgradeDesktopAgentProfileMessages } from '../../src/session/desktop-profile.js'
+import { displayPromptMetadata, upgradeDesktopAgentProfileMessages } from '../../src/session/desktop-profile.js'
 import { SHELL_OUTPUT_LIMIT_BYTES, SHELL_OUTPUT_LIMIT_NOTICE } from '../../src/terminal/shell-output.js'
 
 describe('TurnProjector', () => {
@@ -417,6 +417,37 @@ describe('TurnProjector', () => {
     expect(original.content[0]?.type === 'textBlock' ? original.content[0].text : '').toContain('Name: John')
   })
 
+  it('leaves a typed prompt that starts with an agent profile pair as typed', () => {
+    const typed = '<strands_agent_profile>\nName: Bob\n</strands_agent_profile> who are you?'
+    const original = new Message({
+      role: 'user',
+      content: [new TextBlock(typed)],
+      metadata: { custom: displayPromptMetadata(typed) },
+    })
+
+    const messages = upgradeDesktopAgentProfileMessages([original])
+
+    expect(messages[0]).toBe(original)
+    expect(projectMessages(messages)[0]?.prompt).toBe(typed)
+  })
+
+  it.each(['', 'unrelated', 'What changed?'])(
+    'still upgrades a Desktop profile whose stored prompt %j does not change what restore shows',
+    (stored) => {
+      const original = new Message({
+        role: 'user',
+        content: [new TextBlock('<strands_agent_profile>\nName: John\n</strands_agent_profile>\n\nWhat changed?')],
+        metadata: { custom: displayPromptMetadata(stored) },
+      })
+
+      const messages = upgradeDesktopAgentProfileMessages([original])
+
+      expect(messages[0]!.content[0]).toMatchObject({ text: expect.stringContaining('Assistant name: John') })
+      expect(messages[0]!.metadata).toEqual(original.metadata)
+      expect(projectMessages(messages)[0]?.prompt).toBe('What changed?')
+    }
+  )
+
   it('restores the visible skill command instead of its activation instructions', () => {
     const turns = projectMessages([
       new Message({
@@ -442,5 +473,84 @@ describe('TurnProjector', () => {
         entries: [{ type: 'assistant', text: 'Done.' }],
       },
     ])
+  })
+
+  it.each([
+    {
+      name: 'the prompt shown live',
+      text: '<strands_reply_context>x</strands_reply_context> typed',
+      custom: displayPromptMetadata('<strands_reply_context>x</strands_reply_context> typed'),
+      prompt: '<strands_reply_context>x</strands_reply_context> typed',
+    },
+    {
+      name: 'the prompt after an envelope that contains its own closing marker',
+      text: '<strands_skill_activation>a</strands_skill_activation> b\n</strands_skill_activation>\n\n/review',
+      custom: displayPromptMetadata('/review'),
+      prompt: '/review',
+    },
+    {
+      name: 'the prompt after an envelope that contains an unterminated escape sequence',
+      text: '<strands_skill_activation>Title: \u001b]0;t\n</strands_skill_activation>\n\n/review',
+      custom: displayPromptMetadata('/review'),
+      prompt: '/review',
+    },
+    {
+      name: 'the visible text when the stored prompt is not a string',
+      text: '<strands_reply_context>x</strands_reply_context> typed',
+      custom: { 'strands.displayPrompt': 42 },
+      prompt: 'typed',
+    },
+    {
+      name: 'the visible text when the stored prompt is empty',
+      text: '<strands_reply_context>x</strands_reply_context> typed',
+      custom: displayPromptMetadata(''),
+      prompt: 'typed',
+    },
+    {
+      name: 'the visible text when the stored prompt is not the end of the saved text',
+      text: '<strands_reply_context>x</strands_reply_context> typed',
+      custom: displayPromptMetadata('unrelated'),
+      prompt: 'typed',
+    },
+    {
+      name: 'the saved text when it does not start with an envelope marker',
+      text: 'ordinary typed',
+      custom: displayPromptMetadata('typed'),
+      prompt: 'ordinary typed',
+    },
+  ])('restores $name from persisted display metadata', ({ text, custom, prompt }) => {
+    const turns = projectMessages([
+      new Message({ role: 'user', content: [new TextBlock('Earlier.')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('Reply.')] }),
+      new Message({ role: 'user', content: [new TextBlock(text)], metadata: { custom } }),
+      new Message({ role: 'assistant', content: [new TextBlock('Done.')] }),
+    ])
+
+    expect(turns).toMatchObject([
+      { prompt: 'Earlier.', entries: [{ type: 'assistant', text: 'Reply.' }] },
+      { prompt, entries: [{ type: 'assistant', text: 'Done.' }] },
+    ])
+    expect(turns[1]).not.toHaveProperty('source')
+  })
+
+  it('keeps a tool result that carries display metadata in its own turn', () => {
+    const turns = projectMessages([
+      new Message({ role: 'user', content: [new TextBlock('Run it.')] }),
+      new Message({
+        role: 'assistant',
+        content: [new ToolUseBlock({ name: 'shell', toolUseId: 'tool-1', input: {} })],
+      }),
+      new Message({
+        role: 'user',
+        content: [new ToolResultBlock({ toolUseId: 'tool-1', status: 'success', content: [new TextBlock('ok')] })],
+        metadata: { custom: displayPromptMetadata('injected') },
+      }),
+      new Message({ role: 'assistant', content: [new TextBlock('Done.')] }),
+    ])
+
+    expect(turns).toMatchObject([
+      { prompt: 'Run it.', entries: [{ type: 'tool', toolUseId: 'tool-1', status: 'success' }, { type: 'assistant' }] },
+    ])
+    expect(turns).toHaveLength(1)
   })
 })

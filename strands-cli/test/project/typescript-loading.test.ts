@@ -619,6 +619,22 @@ const timer = setInterval(() => {
     await stopped(previous)
   }, 30000)
 
+  it('persists the prompt shown live on the message sent to the agent process', async () => {
+    await writeFile(join(root, 'value.ts'), "export const value = 'v0'\n")
+    await writeFile(project().entrypoint, source())
+    const backend = await open()
+
+    for await (const _event of backend.stream('wrapped prompt', '/review this change')) {
+      // Drain the turn.
+    }
+
+    expect((await backend.captureFork()).messages[0]).toMatchObject({
+      role: 'user',
+      content: [{ text: 'wrapped prompt' }],
+      metadata: { custom: { 'strands.displayPrompt': '/review this change' } },
+    })
+  }, 30000)
+
   it('keeps the old process usable after a replacement evaluates and fails', async () => {
     await writeFile(join(root, 'value.ts'), "export const value = 'original'\n")
     const authored = source()
