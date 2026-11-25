@@ -164,9 +164,9 @@ async def test_input_to_a_child_that_exits_early_does_not_hang_or_raise():
 
 @pytest.mark.asyncio
 async def test_multibyte_characters_survive_read_boundaries():
-    # 100k three-byte characters span several 64 KiB reads, so some of them
-    # straddle a boundary; decoding each read on its own split those into two
-    # U+FFFD.
+    # Guards #4461: 100k three-byte characters span five 64 KiB reads, so some
+    # characters straddle a boundary and must still arrive intact -- in the
+    # streamed chunks and in the final result.
     script = "import sys; sys.stdout.buffer.write(('\\u2615' * 100000).encode())"
     chunks, result = await _collect(_stream_process(sys.executable, ["-c", script]))
     expected = "\u2615" * 100000
