@@ -1,0 +1,197 @@
+---
+title: Objectives, constraints, and budget
+description: Tell the optimizer what "better" means with objectives and constraints over evaluator scores and token usage, and size the rollout budget for a run.
+tags: [token-management]
+sidebar:
+  label: "Objectives and budget"
+---
+
+The optimizer picks whatever scores best on the objective you give it, within the
+constraints you set and the budget you allow. This page covers how to say what "better"
+means, how to rule candidates out, and how much a run costs.
+
+## Metrics you can optimize
+
+A metric is either an evaluator from your experiment or a usage number measured from the
+agent's traces.
+
+- **Evaluators**, by name with or without the `Evaluator` suffix: `"Helpfulness"` and
+  `"HelpfulnessEvaluator"` are the same metric. An evaluator's range is its
+  `score_range` attribute, or 0 to 1 when it has none.
+- **Usage**: `tokens`, `input_tokens`, `output_tokens`, `cache_read_tokens`,
+  `cache_write_tokens`, `model_calls`, and `seconds`. With a factory, these count the
+  agent it built and every agent under it; with a task function, every model call in the
+  trial. They never count the judges.
+
+An unknown name fails when you build the optimizer, before any rollout.
+
+## Choose an objective
+
+Without an objective, the optimizer maximizes the mean of your evaluators, the same number
+a plain evaluation run reports. To aim at one metric, use `Maximize` or `Minimize`:
+
+```python
+from strands_evals.optimization import Maximize
+
+objective = Maximize("Helpfulness")
+```
+
+To trade two things off, combine them in a `WeightedSum`:
+
+```python
+from strands_evals.optimization import Maximize, Minimize, WeightedSum
+
+objective = WeightedSum(
+    Maximize("Helpfulness", weight=2),
+    Minimize("tokens", scale=1000),
+)
+```
+
+`scale` is the size of a meaningful change, and `weight` is how much that change counts.
+Here Helpfulness has weight 2, so its whole range counts twice as much as 1,000 tokens. An
+evaluator's scale defaults to its range, so you only set it for usage metrics, which have
+no upper bound.
+
+When you can't name an exchange rate between quality and cost, use `Pareto` with the same
+terms. The optimizer still picks one champion, but it validates and tests up to five
+members of the front of trade-offs (or `n_finalists`, if larger) so you can pick another
+from `result.front`:
+
+```python
+from strands_evals.optimization import Maximize, Minimize, Pareto
+
+objective = Pareto(Maximize("Helpfulness"), Minimize("tokens", scale=1000))
+```
+
+## Rule candidates out with constraints
+
+A constraint is a line the champion must not cross:
+
+```python
+from strands_evals.optimization import AtLeast, AtMost
+
+constraints = [
+    AtMost("seconds", 30),
+    AtLeast("Correctness", 0.8),
+]
+```
+
+During the search, constraints only rank: candidates likely to meet every constraint come
+first, and the others become parents only when none is likely to meet them. At the end,
+only a candidate that meets every constraint on validation can be the champion, and
+"meets" means the model puts the chance of meeting it at 90% or more. When no candidate
+qualifies, your current agent stays the champion.
+
+Prefer a constraint over a cost term when you have a hard limit. A weighted cost term buys
+quality with tokens at a fixed rate; a constraint says "never above this".
+
+## Set the budget
+
+The budget is counted in **rollouts**: one case run once by the agent. A run stops when its
+budget is spent, and every such stop still runs the end phase, because the end phase's
+share is held back from the start. A run that stops on an error or an interrupt skips the
+end phase and can be resumed.
+
+```python
+from strands_evals.optimization import Budget
+
+budget = Budget(max_rollouts=300, max_iterations=20)
+```
+
+The default is 500 rollouts and no iteration cap.
+
+### How many rollouts a run needs
+
+A run spends its budget in four parts. The two reserves are held back before the search
+starts, so the search can never spend them:
+
+```text
+baseline            num_train_cases x num_runs
+each search step    num_proposals x num_train_cases x num_runs
+validation reserve  (num_finalists + 1) x (num_validation_cases x num_runs + headroom)
+test reserve        2 x (num_test_cases x num_runs + headroom)
+
+headroom            num_rerun_passes x (5% x num_split_cases x num_runs, rounded up)
+```
+
+`num_runs` is the `Optimizer`'s `runs_per_candidate`, `num_proposals` its
+`proposals_per_iteration`, `num_finalists` its `FinalPick(n_finalists=...)`, and
+`num_rerun_passes` its `rerun_passes`. `num_split_cases` is the validation or test cases,
+for the reserve the headroom belongs to.
+
+The headroom is extra room, for each candidate scored in the end phase, to run a trial
+again when it fails on an outage. With 6 validation cases and 1 run, 5% is 0.3, which
+rounds up to 1, so the 2 default re-run passes add 2 rollouts per candidate.
+Under a `Pareto` objective, both reserves cover at least 5 finalists plus the baseline,
+because every member of the front is validated and tested.
+
+The quickstart's run works out like this, with 20 cases split 8 / 6 / 6 and the defaults
+(4 proposals, up to 3 finalists, 1 run per candidate, 2 re-run passes):
+
+| Part | Rollouts |
+|---|---|
+| Baseline | 8 |
+| Each search step | 4 x 8 = 32 |
+| Validation reserve | 4 x (6 + 2) = 32 |
+| Test reserve | 2 x (6 + 2) = 16 |
+
+The minimum budget is the baseline plus both reserves, 56 here, and a smaller budget fails
+at construction with that number. The minimum leaves nothing for the search, so a budget
+below 56 + 32 = 88 warns that it can't pay for one step. With `max_rollouts=120`, the search gets the other 64,
+which pays for two steps. The run then spent 108 of its 120 rollouts: it needed no re-runs,
+so the headroom went unused.
+
+The budget counts the agent's rollouts only. These model calls aren't counted against it,
+and the result reports each one's tokens (see
+[What the run cost](results.md#what-the-run-cost)):
+
+- **Judges**: every LLM evaluator call. On short answers, judges often use more tokens than
+  the agent.
+- **Proposers**: the text rewriter's own model calls, which can exceed the agent's and the
+  judges' spend together.
+- **Other agents**: agents in the rollout that your factory didn't build, such as a
+  simulated user.
+
+A retried attempt's tokens count in the role that spent them. Retries inside a model call
+(throttling, timeouts, server errors) are free. A trial that fails on an outage or
+expired credentials is run again by the optimizer, and each re-run costs a rollout.
+
+## Other settings that change the pick
+
+| Setting | `Optimizer` argument | CLI flag | Default | Change it when |
+|---|---|---|---|---|
+| Split | `split=Split(train=0.5, validation=0.25, test=0.25)` | `--split 0.5,0.25,0.25` | 40% train, 30% validation, 30% test | You need specific cases in a split, or more in the search |
+| Runs per candidate | `runs_per_candidate=3` | `--runs-per-candidate 3` | 1 | Your agent is noisy and each case needs repeats |
+| Proposals per step | `proposals_per_iteration=2` | `--proposals-per-iteration 2` | 4 | You want wider or narrower steps |
+| Agent failure score | `agent_failure_score=None` | `--agent-failure-score none` | `"worst"` | A crash should count as missing data, not as the worst score |
+| Final pick rule | `final_pick=FinalPick(rule=LowerBound(q=0.1))` | `--final-pick MODULE:ATTR` | `Mean()` | You'd rather pick cautiously, ranking by the pessimistic end |
+
+`Split`, `FinalPick`, and `LowerBound` import from `strands_evals.optimization`.
+
+A crashed rollout scores each evaluator's worst value by default, so a candidate that
+crashes can't look good by skipping its hard cases. Throttling, outages, and expired
+credentials are never scored: those trials are run again.
+
+## Set them from the command line
+
+Every setting has a flag on `strands-evals optimize run`:
+
+```bash
+strands-evals optimize run experiment.json --agent agent.py:create_agent \
+  --objective maximize:Helpfulness:weight=2 \
+  --objective minimize:tokens:scale=1000 \
+  --constraint 'seconds<=30' \
+  --max-rollouts 300 \
+  --split 0.5,0.25,0.25
+```
+
+Several `--objective` flags make a weighted sum; add `--pareto` for a front. Run
+`strands-evals optimize run --help` for every flag.
+
+To keep a long command in a file, see
+[Save a command as a run file](entry_routes.md#save-a-command-as-a-run-file).
+
+## Next steps
+
+- [Reading the results](results.md): See what the objective picked and how sure the run is
+- [Declaring what can change](tunables.md): Widen or narrow what the search may touch

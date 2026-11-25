@@ -40,6 +40,15 @@ describe('npmInvocation', () => {
     expect(npmInvocation(['view'], { platform: 'win32' }).command).toBe('cmd.exe')
   })
 
+  it.each(['--global=false', '--package-lock=false'])('shouldPassTheOption%sToNpmWhenItRunsThroughCmd', (option) => {
+    expect(npmInvocation(['install', option], { platform: 'win32', commandShell: 'cmd.exe' }).args).toEqual([
+      '/d',
+      '/s',
+      '/c',
+      `npm.cmd install ${option}`,
+    ])
+  })
+
   it.each(['1.2.0 & calc', '1.2.0|more', '"1.2.0"', '%PATH%', '1.2.0^', 'a b'])(
     'rejects %j before it reaches cmd.exe',
     (argument) => {

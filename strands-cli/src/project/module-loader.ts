@@ -8,6 +8,7 @@ let runtimeParent: string
 let projectRoot: string
 let runtimeSdkRoot: string
 let entrypoint: string
+let localHarness: string | undefined
 const VERSION_PARAMETER = 'load'
 
 export function initialize(data: {
@@ -15,11 +16,13 @@ export function initialize(data: {
   projectRoot: string
   runtimeSdkRoot: string
   entrypoint: string
+  localHarness?: string
 }): void {
   runtimeParent = data.runtimeParent
   projectRoot = data.projectRoot
   runtimeSdkRoot = data.runtimeSdkRoot
   entrypoint = data.entrypoint
+  localHarness = data.localHarness
 }
 
 export const load: LoadHook = async (url, context, nextLoad) => {
@@ -97,9 +100,35 @@ export const load: LoadHook = async (url, context, nextLoad) => {
 
 export const resolve: ResolveHook = async (specifier, context, nextResolve) => {
   const input = sourceUrl(specifier)
+  if (localHarness && input.url.startsWith('file:')) {
+    const url = new URL(input.url)
+    const sdkPath = url.pathname.match(/\/node_modules\/@strands-agents\/sdk\/(.+)$/u)?.[1]
+    if (sdkPath) {
+      const shared = new URL(sdkPath, new URL('../../', runtimeSdkRoot))
+      return nextResolve(shared.href, context)
+    }
+  }
   const parent = context.parentURL ? sourceUrl(context.parentURL) : undefined
   const version = input.version ?? parent?.version
   const resolutionContext = parent ? { ...context, parentURL: parent.url } : context
+  const workspaceParent = parent?.url.startsWith(projectRoot)
+  if (
+    localHarness &&
+    workspaceParent &&
+    (input.url === '@strands-agents/harness' || input.url.startsWith('@strands-agents/harness/'))
+  ) {
+    const file =
+      input.url === '@strands-agents/harness'
+        ? 'src/index.ts'
+        : input.url === '@strands-agents/harness/internal'
+          ? 'src/internal.ts'
+          : undefined
+    if (!file) throw new Error(`Unsupported local harness export: ${input.url}`)
+    const url = new URL(file, localHarness)
+    await access(url)
+    if (version) url.searchParams.set(VERSION_PARAMETER, version)
+    return { url: url.href, shortCircuit: true }
+  }
   const hostPackage = ['@strands-agents/harness', '@strands-agents/sdk'].some(
     (name) => input.url === name || input.url.startsWith(`${name}/`)
   )
@@ -112,6 +141,17 @@ export const resolve: ResolveHook = async (specifier, context, nextResolve) => {
         : resolutionContext
     )
   } catch (error) {
+    if (
+      localHarness &&
+      parent?.url.startsWith(localHarness) &&
+      !input.url.startsWith('.') &&
+      !input.url.includes(':') &&
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'ERR_MODULE_NOT_FOUND'
+    ) {
+      return nextResolve(input.url, { ...resolutionContext, parentURL: runtimeParent })
+    }
     const providerPackage = ['openai', '@anthropic-ai/sdk', '@google/genai'].some(
       (name) => input.url === name || input.url.startsWith(`${name}/`)
     )

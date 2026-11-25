@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "title": "StrandsDevTelemetryPing",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "event", "context", "data"],
+  "properties": {
+    "v": { "type": "integer", "enum": [1] },
+    "event": { "type": "string", "enum": ["step/1"] },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cli_version", "harness"],
+      "properties": {
+        "cli_version": {
+          "type": "string",
+          "pattern": "^[0-9]{1,4}\\.[0-9]{1,4}\\.[0-9]{1,4}(-[0-9A-Za-z.-]{1,32})?$"
+        },
+        "harness": { "type": "string", "enum": ["base-cli", "typescript", "python"] }
+      }
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step"],
+      "properties": {
+        "step": {
+          "type": "string",
+          "enum": [
+            "dev_launch",
+            "ask_shown",
+            "ask_answered",
+            "ask_cancelled",
+            "optimize_run_started",
+            "optimize_run_finished",
+            "optimize_edits_applied",
+            "evals_ui_opened",
+            "experiment_created",
+            "evaluation_started"
+          ]
+        }
+      }
+    }
+  }
+}
