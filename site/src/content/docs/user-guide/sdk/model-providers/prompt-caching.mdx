@@ -23,6 +23,8 @@ These models take explicit cache points:
 - Anthropic Claude, on Amazon Bedrock and through the Anthropic API.
 - Amazon Nova on Amazon Bedrock.
 - OpenAI GPT-5.6 and later on the Responses API, through OpenAI or Bedrock Mantle.
+- OpenAI GPT-5.6 and later on the Amazon Bedrock Converse API, in TypeScript only. See
+  [OpenAI models on the Converse API](#openai-models-on-the-converse-api).
 
 To use them, set a cache configuration on the model with the `auto` strategy, which is
 also the default. Strands then places the cache points for you:
@@ -67,9 +69,10 @@ that changes between calls changes the prefix the provider compares, so some of 
 cache through normal use.
 
 Strands relies on Gemini's implicit caching and doesn't use its explicit cached-content
-API. See [Gemini context caching](https://aistudio.google.com/docs/caching). OpenAI GPT
-and xAI models through the Amazon Bedrock Converse API support only implicit caching,
-and Strands doesn't cache `gpt-oss` there. Amazon Bedrock lists which APIs take explicit
+API. See [Gemini context caching](https://aistudio.google.com/docs/caching). On the
+Amazon Bedrock Converse API, Strands relies on implicit caching for xAI models and for
+OpenAI GPT-5.5 and earlier, and in Python for every OpenAI GPT model. Strands doesn't
+cache `gpt-oss` there. Amazon Bedrock lists which APIs take explicit
 cache points for each OpenAI model in
 [Prompt caching for models from OpenAI](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html#prompt-caching-openai).
 
@@ -99,17 +102,31 @@ caching.
 
 ### OpenAI models on the Converse API
 
-OpenAI models on Converse support only implicit caching, so the injection gap above
-applies: with a context injector that fires on every model call, every call writes to
-the cache and none reads from it. On GPT-5.6 and later, writes cost 1.25 times the input
-rate. To cache these models, use the Responses API through
-<Syntax py="OpenAIResponsesModel" ts="OpenAIModel" /> with Bedrock Mantle and a cache
-configuration.
+Where Strands relies on implicit caching for an OpenAI model on Converse, the injection
+gap above applies: with a context injector that fires on every model call, every call
+writes to the cache and none reads from it. On GPT-5.6 and later, writes cost 1.25 times
+the input rate.
 
-Converse rejects cache points for these models with an `AccessDeniedException`, so don't
-place them by hand or use the <Syntax py='"anthropic"' ts="'anthropic'" /> strategy. The
-default `auto` strategy places none. To stay on Converse without paying for writes that
-are never read, turn implicit caching off:
+In TypeScript, the `auto` strategy places cache points for GPT-5.6 and later on Converse.
+Amazon Bedrock documents only implicit caching for these models on Converse, but Converse
+accepts the points under the same rules as Amazon Nova: none after the tool definitions,
+no TTL, and a point only directly after text. In a tool loop, the later user messages
+hold only tool results and injected text, so no point follows them. Each call reads the
+tools, the system prompt, and the first user message from the cache, and the tool-loop
+turns are written again. If Converse refuses cache points for one of these models,
+Strands resends the request without them, logs a warning, and sends none for that model
+in that region for the rest of the process.
+
+To cache the whole conversation, including tool-loop turns, use the Responses API
+through <Syntax py="OpenAIResponsesModel" ts="OpenAIModel" /> with Bedrock Mantle and a
+cache configuration.
+
+Converse rejects cache points for GPT-5.5 and earlier, `gpt-oss`, and xAI models with an
+`AccessDeniedException`, so don't place them by hand or use the
+<Syntax py='"anthropic"' ts="'anthropic'" /> strategy with these models. The default
+`auto` strategy places none for them. Where Strands places no cache points on GPT-5.6 and
+later (in Python, or in TypeScript without a cache configuration), you can stay on
+Converse without paying for writes that are never read by turning implicit caching off:
 
 <Tabs>
 <Tab label="Python">
