@@ -1,5 +1,6 @@
 """Unit tests for retry strategy implementations."""
 
+import threading
 from unittest.mock import Mock
 
 import pytest
@@ -91,6 +92,27 @@ async def test_model_retry_strategy_retry_on_throttle_exception_first_attempt(mo
     assert mock_sleep.sleep_calls[0] == strategy._calculate_delay(0)
     # Should increment attempt
     assert strategy._current_attempt == 1
+
+
+@pytest.mark.asyncio
+async def test_model_retry_strategy_skips_delay_when_already_cancelled(monkeypatch):
+    """A retry requested after cancellation does not start a backoff sleep."""
+
+    async def unexpected_sleep(_delay):
+        raise AssertionError("cancelled retry should not sleep")
+
+    monkeypatch.setattr("strands.event_loop._retry.asyncio.sleep", unexpected_sleep)
+    cancel_signal = threading.Event()
+    cancel_signal.set()
+    strategy = ModelRetryStrategy(max_attempts=3, initial_delay=2, max_delay=60)
+    event = AfterModelCallEvent(
+        agent=Mock(cancel_signal=cancel_signal),
+        exception=ModelThrottledException("Throttled"),
+    )
+
+    await strategy._handle_after_model_call(event)
+
+    assert event.retry is True
 
 
 @pytest.mark.asyncio

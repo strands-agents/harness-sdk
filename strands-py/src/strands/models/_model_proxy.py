@@ -23,7 +23,9 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from pydantic import BaseModel
 
 from ..event_loop.streaming import _normalize_messages, process_stream
+from ..types._events import ModelStopReason
 from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
+from ..types.event_loop import Metrics, Usage
 from ..types.tools import ToolSpec
 from ._provider_name import _model_key
 
@@ -89,6 +91,16 @@ class ModelProxy:
         Yields:
             The stream events, ending with the reason for stopping, the final message and the usage metrics.
         """
+        if cancel_signal is not None and cancel_signal.is_set():
+            logger.debug("cancellation detected before model call")
+            yield ModelStopReason(
+                stop_reason="cancelled",
+                message={"role": "assistant", "content": [{"text": "Cancelled by user"}]},
+                usage=Usage(inputTokens=0, outputTokens=0, totalTokens=0),
+                metrics=Metrics(latencyMs=0),
+            )
+            return
+
         logger.debug("model=<%s> | streaming messages", self._model)
         if self._agent is not None:
             _latest_tools[self._agent] = list(tool_specs or [])

@@ -1,5 +1,7 @@
 """Integration tests for Agent retry_strategy parameter."""
 
+import asyncio
+import threading
 from unittest.mock import Mock
 
 import pytest
@@ -121,6 +123,37 @@ async def test_agent_retries_with_default_strategy(mock_sleep):
     assert mock_sleep.sleep_calls[0] == 4
     # Second retry: 8 seconds (exponential backoff)
     assert mock_sleep.sleep_calls[1] == 8
+
+
+@pytest.mark.parametrize("use_external_signal", [False, True])
+@pytest.mark.asyncio
+async def test_agent_cancel_interrupts_retry_backoff_without_another_model_call(use_external_signal):
+    """Cancellation during retry backoff settles promptly without re-entering the provider."""
+    model = Mock()
+    model.stream.side_effect = [
+        ModelThrottledException("ThrottlingException"),
+        MockedModelProvider([{"role": "assistant", "content": [{"text": "unexpected retry"}]}]).stream([]),
+    ]
+    strategy = ModelRetryStrategy(max_attempts=3, initial_delay=30, max_delay=30)
+    agent = Agent(model=model, retry_strategy=strategy)
+    external_signal = threading.Event()
+
+    if use_external_signal:
+        invocation = asyncio.create_task(agent.invoke_async("test prompt", cancel_signal=external_signal))
+    else:
+        invocation = asyncio.create_task(agent.invoke_async("test prompt"))
+    while strategy._current_attempt == 0:
+        await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    if use_external_signal:
+        external_signal.set()
+    else:
+        agent.cancel()
+
+    result = await asyncio.wait_for(invocation, timeout=1)
+
+    assert result.stop_reason == "cancelled"
+    assert model.stream.call_count == 1
 
 
 @pytest.mark.asyncio
