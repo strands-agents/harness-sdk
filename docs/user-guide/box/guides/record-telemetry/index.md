@@ -110,7 +110,7 @@ A vendor that takes only spans is sent no log or metric batch. That is the one e
 
 ### The credential
 
-`secret.ref` names where the box reads the key: `env://NAME` or `secret://NAME` for a variable in the environment of `strands-box run`, `aws://PROFILE` or `credsd://CREDENTIAL` for a SigV4 signature, or a reference in a scheme that a [`[secret-source.<scheme>]`](/docs/user-guide/box/reference/configuration/index.md#secret-sourcescheme) table declares. The box holds the key in a vault of its own for each target, and attaches it on each request. A literal key is refused, and so is a `file://` reference. An `op://` reference is refused unless a table declares `op`.
+`secret.ref` names where the box reads the key: `env://NAME` or `secret://NAME` for a variable in the environment of `strands-box run`, `aws://PROFILE` or `credsd://NAME` for a SigV4 signature, or a reference in a scheme that a [`[secret-source.<scheme>]`](/docs/user-guide/box/reference/configuration/index.md#secret-sourcescheme) table declares. The box holds the key in a vault of its own for each target, and attaches it on each request. A literal key is refused, and so is a `file://` reference. An `op://` reference is refused unless a table declares `op`.
 
 A credential needs an `https://` destination, unless the destination is loopback.
 
@@ -136,7 +136,7 @@ Box binds one loopback port for the workload and sets three variables in its env
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | the same address with `/v1/traces` appended |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` |
 
-Box owns every name that begins with `OTEL_EXPORTER_OTLP_`, so `[agent] env` may not set one. The receiver answers `/v1/traces`, `/v1/logs`, and `/v1/metrics`, and answers `404` on every other route.
+Box owns every name that begins with `OTEL_EXPORTER_OTLP_`, so `[agent] env` may not set one. The receiver answers `/v1/traces`, `/v1/logs`, and `/v1/metrics`, and answers `404` on every other route. It relays one payload at a time. It answers a payload that arrives during a relay with `503` and `Retry-After: 2`. An exporter that retries, as the OpenTelemetry Python and JavaScript OTLP/HTTP exporters do, sends that payload again.
 
 The exporter switches belong to the workload, so write them in `[agent] env`:
 
@@ -349,4 +349,4 @@ Set `STRANDS_BOX_TELEMETRY_DEBUG` to also print each failed export as it happens
 ## See also
 
 -   [Getting started](/docs/user-guide/box/core/quickstart/index.md): install Box, then run Claude Code or Codex in a box.
--   [How telemetry works](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.
+-   [How telemetry works](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/telemetry.md): which process records, what a workload cannot forge, and where a record can be lost.

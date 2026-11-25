@@ -121,6 +121,12 @@ A `when temporal` or `unless temporal` clause can’t name an argument like this
 
 `/tmp/schema/actions.cedarschema` holds one `namespace` per server, one `action` per tool, and the arguments of each tool. A JSON `integer` or `number` is a `Long`, and an `enum` is its base type. A `type` list of one type and `null` is that type.
 
+Box can’t read some input schemas, for example a `$defs` name with a hyphen. Box leaves such a tool out and prints a warning that names it. The other tools of the server work as usual. The agent still sees the left-out tool in `tools/list`, but Box refuses each call to it, and a rule that names it doesn’t load. `policy generate-schema` and `box run` print the same warning:
+
+```text
+strands-box: warning[B0403]: MCP server "repro" tool "create_account" is left out, and its calls are refused: unexpected token `-`
+```
+
 An argument that can have more than one type, from `anyOf`, `oneOf`, or a `type` list, is a record with one optional field for each type: `typeChoice0`, `typeChoice1`, and so on, in the server’s order. Box puts the value in every field whose type matches, and refuses a call whose value matches none. Test the field with `has` before you compare it:
 
 ```text
@@ -230,7 +236,7 @@ Restart the box. The decision log records each decision with the rule’s `@id`.
 | `MCP command matches multiple servers` | No exact entry matched, and more than one wildcard entry matched the received command. The launch is refused. |
 | The harness shows the server with zero tools | A rule refuses `tools/list` for the server. |
 | `the MCP tool catalog is not accepted` | The agent called a tool before the server’s `tools/list` succeeded. |
-| `the tool is not in the accepted MCP catalog` | The server’s `tools/list` does not name the tool, spelled exactly. |
+| `the tool is not in the accepted MCP catalog` | The server’s `tools/list` does not name the tool, spelled exactly. Or Box left the tool out because it can’t read the tool’s input schema, and printed `warning[B0403]` naming the tool. See [step 3](#step-3-find-the-tool-and-argument-names). |
 | A refusal that says `[default-deny]` | No `mcp:call` permit names the server. |
 | A refusal that says `[default-deny]`, and the startup warning `a per-tool rule never loaded` printed | Box cannot enforce a per-tool rule and refuses the calls it can identify. See [When a rule cannot load](#when-a-rule-cannot-load) for causes and fixes. |
 | A refusal that names an `@id` | That `forbid` matched, on `mcp:call` or on the per-tool action. |
@@ -291,5 +297,5 @@ Read the startup warning as the signal that a rule went inert, then check it aga
 ## See also
 
 -   [The `[mcp.<name>]` table](/docs/user-guide/box/guides/add-an-mcp-server/index.md): the keys for a `stdio` and an `http` server.
--   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/mcp.md): how the box starts a server and decides each call.
--   [Policy in the design guide](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/policy.md): how the engine decides, and what refuses to load.
+-   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/mcp.md): how the box starts a server and decides each call.
+-   [Policy in the design guide](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/policy.md): how the engine decides, and what refuses to load.

@@ -1,4 +1,4 @@
-Box writes its own messages to stderr in one format, and most messages carry a code that names their kind. This page explains each code and what to do when you see it.
+Box writes its own messages to stderr in one format, and most messages carry a code that names their kind. This page explains each code and what to do when you see it. With the `box` CLI, [`box explain <code>`](/docs/user-guide/box/reference/cli/index.md#box-explain) prints a code’s row from this page.
 
 ## How a message reads
 
@@ -130,6 +130,7 @@ The box prints these before the workload starts. A note needs no action when the
 | `B0211` | note | Box gives a process with native egress no proxy and no certificate authority, so its client uses its own defaults. | No action when the program trusts its own roots. See [Network](/docs/user-guide/box/guides/add-an-mcp-server/index.md#network). |
 | `B0212` | warning | A process’s write grant reaches the program it runs, so the process can replace that program. | Move the program out of the writable grant, or narrow the grant. See [what is refused](/docs/user-guide/box/reference/configuration/index.md#what-is-refused). |
 | `B0213` | note | The policy runs in log-only mode, so each denial is recorded and the action goes ahead. | Use log-only mode only to trial a policy where it is acceptable that the policy protects nothing. See [log-only mode](/docs/user-guide/box/reference/policy/index.md#log-only-mode). |
+| `B0214` | warning | A credsd route names no secret.type, so it signs with AWS credentials. | Set `secret.type = "aws"`, or `"token"` for a token. A later release requires the key. See [credential sources](/docs/user-guide/box/guides/network-and-credentials/index.md#credential-sources). |
 
 ## B03: Lifecycle
 
@@ -144,6 +145,7 @@ The box prints these before the workload starts. A note needs no action when the
 | --- | --- | --- | --- |
 | `B0401` | warning | A server’s tool catalog could not be read, so its calls are decided without per-tool actions. | Read the reason in the text. See [when a rule cannot load](/docs/user-guide/box/guides/write-mcp-policy/index.md#when-a-rule-cannot-load). |
 | `B0402` | warning | A server’s per-tool policy rules did not load, so they decide none of its calls. | Check the rule’s tool and argument names against the server’s catalog. See [when a rule cannot load](/docs/user-guide/box/guides/write-mcp-policy/index.md#when-a-rule-cannot-load) and [which rules Box can refuse for](/docs/user-guide/box/guides/write-mcp-policy/index.md#which-rules-box-can-refuse-for). |
+| `B0403` | warning | A tool’s schema could not be read, so Box left the tool out of its server’s catalog and refuses its calls. | The server’s other tools work. A rule that names the tool does not load. See [find the tool and argument names](/docs/user-guide/box/guides/write-mcp-policy/index.md#step-3-find-the-tool-and-argument-names). |
 
 ## B05: Egress and fetch
 

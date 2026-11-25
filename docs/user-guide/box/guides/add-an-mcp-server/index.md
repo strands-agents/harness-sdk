@@ -193,13 +193,14 @@ In `filesystem` lists, `~` means your home directory. Box uses `env.PATH` as wri
 | `type` | string | required | `"http"`. |
 | `destinations` | string array | required | Destinations for MCP identification and optional credential routing. Entries accept a host, `host:port`, or a host with a path prefix. A `*.` wildcard entry is refused, because MCP identification uses the explicit host; see [remote destination matching](#remote-destination-matching). |
 | `secret.ref` | string | none | The credential the gateway attaches to each request to the server: `env://NAME`, `aws://PROFILE`, a bare `aws://` for the AWS default credential chain, `credsd://NAME` for a credential in the credentials daemon ([credential sources](/docs/user-guide/box/guides/network-and-credentials/index.md#credential-sources)), or a reference in a scheme that a [`[secret-source.<scheme>]`](/docs/user-guide/box/reference/configuration/index.md#secret-sourcescheme) table declares. |
-| `secret.env` | string | `NAME` for `env://NAME` | Experimental: needs `secret-sources = true` in [`[experimental-features]`](/docs/user-guide/box/reference/configuration/index.md#experimental-features). The variable that holds the placeholder in the workload. Required for a reference in a declared scheme. |
+| `secret.type` | string | `aws`, with a warning | For a `credsd://` reference only: `aws` signs each request with SigV4, and `token` attaches the credential’s access token. See [Credential sources](/docs/user-guide/box/guides/network-and-credentials/index.md#credential-sources). |
+| `secret.env` | string | `NAME` for `env://NAME` | The variable that holds the placeholder in the workload. Required for a reference in a declared scheme. |
 | `secret.header` | string | `Authorization` | The header the credential goes in. |
 | `secret.prefix` | string | `Bearer` on `Authorization` | The text before the credential. |
 | `secret.placement` | string | `header` | `header`, `basic_auth`, or `query_param`. |
 | `secret.param` | string | none | The query parameter’s name, for `placement = "query_param"`. |
-| `secret.inject` | string | `phantom` | For `env://` and a declared scheme: `phantom` attaches the credential to a request that carries the placeholder, and `always` attaches it to every request to the destinations. |
-| `secret.phantom_prefix` | string | `strands_box_` | For `env://` and a declared scheme: the start of the placeholder value. |
+| `secret.inject` | string | `phantom` | For `env://`, a declared scheme, and a credsd token: `phantom` attaches the credential to a request that carries the placeholder, and `always` attaches it to every request to the destinations. |
+| `secret.phantom_prefix` | string | `strands_box_` | For `env://`, a declared scheme, and a credsd token: the start of the placeholder value. |
 | `backends` | table array | none | A backend to re-route the server’s requests to. At most one. See [Backends](#backends). |
 
 With `secret.ref = "env://NAME"`, `box run` reads `NAME` from its own environment. The agent gets a placeholder in `NAME`, and the gateway swaps in the real value on each request to the server.
@@ -234,6 +235,8 @@ A remote MCP backend is the egress backend applied to a remote MCP server: the s
 
 `policy generate-schema` cannot discover a re-routed server: the re-route and its backend `auth` apply only at `box run` time, in the egress gateway, and the offline command has no gateway. It refuses a `[mcp.<name>]` with a backend by name, which stops the whole run. Generate a schema from a `box.toml` without that server to get the rest, then write its `mcp:call` rules by hand.
 
+`policy generate-schema` cannot read a `credsd://` secret either: only `box run` reads credsd. It refuses a server whose `secret.ref` is `credsd://` by name, which stops the whole run. Generate the schema from a `box.toml` without that server. For a token, you can instead give the server an `env://` secret and remove its `secret.type` while you generate the schema; a route that signs with AWS has no such stand-in.
+
 `policy generate-schema` also runs the load checks of `box run` on each remote MCP server. A server whose `secret`, destinations, or name the loader rejects stops the whole run.
 
 When a server’s `secret.ref` names a scheme that a [`[secret-source.<scheme>]`](/docs/user-guide/box/reference/configuration/index.md#secret-sourcescheme) table declares, `policy generate-schema` runs that table’s program to read the secret, as `box run` does, and prints the same line on stderr first. It reads that secret before it starts a stdio server. A program that returns no secret stops the whole run, and the error names the server.
@@ -246,7 +249,7 @@ When a server’s `secret.ref` names a scheme that a [`[secret-source.<scheme>]`
 | --- | --- |
 | A configuration error that names `[mcp.<name>]` | A key is unknown, a required key is missing, or the name or the program breaks a rule on this page. A `backends` key on a `type = "stdio"` table is an unknown field. |
 | `` `[mcp.<a>]` and `[mcp.<b>]` declare the same command "<command>" `` | Two tables declare the same exact command or wildcard pattern on one alias. Remove one, or change its arguments. |
-| A `secret` error (a scheme that no table declares, a declared scheme with no `secret.env`, a `secret.env` while `secret-sources` is off, two entries with one placeholder variable and different secrets, or a reference to a `pass-secret-env` variable) | A remote MCP server’s `secret` follows the egress secret rules. See [Errors in the egress guide](/docs/user-guide/box/guides/network-and-credentials/index.md#errors-and-exit-codes). |
+| A `secret` error (a scheme that no table declares, a declared scheme with no `secret.env`, two entries with one placeholder variable and different secrets, or a reference to a `pass-secret-env` variable) | A remote MCP server’s `secret` follows the egress secret rules. See [Errors in the egress guide](/docs/user-guide/box/guides/network-and-credentials/index.md#errors-and-exit-codes). |
 | `` `[mcp.<name>] secret.ref` names a secret that the secret source `<scheme>` (<program>) did not return `` | The program of a declared secret source returned no secret when the box started. See [how a run reads the secrets](/docs/user-guide/box/reference/configuration/index.md#how-a-run-reads-the-secrets). |
 | `` `[mcp.<name>]` filesystem entry "<entry>" is refused: this grant reaches <path>, which the secret source `<scheme>` keeps from each workload `` | A stdio server’s `filesystem` entry reaches a `reads` or `deny` path of a declared secret source. Remove the entry. See [what Box protects](/docs/user-guide/box/reference/configuration/index.md#what-box-protects). |
 | `destination host "<host>" is not the spelling the gateway matches a connection against` | A `type = "http"` destination has an empty label, a character other than an ASCII letter, a digit, `.`, `-`, or `_`, a label over 63 bytes, or a name over 253 bytes, or it ends in a number, such as `10.5`. Write an internationalized name in its punycode (`xn--`) form, and an IPv4 address as four decimal numbers, such as `10.0.0.5`. See [remote destination matching](#remote-destination-matching). |
@@ -254,6 +257,7 @@ When a server’s `secret.ref` names a scheme that a [`[secret-source.<scheme>]`
 | `` `<entry>` re-routes to backend host "<host>", which `<name>` declares as a remote MCP server `` | An egress or MCP backend `url` names this server’s host. Point the backend at another host. |
 | A backend error (more than one backend, a bad backend `url`, a signed `secret` beside a backend, or a refused backend `auth`) | A remote MCP backend follows the egress backend rules. See [Errors in the egress guide](/docs/user-guide/box/guides/network-and-credentials/index.md#errors-and-exit-codes). |
 | `MCP server "<name>" failed during <step>` | The server failed while the box read its tool list. stderr names the step. |
+| `warning[B0403]: MCP server "<name>" tool "<tool>" is left out, and its calls are refused: <reason>` | The box keeps running. Box can’t read that tool’s input schema, so it refuses calls to the tool and keeps the rest of the server. See [find the tool and argument names](/docs/user-guide/box/guides/write-mcp-policy/index.md#step-3-find-the-tool-and-argument-names). |
 | `modern MCP requests require ...` | The client omitted required protocol metadata. Update the client to one that sends the fields on every request. |
 | `Unsupported MCP protocol version` | The request names a modern version Box does not support. The error lists the supported version. |
 | `modern MCP requests cannot use a legacy handshake connection` | The client mixed the modern request protocol with a legacy handshake. Start a new connection using one protocol era. |
@@ -280,6 +284,6 @@ For a request the policy refuses, see [troubleshooting](/docs/user-guide/box/gui
 ## See also
 
 -   [Write policy for an MCP server](/docs/user-guide/box/guides/write-mcp-policy/index.md): the rules that let the agent start, list, and call a server, and how to connect the harness.
--   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/mcp.md): how the box starts a server and decides each call.
--   [Local MCP servers in the design guide](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/containment.md#local-mcp-servers): what a stdio server’s sandbox reaches.
--   [macOS network restrictions](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/macos-enforcement.md#network-connections-and-local-services): how the sandbox limits a server’s connections.
+-   [MCP servers in the design guide](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/mcp.md): how the box starts a server and decides each call.
+-   [Local MCP servers in the design guide](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/containment.md#local-mcp-servers): what a stdio server’s sandbox reaches.
+-   [macOS network restrictions](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/macos-enforcement.md#network-connections-and-local-services): how the sandbox limits a server’s connections.

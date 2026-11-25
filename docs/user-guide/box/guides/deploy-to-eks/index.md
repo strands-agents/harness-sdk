@@ -6,7 +6,7 @@ Use an EKS cluster with Linux ARM64 workers. ARM64 is the 64-bit Arm processor a
 
 ## Check your cluster
 
-The scripted example passed on EKS 1.33.13; the Claude examples were tested on EKS 1.35. The [tested configurations](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/examples/cloud-deployments/eks/README.md#tested-configuration) list worker versions and results. These are tested combinations, not minimum supported versions.
+The scripted example passed on EKS 1.33.13; the Claude examples were tested on EKS 1.35. The [tested configurations](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/examples/cloud-deployments/eks/README.md#tested-configuration) list worker versions and results. These are tested combinations, not minimum supported versions.
 
 Your cluster must accept these settings, and its workers must support them:
 
@@ -110,7 +110,7 @@ python3 run.py --mode claude --exercise deployment-cooldown \
 
 The runner selects `deployment-cooldown` by default for Claude and records the selected example in `receipt.json`. A successful result contains `passed: true`. The test checks for three failed deployments, at least two blocked retries, and a successful status check after the failures. The mock service returns HTTP 503 (service unavailable) for its first three deployment requests and HTTP 201 (created) afterward. Box enforces the cooldown.
 
-The agent finishes after those checks. It does not wait for the cooldown to end. Run the [test without a model](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/examples/cloud-deployments/eks/claude/README.md#check-cooldown-expiry-without-a-model) to check that deployment becomes available again. That test waits through the full ten-minute cooldown and checks that Box permits the next deployment request. The supplied client makes sequential calls within one box. Requests already in flight and activity in other boxes remain outside this limit. Model responses can vary. Check `receipt.json` for the test result, even if the agent reports success.
+The agent finishes after those checks. It does not wait for the cooldown to end. Run the [test without a model](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/examples/cloud-deployments/eks/claude/README.md#check-cooldown-expiry-without-a-model) to check that deployment becomes available again. That test waits through the full ten-minute cooldown and checks that Box permits the next deployment request. The supplied client makes sequential calls within one box. Requests already in flight and activity in other boxes remain outside this limit. Model responses can vary. Check `receipt.json` for the test result, even if the agent reports success.
 
 To run the coding and file-permission example, select `boundaries`:
 
@@ -139,7 +139,7 @@ A feature gate is a switch that enables a Kubernetes feature. Kubernetes 1.31 ha
 
 The error names these gates as troubleshooting hints. A changed seccomp profile points to Pod Security and other admission rules. The script does not inspect the gates or rules, so these hints do not confirm the cause.
 
-Use the [tested configurations](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/examples/cloud-deployments/eks/README.md#tested-configuration) as a starting point when choosing cluster and worker versions. This guide does not provide a validated older-cluster opt-in procedure. Changing only `spec.kubelet.config.featureGates.UserNamespacesSupport` in an Amazon Linux 2023 node launch template does not enable an API-server feature or `ProcMountType`.
+Use the [tested configurations](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/examples/cloud-deployments/eks/README.md#tested-configuration) as a starting point when choosing cluster and worker versions. This guide does not provide a validated older-cluster opt-in procedure. Changing only `spec.kubelet.config.featureGates.UserNamespacesSupport` in an Amazon Linux 2023 node launch template does not enable an API-server feature or `ProcMountType`.
 
 ### The Job does not create a Pod
 

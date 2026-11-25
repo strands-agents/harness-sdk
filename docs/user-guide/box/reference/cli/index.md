@@ -18,6 +18,7 @@ box run claude
 | [`box profile delete`](#box-profile-delete) | Delete a profile, with its boxes and storage. |
 | [`box runs list`](#box-runs-list) | Find an earlier run and its box ID. |
 | [`box runs history`](#box-runs-history) | See what the box allowed and denied in a run. |
+| [`box explain`](#box-explain) | Look up the code in a Box message, and what to do about it. |
 | [`box telemetry`](#box-telemetry) | Turn usage telemetry on or off. |
 | [`box help agent`](#box-help-agent) | Give a coding agent on your host the guide to make or change a profile. |
 
@@ -54,9 +55,16 @@ box: run b-5b8e3d70c92f14ab ended
   log      /Users/you/.strands/box/r/b-5b8e3d70c92f14ab/box.log
   history  box runs history b-5b8e3d70c92f14ab
   reuse    box run claude --box-id b-5b8e3d70c92f14ab
+  explain  box explain B0102
 ```
 
-Box Core’s startup disclosure, which names every grant the box gives the agent and its tools, is in the [log](/docs/user-guide/box/reference/files/index.md#profile-storage-and-runs). The messages are the other Box lines in the log that the summary didn’t show. A new run that fails before its box starts shows only the errors.
+Box Core’s startup disclosure, which names every grant the box gives the agent and its tools, is in the [log](/docs/user-guide/box/reference/files/index.md#profile-storage-and-runs). The messages are the other Box lines in the log that the summary didn’t show. The `explain` line appears when an error it showed has a code, and names the last one ([`box explain`](#box-explain)). A new run that fails before its box starts shows only the errors, then that command:
+
+```text
+box: recent log output
+  strands-box: error[B0102]: `[agent]` filesystem entry "/Users/you/.kiro-runtime" is refused: /Users/you/.kiro-runtime is not there
+box: to see what to do, run: box explain B0102
+```
 
 If input or output is redirected, including stderr, or `TERM=dumb`, `box` prints the box ID and these commands at startup:
 
@@ -422,9 +430,39 @@ TIME (UTC)  RESULT  ACTION  RESOURCE  RULE  REASON
 2026-11-11T12:31:40Z  installed  policy  policy.dw  -  -
 ```
 
+## box explain
+
+Look up the code in a Box message, such as `P0201` in `policy: warning[P0201]: dogwood evaluation failed: ...; denying`. The explanation comes with your installed `box`, so it works offline and matches your version.
+
+```console
+$ box explain P0201
+P0201: policy warning
+
+A rule errored while it decided a request, so the request was denied.
+
+What to do:
+  Read the reason in the text, and correct the rule. The agent receives the
+  denial `because the request could not be evaluated.`, as how a denial reads
+  (https://github.com/strands-agents/box/blob/v0.1.12/docs/user/policy.md#how-a-denial-reads)
+  describes.
+
+More: https://github.com/strands-agents/box/blob/v0.1.12/docs/user/message-codes.md#p02
+```
+
+```text
+box explain <code> [--format json]
+```
+
+| Flag | What it does |
+| --- | --- |
+| `<code>` | The code: a letter and four digits. Case doesn’t matter. |
+| `--format json` | Print one JSON object, for a script or an agent. It has `code`, `source`, `severity`, `meaning`, `what_to_do`, and `docs`. `what_to_do` is Markdown with full links. |
+
+A code your `box` doesn’t know exits with `1`, since a newer `box` may know it. Box’s [message codes](/docs/user-guide/box/reference/message-codes/index.md) list every code.
+
 ## box telemetry
 
-Turn usage telemetry on or off. [Usage telemetry](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/CLI_TELEMETRY.md) says what `box` sends.
+Turn usage telemetry on or off. [Usage telemetry](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/CLI_TELEMETRY.md) says what `box` sends.
 
 ```sh
 box telemetry off
@@ -468,7 +506,7 @@ It works before you have a profile, and `box --help` tells a coding agent to run
 | --- | --- |
 | `BOX_HOME` | Use another folder in place of `~/.strands/box`, such as to try `box` with no profiles. It takes a full path, and an empty value counts as not set. Without it, `box` refuses a link at `~/.strands` or `~/.strands/box`. Only `installation.toml` and `packages/` stay in `~/.strands/box` ([Where Box keeps its files](/docs/user-guide/box/reference/files/index.md)). |
 | `BOX_TELEMETRY`, `DO_NOT_TRACK` | Turn usage telemetry off for one shell, with `BOX_TELEMETRY=0` or `DO_NOT_TRACK=1`. |
-| `BOX_TEST_TELEMETRY_ENDPOINT` | Developer capture: send usage telemetry to an HTTP URL with a literal loopback address and no credentials. Invalid values, including empty or non-UTF-8 values, disable delivery. Consent still applies. See [local capture](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/dev/manual-testing.md#check-telemetry-delivery). |
+| `BOX_TEST_TELEMETRY_ENDPOINT` | Developer capture: send usage telemetry to an HTTP URL with a literal loopback address and no credentials. Invalid values, including empty or non-UTF-8 values, disable delivery. Consent still applies. See [local capture](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/dev/manual-testing.md#check-telemetry-delivery). |
 | `NO_COLOR` | Turn off color in the output of `box`. |
 | `CREDSD_SOCKET` | The socket of the credentials daemon, for a `credsd://` route ([Where the box finds the daemon](/docs/user-guide/box/credentials/index.md#where-the-box-finds-the-daemon)). |
 | `BOX_RESOURCES` | Use the packs, plugins, starters, policy starters, and agent guide in another folder in place of the ones that come with `box`. |
@@ -480,7 +518,7 @@ The model key’s variable is the one `box profile create` named. The installer 
 | Status | When |
 | --- | --- |
 | `0` | The command succeeded. |
-| `1` | An error. An error from `box` starts with `box: error:`, and one that stops a box as it starts is a Box message with the severity `error`, such as `strands-box: error[<code>]:`. Box’s [message codes](/docs/user-guide/box/reference/message-codes/index.md) explain each code. Most name their own fix. For the rest, see [Troubleshooting](/docs/user-guide/box/troubleshooting/index.md). `box runs history` also exits with `1` when it can’t read a line of the run’s log, after it shows the rest. |
+| `1` | An error. An error from `box` starts with `box: error:`, and one that stops a box as it starts is a Box message with the severity `error`, such as `strands-box: error[<code>]:`. [`box explain <code>`](#box-explain) says what the code means and what to do. For the rest, see [Troubleshooting](/docs/user-guide/box/troubleshooting/index.md). `box runs history` also exits with `1` when it can’t read a line of the run’s log, after it shows the rest. |
 | `2` | The command line is wrong, such as an unknown flag. |
 | `130` | You pressed Ctrl+C at a prompt. |
 

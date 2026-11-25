@@ -1277,7 +1277,7 @@ the set-group-ID and set-user-ID bits, whether native checks are enabled or disa
 </ul>
 <p>These operations are refused before a Dogwood decision or file effect.
 The workload receives an operating-system permission error; the source and destination entries remain unchanged.</p>
-<p>For native rename cases, the <a href="https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/dev/linux-native-tests.md#compare-shell-and-native-policy-events">comparison suite</a>
+<p>For native rename cases, the <a href="https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/dev/linux-native-tests.md#compare-shell-and-native-policy-events">comparison suite</a>
 uses a test program that calls <code dir="auto">renameat</code> directly; it does not execute GNU <code dir="auto">mv</code>.
 Its permitted rename cases do not establish that GNU <code dir="auto">mv</code> works with native filesystem policy.</p>
 <p>An existing descriptor can carry later reads, writes, or directory listings without another Dogwood check.
@@ -1341,6 +1341,7 @@ Record version 42 preserves each process’s
 when any such array is nonempty; empty or omitted arrays do not require it. Record-format support
 does not enable mount forwarding. This build rejects nonempty arrays in Linux run configurations
 and any <code dir="auto">receive_mounts</code> key in macOS run configurations before creating Box state.
+A <code dir="auto">secret.type</code> key on a route or a remote MCP server requires record version 43.
 When a configuration selects more than one of these features, it uses the highest required version
 and retains every selection. Older binaries refuse unsupported versions.</p>
 <p>To disable the experiment, change the global setting to <code dir="auto">false</code>.

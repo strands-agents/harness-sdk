@@ -2,9 +2,9 @@ Four of Strands harness’s default tools let the agent work with a machine: `sh
 
 ## The shell tool
 
-`shell` runs a command line through the Strands Harness SDK’s stateless, sandbox-routed shell. Each call runs in a fresh shell: there is no persisted working directory or environment between calls, so a command that needs a directory or a variable set must set it in the same call. The tool takes the `command` to run and an optional `timeout`.
+`shell` runs a command line through the Strands Harness SDK’s sandbox-routed shell. Each call runs in a fresh shell: there is no persisted working directory or environment between calls, so a command that needs a directory or a variable set must set it in the same call. The tool takes the `command` to run and an optional `timeout`.
 
-Because it is stateless, the agent chains steps within one command (`cd build && cmake ..`) rather than relying on state carrying over. This is a deliberate design: a fresh shell per call is predictable and safe to route through a sandbox.
+The agent chains steps within one command (`cd build && cmake ..`) rather than relying on state carrying over. This is a deliberate design: a fresh shell per call is predictable and safe to route through a sandbox.
 
 ## The file tools
 
@@ -16,9 +16,13 @@ The three file tools are thin wrappers over the agent’s sandbox:
 
 All three take absolute paths and reject path traversal (a `..` segment), so a tool call cannot walk outside the intended location by relative path.
 
-## Everything routes through the sandbox
+## Everything routes through the sandbox interface
 
-Both the shell and the file tools reach the filesystem through the same [sandbox](/docs/user-guide/sdk/sandbox/index.md) seam. The default is a local sandbox on the host, but the same tools work unchanged against a Docker or SSH sandbox, so the platform, working directory, and files the agent sees describe where it actually runs. To isolate what the agent can touch, run it under a [sandbox](/docs/user-guide/sdk/sandbox/index.md) rather than trying to restrict the tools themselves.
+The default is not a sandbox
+
+Omitting the `sandbox` parameter when creating agents runs the agent’s command and file tools directly on the host with the full permissions of the agent process. Treat this as convenience for trusted, local development only. For untrusted input or production runs, pass an explicit sandbox.
+
+Both the shell and the file tools reach the filesystem through the same [sandbox](/docs/user-guide/sdk/sandbox/index.md) seam. The implementation of the sandbox interface that is used by default is a pass-through to the local host that *does not provide any security guardrails*, but the same tools work unchanged against a Docker or SSH sandbox, so the platform, working directory, and files the agent sees describe where it actually runs. To isolate what the agent can touch, run it under a [sandbox](/docs/user-guide/sdk/sandbox/index.md) rather than trying to restrict the tools themselves.
 
 ## Select or disable them
 

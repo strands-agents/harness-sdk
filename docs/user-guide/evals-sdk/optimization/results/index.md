@@ -38,13 +38,13 @@ Your current agent winning is a real answer: it’s as good as anything the sear
 
 ## Browse a run in the browser
 
-To look through a run without writing code, serve its folder with [`strands-evals ui`](/docs/user-guide/evals-sdk/cli/ui/index.md):
+To look through a run without writing code, serve your project folder with [`strands-evals ui`](/docs/user-guide/evals-sdk/cli/ui/index.md):
 
 ```bash
-strands-evals ui .strands-evals/optimization/runs/
+strands-evals ui .
 ```
 
-Each run gets a view with its result, its setup, the progress of every step, each candidate’s diff against the baseline, and the trade-off front. The page refreshes while a run is in progress. Point it at the runs folder itself: started from your project folder, it doesn’t look inside `.strands-evals/`.
+It finds the runs under `optimization/runs/` along with your experiments. Each run gets a view with its result, its setup, the progress of every step, each candidate’s diff against the baseline, and the trade-off front. The page refreshes while a run is in progress.
 
 ## What changed
 
@@ -167,7 +167,7 @@ Pass `run_dir=` when the run folder has moved. To browse conversations instead, 
 
 ## What’s in the run folder
 
-Every run writes to its own folder, by default under `.strands-evals/optimization/runs/`, named for the run’s start time. `result.run_dir` gives its path, and the CLI prints it as soon as the run starts.
+Every run writes to its own folder, by default under `optimization/runs/` in the working directory, named for the run’s start time. Add `optimization/runs/` to your `.gitignore`; to put runs somewhere else, pass `base_dir=` to the `Optimizer`, or `--base-dir` on the command line. `result.run_dir` gives its path, and the CLI prints it as soon as the run starts.
 
 | File | Holds |
 | --- | --- |
@@ -188,7 +188,7 @@ Every run writes to its own folder, by default under `.strands-evals/optimizatio
 from strands_evals.optimization import OptimizationResult
 
 result = OptimizationResult.from_file(
-    ".strands-evals/optimization/runs/20261123-200351-8245db/result.json"
+    "optimization/runs/20261123-200351-8245db/result.json"
 )
 print(result.summary())
 ```
@@ -203,7 +203,7 @@ Every trial is saved the moment it finishes, so a run that was killed, interrupt
 from strands_evals.optimization import Maximize, Minimize, Optimizer, WeightedSum
 
 optimizer = Optimizer.resume(
-    ".strands-evals/optimization/runs/20261123-200351-8245db",
+    "optimization/runs/20261123-200351-8245db",
     experiment=experiment,
     factory=create_agent,
     objective=WeightedSum(Maximize("Triage"), Minimize("output_tokens", scale=100)),
@@ -216,7 +216,7 @@ Pass the same experiment, factory, objective, constraints, and search the run st
 From the CLI, resume needs only the run folder, because the CLI saved its inputs there:
 
 ```bash
-strands-evals optimize resume .strands-evals/optimization/runs/20261123-200351-8245db
+strands-evals optimize resume optimization/runs/20261123-200351-8245db
 ```
 
 A killed run may resume with a larger `--max-rollouts`. A finished run only prints its saved result again; to search more, start a new run.

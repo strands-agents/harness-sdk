@@ -196,7 +196,7 @@ A filesystem list entry is a path. So is a `command` element that is the program
 2.  Each later placeholder fills one folder or file name. Its value holds no `/`, and it is not `.` or `..`.
 3.  The result is an absolute path, or a path that starts with `~/` for your home directory, and it holds no `..`.
 
-`box` refuses a path that goes through a link inside a folder the box can write, because the agent could change that link. Those folders are your project, the run’s storage, `~/.strands/box`, and each folder that a `write` entry names. Name the real path instead. A link above such a folder is fine, such as `/tmp` on macOS. An entry whose path does not exist stops the run, so mark an entry that some machines lack `optional = true`. [Values](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#values) says how `box` writes each value safely into the run’s files.
+`box` refuses a path that goes through a link inside a folder the box can write, because the agent could change that link. Those folders are your project, the run’s storage, `~/.strands/box`, and each folder that a `write` entry names. Name the real path instead. A link above such a folder is fine, such as `/tmp` on macOS. An entry whose path does not exist stops the run, so mark an entry that some machines lack `optional = true`. [Values](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/cli/profile-language.md#values) says how `box` writes each value safely into the run’s files.
 
 ## `when`
 
@@ -246,7 +246,7 @@ box = ">=0.3.0"
 
 `box` merges each name in `packs` after its own `extend`, left to right, each pack once, then each [plugin](/docs/user-guide/box/plugins/index.md) in `plugins`, and your profile last, so the profile wins. Tables merge key by key, and a later file can change a key but cannot remove one. These lists join: the filesystem lists, `dependency`, `[storage] directories`, the `[[storage.files]]` and `[[storage.hooks]]` rows, the `[[mcp-servers]]` rows, and a tool’s own `directories` and `files` in `[tool.<name>.storage]`. Every other list is replaced, `command` included, so add arguments to the agent with `agent-args`.
 
-Each route and each `env://` variable a route reads comes from one pack, though your profile can change a route’s keys. To replace a tool that `box` finds, write its `[tool.<name>]` in your profile, or in your own pack, with a `command` and no `program`, as [A tool table in the full form](#a-tool-table-in-the-full-form) says. [Composition](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#composition) has the full rules.
+Each route and each `env://` variable a route reads comes from one pack, though your profile can change a route’s keys. To replace a tool that `box` finds, write its `[tool.<name>]` in your profile, or in your own pack, with a `command` and no `program`, as [A tool table in the full form](#a-tool-table-in-the-full-form) says. [Composition](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/cli/profile-language.md#composition) has the full rules.
 
 ## Routes and other hosts
 
@@ -345,7 +345,7 @@ The server can read every credential in that file, though the agent can’t, and
 
 A tool is a program that the agent runs from its shell, such as `git` or `npm`. A [tool pack](/docs/user-guide/box/packs/index.md#tool-packs) writes one tool, and a `[tool.<name>]` table in a profile or a pack adds to a tool or writes one. [Add or remove a toolchain](/docs/user-guide/box/profiles/index.md#add-or-remove-a-toolchain) shows how a profile picks its tools. Local MCP servers reuse the launcher packs, such as `@box/npx`, without the pack in `packs`.
 
-When a run starts, `box` finds each tool’s `program` on your `PATH`, the same one the agent gets when it types the name. It skips a tool whose program is missing, or is in your project, the run’s storage, `~/.strands/box`, or a folder the agent can write, and prints a line such as `box: skipped tool cargo (@box/cargo): cargo is not on PATH`. In a tool table with a `program`, a grant whose path is not on your machine is dropped, and a `*` in one part of a path matches each name that is there, so `${{ root.parent }}/share/node-*` finds `share/node-20`. A `deny` entry stays as written and holds no `*`. `box profile show` lists each skipped tool and each path it dropped. [Resolution](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#resolution) has the background, including scripts whose `#!` line names another tool.
+When a run starts, `box` finds each tool’s `program` on your `PATH`, the same one the agent gets when it types the name. It skips a tool whose program is missing, or is in your project, the run’s storage, `~/.strands/box`, or a folder the agent can write, and prints a line such as `box: skipped tool cargo (@box/cargo): cargo is not on PATH`. In a tool table with a `program`, a grant whose path is not on your machine is dropped, and a `*` in one part of a path matches each name that is there, so `${{ root.parent }}/share/node-*` finds `share/node-20`. A `deny` entry stays as written and holds no `*`. `box profile show` lists each skipped tool and each path it dropped. [Resolution](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/cli/profile-language.md#resolution) has the background, including scripts whose `#!` line names another tool.
 
 Each tool with a `program` gets `PATH = "/usr/bin:/bin"` and its own empty `TMPDIR`, unless its table sets them, and reads and writes your project as [Project access](#project-access) says.
 
@@ -387,7 +387,7 @@ A tool’s connections go through the box’s gateway, where your policy decides
 contain_egress = false
 ```
 
-This doesn’t make SSH work for git: the box has no `ssh`, as the [`@box/git` README](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/resources/packs/git/README.md#limitations) says.
+This doesn’t make SSH work for git: the box has no `ssh`, as the [`@box/git` README](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/resources/packs/git/README.md#limitations) says.
 
 Know what that gives away. The tool, and every program it starts, can then connect to any host, outside your policy, and no credential from a route reaches it. The agent picks the tool’s arguments, so it can aim those connections wherever it likes. Don’t set it on a general client such as `curl`, or on an interpreter. The tool still reaches only the files it’s granted, so a client such as `ssh` needs grants for its program and for what it reads, such as an SSH agent socket, and the box refuses a grant in `~/.ssh`.
 
@@ -400,7 +400,7 @@ With native filesystem policy, your policy also decides the file operations that
 -   On macOS: the [native policy requirements](/docs/user-guide/box/security/native-filesystem-policy/index.md#macos-requirements).
 -   On Linux: an ARM64 machine with the required kernel support, and the `CAP_BPF` and `CAP_PERFMON` capabilities for `box`, which a normal install does not give it. Linux x86-64 refuses selection.
 
-See the [prerequisites in Box’s own guide](/docs/user-guide/box/security/native-filesystem-policy/index.md) and the [build instructions](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/dev/manual-testing.md#build-the-native-filesystem-policy-experiment).
+See the [prerequisites in Box’s own guide](/docs/user-guide/box/security/native-filesystem-policy/index.md) and the [build instructions](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/dev/manual-testing.md#build-the-native-filesystem-policy-experiment).
 
 These prerequisites apply only when you enable this feature. With it disabled, the [standard installation requirements](/docs/user-guide/box/install/index.md#requirements) apply.
 
@@ -424,7 +424,7 @@ The box refuses to start a run that turns it on when it cannot check, so a `box`
 
 On macOS, native policy checks need the `box` process to stay alive. If an uncatchable signal such as `SIGKILL` terminates it, programs in the box can survive. Those programs can then perform new file operations within their existing filesystem grants without native policy checks, so previously denied operations can succeed. Because `box` cannot catch that signal, it cannot run its normal shutdown cleanup.
 
-[Experimental native filesystem policy](https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#experimental-native-filesystem-policy) has the background.
+[Experimental native filesystem policy](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/cli/profile-language.md#experimental-native-filesystem-policy) has the background.
 
 ## Errors
 

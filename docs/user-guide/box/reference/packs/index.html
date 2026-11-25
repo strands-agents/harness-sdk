@@ -1332,7 +1332,7 @@ a profile uses and each option they read, and <code dir="auto">--full</code> sho
 tool of its own. <code dir="auto">@box/go</code> extends <code dir="auto">@box/git</code>, so go gets git’s settings and the agent gets no <code dir="auto">git</code>
 tool, unless the profile or a support pack sets <code dir="auto">[tool.git] program</code>. To keep both tools, use <code dir="auto">include</code> too: <code dir="auto">@box/npm</code> extends and includes <code dir="auto">@box/node</code>, so npm gets
 node’s settings and the agent keeps a <code dir="auto">node</code> tool.
-<a href="https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#pack-kinds">Pack kinds</a> has the background.</p>
+<a href="https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/cli/profile-language.md#pack-kinds">Pack kinds</a> has the background.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="inputs">Inputs</h2><a href="#inputs" class="sl-anchor-link"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="true">Section titled “Inputs”</span></a></div>
 <p>An input is one value that a profile can set, or that <code dir="auto">box</code> reads from your machine when a run
 starts. A pack declares it as <code dir="auto">[inputs.&lt;name&gt;]</code> under its full name, such as
@@ -1445,7 +1445,7 @@ profile.</p>
 <p>Two packs can declare the same name, and then it is one input. The declarations agree on <code dir="auto">type</code>,
 and the value satisfies every <code dir="auto">pattern</code> and <code dir="auto">values</code> list. When the packs give different defaults
 or sources, <code dir="auto">box</code> picks neither and the error names each pack: set the input in your profile’s
-<code dir="auto">[options]</code>. <a href="https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#one-input-in-two-packs">One input in two packs</a>
+<code dir="auto">[options]</code>. <a href="https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/cli/profile-language.md#one-input-in-two-packs">One input in two packs</a>
 has the full rules.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="providers">Providers</h2><a href="#providers" class="sl-anchor-link"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="true">Section titled “Providers”</span></a></div>
 <p>A provider pack is a support pack with the <code dir="auto">[egress.&lt;name&gt;]</code> route to a model host and the
@@ -1556,7 +1556,7 @@ target use the same <code dir="auto">kind</code>, and one row’s section is not
 folder that a <a href="/docs/user-guide/box/plugins/">plugin</a> keeps on your machine. A file or a key your machine does not
 have reads as no servers.</li>
 </ul>
-<p><a href="https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profiles.md#mcp-servers">MCP servers</a> says how <code dir="auto">box</code> declares a server, fills in
+<p><a href="https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/cli/profiles.md#mcp-servers">MCP servers</a> says how <code dir="auto">box</code> declares a server, fills in
 its variables, and why it declares none for some, and
 <a href="/docs/user-guide/box/troubleshooting/#an-mcp-server-has-no-automatic-declaration">An MCP server has no automatic declaration</a>
 has the fixes.</p>
@@ -1678,7 +1678,7 @@ the box starts, and storage gets no copy:</p>
 written, and the next update brings it up to date.</p>
 </li>
 </ul>
-<p><a href="https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#copies">Copies</a> has the full steps, including <code dir="auto">sync</code>.</p>
+<p><a href="https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/cli/profile-language.md#copies">Copies</a> has the full steps, including <code dir="auto">sync</code>.</p>
 <div class="sl-heading-wrapper level-h3"><h3 id="copy-only-part-of-a-settings-file">Copy only part of a settings file</h3><a href="#copy-only-part-of-a-settings-file" class="sl-anchor-link"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="true">Section titled “Copy only part of a settings file”</span></a></div>
 <p>A <code dir="auto">keep</code> list copies only the values it names. <code dir="auto">@box/claude</code> brings in your Claude Code display
 preferences with a row like this one:</p>
@@ -1816,7 +1816,7 @@ such as <code dir="auto">agent/config/skills/review.md</code>.</p>
 <p>A <code dir="auto">[[storage.hooks]]</code> row makes the hooks in a JSON copy in storage follow the hooks in a file of
 yours, on each run. <code dir="auto">box</code> keeps each hook that runs one shell script, and lets the box read that
 script. The row says where the file keeps its hooks and what a kept hook looks like.
-<a href="https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#hooks">Hooks</a> shows <code dir="auto">@box/claude</code>’s row and the checks each hook
+<a href="https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/cli/profile-language.md#hooks">Hooks</a> shows <code dir="auto">@box/claude</code>’s row and the checks each hook
 and script pass. An agent pack that imports hooks says in its README how the
 <a href="/docs/user-guide/box/profiles/#what-a-profile-holds"><code dir="auto">[limits]</code></a> apply to a hook.</p>
 
@@ -1964,7 +1964,7 @@ stay out of the tool table, and every other table, such as <code dir="auto">[env
 <code dir="auto">[&quot;node&quot;, &quot;homebrew&quot;]</code> works for Node from nvm and Node from Homebrew. For another layout, leave out
 <code dir="auto">installation</code> and list the paths in <code dir="auto">[filesystem]</code>. The <code dir="auto"># installation</code> comments in
 <code dir="auto">box profile show --full</code> name each type that applied.
-<a href="https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#installation-layouts">Installation layouts</a> says what each type
+<a href="https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/cli/profile-language.md#installation-layouts">Installation layouts</a> says what each type
 matches and reads.</p>
 <p>A tool pack’s program input finds the program on your <code dir="auto">PATH</code> only, because the agent types the bare
 name and the box finds it on the agent’s <code dir="auto">PATH</code>. Leave out <code dir="auto">search</code>, or write exactly
@@ -2052,7 +2052,7 @@ boxes that run the tool at once rely on the tool’s own locking.</li>
 run brings the links up to date with their sources, and leaves what the tool put at a target in
 place of a link. A link grants nothing, so the tool still needs a <code dir="auto">read</code> entry for its source. Two
 rows of one tool cannot have the same target, or one inside the other.
-<a href="https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#tool-storage">Tool storage</a> has the background.</p>
+<a href="https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/cli/profile-language.md#tool-storage">Tool storage</a> has the background.</p>
 <div class="sl-heading-wrapper level-h3"><h3 id="tool-grammars">Tool grammars</h3><a href="#tool-grammars" class="sl-anchor-link"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="true">Section titled “Tool grammars”</span></a></div>
 <p>A tool grammar describes one program as a set of actions and effects, so that your policy decides
 each command of that program as an action, such as <code dir="auto">Tool::&lt;name&gt;::Action::&quot;&lt;action&gt;&quot;</code>. Grammars are

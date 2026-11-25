@@ -2,7 +2,7 @@
 
 ## Get one running
 
-You do not have to pass anything. Import it, instantiate it, then give the agent a task:
+You do not have to pass anything. Agents get shell, file tools, and web access out of the box. Import it, instantiate it, then give the agent a task:
 
 (( tab "Python" ))
 ```python

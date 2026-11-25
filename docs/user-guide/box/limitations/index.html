@@ -1155,7 +1155,7 @@ you, and the box trusts the settings, profiles, and packs you give it. Each sect
 thing the box leaves to you, who it affects, and what to check or turn off.</p>
 <p>This page covers what holds for every run. A pack or a plugin can have limits of its own, and
 those are in the <strong>Limitations</strong> section of its README. Its fixes are in the <strong>Troubleshooting</strong>
-section of the same README. <a href="https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/cli/README.md#packs">Packs</a> and <a href="https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/cli/README.md#plugins">Plugins</a> list each
+section of the same README. <a href="https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/cli/README.md#packs">Packs</a> and <a href="https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/cli/README.md#plugins">Plugins</a> list each
 one.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="how-the-agents-ask-before-they-act">How the agents ask before they act</h2><a href="#how-the-agents-ask-before-they-act" class="sl-anchor-link"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore="true">Section titled “How the agents ask before they act”</span></a></div>
 <p>Each agent decides for itself when to ask you before it acts, and the box checks each action as
@@ -1374,7 +1374,7 @@ settings, comes in only once, and <code dir="auto">box profile show</code> marks
 copy of one of those, delete the copy from the storage folder that <code dir="auto">box profile show</code> prints, and
 the next run copies your file again. That throws away what the agent changed in it
 (<a href="/docs/user-guide/box/reference/packs/#copy-status">Copy status</a>). The full copy rules are on the
-<a href="https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profile-language.md#sync">design page</a>, if you want the details.</p>
+<a href="https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/cli/profile-language.md#sync">design page</a>, if you want the details.</p>
 <p>A skill that is a link to a folder elsewhere comes in too, unless that folder is in your project,
 in <code dir="auto">~/.strands/box</code>, in a folder the agent can write, or in a folder that a
 <a href="/docs/user-guide/box/plugins/">plugin</a> keeps on your machine. <code dir="auto">box</code> leaves those out and prints a
@@ -1412,7 +1412,7 @@ when the run starts:</p>
 only what your profile already grants, so it may fail. The line says why, and
 <a href="/docs/user-guide/box/troubleshooting/#an-mcp-server-has-no-automatic-declaration">An MCP server has no automatic declaration</a>
 has the fixes. How <code dir="auto">box</code> matches a server and fills in its variables is on the
-<a href="https://github.com/strands-agents/box/blob/28071d0dad40cbd428ffb920adbb1a4920c252b4/docs/design/cli/profiles.md#mcp-servers">design page</a>, if you want the details.</p>
+<a href="https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/cli/profiles.md#mcp-servers">design page</a>, if you want the details.</p>
 </li>
 </ul>
 <p>A server that signs in through your browser (OAuth) may fail when the agent uses it, and the
