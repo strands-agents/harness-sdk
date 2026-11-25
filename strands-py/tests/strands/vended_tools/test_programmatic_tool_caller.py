@@ -848,6 +848,76 @@ def test_no_tool_call_starts_or_keeps_running_after_the_run_ends():
     assert finished == []
 
 
+def test_call_still_running_when_the_code_ends_is_cancelled_and_reported_as_an_error():
+    finished = []
+
+    @tool
+    async def write(value: int) -> int:
+        """Take a moment to write."""
+        await asyncio.sleep(0.4)
+        finished.append(value)
+        return value
+
+    @tool
+    async def send(value: int) -> int:
+        """Take a moment to send."""
+        await asyncio.sleep(0.4)
+        finished.append(value)
+        return value
+
+    code = "write(value=1)\nwrite(value=2)\nsend(value=3)\nprint('done')"
+    result = _run(_agent(write, send), code)
+    assert result == {
+        "status": "error",
+        "toolUseId": ANY,
+        "content": [
+            {
+                "text": "done\n\nExecution error: the code ended with calls to 'send', 'write' unfinished "
+                "(not awaited, or left behind by a failed asyncio.gather). They were cancelled and may have run "
+                "partly, fully, or not at all."
+            }
+        ],
+    }
+    assert finished == []
+
+
+def test_call_left_behind_by_a_failed_gather_is_cancelled_and_reported_as_an_error():
+    finished = []
+
+    @tool
+    async def write(value: int) -> int:
+        """Take a moment to write."""
+        await asyncio.sleep(0.4)
+        finished.append(value)
+        return value
+
+    code = (
+        "import asyncio\n"
+        "try:\n    await asyncio.gather(boom(), write(value=1))\n"
+        "except RuntimeError:\n    print('fallback')"
+    )
+    result = _run(_agent(boom, write), code)
+    assert result["status"] == "error"
+    assert _text(result).startswith("fallback\n\nExecution error: the code ended with calls to 'write' unfinished ")
+    assert finished == []
+
+
+def test_call_that_is_not_awaited_but_finishes_before_the_code_ends_is_not_an_error():
+    finished = []
+
+    @tool
+    async def write(value: int) -> int:
+        """Write."""
+        await asyncio.sleep(0.05)
+        finished.append(value)
+        return value
+
+    code = "import asyncio\nwrite(value=1)\nawait asyncio.sleep(0.5)\nprint('done')"
+    result = _run(_agent(write), code)
+    assert result == {"status": "success", "toolUseId": ANY, "content": [{"text": "done"}]}
+    assert finished == [1]
+
+
 def test_tool_timeout_none_leaves_only_the_run_timeout():
     @tool
     async def slow() -> str:

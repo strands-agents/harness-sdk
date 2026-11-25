@@ -234,7 +234,7 @@ def _make_async_tool_function(
         if args:
             raise TypeError(f"{tool_name}() takes keyword arguments only, e.g. {tool_name}(key=value)")
         call = asyncio.current_task()
-        run.calls.add(call)
+        run.calls[call] = tool_name
         try:
             async with run.semaphore:
                 return await asyncio.wait_for(_execute_tool(tool_context, tool_name, kwargs), tool_timeout)
@@ -243,7 +243,7 @@ def _make_async_tool_function(
                 f"Tool '{tool_name}' timed out after {tool_timeout:g} seconds; it may still be running."
             ) from None
         finally:
-            run.calls.discard(call)
+            run.calls.pop(call, None)
 
     return tool_function
 
@@ -253,14 +253,16 @@ class _Run:
 
     def __init__(self) -> None:
         self.semaphore = asyncio.Semaphore(_MAX_CONCURRENT_TOOL_CALLS)
-        self.calls: set[asyncio.Task[Any] | None] = set()
+        self.calls: dict[asyncio.Task[Any] | None, str] = {}
 
-    async def cancel_calls(self) -> None:
-        """Cancel the calls still queued or in flight; the sandbox leaves them running when the code ends."""
+    async def cancel_calls(self) -> list[str]:
+        """Cancel the calls the sandbox left queued or in flight when the code ended; return their tool names."""
+        names = sorted(set(self.calls.values()))
         calls = [call for call in self.calls if call is not None]
         for call in calls:
             call.cancel()
         await asyncio.gather(*calls, return_exceptions=True)
+        return names
 
 
 def _resolve_available_tools(agent: Any, allowed_tools: list[str] | None) -> set[str]:
@@ -406,8 +408,16 @@ async def _run_code(
     except MontyError as error:
         return _error_result(output.with_error(f"Execution error: {error}"))
     finally:
-        await run.cancel_calls()
+        unfinished = await run.cancel_calls()
 
+    if unfinished:
+        return _error_result(
+            output.with_error(
+                f"Execution error: the code ended with calls to {', '.join(map(repr, unfinished))} unfinished "
+                "(not awaited, or left behind by a failed asyncio.gather). They were cancelled and may have run "
+                "partly, fully, or not at all."
+            )
+        )
     return {"status": "success", "content": [{"text": output.text() or "(no output)"}]}
 
 
