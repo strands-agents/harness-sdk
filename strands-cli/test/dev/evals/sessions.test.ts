@@ -1962,7 +1962,7 @@ describe('dev sessions', () => {
     sessions.optimize.start()
     await vi.waitFor(() => expect(stopped).toHaveBeenCalled())
     await vi.waitFor(
-      () => expect(sessions.optimize.snapshot()).toMatchObject({ step: 'running', progress: { best: { number: 1 } } }),
+      () => expect(sessions.optimize.snapshot()).toMatchObject({ step: 'running', progress: { best: 0.8 } }),
       { timeout: 5000 }
     )
 
@@ -2247,8 +2247,7 @@ describe('dev sessions', () => {
       const { workspace, sessions, notices } = await planned(stopped)
       sessions.optimize.start()
       await vi.waitFor(
-        () =>
-          expect(sessions.optimize.snapshot()).toMatchObject({ step: 'running', progress: { best: { number: 1 } } }),
+        () => expect(sessions.optimize.snapshot()).toMatchObject({ step: 'running', progress: { best: 0.8 } }),
         { timeout: 5000 }
       )
 

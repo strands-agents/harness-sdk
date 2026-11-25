@@ -12,11 +12,9 @@ import { baseCliEditProblem, editBaseCliProfile, isProfileBaseCli } from '../bas
 import type { DevWorkspace } from '../workspace.js'
 import { userConfigPath } from '../../config/store.js'
 import {
-  measuredVersions,
   type ExperimentRun,
   type ExperimentSummary,
   type DecisionSetting,
-  type EvalCase,
   type KnobKey,
   type OptimizeDecision,
   type OptimizeObjective,
@@ -59,12 +57,7 @@ import {
 } from './layout.js'
 import { evalsWorkspaceReady } from './layout-migration.js'
 import { EvalsUi } from './evals-ui.js'
-import {
-  readEvalsExperimentFile,
-  readEvalsRunnableCases,
-  evalsCaseCount,
-  evalsJudgeEvaluatorCount,
-} from './experiment.js'
+import { readEvalsExperimentFile, evalsCaseCount, evalsJudgeEvaluatorCount } from './experiment.js'
 import { EvalsExperiments } from './experiments-session.js'
 import {
   announce,
@@ -82,7 +75,6 @@ import { Store, watchEvalsFileCount, type EvalsTail } from './jobs.js'
 import {
   readEvalsKnobs,
   evalsKnobChanges,
-  evalsKnobLabels,
   evalsSpaceVariables,
   type EvalsKnob,
   type EvalsKnobChange,
@@ -219,10 +211,7 @@ export const evalsOptimizeJobs = ({ runs = [] }: OptimizeState): DevChatJob[] =>
   runs.flatMap(({ id, state }) => {
     if (state.step === 'running') {
       // The whole run in rollouts, so the count is full only when the finalists and the test have run too.
-      const { done, total } = state.progress.rollouts ?? {
-        done: measuredVersions(state.progress),
-        total: state.progress.planned,
-      }
+      const { done, total } = state.progress.rollouts
       return [{ id, label: state.progress.run, done, total }]
     }
     const edits = editsToReview(state)
@@ -266,19 +255,14 @@ const plannedRollouts = (plan: RunPlan): EvalsRolloutPhases =>
     pareto: isEvalsPareto(plan.objective ?? NO_OBJECTIVE),
   })
 
-const startingProgress = (plan: RunPlan, startedAt: number): OptimizeProgress => {
+const startingProgress = (plan: RunPlan): OptimizeProgress => {
   const { search, validation, test } = plannedRollouts(plan)
   return {
     run: 'starting',
     record: '',
-    metric: '',
-    iterations: plan.iterations,
     planned: 1 + plan.iterations * plan.width,
-    trainCases: plan.split.train,
-    candidates: [],
+    tried: 0,
     rollouts: { done: 0, total: search + validation + test },
-    startedAt,
-    stopping: false,
   }
 }
 
@@ -701,7 +685,7 @@ export class EvalsOptimize extends Store<OptimizeState> {
     const startedAt = Date.now()
     const entry = this.addRun(page.plan.experiment.name, startedAt, {
       step: 'running',
-      progress: startingProgress(page.plan, startedAt),
+      progress: startingProgress(page.plan),
     })
     this.showPage(entry.state, entry.id)
     recordDevEvent('optimize_run_started')
@@ -713,7 +697,6 @@ export class EvalsOptimize extends Store<OptimizeState> {
     const entry = this.entries.get(id ?? this.shown ?? '')
     if (entry?.state.step !== 'running' || !entry.abort || entry.stopping) return
     entry.stopping = true
-    this.updateRun(entry, { step: 'running', progress: { ...entry.state.progress, stopping: true } })
     entry.abort.abort()
   }
 
@@ -990,7 +973,7 @@ export class EvalsOptimize extends Store<OptimizeState> {
       const knobs = await this.recordedKnobs(saved)
       entry = this.addRun(plan.experiment.name, saved.startedAt, {
         step: 'running',
-        progress: startingProgress(plan, saved.startedAt),
+        progress: startingProgress(plan),
       })
       entry.record = saved.record
       this.publish()
@@ -1051,8 +1034,7 @@ export class EvalsOptimize extends Store<OptimizeState> {
     const abort = new AbortController()
     entry.abort = abort
     entry.stopping = false
-    const cases = await readEvalsRunnableCases(saved.experiment).catch(() => [])
-    const tail = this.track(entry, plan, saved.record, saved.startedAt, knobs, cases)
+    const tail = this.track(entry, plan, saved.record)
     try {
       await waitForEvalsOptimize(saved, abort.signal)
     } finally {
@@ -1064,31 +1046,16 @@ export class EvalsOptimize extends Store<OptimizeState> {
   }
 
   /** Shows the progress of the run as its record grows, until the tail is stopped. */
-  private track(
-    entry: RunEntry,
-    plan: RunPlan,
-    record: string,
-    startedAt: number,
-    knobs: readonly EvalsKnob[],
-    cases: readonly EvalCase[]
-  ): EvalsTail {
+  private track(entry: RunEntry, plan: RunPlan, record: string): EvalsTail {
     const reader = evalsStudyReader({
       run: evalsOptimizationRunName(record),
       record,
-      startedAt,
-      labels: evalsKnobLabels(knobs),
-      cases,
       planned: plannedRollouts(plan),
     })
     const show = (): void =>
       this.updateRun(entry, {
         step: 'running',
-        progress: {
-          ...reader.progress(),
-          planned: 1 + plan.iterations * plan.width,
-          trainCases: plan.split.train,
-          stopping: entry.stopping,
-        },
+        progress: { ...reader.progress(), planned: 1 + plan.iterations * plan.width },
       })
     const tail = tailEvalsRun(record, (line) => {
       reader.push(line)
@@ -1128,10 +1095,9 @@ export class EvalsOptimize extends Store<OptimizeState> {
         )
     }
     let tail: EvalsTail | undefined
-    this.updateRun(entry, { step: 'running', progress: startingProgress(plan, startedAt) })
+    this.updateRun(entry, { step: 'running', progress: startingProgress(plan) })
     try {
       const space = continuing?.space ?? (await this.writeSpace(plan, now, variables))
-      const cases = await readEvalsRunnableCases(plan.experiment.path).catch(() => [])
       await runEvalsOptimization(
         {
           workspace: this.host().workspace,
@@ -1171,7 +1137,7 @@ export class EvalsOptimize extends Store<OptimizeState> {
               decision: plan.decision,
               startedAt,
             })
-            tail = this.track(entry, plan, path, startedAt, knobs, cases)
+            tail = this.track(entry, plan, path)
           },
         },
         this.host().dependencies
@@ -1295,7 +1261,6 @@ export class EvalsOptimize extends Store<OptimizeState> {
       record,
       baseline,
       best: outcome.best?.score ?? baseline,
-      ...(outcome.measure ? { measure: outcome.measure } : {}),
       measuredOn: MEASURED_ON[outcome.measuredOn],
       edits,
       ...(check ? { testCheck: check } : {}),

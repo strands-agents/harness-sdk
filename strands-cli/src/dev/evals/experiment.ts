@@ -241,11 +241,6 @@ export const writeEvalsExperimentFile = async (
   cases: readonly string[]
 ): Promise<void> => writeDocument(path, { ...raw, cases: pickCases(raw, cases) })
 
-export const readEvalsRunnableCases = async (path: string): Promise<EvalCase[]> => {
-  const { raw } = await readEvalsExperimentFile(path)
-  return evalsNamedExperiment(raw).cases.map(evalCase)
-}
-
 export const evalsRunnableExperiment = async (path: string, copy: string): Promise<string> => {
   const { raw } = await readEvalsExperimentFile(path)
   const named = evalsNamedExperiment(raw)

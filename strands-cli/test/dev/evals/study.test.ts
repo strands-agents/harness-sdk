@@ -2,7 +2,6 @@ import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import { measuredVersions, type EvalCase } from '../../../src/dev/panels/model.js'
 import {
   hasEvalsRunResult,
   readEvalsProposerFailure,
@@ -69,21 +68,17 @@ const searchLines = (): string[] => [
   optimizerIterationEnd(['win', 'base']),
 ]
 
-const readerOf = (lines: readonly string[], labels: Record<string, string> = {}, cases?: readonly EvalCase[]) => {
-  const reader = evalsStudyReader({ run: 'r1', record: '/w/r1', startedAt: 7, labels, ...(cases ? { cases } : {}) })
-  lines.forEach((line) => reader.push(line))
-  return reader
-}
-
 // One step of four candidates on SPLIT: 4 train cases for your agent and each candidate, then 2 finalists and your
 // agent on 2 validation cases, then the winner and your agent on 2 test cases.
 const PLANNED = { search: 20, validation: 6, test: 4 }
 
-const rolloutsAfter = (lines: readonly string[]) => {
-  const reader = evalsStudyReader({ run: 'r1', record: '/w/r1', startedAt: 7, planned: PLANNED })
+const readerOf = (lines: readonly string[]) => {
+  const reader = evalsStudyReader({ run: 'r1', record: '/w/r1', planned: PLANNED })
   lines.forEach((line) => reader.push(line))
-  return reader.progress().rollouts
+  return reader
 }
+
+const rolloutsAfter = (lines: readonly string[]) => readerOf(lines).progress().rollouts
 
 const scoredOnTrain = (id: string, number: number): string[] => [
   ...proposed(id, number),
@@ -100,12 +95,6 @@ const searched = (): string[] => [
 ]
 
 const SPLIT = { train: ['a', 'b', 'c', 'd'], validation: ['e', 'f'], test: ['g', 'h'] }
-
-const CASES: readonly EvalCase[] = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((name) => ({
-  name,
-  input: `question ${name}`,
-  expected: `answer ${name}`,
-}))
 
 const base = { id: 'base', number: 0, values: { instructions: BASELINE } }
 
@@ -183,247 +172,63 @@ describe('optimization rollouts', () => {
     expect(rolloutsAfter(yourAgentWon)).toEqual({ done: 8, total: 10 })
   })
 
-  it('shouldLeaveTheRolloutsOutWhenNoPlanWasGiven', () => {
-    expect(readerOf(searched()).progress()).not.toHaveProperty('rollouts')
+  it('shouldCountACaseOnceWhenItRanAgain', () => {
+    const again = [
+      optimizerConfig({ cases: SPLIT }),
+      ...optimizerCandidate(base),
+      optimizerTrial({ candidate: 'base', caseName: 'a', status: 'infrastructure_invalid', error: 'throttled' }),
+      optimizerTrial({ candidate: 'base', caseName: 'a', score: 1 }),
+    ]
+
+    expect(rolloutsAfter(again)).toEqual({ done: 1, total: 30 })
   })
 })
 
-describe('optimization trials', () => {
-  it('shouldCountTheBaselineTrialsAndShowThemBeforeItsScoreArrives', () => {
-    const progress = readerOf(
-      [
-        optimizerConfig({ cases: SPLIT }),
-        ...optimizerCandidate(base),
-        optimizerTrial({ candidate: 'base', caseName: 'a', score: 1, reason: 'Right answer', output: 'answer a' }),
-        optimizerTrial({ candidate: 'base', caseName: 'b', score: 0, reason: 'Wrong city', output: 'rome' }),
-      ],
-      {},
-      CASES
-    ).progress()
+describe('optimization phase', () => {
+  it('shouldMeasureYourAgentUntilTheBaselineScoreArrives', () => {
+    const progress = readerOf([
+      optimizerConfig({ cases: SPLIT }),
+      ...optimizerCandidate(base),
+      optimizerTrial({ candidate: 'base', caseName: 'a' }),
+    ]).progress()
 
-    expect(progress.step).toEqual({ kind: 'baseline', trials: { done: 2, total: 4 } })
-    expect(progress.baselineCandidate?.trials).toEqual([
-      {
-        name: 'a',
-        input: 'question a',
-        expected: 'answer a',
-        actual: 'answer a',
-        passed: true,
-        verdicts: [{ evaluator: 'OutputEvaluator', score: 1, passed: true, reason: 'Right answer' }],
-      },
-      {
-        name: 'b',
-        input: 'question b',
-        expected: 'answer b',
-        actual: 'rome',
-        passed: false,
-        verdicts: [{ evaluator: 'OutputEvaluator', score: 0, passed: false, reason: 'Wrong city' }],
-      },
-    ])
+    expect(progress.phase).toBe('baseline')
+    expect(progress).not.toHaveProperty('baseline')
   })
 
   it('shouldSayTheProposerIsWorkingWhenTheBaselineIsScoredAndNoVersionIsProposedYet', () => {
-    expect(readerOf(measuredBaseline()).progress().step).toEqual({ kind: 'proposing', iteration: 1 })
+    expect(readerOf(measuredBaseline()).progress()).toMatchObject({ phase: 'proposing', baseline: 0.5, tried: 0 })
   })
 
-  it('shouldListEachVersionWithItsTrialsAsSoonAsItIsProposed', () => {
+  it('shouldScoreAVersionAsSoonAsItIsProposedAndNotCountItAsTriedYet', () => {
     const progress = readerOf([
       ...measuredBaseline(),
       ...proposed('v1', 1),
       ...proposed('v2', 2),
       optimizerTrial({ candidate: 'v1', caseName: 'a' }),
-      optimizerTrial({ candidate: 'v1', caseName: 'b', score: 0 }),
     ]).progress()
 
-    expect(progress.step).toEqual({ kind: 'scoring', iteration: 1, versions: 2, trials: { done: 2, total: 8 } })
-    expect(
-      progress.candidates.map(({ number, scoring, trials, rationale }) => ({
-        number,
-        scoring,
-        trials: trials?.map(({ name, passed }) => [name, passed]),
-        rationale,
-      }))
-    ).toEqual([
-      {
-        number: 1,
-        scoring: { done: 2, total: 4, score: 0.5 },
-        trials: [
-          ['a', true],
-          ['b', false],
-        ],
-        rationale: 'Version 1 checks the date.',
-      },
-      { number: 2, scoring: { done: 0, total: 4 }, trials: [], rationale: 'Version 2 checks the date.' },
-    ])
-    expect(measuredVersions(progress)).toBe(1)
+    expect(progress).toMatchObject({ phase: 'scoring', tried: 0 })
   })
 
-  it('shouldShowYourAgentAsARowThatScoresUntilTheBaselineScoreArrives', () => {
-    const scoring = readerOf([
-      optimizerConfig({ cases: SPLIT }),
-      ...optimizerCandidate(base),
-      optimizerTrial({ candidate: 'base', caseName: 'a', score: 1 }),
-    ]).progress()
-    const measured = readerOf(measuredBaseline()).progress()
+  it('shouldCountAVersionAsTriedWhenItsTrainScoreArrives', () => {
+    const progress = readerOf([...measuredBaseline(), ...scoredOnTrain('v1', 1), ...proposed('v2', 2)]).progress()
 
-    expect(scoring.baselineCandidate).toMatchObject({
-      number: 0,
-      summary: 'your agent as it is',
-      scoring: { done: 1, total: 4, score: 1 },
-    })
-    expect(measured.baselineCandidate).toMatchObject({ number: 0, score: 0.5 })
-    expect(measured.baselineCandidate).not.toHaveProperty('scoring')
+    expect(progress).toMatchObject({ phase: 'scoring', tried: 1 })
   })
 
-  it.each([
-    ['TheMeanOfEveryEvaluator', 'WeightedSum(Maximize(Contains), Maximize(Equals))', 0.5],
-    ['OneEvaluator', 'Maximize(Equals)', 0],
-  ])('shouldScoreTheTrialsSoFarByTheObjectiveWhenItIs%s', (_case, objective, score) => {
-    const progress = readerOf([
-      optimizerConfig({ cases: SPLIT, objective }),
-      ...optimizerCandidate(base),
-      optimizerTrial({ candidate: 'base', caseName: 'a', scores: { Contains: 1, Equals: 0 } }),
-    ]).progress()
+  it('shouldCheckTheFinalistsOnceTheyAreNamedAndTestOnceTheWinnerIsPicked', () => {
+    const finalists = [...measuredBaseline(), ...proposed('v1', 1), optimizerFinalists(['v1', 'base'])]
 
-    expect(progress.baselineCandidate?.scoring?.score).toBe(score)
-  })
-
-  it('shouldCountATrialThatFailedAsZeroInTheScoreSoFar', () => {
-    const progress = readerOf([
-      optimizerConfig({ cases: SPLIT }),
-      ...optimizerCandidate(base),
-      optimizerTrial({ candidate: 'base', caseName: 'a', score: 1 }),
-      optimizerTrial({ candidate: 'base', caseName: 'b', status: 'agent_failure', error: 'boom' }),
-    ]).progress()
-
-    expect(progress.baselineCandidate?.scoring).toEqual({ done: 2, total: 4, score: 0.5 })
-  })
-
-  it('shouldStopCountingAVersionAsScoringWhenItsTrainScoreArrives', () => {
-    const progress = readerOf([
-      ...measuredBaseline(),
-      ...proposed('v1', 1),
-      ...SPLIT.train.map((caseName) => optimizerTrial({ candidate: 'v1', caseName })),
-      ...optimizerCandidate({ id: 'v1', number: 1, iteration: 1, values: {}, train: 1 }).slice(1),
-    ]).progress()
-
-    expect(progress.candidates[0]).not.toHaveProperty('scoring')
-    expect(progress.candidates[0]?.score).toBe(1)
-    expect(measuredVersions(progress)).toBe(2)
-  })
-
-  it('shouldCountTheValidationTrialsOfTheFinalistsAndYourAgent', () => {
-    const progress = readerOf([
-      ...measuredBaseline(),
-      ...proposed('v1', 1),
-      optimizerFinalists(['v1', 'base']),
-      optimizerTrial({ candidate: 'v1', caseName: 'e', split: 'validation' }),
-    ]).progress()
-
-    expect(progress.step).toEqual({ kind: 'validating', versions: 2, trials: { done: 1, total: 4 } })
-  })
-
-  it('shouldCountTheTestTrialsOfTheWinnerAndYourAgent', () => {
-    const progress = readerOf([
-      ...measuredBaseline(),
-      ...proposed('v1', 1),
-      optimizerFinalists(['v1', 'base']),
-      optimizerPicked('v1'),
-      optimizerTrial({ candidate: 'base', caseName: 'g', split: 'test' }),
-    ]).progress()
-
-    expect(progress.step).toEqual({ kind: 'testing', versions: 2, trials: { done: 1, total: 4 } })
-  })
-
-  it('shouldCountOnlyYourAgentWhenNoCandidateIsAFinalistOrTheWinner', () => {
-    const validating = readerOf([...measuredBaseline(), optimizerStop(), optimizerFinalists([])]).progress()
-    const testing = readerOf([
-      ...measuredBaseline(),
-      optimizerStop(),
-      optimizerFinalists([]),
-      optimizerPicked('base'),
-    ]).progress()
-
-    expect(validating.step).toEqual({ kind: 'validating', versions: 1, trials: { done: 0, total: 2 } })
-    expect(testing.step).toEqual({ kind: 'testing', versions: 1, trials: { done: 0, total: 2 } })
+    expect(readerOf(finalists).progress().phase).toBe('validating')
+    expect(readerOf([...finalists, optimizerPicked('v1')]).progress().phase).toBe('testing')
   })
 
   it.each([
     ['TheTest', [optimizerFinalists(['v1', 'base']), optimizerPicked('v1'), optimizerTested('v1', 'base', 0.2, 2)]],
     ['AFailedStop', [optimizerStop('proposer_error', 'the proposer raised')]],
-  ])('shouldShowNoStepAfter%s', (_case, end) => {
-    expect(readerOf([...measuredBaseline(), ...proposed('v1', 1), ...end]).progress().step).toBeUndefined()
-  })
-
-  it('shouldCountTokensAsTheScoreSoFarWhenTheObjectiveMinimizesTokens', () => {
-    const progress = readerOf([
-      optimizerConfig({ cases: SPLIT, objective: 'Minimize(tokens)' }),
-      ...optimizerCandidate(base),
-      optimizerTrial({ candidate: 'base', caseName: 'a' }),
-    ]).progress()
-
-    expect(progress.metric).toBe('fewer tokens')
-    expect(progress.measure).toEqual({ kind: 'metric', metric: 'tokens', usage: true, lower: true })
-    expect(progress.baselineCandidate?.scoring).toEqual({ done: 1, total: 4, score: -12 })
-  })
-
-  it.each([
-    ['ATradeOff', 'WeightedSum(Maximize(Contains), Minimize(tokens, scale=1000))', { kind: 'combined' }],
-    ['TheMeanOfEveryEvaluator', 'WeightedSum(Maximize(Contains), Maximize(Equals))', { kind: 'score' }],
-    ['OneEvaluator', 'Maximize(Equals)', { kind: 'metric', metric: 'Equals', usage: false, lower: false }],
-  ])('shouldMeasureTheObjectiveWhenItIs%s', (_case, objective, measure) => {
-    expect(readerOf([optimizerConfig({ objective })]).progress().measure).toEqual(measure)
-  })
-
-  it('shouldGiveNoScoreSoFarWhenTheObjectiveCombinesGoals', () => {
-    const progress = readerOf([
-      optimizerConfig({ cases: SPLIT, objective: 'WeightedSum(Maximize(Contains), Minimize(tokens, scale=1000))' }),
-      ...optimizerCandidate(base),
-      optimizerTrial({ candidate: 'base', caseName: 'a', scores: { Contains: 1 } }),
-    ]).progress()
-
-    expect(progress.baselineCandidate?.scoring).toEqual({ done: 1, total: 4 })
-  })
-
-  it('shouldKeepOnlyTheLastTrialWhenACaseRanAgain', () => {
-    const progress = readerOf([
-      optimizerConfig({ cases: SPLIT }),
-      ...optimizerCandidate(base),
-      optimizerTrial({ candidate: 'base', caseName: 'a', status: 'infrastructure_invalid', error: 'throttled' }),
-      optimizerTrial({ candidate: 'base', caseName: 'a', score: 1 }),
-    ]).progress()
-
-    expect(progress.baselineCandidate?.trials?.map(({ name, passed }) => [name, passed])).toEqual([['a', true]])
-    expect(progress.step).toEqual({ kind: 'baseline', trials: { done: 1, total: 4 } })
-  })
-
-  it('shouldNameTheSplitAndTheRunOfATrialBeyondTheFirstTrainRun', () => {
-    const progress = readerOf([
-      optimizerConfig({ cases: SPLIT, runs: 2 }),
-      ...optimizerCandidate(base),
-      optimizerTrial({ candidate: 'base', caseName: 'a', run: 1 }),
-      optimizerTrial({ candidate: 'base', caseName: 'e', split: 'validation' }),
-    ]).progress()
-
-    expect(progress.baselineCandidate?.trials?.map(({ name }) => name)).toEqual(['a · run 2', 'e · validation'])
-    expect(progress.step).toEqual({ kind: 'baseline', trials: { done: 1, total: 8 } })
-  })
-
-  it('shouldShowTheErrorOfATrialThatFailedAsItsReason', () => {
-    const progress = readerOf([
-      optimizerConfig({ cases: SPLIT }),
-      ...optimizerCandidate(base),
-      optimizerTrial({ candidate: 'base', caseName: 'a', status: 'agent_failure', error: 'the model timed out' }),
-    ]).progress()
-
-    expect(progress.baselineCandidate?.trials).toEqual([
-      {
-        name: 'a',
-        input: '',
-        passed: false,
-        verdicts: [{ evaluator: 'agent_failure', score: 0, passed: false, reason: 'AgentError: the model timed out' }],
-      },
-    ])
+  ])('shouldShowNoPhaseAfter%s', (_case, end) => {
+    expect(readerOf([...measuredBaseline(), ...proposed('v1', 1), ...end]).progress()).not.toHaveProperty('phase')
   })
 })
 
@@ -439,62 +244,18 @@ describe('optimization run', () => {
     expect(await hasEvalsRunResult(record)).toBe(finished)
   })
 
-  it.each([
-    ['OneEvaluator', 'Maximize(OutputEvaluator)', 'OutputEvaluator'],
-    ['TheMeanOfEveryEvaluator', 'WeightedSum(Maximize(Contains), Maximize(Equals))', 'mean of Contains, Equals'],
-    [
-      'AnUnknownObjective',
-      'Pareto(Maximize(Contains), Minimize(tokens, scale=1000))',
-      'Pareto(Maximize(Contains), Minimize(tokens, scale=1000))',
-    ],
-  ])('shouldNameTheObjectiveWhenTheRunOptimizes%s', (_case, objective, metric) => {
-    const progress = readerOf([optimizerConfig({ objective })]).progress()
-
-    expect(progress.metric).toBe(metric)
-  })
-
-  it('shouldListTheScoredCandidatesAfterTheBaselineWhenTheSearchRuns', () => {
-    const progress = readerOf(searchLines(), { caching: 'prompt caching' }).progress()
-
-    expect(progress).toMatchObject({
+  it('shouldReportTheBaselineTheLeaderAndTheVersionsTriedWhenTheSearchRuns', () => {
+    expect(readerOf(searchLines()).progress()).toMatchObject({
       run: 'r1',
-      metric: 'OutputEvaluator',
-      iterations: 1,
-      planned: 5,
+      record: '/w/r1',
       baseline: 0.5,
-      best: { number: 1, score: 0.8 },
-      startedAt: 7,
-      stopping: false,
+      best: 0.8,
+      tried: 2,
     })
-    expect(progress.candidates).toEqual([
-      {
-        number: 1,
-        step: 1,
-        changed: ['instructions', 'caching'],
-        summary: 'Check the order date first.; prompt caching → off',
-        score: 0.8,
-        delta: expect.closeTo(0.3),
-        kept: true,
-        trials: [],
-      },
-      {
-        number: 2,
-        step: 1,
-        changed: ['caching'],
-        summary: 'ModelThrottledError: slow down',
-        score: 0,
-        delta: -0.5,
-        kept: false,
-        failed: 'ModelThrottledError: slow down',
-        trials: [expect.objectContaining({ name: 'first', passed: false })],
-      },
-    ])
   })
 
   it('shouldIgnoreLinesWhenTheyAreBlankOrNotEvents', () => {
-    const progress = readerOf(['', 'not json', '{"type":"study"}', ...searchLines()]).progress()
-
-    expect(progress.candidates).toHaveLength(2)
+    expect(readerOf(['', 'not json', '{"type":"study"}', ...searchLines()]).progress().tried).toBe(2)
   })
 
   it.each([
@@ -523,7 +284,6 @@ describe('optimization run', () => {
     const outcome = readerOf([...searchLines(), optimizerStop(), ...extra, optimizerPicked('win')]).outcome()
 
     expect(outcome).toMatchObject({
-      metric: 'OutputEvaluator',
       ended: 'finished',
       measuredOn,
       baseline: { params: { instructions: BASELINE, caching: true }, score: baselineScore },

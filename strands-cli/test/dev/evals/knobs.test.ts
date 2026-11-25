@@ -6,7 +6,6 @@ import { DEFAULT_HARNESS_AGENT_CONFIG } from '@strands-agents/harness'
 import {
   readEvalsHarnessDefaults,
   readEvalsKnobs,
-  evalsKnobLabels,
   evalsKnobChanges,
   evalsSpaceVariables,
   type EvalsKnob,
@@ -369,16 +368,10 @@ describe('optimization knobs', () => {
     expect(knobs.find(({ key }) => key === 'model')).toMatchObject({ current: 'bedrock/x' })
   })
 
-  it('shouldNameEachSearchVariableAndLeaveOutAKnobThatDidNotChange', async () => {
+  it('shouldLeaveOutAKnobThatDidNotChange', async () => {
     const knobs = enabled(await readEvalsKnobs(await workspaceWith(AGENT)), ['caching', 'contextManager', 'skills'])
     const baseline = { caching: true, contextManager: 'agentic', skills_0: true, skills_1: true }
 
     expect(evalsKnobChanges(knobs, baseline, { ...baseline, contextManager: undefined })).toEqual([])
-    expect(evalsKnobLabels(knobs)).toMatchObject({
-      caching: 'prompt caching',
-      contextManager: 'context manager',
-      skills_0: 'skills: ./skills/refunds',
-      skills_1: 'skills: ./skills/orders',
-    })
   })
 })

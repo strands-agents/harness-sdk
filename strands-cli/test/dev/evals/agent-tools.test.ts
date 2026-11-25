@@ -234,12 +234,9 @@ const generationSettings = (overrides: Partial<GenerationSettings> = {}): Genera
 const progress = () => ({
   run: '20261112-130000-refunds',
   record: '',
-  metric: '',
-  iterations: 4,
   planned: 17,
-  candidates: [],
-  startedAt: 0,
-  stopping: false,
+  tried: 0,
+  rollouts: { done: 0, total: 30 },
 })
 
 const setup = (changes: readonly EvalsAppliedChange[] = []) => {
@@ -614,7 +611,7 @@ describe('dev chat part', () => {
         step: 'running',
         progress: {
           ...progress(),
-          step: { kind: 'validating', versions: 3, trials: { done: 1, total: 6 } },
+          phase: 'validating',
           rollouts: { done: 21, total: 30 },
         },
       },

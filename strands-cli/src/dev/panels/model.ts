@@ -202,52 +202,22 @@ export interface TrialProgress {
   readonly total: number
 }
 
-export interface ScoringProgress extends TrialProgress {
-  readonly score?: number
-}
-
-export type OptimizeStep =
-  | { readonly kind: 'baseline'; readonly trials: TrialProgress }
-  | { readonly kind: 'proposing'; readonly iteration: number }
-  | { readonly kind: 'scoring'; readonly iteration: number; readonly versions: number; readonly trials: TrialProgress }
-  | { readonly kind: 'validating'; readonly versions: number; readonly trials: TrialProgress }
-  | { readonly kind: 'testing'; readonly versions: number; readonly trials: TrialProgress }
-
-export interface CandidateResult {
-  readonly number: number
-  readonly step?: number
-  readonly changed: readonly string[]
-  readonly summary: string
-  readonly score?: number
-  readonly delta?: number
-  readonly kept: boolean
-  readonly failed?: string
-  readonly rationale?: string
-  readonly trials?: readonly CaseResult[]
-  readonly scoring?: ScoringProgress
-}
+export type OptimizePhase = 'baseline' | 'proposing' | 'scoring' | 'validating' | 'testing'
 
 export interface OptimizeProgress {
   readonly run: string
   readonly record: string
-  readonly metric: string
-  readonly iterations: number
+  /** The versions that the plan allows, with the baseline. */
   readonly planned: number
-  readonly trainCases?: number
   readonly baseline?: number
-  readonly best?: { readonly number: number; readonly score: number }
-  readonly candidates: readonly CandidateResult[]
-  readonly baselineCandidate?: CandidateResult
-  readonly measure?: ObjectiveMeasure
-  readonly step?: OptimizeStep
+  /** The score of the leading version on the training cases. */
+  readonly best?: number
+  /** The versions with a score on the training cases, without the baseline. */
+  readonly tried: number
+  readonly phase?: OptimizePhase
   /** The case runs of the whole run, done and in all: the search, the check of the finalists, and the test. */
-  readonly rollouts?: TrialProgress
-  readonly startedAt: number
-  readonly stopping: boolean
+  readonly rollouts: TrialProgress
 }
-
-export const measuredVersions = ({ candidates, baseline }: OptimizeProgress): number =>
-  candidates.filter(({ scoring }) => scoring === undefined).length + (baseline === undefined ? 0 : 1)
 
 export interface ProposedEdit {
   readonly knob: KnobKey
@@ -271,17 +241,11 @@ export interface TestCheck {
   readonly range?: readonly [number, number]
 }
 
-export type ObjectiveMeasure =
-  | { readonly kind: 'score' }
-  | { readonly kind: 'metric'; readonly metric: string; readonly usage: boolean; readonly lower: boolean }
-  | { readonly kind: 'combined' }
-
 export interface OptimizeReview {
   readonly run: string
   readonly record: string
   readonly baseline: number
   readonly best: number
-  readonly measure?: ObjectiveMeasure
   readonly measuredOn: string
   readonly edits: readonly ProposedEdit[]
   readonly testCheck?: TestCheck

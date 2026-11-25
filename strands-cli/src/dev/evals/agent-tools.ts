@@ -19,7 +19,7 @@ import type {
   OptimizeReview,
   OptimizeRun,
   OptimizeState,
-  OptimizeStep,
+  OptimizePhase,
   ProposedEdit,
   TestCheck,
   TestRun,
@@ -313,7 +313,7 @@ const optimizationStatus = (state: OptimizeState): object =>
       : undefined,
   })
 
-const RUN_PHASES: Readonly<Record<OptimizeStep['kind'], string>> = {
+const RUN_PHASES: Readonly<Record<OptimizePhase, string>> = {
   baseline: 'measuring your agent as it is',
   proposing: 'proposing new versions',
   scoring: 'measuring the new versions',
@@ -332,11 +332,11 @@ const pageStatus = (state: OptimizeState): object => {
         step: 'running',
         run: state.progress.run,
         baseline: state.progress.baseline,
-        best: state.progress.best?.score,
-        tried: state.progress.candidates.filter(({ scoring }) => scoring === undefined).length,
+        best: state.progress.best,
+        tried: state.progress.tried,
         planned: state.progress.planned,
         // Every version tried is not the end of the run: the finalists and the test are checked after the search.
-        phase: state.progress.step ? RUN_PHASES[state.progress.step.kind] : undefined,
+        phase: state.progress.phase ? RUN_PHASES[state.progress.phase] : undefined,
         rollouts: state.progress.rollouts,
       })
     case 'review':

@@ -453,12 +453,3 @@ export const evalsKnobChanges = (knobs: readonly EvalsKnob[], baseline: Params, 
       return [valueChange(knob, before, after)]
     })
     .filter((change): change is EvalsKnobChange => change !== undefined)
-
-export const evalsKnobLabels = (knobs: readonly EvalsKnob[]): Record<string, string> =>
-  Object.fromEntries(
-    knobs.flatMap((knob) =>
-      knob.kind === 'switches'
-        ? (knob.entries ?? []).map((entry, index) => [switchKey(knob, index), `${knob.label}: ${entry.label}`])
-        : [[knob.option, knob.label]]
-    )
-  )
