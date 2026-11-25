@@ -1,4 +1,4 @@
-"""L1 stash — durable storage for offloaded context content.
+"""L1 archive — durable storage for offloaded context content.
 
 When the ContextManager offloads content, the original is persisted here
 so the agent can retrieve it on demand via the retrieval tool.
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-STASH_PREFIX = "context"
+ARCHIVE_PREFIX = "context"
 
 
 class _BytesEncoder(json.JSONEncoder):
@@ -43,8 +43,8 @@ def _decode(data: bytes) -> object:
     return json.loads(data.decode("utf-8"))
 
 
-def _parse_stash_key(key: str) -> tuple[str, int] | None:
-    """Split a ``<id>_<index>`` stash key.
+def _parse_archive_key(key: str) -> tuple[str, int] | None:
+    """Split a ``<id>_<index>`` archive key.
 
     The id may itself contain ``_``, so the index is whatever follows the last one.
     """
@@ -54,19 +54,19 @@ def _parse_stash_key(key: str) -> tuple[str, int] | None:
     return owner, int(index)
 
 
-class Stash:
+class Archive:
     """Namespaced storage wrapper for persisting offloaded content blocks."""
 
     def __init__(
-        self, storage: Storage, session_id: str, agent_id: str, *, custom_stash_namespace: bool = False
+        self, storage: Storage, session_id: str, agent_id: str, *, custom_archive_namespace: bool = False
     ) -> None:
         self._base_storage = storage
         self._session_id = session_id
-        # A caller-scoped view is the exact stash root when allowed; otherwise namespace per session and agent.
+        # A caller-scoped view is the exact archive root when allowed; otherwise namespace per session and agent.
         self._storage = (
             storage
-            if custom_stash_namespace and getattr(storage, "_namespaced", None) is _NAMESPACED
-            else _NamespacedStorage(storage, f"{STASH_PREFIX}/{session_id}/scopes/agent/{agent_id}")
+            if custom_archive_namespace and getattr(storage, "_namespaced", None) is _NAMESPACED
+            else _NamespacedStorage(storage, f"{ARCHIVE_PREFIX}/{session_id}/scopes/agent/{agent_id}")
         )
 
     @property
@@ -85,7 +85,7 @@ class Stash:
         await self._storage.write(key, data)
         return key
 
-    async def ensure_stashed(self, block: ContentBlock, message: Message, block_index: int) -> str:
+    async def ensure_archived(self, block: ContentBlock, message: Message, block_index: int) -> str:
         """The reference an offload placeholder carries for the block it replaces, storing the block if it is not yet.
 
         A tool result is referenced by its ``toolUseId``; the retrieval tool resolves it to every stored item
@@ -122,7 +122,7 @@ class Stash:
         *,
         keep_existing: bool = False,
     ) -> None:
-        """Eagerly persist all stashable blocks from a message.
+        """Eagerly persist all archivable blocks from a message.
 
         Offload placeholders are never stored: their keys belong to the originals they replaced.
         With ``keep_existing``, entries already stored under a block's key are left untouched.
@@ -146,21 +146,21 @@ class Stash:
                     )
                 except Exception:
                     logger.warning(
-                        "tracking_id=<%s>, block_index=<%s> | failed to stash block",
+                        "tracking_id=<%s>, block_index=<%s> | failed to archive block",
                         message.get("tracking_id"),
                         block_index,
                         exc_info=True,
                     )
 
     async def retrieve(self, reference: str) -> object | None:
-        """Retrieve a stashed block by reference. Returns None if not found."""
+        """Retrieve an archived block by reference. Returns None if not found."""
         data = await self._storage.read(reference)
         if data is None:
             return None
         return _decode(data)
 
     async def list(self, prefix: str = "") -> builtins.list[str]:
-        """List stashed reference keys, optionally only those starting with ``prefix``."""
+        """List archived reference keys, optionally only those starting with ``prefix``."""
         return await self._storage.list(prefix)
 
     async def keys_of(self, reference_id: str) -> builtins.list[str]:
@@ -168,17 +168,17 @@ class Stash:
 
         A prefix list alone also returns ids that extend this one, so each key's parsed id has to match.
         """
-        parsed = ((key, _parse_stash_key(key)) for key in await self.list(f"{reference_id}_"))
+        parsed = ((key, _parse_archive_key(key)) for key in await self.list(f"{reference_id}_"))
         matching = [(key, entry[1]) for key, entry in parsed if entry and entry[0] == reference_id]
         return [key for key, _ in sorted(matching, key=lambda entry: entry[1])]
 
     async def delete(self, reference: str) -> None:
-        """Delete a stashed entry."""
+        """Delete an archived entry."""
         await self._storage.delete(reference)
-        logger.debug("reference=<%s> | deleted stash entry", reference)
+        logger.debug("reference=<%s> | deleted archive entry", reference)
 
     async def take_snapshot(self) -> dict[str, Any]:
-        """Serialize all stash entries for snapshot persistence.
+        """Serialize all archive entries for snapshot persistence.
 
         Returns:
             Map of reference keys to their deserialized JSON values.
@@ -192,7 +192,7 @@ class Stash:
         return entries
 
     async def load_snapshot(self, entries: dict[str, Any]) -> None:
-        """Restore stash entries from a previously captured snapshot.
+        """Restore archive entries from a previously captured snapshot.
 
         Args:
             entries: Map of reference keys to their JSON values (from :meth:`take_snapshot`).
@@ -201,23 +201,23 @@ class Stash:
             await self._storage.write(key, _encode(data))
 
     async def clear(self) -> None:
-        """Delete all entries in this agent's stash namespace."""
+        """Delete all entries in this agent's archive namespace."""
         keys = await self.list()
         for key in keys:
             await self._storage.delete(key)
 
     async def clear_session(self) -> None:
-        """Delete all stash data for this session across all agents.
+        """Delete all archive data for this session across all agents.
 
         Unlike :meth:`clear`, which is scoped to this agent's namespace, this
         scans ``context/<session_id>/`` on the base storage to remove data from
-        every agent that wrote to the session. A stash rooted at a caller-scoped
+        every agent that wrote to the session. An archive rooted at a caller-scoped
         view is shared beyond this session, so its data is left to the caller.
         """
         if self._storage is self._base_storage:
-            logger.debug("session_id=<%s> | skipping stash deletion, stash is caller-scoped", self._session_id)
+            logger.debug("session_id=<%s> | skipping archive deletion, archive is caller-scoped", self._session_id)
             return
-        prefix = f"{STASH_PREFIX}/{self._session_id}/"
+        prefix = f"{ARCHIVE_PREFIX}/{self._session_id}/"
         keys = await self._base_storage.list(prefix)
         for key in keys:
             await self._base_storage.delete(key)
@@ -230,7 +230,7 @@ class Stash:
                 await self.store(tool_result["toolUseId"], block_index, _encode(item), keep_existing=keep_existing)
             except Exception:
                 logger.warning(
-                    "tool_use_id=<%s>, block_index=<%s> | failed to stash sub-block",
+                    "tool_use_id=<%s>, block_index=<%s> | failed to archive sub-block",
                     tool_result["toolUseId"],
                     block_index,
                     exc_info=True,

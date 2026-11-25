@@ -113,6 +113,7 @@ export default defineConfig({
         baseUrl: 'https://github.com/strands-agents/harness-sdk/edit/main/site/',
       },
       components: {
+        EditLink: './src/components/overrides/EditLink.astro',
         Footer: './src/components/overrides/Footer.astro',
         Head: './src/components/overrides/Head.astro',
         Header: './src/components/Header.astro',

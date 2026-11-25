@@ -51,7 +51,7 @@ from ..types.session import decode_bytes_values, encode_bytes_values
 from .session_manager import SessionManager
 
 if TYPE_CHECKING:
-    from .._context_manager.stash import Stash
+    from .._context_manager.archive import Archive
     from ..multiagent.base import MultiAgentBase
 
 logger = logging.getLogger(__name__)
@@ -310,7 +310,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         self._multi_agent_restored_ids: set[str] = set()
         # Each orchestrator rebinds independently because synchronous invocations use fresh event loops.
         self._multi_agent_save_locks: dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Lock]] = {}
-        self._agent_stash: Stash | None = None
+        self._agent_archive: Archive | None = None
 
     @property
     def _resolved_storage(self) -> Storage:
@@ -428,7 +428,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             self._raw_storage = raw
             self._storage = _resolve_storage(raw)
         if agent.context_manager is not None:
-            self._agent_stash = agent.context_manager.stash
+            self._agent_archive = agent.context_manager.archive
         run_async(lambda: self._initialize_async(agent))
 
     def sync_agent(self, agent: LocalAgent, **kwargs: Any) -> None:
@@ -540,7 +540,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             when ``is_latest=True`` (``snapshot_latest`` is not addressed by id).
         """
         snapshot = self._capture(agent)
-        await self._include_stash_data(agent, snapshot)
+        await self._include_archive_data(agent, snapshot)
         data = _serialize_snapshot(snapshot)
         snapshot_id = None if is_latest else _new_snapshot_id()
         key = _snapshot_key(self.session_id, agent.agent_id, snapshot_id=snapshot_id)
@@ -548,7 +548,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         return snapshot_id
 
     async def delete_session(self) -> None:
-        """Delete all snapshots and stash data for this session."""
+        """Delete all snapshots and archive data for this session."""
         storage = self._resolved_storage
         keys = await storage.list(_session_prefix(self.session_id))
         semaphore = asyncio.Semaphore(_DELETE_CONCURRENCY)
@@ -558,7 +558,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
                 await storage.delete(key)
 
         await asyncio.gather(*(_delete(key) for key in keys))
-        await self._delete_stash_data()
+        await self._delete_archive_data()
 
     # -- Async internals --
 
@@ -592,7 +592,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             return False
         snapshot = _deserialize_snapshot(data)
         agent.load_snapshot(snapshot)
-        await self._restore_stash_data(agent, snapshot)
+        await self._restore_archive_data(agent, snapshot)
         return True
 
     async def _save_latest(self, agent: LocalAgent) -> None:
@@ -607,7 +607,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         but never a ``snapshot_latest`` pointing at history that was never written.
         """
         snapshot = self._capture(agent)
-        await self._include_stash_data(agent, snapshot)
+        await self._include_archive_data(agent, snapshot)
         data = _serialize_snapshot(snapshot)
         await self._resolved_storage.write(
             _snapshot_key(self.session_id, agent.agent_id, snapshot_id=_new_snapshot_id()), data
@@ -691,100 +691,104 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         """
         return agent.take_snapshot(preset="session", include=["system_prompt"])
 
-    # -- Stash integration --
+    # -- Archive integration --
 
-    async def _include_stash_data(self, agent: LocalAgent, snapshot: Snapshot) -> None:
-        """Include context-manager stash data in a snapshot during save.
+    async def _include_archive_data(self, agent: LocalAgent, snapshot: Snapshot) -> None:
+        """Include context-manager archive data in a snapshot during save.
 
-        If the stash storage is durable, writes a lightweight external reference.
+        If the archive storage is durable, writes a lightweight external reference.
         If ephemeral (e.g. InMemoryStorage), serializes all entries inline.
 
-        Raises on failure so the caller never persists a snapshot with missing stash data
+        Raises on failure so the caller never persists a snapshot with missing archive data
         while the agent messages still carry ``[ref: ...]`` placeholders.
         """
         context_manager = agent.context_manager
-        if context_manager is None or context_manager.stash is None:
+        if context_manager is None or context_manager.archive is None:
             return
 
-        if context_manager.stash_is_durable:
-            snapshot.data["stash"] = {
+        if context_manager.archive_is_durable:
+            snapshot.data["archive"] = {
                 "location": "external",
-                "storage_type": context_manager.stash.storage_type_name,
+                "storage_type": context_manager.archive.storage_type_name,
             }
             return
 
-        entries = await context_manager.stash.take_snapshot()
+        entries = await context_manager.archive.take_snapshot()
         if entries:
-            snapshot.data["stash"] = {
+            snapshot.data["archive"] = {
                 "location": "inline",
                 "entries": entries,
             }
 
-    async def _restore_stash_data(self, agent: LocalAgent, snapshot: Snapshot) -> None:
-        """Restore context-manager stash data from a snapshot.
+    async def _restore_archive_data(self, agent: LocalAgent, snapshot: Snapshot) -> None:
+        """Restore context-manager archive data from a snapshot.
 
-        Storage errors are logged and swallowed so a stash failure never prevents session restore.
+        Storage errors are logged and swallowed so an archive failure never prevents session restore.
         """
-        stash_data = snapshot.data.get("stash")
-        if stash_data is None:
+        # ``stash`` is the pre-rename key. An inline snapshot under it holds the only copy of content the agent had
+        # already offloaded, so a read falls back to it; writes only ever go to ``archive``. The fallback outlives
+        # the deprecated names: an immutable snapshot is never rewritten, so a pre-rename checkpoint keeps the old
+        # key forever and no resume can migrate it forward.
+        archive_data = snapshot.data.get("archive") or snapshot.data.get("stash")
+        if archive_data is None:
             return
 
         context_manager = agent.context_manager
-        if context_manager is None or context_manager.stash is None:
+        if context_manager is None or context_manager.archive is None:
             return
 
         try:
-            location = stash_data.get("location")
+            location = archive_data.get("location")
             if location == "external":
-                snapshot_type = stash_data.get("storage_type", "")
-                if snapshot_type and snapshot_type != context_manager.stash.storage_type_name:
+                snapshot_type = archive_data.get("storage_type", "")
+                if snapshot_type and snapshot_type != context_manager.archive.storage_type_name:
                     logger.warning(
                         "session_id=<%s>, snapshot_storage=<%s>, current_storage=<%s> | "
-                        "stash storage type changed since snapshot was created, stash data may be inaccessible",
+                        "archive storage type changed since snapshot was created, archive data may be inaccessible",
                         self.session_id,
                         snapshot_type,
-                        context_manager.stash.storage_type_name,
+                        context_manager.archive.storage_type_name,
                     )
                 return
 
             if location == "inline":
-                entries = stash_data.get("entries", {})
-                await context_manager.stash.load_snapshot(entries)
+                entries = archive_data.get("entries", {})
+                await context_manager.archive.load_snapshot(entries)
         except Exception:
             logger.warning(
-                "session_id=<%s> | failed to restore stash data from snapshot, continuing without stash",
+                "session_id=<%s> | failed to restore archive data from snapshot, continuing without archive",
                 self.session_id,
             )
 
-    async def _delete_stash_data(self) -> None:
-        """Delete all stash data during session deletion.
+    async def _delete_archive_data(self) -> None:
+        """Delete all archive data during session deletion.
 
         When the manager was never initialized (no agent attached), falls back to
         deleting the ``context/<session_id>/`` prefix directly on the base storage so
-        stash data is not orphaned. This assumes the stash shares the same storage backend
-        as the session manager; if the stash was configured with a separate storage, the
+        archive data is not orphaned. This assumes the archive shares the same storage backend
+        as the session manager; if the archive was configured with a separate storage, the
         fallback will not find its data.
 
-        Storage errors are logged and swallowed so a stash failure never prevents session deletion.
+        Storage errors are logged and swallowed so an archive failure never prevents session deletion.
         """
         try:
-            if self._agent_stash is not None:
-                await self._agent_stash.clear_session()
+            if self._agent_archive is not None:
+                await self._agent_archive.clear_session()
             elif self._raw_storage is not None:
-                from .._context_manager.stash import STASH_PREFIX
+                from .._context_manager.archive import ARCHIVE_PREFIX
 
-                prefix = f"{STASH_PREFIX}/{self.session_id}/"
+                prefix = f"{ARCHIVE_PREFIX}/{self.session_id}/"
                 keys = await self._raw_storage.list(prefix)
                 for key in keys:
                     await self._raw_storage.delete(key)
                 if keys:
                     logger.debug(
-                        "session_id=<%s>, keys=<%s> | deleted orphaned stash data via storage fallback",
+                        "session_id=<%s>, keys=<%s> | deleted orphaned archive data via storage fallback",
                         self.session_id,
                         len(keys),
                     )
         except Exception:
             logger.warning(
-                "session_id=<%s> | failed to delete stash data during session deletion",
+                "session_id=<%s> | failed to delete archive data during session deletion",
                 self.session_id,
             )

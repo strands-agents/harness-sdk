@@ -1284,6 +1284,66 @@ describe('Tracer', () => {
     })
   })
 
+  describe('usage on model spans only', () => {
+    const usage = { inputTokens: 10, outputTokens: 20, totalTokens: 30 }
+    const usageKeys = (): string[] =>
+      mockSpan.calls.setAttribute.map((call) => call.key).filter((key) => key.startsWith('gen_ai.usage.'))
+
+    beforeEach(() => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_usage_on_model_spans_only')
+    })
+
+    it('leaves usage off the agent span', () => {
+      const tracer = new Tracer()
+      const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
+
+      tracer.endAgentSpan(span, { accumulatedUsage: usage })
+
+      expect(usageKeys()).toStrictEqual([])
+    })
+
+    it('leaves usage off the multi-agent and node spans', () => {
+      const tracer = new Tracer()
+      const orchestration = tracer.startMultiAgentSpan({ orchestratorId: 'g', orchestratorType: 'graph' })
+      const node = tracer.startNodeSpan({ nodeId: 'n', nodeType: 'agent' })
+
+      tracer.endNodeSpan(node, { status: 'completed', usage })
+      tracer.endMultiAgentSpan(orchestration, { usage })
+
+      expect(usageKeys()).toStrictEqual([])
+      expect(mockSpan.getAttributeValue('gen_ai.agent.status')).toBe('completed')
+    })
+
+    it('still sets usage on the model span', () => {
+      const tracer = new Tracer()
+      const span = tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hi')], modelId: 'model-1' })
+
+      tracer.endModelInvokeSpan(span, { usage })
+
+      const usageAttributes = Object.fromEntries(
+        mockSpan.calls.setAttribute.filter((call) => call.key.startsWith('gen_ai.usage.')).map((c) => [c.key, c.value])
+      )
+      expect(usageAttributes).toStrictEqual({
+        'gen_ai.usage.prompt_tokens': 10,
+        'gen_ai.usage.input_tokens': 10,
+        'gen_ai.usage.completion_tokens': 20,
+        'gen_ai.usage.output_tokens': 20,
+        'gen_ai.usage.total_tokens': 30,
+      })
+    })
+
+    it('keeps langfuse.observation.type on the agent span', () => {
+      vi.stubEnv('OTEL_EXPORTER_OTLP_ENDPOINT', 'https://us.cloud.langfuse.com')
+      const tracer = new Tracer()
+      const span = tracer.startAgentSpan({ messages: [textMessage('user', 'Hi')], agentName: 'agent' })
+
+      tracer.endAgentSpan(span, { accumulatedUsage: usage })
+
+      expect(mockSpan.getAttributeValue('langfuse.observation.type')).toBe('span')
+      expect(usageKeys()).toStrictEqual([])
+    })
+  })
+
   describe('error resilience', () => {
     it.each([
       {

@@ -2713,6 +2713,11 @@ describe('normalizeToolUseNames', () => {
   })
 
   describe('MCP toolsChanged integration', () => {
+    const createMcpClient = (): McpClient =>
+      new McpClient({ transport: { start: vi.fn(), send: vi.fn(), close: vi.fn() } as never })
+    const createMcpTool = (client: McpClient, name: string): McpTool =>
+      new McpTool({ name, description: name, inputSchema: {}, client })
+
     it('removes old tools and adds new tools when onToolsChanged fires', async () => {
       const mcpClient = new McpClient({
         transport: { start: vi.fn(), send: vi.fn(), close: vi.fn() } as never,
@@ -2747,6 +2752,149 @@ describe('normalizeToolUseNames', () => {
       expect(agent.tools.find((t) => t.name === 'tool_b')!.description).toBe('B-updated')
 
       setterSpy.mockRestore()
+    })
+
+    it('registers clients in configured order when listTools resolves out of order', async () => {
+      const clientA = createMcpClient()
+      const clientB = createMcpClient()
+      const toolA = createMcpTool(clientA, 'a_tool')
+      const toolB = createMcpTool(clientB, 'b_tool')
+      let resolveA!: (tools: McpTool[]) => void
+      let resolveB!: (tools: McpTool[]) => void
+      vi.spyOn(clientA, 'listTools').mockReturnValue(
+        new Promise((resolve) => {
+          resolveA = resolve
+        })
+      )
+      vi.spyOn(clientB, 'listTools').mockReturnValue(
+        new Promise((resolve) => {
+          resolveB = resolve
+        })
+      )
+      const agent = new Agent({ model: new MockMessageModel(), tools: [clientA, clientB], printer: false })
+
+      const initialization = agent.initialize()
+      resolveB([toolB])
+      await Promise.resolve()
+      resolveA([toolA])
+      await initialization
+
+      expect(agent.tools.map((tool) => tool.name)).toEqual(['a_tool', 'b_tool'])
+    })
+
+    it('keeps a refresh that arrives while another client is still listing tools', async () => {
+      const clientA = createMcpClient()
+      const clientB = createMcpClient()
+      const initialA = createMcpTool(clientA, 'a_old')
+      const refreshedA = createMcpTool(clientA, 'a_new')
+      const toolB = createMcpTool(clientB, 'b_tool')
+      let resolveA!: (tools: McpTool[]) => void
+      let resolveB!: (tools: McpTool[]) => void
+      vi.spyOn(clientA, 'listTools').mockReturnValue(
+        new Promise((resolve) => {
+          resolveA = resolve
+        })
+      )
+      vi.spyOn(clientB, 'listTools').mockReturnValue(
+        new Promise((resolve) => {
+          resolveB = resolve
+        })
+      )
+      const callbacks = new Map<McpClient, (oldTools: string[], newTools: McpTool[]) => void>()
+      using _setterSpy = vi.spyOn(McpClient.prototype, 'onToolsChanged', 'set').mockImplementation(function (
+        this: McpClient,
+        callback
+      ) {
+        if (callback) callbacks.set(this, callback)
+      })
+      const agent = new Agent({ model: new MockMessageModel(), tools: [clientA, clientB], printer: false })
+
+      const initialization = agent.initialize()
+      expect(callbacks.get(clientA)).toBeDefined()
+      callbacks.get(clientA)!(['a_old'], [refreshedA])
+      resolveA([initialA])
+      resolveB([toolB])
+      await initialization
+
+      expect(agent.tools.map((tool) => tool.name)).toEqual(['a_new', 'b_tool'])
+    })
+
+    it('keeps refreshed tools in their client slot', async () => {
+      const clientA = createMcpClient()
+      const clientB = createMcpClient()
+      vi.spyOn(clientA, 'listTools').mockResolvedValue([createMcpTool(clientA, 'a_tool')])
+      vi.spyOn(clientB, 'listTools').mockResolvedValue([createMcpTool(clientB, 'b_tool')])
+      const callbacks = new Map<McpClient, (oldTools: string[], newTools: McpTool[]) => void>()
+      using _setterSpy = vi.spyOn(McpClient.prototype, 'onToolsChanged', 'set').mockImplementation(function (
+        this: McpClient,
+        callback
+      ) {
+        if (callback) callbacks.set(this, callback)
+      })
+      const localTool = createMockTool(
+        'local_tool',
+        () => new ToolResultBlock({ toolUseId: 'local', status: 'success', content: [] })
+      )
+      const agent = new Agent({
+        model: new MockMessageModel(),
+        tools: [localTool, clientA, clientB],
+        contextManager: 'auto',
+        printer: false,
+      })
+      await agent.initialize()
+
+      callbacks.get(clientA)!(['a_tool'], [createMcpTool(clientA, 'a_tool')])
+      expect(agent.tools.map((tool) => tool.name)).toEqual(['local_tool', 'a_tool', 'b_tool', 'retrieve_context'])
+
+      callbacks.get(clientA)!(['a_tool'], [createMcpTool(clientA, 'a_one'), createMcpTool(clientA, 'a_two')])
+      expect(agent.tools.map((tool) => tool.name)).toEqual([
+        'local_tool',
+        'a_one',
+        'a_two',
+        'b_tool',
+        'retrieve_context',
+      ])
+    })
+
+    it('inserts tools from initially empty clients in configured order', async () => {
+      const clientA = createMcpClient()
+      const clientB = createMcpClient()
+      vi.spyOn(clientA, 'listTools').mockResolvedValue([])
+      vi.spyOn(clientB, 'listTools').mockResolvedValue([])
+      const callbacks = new Map<McpClient, (oldTools: string[], newTools: McpTool[]) => void>()
+      using _setterSpy = vi.spyOn(McpClient.prototype, 'onToolsChanged', 'set').mockImplementation(function (
+        this: McpClient,
+        callback
+      ) {
+        if (callback) callbacks.set(this, callback)
+      })
+      const localTool = createMockTool(
+        'local_tool',
+        () => new ToolResultBlock({ toolUseId: 'local', status: 'success', content: [] })
+      )
+      const agent = new Agent({
+        model: new MockMessageModel(),
+        tools: [localTool, clientA, clientB],
+        contextManager: 'auto',
+        printer: false,
+      })
+      await agent.initialize()
+      agent.toolRegistry.addOrReplace([
+        createMockTool(
+          'local_tool',
+          () => new ToolResultBlock({ toolUseId: 'local-replacement', status: 'success', content: [] })
+        ),
+      ])
+
+      callbacks.get(clientB)!([], [createMcpTool(clientB, 'b_tool')])
+      expect(agent.tools.map((tool) => tool.name)).toEqual(['local_tool', 'b_tool', 'retrieve_context'])
+
+      callbacks.get(clientA)!([], [createMcpTool(clientA, 'a_tool')])
+      expect(agent.tools.map((tool) => tool.name)).toEqual(['local_tool', 'a_tool', 'b_tool', 'retrieve_context'])
+
+      callbacks.get(clientA)!(['a_tool'], [])
+      callbacks.get(clientA)!([], [createMcpTool(clientA, 'a_next')])
+      expect(agent.tools.map((tool) => tool.name)).toEqual(['local_tool', 'a_next', 'b_tool', 'retrieve_context'])
     })
 
     describe('when a refreshed tool is invalid or taken', () => {
