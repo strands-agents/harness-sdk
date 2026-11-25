@@ -47,7 +47,8 @@ import {
   type AppliedOptimizeEdits,
 } from './review-run.js'
 import type { EvalsSessionHistory } from './session-converter.js'
-import { evalsEditsAwaitingAnswer, type EvalsAppliedChange, type EvalsDevSessions } from './sessions.js'
+import { evalsEditsAwaitingAnswer, type EvalsAppliedChange } from './optimize-session.js'
+import { type EvalsDevSessions } from './sessions.js'
 
 type Input = Readonly<Record<string, JSONValue>>
 type Sessions = () => EvalsDevSessions

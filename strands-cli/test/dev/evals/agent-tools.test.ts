@@ -21,7 +21,8 @@ import { evalsDevChatPart } from '../../../src/dev/evals/agent-tools.js'
 import { EVALS_DECISION_CHOICES, EVALS_DECISION_DEFAULTS, EVALS_TEST_SHARES } from '../../../src/dev/evals/plan.js'
 import type { AutoOptimizeStatus } from '../../../src/dev/evals/auto-optimize.js'
 import type { AnsweredOptimizeReview, AppliedOptimizeEdits } from '../../../src/dev/evals/review-run.js'
-import type { EvalsAppliedChange, EvalsDevSessions } from '../../../src/dev/evals/sessions.js'
+import type { EvalsAppliedChange } from '../../../src/dev/evals/optimize-session.js'
+import type { EvalsDevSessions } from '../../../src/dev/evals/sessions.js'
 import { temporaryDirectory } from '../../fixtures/tempdir.js'
 
 const REFUNDS: ExperimentSummary = {

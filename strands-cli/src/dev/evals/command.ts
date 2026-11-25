@@ -27,13 +27,9 @@ import { mergedJobsFeed, evalsJobsFeed } from './jobs.js'
 import { optimizeReviewContext, showOptimizeReview } from './review-run.js'
 import { evalsSessionHistory } from './session-converter.js'
 import { evalsCommandWorkflows } from './workflow-skills.js'
-import {
-  evalsDevSessions,
-  evalsOptimizeJobs,
-  evalsRunAwaitsReview,
-  evalsEvaluateJobs,
-  type EvalsDevSessions,
-} from './sessions.js'
+import { evalsDevSessions, type EvalsDevSessions } from './sessions.js'
+import { evalsOptimizeJobs, evalsRunAwaitsReview } from './optimize-session.js'
+import { evalsEvaluateJobs } from './evaluate-session.js'
 
 type Sessions = (context?: DevChatCommandContext) => EvalsDevSessions
 

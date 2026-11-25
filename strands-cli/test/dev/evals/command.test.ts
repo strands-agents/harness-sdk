@@ -125,7 +125,7 @@ describe('dev commands', () => {
 
     evalsDevCommands(workspace, project)[0]!.attach?.({ ...context, report: announced })
 
-    // What a resumed evaluation shows is checked on the session itself, in sessions.test.ts.
+    // What a resumed evaluation shows is checked on the session itself, in evaluate-session.test.ts.
     expect(resume).toHaveBeenCalledOnce()
     await vi.waitFor(() =>
       expect(announced).toHaveBeenCalledWith('error', expect.stringContaining('evals UI unavailable · '))
