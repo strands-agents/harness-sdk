@@ -20,6 +20,7 @@ import { mouseInputSequence } from '../fixtures/terminal.js'
 const ENTER = '\r'
 const UP = '\u001b[A'
 const DOWN = '\u001b[B'
+const RIGHT = '\u001b[C'
 const ESCAPE = '\u001b'
 const BACKSPACE = '\u007f'
 const CTRL_A = '\u0001'
@@ -181,6 +182,7 @@ describe('WizardRequestPanel', () => {
     const editing = screen().split('\n')
     expect(editing.find((line) => line.includes('something else'))).toContain('tokens <= 4000▏')
     expect(editing.filter((line) => line.includes('tokens <= 4000'))).toHaveLength(1)
+    expect(screen()).toContain('Enter save · Esc cancel')
     await press(ENTER)
     expect(screen()).toContain('◉ something else')
     expect(screen()).toContain('tokens <= 4000')
@@ -205,6 +207,7 @@ describe('WizardRequestPanel', () => {
     expect(screen()).toContain('steps must be at least 1.')
     await press(DOWN, DOWN, ENTER)
     expect(broker.pending()).toBeDefined()
+    expect(screen()).toContain('fix the problem to finish')
     await press(ESCAPE)
     await expect(asked).resolves.toBeUndefined()
 
@@ -236,6 +239,86 @@ describe('WizardRequestPanel', () => {
     await press(ENTER, DOWN, ENTER)
 
     await expect(asked).resolves.toEqual({ notes: 12 })
+  })
+
+  it('shouldNotTypeTheMouseReportsOfTheTerminalIntoARowOrItsEditor', async () => {
+    const size: WizardFieldSpec = { kind: 'number', key: 'size', label: 'size', value: 1 }
+    const { asked, screen, press } = await panel(question([size, { ...objective, selected: [] } as WizardFieldSpec]))
+    // The mouse moves, moves with Shift and Alt held, and the wheel turns: each is a report on the same input.
+    const mouse = async (): Promise<void> => {
+      for (const button of [35, 47, 64, 65]) await press(mouseInputSequence(button, 49, 19, 'M'))
+    }
+
+    await mouse()
+    const onTheRow = screen()
+    await press(DOWN, DOWN, ENTER, 'h')
+    await mouse()
+    await press('i')
+    const inTheEditor = screen()
+    await press(ENTER, DOWN, ENTER)
+
+    expect(onTheRow).not.toContain('[<')
+    expect(onTheRow).not.toContain('Enter save')
+    expect(inTheEditor).not.toContain('[<')
+    await expect(asked).resolves.toEqual({ size: 1, objective: 'hi' })
+  })
+
+  it('shouldDropTheEditWhenTheUserPressesEscInTheEditor', async () => {
+    const { asked, broker, screen, press } = await panel(question(budget))
+
+    await press(ENTER, '7', ESCAPE)
+    await vi.waitFor(() => expect(screen()).not.toContain('Enter save'))
+    expect(broker.pending()).toBeDefined()
+    await press(DOWN, DOWN, ENTER)
+
+    await expect(asked).resolves.toEqual({ iterations: 4, workers: 4 })
+  })
+
+  it('shouldGoBackFromTheCancelButtonButStillCancelOnEscWhenTheRequestOffersBack', async () => {
+    const back = await panel({ ...question([tune]), back: true })
+    await back.press(DOWN, DOWN, DOWN, RIGHT)
+    expect(back.screen()).toContain('Enter back')
+    await back.press(ENTER)
+    const cancelled = await panel({ ...question([tune]), back: true })
+    await cancelled.press(ESCAPE)
+
+    await expect(back.asked).resolves.toBe('back')
+    await expect(cancelled.asked).resolves.toBeUndefined()
+  })
+
+  it('shouldLineUpTheValuesWhenALabelIsLongerThanTheDefaultWidth', async () => {
+    const { screen } = await panel(
+      question([
+        { kind: 'number', key: 'steps', label: 'steps', value: 7 },
+        { kind: 'number', key: 'trials', label: 'trials at once', value: 7 },
+      ])
+    )
+
+    const columns = screen()
+      .split('\n')
+      .filter((line) => /steps|trials at once/u.test(line))
+      .map((line) => line.indexOf('7'))
+
+    expect(columns).toHaveLength(2)
+    expect(new Set(columns).size).toBe(1)
+  })
+
+  it('shouldKeepTheDeclaredOrderWhenAQuestionMixesNumbersAndOptions', async () => {
+    const { screen } = await panel(question([budget[0]!, tune]))
+    const rows = screen().split('\n')
+
+    expect(rows.findIndex((row) => row.includes('steps'))).toBeLessThan(
+      rows.findIndex((row) => row.includes('caching'))
+    )
+  })
+
+  it('shouldToggleTheRowTheCursorIsOnWithSpace', async () => {
+    const { asked, screen, press } = await panel(question([budget[0]!, tune]))
+
+    expect(screen()).toContain('set in code')
+    await press(DOWN, DOWN, ' ', DOWN, DOWN, ENTER)
+
+    await expect(asked).resolves.toEqual({ iterations: 4, tune: ['instructions', 'caching'] })
   })
 
   it('shouldStayIdleWithoutACursorWhileTheChatInputHoldsTheKeyboard', async () => {
