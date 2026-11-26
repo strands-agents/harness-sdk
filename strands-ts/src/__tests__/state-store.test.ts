@@ -79,6 +79,9 @@ describe('StateStore', () => {
     it('returns undefined when key does not exist', () => {
       const state = new StateStore()
       expect(state.get('nonexistent')).toBeUndefined()
+      expect(state.get('toString')).toBeUndefined()
+      expect(state.get('constructor')).toBeUndefined()
+      expect(state.get('__proto__')).toBeUndefined()
     })
 
     it('returns value when key exists', () => {
@@ -178,6 +181,26 @@ describe('StateStore', () => {
       const state = new StateStore({ key1: 'old' })
       state.set('key1', 'new')
       expect(state.get('key1')).toBe('new')
+    })
+
+    // Special state keys remain own properties across serialization (#4570).
+    it('preserves special keys through state serialization', () => {
+      const state = new StateStore()
+      state.set('__proto__', { admin: true })
+      state.set('toString', 'saved')
+      const expected = { ['__proto__']: { admin: true }, toString: 'saved' }
+
+      expect(state.get('__proto__')).toEqual({ admin: true })
+      expect(state.keys()).toEqual(['__proto__', 'toString'])
+      expect(state.getAll()).toEqual(expected)
+      expect(serializeStateSerializable(state)).toEqual(expected)
+
+      const restored = new StateStore()
+      loadStateSerializable(restored, serializeStateSerializable(state))
+      expect(restored.getAll()).toEqual(expected)
+      expect(restored.get('__proto__')).toEqual({ admin: true })
+      restored.delete('__proto__')
+      expect(restored.get('__proto__')).toBeUndefined()
     })
 
     it('stores deep copy that cannot mutate stored state', () => {
