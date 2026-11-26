@@ -68,12 +68,29 @@ export function formatResponsesRequest(
   stateful: boolean,
   modelInfo: ModelInfo
 ): ResponseCreateParamsStreaming {
+  const responseId = stateful ? (options?.modelState?.get('responseId') as string | undefined) : undefined
+  let messagesToFormat = messages
+  if (responseId) {
+    // When chaining on previous_response_id, the server already holds everything
+    // through the last assistant response; send only the new messages after it.
+    let lastAssistantIdx = -1
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.role === 'assistant') {
+        lastAssistantIdx = i
+        break
+      }
+    }
+    if (lastAssistantIdx !== -1) {
+      messagesToFormat = messages.slice(lastAssistantIdx + 1)
+    }
+  }
+
   const { cacheConfig } = config
   const cachePoints = modelInfo.capabilities?.promptCaching === 'cachePoints'
   const cacheMessages = cachePoints && cacheConfig !== undefined && cacheConfig.messagesTTL !== false
   const { input, explicitCache } = cacheMessages
-    ? formatCacheableResponsesMessages(messages, options?.dynamicTrailingBlocks, cacheConfig.messagesTTL)
-    : { input: formatResponsesMessages(messages), explicitCache: false }
+    ? formatCacheableResponsesMessages(messagesToFormat, options?.dynamicTrailingBlocks, cacheConfig.messagesTTL)
+    : { input: formatResponsesMessages(messagesToFormat), explicitCache: false }
 
   // User `params` are spread first so provider-managed fields (asserted
   // required by `ResponseCreateParamsStreaming` below) always win. The
@@ -87,11 +104,8 @@ export function formatResponsesRequest(
     store: stateful,
   } as ResponseCreateParamsStreaming
 
-  if (stateful) {
-    const responseId = options?.modelState?.get('responseId') as string | undefined
-    if (responseId) {
-      request.previous_response_id = responseId
-    }
+  if (responseId) {
+    request.previous_response_id = responseId
   }
 
   const systemPrompt = systemPromptText(options?.systemPrompt)

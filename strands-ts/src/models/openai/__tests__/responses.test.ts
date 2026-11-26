@@ -251,6 +251,36 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.previous_response_id).toBe('resp_prev')
     })
 
+    it('sends only messages after the last assistant turn when stateful and previous_response_id is set', async () => {
+      const modelState = new StateStore({ responseId: 'resp_1' })
+      const messages = [
+        mkUserMessage('Read 1.txt'),
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ name: 'read_file', toolUseId: 'call_1', input: { path: '1.txt' } })],
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'call_1',
+              status: 'success',
+              content: [new TextBlock('contents of 1.txt')],
+            }),
+          ],
+        }),
+      ]
+      const req = await runOnce({ stateful: true }, messages, { modelState })
+      expect(req.previous_response_id).toBe('resp_1')
+      expect(req.input).toEqual([
+        {
+          type: 'function_call_output',
+          call_id: 'call_1',
+          output: 'contents of 1.txt',
+        },
+      ])
+    })
+
     it('omits previous_response_id when stateful is disabled, even with responseId in modelState', async () => {
       const modelState = new StateStore({ responseId: 'resp_prev' })
       const req = await runOnce({}, [mkUserMessage()], { modelState })

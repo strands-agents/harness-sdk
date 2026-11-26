@@ -627,6 +627,19 @@ class OpenAIResponsesModel(Model):
             TypeError: If a message contains a content block type that cannot be converted to an OpenAI-compatible
                 format.
         """
+        stateful = self.stateful
+        response_id = model_state.get("response_id") if (stateful and model_state) else None
+        messages_to_format = messages
+        if response_id:
+            # When chaining on previous_response_id, the server already holds everything
+            # through the last assistant response; send only the new messages after it.
+            last_assistant_idx = next(
+                (i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "assistant"),
+                -1,
+            )
+            if last_assistant_idx != -1:
+                messages_to_format = messages[last_assistant_idx + 1 :]
+
         cache_config = cast(CacheConfig | None, self.config.get("cache_config"))
         cache_points = cache_config is not None and self.model_info.capabilities.prompt_caching == "cache_points"
         cache_messages = (
@@ -638,12 +651,11 @@ class OpenAIResponsesModel(Model):
         )
         input_items, explicit_cache = (
             self._format_cacheable_request_messages(
-                messages, dynamic_trailing_blocks, cast(CacheConfig, cache_config).messages_ttl
+                messages_to_format, dynamic_trailing_blocks, cast(CacheConfig, cache_config).messages_ttl
             )
             if cache_messages
-            else (self._format_request_messages(messages), False)
+            else (self._format_request_messages(messages_to_format), False)
         )
-        stateful = self.stateful
         request: dict[str, Any] = {
             "model": self.config["model_id"],
             "input": input_items,
@@ -652,8 +664,7 @@ class OpenAIResponsesModel(Model):
             "store": stateful,
         }
 
-        response_id = model_state.get("response_id") if model_state else None
-        if response_id and stateful:
+        if response_id:
             request["previous_response_id"] = response_id
 
         if system_prompt:

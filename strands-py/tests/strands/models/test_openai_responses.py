@@ -2775,6 +2775,39 @@ def test_message_cache_preserves_stateful_response_chaining():
     ]
 
 
+def test_stateful_tool_loop_sends_only_messages_after_last_assistant_turn():
+    model = OpenAIResponsesModel(model_id="gpt-4o", stateful=True)
+    messages = [
+        {"role": "user", "content": [{"text": "Read 1.txt"}]},
+        {
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "call_1", "name": "read_file", "input": {"path": "1.txt"}}}],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "call_1",
+                        "status": "success",
+                        "content": [{"text": "contents of 1.txt"}],
+                    }
+                }
+            ],
+        },
+    ]
+    request = model._format_request(messages, model_state={"response_id": "resp_1"})
+
+    assert request["previous_response_id"] == "resp_1"
+    assert request["input"] == [
+        {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "contents of 1.txt",
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     ("block", "part"),
     [
