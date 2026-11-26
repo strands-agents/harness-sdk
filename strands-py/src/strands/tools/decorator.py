@@ -72,6 +72,16 @@ from ..types.tools import AgentTool, JSONSchema, ToolContext, ToolGenerator, Too
 
 logger = logging.getLogger(__name__)
 
+_CONTAINER_TYPES = (list, tuple, set, frozenset)
+
+
+def _isolate_from_input(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _isolate_from_input(item) for key, item in value.items()}
+    if type(value) in _CONTAINER_TYPES:
+        return type(value)(map(_isolate_from_input, value))
+    return value
+
 
 # Type for wrapped function
 T = TypeVar("T", bound=Callable[..., Any])
@@ -378,17 +388,14 @@ class FunctionToolMetadata:
             input_data: A dictionary of parameter names and values to validate.
 
         Returns:
-            A dictionary with validated and converted parameter values.
+            A dictionary of validated parameter values. BaseModel fields are model instances.
 
         Raises:
             ValueError: If the input data fails validation, with details about what failed.
         """
         try:
-            # Validate with Pydantic model
-            validated = self.input_model(**input_data)
-
-            # Return as dict
-            return validated.model_dump()
+            validated = self.input_model(**_isolate_from_input(input_data))
+            return {name: getattr(validated, name) for name in type(validated).model_fields}
         except Exception as e:
             # Re-raise with more detailed error message
             error_msg = str(e)
