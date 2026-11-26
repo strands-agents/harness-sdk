@@ -206,6 +206,8 @@ async def test_manage_tool_name_controls_foreground_calls() -> None:
     ("tools", "config", "message"),
     [
         ([work], {"always": [work], "never": [work]}, "Tool 'work' cannot be configured as both 'always' and 'never'"),
+        # https://github.com/strands-agents/harness-sdk/issues/5083
+        ([work], {"never": "work"}, "'never' must be a list of tools or tool names, got the string 'work'"),
         (
             [tool(name="summarize_context")(lambda: None)],
             {"always": ["summarize_context"]},
