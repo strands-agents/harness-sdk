@@ -387,6 +387,14 @@ def test_update_nonexistent_message(s3_manager, sample_session, sample_agent, sa
         s3_manager.update_message(sample_session.session_id, sample_agent.agent_id, sample_message)
 
 
+def test__get_session_path_empty_prefix_no_leading_slash(mocked_aws, s3_bucket):
+    """Ensure _get_session_path does not produce a leading slash when prefix is empty."""
+    manager = S3SessionManager(session_id="test", bucket=s3_bucket, prefix="", region_name="us-west-2")
+    path = manager._get_session_path("abc")
+    assert not path.startswith("/"), f"path must not start with '/': {path}"
+    assert path == "session_abc/"
+
+
 @pytest.mark.parametrize(
     "prefix, expected_path",
     [
