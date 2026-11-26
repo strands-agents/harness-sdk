@@ -1288,6 +1288,83 @@ async def test_structured_output_forwards_request_params(openai_client, model_id
     assert "stream" not in parse_kwargs
 
 
+class _RecordingStream:
+    """Async iterator that records ``close()``, matching ``openai.AsyncStream``.
+
+    A plain async generator never records that call, so it cannot show the provider stream was closed.
+    """
+
+    def __init__(self, events: list[object]) -> None:
+        self._events = iter(events)
+        self.close_calls = 0
+        self.aclose_calls = 0
+
+    def __aiter__(self) -> "_RecordingStream":
+        return self
+
+    async def __anext__(self) -> object:
+        try:
+            return next(self._events)
+        except StopIteration as stop:
+            raise StopAsyncIteration from stop
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+    async def aclose(self) -> None:
+        self.aclose_calls += 1
+
+
+def _terminal_response_event(event_type: str) -> unittest.mock.Mock:
+    usage = unittest.mock.Mock(input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None)
+    if event_type == "response.incomplete":
+        return unittest.mock.Mock(
+            type=event_type,
+            response=unittest.mock.Mock(
+                usage=usage,
+                incomplete_details=unittest.mock.Mock(reason="max_output_tokens"),
+            ),
+        )
+    return unittest.mock.Mock(type=event_type, response=unittest.mock.Mock(usage=usage))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", ["response.completed", "response.incomplete"])
+async def test_stream_closes_provider_stream_on_terminal_event(openai_client, model, alist, event_type):
+    """The provider stream is closed after a terminal Responses event (#6160)."""
+    text_event = unittest.mock.Mock(type="response.output_text.delta", delta="Hello")
+    trailing_event = unittest.mock.Mock(type="response.output_text.delta", delta="not read")
+    stream = _RecordingStream([text_event, _terminal_response_event(event_type), trailing_event])
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=stream)
+
+    messages = [{"role": "user", "content": [{"text": "hello"}]}]
+    tru_events = await alist(model.stream(messages))
+
+    exp_stop = "max_tokens" if event_type == "response.incomplete" else "end_turn"
+    assert {"messageStop": {"stopReason": exp_stop}} in tru_events
+    assert stream.close_calls == 1
+    assert not any(
+        event.get("contentBlockDelta", {}).get("delta", {}).get("text") == "not read" for event in tru_events
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_closes_provider_stream_on_stream_error(openai_client, model, messages):
+    """A stream error still closes the provider stream (#6160)."""
+    error = ResponseError(message="The model failed while processing the request.", code="server_error")
+    failed_event = ResponseFailedEvent.model_construct(
+        type="response.failed", sequence_number=1, response=Response.model_construct(error=error)
+    )
+    stream = _RecordingStream([failed_event])
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=stream)
+
+    with pytest.raises(RuntimeError, match="The model failed while processing the request"):
+        async for _ in model.stream(messages):
+            pass
+
+    assert stream.close_calls == 1
+
+
 @pytest.mark.asyncio
 async def test_stream_response_failed_raises_provider_error(openai_client, model, messages, agenerator):
     error = ResponseError(message="The model failed while processing the request.", code="server_error")
