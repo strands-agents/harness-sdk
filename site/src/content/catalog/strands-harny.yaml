@@ -1,0 +1,8 @@
+name: Harny
+description: "Harny for Strands agents: long-term memory of each customer that keeps up when facts change."
+integrationType: memory-store
+languages:
+  python:
+    package: strands-harny
+github: https://github.com/harny-ai/strands-harny
+addedDate: 2026-11-26
