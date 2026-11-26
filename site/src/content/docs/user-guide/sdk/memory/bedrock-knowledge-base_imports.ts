@@ -28,6 +28,18 @@ import { BedrockKnowledgeBaseStore } from '@strands-agents/sdk/vended-memory-sto
 import { BedrockKnowledgeBaseStore } from '@strands-agents/sdk/vended-memory-stores/bedrock-knowledge-base'
 // --8<-- [end:search_imports]
 
+// --8<-- [start:citations_imports]
+import {
+  Agent,
+  BedrockModel,
+  DocumentBlock,
+  tool,
+  type MemoryEntry,
+} from '@strands-agents/sdk'
+import { BedrockKnowledgeBaseStore } from '@strands-agents/sdk/vended-memory-stores/bedrock-knowledge-base'
+import { z } from 'zod'
+// --8<-- [end:citations_imports]
+
 // --8<-- [start:extraction_imports]
 import { BedrockKnowledgeBaseStore } from '@strands-agents/sdk/vended-memory-stores/bedrock-knowledge-base'
 // --8<-- [end:extraction_imports]

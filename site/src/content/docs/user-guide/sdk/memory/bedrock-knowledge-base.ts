@@ -1,8 +1,15 @@
-import { Agent, BedrockModel } from '@strands-agents/sdk'
+import {
+  Agent,
+  BedrockModel,
+  DocumentBlock,
+  tool,
+  type MemoryEntry,
+} from '@strands-agents/sdk'
 import {
   BedrockKnowledgeBaseStore,
   type BedrockKnowledgeBaseConfig,
 } from '@strands-agents/sdk/vended-memory-stores/bedrock-knowledge-base'
+import { z } from 'zod'
 
 // =====================
 // Read-only store
@@ -152,6 +159,52 @@ async function searchAndAdd() {
   void documentId
 }
 void searchAndAdd
+
+// =====================
+// Citing retrieved passages
+// =====================
+
+async function citations() {
+  // --8<-- [start:citations]
+  const store = new BedrockKnowledgeBaseStore({
+    name: 'docs',
+    config: { knowledgeBaseId: 'KB123' },
+  })
+
+  const passages = new Map<string, MemoryEntry>()
+
+  const searchDocs = tool({
+    name: 'search_docs',
+    description: 'Search the product documentation and return passages to cite.',
+    inputSchema: z.object({ query: z.string() }),
+    callback: async ({ query }) => {
+      const entries = await store.search(query, { maxSearchResults: 5 })
+      return entries.map((entry) => {
+        const name = `passage ${passages.size + 1}`
+        passages.set(name, entry)
+        return new DocumentBlock({
+          name,
+          format: 'txt',
+          source: { content: [{ text: entry.content }] },
+          citations: { enabled: true },
+        })
+      })
+    },
+  })
+
+  const agent = new Agent({ model: new BedrockModel(), tools: [searchDocs] })
+  const result = await agent.invoke('How do I factory reset the router?')
+
+  for (const block of result.lastMessage.content) {
+    if (block.type !== 'citationsBlock') continue
+    for (const citation of block.citations) {
+      const entry = passages.get(citation.title)
+      console.log(citation.title, entry?.metadata?._sourceLocation)
+    }
+  }
+  // --8<-- [end:citations]
+}
+void citations
 
 // =====================
 // Extraction
