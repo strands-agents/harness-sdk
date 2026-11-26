@@ -1,0 +1,8 @@
+name: BrewPage
+description: Publish agent output as HTML, Markdown, JSON or a static site through BrewPage's hosted MCP server (no API key) and get back a shareable link.
+integrationType: tool
+languages:
+  python: {}
+github: https://github.com/kochetkov-ma/brewpage-openapi
+docsUrl: https://gist.github.com/kochetkov-ma/000606b43d4fd04f4b70e18922a36765
+addedDate: 2026-11-08
