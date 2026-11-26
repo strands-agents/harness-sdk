@@ -1,3 +1,4 @@
+import copy
 import threading
 import unittest.mock
 from typing import cast
@@ -1788,9 +1789,20 @@ async def test_stream_messages_keeps_the_cache_point_ahead_of_the_latest_injecte
     ]
 
 
+@pytest.mark.parametrize(
+    ("system_prompt_content", "system_prompt", "tool_specs"),
+    [
+        ([{"text": "You are a helpful assistant."}, {"cachePoint": {"type": "default"}}], None, []),
+        ([{"text": "You are a helpful assistant."}], "You are a helpful assistant.", []),
+        ([], None, []),
+        (None, None, None),
+    ],
+    ids=["text-and-cache-point", "single-text-block-with-system-prompt", "empty", "none"],
+)
 @pytest.mark.asyncio
-async def test_stream_messages_with_system_prompt_content(agenerator, alist):
-    """Test stream_messages with SystemContentBlock input."""
+async def test_stream_messages_system_prompt_content(
+    system_prompt_content, system_prompt, tool_specs, agenerator, alist
+):
     mock_model = unittest.mock.MagicMock()
     mock_model.stream.return_value = agenerator(
         [
@@ -1798,133 +1810,24 @@ async def test_stream_messages_with_system_prompt_content(agenerator, alist):
             {"contentBlockStop": {}},
         ]
     )
-
-    system_prompt_content = [{"text": "You are a helpful assistant."}, {"cachePoint": {"type": "default"}}]
-
-    stream = strands.event_loop.streaming.stream_messages(
-        mock_model,
-        system_prompt_content=system_prompt_content,
-        messages=[{"role": "user", "content": [{"text": "Hello"}]}],
-        tool_specs=[],
-        system_prompt=None,
-    )
-
-    await alist(stream)
-
-    # Verify model.stream was called with both parameters
-    mock_model.stream.assert_called_with(
-        [{"role": "user", "content": [{"text": "Hello"}]}],
-        None,
-        None,
-        tool_choice=None,
-        system_prompt_content=system_prompt_content,
-        invocation_state=None,
-        model_state=None,
-        cancel_signal=None,
-        agent_metadata=None,
-    )
-
-
-@pytest.mark.asyncio
-async def test_stream_messages_single_text_block_backwards_compatibility(agenerator, alist):
-    """Test that single text block extracts system_prompt for backwards compatibility."""
-    mock_model = unittest.mock.MagicMock()
-    mock_model.stream.return_value = agenerator(
-        [
-            {"contentBlockDelta": {"delta": {"text": "test"}}},
-            {"contentBlockStop": {}},
-        ]
-    )
-
-    system_prompt_content = [{"text": "You are a helpful assistant."}]
+    exp_system_prompt_content = copy.deepcopy(system_prompt_content)
 
     stream = strands.event_loop.streaming.stream_messages(
         mock_model,
         system_prompt_content=system_prompt_content,
         messages=[{"role": "user", "content": [{"text": "Hello"}]}],
-        tool_specs=[],
-        system_prompt="You are a helpful assistant.",
-    )
-
-    await alist(stream)
-
-    # Verify model.stream was called with extracted system_prompt for backwards compatibility
-    mock_model.stream.assert_called_with(
-        [{"role": "user", "content": [{"text": "Hello"}]}],
-        None,
-        "You are a helpful assistant.",
-        tool_choice=None,
-        system_prompt_content=system_prompt_content,
-        invocation_state=None,
-        model_state=None,
-        cancel_signal=None,
-        agent_metadata=None,
-    )
-
-
-@pytest.mark.asyncio
-async def test_stream_messages_empty_system_prompt_content(agenerator, alist):
-    """Test stream_messages with empty system_prompt_content."""
-    mock_model = unittest.mock.MagicMock()
-    mock_model.stream.return_value = agenerator(
-        [
-            {"contentBlockDelta": {"delta": {"text": "test"}}},
-            {"contentBlockStop": {}},
-        ]
-    )
-
-    stream = strands.event_loop.streaming.stream_messages(
-        mock_model,
-        messages=[{"role": "user", "content": [{"text": "Hello"}]}],
-        tool_specs=[],
-        system_prompt=None,
-        system_prompt_content=[],
-    )
-
-    await alist(stream)
-
-    # Verify model.stream was called with None system_prompt
-    mock_model.stream.assert_called_with(
-        [{"role": "user", "content": [{"text": "Hello"}]}],
-        None,
-        None,
-        tool_choice=None,
-        system_prompt_content=[],
-        invocation_state=None,
-        model_state=None,
-        cancel_signal=None,
-        agent_metadata=None,
-    )
-
-
-@pytest.mark.asyncio
-async def test_stream_messages_none_system_prompt_content(agenerator, alist):
-    """Test stream_messages with None system_prompt_content."""
-    mock_model = unittest.mock.MagicMock()
-    mock_model.stream.return_value = agenerator(
-        [
-            {"contentBlockDelta": {"delta": {"text": "test"}}},
-            {"contentBlockStop": {}},
-        ]
-    )
-
-    stream = strands.event_loop.streaming.stream_messages(
-        mock_model,
-        system_prompt_content=None,
-        messages=[{"role": "user", "content": [{"text": "Hello"}]}],
-        tool_specs=None,
-        system_prompt=None,
+        tool_specs=tool_specs,
+        system_prompt=system_prompt,
     )
 
     tru_events = await alist(stream)
 
-    # Verify model.stream was called with None system_prompt and empty lists
     mock_model.stream.assert_called_with(
         [{"role": "user", "content": [{"text": "Hello"}]}],
         None,
-        None,
+        system_prompt,
         tool_choice=None,
-        system_prompt_content=None,
+        system_prompt_content=exp_system_prompt_content,
         invocation_state=None,
         model_state=None,
         cancel_signal=None,
