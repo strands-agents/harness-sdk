@@ -178,6 +178,67 @@ does, see [shell and file tools](../../tools/shell-and-files/),
 [web access](../../tools/web-access/), and
 [programmatic tool calling](../../tools/programmatic-tool-calling/).
 
+## Edit the default tool set
+
+To keep the defaults but drop or configure one tool, pass
+<Syntax py="builtin_tools" ts="builtinTools" /> a mapping instead of a list. A list pins the
+set to exactly the names given. A mapping edits the default set:
+<Syntax py="False" ts="false" /> removes a tool, <Syntax py="True" ts="true" /> adds one, and a
+config object enables and configures it. Every tool the mapping does not name keeps its
+default, so a mapping that only sets `read` to <Syntax py="True" ts="true" /> still enables
+`shell`, `write`, `edit`, and the rest. To start from an empty set, set the `"*"` key to
+<Syntax py="False" ts="false" /> and name only the tools you want:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands_harness import create_harness
+
+    # Every default except subagent
+    agent = create_harness(builtin_tools={"subagent": False})
+
+    # Only read and web_fetch, with web_fetch configured; the same set as ["read", "web_fetch"]
+    pinned = create_harness(
+        builtin_tools={"*": False, "read": True, "web_fetch": {"transport": "direct"}},
+    )
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { createHarness } from '@strands-agents/harness'
+
+    // Every default except subagent
+    const agent = await createHarness({ builtinTools: { subagent: false } })
+
+    // Only read and web_fetch, with web_fetch configured; the same set as ['read', 'web_fetch']
+    const pinned = await createHarness({
+      builtinTools: { '*': false, read: true, web_fetch: { transport: 'direct' } },
+    })
+    ```
+  </Tab>
+</Tabs>
+
+An empty mapping changes nothing and leaves every default on. Use an empty list to turn every
+built-in tool off.
+
+## Turn off tools that other features add
+
+<Syntax py="builtin_tools" ts="builtinTools" /> controls only the built-in tools listed above.
+Other features that are on by default give the agent their own tools, so an agent built with an
+empty list can still offer the model these. Each one has its own switch:
+
+| Tool | Added by | Turn off with |
+|---|---|---|
+| `retrieve_context`, `retrieve_offloaded_content` | [Context management](../context-and-caching/) | <Syntax py="context_manager=False" ts="contextManager: false" /> |
+| `strands_manage_background_task` | [Background tasks](../background-tasks/) | <Syntax py="background_tasks=False" ts="backgroundTasks: false" /> |
+| `todo_write` | The `todos` [built-in plugin](../../tools/todos-and-environment/) | <Syntax py="builtin_plugins" ts="builtinPlugins" /> without `todos` |
+| `search_memory` | [Long-term memory](../memory/) | <Syntax py="memory=False" ts="memory: false" /> |
+| `skills` | [Agent Skills](../skills/), when a skill is found | <Syntax py="skills=False" ts="skills: false" /> |
+
+With all of these off and an empty built-in tool list, the agent has only the tools you pass
+in <Syntax py="tools" ts="tools" />, the tools your own plugins add, and the tools your MCP
+servers provide.
+
 ## Change the web_fetch summarizer
 
 `web_fetch` answers over a fetched page using a small, fast summarizer model chosen for
