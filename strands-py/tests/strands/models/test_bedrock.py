@@ -3422,31 +3422,50 @@ def test_format_request_drops_reasoning_the_model_rejects(bedrock_client, model_
     assert tru_content == exp_content
 
 
-def test_format_request_filters_image_content_blocks(model, model_id):
-    """Test that format_request filters extra fields from image content blocks."""
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "image": {
-                        "format": "png",
-                        "source": {"bytes": b"image_data"},
-                        "filename": "test.png",  # Extra field that should be filtered
-                        "metadata": {"size": 1024},  # Extra field that should be filtered
-                    }
-                },
-            ],
-        }
-    ]
+@pytest.mark.parametrize(
+    ("block_type", "block", "exp_block"),
+    [
+        (
+            "image",
+            {
+                "format": "png",
+                "source": {"bytes": b"image_data"},
+                "filename": "test.png",
+                "metadata": {"size": 1024},
+            },
+            {"format": "png", "source": {"bytes": b"image_data"}},
+        ),
+        (
+            "document",
+            {
+                "name": "test.pdf",
+                "source": {"bytes": b"pdf_data"},
+                "format": "pdf",
+                "extraField": "should be removed",
+                "metadata": {"pages": 10},
+            },
+            {"name": "test.pdf", "source": {"bytes": b"pdf_data"}, "format": "pdf"},
+        ),
+        (
+            "video",
+            {
+                "format": "mp4",
+                "source": {"bytes": b"video_data"},
+                "duration": 120,
+                "resolution": "1080p",
+            },
+            {"format": "mp4", "source": {"bytes": b"video_data"}},
+        ),
+    ],
+    ids=["image", "document", "video"],
+)
+def test_format_request_filters_media_content_blocks(model, model_id, block_type, block, exp_block):
+    """Test that format_request filters extra fields from image, document, and video content blocks."""
+    messages = [{"role": "user", "content": [{block_type: block}]}]
 
-    formatted_request = model.format_request(messages)
+    tru_block = model.format_request(messages)["messages"][0]["content"][0][block_type]
 
-    image_block = formatted_request["messages"][0]["content"][0]["image"]
-    expected = {"format": "png", "source": {"bytes": b"image_data"}}
-    assert image_block == expected
-    assert "filename" not in image_block
-    assert "metadata" not in image_block
+    assert tru_block == exp_block
 
 
 def test_format_request_image_s3_location_only(model, model_id):
@@ -3702,34 +3721,6 @@ def test_format_request_maps_3gp_video_formats(model, model_id, video_format):
     assert video_block == {"format": "three_gp", "source": {"bytes": b"video_data"}}
 
 
-def test_format_request_filters_document_content_blocks(model, model_id):
-    """Test that format_request filters extra fields from document content blocks."""
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "document": {
-                        "name": "test.pdf",
-                        "source": {"bytes": b"pdf_data"},
-                        "format": "pdf",
-                        "extraField": "should be removed",
-                        "metadata": {"pages": 10},
-                    }
-                },
-            ],
-        }
-    ]
-
-    formatted_request = model.format_request(messages)
-
-    document_block = formatted_request["messages"][0]["content"][0]["document"]
-    expected = {"name": "test.pdf", "source": {"bytes": b"pdf_data"}, "format": "pdf"}
-    assert document_block == expected
-    assert "extraField" not in document_block
-    assert "metadata" not in document_block
-
-
 def test_format_request_filters_nested_reasoning_content(model, model_id):
     """Test deep filtering of nested reasoningText fields."""
     messages = [
@@ -3749,33 +3740,6 @@ def test_format_request_filters_nested_reasoning_content(model, model_id):
     reasoning_text = formatted_request["messages"][0]["content"][0]["reasoningContent"]["reasoningText"]
 
     assert reasoning_text == {"text": "thinking...", "signature": "abc123"}
-
-
-def test_format_request_filters_video_content_blocks(model, model_id):
-    """Test that format_request filters extra fields from video content blocks."""
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "video": {
-                        "format": "mp4",
-                        "source": {"bytes": b"video_data"},
-                        "duration": 120,  # Extra field that should be filtered
-                        "resolution": "1080p",  # Extra field that should be filtered
-                    }
-                },
-            ],
-        }
-    ]
-
-    formatted_request = model.format_request(messages)
-
-    video_block = formatted_request["messages"][0]["content"][0]["video"]
-    expected = {"format": "mp4", "source": {"bytes": b"video_data"}}
-    assert video_block == expected
-    assert "duration" not in video_block
-    assert "resolution" not in video_block
 
 
 def test_format_request_filters_cache_point_content_blocks(model, model_id):
