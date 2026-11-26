@@ -348,6 +348,68 @@ class TestAnalyst:
         assert "page content" in received_prompt[0]
 
 
+_BINARY_BODY = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 188  # 48,136 bytes, NULs and ~half undecodable
+
+
+class TestBinaryContent:
+    """Binary or undecodable bodies come back as a short marker instead of decoded U+FFFD noise."""
+
+    @staticmethod
+    def _binary_client(content_type: str | None, body: bytes) -> httpx.AsyncClient:
+        headers = {"content-type": content_type} if content_type is not None else {}
+        return _client(lambda _request: httpx.Response(200, headers=headers, content=body))
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("content_type", "body", "exp_result"),
+        [
+            ("image/png", _BINARY_BODY, "[binary image/png, 48,136 bytes; not shown]"),
+            ("Audio/MPEG; foo=bar", b"ID3\x04\x00\x00\x00\x00\x00\x00", "[binary audio/mpeg, 10 bytes; not shown]"),
+            ("application/octet-stream", _BINARY_BODY, "[binary application/octet-stream, 48,136 bytes; not shown]"),
+            (
+                "application/pdf; charset=iso-8859-1",
+                b"%PDF-1.7\n\x00\xe2\xe3",
+                "[binary application/pdf, 12 bytes; not shown]",
+            ),
+            ("text/html; charset=utf-8", _BINARY_BODY, "[undecodable text/html, 48,136 bytes; not shown]"),
+            ("text/plain", b"a" * 6 + b"\xff" * 4, "[undecodable text/plain, 10 bytes; not shown]"),
+            (None, b"\x00\x01\x00\x02", "[binary content, 4 bytes; not shown]"),
+        ],
+    )
+    async def test_binary_body_returns_marker(self, content_type, body, exp_result):
+        tool = make_web_fetch(client=self._binary_client(content_type, body), mode="markdown")
+        tru_result = await tool(url="https://example.com/file")
+        assert tru_result == exp_result
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("content_type", "body", "exp_result"),
+        [
+            ("application/octet-stream", b"plain notes", "plain notes"),
+            ("audio/mpegurl", b"#EXTM3U\nsegment1.ts\n", "#EXTM3U\nsegment1.ts\n"),
+            ("text/plain", "caf\xe9 ".encode("latin-1") + b"a" * 20, "caf\ufffd " + "a" * 20),
+            ("text/plain", b"a" * 7 + b"\xff" * 3, "a" * 7 + "\ufffd" * 3),
+            ("text/plain", b"\xff" * 30 + "\U0001f600".encode() * 35, "\ufffd" * 30 + "\U0001f600" * 35),
+        ],
+    )
+    async def test_text_body_is_not_treated_as_binary(self, content_type, body, exp_result):
+        tool = make_web_fetch(client=self._binary_client(content_type, body), mode="markdown")
+        tru_result = await tool(url="https://example.com/file")
+        assert tru_result == exp_result
+
+    @pytest.mark.asyncio
+    async def test_agentic_binary_body_skips_analyst(self, monkeypatch):
+        def _fail(**kwargs):
+            raise AssertionError("analyst must not run for binary content")
+
+        monkeypatch.setattr(agent_module, "Agent", _fail)
+        tool = make_web_fetch(
+            client=self._binary_client("image/png", _BINARY_BODY), model=SimpleNamespace(), mode="agentic"
+        )
+        tru_result = await tool(url="https://example.com/a.png", prompt="Describe it")
+        assert tru_result == "[binary image/png, 48,136 bytes; not shown]"
+
+
 class TestParseCharset:
     """_parse_charset extracts charset from Content-Type values, defaulting to utf-8."""
 
