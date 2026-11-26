@@ -91,6 +91,42 @@ const TO_MEDIA_FORMAT: Record<string, MediaFormat> = {
   'application/xml': 'xml',
 }
 
+const TO_AUDIO_MIME_TYPE: Record<AudioFormat, string> = {
+  mp3: 'audio/mpeg',
+  mpeg: 'audio/mpeg',
+  mpga: 'audio/mpeg',
+  wav: 'audio/wav',
+  opus: 'audio/opus',
+  aac: 'audio/aac',
+  'x-aac': 'audio/x-aac',
+  flac: 'audio/flac',
+  ogg: 'audio/ogg',
+  webm: 'audio/webm',
+  mp4: 'audio/mp4',
+  m4a: 'audio/mp4',
+  mkv: 'audio/x-matroska',
+  mka: 'audio/x-matroska',
+  pcm: 'audio/pcm',
+}
+
+const TO_AUDIO_FORMAT: Record<string, AudioFormat> = {
+  'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+  'audio/wav': 'wav',
+  'audio/wave': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/opus': 'opus',
+  'audio/aac': 'aac',
+  'audio/x-aac': 'x-aac',
+  'audio/flac': 'flac',
+  'audio/ogg': 'ogg',
+  'audio/webm': 'webm',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/x-matroska': 'mka',
+  'audio/pcm': 'pcm',
+}
+
 /**
  * Convert a media format to its MIME type.
  *
@@ -109,4 +145,27 @@ export function toMimeType(format: string): string | undefined {
  */
 export function toMediaFormat(mimeType: string): MediaFormat | undefined {
   return TO_MEDIA_FORMAT[mimeType.toLowerCase()]
+}
+
+/**
+ * Convert an audio format to its MIME type.
+ *
+ * Audio has its own lookup because several formats (e.g. 'mp4', 'webm', 'mpeg')
+ * are also video formats with a different MIME type.
+ *
+ * @param format - Audio format (e.g., 'mp3', 'wav')
+ * @returns MIME type string or undefined if not a known audio format
+ */
+export function toAudioMimeType(format: string): string | undefined {
+  return TO_AUDIO_MIME_TYPE[format.toLowerCase() as AudioFormat]
+}
+
+/**
+ * Convert an audio MIME type to its canonical audio format.
+ *
+ * @param mimeType - MIME type string (e.g., 'audio/mpeg', 'audio/wav')
+ * @returns Audio format or undefined if not a known audio MIME type
+ */
+export function toAudioFormat(mimeType: string): AudioFormat | undefined {
+  return TO_AUDIO_FORMAT[mimeType.toLowerCase()]
 }
