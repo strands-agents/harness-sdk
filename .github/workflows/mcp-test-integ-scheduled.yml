@@ -1,0 +1,49 @@
+name: "MCP: Daily Integration Tests"
+
+on:
+  schedule:
+    - cron: '23 7 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-integ-scheduled
+  cancel-in-progress: false
+
+jobs:
+  call-test-integ:
+    uses: ./.github/workflows/mcp-test-integ.yml
+    with:
+      ref: ${{ github.sha }}
+
+  notify-failure:
+    needs: call-test-integ
+    if: ${{ failure() && github.event_name == 'schedule' && needs.call-test-integ.result == 'failure' }}
+    runs-on: strands-agents_ubuntu-latest_4-core
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or reuse a failure issue
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const title = 'MCP documentation integration tests failed';
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const existing = issues.find(issue => !issue.pull_request && issue.title === title);
+            if (existing) {
+              console.log(`Issue already exists: #${existing.number}`);
+              return;
+            }
+
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.create({
+              ...context.repo,
+              title,
+              body: `The daily MCP integration tests against the public documentation site failed.\n\nSee the [workflow run](${runUrl}) for details.`,
+            });
