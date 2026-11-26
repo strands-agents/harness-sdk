@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Buffer } from 'node:buffer'
 import { DocumentBlock, ImageBlock } from '@strands-agents/sdk'
 import type { Agent, ToolContext } from '@strands-agents/sdk'
 
 import { createHarness } from '../../src/agent.js'
 import { edit, makeRead, read, write } from '../../src/tools/file-tools.js'
+import { DOCX, GIF, HTML, JPEG, PDF, PNG, WEBP } from './media-fixtures.js'
 
 let agent: Agent
 let dir: string
@@ -68,7 +70,7 @@ describe('read/write/edit', () => {
 
   it('returns an ImageBlock for an image extension', async () => {
     const path = join(dir, 'pic.png')
-    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    const bytes = new Uint8Array(PNG)
     writeFileSync(path, bytes)
     const out = await read.invoke({ path }, ctx())
     expect(out).toBeInstanceOf(ImageBlock)
@@ -81,26 +83,26 @@ describe('read/write/edit', () => {
 
   it('maps a jpg extension to the jpeg format', async () => {
     const path = join(dir, 'photo.JPG')
-    writeFileSync(path, new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))
+    writeFileSync(path, JPEG)
     const out = await read.invoke({ path }, ctx())
     expect((out as ImageBlock).format).toBe('jpeg')
   })
 
   it.each([
-    ['a.gif', [0x47, 0x49, 0x46, 0x38, 0x39, 0x61], 'gif'],
-    ['a.gif', [0x47, 0x49, 0x46, 0x38, 0x37, 0x61], 'gif'],
-    ['a.webp', [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38], 'webp'],
-    ['photo.jpg', [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 'png'],
-    ['shot.png', [0xff, 0xd8, 0xff, 0xe0], 'jpeg'],
+    ['a.gif', GIF, 'gif'],
+    ['a.gif', Buffer.concat([Buffer.from('GIF87a'), GIF.subarray(6)]), 'gif'],
+    ['a.webp', WEBP, 'webp'],
+    ['photo.jpg', PNG, 'png'],
+    ['shot.png', JPEG, 'jpeg'],
   ])('image format follows the bytes, not the extension (%s)', async (name, bytes, expected) => {
     const path = join(dir, name)
-    writeFileSync(path, new Uint8Array(bytes))
+    writeFileSync(path, bytes)
     const out = await read.invoke({ path }, ctx())
     expect((out as ImageBlock).format).toBe(expected)
   })
 
   it.each([
-    ['plain text', new Uint8Array([0x74, 0x68, 0x69, 0x73, 0x20, 0x69, 0x73, 0x20, 0x74, 0x65, 0x78, 0x74, 0x0a])],
+    ['binary', new Uint8Array([0x00, 0x01, 0x62, 0x69, 0x6e, 0x61, 0x72, 0x79, 0xfe])],
     ['empty', new Uint8Array([])],
     ['truncated png signature', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x58])],
     ['riff but not webp', new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45])],
@@ -114,16 +116,16 @@ describe('read/write/edit', () => {
 
   it('surfaces a non-image as an error tool result, never a success image block', async () => {
     const path = join(dir, 'notes.png')
-    writeFileSync(path, 'this is plain text\n')
+    writeFileSync(path, Buffer.from('\xfe\xfe not text, not an image', 'latin1'))
     const result = await agent.tool.read!.invoke({ path }, { recordDirectToolCall: false })
     expect(result.status).toBe('error')
     expect(result.content).toHaveLength(1)
-    expect((result.content[0] as { text?: string }).text).toContain('19 bytes are not a png, jpeg, gif, or webp image')
+    expect((result.content[0] as { text?: string }).text).toContain('25 bytes are not a png, jpeg, gif, or webp image')
   })
 
   it('returns a DocumentBlock with a sanitized name for a binary document', async () => {
     const path = join(dir, 'my report_v2.pdf')
-    const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46])
+    const bytes = new Uint8Array(PDF)
     writeFileSync(path, bytes)
     const out = await read.invoke({ path }, ctx())
     expect(out).toBeInstanceOf(DocumentBlock)
@@ -167,14 +169,14 @@ describe('read/write/edit', () => {
 describe('read media capability', () => {
   it('returns media for a capable model', async () => {
     const path = join(dir, 'shot.png')
-    writeFileSync(path, new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    writeFileSync(path, PNG)
     const out = await read.invoke({ path }, ctx())
     expect(out).toBeInstanceOf(ImageBlock)
   })
 
   it('describes an image in text when media is off', async () => {
     const path = join(dir, 'shot.png')
-    writeFileSync(path, new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    writeFileSync(path, PNG)
     const out = await makeRead({ media: false }).invoke({ path }, ctx())
     expect(typeof out).toBe('string')
     expect(out).toContain(path)
@@ -184,7 +186,7 @@ describe('read media capability', () => {
 
   it('describes a document in text when media is off', async () => {
     const path = join(dir, 'spec.pdf')
-    writeFileSync(path, new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]))
+    writeFileSync(path, PDF)
     const out = await makeRead({ media: false }).invoke({ path }, ctx())
     expect(typeof out).toBe('string')
     expect(out).toContain('pdf')
@@ -195,5 +197,65 @@ describe('read media capability', () => {
     await write.invoke({ path, content: 'alpha\nbeta\n' }, ctx())
     const out = await makeRead({ media: false }).invoke({ path }, ctx())
     expect(out).toContain('     1\talpha')
+  })
+})
+
+describe('read invalid media', () => {
+  it.each([
+    ['full media', read],
+    ['media off', makeRead({ media: false })],
+  ])('shows a text file under a media extension as text (%s)', async (_label, tool) => {
+    const path = join(dir, 'report.pdf')
+    writeFileSync(path, HTML)
+    const out = (await tool.invoke({ path }, ctx())) as string
+    expect(
+      out.startsWith(
+        `[${path} is not a valid pdf document: it has no %PDF- header. Showing it as text.]\n     1\t<!DOCTYPE html>`
+      )
+    ).toBe(true)
+  })
+
+  it('pages a text file under a media extension', async () => {
+    const path = join(dir, 'notes.png')
+    writeFileSync(path, 'one\ntwo\nthree\n')
+    const out = await read.invoke({ path, offset: 2, limit: 1 }, ctx())
+    expect(out).toBe(
+      `[${path} is not a png, jpeg, gif, or webp image. Showing it as text.]\n` +
+        '     2\ttwo\n[Showing lines 2-2 of 4. Use offset/limit to read more.]'
+    )
+    const past = (await read.invoke({ path, offset: 9 }, ctx())) as string
+    expect(past.endsWith('[File has 4 lines; offset 9 is past the end.]')).toBe(true)
+  })
+
+  it.each([
+    ['full media', read],
+    ['media off', makeRead({ media: false })],
+  ])('fails a broken binary media file (%s)', async (_label, tool) => {
+    const path = join(dir, 'chart.png')
+    writeFileSync(path, PNG.subarray(0, -12))
+    await expect(tool.invoke({ path }, ctx())).rejects.toThrow(
+      `${path} has a .png extension but its ${PNG.length - 12} bytes are not a valid png image: it is truncated. ` +
+        'Identify it with `file`.'
+    )
+  })
+
+  it('surfaces a broken document as an error tool result', async () => {
+    // Sent as a document block, this would fail the request and every later one.
+    const path = join(dir, 'report.docx')
+    writeFileSync(path, DOCX.subarray(0, DOCX.length / 2))
+    const result = await agent.tool.read!.invoke({ path }, { recordDirectToolCall: false })
+    expect(result.status).toBe('error')
+    expect(result.content).toHaveLength(1)
+    expect((result.content[0] as { text?: string }).text).toContain(
+      'not a valid docx document: its zip archive is corrupt or truncated'
+    )
+  })
+
+  it('fails an empty document', async () => {
+    const path = join(dir, 'empty.pdf')
+    writeFileSync(path, '')
+    await expect(read.invoke({ path }, ctx())).rejects.toThrow(
+      'its 0 bytes are not a valid pdf document: it has no %PDF- header.'
+    )
   })
 })
