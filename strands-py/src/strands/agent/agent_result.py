@@ -5,9 +5,10 @@ This module defines the AgentResult class which encapsulates the complete respon
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Generic, cast
 
 from pydantic import BaseModel
+from typing_extensions import TypeVar
 
 from ..experimental.checkpoint import Checkpoint
 from ..interrupt import Interrupt
@@ -19,10 +20,14 @@ from ..types.streaming import StopReason
 if TYPE_CHECKING:
     from .invocation_context import InvocationContext
 
+StructuredOutputT = TypeVar("StructuredOutputT", bound=BaseModel, default=BaseModel, covariant=True)
+
 
 @dataclass
-class AgentResult:
+class AgentResult(Generic[StructuredOutputT]):
     """Represents the last result of invoking an agent with a prompt.
+
+    Generic over the structured output model type; a bare ``AgentResult`` is ``AgentResult[BaseModel]``.
 
     Attributes:
         stop_reason: The reason why the agent's processing stopped.
@@ -45,7 +50,7 @@ class AgentResult:
     metrics: EventLoopMetrics
     state: Any
     interrupts: Sequence[Interrupt] | None = None
-    structured_output: BaseModel | None = None
+    structured_output: StructuredOutputT | None = None
     checkpoint: Checkpoint | None = None
     invocation_context: "InvocationContext | None" = field(default=None, repr=False, compare=False)
 
