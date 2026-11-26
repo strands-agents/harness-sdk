@@ -121,9 +121,12 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
     if (context.archive) this._archive = context.archive
     if (!this._conditions.reached(context)) return false
     if (this._target !== '*') return this._applyPerBlock(context)
-    const acted = await this._applyPerMessage(context)
-    if (acted) repairAlternation(context.messages)
-    return acted
+    try {
+      return await this._applyPerMessage(context)
+    } finally {
+      // A failed or cancelled pass can leave a gap mid-removal; the next request would send the history with it.
+      repairAlternation(context.messages)
+    }
   }
 
   /**
