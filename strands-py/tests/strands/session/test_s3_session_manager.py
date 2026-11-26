@@ -1,7 +1,7 @@
 """Tests for S3SessionManager."""
 
 import json
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import boto3
 import pytest
@@ -165,6 +165,45 @@ def test_delete_session(s3_manager, sample_session):
     with pytest.raises(ClientError) as excinfo:
         s3_manager.client.head_object(Bucket=s3_manager.bucket, Key=key)
     assert excinfo.value.response["Error"]["Code"] == "404"
+
+
+def test_delete_nonexistent_session(s3_manager):
+    """Test deleting a session that doesn't exist in S3."""
+    with pytest.raises(SessionException, match="does not exist"):
+        s3_manager.delete_session("nonexistent-session")
+
+
+def test_read_session_invalid_json(s3_manager, sample_session):
+    """Test reading a session whose S3 object is not valid JSON."""
+    key = f"{s3_manager._get_session_path(sample_session.session_id)}session.json"
+    s3_manager.client.put_object(Bucket=s3_manager.bucket, Key=key, Body=b"invalid json content")
+
+    with pytest.raises(SessionException, match="Invalid JSON"):
+        s3_manager.read_session(sample_session.session_id)
+
+
+@pytest.mark.parametrize(
+    ("client_method", "operation", "match"),
+    [
+        ("get_object", lambda manager, session: manager.read_session(session.session_id), "S3 error reading"),
+        ("put_object", lambda manager, session: manager.create_session(session), "Failed to write S3 object"),
+        ("head_object", lambda manager, session: manager.create_session(session), "S3 error checking session"),
+        ("list_objects_v2", lambda manager, session: manager.delete_session(session.session_id), "S3 error deleting"),
+        (
+            "list_objects_v2",
+            lambda manager, session: manager.list_messages(session.session_id, "test-agent"),
+            "S3 error reading messages",
+        ),
+    ],
+    ids=["read_object", "write_object", "check_session_exists", "delete_session", "list_messages"],
+)
+def test_client_error_raises_session_exception(client_method, operation, match, s3_manager, sample_session):
+    """Test that S3 client errors surface as SessionException."""
+    error = ClientError({"Error": {"Code": "AccessDenied", "Message": "Access Denied"}}, client_method)
+
+    with patch.object(s3_manager.client, client_method, side_effect=error):
+        with pytest.raises(SessionException, match=match):
+            operation(s3_manager, sample_session)
 
 
 def test_create_agent(s3_manager, sample_session, sample_agent):
