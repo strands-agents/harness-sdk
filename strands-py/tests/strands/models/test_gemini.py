@@ -1508,7 +1508,6 @@ async def test_stream_request_with_gemini_tools(gemini_client, messages, model_i
     exp_request = {
         "config": {
             "tools": [
-                {"function_declarations": []},
                 {"google_search": {}},
             ]
         },
@@ -1516,6 +1515,35 @@ async def test_stream_request_with_gemini_tools(gemini_client, messages, model_i
         "model": model_id,
     }
     gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+@pytest.mark.parametrize(
+    "gemini_tool",
+    [
+        genai.types.Tool(google_search=genai.types.GoogleSearch()),
+        genai.types.Tool(code_execution=genai.types.ToolCodeExecution()),
+    ],
+)
+@pytest.mark.parametrize("tool_specs", [None, []])
+def test_format_request_tools_gemini_tools_only_has_no_empty_function_declarations(model_id, gemini_tool, tool_specs):
+    model = GeminiModel(model_id=model_id, gemini_tools=[gemini_tool])
+
+    tools = model._format_request_tools(tool_specs)
+
+    assert tools == [gemini_tool]
+    assert all(not getattr(tool, "function_declarations", None) for tool in tools)
+
+
+def test_format_request_tools_function_tools_only(model, tool_spec):
+    tools = model._format_request_tools([tool_spec])
+
+    assert len(tools) == 1
+    assert [declaration.name for declaration in tools[0].function_declarations] == [tool_spec["name"]]
+
+
+def test_format_request_tools_no_tools(model):
+    assert model._format_request_tools(None) is None
+    assert model._format_request_tools([]) is None
 
 
 @pytest.mark.asyncio
