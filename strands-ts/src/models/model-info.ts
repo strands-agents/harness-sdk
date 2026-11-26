@@ -69,7 +69,7 @@ export interface ModelCapabilities {
   readonly deferredToolLoading?: DeferredToolLoading | undefined
   /**
    * Formats the model and provider take in image blocks of a user message, where `jpeg` also covers `jpg`; `[]` when
-   * they take no images. Tool results can take fewer. Check for `undefined`, not falsiness: `[]` is known.
+   * they take no images. Tool results can take fewer. `[]` is known: don't treat an empty list like `undefined`.
    */
   readonly imageFormats?: readonly ImageFormat[] | undefined
   /** Formats the model and provider take in document blocks of a user message; see `imageFormats`. */
@@ -93,7 +93,9 @@ export interface ModelInfo {
 }
 
 function defined<T extends object>(section: T): T | undefined {
-  const entries = Object.entries(section).filter(([, value]) => value !== undefined)
+  const entries = Object.entries(section)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => [key, Array.isArray(value) ? Object.freeze([...value]) : value])
   return entries.length === 0 ? undefined : (Object.freeze(Object.fromEntries(entries)) as T)
 }
 

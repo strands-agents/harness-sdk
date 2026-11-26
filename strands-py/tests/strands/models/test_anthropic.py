@@ -2039,10 +2039,10 @@ def test_model_info_override_sets_the_document_formats(anthropic_client):
     model = AnthropicModel(
         model_id="claude-sonnet-4-6",
         max_tokens=1,
-        model_info=ModelInfo(capabilities=ModelCapabilities(document_formats=("pdf",))),
+        model_info=ModelInfo(capabilities=ModelCapabilities(document_formats=("docx",))),
     )
 
-    assert model.model_info.capabilities.document_formats == ("pdf",)
+    assert model.model_info.capabilities.document_formats == ("docx",)
 
 
 def test_model_info_exposes_the_output_ceiling_from_the_shared_model_info(anthropic_client):

@@ -36,6 +36,7 @@ describe('ModelInfo.merge', () => {
     const merged = ModelInfo.merge({ capabilities: { imageFormats: ['png'] } }, { capabilities: { imageFormats: [] } })
 
     expect(merged.capabilities?.imageFormats).toEqual([])
+    expect(Object.isFrozen(merged.capabilities?.imageFormats)).toBe(true)
   })
 
   it('leaves out sections with nothing known', () => {

@@ -242,6 +242,12 @@ describe('AnthropicModel', () => {
           ?.documentFormats
       ).toEqual(['pdf', 'csv', 'html', 'txt', 'md'])
       expect(
+        Object.isFrozen(
+          new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' }).modelInfo.capabilities
+            ?.documentFormats
+        )
+      ).toBe(true)
+      expect(
         new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-3-opus-20240229' }).modelInfo.capabilities
           ?.documentFormats
       ).toBeUndefined()
@@ -251,9 +257,9 @@ describe('AnthropicModel', () => {
       const model = new AnthropicModel({
         apiKey: 'sk-ant-test',
         modelId: 'claude-sonnet-4-6',
-        modelInfo: { capabilities: { documentFormats: ['pdf'] } },
+        modelInfo: { capabilities: { documentFormats: ['docx'] } },
       })
-      expect(model.modelInfo.capabilities?.documentFormats).toEqual(['pdf'])
+      expect(model.modelInfo.capabilities?.documentFormats).toEqual(['docx'])
     })
 
     it('lets the modelInfo config turn temporary messages off', () => {
