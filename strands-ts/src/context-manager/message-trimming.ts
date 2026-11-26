@@ -9,7 +9,7 @@ import { logger } from '../logging/logger.js'
 import { Message, ToolResultBlock, ToolUseBlock } from '../types/messages.js'
 import type { MessageMetadata, OffloadMethod, TextBlock } from '../types/messages.js'
 import { carriedTokens, offloadPlaceholder } from './placeholder.js'
-import type { Stash } from './stash.js'
+import type { Archive } from './archive.js'
 import type { Model } from '../models/model.js'
 
 /**
@@ -90,7 +90,7 @@ export function withPairs(messages: Message[], toRemove: Message[]): Message[] {
  * Adds a marker as assistant content at the gap left by removed messages.
  *
  * The marker is appended to an assistant message beside the gap, which keeps that message's
- * tracking id and block indices for stash refs, or becomes its own assistant message. It never
+ * tracking id and block indices for archive refs, or becomes its own assistant message. It never
  * joins message 0, and the last message is never removed, so a new marker never ends the history.
  */
 export function insertMarker(messages: Message[], index: number, marker: TextBlock): void {
@@ -146,8 +146,8 @@ function mergeMetadata(earlier?: MessageMetadata, later?: MessageMetadata): Mess
 type PlaceholderText = (removed: Message[]) => Promise<{ text: string; tokens: number } | null>
 
 /**
- * Removes messages with their tool pairs and leaves one placeholder for each contiguous run of them, each stashed
- * under its own reference. A run whose text is null is kept, and a failed stash write leaves the placeholder without
+ * Removes messages with their tool pairs and leaves one placeholder for each contiguous run of them, each archived
+ * under its own reference. A run whose text is null is kept, and a failed archive write leaves the placeholder without
  * a reference. Callers restore alternation once they are done.
  *
  * @returns Whether anything was removed
@@ -158,12 +158,12 @@ export async function removeMessages(
   toRemove: Message[],
   textFor: PlaceholderText,
   method: OffloadMethod,
-  stash: Stash | undefined
+  archive: Archive | undefined
 ): Promise<boolean> {
   let acted = false
   // Last run first, so removing a run leaves the earlier runs' positions unchanged.
   for (const run of splitIntoRuns(messages, withPairs(messages, toRemove)).reverse()) {
-    if (await removeRun(messages, run, textFor, method, stash)) acted = true
+    if (await removeRun(messages, run, textFor, method, archive)) acted = true
   }
   return acted
 }
@@ -174,34 +174,59 @@ async function removeRun(
   run: Message[],
   textFor: PlaceholderText,
   method: OffloadMethod,
-  stash: Stash | undefined
+  archive: Archive | undefined
 ): Promise<boolean> {
   const placeholder = await textFor(run)
   if (placeholder === null) return false
 
-  const start = messages.indexOf(run[0]!)
+  const archiveRef = await archiveRemoved(archive, run, method)
+  const start = runStart(messages, run)
+  if (start === undefined) return false
+  // Archived before the splice and the marker inserted without an await between: a cancellation here would
+  // otherwise leave the run neither in the history nor retrievable.
   messages.splice(start, run.length)
-  const stashRef = await stashRemoved(stash, run, method)
-  insertMarker(messages, start, offloadPlaceholder(method, placeholder.text, stashRef, placeholder.tokens))
+  insertMarker(messages, start, offloadPlaceholder(method, placeholder.text, archiveRef, placeholder.tokens))
   return true
 }
 
 /**
- * The reference a run of removed messages is retrievable under, or undefined when there is no stash or the write
+ * The index `run` starts at, or undefined once `messages` no longer holds it as a contiguous run.
+ *
+ * A pass awaits between selecting a run and removing it, so the run can be displaced or broken up before the
+ * removal reaches it. Removing `run.length` messages from a stale start takes messages nobody selected, and those
+ * are not in the archive entry the run was written to.
+ */
+function runStart(messages: Message[], run: Message[]): number | undefined {
+  const start = messages.indexOf(run[0]!)
+  if (start === -1 || !holdsRun(messages, start, run)) return undefined
+  return start
+}
+
+/**
+ * Whether `messages` still holds `run` as a contiguous run beginning at `start`, by identity.
+ *
+ * @internal
+ */
+export function holdsRun(messages: Message[], start: number, run: Message[]): boolean {
+  return run.every((message, offset) => messages[start + offset] === message)
+}
+
+/**
+ * The reference a run of removed messages is retrievable under, or undefined when there is no archive or the write
  * failed, which leaves the placeholder without a reference rather than keeping content the caller has accounted for.
  *
  * @internal
  */
-export async function stashRemoved(
-  stash: Stash | undefined,
+export async function archiveRemoved(
+  archive: Archive | undefined,
   removed: Message[],
   method: OffloadMethod
 ): Promise<string | undefined> {
-  if (!stash || removed.length === 0) return undefined
+  if (!archive || removed.length === 0) return undefined
   try {
-    return await stash.storeRemoved(removed)
+    return await archive.storeRemoved(removed)
   } catch (error) {
-    logger.warn(`method=<${method}>, error=<${error}> | failed to stash removed messages`)
+    logger.warn(`method=<${method}>, error=<${error}> | failed to archive removed messages`)
     return undefined
   }
 }

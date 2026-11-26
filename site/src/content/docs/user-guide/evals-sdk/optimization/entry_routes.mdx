@@ -1,0 +1,350 @@
+---
+title: Choosing an entry route
+description: Optimize an agent from a Python factory, your own task function, a Strands harness config file, or an exported agent file, and see what each route can't tune.
+sidebar:
+  label: "Choosing an entry route"
+---
+
+The optimizer needs two things from you: a way to build the agent, and a declaration of what
+may change. How you supply them depends on how your agent is defined. There are four
+routes. They run the same search and return the same results; they differ in what they can
+reach.
+
+| Your agent is defined as... | Use | Runs from |
+|---|---|---|
+| A Python function that returns an agent | A tunable factory | Python or the CLI |
+| Anything else you can call from Python | Your own task function and a space | Python or the CLI |
+| A Strands harness config file (JSON) | `--config` and `--tune` | The CLI |
+| An agent file from the strands CLI's `/export` (Python or TypeScript) | `--agent agent.py` or `--agent agent.ts` | The CLI |
+
+**Use a tunable factory if you can.** It's the most direct route to every marker, and,
+like an agent file, it checks every candidate builds before spending a rollout on it.
+Reach for the others when your agent isn't a Python function, or when you'd rather not
+write optimizer code.
+
+All four routes need an [experiment](../how-evaluation-works.md#what-an-evaluation-is-made-of) to evaluate each configuration with: an existing one, or
+a new one with cases from the agent's task and evaluators for what you care about. On the
+command line it's a JSON file written with `experiment.to_file("experiment.json")`.
+
+## A tunable factory
+
+This is the route the [quickstart](quickstart.md) uses: decorate the function that builds
+your agent, then pass it to the optimizer.
+
+```python
+from strands import Agent
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import HelpfulnessEvaluator
+from strands_evals.optimization import Optimizer, TextValue, tunable
+
+
+@tunable(system_prompt=TextValue())
+def create_agent(system_prompt="You are a support agent for Acme Shop."):
+    return Agent(system_prompt=system_prompt, callback_handler=None)
+
+
+experiment = Experiment(
+    cases=[Case(name=f"q{i}", input=f"Customer question {i}") for i in range(20)],
+    evaluators=[HelpfulnessEvaluator()],
+)
+optimizer = Optimizer(experiment, create_agent)
+```
+
+From the CLI, point `--agent` at the factory as `module:attribute` or `path/to/file.py:attribute`:
+
+```bash
+strands-evals optimize run experiment.json --agent agent.py:create_agent
+```
+
+Two optional hooks change how each trial runs. A custom **rollout** runs one case with a
+fresh agent, for multi-turn conversations or a simulated user. An **environment** creates
+per-trial resources, such as a sandbox, and passes them to the factory by name. A tunable
+factory takes both. A config file and an exported agent file take a rollout; an agent file
+accepts an environment too, but its resources don't reach the agent. Your own task
+function takes neither, because the task is the rollout.
+
+**Limitations:**
+
+- Your agent has to be built by one Python function. Everything that varies must be one of
+  its parameters.
+- Usage metrics and trace-level evaluators (Helpfulness, GoalSuccessRate, and the other
+  evaluators that read the trajectory) need a Strands agent running in-process. A
+  non-Strands agent reports no usage, and those evaluators fail on every trial.
+
+## Your own task function
+
+When the agent isn't built by a Python function you can decorate (it's loaded from your own
+config format, say, or runs behind an API), write a `build_task` function instead. The
+optimizer calls it once per candidate with the candidate's values, and it returns the task
+`Experiment` runs on each case:
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from strands_evals import Case, Experiment
+from strands_evals.evaluators import HelpfulnessEvaluator
+from strands_evals.optimization import Float, Optimizer, TextValue
+
+space = {
+    "instructions": TextValue(default="You are a support agent for Acme Shop."),
+    "temperature": Float(0.0, 1.0, default=0.3),
+}
+
+
+def build_task(ctx):
+    def task(case):
+        # Build the agent per case, never once per candidate: a shared agent carries state
+        agent = Agent(
+            system_prompt=ctx.values["instructions"],
+            model=BedrockModel(temperature=ctx.values["temperature"]),
+            callback_handler=None,
+        )
+        return str(agent(case.input))
+
+    return task
+
+
+experiment = Experiment(
+    cases=[Case(name=f"q{i}", input=f"Customer question {i}") for i in range(20)],
+    evaluators=[HelpfulnessEvaluator()],
+)
+optimizer = Optimizer(experiment, build_task=build_task, space=space)
+```
+
+The space uses the same markers as a factory. When the space holds file markers, the
+context's workspace is the candidate's copy of those files, so you can load a whole edited
+config from it.
+
+From the CLI, give both functions as `module:attribute`:
+
+```bash
+strands-evals optimize run experiment.json \
+  --build-task tasks.py:build_task --space tasks.py:space
+```
+
+**Limitations:**
+
+- `Int`, `Float`, and the text markers need an explicit default, because there's no
+  function parameter to read one from. A `OneOf` falls back to its first option.
+- A fresh agent per trial is your job. Nothing checks it, and an agent shared across cases
+  leaks conversation state into the scores.
+- Candidates that can't be built aren't caught before scoring. Each of their trials is
+  scored as an agent failure instead.
+- The task is the rollout, so there's no custom rollout or environment hook. Create
+  per-trial resources inside the task.
+- Usage and trace-level evaluators still need a Strands agent in the same process. A
+  separate process, such as a TypeScript service, reports no usage.
+
+## A Strands harness config file
+
+If your agent is a [Strands harness](../../harness/index.md) portable config, you can
+optimize it with no Python of your own. The config's `instructions` are tuned by default,
+and each `--tune` adds a field by its dotted path:
+
+```json
+{
+  "name": "support",
+  "instructions": "You are a friendly support agent. Chat with the customer.",
+  "model": "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "effort": "auto",
+  "skills": "./skills",
+  "contextManager": "auto",
+  "builtinTools": { "*": false, "subagent": { "maxDepth": 1 } }
+}
+```
+
+```bash
+strands-evals optimize run experiment.json --config agent.json \
+  --tune skills \
+  --tune 'effort=["auto", "off", "low"]' \
+  --tune 'contextManager=["auto", "agentic"]' \
+  --tune 'builtinTools.subagent.maxDepth=int:0..2'
+```
+
+Each `--tune` takes one of four forms:
+
+| Form | Declares |
+|---|---|
+| `--tune PATH` | A text field, rewritten by the text rewriter. `skills` makes each skill's `SKILL.md` tunable |
+| `--tune 'PATH=["a", "b"]'` | A choice among JSON values, lists and objects included; the config's current value is the baseline |
+| `--tune PATH=int:LO..HI` | An integer in an inclusive range |
+| `--tune PATH=float:LO..HI` | A number in an inclusive range |
+
+A choice's options may be lists or objects, which is how you search tool sets. With
+`"builtinTools": ["read"]` in the config, this compares no built-in tools, read only, and
+read plus edit:
+
+```bash
+--tune 'builtinTools=[[], ["read"], ["read", "edit"]]'
+```
+
+Each option is one whole set, not a subset search.
+
+A skill set works the same way. With `skills` written as a list of folders in the config,
+`--tune 'skills=[["./skills/returns"], ["./skills/returns", "./skills/shipping"]]'` chooses
+which skills load. It can't be combined with `--tune skills`, which rewrites the skills,
+because both name the same path. To choose skills and rewrite them in one run, use a
+[tunable factory](tunables.md#choose-which-skills-load).
+
+Pass `--no-tune-instructions` to leave the instructions alone. Every choice and range is
+checked against the harness's own schema before the run starts, so a value no trial could
+use is an error, not a wasted rollout. The diff lands on `agent.json` itself; the file is
+never written.
+
+Each trial builds a fresh harness with an empty session folder and a copy of the memory
+folder, so trials never see each other's state.
+
+**Limitations:**
+
+- **No model parameters.** The config has no temperature field, so temperature can't be
+  tuned here. `model` and `effort` can be choices. Use a tunable factory to tune sampling.
+- **No components.** Choices take JSON values (strings, numbers, lists, objects), never
+  constructed objects. The harness's own switches (`contextManager`, `builtinTools`) are
+  JSON values, but a custom `Offload` pipeline with tuned numbers needs a
+  [tunable factory](tunables.md#tune-context-strategies).
+- **No subagent prompts.** Subagents are module references, so their prompts aren't in the
+  file.
+- **One skills folder.** `--tune skills` works only when `skills` is a single local folder.
+- **The config needs an `instructions` field**, even an empty one, unless you pass
+  `--no-tune-instructions`.
+- **Built-in tools act on this machine.** `shell`, `write`, and `edit` run as configured, and
+  concurrent trials share the working directory. Set a sandbox in the config or turn those
+  tools off.
+- **Resume refuses a changed config.** A killed run whose config file changed since it
+  started can't be resumed, because its trials would mix two agents.
+
+## An exported agent file
+
+When you build an agent in the strands CLI and run `/export`, it writes a project whose
+agent file builds the agent with one <Syntax py="create_harness(...)" ts="createHarness(...)" />
+call. Point `--agent` at that file. The call's arguments are the baseline, and `--tune`
+takes the same forms as for a config file, with paths naming the call's arguments:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    # agent.py
+    from strands_harness import create_harness
+
+    agent = create_harness(
+        name="support",
+        instructions="You are a friendly support agent. Chat with the customer.",
+        model="bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        context_manager="auto",
+    )
+    ```
+
+    ```bash
+    strands-evals optimize run experiment.json --agent agent.py \
+      --tune 'context_manager=["auto", "agentic"]' \
+      --tune 'effort=["auto", "low"]'
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    // agent.ts
+    import { createHarness } from '@strands-agents/harness'
+
+    export const agent = await createHarness({
+      name: 'support',
+      instructions: 'You are a friendly support agent. Chat with the customer.',
+      model: 'bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0',
+      contextManager: 'auto',
+    })
+    ```
+
+    ```bash
+    strands-evals optimize run experiment.json --agent agent.ts \
+      --tune 'contextManager=["auto", "agentic"]' \
+      --tune 'effort=["auto", "low"]'
+    ```
+
+    The optimizer itself is Python, so the command still runs from `strands-evals`. It
+    starts a Node.js worker for the agent file and sends it each trial. The worker returns
+    the agent's output and its traces, so token counts and trace-level evaluators work as
+    they do for a Python agent. You need Node.js 22.18 or later, with
+    `@strands-agents/harness` installed next to the file.
+  </Tab>
+</Tabs>
+
+The file runs again for every trial with the candidate's values, so every trial gets a
+fresh agent. An argument the call leaves out takes the harness's default and is passed
+only when a candidate changes it. Candidates that can't be built are caught before they
+cost a rollout.
+
+**Limitations:**
+
+- **Only <Syntax py="create_harness" ts="createHarness" /> is captured.** A plain Strands
+  `Agent` built directly isn't, because its settings live in other constructors. Write a
+  tunable factory for that.
+- **JSON values only.** Like a config file: no components, no model objects, so no
+  temperature. Lists and objects work, so tool sets can be a choice. `model` is a string here, so it can be a choice.
+- **The harness's own subagents only.** Their prompts aren't arguments of the call.
+- **CLI only.** The Python `Optimizer` still takes a tunable factory.
+- **Option values aren't checked before the run**, unlike a config file's. A value the
+  harness rejects shows up as an invalid candidate.
+- **TypeScript:** a custom rollout gets a stand-in for the agent. Its invoke method asks a
+  fresh agent once; for a multi-turn conversation, open its session and call `turn` once per
+  message, and the same agent answers every turn. Nothing else on the agent is reachable.
+
+## Save a command as a run file
+
+Once a command gets long, keep it in a `.toml` run file and pass the file where the
+experiment file would go. Each key is a flag name without the leading `--`, with `-`
+written as `_`:
+
+```toml
+# runs/triage.toml
+experiment = "../experiment.json"
+max_rollouts = 120
+name = "triage"  # prefix of the run folder's name
+
+[agent]
+factory = "../agent.py:create_agent"
+
+[objective.triage]
+maximize = "Triage"
+
+[objective.tokens]
+minimize = "output_tokens"
+scale = 100
+
+[constraint.latency]
+metric = "seconds"
+at_most = 30
+```
+
+```bash
+strands-evals optimize run runs/triage.toml
+```
+
+The `[agent]` table holds the route:
+
+| Route | `[agent]` keys |
+|---|---|
+| A tunable factory | `factory = "agent.py:create_agent"` |
+| Your own task function | `build_task = "tasks.py:build_task"` and `space = "tasks.py:space"` |
+| A config file | `config = "agent.json"`, and `tune = [...]` with one `--tune` value per entry |
+| An exported agent file | `factory = "agent.py"` (or `"agent.ts"`), and `tune = [...]` |
+
+Paths in the file (`experiment`, `config`, and file paths in `MODULE:ATTR` values) resolve
+against the file's own folder, so the run works from any directory. Each objective and
+constraint is a named table; the name is only a label.
+
+A flag given on the command line wins over the file, so
+`strands-evals optimize run runs/triage.toml --max-rollouts 300` reruns with a bigger
+budget. An unknown key fails before the run starts, and suggests a valid key when one is
+close.
+
+## What every route shares
+
+- **Resume trusts your code.** Resuming re-imports the agent code, rollout, and environment
+  without comparing them, so don't change them between a kill and a resume.
+- **The test split is the unseen-case check.** The search and the pick never read it. Before
+  shipping, also rerun your experiment on a few cases the run never had.
+
+## Next steps
+
+- [Declaring what can change](tunables.md): Every marker, for the factory and task routes
+- [Objectives, constraints, and budget](objectives.md): The same settings on every route
+- [Reading the results](results.md): The run folder and resuming from the CLI

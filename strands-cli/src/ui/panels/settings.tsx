@@ -118,6 +118,8 @@ export function SettingsPicker({
                     {...(hoveredControl ? { hoveredControl } : {})}
                     {...(onControlElement ? { onControlElement } : {})}
                   />
+                ) : row.control?.kind === 'number' ? (
+                  <SettingNumber control={row.control} active={active} />
                 ) : row.control ? (
                   <SettingOptions
                     control={row.control}
@@ -146,6 +148,10 @@ export function SettingsPicker({
                       {row.description}{' '}
                     </Text>
                   </Box>
+                ) : panel.settingsCategory === 'Workspace' ? (
+                  <Text dimColor wrap="truncate-middle">
+                    {row.description}
+                  </Text>
                 ) : null}
               </Box>
             )
@@ -164,7 +170,33 @@ function minimumControlWidth(row: ChatPanelRow): number {
   if (!row.control && row.value) {
     return stringWidth(row.description) + 2
   }
+  if (row.control?.kind === 'number') {
+    return Math.max(stringWidth('Off'), String(row.control.max).length) + NUMBER_FIELD_FRAME_COLUMNS
+  }
   return row.control ? Math.max(...row.control.options.map((option) => stringWidth(option.label))) + 6 : 0
+}
+
+// Both brackets with their inner spaces, and the cursor.
+const NUMBER_FIELD_FRAME_COLUMNS = 5
+
+/** A field that shows a whole number, Off for 0, and a cursor while its row is the active one. */
+export function SettingNumber({
+  control,
+  active = false,
+}: {
+  control: Extract<NonNullable<ChatPanelRow['control']>, { kind: 'number' }>
+  active?: boolean
+}): ReactElement {
+  const { accent } = useTheme()
+  const off = !control.editing && Number(control.value) === 0
+  return (
+    <Box flexShrink={0}>
+      <Text dimColor={!active}>[ </Text>
+      {off ? <Text dimColor>Off</Text> : <Text color={accent}>{control.value}</Text>}
+      {active ? <Text inverse> </Text> : null}
+      <Text dimColor={!active}> ]</Text>
+    </Box>
+  )
 }
 
 function SettingToggle({
@@ -387,6 +419,9 @@ export function SettingsControl({
         </Text>
       </Box>
     )
+  }
+  if (control.kind === 'number') {
+    return <SettingNumber control={control} />
   }
   return (
     <Box flexWrap="wrap" justifyContent="center" flexShrink={1}>

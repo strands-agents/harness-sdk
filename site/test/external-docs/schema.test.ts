@@ -25,9 +25,32 @@ function manifest() {
   }
 }
 
+function expectedManifest(input: ReturnType<typeof manifest>) {
+  return {
+    ...input,
+    pages: input.pages.map((page) => ({
+      ...page,
+      nav: { ...page.nav, group: [page.nav.group] },
+    })),
+  }
+}
+
 describe('external docs schema', () => {
   it('accepts the versioned upstream manifest contract', () => {
-    expect(parseExternalDocsManifest(manifest())).toEqual(manifest())
+    expect(parseExternalDocsManifest(manifest())).toEqual(expectedManifest(manifest()))
+  })
+
+  it('accepts a nested nav.group path for sub-dropdowns', () => {
+    const nested = manifest()
+    nested.pages[0]!.nav.group = ['Using Decider', 'Models'] as unknown as string
+    const parsed = parseExternalDocsManifest(nested)
+    expect(parsed.pages[0]!.nav.group).toEqual(['Using Decider', 'Models'])
+  })
+
+  it('rejects an empty nav.group array', () => {
+    const empty = manifest()
+    empty.pages[0]!.nav.group = [] as unknown as string
+    expect(() => parseExternalDocsManifest(empty)).toThrow(/non-empty string or array/)
   })
 
   it('accepts manifests without the deprecated upstream status', () => {
@@ -40,7 +63,7 @@ describe('external docs schema', () => {
       },
     }
 
-    expect(parseExternalDocsManifest(withoutStatus)).toEqual(withoutStatus)
+    expect(parseExternalDocsManifest(withoutStatus)).toEqual(expectedManifest(withoutStatus))
   })
 
   it('rejects unknown fields and unsupported product status', () => {
@@ -124,6 +147,25 @@ describe('external docs schema', () => {
         ],
       })
     ).toThrow(/without \.git/)
+  })
+
+  it('rejects refs other than main', () => {
+    const config = {
+      schemaVersion: 1,
+      products: [
+        {
+          id: 'strands-box',
+          repository: 'https://github.com/strands-agents/box',
+          ref: 'a'.repeat(40),
+          manifest: 'docs/site-manifest.json',
+          routePrefix: 'docs/user-guide/box/source',
+          navLabel: 'Upstream docs preview',
+          publicationStatus: 'preview',
+        },
+      ],
+    }
+
+    expect(() => parseExternalDocsConfig(config)).toThrow(/must be "main"/)
   })
 
   it('rejects an unsupported site publication status', () => {

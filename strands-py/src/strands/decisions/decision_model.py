@@ -79,7 +79,7 @@ class DecisionModel(abc.ABC):
             }
             if result.usage is not None:
                 if invocation_context is not None:
-                    invocation_context._record_usage(result.usage)
+                    invocation_context._record_usage(result.usage, *self._usage_model_key(result))
                 attributes["gen_ai.usage.input_tokens"] = result.usage["inputTokens"]
                 attributes["gen_ai.usage.output_tokens"] = result.usage["outputTokens"]
             span.set_attributes(attributes)
@@ -92,6 +92,10 @@ class DecisionModel(abc.ABC):
             raise
         finally:
             span.end()
+
+    def _usage_model_key(self, result: DecisionResult) -> tuple[str | None, str | None]:
+        """The provider name and model id ``result``'s usage is recorded under; ``None`` for what is not known."""
+        return result.metadata.provider_name, result.metadata.model_id
 
     @abc.abstractmethod
     async def _ask(self, state: DecisionInput, questions: dict[str, Question], **kwargs: Any) -> DecisionResult:
@@ -123,9 +127,9 @@ def _validate_choices(question_id: str, question: Question) -> None:
     choices = question["choices"]
     if choices == "boolean":
         return
-    if not choices:
-        raise ValueError(f"question id=<{question_id}> | choices must be a non-empty list of strings")
-    if any(not choice for choice in choices):
+    if not isinstance(choices, list) or not choices:
+        raise ValueError(f"question id=<{question_id}> | choices must be 'boolean' or a non-empty list of strings")
+    if any(not isinstance(choice, str) or not choice for choice in choices):
         raise ValueError(f"question id=<{question_id}> | choices must be non-empty strings")
     if len(set(choices)) != len(choices):
         raise ValueError(f"question id=<{question_id}> | choices must be unique")

@@ -99,8 +99,7 @@ export interface HarnessAgentOptions extends Omit<
    * (built-in tools, `tools`, plugins); a collision throws at construction. To replace a built-in,
    * drop it first via `builtinTools` so the name is free. Consumer tools also join the `subagent`
    * tool's narrowable set, so a delegate can be granted them too; a connected `McpClient` passed here
-   * is offered on its `mcp_servers` axis under its `clientName` (set `applicationName`), like the
-   * servers loaded from `mcpServers`; an unnamed or same-named client is warned about and left off it.
+   * is always handed to delegates (shared, not reconnected), like the servers loaded from `mcpServers`.
    */
   tools?: ToolList
   /**
@@ -327,6 +326,7 @@ function resolveBackgroundTasks(
 
   return {
     ...policy,
+    manageToolName: policy.manageToolName ?? 'manage_background_task',
     ...(policy.agentic !== undefined ? { agentic: omitForced(policy.agentic) } : {}),
     ...(always.length > 0 || policy.always !== undefined ? { always } : {}),
     ...(policy.never !== undefined ? { never: omitForced(policy.never) } : {}),
@@ -454,7 +454,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
         storage: { snapshot: new SessionFileStorage(sessionDir) },
         saveLatestOn: 'message',
       })
-      // The context manager's stash goes to files, not into the snapshot rewritten on every message. It
+      // The context manager's archive goes to files, not into the snapshot rewritten on every message. It
       // lives in the session's own folder because each folder under the session dir is read as a session.
       storage ??= new LocalFileStorage(join(sessionDir, sessionId))
     }

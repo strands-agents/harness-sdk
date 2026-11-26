@@ -26,13 +26,18 @@ import { createDiffPreview } from './file-changes.js'
 import { EXA_WEB_SEARCH_WARNING, builtinToolChoices, withBuiltinToolChoice } from './tools.js'
 import { type ChatBuiltinToolsRuntime, type ChatDiffPreview } from './types.js'
 
+export type WorkspaceAction = 'edit'
+
 export type SetupChange = {
+  reloadedFiles?: readonly string[]
+  profileSaved?: true
   conversationId?: string
   onFailure?: (message: string) => Promise<void>
 } & (
   | { configuration: SetupConfiguration; profile?: HarnessAgentConfig; agentProject?: string }
   | { configuration?: never; profile: HarnessAgentConfig; agentProject?: never }
   | { configuration?: never; profile?: never; agentProject: string }
+  | { configuration?: never; profile?: never; agentProject?: never; workspaceAction: WorkspaceAction }
 )
 
 export type RequestSetup = (change?: SetupChange) => void

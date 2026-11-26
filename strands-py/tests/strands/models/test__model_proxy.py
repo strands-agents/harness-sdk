@@ -5,6 +5,7 @@ import unittest.mock
 
 import pytest
 
+from strands.agent.invocation_context import ModelUsage, _create_invocation_context
 from strands.models._model_proxy import ModelProxy
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
@@ -122,6 +123,18 @@ def test_prepare_passes_injected_blocks_through_to_a_model_that_takes_temporary_
 
 
 @pytest.mark.asyncio
+async def test_stream_adds_the_call_usage_under_the_model_it_wraps(alist):
+    usage = {"inputTokens": 3, "outputTokens": 4, "totalTokens": 7}
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "done"}]}], [usage])
+    model.get_config = lambda: {"model_id": "model-a"}
+    invocation_context = _create_invocation_context()
+
+    await alist(ModelProxy(model).stream([user({"text": "go"})], None, None, invocation_context=invocation_context))
+
+    assert invocation_context.usage_by_model == [ModelUsage(provider_name=None, model_id="model-a", usage=usage)]
+
+
+@pytest.mark.asyncio
 async def test_count_tokens_counts_the_messages_it_would_send():
     model = unittest.mock.MagicMock()
     model.count_tokens = unittest.mock.AsyncMock(return_value=7)
@@ -169,6 +182,23 @@ def test_prepare_passes_messages_without_an_injected_block_through_as_they_are(m
     tru_messages, _ = ModelProxy(model)._prepare(messages)
 
     assert tru_messages is messages
+
+
+def test_prepare_leaves_an_offload_placeholders_bookkeeping_out_of_the_request(model):
+    placeholder = {"text": "[Dropped: ~5 tokens] [ref: tool-1]", "offloaded": {"method": "drop", "ref": "tool-1"}}
+    tool_result = {"toolUseId": "tool-1", "status": "success", "content": [dict(placeholder)]}
+    messages = [user(dict(placeholder), {"toolResult": tool_result})]
+    original = copy.deepcopy(messages)
+
+    sent, _ = ModelProxy(model)._prepare(messages)
+
+    assert sent == [
+        user(
+            {"text": "[Dropped: ~5 tokens] [ref: tool-1]"},
+            {"toolResult": {**tool_result, "content": [{"text": "[Dropped: ~5 tokens] [ref: tool-1]"}]}},
+        )
+    ]
+    assert messages == original
 
 
 @pytest.mark.parametrize(

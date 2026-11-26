@@ -144,15 +144,25 @@ describe('ToolRegistry', () => {
   })
 
   describe('swap', () => {
-    it('replaces the current tools with the next ones and keeps every other tool', () => {
-      const other = createMockTool({ name: 'other' })
+    it('replaces the current tools in place and keeps every other tool', () => {
+      const [before, after] = [createMockTool({ name: 'before' }), createMockTool({ name: 'after' })]
       const [oldA, oldB] = [createMockTool({ name: 'tool-a' }), createMockTool({ name: 'tool-b' })]
       const [newB, newC] = [createMockTool({ name: 'tool-b' }), createMockTool({ name: 'tool-c' })]
-      registry.add([other, oldA, oldB])
+      registry.add([before, oldA, oldB, after])
 
       expect(registry.swap([oldA, oldB], [newB, newC])).toEqual([])
 
-      expect(registry.list()).toEqual([other, newB, newC])
+      expect(registry.list()).toEqual([before, newB, newC, after])
+    })
+
+    it('inserts new tools before an anchor when no current tools remain', () => {
+      const [before, after] = [createMockTool({ name: 'before' }), createMockTool({ name: 'after' })]
+      const next = createMockTool({ name: 'next' })
+      registry.add([before, after])
+
+      expect(registry.swap([], [next], after)).toEqual([])
+
+      expect(registry.list()).toEqual([before, next, after])
     })
 
     it.each([
@@ -283,6 +293,21 @@ describe('ToolRegistry', () => {
       const tool2 = createMockTool({ name: 'tool-2' })
       registry.add([tool1, tool2])
       expect(registry.list()).toStrictEqual([tool1, tool2])
+    })
+  })
+
+  describe('toolSpecs', () => {
+    it.each([
+      { options: undefined, expected: ['zeta', 'alpha', 'Mike'] },
+      { options: { sortToolSpecs: false }, expected: ['zeta', 'alpha', 'Mike'] },
+      { options: { sortToolSpecs: true }, expected: ['Mike', 'alpha', 'zeta'] },
+    ])('returns specs in order $expected for options $options (#5700)', ({ options, expected }) => {
+      const tools = ['zeta', 'alpha', 'Mike'].map((name) =>
+        createMockTool({ name, toolSpec: { name, description: 'd', inputSchema: { type: 'object', properties: {} } } })
+      )
+      registry = new ToolRegistry(tools, options)
+      expect(registry.toolSpecs().map((spec) => spec.name)).toStrictEqual(expected)
+      expect(registry.list()).toStrictEqual(tools)
     })
   })
 

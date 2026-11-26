@@ -52,6 +52,18 @@ export function PanelHelpFooter({
   )
 }
 
+function devErrorPanelKeys(panel: Extract<ChatPanel, { kind: 'error' }>, width: number, scrollable: boolean): string {
+  const narrow = width < 60
+  const keys = !scrollable
+    ? 'Ctrl+Y copy error · Esc close'
+    : narrow
+      ? '↑↓ scroll · Ctrl+Y copy · Esc close'
+      : '↑↓ / PgUp / PgDn scroll · Ctrl+Y copy error · Esc close'
+  if (panel.modelSetup) return `${narrow ? 's set up' : 's set up a model'} · ${keys}`
+  if (!panel.fixDirectory) return keys
+  return `${narrow ? 'f fix' : 'f fix with Strands'} · ${keys}`
+}
+
 function panelHelpKeys(panel: ChatPanel, width: number, scrollable: boolean): string {
   if (panel.kind === 'agents' && panel.renameInput) return 'Enter save · Esc cancel'
   if (panel.kind === 'permission') {
@@ -60,6 +72,9 @@ function panelHelpKeys(panel: ChatPanel, width: number, scrollable: boolean): st
       : width < 64
         ? '↑↓←→ · Enter choose · Esc deny'
         : '↑↓←→ · Enter choose · PgUp/PgDn scroll · Esc deny once'
+  }
+  if (panel.kind === 'error' && (panel.copyable || panel.fixDirectory || panel.modelSetup)) {
+    return devErrorPanelKeys(panel, width, scrollable)
   }
   if (panel.kind === 'error' && scrollable) {
     return width < 53 ? '↑↓ scroll · Esc close' : '↑↓ / PgUp / PgDn scroll · Esc close'
@@ -83,6 +98,9 @@ function panelHelpKeys(panel: ChatPanel, width: number, scrollable: boolean): st
   }
   switch (panel.kind) {
     case 'settings':
+      if (panel.rows.some((row) => row.control?.kind === 'number' && row.control.editing)) {
+        return width < 42 ? 'Enter save · Esc cancel' : '0-9 type a whole number · Enter save · Esc cancel'
+      }
       return width < 42 ? '↑↓ move · ←→ change · Esc back' : '↑↓ · ←→ change · Tab section · Esc back'
     case 'help':
       return width < 53

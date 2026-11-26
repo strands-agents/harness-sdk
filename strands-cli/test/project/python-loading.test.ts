@@ -14,8 +14,11 @@ import { PythonBackend, type PythonOptions } from '../../src/project/python.js'
 import { createPythonChat } from '../../src/ui/chat/runtime.js'
 import { exportSourceProject } from '../../src/project/export.js'
 import { watchAgentProject } from '../../src/project/watch.js'
+import { bindExistingAgent } from '../../src/dev/create.js'
 import type { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { pythonExecutable as python } from '../fixtures/python-runtime.js'
+import { pythonEnvironment } from '../fixtures/python-runtime.js'
+import { temporaryDirectory } from '../fixtures/tempdir.js'
 
 const baseSource = `from strands import tool
 from strands_harness import create_harness
@@ -63,7 +66,7 @@ describe.skipIf(!existsSync(python))('Python source loading', () => {
     await Promise.all(chats.splice(0).map((chat) => chat.dispose()))
     vi.unstubAllEnvs()
     await rm(root, { recursive: true, force: true })
-  })
+  }, 30_000)
 
   async function open(authored: string | Uint8Array, options: PythonOptions = {}): Promise<PythonBackend> {
     const entrypoint = join(root, 'agent.py')
@@ -126,7 +129,7 @@ describe.skipIf(!existsSync(python))('Python source loading', () => {
       'memory=MemoryManager(stores=[FileMemoryStore(name="private", storage=storage, extraction=False)], injection=False)',
     ],
     ['session storage', 'session=SnapshotSessionManager(session_id="private", storage=storage)'],
-    ['context stash', 'context_manager=ContextManager(stash={"storage": storage})'],
+    ['context archive', 'context_manager=ContextManager(archive={"storage": storage})'],
     ['context offloader', 'plugins=[ContextOffloader(storage=storage)]'],
   ])(
     'refuses exports with unrecognized %s without preventing chat',
@@ -139,7 +142,7 @@ describe.skipIf(!existsSync(python))('Python source loading', () => {
         `from strands.memory import MemoryManager
 from strands.session import SnapshotSessionManager
 from strands.storage import LocalFileStorage
-from strands.experimental.context_manager import ContextManager
+from strands.context_manager import ContextManager
 from strands.vended_memory_stores.file_memory_store import FileMemoryStore
 from strands.vended_memory_stores.test_memory_store import TestMemoryStore
 from strands.vended_plugins.context_offloader import ContextOffloader
@@ -187,6 +190,90 @@ ${(name === 'memory store'
     30_000
   )
 
+  it('shouldLeaveTheDevWorkspaceOutOfExportsWhenItIsInsideTheProject', { timeout: 30_000 }, async () => {
+    const entrypoint = join(root, 'agent.py')
+    await writeFile(entrypoint, factorySource)
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, entrypoint)
+    await writeFile(join(directory, 'tmp', 'sentinel.txt'), 'WORKSPACE SENTINEL')
+    const archiveDirectory = await mkdtemp(join(tmpdir(), 'strands-dev-export-'))
+    const archive = join(archiveDirectory, 'agent.zip')
+    const chat = await createPythonChat(
+      entrypoint,
+      CliConfigStore.memory(),
+      { cwd: root, devWorkspace: directory, prepared: true },
+      AbortSignal.timeout(15_000),
+      vi.fn()
+    )
+    chats.push(chat)
+    try {
+      await chat.submit(`/export python "${archive}"`)
+
+      const names = Object.keys(unzipSync(await readFile(archive)))
+      expect(names.some((name) => name.endsWith('agent.py'))).toBe(true)
+      expect(names.filter((name) => name.includes('strands-dev'))).toEqual([])
+    } finally {
+      await rm(archiveDirectory, { recursive: true, force: true })
+    }
+  })
+
+  it('shouldOfferOnlyTheDevCommandsAndNotTheDevSkillsWhenADevChatListsSlashCommands', { timeout: 30_000 }, async () => {
+    const entrypoint = join(root, 'agent.py')
+    await writeFile(entrypoint, factorySource)
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, entrypoint)
+    const devSkills = ['background-evals', 'strands-evals']
+    const chat = await createPythonChat(
+      entrypoint,
+      CliConfigStore.memory(),
+      { cwd: root, devWorkspace: directory, prepared: true },
+      AbortSignal.timeout(15_000),
+      vi.fn()
+    )
+    chats.push(chat)
+    const listed = (input: string): string[] => chat.commandAssistance(input)?.completions.map(({ name }) => name) ?? []
+
+    await chat.submit('/skills')
+
+    await vi.waitFor(() => expect(chat.getSnapshot().panel?.title).toMatch(/^Skills \(\d+\)$/))
+    expect(chat.getSnapshot().panel?.rows.map(({ label }) => label)).toEqual(expect.arrayContaining(devSkills))
+    expect(listed('/')).toEqual(expect.arrayContaining(['experiment', 'optimize']))
+    expect(listed('/')).not.toContain('evaluate')
+    expect(listed('/').filter((name) => devSkills.includes(name))).toEqual([])
+    expect(listed('/opt')).toEqual(['optimize'])
+    expect(chat.actionableCommandToken('/background-evals')).toBeUndefined()
+  })
+
+  it('shouldTurnOffTheCustomSessionManagerWhenADevChatOpensTheAgent', { timeout: 30_000 }, async () => {
+    const entrypoint = join(root, 'agent.py')
+    await writeFile(
+      entrypoint,
+      `from strands.session import SnapshotSessionManager
+from strands.storage import LocalFileStorage
+${factorySource.replace('"session": False,', '"session": False, "session_manager": SnapshotSessionManager("own", storage=LocalFileStorage("own-sessions")),')}`
+    )
+    const directory = join(root, 'strands-dev')
+    await bindExistingAgent(directory, entrypoint)
+    const config = CliConfigStore.memory()
+    await config.setPermissionMode('bypassPermissions')
+    const chat = await createPythonChat(
+      entrypoint,
+      config,
+      { cwd: root, devWorkspace: directory, prepared: true },
+      AbortSignal.timeout(15_000),
+      vi.fn()
+    )
+    chats.push(chat)
+
+    await chat.submit('{"tool":"status"}')
+
+    expect(chat.getSnapshot().notices.map(({ text }) => text)).toContain(
+      'Dev deactivated the custom session manager of this agent in this chat. Thus the chat cannot write into the stores of the agent. Dev does not save this chat.'
+    )
+    expect(JSON.stringify(chat.getSnapshot().completedTurns)).toContain('Turn complete.')
+    expect(existsSync(join(root, 'own-sessions'))).toBe(false)
+  })
+
   it.each([
     '{"dir": "custom-memory"}',
     'MemoryManager(stores=[FileMemoryStore(name="private", storage=LocalFileStorage("custom-memory").namespace(""), writable=False)], injection=False)',
@@ -228,50 +315,50 @@ ${baseSource.replace('"memory": False', `"memory": ${memory}`)}`
   })
 
   it.each([false, true])(
-    'excludes context stash storage from exports with a custom namespace=%s',
+    'excludes context archive storage from exports with a custom namespace=%s',
     { timeout: 30_000 },
     async (namespaced) => {
       await writeFile(join(root, 'public.txt'), 'PUBLIC SOURCE')
-      const backend = await open(`from strands.experimental.context_manager import ContextManager
+      const backend = await open(`from strands.context_manager import ContextManager
 from strands.storage import LocalFileStorage
 ${baseSource
   .replace(
     'def build(**overrides):',
     `@tool
-async def stash_note(note: str) -> str:
-    """Save content in the context stash.
+async def archive_note(note: str) -> str:
+    """Save content in the context archive.
 
     Args:
         note: Private content to store.
     """
-    await agent.context_manager.stash.store("private-note", 0, note.encode())
+    await agent.context_manager.archive.store("private-note", 0, note.encode())
     return "saved"
 
 def build(**overrides):`
   )
-  .replace('"tools": [status]', '"tools": [status, stash_note]')
+  .replace('"tools": [status]', '"tools": [status, archive_note]')
   .replace(
     '"context_manager": False',
-    `"context_manager": ContextManager(stash={"storage": LocalFileStorage("custom-stash")${namespaced ? '.namespace("")' : ''}})`
+    `"context_manager": ContextManager(archive={"storage": LocalFileStorage("custom-archive")${namespaced ? '.namespace("")' : ''}})`
   )}`)
       for await (const _event of backend.stream(
-        JSON.stringify({ tool: 'stash_note', input: { note: 'PRIVATE STASH SENTINEL' } })
+        JSON.stringify({ tool: 'archive_note', input: { note: 'PRIVATE ARCHIVE SENTINEL' } })
       )) {
         // Drain the actual tool turn before exporting its persisted state.
       }
-      const privateDirectory = join(root, 'custom-stash', ...(namespaced ? [] : ['context']))
+      const privateDirectory = join(root, 'custom-archive', ...(namespaced ? [] : ['context']))
       expect(backend.privatePaths).toContain(privateDirectory)
       const stored = (await readdir(privateDirectory, { recursive: true })).find((name) =>
         name.endsWith('private-note_0')
       )
       expect(stored).toBeDefined()
-      expect(await readFile(join(privateDirectory, stored!), 'utf8')).toBe('PRIVATE STASH SENTINEL')
+      expect(await readFile(join(privateDirectory, stored!), 'utf8')).toBe('PRIVATE ARCHIVE SENTINEL')
       const project = { root, entrypoint: join(root, 'agent.py'), language: 'python' as const }
       const archive = join(root, '.agent', 'export.zip')
       await exportSourceProject(project, 'Private context', 'python', backend.privatePaths, archive)
       const files = unzipSync(await readFile(archive))
       expect(Buffer.from(files['public.txt']!).toString()).toBe('PUBLIC SOURCE')
-      expect(Object.values(files).some((contents) => Buffer.from(contents).includes('PRIVATE STASH SENTINEL'))).toBe(
+      expect(Object.values(files).some((contents) => Buffer.from(contents).includes('PRIVATE ARCHIVE SENTINEL'))).toBe(
         false
       )
       expect(Object.keys(files).some((name) => name.includes('private-note'))).toBe(false)
@@ -443,8 +530,58 @@ def build(**overrides):`
       await current.submit('/fork')
       expect((await current.captureConversations()).activeId).toBe('agent-3')
     },
-    30_000
+    60_000
   )
+
+  // https://github.com/strands-agents/harness-sdk/issues/6224
+  it.each(['uninterrupted', 'allow', 'deny'])('reports per-turn usage with %s tool calls', async (permission) => {
+    const backend = await open(
+      baseSource.replace(
+        'agent = build()',
+        `
+from strands.hooks import BeforeToolCallEvent
+
+class UsageModel(SourceReloadModel):
+    async def stream(self, *args, **kwargs):
+        async for event in super().stream(*args, **kwargs):
+            if "metadata" in event:
+                event["metadata"]["usage"] = {
+                    "inputTokens": 7, "outputTokens": 3, "totalTokens": 10,
+                    "cacheReadInputTokens": 2, "cacheWriteInputTokens": 1,
+                }
+            yield event
+
+agent = build(model=UsageModel())
+
+def approve(event):
+    if not event.interrupt("approval", "Allow this tool?"):
+        event.cancel_tool = "Tool denied"
+
+${permission === 'uninterrupted' ? '' : 'agent.hooks.add_callback(BeforeToolCallEvent, approve)'}
+`
+      )
+    )
+    let approvals = 0
+    for (let turnIndex = 0; turnIndex < 2; turnIndex++) {
+      const stream = backend.stream(JSON.stringify({ tool: 'status' }))
+      let next = await stream.next()
+      while (!next.done) {
+        if (next.value.type === 'permission') {
+          approvals++
+          backend.respondPermission(next.value.request.id, permission)
+        }
+        next = await stream.next()
+      }
+      expect(next.value.usage).toEqual({
+        inputTokens: 14,
+        outputTokens: 6,
+        totalTokens: 20,
+        cacheReadInputTokens: 4,
+        cacheWriteInputTokens: 2,
+      })
+    }
+    expect(approvals).toBe(permission === 'uninterrupted' ? 0 : 2)
+  })
 
   it('reports the effective context composition for imported Python agents', async () => {
     const backend = await open(
@@ -892,6 +1029,35 @@ agent = create_agent()`
     expect(backend.name).toBe('Generated')
   })
 
+  it.each([
+    ['from strands_harness import create_harness as make_harness', 'make_harness'],
+    ['import strands_harness as harness', 'harness.create_harness'],
+    ['import strands_harness', 'strands_harness.create_harness'],
+  ])('shouldReconstructTheAgentInADevChatWhenTheDirectCallUses %s', { timeout: 30_000 }, async (binding, callee) => {
+    const authored = baseSource
+      .replace('from strands_harness import create_harness', binding)
+      .replace('def build(**overrides):', 'def build_options():')
+      .replace('    options.update(overrides)\n    return create_harness(**options)', '    return options')
+      .replace('agent = build()', `agent = ${callee}(**build_options())`)
+    const backend = await open(authored, { overrides: { name: 'Generated', session: false }, devWorkspace: root })
+
+    expect(backend.reconstructable()).toBe(true)
+    await backend.clear()
+    expect(backend.name).toBe('Generated')
+  })
+
+  it('shouldNotReconstructAnAliasedDirectCallOutsideADevChat', async () => {
+    const authored = baseSource
+      .replace('from strands_harness import create_harness', 'import strands_harness as harness')
+      .replace('def build(**overrides):', 'def build_options():')
+      .replace('    options.update(overrides)\n    return create_harness(**options)', '    return options')
+      .replace('agent = build()', 'agent = harness.create_harness(**build_options())')
+
+    await expect(open(authored, { overrides: { name: 'Generated', session: false } })).rejects.toThrow(
+      'recreation controls are unavailable'
+    )
+  })
+
   it.each(['bom-crlf', 'latin1-cookie'])('loads non-ASCII %s source without changing its bytes', async (encoding) => {
     const text = `${baseSource}\nagent.name = "café"\n`
     const authored =
@@ -903,4 +1069,44 @@ agent = create_agent()`
     expect(backend.name).toBe('café')
     expect(await readFile(join(root, 'agent.py'))).toEqual(authored)
   })
+})
+
+describe.skipIf(!existsSync(python))('Python installed package loading', () => {
+  const backends: PythonBackend[] = []
+  afterEach(async () => {
+    await Promise.all(backends.splice(0).map((backend) => backend.dispose()))
+    vi.unstubAllEnvs()
+  })
+
+  it('shouldImportTheRealPackageWhenAnInstalledEntrypointUsesSrcLayout', async () => {
+    const root = await temporaryDirectory()
+    const sourceRoot = join(root, 'src')
+    const packageRoot = join(sourceRoot, 'refund_desk')
+    await mkdir(packageRoot, { recursive: true })
+    await symlink(pythonEnvironment, join(root, '.venv'), 'junction')
+    await writeFile(join(packageRoot, '__init__.py'), '')
+    await writeFile(join(packageRoot, 'tools.py'), 'NAME = "Refund desk package"\n')
+    await copyFile(new URL('../fixtures/source-reload-model.py', import.meta.url), join(packageRoot, 'model.py'))
+    const source = `from strands_harness import create_harness
+from refund_desk.tools import NAME
+from .model import SourceReloadModel
+agent = create_harness(name=NAME, model=SourceReloadModel(), memory=False, session=False, skills=False, builtin_tools=[], builtin_plugins=[], context_manager=False, background_tasks=False)
+`
+    const entrypoint = join(packageRoot, 'agent.py')
+    await writeFile(entrypoint, source)
+    vi.stubEnv('PYTHONPATH', sourceRoot)
+    vi.stubEnv('PYTHONDONTWRITEBYTECODE', '1')
+    vi.stubEnv('AWS_EC2_METADATA_DISABLED', 'true')
+
+    const backend = await PythonBackend.open(
+      { root, entrypoint, language: 'python' },
+      CliConfigStore.memory(),
+      { cwd: root, devWorkspace: root, prepared: true },
+      AbortSignal.timeout(20000)
+    )
+    backends.push(backend)
+
+    expect(backend.name).toBe('Refund desk package')
+    expect(await readFile(entrypoint, 'utf8')).toBe(source)
+  }, 25000)
 })

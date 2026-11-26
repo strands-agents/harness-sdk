@@ -9,6 +9,12 @@ sourceLinks:
   - path: strands-py/src/strands/decisions/types.py
   - path: strands-ts/src/decisions/decision-model.ts
   - path: strands-ts/src/decisions/types.ts
+  - path: strands-py/src/strands/decisions/typesafe_decision_model.py
+  - path: strands-py/src/strands/decisions/decisions_api_decision_model.py
+  - path: strands-py/src/strands/decisions/sagemaker_decision_model.py
+  - path: strands-ts/src/decisions/typesafe-decision-model.ts
+  - path: strands-ts/src/decisions/decisions-api-decision-model.ts
+  - path: strands-ts/src/decisions/sagemaker.ts
 ---
 
 To change what answers your questions, you change the decision model class. Every class
@@ -20,6 +26,9 @@ your code stays as it is.
 | Decision model | Class | Answers with | Reports |
 | --- | --- | --- | --- |
 | [LLM decision model](llm.mdx) | `LLMDecisionModel` | Any model provider | Latency, token usage |
+| [TypeSafe Jev](typesafe.mdx) | `TypeSafeDecisionModel` | TypeSafe's hosted Jev model | Latency, per-answer confidence, token usage when the provider returns it |
+| [Decisions API](decisions-api.mdx) | `DecisionsAPIDecisionModel` | A decision model hosted on decisionapi.net | Latency, per-answer confidence, token usage when the provider returns it |
+| [Amazon SageMaker AI](sagemaker.mdx) | `SageMakerDecisionModel` | A decision model deployed to your SageMaker AI real-time endpoint | Latency, per-answer confidence, token usage when the endpoint returns it |
 
 ## Custom decision models
 

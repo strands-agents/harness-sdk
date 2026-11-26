@@ -1529,6 +1529,143 @@ def test__stream_switch_content(model, new_data_type, prev_data_type, expected_c
     assert data_type == expected_data_type
 
 
+_OPENAI_URL = "https://api.openai.com/v1/"
+_MANTLE_URL = "https://bedrock-mantle.us-east-1.api.aws/openai/v1/"
+_PROXY_URL = "http://localhost:4000/v1/"
+
+
+@pytest.fixture
+def stream_request(openai_client, agenerator, alist, messages, tool_specs):
+    """Stream once and return the request the client was sent."""
+
+    async def stream_request(base_url, model_id, params=None, with_tools=True):
+        if base_url:
+            openai_client.base_url = httpx.URL(base_url)
+        mock_delta = unittest.mock.Mock(content=None, tool_calls=None, reasoning_content=None)
+        mock_events = [
+            unittest.mock.Mock(choices=[unittest.mock.Mock(finish_reason="stop", delta=mock_delta)]),
+            unittest.mock.Mock(usage=None),
+        ]
+        openai_client.chat.completions.create = unittest.mock.AsyncMock(return_value=agenerator(mock_events))
+        model = OpenAIModel(model_id=model_id, params=params)
+        await alist(model.stream(messages, tool_specs if with_tools else None))
+        return openai_client.chat.completions.create.call_args.kwargs
+
+    return stream_request
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("base_url", "model_id"),
+    [
+        (_OPENAI_URL, "gpt-6-sol"),
+        ("https://API.OPENAI.COM:443/v1/", "gpt-6-sol"),
+        (_MANTLE_URL, "openai.gpt-6.1-terra"),
+    ],
+)
+async def test_stream_turns_reasoning_off_when_the_model_takes_tools_only_without_it(
+    stream_request, base_url, model_id, messages, tool_specs
+):
+    with pytest.warns(UserWarning, match=f"model_id=<{model_id}> .* sending reasoning_effort='none'"):
+        tru_request = await stream_request(base_url, model_id)
+    exp_request = {**OpenAIModel(model_id=model_id).format_request(messages, tool_specs), "reasoning_effort": "none"}
+
+    assert tru_request == exp_request
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("base_url", "model_id", "params", "with_tools"),
+    [
+        (_OPENAI_URL, "gpt-6-sol", None, False),
+        (_OPENAI_URL, "gpt-6-sol", {"reasoning_effort": "none"}, True),
+        (_OPENAI_URL, "gpt-6-sol", {"reasoning_effort": "low"}, True),
+        (_OPENAI_URL, "gpt-6-astra", None, True),
+        (_OPENAI_URL, "gpt-6.1-sol", {"reasoning_effort": "none"}, True),
+        (_MANTLE_URL, "openai.gpt-6.1-sol", None, True),
+        (_OPENAI_URL, "gpt-5.4", {"reasoning_effort": "low"}, True),
+        (_PROXY_URL, "gpt-6-sol", None, True),
+        ("https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/", "openai.gpt-6.1-terra", None, True),
+        ("https://api.openai.com.evil.example/v1/", "gpt-6-sol", None, True),
+        (None, "gpt-6-sol", None, True),
+    ],
+)
+async def test_stream_sends_the_request_as_formatted_unless_it_turns_reasoning_off(
+    stream_request, base_url, model_id, params, with_tools, messages, tool_specs, recwarn
+):
+    tru_request = await stream_request(base_url, model_id, params, with_tools)
+    exp_request = OpenAIModel(model_id=model_id, params=params).format_request(
+        messages, tool_specs if with_tools else None
+    )
+
+    assert tru_request == exp_request
+    assert not [warning for warning in recwarn if "accepts tools" in str(warning.message)]
+
+
+def _api_error(error_type, param):
+    """An OpenAI error with the body OpenAI and Bedrock Mantle send for a rejected request."""
+    return error_type(
+        message="Function tools with reasoning_effort are not supported",
+        response=unittest.mock.MagicMock(),
+        body={"message": "Function tools with reasoning_effort are not supported", "param": param},
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("base_url", "model_id", "params"),
+    [
+        (_OPENAI_URL, "gpt-6-astra", None),
+        (_OPENAI_URL, "gpt-6.1-sol", {"reasoning_effort": "none"}),
+        (_MANTLE_URL, "openai.gpt-6.1-sol", None),
+    ],
+)
+async def test_stream_points_to_the_responses_api_when_tools_are_rejected_for_a_model_that_takes_none(
+    openai_client, messages, tool_specs, alist, base_url, model_id, params
+):
+    error = _api_error(openai.BadRequestError, "reasoning_effort")
+    openai_client.base_url = httpx.URL(base_url)
+    openai_client.chat.completions.create.side_effect = error
+    model = OpenAIModel(model_id=model_id, params=params)
+
+    with pytest.raises(openai.BadRequestError) as exc_info:
+        await alist(model.stream(messages, tool_specs))
+
+    assert exc_info.value.message == (
+        f"Function tools with reasoning_effort are not supported {model_id} does not accept tools on the"
+        " Chat Completions API with any reasoning_effort. Use OpenAIResponsesModel instead."
+    )
+    assert exc_info.value.__cause__ is error
+    assert exc_info.value.response is error.response
+    assert exc_info.value.body == error.body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("base_url", "model_id", "with_tools", "error_type", "param"),
+    [
+        (_OPENAI_URL, "gpt-6-astra", False, openai.BadRequestError, "reasoning_effort"),
+        (_OPENAI_URL, "gpt-6-sol", True, openai.BadRequestError, "reasoning_effort"),
+        (_PROXY_URL, "gpt-6-astra", True, openai.BadRequestError, "reasoning_effort"),
+        (_OPENAI_URL, "gpt-6-astra", True, openai.BadRequestError, "max_completion_tokens"),
+        (_OPENAI_URL, "gpt-6-astra", True, openai.BadRequestError, None),
+        (_OPENAI_URL, "gpt-6-astra", True, openai.InternalServerError, "reasoning_effort"),
+    ],
+)
+async def test_stream_passes_an_error_through_unless_tools_are_rejected_for_a_model_that_takes_none(
+    openai_client, messages, tool_specs, alist, base_url, model_id, with_tools, error_type, param
+):
+    error = _api_error(error_type, param)
+    openai_client.base_url = httpx.URL(base_url)
+    openai_client.chat.completions.create.side_effect = error
+    model = OpenAIModel(model_id=model_id, params={"reasoning_effort": "low"})
+
+    with pytest.raises(error_type) as exc_info:
+        await alist(model.stream(messages, tool_specs if with_tools else None))
+
+    assert exc_info.value is error
+
+
 def test_format_request_messages_excludes_reasoning_content():
     """Test that reasoningContent is excluded from formatted messages."""
     messages = [

@@ -718,8 +718,8 @@ export async function resolveWebFetchModel(
     small = bedrockWebFetchModel(name)
     if (small === undefined) {
       warnOnce(
-        `model=<${main}> | could not identify the Bedrock model family for the web_fetch ` +
-          'summarizer; reusing the main model. Pass builtinTools.web_fetch.model to choose a smaller one.'
+        `model=<${main}> | no small web_fetch summarizer is mapped for this Bedrock model family; ` +
+          'reusing the main model. Pass builtinTools.web_fetch.model to choose a smaller one.'
       )
       return concreteModel(await resolveModel(main, main, 'off'))
     }
@@ -755,15 +755,15 @@ function concreteModel(model: Model | ModelRouter): Model {
 }
 
 /**
- * Small Bedrock summarizer id for a Bedrock main model `name`, or `undefined` if the family is
- * unidentifiable.
+ * Small Bedrock summarizer id for a Bedrock main model `name`, or `undefined` if its family has no
+ * mapped small model.
  *
  * Bedrock hosts models from several providers, so the summarizer follows the main model's family.
  * An Anthropic-on-Bedrock model (an `anthropic.` prefix, after any cross-region prefix like `us.`)
  * gets Anthropic Haiku; an OpenAI-on-Bedrock model (an `openai.` prefix) gets the OpenAI small model
  * hosted on Bedrock (`openai.` + the OpenAI-provider summarizer). Either way the summarizer shares
- * the main model's provider. Any other family is unidentifiable and returns `undefined` so the
- * caller can reuse the main model rather than guess.
+ * the main model's provider. Any other family returns `undefined` so the caller can reuse the main
+ * model rather than guess.
  */
 function bedrockWebFetchModel(name: string): string | undefined {
   const family = bedrockFamily(name)

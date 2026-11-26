@@ -9,7 +9,14 @@ import { modelDisplayName } from '../model/metadata.js'
 import { escapePermissionText } from './chat/panel-state.js'
 import { FILE_TOOLS } from '../agent/permission-rules.js'
 import { permissionModeDisplayLabel } from './permission-options.js'
-import { expandTabs, graphemes, normalizeDetailText, sanitizeTerminalText, wrapCells } from '../terminal/text.js'
+import {
+  expandTabs,
+  graphemes,
+  normalizeDetailText,
+  sanitizeTerminalText,
+  wrapCells,
+  wrapWords,
+} from '../terminal/text.js'
 import {
   COMPOSER_RESOURCE_PANEL_HEIGHT,
   COMPOSER_EXPANDED_PANEL_HEIGHT,
@@ -17,6 +24,7 @@ import {
   permissionPanelLayout,
   permissionPreviewCapacity,
 } from './interaction.js'
+import { isOnScreenQuestionTool } from './chat/state.js'
 import { getTheme } from './theme.js'
 import { isRecord } from '../values.js'
 
@@ -135,7 +143,10 @@ export function detailLines(
   })
   const body = panel.activity
     ? activityDetailLines(panel.activity, width, palette)
-    : wrapCells(normalizeDetailText(panel.body ?? ''), Math.max(1, width)).map((text) => ({ text }))
+    : (panel.wrapWords
+        ? wrapWords(panel.body ?? '', width)
+        : wrapCells(normalizeDetailText(panel.body ?? ''), Math.max(1, width))
+      ).map((text) => ({ text }))
   return metadata.length > 0 ? [...metadata, { text: '' }, ...body] : body
 }
 
@@ -308,7 +319,12 @@ export function metadataPlacements(
   const pathMinimumStart = modelText ? stringWidth(modelText) + separatorWidth : 0
   const pathMaximumEnd = Math.max(0, available - settingsWidth - separatorWidth)
   const pathText = truncateText(
-    sanitizeTerminalText(snapshot.runtime.cwd),
+    sanitizeTerminalText(
+      snapshot.runtime.devWorkspace
+        ? (snapshot.runtime.reloadStatus ??
+            `dev · ${snapshot.runtime.agent} · ${snapshot.runtime.sourceWatching ? 'watching files' : 'watch off'}`)
+        : snapshot.runtime.cwd
+    ),
     Math.max(0, pathMaximumEnd - pathMinimumStart),
     true
   )
@@ -422,6 +438,11 @@ const TOOL_ACTIONS: Readonly<Record<string, string>> = {
   shell: 'Shell',
   skills: 'Skills',
   strands_config: 'Strands Config',
+  strands_dev_confirm: 'Ask',
+  strands_dev_multi_select: 'Ask',
+  strands_dev_number_input: 'Ask',
+  strands_dev_optimization_plan: 'Optimization plan',
+  strands_dev_single_select: 'Ask',
   strands_manage_background_task: 'Background tasks',
   todo_write: 'Update tasks',
   web_fetch: 'Fetch',
@@ -472,6 +493,10 @@ export function summarizeToolInput(name: string, input: JSONValue): string {
       if (summary) {
         return summary
       }
+    }
+    if (isOnScreenQuestionTool(normalizedName)) {
+      // The component on screen already shows the fields, so only the question is worth a line.
+      return truncateText(typeof input.question === 'string' ? input.question : 'a setup question', 160)
     }
     if (normalizedName === 'subagent') {
       return truncateText(typeof input.task === 'string' ? input.task : '', 160)

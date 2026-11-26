@@ -65,7 +65,12 @@ export interface Product {
   slug: string
   /** Homepage card color key (--card-accent-* in fonts.css), e.g. "teal". */
   accent?: string
+  /** Product landing page used by marketing surfaces and product switchers. */
   href: string
+  /** Docs hub used to scope docs navigation when it differs from the landing page. */
+  docsHref?: string
+  /** Shorter description used in the desktop and mobile navigation menus. */
+  navDescription?: string
   description: string
   /** Source repository URL, e.g. "https://github.com/strands-agents/shell". */
   repository: string
@@ -169,16 +174,34 @@ function convertExternalDocsItem(productId: string, ctx: ConvertContext): Starli
   if (!navigation) return null
 
   const groups = navigation.groups
-    .map((group) => ({
-      label: group.label,
-      items: group.items
-        .filter((item) => contentExists(item.slug, ctx.contentDir))
-        .map((item) => ({ label: item.label, slug: item.slug })),
-    }))
+    .map((group) => {
+      const items = group.items
+        .map((item) => convertExternalDocsNavItem(item, ctx))
+        .filter((item): item is StarlightSidebarItem => item !== null)
+      return { label: group.label, items }
+    })
     .filter((group) => group.items.length > 0)
 
   if (groups.length === 0) return null
   return { label: navigation.label, items: groups }
+}
+
+function convertExternalDocsNavItem(
+  item: { label: string; slug?: string; items?: unknown },
+  ctx: ConvertContext
+): StarlightSidebarItem | null {
+  if ('slug' in item && typeof item.slug === 'string') {
+    if (!contentExists(item.slug, ctx.contentDir)) return null
+    return { label: item.label, slug: item.slug }
+  }
+  if (Array.isArray(item.items)) {
+    const children = item.items
+      .map((child) => convertExternalDocsNavItem(child as { label: string; slug?: string; items?: unknown }, ctx))
+      .filter((child): child is StarlightSidebarItem => child !== null)
+    if (children.length === 0) return null
+    return { label: item.label, items: children }
+  }
+  return null
 }
 
 /**

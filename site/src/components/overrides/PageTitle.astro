@@ -1,5 +1,6 @@
 ---
 import { currentProduct } from '../../util/current-product'
+import PageActions from '../PageActions.astro'
 
 // Page title area. Three shapes:
 //  - Product hub (the product's own href): a lightweight hero — product-name
@@ -14,22 +15,26 @@ const currentPath = Astro.url.pathname
 const titleParts = /\s/.test(title) ? [title] : title.split(/(?<=[._])/)
 
 const product = currentProduct(currentPath)
-const onHub = !!product && currentPath === product.href
+const productDocsHref = product?.docsHref ?? product?.href
+const onHub = !!product && currentPath === productDocsHref
 
 // Primary CTA for the hub hero: the product's Quickstart page if it has one,
 // else its first page that isn't the hub itself.
 const ctaHref =
   product?.pages?.find((p) => /quickstart/i.test(p.label))?.href ??
-  product?.pages?.find((p) => p.href !== product.href)?.href ??
-  product?.href
+  product?.pages?.find((p) => p.href !== productDocsHref)?.href ??
+  productDocsHref
 ---
 
 {
   onHub ? (
     <div class="hub-hero">
-      <h1 id="_top" class="hub-hero__title">
-        {product!.name}
-      </h1>
+      <div class="title-row">
+        <h1 id="_top" class="hub-hero__title">
+          {product!.name}
+        </h1>
+        <PageActions />
+      </div>
       <p class="hub-hero__tagline">{product!.description}</p>
       {ctaHref && (
         <a class="hub-hero__cta" href={ctaHref}>
@@ -39,11 +44,22 @@ const ctaHref =
       )}
     </div>
   ) : (
-    <h1 id="_top">{titleParts.map((part, i) => (i ? [<wbr />, part] : part))}</h1>
+    <div class="title-row">
+      <h1 id="_top">{titleParts.map((part, i) => (i ? [<wbr />, part] : part))}</h1>
+      <PageActions />
+    </div>
   )
 }
 
 <style>
+  /* The page actions sit beside the title when there is room and wrap below it otherwise. */
+  .title-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 1.5rem;
+  }
+
   h1 {
     margin-top: 0.15rem;
     font-size: var(--sl-text-h1);

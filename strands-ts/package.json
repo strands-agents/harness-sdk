@@ -44,6 +44,11 @@
       "types": "./dist/src/decisions/sagemaker.d.ts",
       "default": "./dist/src/decisions/sagemaker.js"
     },
+    "./decisions/http": {
+      "types": "./dist/src/decisions/http-decision-model.d.ts",
+      "node": "./dist/src/decisions/http-decision-model.node.js",
+      "default": "./dist/src/decisions/http-decision-model.js"
+    },
     "./models/vercel": {
       "types": "./dist/src/models/vercel.d.ts",
       "default": "./dist/src/models/vercel.js"
@@ -55,6 +60,10 @@
     "./multiagent": {
       "types": "./dist/src/multiagent/index.d.ts",
       "default": "./dist/src/multiagent/index.js"
+    },
+    "./context-manager": {
+      "types": "./dist/src/context-manager/index.d.ts",
+      "default": "./dist/src/context-manager/index.js"
     },
     "./experimental": {
       "types": "./dist/src/experimental/index.d.ts",
@@ -196,6 +205,10 @@
       "types": "./dist/src/vended-interventions/cedar/index.d.ts",
       "default": "./dist/src/vended-interventions/cedar/index.js"
     },
+    "./vended-interventions/dogwood": {
+      "types": "./dist/src/vended-interventions/dogwood/index.d.ts",
+      "default": "./dist/src/vended-interventions/dogwood/index.js"
+    },
     "./vended-tools": {
       "types": "./dist/src/vended-tools/index.d.ts",
       "default": "./dist/src/vended-tools/index.js"
@@ -295,6 +308,7 @@
     "@aws-sdk/client-sts": "^3.1153.0",
     "@aws-sdk/credential-providers": "^3.1153.0",
     "@aws/bedrock-token-generator": "^1.1.0",
+    "@aws/dogwood-wasm": "^1.1.0",
     "@cedar-policy/cedar-wasm": "^4.14.0",
     "@cedar-policy/mcp-schema-generator-wasm": "^0.6.1",
     "@eslint/js": "^10.0.1",
@@ -342,8 +356,11 @@
   "homepage": "https://github.com/strands-agents/harness-sdk#readme",
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1154.0",
+    "@aws-sdk/credential-provider-node": "^3.972.87",
     "@modelcontextprotocol/ext-tasks": "^0.2.2",
+    "@smithy/core": "^3.36.0",
     "@smithy/fetch-http-handler": "^5.8.0",
+    "@smithy/signature-v4": "^5.7.4",
     "@types/json-schema": "^7.0.15",
     "uuid": "^14.0.3",
     "yaml": "^2.9.1"
@@ -358,6 +375,7 @@
     "@aws-sdk/client-s3vectors": "^3.1125.0",
     "@aws-sdk/client-sagemaker-runtime": "^3.1078.0",
     "@aws/bedrock-token-generator": "^1.1.0",
+    "@aws/dogwood-wasm": "^1.1.0",
     "@cedar-policy/cedar-wasm": "^4.0.0",
     "@cedar-policy/mcp-schema-generator-wasm": "^0.6.0",
     "@google/genai": "^2.6.0",
@@ -442,6 +460,9 @@
       "optional": true
     },
     "@cedar-policy/mcp-schema-generator-wasm": {
+      "optional": true
+    },
+    "@aws/dogwood-wasm": {
       "optional": true
     },
     "@tobilu/qmd": {

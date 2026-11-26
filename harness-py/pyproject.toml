@@ -29,12 +29,15 @@ classifiers = [
 # SDK 1.62.0 retries with drop_block when a history edit invalidates Opus 5.5 preserved-thinking blocks.
 # SDK 1.64.0 places OpenAI Responses cache points on GPT-5.6+, which the harness's caching relies on.
 # SDK 1.65.0 carries the AnthropicModel `client` parameter that runs Claude on Anthropic's Bedrock client.
+# SDK 1.65.0 also has the vended subagent report content_filtered/refusal as tool errors.
+# SDK 1.66.0 adds `manage_tool_name`, which names the background-tasks management tool.
+# SDK 1.67.0 provides the public `strands.context_manager` API used by the harness.
 # anthropic is a hard dependency because the default model runs on it; 1.7.0 is the first release that
 # raises a mid-stream Bedrock error (e.g. throttling) as an APIStatusError the SDK can map.
 # pydantic-monty is the sandbox programmatic_tool_caller runs model-authored code in; it is a hard
 # dependency because the tool is on by default. Pinned exactly while Monty is pre-1.0 and its API moves.
 dependencies = [
-    "strands-agents[otel]>=1.65.0,<2.0.0",
+    "strands-agents[otel]>=1.67.0,<2.0.0",
     "anthropic[bedrock]>=1.7.0,<3.0.0",
     # The first release with bedrock-agentcore InvokeWebSearch, which backs web_search on Bedrock;
     # botocore is imported directly there too.

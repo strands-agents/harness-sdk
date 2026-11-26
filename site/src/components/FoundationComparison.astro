@@ -192,6 +192,15 @@ const rows: { job: string; detail: string; cells: Cell[] }[] = [
 </figure>
 
 <style>
+  /* Always take the full wide width on large screens: the comparison wraps heavily at column
+     width. --wide-grow and cqw come from the docs layout in src/styles/custom.css. */
+  @media (min-width: 72rem) {
+    :global(:root[data-has-sidebar] .sl-markdown-content) > .fc {
+      width: calc(100cqw + 2 * var(--wide-grow));
+      transform: translateX(calc(-1 * var(--wide-grow)));
+    }
+  }
+
   .fc {
     margin: 1.5rem 0;
   }

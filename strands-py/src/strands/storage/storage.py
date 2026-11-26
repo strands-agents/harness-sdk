@@ -25,7 +25,7 @@ _EPHEMERAL: object = object()
 """Internal sentinel marking a storage backend as ephemeral (data does not survive restarts).
 
 Set on :class:`InMemoryStorage` and propagated by :class:`_NamespacedStorage` so that
-consumers (e.g. the session manager's stash integration) can detect ephemeral backends
+consumers (e.g. the session manager's archive integration) can detect ephemeral backends
 without an ``isinstance`` check that breaks for namespaced views of ephemeral storage.
 """
 

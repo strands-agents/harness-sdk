@@ -127,6 +127,15 @@ This will break existing code.
 :::
 ```
 
+## Wide Tables and Images
+
+There is nothing to mark up. On large screens, a top-level table whose cells wrap at column
+width, or an image wider than the column, grows into the spare room on both sides of the
+text, up to 72rem; everything else keeps the column width. On laptops and phones nothing
+changes. A table or image inside an aside or `<TabItem>` stays at the width of its box, so
+keep a wide table at the top level of the page when it needs the room. Prose and code blocks
+never widen.
+
 ## Frontmatter Schema
 
 Required fields:
@@ -146,7 +155,7 @@ Optional fields (validated by Zod in `site/src/content.config.ts`):
 | `community` | `boolean` | Marks page as community-contributed |
 | `experimental` | `boolean` | Marks feature as experimental |
 | `externalDocs` | object | Generated provenance and publication status for imported docs; authors must not set it |
-| `integrationType` | enum | `model-provider`, `tool`, `session-manager`, `memory-store`, `storage`, `integration`, `plugin`, `observability`, `agent-extension`, `intervention` |
+| `integrationType` | enum | `model-provider`, `decision-model`, `tool`, `session-manager`, `memory-store`, `storage`, `integration`, `plugin`, `observability`, `agent-extension`, `intervention` |
 | `category` | `string` | For TypeScript API doc grouping |
 | `redirectFrom` | `string[]` | Old slugs that should redirect here |
 | `tags` | `Tag[]` | From `site/src/config/tags.yml`; drives the build-time "Related pages" block |

@@ -4,7 +4,7 @@ import arrow from '../assets/banner/arrow.svg?raw';
 import { pathWithBase } from '../util/links';
 import { getPublishedPosts } from '../util/blog';
 import { formatEventDate, upcomingEvents } from '../util/learn';
-import { homepageBanner, homepageCommunityPost } from '../util/announcements';
+import { bannerHrefs, homepageBanner, homepageCommunityPost } from '../util/announcements';
 
 // The old /community/ hub is gone; its "what's new" and events feed now lives
 // here on the homepage. Events are filtered to upcoming ones at build time.
@@ -24,7 +24,7 @@ const banner = homepageBanner(
   posts,
   today,
 );
-const featuredPost = homepageCommunityPost(posts, banner?.href);
+const featuredPost = homepageCommunityPost(posts, bannerHrefs(banner));
 
 // External event hrefs pass through; internal ones get the base prefix.
 const eventHref = (href?: string) =>

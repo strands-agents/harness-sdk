@@ -12,7 +12,7 @@ import pytest
 
 import strands
 from strands import Agent
-from strands.experimental.context_manager import ContextManager, ContextStrategy, Offload
+from strands.context_manager import ContextManager, ContextStrategy, Offload
 from strands.models import BedrockModel
 from strands.types.content import ContentBlock, Message
 
@@ -38,9 +38,10 @@ def _task() -> Message:
 @pytest.mark.parametrize(
     "make_strategy",
     [
-        lambda: Offload.drop("*").when(utilization=0.5),
-        lambda: Offload.truncate("*").when(utilization=0.5),
-        lambda: Offload.summarize("*").when(utilization=0.5, preserve_recent=2),
+        lambda: Offload.drop("*").when(context_utilization="50%"),
+        # preview_tokens must be well under the history's size, or middle-out keeps every message in the preview.
+        lambda: Offload.truncate("*", {"preview_tokens": 50}).when(context_utilization="50%"),
+        lambda: Offload.summarize("*").when(context_utilization="50%", preserve_recent=2),
     ],
     ids=["drop", "truncate", "summarize"],
 )

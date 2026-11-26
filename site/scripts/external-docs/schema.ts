@@ -20,7 +20,8 @@ export interface ExternalDocsManifestPage {
   title: string
   description: string
   nav: {
-    group: string
+    /** Path of nested sidebar groups, outermost first. A string manifest value is a one-segment path. */
+    group: string[]
     order: number
   }
 }
@@ -40,20 +41,9 @@ export interface ExternalDocsProductConfig {
   publicationStatus: ExternalDocsStatus
 }
 
-export interface ExternalDocsLock {
-  schemaVersion: 1
-  products: ExternalDocsProductLock[]
-}
-
-export interface ExternalDocsProductLock {
-  id: string
-  revision: string
-}
-
 type JsonObject = Record<string, unknown>
 
 const SAFE_COMPONENT = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-const COMMIT_SHA = /^[0-9a-f]{40}$/
 const GITHUB_REPOSITORY = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 
 export function parseExternalDocsManifest(input: unknown, label = 'external docs manifest'): ExternalDocsManifest {
@@ -68,7 +58,11 @@ export function parseExternalDocsManifest(input: unknown, label = 'external docs
   assertUnique(pages, (page) => page.id, `${label} page id`)
   assertUnique(pages, (page) => page.source, `${label} page source`)
   assertUnique(pages, (page) => page.slug, `${label} page slug`)
-  assertUnique(pages, (page) => `${page.nav.group}\0${page.nav.order}`, `${label} navigation group/order`)
+  assertUnique(
+    pages,
+    (page) => `${page.nav.group.join('\u001f')}\u0000${page.nav.order}`,
+    `${label} navigation group/order`
+  )
 
   return { schemaVersion: 1, product, pages }
 }
@@ -87,28 +81,6 @@ export function parseExternalDocsConfig(input: unknown, label = 'external docs c
   assertNonOverlappingRoutePrefixes(products, label)
 
   return { schemaVersion: 1, products }
-}
-
-export function parseExternalDocsLock(input: unknown, label = 'external docs lock'): ExternalDocsLock {
-  const root = asObject(input, label)
-  assertKeys(root, ['schemaVersion', 'products'], label)
-  assertSchemaVersion(root.schemaVersion, label)
-
-  const products = asArray(root.products, `${label}.products`).map((product, index) =>
-    parseLockProduct(product, `${label}.products[${index}]`)
-  )
-  if (products.length === 0) fail(`${label}.products must contain at least one product`)
-  assertUnique(products, (product) => product.id, `${label} product id`)
-
-  return { schemaVersion: 1, products }
-}
-
-export function validateConfigAndLock(config: ExternalDocsConfig, lock: ExternalDocsLock): void {
-  const configIds = config.products.map((product) => product.id).sort()
-  const lockIds = lock.products.map((product) => product.id).sort()
-  if (configIds.join('\0') !== lockIds.join('\0')) {
-    fail('external docs config and lock must contain the same product ids')
-  }
 }
 
 function parseProduct(input: unknown, label: string): ExternalDocsManifest['product'] {
@@ -140,10 +112,18 @@ function parsePage(input: unknown, label: string): ExternalDocsManifestPage {
     title: nonEmptyString(page.title, `${label}.title`),
     description: nonEmptyString(page.description, `${label}.description`),
     nav: {
-      group: nonEmptyString(nav.group, `${label}.nav.group`),
+      group: parseNavGroup(nav.group, `${label}.nav.group`),
       order: order as number,
     },
   }
+}
+
+function parseNavGroup(input: unknown, label: string): string[] {
+  if (typeof input === 'string') return [nonEmptyString(input, label)]
+  if (!Array.isArray(input) || input.length === 0) {
+    fail(`${label} must be a non-empty string or array of strings`)
+  }
+  return (input as unknown[]).map((segment, index) => nonEmptyString(segment, `${label}[${index}]`))
 }
 
 function parseConfigProduct(input: unknown, label: string): ExternalDocsProductConfig {
@@ -154,28 +134,17 @@ function parseConfigProduct(input: unknown, label: string): ExternalDocsProductC
   if (!GITHUB_REPOSITORY.test(repository) || repository.endsWith('.git')) {
     fail(`${label}.repository must be an https://github.com/<owner>/<repo> URL without .git`)
   }
+  const ref = nonEmptyString(product.ref, `${label}.ref`)
+  if (ref !== 'main') fail(`${label}.ref must be "main"`)
 
   return {
     id: safeComponent(product.id, `${label}.id`),
     repository,
-    ref: nonEmptyString(product.ref, `${label}.ref`),
+    ref,
     manifest: repositoryPath(product.manifest, `${label}.manifest`, '.json'),
     routePrefix: safePath(product.routePrefix, `${label}.routePrefix`),
     navLabel: nonEmptyString(product.navLabel, `${label}.navLabel`),
     publicationStatus: externalDocsStatus(product.publicationStatus, `${label}.publicationStatus`),
-  }
-}
-
-function parseLockProduct(input: unknown, label: string): ExternalDocsProductLock {
-  const product = asObject(input, label)
-  assertKeys(product, ['id', 'revision'], label)
-
-  const revision = nonEmptyString(product.revision, `${label}.revision`)
-  if (!COMMIT_SHA.test(revision)) fail(`${label}.revision must be a 40-character lowercase commit SHA`)
-
-  return {
-    id: safeComponent(product.id, `${label}.id`),
-    revision,
   }
 }
 

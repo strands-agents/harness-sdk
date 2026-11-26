@@ -185,9 +185,10 @@ export type AgentConfig = {
    */
   model?: Model<BaseModelConfig> | ModelRouter | string
   /**
-   * Model for the auxiliary side calls the SDK makes outside the main agent loop: context
-   * summarization, memory extraction, the HITL risk classifier, LLM steering, the goal judge, and
-   * the `web_fetch` analyst. Defaults to `model`, so leaving it unset changes nothing; set it
+   * Model for the auxiliary side calls the SDK makes outside the main agent loop:
+   * conversation-manager summarization, memory extraction, the HITL risk classifier, LLM steering,
+   * the goal judge, and the `web_fetch` analyst. The context manager's summarize strategy does
+   * not use it; it resolves `this model > model`. Defaults to `model`, so leaving it unset changes nothing; set it
    * (typically to a smaller, cheaper model) to move every side call off the main model at once.
    * Each side call resolves its model as `component's own model > auxModel > model`.
    * Accepts a Model or a string representing a Bedrock model ID, like `model`; a ModelRouter is
@@ -202,6 +203,13 @@ export type AgentConfig = {
    * {@link Agent} instances are automatically wrapped as tools via {@link Agent.asTool}.
    */
   tools?: ToolList
+  /**
+   * Send tool specs to the model sorted by name, on every request (model calls, context summaries, token
+   * counts), to keep prompt-cache prefixes stable when the same tools are registered in a different order,
+   * e.g. from MCP servers. Sorting happens before middleware, which can still reorder them. Defaults to
+   * false, which keeps registration order.
+   */
+  sortTools?: boolean
   /**
    * A system prompt which guides model behavior.
    */
@@ -231,7 +239,7 @@ export type AgentConfig = {
    * - `"agentic"`: (Experimental) Lets the model drive context management via injected tools,
    *   with a higher truncation threshold and summarization only on overflow.
    *   This mode may change in future versions.
-   * - `ContextManagerConfig` object: Custom strategy pipeline and stash configuration.
+   * - `ContextManagerConfig` object: Custom strategy pipeline and archive configuration.
    * - `ContextManager` instance: Used as-is. An instance binds to one agent; construct one per `Agent`.
    * - `false`: Explicitly disable context management (no compression, no offloading).
    *
@@ -625,7 +633,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     if (config?.contextManager === 'agentic') {
       tools.push(summarizeContextTool, truncateContextTool, pinContextTool)
     }
-    this._toolRegistry = new ToolRegistry(tools)
+    this._toolRegistry = new ToolRegistry(tools, { sortToolSpecs: config?.sortTools ?? false })
     this._mcpClients = mcpClients
 
     // Initialize hooks registry
@@ -878,17 +886,45 @@ export class Agent implements LocalAgent, InvokableAgent {
       return
     }
 
-    // Initialize MCP clients and register their tools
-    await Promise.all(
-      this._mcpClients.map(async (client) => {
-        let registered = await client.listTools()
-        this._toolRegistry.add(registered)
-        // The client's own list of old names includes tools this agent skipped, so track what was registered.
+    const preMcpToolNames = new Set(this._toolRegistry.list().map((tool) => tool.name))
+    // The client's own list of old names includes tools this agent skipped, so track what was registered.
+    const registeredByClient = this._mcpClients.map(() => [] as McpTool[])
+    const initializationByClient = this._mcpClients.map(() => ({
+      pending: undefined as McpTool[] | undefined,
+      refreshVersion: 0,
+      listingVersion: 0,
+      committed: false,
+    }))
+
+    // Start every listing concurrently, but buffer refreshes until registration commits in configured client order.
+    const initialToolsByClient = await Promise.all(
+      this._mcpClients.map((client, index) => {
+        const initialization = initializationByClient[index]!
         client.onToolsChanged = (_oldTools, newTools): void => {
-          registered = this._replaceMcpTools(client, registered, newTools)
+          if (!initialization.committed) {
+            initialization.pending = newTools
+            initialization.refreshVersion += 1
+            return
+          }
+          registeredByClient[index] = this._replaceMcpTools(
+            client,
+            registeredByClient[index]!,
+            newTools,
+            this._findMcpInsertAnchor(index, registeredByClient, preMcpToolNames)
+          )
         }
+        initialization.listingVersion = initialization.refreshVersion
+        return client.listTools()
       })
     )
+    for (const [index, initialTools] of initialToolsByClient.entries()) {
+      const initialization = initializationByClient[index]!
+      const registered =
+        initialization.refreshVersion === initialization.listingVersion ? initialTools : initialization.pending!
+      this._toolRegistry.add(registered)
+      registeredByClient[index] = registered
+      initialization.committed = true
+    }
 
     // Register tools vended by the sandbox. The host default vends nothing. A tool
     // is skipped if the user already registered one with that name.
@@ -919,6 +955,26 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
+   * Finds the first registered tool that should follow an MCP client's configured slot.
+   *
+   * @param clientIndex - The client's position in the configured MCP client list
+   * @param registeredByClient - The tools currently owned by each MCP client
+   * @param preMcpToolNames - Tool names registered before MCP initialization
+   * @returns The tool to insert before, or undefined to append
+   */
+  private _findMcpInsertAnchor(
+    clientIndex: number,
+    registeredByClient: readonly McpTool[][],
+    preMcpToolNames: ReadonlySet<string>
+  ): Tool | undefined {
+    const mcpTools = new Set<Tool>(registeredByClient.flat())
+    const precedingMcpTools = new Set<Tool>(registeredByClient.slice(0, clientIndex).flat())
+    return this._toolRegistry.list().find((tool) => {
+      if (precedingMcpTools.has(tool)) return false
+      return mcpTools.has(tool) || !preMcpToolNames.has(tool.name)
+    })
+  }
+  /**
    * Swaps an MCP client's registered tools for its refreshed list. A refreshed tool that is invalid, or that takes the
    * name of a tool from another source such as `retrieve_context`, is skipped with a warning; the rest of the refresh
    * applies. A skipped tool comes back only on this client's next refresh, even if the other source drops the name first.
@@ -926,10 +982,16 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @param client - The MCP client whose tools changed
    * @param current - The tools the client has registered
    * @param refreshed - The client's refreshed tools
+   * @param insertBefore - Where to insert when the client currently has no registered tools
    * @returns The tools the client has registered afterwards
    */
-  private _replaceMcpTools(client: McpClient, current: McpTool[], refreshed: McpTool[]): McpTool[] {
-    const skipped = this._toolRegistry.swap(current, refreshed)
+  private _replaceMcpTools(
+    client: McpClient,
+    current: McpTool[],
+    refreshed: McpTool[],
+    insertBefore?: Tool
+  ): McpTool[] {
+    const skipped = this._toolRegistry.swap(current, refreshed, insertBefore)
     for (const { tool, error } of skipped) {
       logger.warn(
         `client=<${client.clientName}>, tool_name=<${tool.name}>, error=<${error.message}> | skipping refreshed mcp tool`
@@ -1085,9 +1147,10 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Cancels the current agent invocation cooperatively. Idempotent; no-op when
-   * the agent is not invoking. The pending `invoke`/`stream` resolves with
-   * `stopReason: 'cancelled'`.
+   * Cancels the current agent invocation cooperatively. Idempotent; no-op for the
+   * invocation when the agent is not invoking (`cancelBackgroundTasks` still applies).
+   * The pending `invoke`/`stream` resolves with `stopReason: 'cancelled'`, or with its natural
+   * `stopReason` if it had already finished its turn and was only waiting for background tasks.
    *
    * The agent stops at the next cancellation-safe point (model streaming, before
    * tools, between sequential tool calls, or the top of a loop cycle). A tool
@@ -1097,7 +1160,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    * For cancellation driven from outside the agent, prefer the `cancelSignal`
    * option on `invoke` / `stream`.
    *
-   * @param options - See {@link CancelOptions} for `message` and `afterCurrentTools`.
+   * @param options - See {@link CancelOptions} for `message`, `afterCurrentTools`, and `cancelBackgroundTasks`.
    *
    * @example
    * ```typescript
@@ -1113,6 +1176,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * ```
    */
   public cancel(options?: CancelOptions): void {
+    if (options?.cancelBackgroundTasks && this._initialized) {
+      this._backgroundTasks?.cancelAll()
+    }
     if (!this._isInvoking) {
       return
     }
@@ -1135,6 +1201,15 @@ export class Agent implements LocalAgent, InvokableAgent {
    */
   private get isAborted(): boolean {
     return this._abortSignal.aborted
+  }
+
+  /**
+   * Whether cancellation has been requested in any form, including a deferred cancel.
+   *
+   * @internal
+   */
+  get _cancelRequested(): boolean {
+    return this._deferredCancel || this.isAborted
   }
 
   /**
@@ -1743,6 +1818,9 @@ export class Agent implements LocalAgent, InvokableAgent {
     }
     if (agentModelId) agentSpanOptions.modelId = agentModelId
     if (this.systemPrompt !== undefined) agentSpanOptions.systemPrompt = this.systemPrompt
+    if (this.tools.length > 0) {
+      agentSpanOptions.toolsConfig = Object.fromEntries(this.tools.map((tool) => [tool.name, tool.toolSpec]))
+    }
     const agentSpan = this._tracer.startAgentSpan(agentSpanOptions)
 
     let caughtError: Error | undefined
@@ -2610,7 +2688,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       model: selectedModel,
       messages: this.messages.map((msg) => msg.clone()),
       ...(this.systemPrompt !== undefined && { systemPrompt: cloneSystemPrompt(this.systemPrompt) }),
-      toolSpecs: deepCopy(this._toolRegistry.list().map((tool) => tool.toolSpec)) as unknown as ToolSpec[],
+      toolSpecs: deepCopy(this._toolRegistry.toolSpecs()) as unknown as ToolSpec[],
       ...(toolChoice !== undefined && { toolChoice: deepCopy(toolChoice) as unknown as ToolChoice }),
       invocationState,
       ...(projectedInputTokens !== undefined && { projectedInputTokens }),
@@ -2654,6 +2732,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             ...(ctx.dynamicTrailingBlocks ? { dynamicTrailingBlocks: ctx.dynamicTrailingBlocks } : {}),
             ...(self.agentMetadata && { agentMetadata: self.agentMetadata }),
             ...(ctx.structuredOutputSchema && { structuredOutputSchema: ctx.structuredOutputSchema }),
+            ...(ctx.deferredTools?.size ? { deferredTools: ctx.deferredTools } : {}),
           }
           const gen = self._streamFromModel(
             ctx.model,
@@ -2728,7 +2807,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     invocationContext: InvocationContextImpl
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
     messages = fillEmptyAssistantMessages(normalizeToolUseNames(messages))
-    const proxy = new ModelProxy(model)
+    const proxy = new ModelProxy(model, this)
     const streamGenerator = proxy.streamAggregated(messages, streamOptions, invocationContext)
     try {
       let result = await streamGenerator.next()

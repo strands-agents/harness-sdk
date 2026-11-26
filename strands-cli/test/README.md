@@ -39,6 +39,11 @@ Python exports require Python 3.10 or newer. The platform suite installs the exp
 environments through the normal CLI import path. Ordinary Python source tests use `harness-py/.venv` when available;
 set `STRANDS_TEST_PYTHON` to another interpreter for those tests.
 
+The pytest files in `dev/evals/python/` examine `strands_dev_evals`, the Python package that runs strands dev agents in
+strands-evals. To run them, set `STRANDS_TEST_EVALS_PYTHON` to a Python with `strands-agents-evals[optimization]`,
+`strands-harness`, and pytest. Then `dev/evals/python.test.ts` runs these files. Without the variable, Vitest skips
+that file.
+
 ## Live provider checks
 
 ```sh

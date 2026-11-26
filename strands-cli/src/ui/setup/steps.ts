@@ -128,21 +128,23 @@ export function appearanceSettings(settings: ChatSettings): AppearanceSettings {
 }
 
 export function wizardSettingsRows(settings: ChatSettings, update: (settings: ChatSettings) => void): WizardRow[] {
-  return SETTING_DEFINITIONS.map(({ key, label, section, options }) => ({
-    id: key,
-    label,
-    description: '',
-    section,
-    choices: options.map(({ label: optionLabel, value }) => ({
-      label: optionLabel,
-      value,
-      active: settings[key] === value,
-      activate: (): void => {
-        update({ ...settings, [key]: value } as ChatSettings)
-      },
-    })),
-    activate: noop,
-  }))
+  return SETTING_DEFINITIONS.filter(({ section }) => section !== 'Workspace').map(
+    ({ key, label, section, options }) => ({
+      id: key,
+      label,
+      description: '',
+      section,
+      choices: options.map(({ label: optionLabel, value }) => ({
+        label: optionLabel,
+        value,
+        active: settings[key] === value,
+        activate: (): void => {
+          update({ ...settings, [key]: value } as ChatSettings)
+        },
+      })),
+      activate: noop,
+    })
+  )
 }
 
 export function rowsForStep(

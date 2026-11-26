@@ -1,7 +1,15 @@
+import { realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { isAbsolute, join, relative, sep } from 'node:path'
+import { basename, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
 
 import { isRecord } from './values.js'
+
+export async function canonicalParentPath(path: string): Promise<string> {
+  const absolute = resolve(expandHome(path))
+  const parent = parse(absolute).dir
+  if (parent === absolute) return absolute
+  return join(await realpath(parent), basename(absolute))
+}
 
 /** True when `path` is `root` or lies beneath it, compared lexically. */
 export function containsPath(root: string, path: string): boolean {

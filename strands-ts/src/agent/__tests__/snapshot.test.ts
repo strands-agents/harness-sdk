@@ -227,7 +227,7 @@ describe('Snapshot API', () => {
             toolResult: {
               toolUseId: 'tool-1',
               status: 'success',
-              content: [{ toolReference: { name: 'shell' } }],
+              content: [{ futureBlock: { name: 'shell' } }],
             },
           },
         ],
@@ -247,7 +247,7 @@ describe('Snapshot API', () => {
         new ToolResultBlock({
           toolUseId: 'tool-1',
           status: 'success',
-          content: [new UnknownBlock({ toolReference: { name: 'shell' } })],
+          content: [new UnknownBlock({ futureBlock: { name: 'shell' } })],
         }),
       ])
       expect(takeSnapshot(agent, { preset: 'session' }).data.messages).toEqual([savedMessage])

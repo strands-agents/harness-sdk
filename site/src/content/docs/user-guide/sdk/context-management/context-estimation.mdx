@@ -1,17 +1,12 @@
 ---
 title: Context Estimation
 description: "How the SDK estimates token counts, context window utilization, and context window limits."
-experimental: true
 tags: [conversation-management, token-management]
 sourceLinks:
   - path: strands-py/src/strands/models/model.py
   - path: strands-ts/src/models/model.ts
 addedDate: 2026-09-14
 ---
-
-:::caution[Experimental]
-The Context Manager strategy API is experimental and may change in future versions.
-:::
 
 The SDK estimates how much of the model's context window is in use so it can trigger compression before overflow. Three pieces work together: the context window limit, token counting, and utilization estimation.
 
