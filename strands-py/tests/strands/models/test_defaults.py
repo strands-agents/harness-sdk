@@ -129,6 +129,7 @@ class TestGetContextWindowLimit:
     def test_known_gemini(self):
         assert get_context_window_limit("gemini-4-neon") == 1_048_576
         assert get_context_window_limit("gemini-4-hydrogen") == 1_048_576
+        assert get_context_window_limit("gemini-4-carbon") == 1_048_576
         assert get_context_window_limit("gemini-4-argon") == 1_048_576
         assert get_context_window_limit("gemini-3.8-flash") == 1_048_576
         assert get_context_window_limit("gemini-3.7-flash") == 1_048_576
