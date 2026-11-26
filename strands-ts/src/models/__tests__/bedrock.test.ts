@@ -6602,7 +6602,7 @@ describe('BedrockModel', () => {
         )
       })
 
-      it('skips wrapping images with unsupported formats (gif)', async () => {
+      it.each(['gif', 'webp'] as const)('skips wrapping images with unsupported formats (%s)', async (format) => {
         const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
         const imageBytes = new Uint8Array([1, 2, 3, 4])
         const provider = new BedrockModel({
@@ -6617,7 +6617,7 @@ describe('BedrockModel', () => {
             role: 'user',
             content: [
               new ImageBlock({
-                format: 'gif',
+                format,
                 source: { bytes: imageBytes },
               }),
             ],
@@ -6627,7 +6627,7 @@ describe('BedrockModel', () => {
         collectIterator(provider.stream(messages))
 
         expect(consoleWarnSpy).toHaveBeenCalledWith(
-          'image_format=<gif> | format not supported by bedrock guardrails | skipping guardContent wrap'
+          `image_format=<${format}> | format not supported by bedrock guardrails | skipping guardContent wrap`
         )
         expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
           expect.objectContaining({
@@ -6637,54 +6637,7 @@ describe('BedrockModel', () => {
                 content: [
                   {
                     image: {
-                      format: 'gif',
-                      source: { bytes: imageBytes },
-                    },
-                  },
-                ],
-              },
-            ],
-          })
-        )
-        consoleWarnSpy.mockRestore()
-      })
-
-      it('skips wrapping images with unsupported formats (webp)', async () => {
-        const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-        const imageBytes = new Uint8Array([1, 2, 3, 4])
-        const provider = new BedrockModel({
-          guardrailConfig: {
-            guardrailIdentifier: 'my-guardrail-id',
-            guardrailVersion: '1',
-            guardLatestUserMessage: true,
-          },
-        })
-        const messages = [
-          new Message({
-            role: 'user',
-            content: [
-              new ImageBlock({
-                format: 'webp',
-                source: { bytes: imageBytes },
-              }),
-            ],
-          }),
-        ]
-
-        collectIterator(provider.stream(messages))
-
-        expect(consoleWarnSpy).toHaveBeenCalledWith(
-          'image_format=<webp> | format not supported by bedrock guardrails | skipping guardContent wrap'
-        )
-        expect(mockConverseStreamCommand).toHaveBeenLastCalledWith(
-          expect.objectContaining({
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  {
-                    image: {
-                      format: 'webp',
+                      format,
                       source: { bytes: imageBytes },
                     },
                   },
