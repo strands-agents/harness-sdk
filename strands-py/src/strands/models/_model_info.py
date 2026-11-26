@@ -13,7 +13,9 @@ import json
 import re
 from dataclasses import dataclass, fields, replace
 from importlib import resources
-from typing import Any, Literal, TypeAlias, TypeVar
+from typing import Any, Literal, TypeAlias, TypeVar, get_args
+
+from ..types.media import DocumentFormat, ImageFormat, VideoFormat
 
 PromptCaching: TypeAlias = Literal["unsupported", "auto", "cache_points"]
 """How a model supports prompt caching."""
@@ -53,6 +55,12 @@ class ModelCapabilities:
             :attr:`strands.models.Model.model_info` reports False unless the provider can send them
             (``AnthropicModel``). Turning it on for a provider that cannot send them loses the injected text: Bedrock
             skips the block with a warning, Mistral drops it, other providers raise ``TypeError``.
+        image_formats: Formats the model takes in image blocks; empty when it takes no images. The shared data lists a
+            format only when every built-in provider can send it to the model.
+        document_formats: Formats the model takes in document blocks; empty when it takes no documents. Listed as for
+            ``image_formats``.
+        video_formats: Formats the model takes in video blocks; empty when it takes no video. Listed as for
+            ``image_formats``.
     """
 
     stateful: bool | None = None
@@ -61,6 +69,9 @@ class ModelCapabilities:
     native_structured_output: bool | None = None
     server_side_summary: bool | None = None
     temporary_messages: bool | None = None
+    image_formats: tuple[ImageFormat, ...] | None = None
+    document_formats: tuple[DocumentFormat, ...] | None = None
+    video_formats: tuple[VideoFormat, ...] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -139,6 +150,9 @@ _CAPABILITY_FIELDS = {
     "nativeStructuredOutput": "native_structured_output",
     "serverSideSummary": "server_side_summary",
     "temporaryMessages": "temporary_messages",
+    "imageFormats": "image_formats",
+    "documentFormats": "document_formats",
+    "videoFormats": "video_formats",
 }
 _LIMIT_FIELDS = {"contextWindow": "context_window", "maxOutputTokens": "max_output_tokens"}
 # Shared-data values are camelCase; the Python literals are snake_case.
@@ -147,12 +161,23 @@ _PROMPT_CACHING_VALUES: dict[str, PromptCaching] = {
     "auto": "auto",
     "cachePoints": "cache_points",
 }
+# The format names each list takes, keyed by the shared-data spelling; the data spells three_gp as TypeScript does.
+_FORMAT_VALUES: dict[str, dict[str, str]] = {
+    "image_formats": {value: value for value in get_args(ImageFormat)},
+    "document_formats": {value: value for value in get_args(DocumentFormat)},
+    "video_formats": {"3gp" if value == "three_gp" else value: value for value in get_args(VideoFormat)},
+}
 
 # Bedrock appends a version to some ids (`claude-3-5-haiku-20241022-v1:0`); the base id carries the facts.
 _VERSION_SUFFIX = re.compile(r"-(?:v\d+(?::\d+)?|\d+:\d+)$")
 # Dated snapshots (`claude-opus-5-5-20260401`, `claude-haiku-4-5@20251001`, `gpt-5.4-2026-03-05`) share the undated
 # model's facts.
 _DATE_SUFFIX = re.compile(r"[-@](?:\d{8}|\d{4}-\d{2}-\d{2})$")
+
+
+def _formats(value: object, names: dict[str, str]) -> tuple[str, ...] | None:
+    """Read a format list, skipping formats this version does not know; None when it is not a list."""
+    return tuple(names[name] for name in value if name in names) if isinstance(value, list) else None
 
 
 def _section(entry: dict[str, Any], name: str, field_names: dict[str, str], section: type[_SectionT]) -> _SectionT:
@@ -168,6 +193,7 @@ def _section(entry: dict[str, Any], name: str, field_names: dict[str, str], sect
     if "prompt_caching" in known:
         value = known["prompt_caching"]
         known["prompt_caching"] = _PROMPT_CACHING_VALUES.get(value) if isinstance(value, str) else None
+    known.update({name: _formats(known[name], names) for name, names in _FORMAT_VALUES.items() if name in known})
     return section(**known)
 
 

@@ -9,6 +9,18 @@ import {
 } from '../model-info.js'
 import modelInfoData from '../model-info.json' with { type: 'json' }
 
+const FORMATS: Record<string, string[]> = {
+  imageFormats: ['png', 'jpeg', 'gif', 'webp'],
+  documentFormats: ['pdf', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'txt', 'md'],
+  videoFormats: ['flv', 'mkv', 'mov', 'mpeg', 'mpg', 'mp4', '3gp', 'webm', 'wmv'],
+}
+
+const CLAUDE_FORMATS = {
+  imageFormats: ['png', 'jpeg', 'gif', 'webp'],
+  documentFormats: ['pdf', 'csv', 'html', 'md', 'txt'],
+  videoFormats: [],
+}
+
 describe('shared model info data', () => {
   it('resolves every spelling of a model to its one entry', () => {
     const entry = lookupModel('claude-opus-5-5')
@@ -46,6 +58,7 @@ describe('shared model info data', () => {
         serverSideSummary: true,
         temporaryMessages: true,
         deferredToolLoading: 'native',
+        ...CLAUDE_FORMATS,
       },
       limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
     })
@@ -58,7 +71,7 @@ describe('shared model info data', () => {
 
   it('returns the entry facts and nothing for unknown ids', () => {
     expect(lookupModelInfo('eu.anthropic.claude-sonnet-4-6')).toEqual({
-      capabilities: { promptCaching: 'cachePoints', deferredToolLoading: 'native' },
+      capabilities: { promptCaching: 'cachePoints', deferredToolLoading: 'native', ...CLAUDE_FORMATS },
       limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
     })
     for (const modelId of ['anthropic.claude-opus-5-5', 'global.anthropic.claude-fable-5-2', 'claude-mythos-5-2']) {
@@ -70,12 +83,18 @@ describe('shared model info data', () => {
           serverSideSummary: true,
           temporaryMessages: true,
           deferredToolLoading: 'native',
+          ...CLAUDE_FORMATS,
         },
         limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
       })
     }
     expect(lookupModelInfo('amazon.nova-pro-v1:0')).toEqual({
-      capabilities: { forcedToolChoice: true, nativeStructuredOutput: false, deferredToolLoading: 'unsupported' },
+      capabilities: {
+        forcedToolChoice: true,
+        nativeStructuredOutput: false,
+        deferredToolLoading: 'unsupported',
+        ...FORMATS,
+      },
       limits: { contextWindow: 300_000 },
     })
     expect(lookupModelInfo('claude-future-9')).toEqual({})
@@ -130,7 +149,13 @@ describe('shared model info data', () => {
       for (const [key, value] of Object.entries(entry.capabilities ?? {})) {
         if (key === 'promptCaching') expect(['unsupported', 'auto', 'cachePoints'], `${id}.${key}`).toContain(value)
         else if (key === 'deferredToolLoading') expect(['unsupported', 'native'], `${id}.${key}`).toContain(value)
-        else if (['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key))
+        // Only the formats both SDKs name, without the `jpg` alias, so the Python loader keeps every one.
+        else if (key in FORMATS) {
+          expect(Array.isArray(value) && new Set(value).size === value.length, `${id}.${key}`).toBe(true)
+          for (const format of value as string[]) expect(FORMATS[key], `${id}.${key}`).toContain(format)
+        } else if (
+          ['forcedToolChoice', 'nativeStructuredOutput', 'serverSideSummary', 'temporaryMessages'].includes(key)
+        )
           expect(typeof value, `${id}.${key}`).toBe('boolean')
         // Read by the OpenAI Chat Completions provider, not part of ModelCapabilities.
         else if (key === 'chatCompletionsTools')

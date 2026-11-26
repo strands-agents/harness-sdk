@@ -14,6 +14,7 @@
  */
 
 import modelInfoData from './model-info.json' with { type: 'json' }
+import type { DocumentFormat, ImageFormat, VideoFormat } from '../mime.js'
 /** How a model supports prompt caching. */
 export type PromptCaching = 'unsupported' | 'auto' | 'cachePoints'
 
@@ -66,6 +67,15 @@ export interface ModelCapabilities {
    * `BedrockModel` names each loaded tool and other providers leave it out.
    */
   readonly deferredToolLoading?: DeferredToolLoading | undefined
+  /**
+   * Formats the model takes in image blocks; `[]` when it takes no images. The shared data lists a format only when
+   * every built-in provider can send it to the model.
+   */
+  readonly imageFormats?: readonly ImageFormat[] | undefined
+  /** Formats the model takes in document blocks; `[]` when it takes no documents. Listed as for `imageFormats`. */
+  readonly documentFormats?: readonly DocumentFormat[] | undefined
+  /** Formats the model takes in video blocks; `[]` when it takes no video. Listed as for `imageFormats`. */
+  readonly videoFormats?: readonly VideoFormat[] | undefined
 }
 
 /** Size limits of the model. */
@@ -146,6 +156,9 @@ const CAPABILITY_FIELDS = Object.keys({
   serverSideSummary: true,
   temporaryMessages: true,
   deferredToolLoading: true,
+  imageFormats: true,
+  documentFormats: true,
+  videoFormats: true,
 } satisfies Record<keyof ModelCapabilities, true>)
 const LIMIT_FIELDS = Object.keys({ contextWindow: true, maxOutputTokens: true } satisfies Record<
   keyof ModelLimits,

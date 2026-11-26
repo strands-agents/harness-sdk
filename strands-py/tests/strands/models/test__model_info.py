@@ -10,6 +10,7 @@ import pytest
 
 from strands.models._model_info import (
     _CAPABILITY_FIELDS,
+    _FORMAT_VALUES,
     _LIMIT_FIELDS,
     _PROMPT_CACHING_VALUES,
     DEFAULT_CONTEXT_WINDOW_LIMIT,
@@ -30,6 +31,12 @@ BASE = ModelInfo(
     capabilities=ModelCapabilities(stateful=False, prompt_caching="cache_points"),
     limits=ModelLimits(context_window=200_000),
 )
+
+_CLAUDE_FORMATS = {
+    "image_formats": ("png", "jpeg", "gif", "webp"),
+    "document_formats": ("pdf", "csv", "html", "md", "txt"),
+    "video_formats": (),
+}
 
 _SHARED_DATA = pathlib.Path(__file__).parents[3] / ".." / "shared" / "model-info.json"
 _PACKAGE_COPY = pathlib.Path(__file__).parents[3] / "src" / "strands" / "models" / "model_info.json"
@@ -133,7 +140,7 @@ def test_lookup_model_returns_none_for_unknown_ids():
 
 def test_lookup_model_info_returns_the_entry_facts_and_nothing_for_unknown_ids():
     assert lookup_model_info("eu.anthropic.claude-sonnet-4-6") == ModelInfo(
-        capabilities=ModelCapabilities(prompt_caching="cache_points"),
+        capabilities=ModelCapabilities(prompt_caching="cache_points", **_CLAUDE_FORMATS),
         limits=ModelLimits(context_window=1_000_000, max_output_tokens=128_000),
     )
     for model_id in ("anthropic.claude-opus-5-5", "global.anthropic.claude-fable-5-2", "claude-mythos-5-2"):
@@ -144,11 +151,18 @@ def test_lookup_model_info_returns_the_entry_facts_and_nothing_for_unknown_ids()
                 native_structured_output=True,
                 server_side_summary=True,
                 temporary_messages=True,
+                **_CLAUDE_FORMATS,
             ),
             limits=ModelLimits(context_window=1_000_000, max_output_tokens=128_000),
         )
     assert lookup_model_info("amazon.nova-pro-v1:0") == ModelInfo(
-        capabilities=ModelCapabilities(forced_tool_choice=True, native_structured_output=False),
+        capabilities=ModelCapabilities(
+            forced_tool_choice=True,
+            native_structured_output=False,
+            image_formats=("png", "jpeg", "gif", "webp"),
+            document_formats=("pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"),
+            video_formats=("flv", "mkv", "mov", "mpeg", "mpg", "mp4", "three_gp", "webm", "wmv"),
+        ),
         limits=ModelLimits(context_window=300_000),
     )
     assert lookup_model_info("claude-future-9") == ModelInfo()
@@ -193,6 +207,29 @@ def test_loader_treats_a_prompt_caching_value_this_version_does_not_know_as_unkn
 @pytest.mark.parametrize("entry", [{}, {"capabilities": None}, {"capabilities": "cachePoints"}])
 def test_loader_returns_an_empty_section_when_the_section_is_missing_or_not_an_object(entry):
     assert _section(entry, "capabilities", _CAPABILITY_FIELDS, ModelCapabilities) == ModelCapabilities()
+
+
+def test_loader_reads_format_lists_as_tuples_and_skips_formats_this_version_does_not_know():
+    entry = {"capabilities": {"imageFormats": [], "documentFormats": ["pdf", "json"], "videoFormats": ["mp4", "3gp"]}}
+
+    assert _section(entry, "capabilities", _CAPABILITY_FIELDS, ModelCapabilities) == ModelCapabilities(
+        image_formats=(), document_formats=("pdf",), video_formats=("mp4", "three_gp")
+    )
+
+
+def test_loader_treats_a_format_list_that_is_not_a_list_as_unknown():
+    entry = {"capabilities": {"imageFormats": "png"}}
+
+    assert _section(entry, "capabilities", _CAPABILITY_FIELDS, ModelCapabilities) == ModelCapabilities()
+
+
+def test_model_info_merge_keeps_an_empty_format_list_as_known():
+    merged = ModelInfo.merge(
+        ModelInfo(capabilities=ModelCapabilities(image_formats=("png",))),
+        ModelInfo(capabilities=ModelCapabilities(image_formats=())),
+    )
+
+    assert merged.capabilities.image_formats == ()
 
 
 def test_prompt_caching_value_map_covers_exactly_the_prompt_caching_type():
@@ -294,6 +331,9 @@ def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry()
                 assert value in _DEFAULT_EFFORT_VALUES, f"{model_id}.{key}"
             elif key == "deferredToolLoading":
                 assert value in _DEFERRED_TOOL_LOADING_VALUES, f"{model_id}.{key}"
+            elif key in ("imageFormats", "documentFormats", "videoFormats"):
+                assert isinstance(value, list) and len(set(value)) == len(value), f"{model_id}.{key}"
+                assert set(value) <= set(_FORMAT_VALUES[_CAPABILITY_FIELDS[key]]), f"{model_id}.{key}"
             else:
                 assert key in _BOOLEAN_CAPABILITY_KEYS, f"{model_id}.capabilities.{key}"
                 assert isinstance(value, bool), f"{model_id}.{key}"
@@ -308,6 +348,7 @@ def test_lookup_keeps_the_typed_fields_and_skips_the_rest():
             native_structured_output=True,
             server_side_summary=True,
             temporary_messages=True,
+            **_CLAUDE_FORMATS,
         ),
         limits=ModelLimits(context_window=1_000_000, max_output_tokens=128_000),
     )

@@ -14,7 +14,10 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "high",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-sonnet-4-20250514": {
@@ -23,7 +26,10 @@
         "maxOutputTokens": 64000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-sonnet-4-5": {
@@ -35,7 +41,10 @@
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
         "nativeStructuredOutput": true,
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-opus-4-6": {
@@ -46,7 +55,10 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "high",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-opus-4-7": {
@@ -57,7 +69,10 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "defaultEffort": "xhigh",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-opus-4-8": {
@@ -71,7 +86,10 @@
         "nativeStructuredOutput": false,
         "temporaryMessages": true,
         "defaultEffort": "high",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-opus-5": {
@@ -85,7 +103,10 @@
         "nativeStructuredOutput": true,
         "temporaryMessages": true,
         "defaultEffort": "high",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-opus-5-5": {
@@ -100,7 +121,10 @@
         "serverSideSummary": true,
         "temporaryMessages": true,
         "defaultEffort": "medium",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-fable-5": {
@@ -112,7 +136,10 @@
         "promptCaching": "cachePoints",
         "temporaryMessages": true,
         "defaultEffort": "high",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-fable-5-1": {
@@ -126,7 +153,10 @@
         "serverSideSummary": true,
         "temporaryMessages": true,
         "defaultEffort": "high",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-fable-5-2": {
@@ -141,7 +171,10 @@
         "serverSideSummary": true,
         "temporaryMessages": true,
         "defaultEffort": "high",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-sonnet-5": {
@@ -154,7 +187,10 @@
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
         "defaultEffort": "high",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-sonnet-5-5": {
@@ -169,7 +205,10 @@
         "serverSideSummary": true,
         "temporaryMessages": true,
         "defaultEffort": "medium",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-haiku-5-5": {
@@ -184,7 +223,10 @@
         "serverSideSummary": true,
         "temporaryMessages": false,
         "defaultEffort": "medium",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-opus-4-5": {
@@ -194,7 +236,10 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-opus-4-20250514": {
@@ -203,7 +248,10 @@
         "maxOutputTokens": 32000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-opus-4-1": {
@@ -212,7 +260,10 @@
         "maxOutputTokens": 32000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-haiku-4-5": {
@@ -222,7 +273,10 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-3-7-sonnet-20250219": {
@@ -231,7 +285,10 @@
         "maxOutputTokens": 64000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-3-5-sonnet-20241022": {
@@ -240,7 +297,10 @@
         "maxOutputTokens": 8192
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-3-5-sonnet-20240620": {
@@ -249,7 +309,10 @@
         "maxOutputTokens": 8192
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-3-5-haiku-20241022": {
@@ -258,7 +321,10 @@
         "maxOutputTokens": 8192
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "imageFormats": [],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-3-opus-20240229": {
@@ -267,7 +333,9 @@
         "maxOutputTokens": 4096
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "claude-3-haiku-20240307": {
@@ -276,7 +344,10 @@
         "maxOutputTokens": 4096
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-3-7-sonnet-20240620": {
@@ -293,7 +364,9 @@
         "maxOutputTokens": 4096
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "claude-mythos-5-2": {
@@ -308,7 +381,10 @@
         "serverSideSummary": true,
         "temporaryMessages": true,
         "defaultEffort": "high",
-        "deferredToolLoading": "native"
+        "deferredToolLoading": "native",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "claude-mythos-preview": {
@@ -316,7 +392,10 @@
         "contextWindow": 1000000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "videoFormats": []
       }
     },
     "amazon.nova-pro-v1:0": {
@@ -326,7 +405,10 @@
       "capabilities": {
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
+        "videoFormats": ["flv", "mkv", "mov", "mpeg", "mpg", "mp4", "3gp", "webm", "wmv"]
       }
     },
     "amazon.nova-lite-v1:0": {
@@ -336,7 +418,10 @@
       "capabilities": {
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
+        "videoFormats": ["flv", "mkv", "mov", "mpeg", "mpg", "mp4", "3gp", "webm", "wmv"]
       }
     },
     "amazon.nova-micro-v1:0": {
@@ -346,7 +431,10 @@
       "capabilities": {
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": [],
+        "documentFormats": [],
+        "videoFormats": []
       }
     },
     "amazon.nova-premier-v1:0": {
@@ -356,7 +444,10 @@
       "capabilities": {
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
+        "videoFormats": ["flv", "mkv", "mov", "mpeg", "mpg", "mp4", "3gp", "webm", "wmv"]
       }
     },
     "amazon.nova-2-lite-v1:0": {
@@ -366,7 +457,10 @@
       "capabilities": {
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
+        "videoFormats": ["flv", "mkv", "mov", "mpeg", "mpg", "mp4", "3gp", "webm", "wmv"]
       }
     },
     "amazon.nova-2-pro-preview-20251202-v1:0": {
@@ -382,21 +476,37 @@
     "zai.glm-4.7": {
       "limits": {
         "contextWindow": 203000
+      },
+      "capabilities": {
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "zai.glm-4.7-flash": {
       "limits": {
         "contextWindow": 203000
+      },
+      "capabilities": {
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "zai.glm-5": {
       "limits": {
         "contextWindow": 200000
+      },
+      "capabilities": {
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "zai.glm-5.3": {
       "limits": {
         "contextWindow": 1000000
+      },
+      "capabilities": {
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "gpt-6.2-astra": {
@@ -408,7 +518,9 @@
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "unsupported",
         "systemPromptPlacement": "message",
-        "defaultEffort": "low"
+        "defaultEffort": "low",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "gpt-6.2-sol": {
@@ -420,7 +532,9 @@
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "unsupported",
         "systemPromptPlacement": "message",
-        "defaultEffort": "low"
+        "defaultEffort": "low",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "gpt-6-astra": {
@@ -430,7 +544,9 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "unsupported",
-        "defaultEffort": "low"
+        "defaultEffort": "low",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "gpt-6.1-sol": {
@@ -440,7 +556,10 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "unsupported",
-        "defaultEffort": "low"
+        "defaultEffort": "low",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "openai.gpt-6.1-sol": {
@@ -450,7 +569,9 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "unsupported",
-        "defaultEffort": "low"
+        "defaultEffort": "low",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "gpt-6.1-terra": {
@@ -460,7 +581,10 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "low"
+        "defaultEffort": "low",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "openai.gpt-6.1-terra": {
@@ -469,7 +593,9 @@
       },
       "capabilities": {
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "low"
+        "defaultEffort": "low",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "gpt-6-sol": {
@@ -479,7 +605,9 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "gpt-6-luna": {
@@ -489,12 +617,17 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "gpt-6-cyber": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "videoFormats": []
       }
     },
     "gpt-5.6": {
@@ -504,7 +637,10 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-5.6-sol": {
@@ -514,7 +650,9 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "low"
+        "defaultEffort": "low",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "gpt-5.6-terra": {
@@ -524,7 +662,9 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "gpt-5.6-luna": {
@@ -534,17 +674,27 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "openai.gpt-5.6-cyber": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "openai.gpt-daybreak-blue-5.6-sol": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "gpt-5.5": {
@@ -552,12 +702,19 @@
         "contextWindow": 1050000
       },
       "capabilities": {
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "gpt-5.5-pro": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-5.4": {
@@ -565,12 +722,19 @@
         "contextWindow": 1050000
       },
       "capabilities": {
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "gpt-5.4-pro": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-5.4-mini": {
@@ -578,12 +742,20 @@
         "contextWindow": 272000
       },
       "capabilities": {
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-5.4-nano": {
       "limits": {
         "contextWindow": 272000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-5.2": {
@@ -591,12 +763,20 @@
         "contextWindow": 272000
       },
       "capabilities": {
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-5.2-pro": {
       "limits": {
         "contextWindow": 272000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-5.1": {
@@ -604,7 +784,10 @@
         "contextWindow": 272000
       },
       "capabilities": {
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-5": {
@@ -612,102 +795,197 @@
         "contextWindow": 272000
       },
       "capabilities": {
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-5-mini": {
       "limits": {
         "contextWindow": 272000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-5-nano": {
       "limits": {
         "contextWindow": 272000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-5-pro": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-4.1": {
       "limits": {
         "contextWindow": 1047576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-4.1-mini": {
       "limits": {
         "contextWindow": 1047576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-4.1-nano": {
       "limits": {
         "contextWindow": 1047576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-4o": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-4o-mini": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-4-turbo": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "o3": {
       "limits": {
         "contextWindow": 200000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "o3-mini": {
       "limits": {
         "contextWindow": 200000
+      },
+      "capabilities": {
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "o3-pro": {
       "limits": {
         "contextWindow": 200000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "o4-mini": {
       "limits": {
         "contextWindow": 200000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "o1": {
       "limits": {
         "contextWindow": 200000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gemini-2.5-flash": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-2.5-flash-lite": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-2.5-pro": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-2.0-flash": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "webp"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-2.0-flash-lite": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "webp"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-3-pro-preview": {
@@ -715,7 +993,10 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-3-flash-preview": {
@@ -723,12 +1004,20 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-3.6-flash": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-3.5-flash": {
@@ -736,7 +1025,10 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-3.5-flash-lite": {
@@ -744,7 +1036,10 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-3.1-flash-lite": {
@@ -752,7 +1047,10 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-3.1-pro-preview": {
@@ -760,7 +1058,10 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-3.1-flash-lite-preview": {
@@ -768,42 +1069,73 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "defaultEffort": "high"
+        "defaultEffort": "high",
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "mistral-large-latest": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral-large-2512": {
       "limits": {
         "contextWindow": 262144
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral-large-3": {
       "limits": {
         "contextWindow": 262144
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral-medium-latest": {
       "limits": {
         "contextWindow": 262144
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral-medium-2505": {
       "limits": {
         "contextWindow": 131072
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral-small-latest": {
       "limits": {
         "contextWindow": 262144
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral-small-3-2-2506": {
       "limits": {
         "contextWindow": 131072
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "openai.gpt-oss-120b": {
@@ -811,7 +1143,9 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "openai.gpt-oss-20b": {
@@ -819,37 +1153,63 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "openai.gpt-oss-safeguard-120b": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "openai.gpt-oss-safeguard-20b": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "mistral.mistral-large-3-675b-instruct": {
       "limits": {
         "contextWindow": 256000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral.ministral-3-14b-instruct": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral.ministral-3-8b-instruct": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral.ministral-3-3b-instruct": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral.magistral-small-2509": {
@@ -857,17 +1217,28 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "toolUse": false
+        "toolUse": false,
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral.pixtral-large-2502": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
+        "videoFormats": []
       }
     },
     "mistral.mistral-small-2402": {
       "limits": {
         "contextWindow": 32000
+      },
+      "capabilities": {
+        "imageFormats": [],
+        "documentFormats": [],
+        "videoFormats": []
       }
     },
     "mistral.mistral-large-2402": {
@@ -875,7 +1246,10 @@
         "contextWindow": 32000
       },
       "capabilities": {
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": [],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
+        "videoFormats": []
       }
     },
     "google.gemma-4-31b": {
@@ -898,7 +1272,9 @@
         "contextWindow": 524288
       },
       "capabilities": {
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "xai.grok-4.6": {
@@ -906,7 +1282,9 @@
         "contextWindow": 500000
       },
       "capabilities": {
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "xai.grok-4.3": {
@@ -914,7 +1292,8 @@
         "contextWindow": 1000000
       },
       "capabilities": {
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "videoFormats": []
       }
     },
     "meta.llama3-1-8b-instruct": {
@@ -922,7 +1301,10 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": [],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
+        "videoFormats": []
       }
     },
     "meta.llama3-1-70b-instruct": {
@@ -930,7 +1312,10 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": [],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
+        "videoFormats": []
       }
     },
     "meta.llama3-3-70b-instruct": {
@@ -938,7 +1323,9 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "meta.llama4-scout-17b-instruct": {
@@ -946,7 +1333,10 @@
         "contextWindow": 10000000
       },
       "capabilities": {
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
+        "videoFormats": []
       }
     },
     "meta.llama4-maverick-17b-instruct": {
@@ -954,7 +1344,10 @@
         "contextWindow": 1000000
       },
       "capabilities": {
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
+        "videoFormats": []
       }
     },
     "deepseek.v3": {
@@ -962,7 +1355,9 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "qwen.qwen3-coder-480b-a35b": {
@@ -970,12 +1365,19 @@
         "contextWindow": 256000
       },
       "capabilities": {
-        "deferredToolLoading": "unsupported"
+        "deferredToolLoading": "unsupported",
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "chat-latest": {
       "limits": {
         "contextWindow": 272000
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "documentFormats": ["pdf"],
+        "videoFormats": []
       }
     },
     "gpt-oss-120b": {
@@ -983,7 +1385,9 @@
         "contextWindow": 131072
       },
       "capabilities": {
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "gpt-oss-20b": {
@@ -991,97 +1395,176 @@
         "contextWindow": 131072
       },
       "capabilities": {
-        "defaultEffort": "medium"
+        "defaultEffort": "medium",
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "gemini-4-neon": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-4-hydrogen": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-4-argon": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-3.8-flash": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "gemini-3.7-flash": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "webp"],
+        "documentFormats": ["pdf", "html", "txt", "md"],
+        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
       }
     },
     "codestral-2508": {
       "limits": {
         "contextWindow": 256000
+      },
+      "capabilities": {
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "codestral-latest": {
       "limits": {
         "contextWindow": 256000
+      },
+      "capabilities": {
+        "imageFormats": [],
+        "videoFormats": []
       }
     },
     "mistral-large-4-0": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral-large-4": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral-medium-3-5": {
       "limits": {
         "contextWindow": 262144
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral-medium-3": {
       "limits": {
         "contextWindow": 262144
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "ministral-14b-2512": {
       "limits": {
         "contextWindow": 262144
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "ministral-14b-latest": {
       "limits": {
         "contextWindow": 262144
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "ministral-8b-2512": {
       "limits": {
         "contextWindow": 262144
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "ministral-8b-latest": {
       "limits": {
         "contextWindow": 262144
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "ministral-3b-2512": {
       "limits": {
         "contextWindow": 131072
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "ministral-3b-latest": {
       "limits": {
         "contextWindow": 131072
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     },
     "mistral-small-2603": {
       "limits": {
         "contextWindow": 262144
+      },
+      "capabilities": {
+        "imageFormats": ["png", "jpeg", "gif", "webp"],
+        "videoFormats": []
       }
     }
   }

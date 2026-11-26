@@ -32,6 +32,12 @@ describe('ModelInfo.merge', () => {
     expect(merged.limits?.contextWindow).toBe(2)
   })
 
+  it('keeps an empty format list as known', () => {
+    const merged = ModelInfo.merge({ capabilities: { imageFormats: ['png'] } }, { capabilities: { imageFormats: [] } })
+
+    expect(merged.capabilities?.imageFormats).toEqual([])
+  })
+
   it('leaves out sections with nothing known', () => {
     expect(ModelInfo.merge({}, undefined, { limits: { contextWindow: undefined } })).toEqual({})
   })
