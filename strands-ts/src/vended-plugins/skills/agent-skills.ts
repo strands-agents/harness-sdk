@@ -219,21 +219,18 @@ export class AgentSkills implements Plugin {
     const resolved = new Map<string, Skill>()
     const skillPaths: string[] = []
     const asyncTasks: Promise<void>[] = []
+    // One slot per source, in source order. A URL fills its slot when its fetch settles; insertion into the map
+    // happens only after every slot is filled, so listing order follows configuration, not network timing.
+    const slots: (Skill | undefined)[] = sources.map(() => undefined)
 
-    for (const source of sources) {
+    for (const [index, source] of sources.entries()) {
       if (source instanceof Skill) {
-        if (resolved.has(source.name)) {
-          logger.warn(`name=<${source.name}> | duplicate skill name, overwriting previous skill`)
-        }
-        resolved.set(source.name, source)
+        slots[index] = source
       } else if (source.startsWith('https://')) {
         asyncTasks.push(
           Skill.fromUrl(source, { strict: this._strict }).then(
             (skill) => {
-              if (resolved.has(skill.name)) {
-                logger.warn(`name=<${skill.name}> | duplicate skill name, overwriting previous skill`)
-              }
-              resolved.set(skill.name, skill)
+              slots[index] = skill
             },
             (error) => {
               logger.warn(`url=<${source}> | failed to load skill from URL: ${error}`)
@@ -245,17 +242,20 @@ export class AgentSkills implements Plugin {
       }
     }
 
-    let ready: Promise<void>
-    if (asyncTasks.length > 0) {
-      ready = Promise.all(asyncTasks).then(() => {
-        logger.debug(
-          `source_count=<${sources.length}>, resolved_count=<${resolved.size}> | skills resolved (including async)`
-        )
-      })
-    } else {
-      logger.debug(`source_count=<${sources.length}>, resolved_count=<${resolved.size}> | skills resolved`)
-      ready = Promise.resolve()
-    }
+    const ready = Promise.all(asyncTasks).then(() => {
+      for (const skill of slots) {
+        if (!skill) continue
+        if (resolved.has(skill.name)) {
+          logger.warn(`name=<${skill.name}> | duplicate skill name, overwriting previous skill`)
+        }
+        resolved.set(skill.name, skill)
+      }
+      logger.debug(
+        asyncTasks.length > 0
+          ? `source_count=<${sources.length}>, resolved_count=<${resolved.size}> | skills resolved (including async)`
+          : `source_count=<${sources.length}>, resolved_count=<${resolved.size}> | skills resolved`
+      )
+    })
 
     return { skills: resolved, ready, skillPaths }
   }
@@ -310,7 +310,9 @@ export class AgentSkills implements Plugin {
       }
 
       // Parent directory: load each subdirectory that contains a skill.
-      for (const entry of entries.filter((e) => e.isDir).sort((a, b) => a.name.localeCompare(b.name))) {
+      for (const entry of entries
+        .filter((e) => e.isDir)
+        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
         const childDir = `${skillPath}/${entry.name}`
         const childEntries = await sandbox.listFiles(childDir).catch((error) => {
           logger.warn(`path=<${childDir}> | failed to load skill from sandbox: ${error}`)

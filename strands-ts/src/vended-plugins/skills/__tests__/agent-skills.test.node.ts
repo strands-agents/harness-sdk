@@ -32,6 +32,8 @@ describe('AgentSkills', () => {
   const makeSkill = (name: string, description = `Description of ${name}`, instructions = `Instructions for ${name}`) =>
     new Skill({ name, description, instructions })
 
+  const skillMd = (name: string) => `---\nname: ${name}\ndescription: The ${name} skill.\n---\nDo ${name}.\n`
+
   beforeEach(async () => {
     testDir = path.join(tmpdir(), `agent-skills-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     await fs.mkdir(testDir, { recursive: true })
@@ -66,6 +68,33 @@ describe('AgentSkills', () => {
       const agent = createMockAgent()
       await plugin.initAgent(agent)
       expect(await plugin.getAvailableSkills(agent)).toHaveLength(2)
+    })
+
+    it('sorts parent-directory skills by code-unit order, not locale order', async () => {
+      for (const name of ['aardvark', 'data-viz', 'pdf-tools', 'zebra']) {
+        await createSkillDir(name, skillMd(name))
+      }
+
+      // Simulate a locale whose collation reverses code-unit order.
+      const localeCompare = vi.spyOn(String.prototype, 'localeCompare').mockImplementation(function (
+        this: string,
+        other: string
+      ) {
+        return this < other ? 1 : this > other ? -1 : 0
+      })
+      try {
+        const plugin = new AgentSkills({ skills: [testDir] })
+        const agent = createMockAgent()
+        await plugin.initAgent(agent)
+        expect((await plugin.getAvailableSkills(agent)).map((s) => s.name)).toEqual([
+          'aardvark',
+          'data-viz',
+          'pdf-tools',
+          'zebra',
+        ])
+      } finally {
+        localeCompare.mockRestore()
+      }
     })
 
     it('handles mixed sources', async () => {
@@ -539,6 +568,32 @@ describe('AgentSkills', () => {
 
       expect(await plugin.getAvailableSkills()).toHaveLength(1)
       expect((await plugin.getAvailableSkills())[0]!.name).toBe('url-skill')
+    })
+
+    it('lists URL skills in source order regardless of fetch completion order', async () => {
+      const releases = new Map<string, () => void>()
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const name = String(input).split('/').at(-2)!
+        const body = new Promise<string>((resolve) => releases.set(name, () => resolve(skillMd(name))))
+        return { ok: true, status: 200, statusText: 'OK', text: () => body } as Response
+      })
+
+      const plugin = new AgentSkills({
+        skills: [
+          'https://skills.example/alpha/SKILL.md',
+          makeSkill('local'),
+          'https://skills.example/bravo/SKILL.md',
+          'https://skills.example/charlie/SKILL.md',
+        ],
+      })
+      const listed = plugin.getAvailableSkills()
+
+      // Let each fromUrl reach its awaited response.text() before releasing, so completion order cannot
+      // be mistaken for configuration order.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      for (const name of ['charlie', 'bravo', 'alpha']) releases.get(name)!()
+
+      expect((await listed).map((s) => s.name)).toEqual(['alpha', 'local', 'bravo', 'charlie'])
     })
 
     it('resolves a mix of URL and local filesystem sources', async () => {
