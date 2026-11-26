@@ -85,6 +85,10 @@ describe('OpenAIModel', () => {
   }
 
   describe('constructor', () => {
+    it('reports its gen_ai provider name', () => {
+      expect(new OpenAIModel({ api: 'chat', apiKey: 'sk-test' }).genAIProviderName).toBe('openai')
+    })
+
     it('creates an instance with required modelId', () => {
       const provider = new OpenAIModel({ api: 'chat', modelId: 'gpt-5.4', apiKey: 'sk-test' })
       const config = provider.getConfig()

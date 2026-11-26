@@ -46,6 +46,12 @@ vi.mock('../../telemetry/tracer.js', () => ({
   }),
 }))
 
+class ProviderModel extends MockMessageModel {
+  override get genAIProviderName(): string {
+    return 'aws.bedrock'
+  }
+}
+
 function getLatestTracer(): MockTracerInstance {
   return vi.mocked(Tracer).mock.results.at(-1)!.value
 }
@@ -442,14 +448,16 @@ describe('Agent tracer integration', () => {
     })
 
     it('starts and ends model span on successful model call', async () => {
-      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'Hello' })
+      const model = new ProviderModel().addTurn({ type: 'textBlock', text: 'Hello' })
       const agent = new Agent({ model })
       const tracer = getLatestTracer()
 
       await agent.invoke('Hi')
 
       expect(tracer.startModelInvokeSpan).toHaveBeenCalledTimes(1)
-      expect(tracer.startModelInvokeSpan).toHaveBeenCalledWith(expect.objectContaining({ modelId: 'test-model' }))
+      expect(tracer.startModelInvokeSpan).toHaveBeenCalledWith(
+        expect.objectContaining({ modelId: 'test-model', genAIProviderName: 'aws.bedrock' })
+      )
       expect(tracer.endModelInvokeSpan).toHaveBeenCalledTimes(1)
       expect(tracer.endModelInvokeSpan).toHaveBeenCalledWith(
         { mock: 'modelSpan' },

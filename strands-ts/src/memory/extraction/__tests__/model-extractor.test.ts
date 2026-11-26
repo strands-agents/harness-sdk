@@ -123,7 +123,11 @@ describe('ModelExtractor', () => {
   })
 
   it('wraps the model call in a model-invoke span when a tracer is supplied', async () => {
-    const model = new MockMessageModel()
+    const model = new (class extends MockMessageModel {
+      override get genAIProviderName(): string {
+        return 'anthropic'
+      }
+    })()
     model.addTurn({ type: 'textBlock', text: '[{"content": "fact"}]' })
     const startSpy = vi.spyOn(Tracer.prototype, 'startModelInvokeSpan')
     const endSpy = vi.spyOn(Tracer.prototype, 'endModelInvokeSpan')
@@ -132,6 +136,7 @@ describe('ModelExtractor', () => {
     await extractor.extract([userTurn('x')], { tracer: new Tracer() })
 
     expect(startSpy).toHaveBeenCalledTimes(1)
+    expect(startSpy).toHaveBeenCalledWith(expect.objectContaining({ genAIProviderName: 'anthropic' }))
     expect(endSpy).toHaveBeenCalledTimes(1)
     expect(endSpy.mock.calls[0]![1]?.error).toBeUndefined()
     expect(endSpy.mock.calls[0]![1]?.output).toBeDefined()

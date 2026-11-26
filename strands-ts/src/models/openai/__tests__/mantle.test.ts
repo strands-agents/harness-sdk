@@ -54,6 +54,12 @@ describe('OpenAIModel bedrockMantleConfig', () => {
   })
 
   describe('constructor wiring', () => {
+    it('reports aws.bedrock as its gen_ai provider name', () => {
+      const model = new OpenAIModel({ modelId: TEST_MODEL_ID, bedrockMantleConfig: { region: 'us-east-1' } })
+
+      expect(model.genAIProviderName).toBe('aws.bedrock')
+    })
+
     it('sets baseURL and installs async apiKey setter that mints a bearer token', async () => {
       new OpenAIModel({
         modelId: TEST_MODEL_ID,

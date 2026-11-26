@@ -74,6 +74,7 @@ export class ModelExtractor implements Extractor {
       context?.tracer?.startModelInvokeSpan({
         messages: promptMessages,
         ...(model.modelId !== undefined && { modelId: model.modelId }),
+        ...(model.genAIProviderName && { genAIProviderName: model.genAIProviderName }),
         systemPrompt: this._systemPrompt,
       }) ?? null
 

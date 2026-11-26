@@ -375,7 +375,7 @@ export class Tracer {
    * @param options - Options for starting the model invocation span
    */
   startModelInvokeSpan(options: StartModelInvokeSpanOptions): Span | null {
-    const { messages, modelId, systemPrompt } = options
+    const { messages, modelId, genAIProviderName, systemPrompt } = options
 
     // Create local model trace as child of current cycle
     this._traceState.currentModel = new AgentTrace(
@@ -384,7 +384,7 @@ export class Tracer {
     )
 
     try {
-      const attributes = this._getCommonAttributes('chat')
+      const attributes = this._getCommonAttributes('chat', genAIProviderName)
       if (modelId) attributes['gen_ai.request.model'] = modelId
 
       const span = this._startSpan({
@@ -1075,19 +1075,18 @@ export class Tracer {
 
   /**
    * Get common attributes based on semantic convention version.
-   * The attribute name changed between OTEL semconv versions:
+   * The provider attribute name changed between OTEL semconv versions:
    * - Stable: 'gen_ai.system'
    * - Latest experimental: 'gen_ai.provider.name'
+   * The provider attribute is omitted when `genAIProviderName` is undefined or empty.
    */
-  private _getCommonAttributes(operationName: string): Record<string, AttributeValue> {
+  private _getCommonAttributes(operationName: string, genAIProviderName?: string): Record<string, AttributeValue> {
     const attributes: Record<string, AttributeValue> = {
       'gen_ai.operation.name': operationName,
     }
 
-    if (this._useLatestConventions) {
-      attributes['gen_ai.provider.name'] = getServiceName()
-    } else {
-      attributes['gen_ai.system'] = getServiceName()
+    if (genAIProviderName) {
+      attributes[this._useLatestConventions ? 'gen_ai.provider.name' : 'gen_ai.system'] = genAIProviderName
     }
 
     return attributes

@@ -147,6 +147,15 @@ describe('VercelModel', () => {
     })
   })
 
+  describe('info', () => {
+    it('reports its gen_ai provider name from the provider namespace', () => {
+      expect(new VercelModel({ provider: createMockModel([], 'amazon-bedrock') }).genAIProviderName).toBe('aws.bedrock')
+      expect(new VercelModel({ provider: createMockModel([], 'openai.responses') }).genAIProviderName).toBe('openai')
+      expect(new VercelModel({ provider: createMockModel([], 'azure.chat') }).genAIProviderName).toBeUndefined()
+      expect(new VercelModel({ provider: createMockModel([], 'constructor.chat') }).genAIProviderName).toBeUndefined()
+    })
+  })
+
   describe('stream', () => {
     describe('text streaming', () => {
       it('emits correct events for simple text response', async () => {

@@ -424,6 +424,10 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     )
   }
 
+  override get genAIProviderName(): string {
+    return 'anthropic'
+  }
+
   updateConfig(modelConfig: AnthropicModelConfig): void {
     if (modelConfig.anthropicTools) validateAnthropicTools(modelConfig.anthropicTools)
 

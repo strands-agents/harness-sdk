@@ -1106,6 +1106,12 @@ describe('Model.modelId', () => {
   })
 })
 
+describe('Model.genAIProviderName', () => {
+  it('is undefined on the base model', () => {
+    expect(new TestModelProvider().genAIProviderName).toBeUndefined()
+  })
+})
+
 /** Replies with `reply` texts and `stopReason`, recording each stream call. */
 class RecordingModel extends TestModelProvider {
   readonly calls: { messages: Message[]; options: StreamOptions | undefined }[] = []
