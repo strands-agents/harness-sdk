@@ -152,3 +152,12 @@ async function endToEnd() {
   // Each interaction creates a complete trace that can be visualized in your tracing tool
   // --8<-- [end:end_to_end]
 }
+
+async function cloudwatchOtlp() {
+  // --8<-- [start:cloudwatch_otlp]
+  setupTracer({ exporters: { otlp: true } })
+
+  const agent = new Agent({ systemPrompt: 'You are a helpful AI assistant' })
+  await agent.invoke('What can you help me with?')
+  // --8<-- [end:cloudwatch_otlp]
+}
