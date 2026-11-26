@@ -551,8 +551,12 @@ async def test_connection_edge_cases(mock_websockets_connect, api_key, model_id)
                 {"type": "input_text", "text": "Be brief"},
             ],
         ),
+        (
+            [ImageBlock(format="jpeg", source={"bytes": b"image"}, detail="low")],
+            [{"type": "input_image", "image_url": "data:image/jpeg;base64,aW1hZ2U=", "detail": "low"}],
+        ),
     ],
-    ids=["text", "mixed"],
+    ids=["text", "mixed", "image_detail"],
 )
 async def test_send_message_creates_one_message_and_response(mock_websockets_connect, model, blocks, exp_content):
     _, mock_ws = mock_websockets_connect
