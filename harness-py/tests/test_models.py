@@ -517,6 +517,11 @@ def test_google_auto_maps_to_high_thinking_level():
     ("model", "effort", "expected"),
     [
         ("google/gemini-4-argon", "minimal", "Supported levels: low, medium, high"),
+        ("google/gemini-4-argon", "xhigh", "Supported levels: low, medium, high"),
+        ("google/gemini-4-neon", "xhigh", "xhigh"),
+        ("google/gemini-4-neon", "minimal", "Supported levels: low, medium, high, xhigh"),
+        ("google/gemini-4-hydrogen", "xhigh", "xhigh"),
+        ("google/gemini-4-hydrogen", "minimal", "Supported levels: low, medium, high, xhigh"),
         ("google/gemini-3.6-flash", "minimal", "minimal"),
         ("google/gemini-3.1-flash-lite-image", "minimal", "minimal"),
         ("google/gemini-3.1-flash-lite-image", "low", "Supported levels: minimal, high"),

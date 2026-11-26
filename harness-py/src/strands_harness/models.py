@@ -107,10 +107,13 @@ _BEDROCK_XAI_LEVELS = ("low", "medium", "high", "xhigh")
 _BEDROCK_NOVA_LEVELS = ("low", "medium", "high")
 _GOOGLE_LEVELS = ("low", "medium", "high")
 _GOOGLE_MINIMAL_LEVELS = ("minimal", "low", "medium", "high")
+_GOOGLE_XHIGH_LEVELS = ("low", "medium", "high", "xhigh")
 # Per-model levels: https://ai.google.dev/gemini-api/docs/thinking#controlling-thinking for Gemini;
 # Gemma 4 on Mantle only reasons at ``high``.
 _MODEL_LEVELS = {
     "google": (
+        ("gemini-4-neon", _GOOGLE_XHIGH_LEVELS),
+        ("gemini-4-hydrogen", _GOOGLE_XHIGH_LEVELS),
         ("gemini-3.1-flash-lite-image", ("minimal", "high")),
         ("gemini-3.6-flash", _GOOGLE_MINIMAL_LEVELS),
         ("gemini-3.5-flash", _GOOGLE_MINIMAL_LEVELS),

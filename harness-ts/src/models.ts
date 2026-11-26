@@ -82,10 +82,13 @@ const BEDROCK_QWEN_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'
 const BEDROCK_XAI_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const
 const GOOGLE_LEVELS = ['low', 'medium', 'high'] as const
 const GOOGLE_MINIMAL_LEVELS = ['minimal', 'low', 'medium', 'high'] as const
+const GOOGLE_XHIGH_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const
 // Per-model levels: https://ai.google.dev/gemini-api/docs/thinking#controlling-thinking for Gemini;
 // Gemma 4 on Mantle only reasons at `high`.
 const MODEL_LEVELS: Record<string, [string, readonly string[]][]> = {
   google: [
+    ['gemini-4-neon', GOOGLE_XHIGH_LEVELS],
+    ['gemini-4-hydrogen', GOOGLE_XHIGH_LEVELS],
     ['gemini-3.1-flash-lite-image', ['minimal', 'high']],
     ['gemini-3.6-flash', GOOGLE_MINIMAL_LEVELS],
     ['gemini-3.5-flash', GOOGLE_MINIMAL_LEVELS],
