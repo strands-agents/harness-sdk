@@ -812,6 +812,53 @@ async def test_stream_response_tool_use(gemini_client, model, messages, agenerat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "finish_reason,stop_reason",
+    [
+        ("STOP", "tool_use"),
+        (None, "tool_use"),
+        ("MAX_TOKENS", "max_tokens"),
+        ("SAFETY", "guardrail_intervened"),
+        ("RECITATION", "content_filtered"),
+    ],
+)
+async def test_stream_response_tool_use_keeps_abnormal_finish_reason(
+    gemini_client, model, messages, agenerator, alist, finish_reason, stop_reason
+):
+    # https://github.com/strands-agents/harness-sdk/issues/6080
+    # A function call in a truncated or blocked turn must not hide the server's finish reason.
+    gemini_client.aio.models.generate_content_stream.return_value = agenerator(
+        [
+            genai.types.GenerateContentResponse(
+                candidates=[
+                    genai.types.Candidate(
+                        content=genai.types.Content(
+                            parts=[
+                                genai.types.Part(
+                                    function_call=genai.types.FunctionCall(
+                                        args={"expression": "2+2"},
+                                        id="c1",
+                                        name="calculator",
+                                    ),
+                                ),
+                            ],
+                        ),
+                    ),
+                ],
+            ),
+            genai.types.GenerateContentResponse(
+                candidates=[genai.types.Candidate(finish_reason=finish_reason)],
+            ),
+        ]
+    )
+
+    tru_chunks = await alist(model.stream(messages))
+
+    assert {"contentBlockStart": {"start": {"toolUse": {"name": "calculator", "toolUseId": "c1"}}}} in tru_chunks
+    assert tru_chunks[-1] == {"messageStop": {"stopReason": stop_reason}}
+
+
+@pytest.mark.asyncio
 async def test_stream_response_tool_use_with_thought_signature(gemini_client, model, messages, agenerator, alist):
     """Test that tool use responses with thought_signature include reasoningSignature."""
     gemini_client.aio.models.generate_content_stream.return_value = agenerator(
