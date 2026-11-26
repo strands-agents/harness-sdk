@@ -1,11 +1,12 @@
 ---
 title: GenAI Prices Estimator
 description: "Estimate what a request cost in USD: the GenAIPricesEstimator plugin prices each model's token usage with the genai-prices package and streams the estimate after every model call."
-languages: Python
 tags: [token-management]
 sourceLinks:
   - path: strands-py/src/strands/vended_plugins/cost_estimator/plugin.py
+  - path: strands-ts/src/vended-plugins/cost-estimator/plugin.ts
   - path: strands-py/src/strands/agent/invocation_context.py
+  - path: strands-ts/src/agent/invocation-context.ts
 addedDate: 2026-11-19
 ---
 
@@ -20,22 +21,40 @@ invoice depends on things the estimate cannot see. See
 
 ## Install
 
+<Tabs>
+<Tab label="Python">
+
 The plugin needs the `cost-estimator` extra and Python 3.11 or later:
 
 ```bash
 pip install 'strands-agents[cost-estimator]'
 ```
 
-The prices ship inside the genai-prices package, so the plugin makes no network calls. To
-get newer prices, upgrade genai-prices.
-
 On Python 3.10 the plugin is unavailable, because genai-prices needs Python 3.11.
 [`usage_by_model`](#token-usage-per-model) still works there.
+
+</Tab>
+<Tab label="TypeScript">
+
+The plugin needs the optional `@pydantic/genai-prices` package:
+
+```bash
+npm install @pydantic/genai-prices
+```
+
+</Tab>
+</Tabs>
+
+The prices ship inside the genai-prices package, so the plugin makes no network calls. To
+get newer prices, upgrade genai-prices.
 
 ## Read the Estimate from the Stream
 
 Attach the plugin to your agent. After every model call, the agent's stream carries a
-`cost_estimate` event:
+<Syntax py="cost_estimate" ts="costEstimateEvent" /> event:
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 import asyncio
@@ -69,32 +88,67 @@ asyncio.run(main())
 #   global.anthropic.claude-sonnet-4-6 0.000669 genai-prices:aws/global.anthropic.claude-sonnet-4-6-v1:0
 ```
 
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/plugins/genai-prices-estimator_imports.ts:stream_imports"
+
+--8<-- "user-guide/sdk/plugins/genai-prices-estimator.ts:stream"
+```
+
+</Tab>
+</Tabs>
+
 Each event carries two estimates:
 
-- `event["model_call"]` is the estimate for the model call that just ended. It names the
-  model the plugin saw: wrap middleware you add after the plugin that swaps the model is
-  not reflected in it.
-- `event["cost_estimate"]` is the running estimate for the request so far, including the
-  agents your tools ran in the same request. Do not add events together.
+- <Syntax py='event["model_call"]' ts="event.modelCall" /> is the estimate for the model
+  call that just ended. It names the model the plugin saw: wrap middleware you add after
+  the plugin that swaps the model is not reflected in it.
+- <Syntax py='event["cost_estimate"]' ts="event.costEstimate" /> is the running estimate
+  for the request so far, including the agents your tools ran in the same request. Do not
+  add events together.
 
 The events are a running figure, not the request's estimate. Work that happens after the
 agent's last model call, such as a goal judge or memory extraction, is not in any event.
-For the request's estimate, call `cost.estimate(event["result"])` when the `result` event
-arrives, as the example does.
+For the request's estimate, call
+<Syntax py='cost.estimate(event["result"])' ts="cost.estimate(event.result)" /> when the
+<Syntax py="result" ts="agentResultEvent" /> event arrives, as the example does.
+
+<Tabs>
+<Tab label="Python">
 
 A [callback handler](../streaming/callback-handlers.md) receives the same two estimates as
 the `cost_estimate` and `model_call` keyword arguments.
 
+</Tab>
+<Tab label="TypeScript">
+
+The event is a [hook event](../agents/hooks.md) too, so a hook callback receives the same
+two estimates:
+
+```typescript
+--8<-- "user-guide/sdk/plugins/genai-prices-estimator_imports.ts:hook_imports"
+
+--8<-- "user-guide/sdk/plugins/genai-prices-estimator.ts:hook"
+```
+
+</Tab>
+</Tabs>
+
 ## Estimate a Request
 
 `estimate()` returns the estimate for a request. It accepts an agent result, a Graph or
-Swarm result, an `invocation_context`, or a list of
+Swarm result, an <Syntax py="invocation_context" ts="invocationContext" />, or a list of
 [`ModelUsage` records](#token-usage-per-model), and it works without attaching the plugin
 to an agent.
 
 The request includes the model calls the SDK makes for you, such as summarization, and the
 agents your tools run. An agent started by your own tool counts only when the tool passes
-`invocation_context` on:
+<Syntax py="invocation_context" ts="invocationContext" /> on:
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 from strands import Agent, ToolContext, tool
@@ -125,38 +179,77 @@ for model in estimate.models:
 #   us.amazon.nova-lite-v1:0 5.574e-05 genai-prices:aws/amazon.nova-lite-v1:0
 ```
 
-A request you continue by passing its `invocation_context` to a later call is one request,
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/plugins/genai-prices-estimator_imports.ts:estimate_request_imports"
+
+--8<-- "user-guide/sdk/plugins/genai-prices-estimator.ts:estimate_request"
+```
+
+</Tab>
+</Tabs>
+
+A request you continue by passing its
+<Syntax py="invocation_context" ts="invocationContext" /> to a later call is one request,
 so its estimate grows. Do not add the estimates of the two calls together. Resuming after
 an [interrupt](../interrupts.md) starts a new request.
 
 ### Nested Agents
 
-A nested agent emits its own `cost_estimate` events when the plugin is attached to it.
-When the agent runs as a tool, they reach the parent's stream inside
-[tool stream events](../tools/custom-tools.md#tool-streaming), not at the top level.
+A nested agent emits its own <Syntax py="cost_estimate" ts="costEstimateEvent" /> events
+when the plugin is attached to it. When the agent runs as a tool, they reach the parent's
+stream inside [tool stream events](../tools/custom-tools.md#tool-streaming), not at the
+top level.
 
-A nested agent that sets its own `limits` reports its own share in `cost_estimate`, not
-the whole request. The parent's events and `estimate()` still include it.
+A nested agent that sets its own `limits` reports its own share in
+<Syntax py="cost_estimate" ts="costEstimate" />, not the whole request. The parent's
+events and `estimate()` still include it.
 
 ### Token Usage per Model
 
 The token counts behind the estimate are on the request itself, with or without the
-plugin. `result.invocation_context.usage_by_model` is a list of `ModelUsage` records, one
-per model, each with a `provider_name`, a `model_id`, and the model's summed `usage`. You
-can save the records and pass them to `estimate()` later.
+plugin.
+<Syntax
+  py="result.invocation_context.usage_by_model"
+  ts="result.invocationContext.usageByModel"
+/> is a list of `ModelUsage` records, one per model, each with a
+<Syntax py="provider_name" ts="providerName" />, a
+<Syntax py="model_id" ts="modelId" />, and the model's summed `usage`. You can save the
+records and pass them to `estimate()` later.
 
-For the SDK's model classes, `provider_name` is one of `anthropic`, `bedrock`, `google`,
-`litellm`, `llamaapi`, `llamacpp`, `mistral`, `ollama`, `openai`, `sagemaker`, or `writer`.
+For the SDK's model classes, the provider name is one of the following:
+
+<Tabs>
+<Tab label="Python">
+
+`anthropic`, `bedrock`, `google`, `litellm`, `llamaapi`, `llamacpp`, `mistral`, `ollama`,
+`openai`, `sagemaker`, or `writer`. A SageMaker model's `model_id` is its endpoint name.
+
+</Tab>
+<Tab label="TypeScript">
+
+`anthropic`, `bedrock`, `google`, or `openai`. A `VercelModel` has no provider name, and
+neither has an `AnthropicModel` whose client calls a base URL other than Anthropic's or
+Bedrock's.
+
+</Tab>
+</Tabs>
+
 A model that reaches Bedrock through another class, such as `OpenAIModel` with
-`bedrock_mantle_config` or a Bedrock base URL, is `bedrock` too. A decision model reports the provider name from
-its own metadata. The name is `None` when the SDK cannot tell, as for a custom model or an
-OpenAI-compatible endpoint with its own base URL. A SageMaker model's `model_id` is its
-endpoint name.
+<Syntax py="bedrock_mantle_config" ts="bedrockMantleConfig" /> or a Bedrock base URL, is
+`bedrock` too. A decision model reports the provider name from its own metadata. The name
+is <Syntax py="None" ts="undefined" /> when the SDK cannot tell, as for a custom model or an
+OpenAI-compatible endpoint with its own base URL.
 
 ## Use Your Own Prices
 
 Pass your own prices for a model genai-prices does not list, or for a rate you negotiated.
 Prices are in USD per one million tokens:
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 from strands.vended_plugins.cost_estimator import GenAIPricesEstimator, ModelPrice
@@ -176,22 +269,42 @@ cost = GenAIPricesEstimator(
 )
 ```
 
-Your prices win over genai-prices. The `model_id` is compared as a whole string. For a
-SageMaker model, it is the endpoint name. A price with no cache rate charges cached tokens
-at the input rate.
+</Tab>
+<Tab label="TypeScript">
 
-A price with a `provider_name` applies only when it equals the record's
-[provider name](#token-usage-per-model) exactly, and it wins over a price without one. A
-price with `provider_name="aws"`, for example, never applies to a Bedrock model.
+```typescript
+--8<-- "user-guide/sdk/plugins/genai-prices-estimator_imports.ts:own_prices_imports"
+
+--8<-- "user-guide/sdk/plugins/genai-prices-estimator.ts:own_prices"
+```
+
+</Tab>
+</Tabs>
+
+Your prices win over genai-prices. The <Syntax py="model_id" ts="modelId" /> is compared
+as a whole string. For a SageMaker model in Python, it is the endpoint name. A price with
+no cache rate charges cached tokens at the input rate.
+
+A price with a <Syntax py="provider_name" ts="providerName" /> applies only when it equals
+the record's [provider name](#token-usage-per-model) exactly, and it wins over a price
+without one. A price with
+<Syntax py='provider_name="aws"' ts="providerName: 'aws'" />, for example, never applies
+to a Bedrock model.
 
 Each model in the estimate reports the price it used in `price` and where the price came
-from in `price_source`: `"user"`, or the genai-prices entry that matched. `price_source`
-is for display, so do not parse it.
+from in <Syntax py="price_source" ts="priceSource" />: `"user"`, or the genai-prices entry
+that matched. <Syntax py="price_source" ts="priceSource" /> is for display, so do not
+parse it.
 
 ## When a Model Has No Price
 
-A model with no price has a `cost_usd` of `None`, and then `total_usd` is `None` too. A
-missing price never counts as zero, so you never read a partial sum as the whole:
+A model with no price has a <Syntax py="cost_usd" ts="costUsd" /> of
+<Syntax py="None" ts="undefined" />, and then <Syntax py="total_usd" ts="totalUsd" /> is
+<Syntax py="None" ts="undefined" /> too. A missing price never counts as zero, so you never
+read a partial sum as the whole:
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 estimate = cost.estimate(result)
@@ -200,16 +313,28 @@ if estimate.total_usd is None:
     print("No price for:", [model.model_id for model in estimate.unpriced])
 ```
 
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/plugins/genai-prices-estimator.ts:unpriced"
+```
+
+</Tab>
+</Tabs>
+
 The plugin looks a model up in genai-prices only when its provider name is `anthropic`,
 `bedrock`, `google`, `mistral`, `openai`, or `litellm`. For a LiteLLM model, the provider
 is the part of the model ID before the first `/`; for an ID without one, such as `gpt-4o`,
 genai-prices infers the provider from the model name. Every other model, such as a custom
-model, a SageMaker endpoint, or a local model, is priced only by the prices you pass.
+model, a SageMaker endpoint, or a local model, is priced only by the prices you pass. In
+TypeScript, no model class reports `mistral` or `litellm`; those names apply to usage
+records you pass to `estimate()` yourself.
 
 genai-prices matches model IDs by rule, so an ID it does not list exactly can match a
 neighbouring entry. For example, `claude-sonnet-4-5-custom` gets the price of
-`claude-sonnet-4-5`. `price_source` shows the entry that was used. Pass your own price
-when it is the wrong one.
+`claude-sonnet-4-5`. <Syntax py="price_source" ts="priceSource" /> shows the entry that
+was used. Pass your own price when it is the wrong one.
 
 ## What the Estimate Leaves Out
 
@@ -225,13 +350,13 @@ Each of these makes your bill differ from the estimate:
 | Amazon Bedrock source region | Regional profiles get one price, while real prices vary by region |
 | Service tier, batch, and provisioned throughput | Flex and batch are overpriced, and priority is underpriced |
 | One-hour cache writes | Priced at the five-minute rate, so underpriced |
-| Amazon Nova cache writes | Priced at the input rate, so overpriced; pass your own price with `cache_write_per_million=0` |
+| Amazon Nova cache writes | Priced at the input rate, so overpriced; pass your own price with <Syntax py="cache_write_per_million=0" ts="cacheWritePerMillion: 0" /> |
 | Negotiated discounts | Overpriced; pass your own prices |
 | Application inference profile ARNs | Unpriced; pass your own price |
-| A model call that fails or is cancelled mid-stream | A failed call is not counted; a cancelled call counts only the usage reported before the cancel |
+| A model call that fails or is cancelled mid-stream | A failed call is not counted. In Python, a cancelled call counts only the usage reported before the cancel; in TypeScript, a cancelled call is not counted and emits no event |
 | Background tasks that finish after the result | Counted only in an estimate you take after they finish |
-| `Agent.structured_output()` | Runs outside any request, so not counted |
-| Agents your own tools start without passing `invocation_context` | Not counted |
+| `Agent.structured_output()` in Python | Runs outside any request, so not counted |
+| Agents your own tools start without passing <Syntax py="invocation_context" ts="invocationContext" /> | Not counted |
 | Tool, knowledge base, and other non-model costs | Not counted |
 | Bidirectional streaming | Not counted |
 

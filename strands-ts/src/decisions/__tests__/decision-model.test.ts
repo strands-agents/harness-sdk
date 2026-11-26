@@ -60,6 +60,25 @@ describe('DecisionModel', () => {
         expect(invocationContext.usage).toEqual({ turnsTaken: 0, ...DECISION_USAGE })
       })
 
+      it.each([
+        {
+          metadata: { providerName: 'typesafe', modelId: 'jev-1' },
+          expected: { providerName: 'typesafe', modelId: 'jev-1' },
+        },
+        { metadata: {}, expected: {} },
+      ])(
+        'adds the reported usage under the model named in the result metadata: $expected.providerName',
+        async (testCase) => {
+          const metadata = { latencyMs: 1, ...testCase.metadata }
+          const decision = new StubDecisionModel({ usage: DECISION_USAGE, metadata })
+          const invocationContext = new InvocationContextImpl()
+
+          await decision.ask('ls', QUESTIONS, { invocationContext })
+
+          expect(invocationContext.usageByModel).toStrictEqual([{ ...testCase.expected, usage: DECISION_USAGE }])
+        }
+      )
+
       it('adds the reported usage through to the parent request', async () => {
         const decision = new StubDecisionModel({ usage: DECISION_USAGE, metadata: { latencyMs: 1 } })
         const parent = new InvocationContextImpl()

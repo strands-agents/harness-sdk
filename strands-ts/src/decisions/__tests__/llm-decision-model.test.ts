@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { InvocationContextImpl } from '../../agent/invocation-context.js'
 import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
 import { BedrockModel } from '../../models/bedrock.js'
 import { Model } from '../../models/model.js'
@@ -330,6 +331,30 @@ describe('LLMDecisionModel', () => {
 
       await expect(decision.ask('x', { q: { question: 'pick', choices: ['a', 'a'] } })).rejects.toThrow(/unique/)
       expect(model.requests).toHaveLength(0)
+    })
+
+    it('adds the reported usage under the model it wraps', async () => {
+      const model = toolUseModel({ q: 'true' })
+      model.updateConfig({ modelId: 'model-a' })
+      const invocationContext = new InvocationContextImpl()
+
+      const result = await new LLMDecisionModel({ model }).ask(
+        'x',
+        { q: { question: 'ok?', choices: 'boolean' } },
+        { invocationContext }
+      )
+
+      expect(invocationContext.usageByModel).toStrictEqual([{ modelId: 'model-a', usage: DEFAULT_USAGE }])
+      expect(result.metadata).toEqual({ latencyMs: expect.any(Number) })
+    })
+
+    it('keeps the cache tokens of the reported usage', async () => {
+      const usage: Usage = { ...DEFAULT_USAGE, cacheReadInputTokens: 7, cacheWriteInputTokens: 1 }
+      const model = toolUseModel({ q: 'true' }, { usage })
+
+      const result = await new LLMDecisionModel({ model }).ask('x', { q: { question: 'ok?', choices: 'boolean' } })
+
+      expect(result.usage).toEqual(usage)
     })
 
     it('returns a result without usage when the provider omits it', async () => {

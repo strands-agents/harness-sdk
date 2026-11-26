@@ -4,7 +4,7 @@
 
 import { context, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api'
 
-import { unwrapInvocationContext } from '../agent/invocation-context.js'
+import { unwrapInvocationContext, type ModelKey } from '../agent/invocation-context.js'
 import { getServiceName } from '../telemetry/utils.js'
 import type { AskOptions, DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
 
@@ -61,7 +61,7 @@ export abstract class DecisionModel {
         'gen_ai.decision.answers': JSON.stringify(result.answers),
       }
       if (result.usage !== undefined) {
-        invocationContext?.recordUsage(result.usage)
+        invocationContext?.recordUsage(result.usage, this._usageModelKey(result))
         spanAttributes['gen_ai.usage.input_tokens'] = result.usage.inputTokens
         spanAttributes['gen_ai.usage.output_tokens'] = result.usage.outputTokens
       }
@@ -77,6 +77,16 @@ export abstract class DecisionModel {
     } finally {
       span.end()
     }
+  }
+
+  /**
+   * The provider name and model id `result`'s usage is recorded under; `undefined` for what is not known.
+   *
+   * @internal
+   */
+  protected _usageModelKey(result: DecisionResult): ModelKey {
+    const { providerName, modelId } = result.metadata
+    return { ...(providerName !== undefined && { providerName }), ...(modelId !== undefined && { modelId }) }
   }
 
   /**

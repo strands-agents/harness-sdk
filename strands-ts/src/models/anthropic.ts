@@ -23,6 +23,7 @@ import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
 import type { ToolSpec } from '../tools/types.js'
 import { lookupModelInfo, ModelInfo } from './model-info.js'
+import { BEDROCK_HOSTS } from './provider-name.js'
 import { withToolReferenceText } from './tool-references.js'
 import { Message, SummaryBlock } from '../types/messages.js'
 import type { ContentBlock, SystemPrompt, ToolResultContent } from '../types/messages.js'
@@ -103,11 +104,16 @@ const BEDROCK_THROTTLING_EVENTS = ['throttlingException', 'serviceUnavailableExc
 // `@anthropic-ai/bedrock-sdk`: by class name, or by its bedrock-runtime base URL when a bundler renamed the class.
 // The Mantle client is a separate class on a bedrock-mantle host and takes the Anthropic API versions.
 function isBedrockRuntimeClient(client: unknown): boolean {
-  for (let proto = Object.getPrototypeOf(client); proto; proto = Object.getPrototypeOf(proto)) {
-    if ((proto as { constructor?: { name?: string } }).constructor?.name === 'AnthropicBedrock') return true
-  }
+  if (hasClassName(client, 'AnthropicBedrock')) return true
   const baseURL = (client as { baseURL?: unknown } | null)?.baseURL
   return typeof baseURL === 'string' && /\bbedrock-runtime\./.test(baseURL)
+}
+
+function hasClassName(client: unknown, name: string): boolean {
+  for (let proto = Object.getPrototypeOf(client); proto; proto = Object.getPrototypeOf(proto)) {
+    if ((proto as { constructor?: { name?: string } }).constructor?.name === name) return true
+  }
+  return false
 }
 
 /**
@@ -422,6 +428,22 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       { capabilities: { temporaryMessages, deferredToolLoading } },
       this._config.modelInfo
     )
+  }
+
+  /**
+   * Names the provider by the client's class and the host it calls; a client the SDK does not recognise, or an
+   * `Anthropic` client on a host other than Anthropic's or Bedrock's, may call any vendor.
+   *
+   * @internal
+   */
+  override get _providerName(): string | undefined {
+    if (hasClassName(this._client, 'AnthropicBedrock') || hasClassName(this._client, 'AnthropicBedrockMantle')) {
+      return 'bedrock'
+    }
+    const { baseURL } = this._client as { baseURL?: unknown }
+    const host = typeof baseURL === 'string' ? new URL(baseURL).hostname : undefined
+    if (host !== undefined && BEDROCK_HOSTS.test(host)) return 'bedrock'
+    return this._client instanceof Anthropic && host === 'api.anthropic.com' ? 'anthropic' : undefined
   }
 
   updateConfig(modelConfig: AnthropicModelConfig): void {

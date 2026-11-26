@@ -193,6 +193,10 @@
       "types": "./dist/src/vended-plugins/todos/index.d.ts",
       "default": "./dist/src/vended-plugins/todos/index.js"
     },
+    "./vended-plugins/cost-estimator": {
+      "types": "./dist/src/vended-plugins/cost-estimator/index.d.ts",
+      "default": "./dist/src/vended-plugins/cost-estimator/index.js"
+    },
     "./vended-interventions/hitl": {
       "types": "./dist/src/vended-interventions/hitl/index.d.ts",
       "default": "./dist/src/vended-interventions/hitl/index.js"
@@ -324,6 +328,7 @@
     "@opentelemetry/sdk-metrics": "^2.6.1",
     "@opentelemetry/sdk-trace-base": "^2.12.0",
     "@opentelemetry/sdk-trace-node": "^2.12.0",
+    "@pydantic/genai-prices": "^0.2.5",
     "@smithy/types": "^4.15.1",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.3",
@@ -388,6 +393,7 @@
     "@opentelemetry/sdk-metrics": "^2.6.1",
     "@opentelemetry/sdk-trace-base": "^2.6.1",
     "@opentelemetry/sdk-trace-node": "^2.6.1",
+    "@pydantic/genai-prices": "^0.2.4",
     "@smithy/types": "^4.15.1",
     "@tobilu/qmd": "^2.8.0",
     "express": "^5.1.0",
@@ -469,6 +475,9 @@
       "optional": true
     },
     "turndown": {
+      "optional": true
+    },
+    "@pydantic/genai-prices": {
       "optional": true
     }
   },

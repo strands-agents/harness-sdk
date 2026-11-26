@@ -31,6 +31,7 @@ import type {
   StreamEvent,
 } from '../hooks/events.js'
 import type { HookCallback, HookableEventConstructor, HookCallbackOptions, HookCleanup } from '../hooks/types.js'
+import type { CostEstimateEvent } from '../vended-plugins/cost-estimator/types.js'
 import type {
   MiddlewareStage,
   MiddlewareHandler,
@@ -724,3 +725,4 @@ export type AgentStreamEvent =
   | MessageAddedEvent
   | InterruptEvent
   | AgentResultEvent
+  | CostEstimateEvent

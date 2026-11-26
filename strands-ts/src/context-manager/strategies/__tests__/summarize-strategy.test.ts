@@ -1282,7 +1282,7 @@ describe('client-side summaries use Model.summarize', () => {
     }
   )
 
-  it('a per-message summary adds its usage to the request', async () => {
+  it('a per-message summary adds its usage to the request under its model', async () => {
     const messages = serverSideMessages()
     const { agent } = mockAgent(messages)
     const invocationContext = new InvocationContextImpl()
@@ -1290,12 +1290,13 @@ describe('client-side summaries use Model.summarize', () => {
     expect(await perMessage().apply({ messages, agent, utilization: 0.9, invocationContext })).toBe(true)
 
     expect(invocationContext.usage).toEqual({ turnsTaken: 0, ...STREAM_USAGE })
+    expect(invocationContext.usageByModel).toStrictEqual([{ modelId: 'test-model', usage: STREAM_USAGE }])
   })
 
   it.each([
     { name: 'with a summary', content: [new SummaryBlock({ provider: 'anthropic', text: 'compacted' })] },
     { name: 'without a summary', content: [] },
-  ])('a server-side summary adds its usage to the request: $name', async ({ content }) => {
+  ])('a server-side summary adds its usage to the request under its model: $name', async ({ content }) => {
     const messages = serverSideMessages()
     const { agent, summarize } = mockAgent(messages, { serverSideSummary: true })
     const usage = { inputTokens: 100, outputTokens: 20, totalTokens: 120 }
@@ -1306,6 +1307,7 @@ describe('client-side summaries use Model.summarize', () => {
     expect(await perMessage().apply({ messages, agent, utilization: 0.9, invocationContext })).toBe(content.length > 0)
 
     expect(invocationContext.usage).toEqual({ turnsTaken: 0, ...usage })
+    expect(invocationContext.usageByModel).toStrictEqual([{ modelId: 'test-model', usage }])
     warnSpy.mockRestore()
   })
 

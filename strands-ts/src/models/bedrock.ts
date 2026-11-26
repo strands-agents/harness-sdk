@@ -621,6 +621,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     )
   }
 
+  /** @internal */
+  override get _providerName(): string {
+    return 'bedrock'
+  }
+
   /**
    * Returns the cache strategy for this model based on its model ID.
    * Returns the appropriate cache strategy name, or null if automatic caching is not supported.

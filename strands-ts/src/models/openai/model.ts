@@ -13,6 +13,7 @@ import type { ResponseStreamEvent } from 'openai/resources/responses/responses'
 import { Model, resolveConfigMetadata } from '../model.js'
 import type { StreamOptions } from '../model.js'
 import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from '../model-info.js'
+import { BEDROCK_HOSTS } from '../provider-name.js'
 import type { ChatCompletionsTools } from '../model-info.js'
 import type { Message } from '../../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../streaming.js'
@@ -167,6 +168,18 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
       { capabilities: { stateful } },
       this._config.modelInfo
     )
+  }
+
+  /**
+   * Names the provider by the endpoint the client calls; a base URL other than OpenAI's or Bedrock's may be any vendor.
+   *
+   * @internal
+   */
+  override get _providerName(): string | undefined {
+    if (this._mantleBaseUrl !== undefined) return 'bedrock'
+    const host = new URL(this._client.baseURL).hostname
+    if (host === 'api.openai.com') return 'openai'
+    return BEDROCK_HOSTS.test(host) ? 'bedrock' : undefined
   }
 
   /**

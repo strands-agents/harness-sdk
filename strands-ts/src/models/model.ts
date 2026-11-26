@@ -416,6 +416,15 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   }
 
   /**
+   * Strands name of the provider this model calls, which its usage is recorded under; `undefined` when not known.
+   *
+   * @internal
+   */
+  get _providerName(): string | undefined {
+    return undefined
+  }
+
+  /**
    * Whether this model manages conversation state server-side.
    *
    * When `true`, the server tracks conversation context across turns, so the SDK

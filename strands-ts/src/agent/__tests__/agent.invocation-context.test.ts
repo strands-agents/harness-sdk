@@ -13,6 +13,7 @@ import type { ToolContext } from '../../tools/tool.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { Message, TextBlock } from '../../types/messages.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
+import { accumulateUsage, createEmptyUsage, type Usage } from '../../models/streaming.js'
 
 describe('Agent request-wide limits', () => {
   it('leaves the parent limit intact and the child uncounted when a hand-written tool forwards invocationState', async () => {
@@ -352,6 +353,56 @@ describe('Agent request-wide limits', () => {
     expect(secondInvocationContext).toBeDefined()
     expect(secondInvocationContext).not.toBe(firstInvocationContext)
     expect(unwrapInvocationContext(secondInvocationContext)?.usage.turnsTaken).toBe(1)
+  })
+
+  it('records usage under the model of each call in the request', async () => {
+    const usage = (inputTokens: number, outputTokens: number): Usage => ({
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+    })
+    const subAgent = (modelId: string | undefined, subUsage: Usage): Agent => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'sub done' }, { usage: subUsage })
+      vi.spyOn(model, 'getConfig').mockReturnValue(modelId === undefined ? {} : { modelId })
+      return new Agent({ model, printer: false })
+    }
+    const contexts: Record<string, InvocationContext> = {}
+    const relay = tool({
+      name: 'relay',
+      description: 'runs one sub-agent in the request, one with its own limits, and one as an auxiliary call',
+      callback: async (_input: unknown, context: ToolContext) => {
+        const request = context.invocationContext!
+        await subAgent('small', usage(10, 1)).invoke('go', { invocationContext: request })
+        const limited = await subAgent('small', usage(20, 2)).invoke('go', {
+          invocationContext: request,
+          limits: { turns: 3 },
+        })
+        contexts.limited = limited.invocationContext!
+        contexts.auxiliary = createAuxiliaryInvocationContext(request)!
+        await subAgent(undefined, usage(40, 4)).invoke('go', { invocationContext: contexts.auxiliary })
+        return 'ok'
+      },
+    })
+    const parentModel = new MockMessageModel()
+      .addTurn([{ type: 'toolUseBlock', name: 'relay', toolUseId: 'tu-1', input: {} }], { usage: usage(100, 5) })
+      .addTurn({ type: 'textBlock', text: 'done' }, { usage: usage(200, 6) })
+    parentModel.updateConfig({ modelId: 'main' })
+    const parent = new Agent({ model: parentModel, tools: [relay], printer: false })
+
+    contexts.request = (await parent.invoke('start')).invocationContext!
+
+    expect(contexts.request.usageByModel).toStrictEqual([
+      { modelId: 'main', usage: usage(300, 11) },
+      { modelId: 'small', usage: usage(30, 3) },
+      { usage: usage(40, 4) },
+    ])
+    expect(contexts.limited!.usageByModel).toStrictEqual([{ modelId: 'small', usage: usage(20, 2) }])
+    expect(contexts.auxiliary!.usageByModel).toStrictEqual([{ usage: usage(40, 4) }])
+    for (const context of Object.values(contexts)) {
+      const total = createEmptyUsage()
+      for (const record of context.usageByModel) accumulateUsage(total, record.usage)
+      expect({ turnsTaken: context.usage.turnsTaken, ...total }).toStrictEqual(context.usage)
+    }
   })
 
   it('ends on a limit stop even when a hook asks to resume', async () => {

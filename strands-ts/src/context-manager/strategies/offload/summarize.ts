@@ -18,6 +18,7 @@ import type { Model, SummarizeOptions } from '../../../models/model.js'
 import type { SummarizeResult } from '../../../models/summarize.js'
 import { unwrapInvocationContext, type InvocationContext } from '../../../agent/invocation-context.js'
 import { latestCallTools } from '../../../models/model-proxy.js'
+import { modelKey } from '../../../models/provider-name.js'
 import type { LocalAgent } from '../../../types/agent.js'
 import type { ContextState } from '../../types.js'
 import { formatToolResultLabel, toolResultToContentBlocks } from '../../content-rendering.js'
@@ -191,7 +192,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
       logger.warn(`messages=<${replaced}>, error=<${normalizeError(error).message}> | summarization failed`, error)
       return false
     }
-    recordSummaryUsage(context.invocationContext, result)
+    recordSummaryUsage(context.invocationContext, result, model)
     const summary = providerSummary(result)
     if (summary === undefined) return this._placeTextSummary(context, model, covered, summaryText(result))
 
@@ -307,7 +308,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
     replay: boolean
   ): Promise<string> {
     const result = await model.summarize(request, this._summarizeOptions(context.agent, replay))
-    recordSummaryUsage(context.invocationContext, result)
+    recordSummaryUsage(context.invocationContext, result, model)
     const text = summaryText(result)
     if (!text) {
       logger.warn(`model=<${model.constructor.name}> | summary held no text | leaving the content unsummarized`)
@@ -351,8 +352,12 @@ interface SummarizeCaller {
   invocationContext?: InvocationContext | undefined
 }
 
-function recordSummaryUsage(invocationContext: InvocationContext | undefined, result: SummarizeResult): void {
-  if (result.usage !== undefined) unwrapInvocationContext(invocationContext)?.recordUsage(result.usage)
+function recordSummaryUsage(
+  invocationContext: InvocationContext | undefined,
+  result: SummarizeResult,
+  model: Model
+): void {
+  if (result.usage !== undefined) unwrapInvocationContext(invocationContext)?.recordUsage(result.usage, modelKey(model))
 }
 
 /**

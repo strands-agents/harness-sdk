@@ -4,6 +4,7 @@ integrationType: plugin
 maintainedBy: strands
 languages:
   python: {}
+  typescript: {}
 github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_plugins/cost_estimator
 docsPage: docs/user-guide/sdk/plugins/genai-prices-estimator
 addedDate: 2026-11-19

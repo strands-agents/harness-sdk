@@ -172,6 +172,11 @@ export class GoogleModel extends Model<GoogleModelConfig> {
     return ModelInfo.merge(super.modelInfo, SERVER_SIDE_SUMMARY_OFF, this._config.modelInfo)
   }
 
+  /** @internal */
+  override get _providerName(): string {
+    return 'google'
+  }
+
   /**
    * Count tokens using Gemini's native countTokens API.
    *
