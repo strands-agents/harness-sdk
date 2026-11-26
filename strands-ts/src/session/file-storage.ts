@@ -9,6 +9,13 @@ const SNAPSHOT_LATEST = 'snapshot_latest.json'
 const IMMUTABLE_HISTORY = 'immutable_history'
 const SNAPSHOT_REGEX = /snapshot_([\w-]+)\.json$/
 const SCHEMA_VERSION = '1.0'
+// Windows may reject simultaneous replacements of the same destination.
+const PENDING_RENAMES = new Map<string, Promise<void>>()
+// Saves share these: under a module loader hook each `import()` settles after a varying number of
+// ticks, which would let overlapping saves reach the rename queue out of call order.
+let fsModule: Promise<typeof import('fs')> | undefined
+let pathModule: Promise<typeof import('path')> | undefined
+let cryptoModule: Promise<typeof import('crypto')> | undefined
 
 /**
  * File-based implementation of SnapshotStorage.
@@ -41,7 +48,7 @@ export class FileStorage implements SnapshotStorage {
    * Validates sessionId, scope, and scopeId before constructing the path.
    */
   private async _getPath(location: SnapshotLocation, filename: string): Promise<string> {
-    const { join } = await import('path')
+    const { join } = await (pathModule ??= import('path'))
     validateIdentifier(location.sessionId)
     validateScope(location.scope)
     validateIdentifier(location.scopeId)
@@ -162,18 +169,38 @@ export class FileStorage implements SnapshotStorage {
   }
 
   /**
-   * Atomically writes JSON to a file using a `.tmp` intermediary to prevent partial writes.
+   * Atomically writes JSON to a file through a unique `.tmp` intermediary to prevent partial writes.
    * Creates parent directories if they do not exist.
+   * Overlapping saves to the same file write concurrently and are renamed one at a time in call
+   * order, so the last save called wins. This holds within one process only.
    */
   private async _writeJSON(path: string, data: unknown): Promise<void> {
+    let tmpPath: string | undefined
     try {
-      const { promises: fs } = await import('fs')
-      const { dirname } = await import('path')
-      await fs.mkdir(dirname(path), { recursive: true })
-      const tmpPath = `${path}.tmp`
-      await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf8')
-      await fs.rename(tmpPath, path)
+      const { promises: fs } = await (fsModule ??= import('fs'))
+      const { dirname, resolve } = await (pathModule ??= import('path'))
+      const { randomUUID } = await (cryptoModule ??= import('crypto'))
+      const uniquePath = `${path}.${randomUUID()}.tmp`
+      tmpPath = uniquePath
+      const target = resolve(path)
+      // Only the shared imports are awaited before this save takes its place in the queue, which keeps call order.
+      const written = fs
+        .mkdir(dirname(path), { recursive: true })
+        .then(() => fs.writeFile(uniquePath, JSON.stringify(data, null, 2), 'utf8'))
+      const pendingRename = Promise.allSettled([PENDING_RENAMES.get(target), written])
+        .then(() => written)
+        .then(() => fs.rename(uniquePath, path))
+      PENDING_RENAMES.set(target, pendingRename)
+      try {
+        await pendingRename
+      } finally {
+        if (PENDING_RENAMES.get(target) === pendingRename) PENDING_RENAMES.delete(target)
+      }
     } catch (error: unknown) {
+      if (tmpPath) {
+        const { promises: fs } = await import('fs')
+        await fs.rm(tmpPath, { force: true }).catch(() => {})
+      }
       throw new SessionError(`Failed to write file ${path}`, { cause: error })
     }
   }

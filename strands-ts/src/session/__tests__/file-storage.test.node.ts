@@ -1,7 +1,11 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
+import { execFile } from 'child_process'
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { fileURLToPath } from 'url'
+import { promisify } from 'util'
+import ts from 'typescript'
 import { FileStorage } from '../file-storage.js'
 import { SessionError } from '../../errors.js'
 import {
@@ -11,6 +15,7 @@ import {
   createTestSnapshots,
 } from '../../__fixtures__/mock-storage-provider.js'
 import type { SnapshotLocation } from '../storage.js'
+import type { Snapshot } from '../types.js'
 
 const SCOPE_ID = 'test-agent'
 
@@ -25,11 +30,272 @@ describe('FileStorage', () => {
   })
 
   afterEach(async () => {
+    vi.restoreAllMocks()
     try {
       await fs.rm(testDir, { recursive: true, force: true })
     } catch {
       // Ignore cleanup errors
     }
+  })
+
+  // Regression: https://github.com/strands-agents/harness-sdk/issues/5212
+  describe('concurrent writes', () => {
+    it.each(['snapshot', 'manifest'] as const)('persists complete JSON for overlapping %s saves', async (kind) => {
+      const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
+      const values = [1, 2].map((index) =>
+        kind === 'snapshot'
+          ? createTestSnapshot({ appData: { value: 'x'.repeat(index * 1000) } })
+          : createTestManifest({ updatedAt: `2024-01-0${index}T00:00:00.000Z` })
+      )
+      const writeFile = fs.writeFile.bind(fs)
+      let arrived = 0
+      let release!: () => void
+      const writesFinished = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      // Both temporary writes finish before either rename commits.
+      vi.spyOn(fs, 'writeFile').mockImplementation(async (...args) => {
+        await writeFile(...args)
+        if (++arrived === values.length) release()
+        await writesFinished
+      })
+      const rename = fs.rename.bind(fs)
+      let renaming = false
+      vi.spyOn(fs, 'rename').mockImplementation(async (source, destination) => {
+        if (renaming) throw Object.assign(new Error('Overlapping rename'), { code: 'EPERM' })
+        renaming = true
+        try {
+          await rename(source, destination)
+        } finally {
+          renaming = false
+        }
+      })
+      const stores = [storage, new FileStorage(testDir)]
+
+      const results = await Promise.allSettled(
+        values.map((value, index) =>
+          kind === 'snapshot'
+            ? stores[index]!.saveSnapshot({
+                location,
+                snapshotId: '1',
+                isLatest: true,
+                snapshot: value as ReturnType<typeof createTestSnapshot>,
+              })
+            : stores[index]!.saveManifest({ location, manifest: value as ReturnType<typeof createTestManifest> })
+        )
+      )
+
+      expect(results).toEqual(values.map(() => ({ status: 'fulfilled', value: undefined })))
+      const saved =
+        kind === 'snapshot' ? await storage.loadSnapshot({ location }) : await storage.loadManifest({ location })
+      expect(saved).toEqual(values[1])
+      const directory = join(testDir, location.sessionId, 'scopes', location.scope, location.scopeId, 'snapshots')
+      expect(await fs.readdir(directory)).toEqual([kind === 'snapshot' ? 'snapshot_latest.json' : 'manifest.json'])
+    })
+
+    it('starts a rename only after the previous one to the same file settles, even if it failed', async () => {
+      const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
+      const snapshots = createTestSnapshots(2)
+      const error = new Error('Rename failed')
+      let failFirstRename!: () => void
+      const rename = vi.spyOn(fs, 'rename').mockImplementationOnce(
+        () =>
+          new Promise<void>((_, reject) => {
+            failFirstRename = () => reject(error)
+          })
+      )
+      const writeFile = vi.spyOn(fs, 'writeFile')
+
+      const saves = snapshots.map((snapshot) =>
+        storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+      )
+      await vi.waitFor(() => expect(writeFile).toHaveBeenCalledTimes(2))
+      await Promise.all(writeFile.mock.results.map((result) => result.value))
+      await new Promise((resolve) => setTimeout(resolve))
+      expect(rename).toHaveBeenCalledTimes(1)
+
+      failFirstRename()
+      const results = await Promise.allSettled(saves)
+      expect(results).toEqual([
+        { status: 'rejected', reason: expect.objectContaining({ name: 'SessionError', cause: error }) },
+        { status: 'fulfilled', value: undefined },
+      ])
+      expect(rename).toHaveBeenCalledTimes(2)
+      expect(await storage.loadSnapshot({ location })).toEqual(snapshots[1])
+    })
+
+    it('rejects only the save whose write fails while an earlier rename is pending', async () => {
+      const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
+      const snapshots = createTestSnapshots(3)
+      const error = new Error('Write failed')
+      const renameFile = fs.rename.bind(fs)
+      let finishFirstRename!: () => void
+      const rename = vi.spyOn(fs, 'rename').mockImplementationOnce(async (...args) => {
+        await new Promise<void>((resolve) => {
+          finishFirstRename = resolve
+        })
+        await renameFile(...args)
+      })
+      const save = (snapshot: Snapshot): Promise<void> =>
+        storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+      const unhandledRejection = vi.fn()
+      process.on('unhandledRejection', unhandledRejection)
+
+      try {
+        const first = save(snapshots[0]!)
+        await vi.waitFor(() => expect(rename).toHaveBeenCalledTimes(1))
+        const writeFile = vi.spyOn(fs, 'writeFile').mockRejectedValueOnce(error)
+        const second = save(snapshots[1]!)
+        await vi.waitFor(() => expect(writeFile).toHaveBeenCalledTimes(1))
+        const third = save(snapshots[2]!)
+        await new Promise((resolve) => setTimeout(resolve))
+        finishFirstRename()
+
+        expect(await Promise.allSettled([first, second, third])).toEqual([
+          { status: 'fulfilled', value: undefined },
+          { status: 'rejected', reason: expect.objectContaining({ name: 'SessionError', cause: error }) },
+          { status: 'fulfilled', value: undefined },
+        ])
+      } finally {
+        process.off('unhandledRejection', unhandledRejection)
+      }
+      expect(unhandledRejection).not.toHaveBeenCalled()
+      expect(await storage.loadSnapshot({ location })).toEqual(snapshots[2])
+    })
+
+    it('keeps the save called last when the earlier save has the larger payload', async () => {
+      const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
+      const snapshots = [4_000_000, 1].map((length) => createTestSnapshot({ appData: { value: 'x'.repeat(length) } }))
+
+      await Promise.all(
+        snapshots.map((snapshot) => storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot }))
+      )
+
+      expect(await storage.loadSnapshot({ location })).toEqual(snapshots[1])
+    })
+
+    // Vitest caches imported modules, so a loader hook only delays `import()` in compiled code run by Node.
+    // Only Node 22 reorders here; on Node 24 this passes with or without the shared imports.
+    it('keeps call order when a module loader hook delays imports', { timeout: 60_000 }, async () => {
+      const source = fileURLToPath(new URL('../..', import.meta.url))
+      ts.createProgram([join(source, 'session', 'file-storage.ts')], {
+        module: ts.ModuleKind.NodeNext,
+        target: ts.ScriptTarget.ES2022,
+        rootDir: source,
+        outDir: testDir,
+        noLib: true,
+        types: [],
+      }).emit()
+      await fs.writeFile(join(testDir, 'package.json'), '{ "type": "module" }')
+      const hook = `export async function resolve(specifier, context, next) {
+        await new Promise((done) => setTimeout(done, Math.random() * 3))
+        return next(specifier, context)
+      }`
+      await fs.writeFile(
+        join(testDir, 'overlapping-saves.js'),
+        `import { register } from 'node:module'
+        import { FileStorage } from './session/file-storage.js'
+
+        register('data:text/javascript,' + encodeURIComponent(${JSON.stringify(hook)}))
+        const location = { sessionId: 'test-session', scope: 'agent', scopeId: 'test-agent' }
+        let stale = 0
+        for (let round = 0; round < 50; round++) {
+          const storage = new FileStorage('round-' + round)
+          await Promise.all(
+            [1, 2, 3].map((call) => storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot: { call } }))
+          )
+          if ((await storage.loadSnapshot({ location })).call !== 3) stale++
+        }
+        console.log(stale)`
+      )
+
+      const { stdout } = await promisify(execFile)(process.execPath, ['overlapping-saves.js'], { cwd: testDir })
+
+      expect(stdout.trim()).toBe('0')
+    })
+
+    it('persists complete JSON for many overlapping saves on the real filesystem', async () => {
+      const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
+      const snapshots = Array.from({ length: 20 }, (_, index) =>
+        createTestSnapshot({ appData: { value: 'x'.repeat((index + 1) * 1000) } })
+      )
+      const manifests = Array.from({ length: 20 }, (_, index) =>
+        createTestManifest({ updatedAt: new Date(Date.UTC(2024, 0, index + 1)).toISOString() })
+      )
+      const stores = [storage, new FileStorage(testDir)]
+
+      const results = await Promise.allSettled([
+        ...snapshots.map((snapshot, index) =>
+          stores[index % 2]!.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+        ),
+        ...manifests.map((manifest, index) => stores[index % 2]!.saveManifest({ location, manifest })),
+      ])
+
+      expect(results.filter((result) => result.status === 'rejected')).toEqual([])
+      expect(await storage.loadSnapshot({ location })).toEqual(snapshots.at(-1))
+      expect(await storage.loadManifest({ location })).toEqual(manifests.at(-1))
+      const directory = join(testDir, location.sessionId, 'scopes', location.scope, location.scopeId, 'snapshots')
+      expect((await fs.readdir(directory)).sort()).toEqual(['manifest.json', 'snapshot_latest.json'])
+    })
+  })
+
+  describe('failed writes', () => {
+    it.each(['writeFile', 'rename'] as const)('cleans up the temporary file after %s fails', async (operation) => {
+      const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
+      const snapshot = createTestSnapshot()
+      await storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot })
+      const error = new Error('Write failed')
+      const writeFile = fs.writeFile.bind(fs)
+      if (operation === 'writeFile') {
+        vi.spyOn(fs, 'writeFile').mockImplementationOnce(async (...args) => {
+          await writeFile(...args)
+          throw error
+        })
+      } else {
+        vi.spyOn(fs, 'rename').mockRejectedValueOnce(error)
+      }
+
+      const path = join(
+        testDir,
+        location.sessionId,
+        'scopes',
+        location.scope,
+        location.scopeId,
+        'snapshots',
+        'snapshot_latest.json'
+      )
+      await expect(
+        storage.saveSnapshot({
+          location,
+          snapshotId: '2',
+          isLatest: true,
+          snapshot: createTestSnapshot({ appData: { next: true } }),
+        })
+      ).rejects.toMatchObject({ name: 'SessionError', message: `Failed to write file ${path}`, cause: error })
+      expect(await storage.loadSnapshot({ location })).toEqual(snapshot)
+      expect(await fs.readdir(join(path, '..'))).toEqual(['snapshot_latest.json'])
+    })
+
+    it('preserves the write error when temporary file cleanup fails', async () => {
+      const location: SnapshotLocation = { sessionId: 'test-session', scope: 'agent', scopeId: SCOPE_ID }
+      const error = new Error('Rename failed')
+      vi.spyOn(fs, 'rename').mockRejectedValueOnce(error)
+      vi.spyOn(fs, 'rm').mockRejectedValueOnce(new Error('Cleanup failed'))
+      const path = join(
+        testDir,
+        location.sessionId,
+        'scopes',
+        location.scope,
+        location.scopeId,
+        'snapshots',
+        'snapshot_latest.json'
+      )
+
+      await expect(
+        storage.saveSnapshot({ location, snapshotId: '1', isLatest: true, snapshot: createTestSnapshot() })
+      ).rejects.toMatchObject({ name: 'SessionError', message: `Failed to write file ${path}`, cause: error })
+      expect(fs.rm).toHaveBeenCalledWith(expect.stringMatching(/snapshot_latest\.json\..+\.tmp$/), { force: true })
+    })
   })
 
   describe('saveSnapshot', () => {
