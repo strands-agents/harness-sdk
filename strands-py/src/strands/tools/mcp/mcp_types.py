@@ -46,11 +46,16 @@ class MCPClientCredentials(TypedDict):
             advertises its own scopes (via the `WWW-Authenticate` header or its
             protected-resource / authorization-server metadata), the server's list is used
             instead and this value is ignored.
+        issuer: The issuer URL of the authorization server the credentials belong to. When
+            set, the credentials are only sent to that authorization server; when omitted,
+            they go to whichever one the MCP server advertises. Requires `mcp` 1.30.0 or
+            later on the 1.x line, or 2.2.0 or later.
     """
 
     client_id: str
     client_secret: str
     scopes: NotRequired[list[str]]
+    issuer: NotRequired[str]
 
 
 """

@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 import uuid
+import warnings
 from asyncio import AbstractEventLoop
 from collections.abc import Callable, Coroutine, Sequence
 from concurrent import futures
@@ -67,6 +68,7 @@ from ._compat import (
     MCP_V2,
     MCPError,
     client_credentials_auth,
+    client_credentials_supports_issuer,
     is_error,
     is_tools_list_changed,
     mime_type,
@@ -309,6 +311,8 @@ class MCPClient(ToolProvider):
                 ``continue_on_error``. A failure building an individual server (e.g. a missing env
                 var) also raises unless ``continue_on_error`` applies to that server, in which case
                 it is skipped.
+            Warning: If a warnings filter turns a warning raised while building a server into an
+                error, regardless of ``continue_on_error``.
         """
         servers = _load_servers_mapping(config)
 
@@ -335,7 +339,8 @@ class MCPClient(ToolProvider):
                     )
                 )
             except Exception as e:
-                if not server.get("continue_on_error", continue_on_error):
+                # A warning raised as an error (python -W error) must fail, not skip the server.
+                if isinstance(e, Warning) or not server.get("continue_on_error", continue_on_error):
                     raise
                 logger.warning("server_name=<%s>, error=<%s> | MCP server config failed, skipping", name, e)
 
@@ -424,8 +429,9 @@ class MCPClient(ToolProvider):
         Raises:
             ValueError: If neither or both of `transport_callable` and `url` are provided, if
                 `headers`, `auth`, or `auth_provider` is provided without `url`, if both `auth`
-                and `auth_provider` are provided, if `url` is not an http:// or https:// URL, or
-                if `auth` is missing required keys or a value has the wrong type.
+                and `auth_provider` are provided, if `url` is not an http:// or https:// URL, if
+                `auth` is missing required keys or a value has the wrong type, or if `auth` sets
+                an `issuer` that the installed `mcp` cannot enforce.
         """
         self._startup_timeout = startup_timeout
         self._tool_filters = tool_filters
@@ -2846,11 +2852,11 @@ class _InMemoryTokenStorage:
         self._client_info = client_info
 
 
-def _build_client_credentials_auth(url: str, auth: MCPClientCredentials) -> httpx.Auth:
+def _build_client_credentials_auth(url: str, auth: MCPClientCredentials, *, stacklevel: int) -> httpx.Auth:
     """Build an httpx.Auth performing the OAuth client_credentials grant against the server.
 
     Error messages name only the offending keys, never their values, so credentials cannot
-    leak into logs.
+    leak into logs. `stacklevel` points the missing-issuer warning at the caller's code.
 
     Raises:
         ValueError: If `auth` is missing required keys or a value has the wrong type.
@@ -2864,12 +2870,27 @@ def _build_client_credentials_auth(url: str, auth: MCPClientCredentials) -> http
     scopes = values.get("scopes")
     if scopes is not None and not (isinstance(scopes, list) and all(isinstance(scope, str) for scope in scopes)):
         raise ValueError("MCPClient: 'auth' requires 'scopes' to be a list of strings")
+    issuer = values.get("issuer")
+    if issuer is not None and not (isinstance(issuer, str) and urlparse(issuer).scheme in ("http", "https")):
+        raise ValueError("MCPClient: 'auth' requires 'issuer' to be an http:// or https:// URL")
+    if issuer is None:
+        fix = (
+            "Set 'issuer' to your authorization server's issuer URL to pin it."
+            if client_credentials_supports_issuer()
+            else "Pinning it with 'issuer' requires mcp>=1.30.0 on the 1.x line or mcp>=2.2.0."
+        )
+        warnings.warn(
+            f"MCPClient: 'auth' has no 'issuer', so the MCP server at '{urlparse(url).hostname}' decides "
+            f"which authorization server receives the client credentials. {fix}",
+            stacklevel=stacklevel,
+        )
     return client_credentials_auth(
         server_url=url,
         storage=_InMemoryTokenStorage(),
         client_id=values["client_id"],
         client_secret=values["client_secret"],
         scope=" ".join(scopes) if scopes else None,
+        issuer=issuer,
     )
 
 
@@ -2907,7 +2928,9 @@ def _resolve_transport_callable(
         raise ValueError(f"MCPClient: 'url' must be an http:// or https:// URL, got '{server_url}'")
     if scheme == "http" and (auth is not None or auth_provider is not None):
         logger.warning("url=<%s> | sending oauth credentials over plaintext http", server_url)
-    resolved_auth = _build_client_credentials_auth(server_url, auth) if auth is not None else auth_provider
+    resolved_auth = (
+        _build_client_credentials_auth(server_url, auth, stacklevel=4) if auth is not None else auth_provider
+    )
     return lambda: streamable_http_transport(url=server_url, headers=headers, auth=resolved_auth)
 
 
@@ -3036,7 +3059,9 @@ def _parse_config_auth(name: str, url: str, auth: dict[str, Any] | None) -> http
     credentials = MCPClientCredentials(client_id=auth["client_id"], client_secret=auth["client_secret"])
     if auth.get("scopes") is not None:
         credentials["scopes"] = auth["scopes"]
-    return _build_client_credentials_auth(url, credentials)
+    if auth.get("issuer") is not None:
+        credentials["issuer"] = auth["issuer"]
+    return _build_client_credentials_auth(url, credentials, stacklevel=6)
 
 
 def _parse_config_tool_filters(name: str, config: dict[str, Any] | None) -> ToolFilters | None:
