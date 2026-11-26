@@ -1,0 +1,10 @@
+name: strands-equibles
+description: SEC filings, earnings call transcripts, financial statements, prices, insider trades and 13F holders as Strands tools, from the Equibles API.
+integrationType: tool
+languages:
+  python:
+    package: strands-equibles
+github: https://github.com/equibles/equibles-integrations
+docsUrl: https://equibles.com/docs/api/strands
+maintainedBy: partner
+addedDate: 2026-11-24
