@@ -11,7 +11,9 @@
  *
  * - a preset keyword (`off`/`ask`/`smart`) maps to a `HumanInTheLoop` config,
  * - a path ending in `.cedar` loads a `CedarAuthorization` policy,
- * - any other string is a natural-language risk policy: it becomes the LLM risk classifier's prompt.
+ * - any other string is a natural-language risk policy: it becomes the LLM risk classifier's prompt,
+ *   except a blank string, a preset keyword in the wrong case (`'OFF'`), or a switch-like word
+ *   (`'false'`, `'none'`, ...), which throw rather than become a one-word policy.
  *
  * Inline Cedar policy text is intentionally *not* auto-detected — it is indistinguishable from
  * prose, so pass `new CedarAuthorization({ policies })` directly for that. Cedar is imported on
@@ -40,6 +42,32 @@ async function cedarHandler(policies: string): Promise<InterventionHandler> {
   return new mod.CedarAuthorization({ policies })
 }
 
+const PRESETS: readonly string[] = ['off', 'ask', 'smart']
+// Read as an on/off switch, not a rubric: as a policy, each would be the classifier's whole prompt.
+const SWITCH_WORDS = new Set(['true', 'false', 'yes', 'no', 'on', 'none', 'null', 'enabled', 'disabled'])
+
+/** Throw for a string that would otherwise become a natural-language policy by mistake. */
+function checkPolicyString(value: string): void {
+  const text = value.trim()
+  if (!text) {
+    throw new Error(
+      `Blank interventions policy ${JSON.stringify(value)}; use undefined or 'off' to turn interventions off.`
+    )
+  }
+  const lowered = text.toLowerCase()
+  if (PRESETS.includes(lowered) && !PRESETS.includes(text)) {
+    throw new Error(
+      `Unknown interventions preset ${JSON.stringify(value)}; did you mean '${lowered}'? Presets are lowercase.`
+    )
+  }
+  if (SWITCH_WORDS.has(lowered)) {
+    throw new Error(
+      `Ambiguous interventions value ${JSON.stringify(value)}; it reads as a switch, not a policy. Use undefined or ` +
+        "'off' to turn interventions off, or 'ask' or 'smart' to turn them on."
+    )
+  }
+}
+
 async function resolveOne(value: InterventionValue, ask: InterventionAsk): Promise<InterventionHandler | null> {
   if (value instanceof InterventionHandler) {
     return value
@@ -49,6 +77,7 @@ async function resolveOne(value: InterventionValue, ask: InterventionAsk): Promi
       `Invalid interventions value ${JSON.stringify(value)}; expected a preset name, a policy string, or a handler instance.`
     )
   }
+  checkPolicyString(value)
   const askOpt = ask ? { ask } : {}
   switch (value.trim()) {
     case 'off':
