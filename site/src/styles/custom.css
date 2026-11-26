@@ -108,6 +108,75 @@ a[aria-current="page"]:hover {
    Wider buys little for code and makes prose lines long. */
 :root {
 	--sl-content-width: 55rem;
+	/* Widest a top-level table or image grows on large screens (see below). */
+	--wide-max: 72rem;
+}
+
+/* Docs layout at 72rem and up, on pages with both sidebars. Starlight sizes the TOC column to
+   the TOC width plus half the spare width and pushes the text against it, so the text sits off
+   centre, next to the TOC. Instead, give the TOC a fixed column that matches the left sidebar
+   (--sl-sidebar-width), and centre the text in the space between the two. Below about 1480px
+   there is no spare width, so this matches Starlight's layout. */
+@media (min-width: 72rem) {
+	:root[data-has-sidebar][data-has-toc] .right-sidebar-container,
+	:root[data-has-sidebar][data-has-toc] .right-sidebar {
+		width: var(--sl-sidebar-width);
+	}
+	:root[data-has-sidebar][data-has-toc] .main-pane {
+		--sl-content-margin-inline: auto;
+		width: calc(100% - var(--sl-sidebar-width));
+	}
+}
+
+/* Wide tables and images: a top-level table or image that doesn't fit the text column grows into
+   the spare room on both sides, staying centred on the text, up to --wide-max in total. Anything
+   that fits keeps its normal width and position, so only tables whose cells wrap and images wider
+   than the column change. Below 72rem there is no spare room, and pages without the left sidebar
+   (blog, integrations) already have a wider column, so neither changes.
+   Room per side, with R = 100vw - left sidebar, S the TOC column, W the text column and P the
+   panel padding: (R - S - W) / 2 - P with a TOC, (R - W) / 2 - P without one. 100vw counts a
+   classic scrollbar, which overstates the room by half its width; the P gutters absorb that.
+   Centring: translateX(min(0px, 50cqw - 50%)) is 0 for an element no wider than the column
+   (cqw is the text column, % the element), and moves a wider one left by half its overhang.
+   Only direct children widen: inside an aside or a <TabItem> they would leave its box behind.
+   A component can opt in from its own styles: width: calc(100cqw + 2 * var(--wide-grow)) and
+   transform: translateX(calc(-1 * var(--wide-grow))) take the full wide width (see
+   FoundationComparison.astro). */
+@media (min-width: 72rem) {
+	:root[data-has-sidebar] .sl-markdown-content {
+		container-type: inline-size;
+		--wide-grow: max(0px, min(var(--wide-room), (var(--wide-max) - var(--sl-content-width)) / 2));
+	}
+	:root[data-has-sidebar][data-has-toc] .sl-markdown-content {
+		--wide-room: calc(
+			(100vw - var(--sl-content-inline-start, 0px) - var(--sl-sidebar-width) - var(--sl-content-width)) / 2 -
+				var(--sl-content-pad-x)
+		);
+	}
+	:root[data-has-sidebar]:not([data-has-toc]) .sl-markdown-content {
+		--wide-room: calc(
+			(100vw - var(--sl-content-inline-start, 0px) - var(--sl-content-width)) / 2 - var(--sl-content-pad-x)
+		);
+	}
+	/* Starlight makes tables display: block with their own scroll; max-content lets one grow only
+	   as far as its unwrapped cells need, and a table too wide even at the cap still scrolls. */
+	:root[data-has-sidebar] .sl-markdown-content > table:not(:where(.not-content *)) {
+		width: max-content;
+		min-width: 100%;
+		max-width: calc(100cqw + 2 * var(--wide-grow));
+		transform: translateX(min(0px, 50cqw - 50%));
+	}
+	/* Markdown images sit in a <p>, inside the zoom control when image zoom wraps them. */
+	:root[data-has-sidebar] .sl-markdown-content > p > :is(img, starlight-image-zoom-zoomable > img) {
+		max-width: calc(100cqw + 2 * var(--wide-grow));
+		transform: translateX(min(0px, 50cqw - 50%));
+	}
+	/* The container makes .sl-markdown-content its own formatting context, so its first child's
+	   top margin no longer collapses through it (the learning pages' course notice moved 24px
+	   down). Drop that margin to match the layout without the container. */
+	:root[data-has-sidebar] .sl-markdown-content > :first-child {
+		margin-block-start: 0;
+	}
 }
 
 /* Scroll shadows on wide tables, code, and tab lists: the surface-colored

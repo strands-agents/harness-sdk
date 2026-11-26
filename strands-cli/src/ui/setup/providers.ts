@@ -384,6 +384,28 @@ export function effectiveProviderEnvironment(
   return withAwsProfile(environment, aws)
 }
 
+const PROBED_PROVIDERS: readonly ProviderId[] = ['ollama', 'litellm']
+const AWS_PROVIDERS: readonly ProviderId[] = ['bedrock', 'bedrock-mantle']
+
+export const modelProviderNeedsSetup = async (config: CliConfigStore, model: string): Promise<boolean> => {
+  const provider = providerFromModel(model)
+  if (!provider || PROBED_PROVIDERS.includes(provider)) return false
+  const files = config.providerEnvironment()
+  const aws = discoverAwsConfiguration({
+    AWS_CONFIG_FILE: files.AWS_CONFIG_FILE?.value,
+    AWS_SHARED_CREDENTIALS_FILE: files.AWS_SHARED_CREDENTIALS_FILE?.value,
+  })
+  const environment = effectiveProviderEnvironment(
+    config.configuredProviderEnvironment(),
+    config.providerEnvironment({}),
+    aws
+  )
+  if (!AWS_PROVIDERS.includes(provider))
+    return providerAssessment(provider, environment, aws, undefined).status === 'error'
+  const credentials = await discoverAwsCredentials(environment)
+  return credentials === 'missing' || credentials === 'expired'
+}
+
 export function sourceLabel(source: DetectedProviderEnvironmentValue['source']): string {
   switch (source) {
     case 'process':

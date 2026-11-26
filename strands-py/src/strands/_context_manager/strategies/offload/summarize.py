@@ -10,18 +10,20 @@ from typing_extensions import TypedDict
 
 from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....event_loop.streaming import _record_usage
+from ....models._model_proxy import _latest_call_tools
+from ....models._provider_name import _model_key
 from ....types.content import ContentBlock, Message, Messages, split_system_prompt
-from ....types.tools import ToolResultContent
+from ....types.tools import ToolResultContent, ToolSpec
 from ...content_rendering import format_tool_result_label, tool_result_to_content_blocks
 from ...message_trimming import (
     _holds_run,
     _replace_run,
     _split_into_runs,
+    archive_removed,
     new_message,
     remove_messages,
     removed_tokens,
     repair_alternation,
-    stash_removed,
     with_pairs,
 )
 from ...placeholder import (
@@ -131,7 +133,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
                 continue
             tokens = await removed_tokens(run, model)
             marker = format_summarized(REMOVED_MESSAGES, tokens, summary)
-            if await _replace_run(messages, run, marker, tokens, "summarize", context.stash):
+            if await _replace_run(messages, run, marker, tokens, "summarize", context.archive):
                 logger.debug("summarized=<%s>, tokens=<%s> | summarized message run", len(run), tokens)
                 acted = True
         return acted
@@ -201,7 +203,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         except Exception as error:
             logger.warning("messages=<%d>, error=<%s> | summarization failed", replaced, error, exc_info=True)
             return False
-        _record_summary_usage(context.invocation_context, result)
+        _record_summary_usage(context.invocation_context, result, model)
         # Only a summary the provider wrote can be replayed by the agent's model.
         summary = _first_summary(result)
         if summary is None or not summary["summary"].get("provider"):
@@ -210,13 +212,13 @@ class SummarizeStrategy(BaseOffloadStrategy):
         # Message 0 stays in the history, but a provider sending the summary as a compaction block stops sending
         # anything before it, so the summary stands for message 0 too and a retrieval has to be able to return it.
         content = [summary]
-        stash_ref = await stash_removed(context.stash, covered, self._method)
-        if stash_ref is not None:
+        archive_ref = await archive_removed(context.archive, covered, self._method)
+        if archive_ref is not None:
             # The reference follows the summary because a compaction block drops the content before it, which is also
             # why it is a block of its own: a provider's summary text is signed, so nothing can be written into it.
             tokens = await removed_tokens(covered, model)
             marker = format_summarized(REMOVED_MESSAGES, tokens)
-            content.append(offload_placeholder(self._method, marker, stash_ref, tokens))
+            content.append(offload_placeholder(self._method, marker, archive_ref, tokens))
         if not _holds_run(messages, 0, covered):
             logger.warning(
                 "summarized=<%d> | the summarized messages are no longer the history's start"
@@ -247,7 +249,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
             model,
             lambda tokens: format_summarized(REMOVED_MESSAGES, tokens, summary),
             "summarize",
-            context.stash,
+            context.archive,
         )
 
     async def _replace_block(
@@ -297,7 +299,7 @@ class SummarizeStrategy(BaseOffloadStrategy):
         """
         try:
             result = await model.summarize(request, **self._summarize_kwargs(agent, replay=replay))
-            _record_summary_usage(invocation_context, result)
+            _record_summary_usage(invocation_context, result, model)
             text = _summary_text(result)
         except Exception as error:
             logger.warning("%s, error=<%s> | summarization failed", log_fields, error)
@@ -317,19 +319,28 @@ class SummarizeStrategy(BaseOffloadStrategy):
         if replay:
             system_prompt, system_prompt_content = split_system_prompt(agent.system_prompt_content)
             kwargs.update(
-                tool_specs=agent.tool_registry.get_all_tool_specs(),
+                tool_specs=self._replayed_tools(agent),
                 system_prompt=system_prompt,
                 system_prompt_content=system_prompt_content,
             )
         return kwargs
 
+    def _replayed_tools(self, agent: Agent) -> list[ToolSpec]:
+        """The tools a replay sends.
+
+        Those of the agent's latest model call, since the replay shares that call's prompt cache only with the same
+        tools, which ``InvokeModelStage.Input`` middleware can have rewritten. Before the first call, the registry's.
+        """
+        recorded = _latest_call_tools(agent)
+        return recorded if recorded is not None else agent.tool_registry.get_all_tool_specs()
+
     def _resolve_model(self, agent: Agent) -> Model | None:
         return self._config.get("model") or agent.model
 
 
-def _record_summary_usage(invocation_context: InvocationContext | None, result: SummarizeResult) -> None:
+def _record_summary_usage(invocation_context: InvocationContext | None, result: SummarizeResult, model: Model) -> None:
     if result.usage is not None:
-        _record_usage(invocation_context, result.usage)
+        _record_usage(invocation_context, result.usage, _model_key(model))
 
 
 def _can_replay_server_side(model: Model, agent_model: Model) -> bool:

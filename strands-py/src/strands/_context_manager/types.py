@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, deprecated
 
 from ..types.content import ContentBlock, Messages
 
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from ..agent.agent import Agent
     from ..agent.invocation_context import InvocationContext
     from ..storage.storage import Storage
-    from .stash import Stash
+    from .archive import Archive
 
 
 def is_tool_result_block(block: ContentBlock) -> bool:
@@ -41,7 +41,7 @@ class ContextState:
         utilization: Current context utilization ratio (0-1+). Above 1.0 means overflow.
         overflow: Set when running in response to a ContextWindowOverflowException.
             Strategies should bypass utilization gates when True.
-        stash: L1 stash for persisting offloaded content. Present when storage is configured.
+        archive: L1 archive for persisting offloaded content. Present when storage is configured.
         invocation_context: The request this reduction runs for, if any; a nested call that joins it
             adds to the request's usage, but the request's limits don't apply.
     """
@@ -50,8 +50,20 @@ class ContextState:
     agent: Agent
     utilization: float
     overflow: bool = field(default=False)
-    stash: Stash | None = field(default=None)
+    archive: Archive | None = field(default=None)
     invocation_context: InvocationContext | None = field(default=None)
+
+    @property
+    @deprecated("ContextState.stash is deprecated and will be removed in v1.68.0. Use ContextState.archive instead.")
+    def stash(self) -> Archive | None:
+        """Deprecated name for :attr:`archive`. Removed in v1.68.0."""
+        return self.archive
+
+    @stash.setter
+    @deprecated("ContextState.stash is deprecated and will be removed in v1.68.0. Use ContextState.archive instead.")
+    def stash(self, archive: Archive | None) -> None:
+        """Deprecated name for :attr:`archive`. Removed in v1.68.0."""
+        self.archive = archive
 
 
 @runtime_checkable
@@ -72,13 +84,13 @@ class ContextStrategy(Protocol):
         ...
 
 
-class StashConfig(TypedDict, total=False):
-    """Configuration for the L1 stash.
+class ArchiveConfig(TypedDict, total=False):
+    """Configuration for the L1 archive.
 
-    Each agent stashes under ``context/<session_id>/scopes/agent/<agent_id>/``. The prefix is dropped
+    Each agent archives under ``context/<session_id>/scopes/agent/<agent_id>/``. The prefix is dropped
     only when a namespaced view is passed as this config's ``storage``; that view becomes the exact
-    stash root, so agents given the same view share one stash. Deleting a session leaves a shared
-    stash in place.
+    archive root, so agents given the same view share one archive. Deleting a session leaves a shared
+    archive in place.
 
     Attributes:
         storage: Storage backend. Defaults to InMemoryStorage when omitted.
@@ -88,15 +100,15 @@ class StashConfig(TypedDict, total=False):
         ```python
         storage = S3Storage(bucket="my-bucket")
 
-        # Namespaced view passed to the stash: stashes at "team/" (prefix dropped, shared).
-        ContextManager(stash={"storage": storage.namespace("team")})
+        # Namespaced view passed to the archive: archives at "team/" (prefix dropped, shared).
+        ContextManager(archive={"storage": storage.namespace("team")})
 
-        # Plain storage passed to the stash:
-        # stashes at "context/<session_id>/scopes/agent/<agent_id>/".
-        ContextManager(stash={"storage": storage})
+        # Plain storage passed to the archive:
+        # archives at "context/<session_id>/scopes/agent/<agent_id>/".
+        ContextManager(archive={"storage": storage})
 
         # Namespaced view passed as agent-level storage: prefix still applies, under the view:
-        # stashes at "team/context/<session_id>/scopes/agent/<agent_id>/".
+        # archives at "team/context/<session_id>/scopes/agent/<agent_id>/".
         Agent(storage=storage.namespace("team"), context_manager=ContextManager())
         ```
     """
@@ -110,8 +122,10 @@ class ContextManagerConfig(TypedDict, total=False):
 
     Attributes:
         strategies: Strategies for context reduction, applied as an ordered pipeline.
-        stash: L1 stash configuration. Omit or True for defaults; False to disable.
+        archive: L1 archive configuration. Omit or True for defaults; False to disable.
+        stash: Deprecated name for ``archive``, honored when ``archive`` is omitted. Removed in v1.68.0.
     """
 
     strategies: list[ContextStrategy | str]
-    stash: StashConfig | bool
+    archive: ArchiveConfig | bool
+    stash: ArchiveConfig | bool

@@ -4,11 +4,33 @@ import shape from '../assets/next-steps/shape.svg?raw';
 import shapeMobile from '../assets/next-steps/shape-mobile.svg?raw';
 import { pathWithBase } from '../util/links';
 
-const ctas = [
+interface Cta {
+  label: string
+  href: string
+  external?: boolean
+}
+
+interface Props {
+  title?: string
+  ctas?: Cta[]
+}
+
+const defaultCtas: Cta[] = [
   { label: 'Quickstart', href: pathWithBase('/docs/user-guide/harness/quickstart/') },
   { label: 'Migrate', href: pathWithBase('/docs/user-guide/migrate/choosing-an-agent-foundation/') },
   { label: 'Deploy', href: pathWithBase('/docs/user-guide/sdk/deploy/operating-agents-in-production/') },
 ];
+
+const {
+  title = 'Push the boundaries of what agents can do.',
+  ctas: providedCtas,
+} = Astro.props
+const ctas = providedCtas
+  ? providedCtas.map((cta) => ({
+      ...cta,
+      href: cta.external || cta.href.startsWith('http') ? cta.href : pathWithBase(cta.href),
+    }))
+  : defaultCtas
 ---
 
 <section class="next-steps" aria-label="Next steps">
@@ -23,11 +45,15 @@ const ctas = [
     set:html={shapeMobile}
   />
   <div class="next-steps__content">
-    <h2 class="next-steps__title">Push the boundaries of what agents can do.</h2>
+    <h2 class="next-steps__title">{title}</h2>
     <div class="next-steps__ctas">
       {ctas.map((cta) => (
-        <a href={cta.href} class="next-steps__cta">
-          {cta.label}
+        <a
+          href={cta.href}
+          class="next-steps__cta"
+          {...(cta.external ? { target: '_blank', rel: 'noopener' } : {})}
+        >
+          <span class="next-steps__cta-label">{cta.label}</span>
           <span class="next-steps__cta-arrow" set:html={arrow} />
         </a>
       ))}
@@ -113,15 +139,20 @@ const ctas = [
   }
 
   .next-steps__ctas {
-    display: flex;
-    gap: 106px;
-    align-items: center;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 32px;
+    width: 100%;
   }
 
   .next-steps__cta {
-    display: inline-flex;
+    display: flex;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
     align-items: center;
-    gap: 6px;
+    justify-content: space-between;
+    gap: 16px;
     padding: 12px 18px;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-weight: 500;
@@ -129,6 +160,11 @@ const ctas = [
     line-height: 1.3;
     color: var(--fg);
     text-decoration: none;
+  }
+
+  .next-steps__cta-label {
+    min-width: 0;
+    text-align: left;
   }
 
   .next-steps__cta:hover {
@@ -165,9 +201,10 @@ const ctas = [
     }
 
     .next-steps__ctas {
-      flex-direction: column;
+      grid-template-columns: 1fr;
       gap: 12px;
-      align-items: center;
+      width: min(100%, 420px);
+      margin: 0 auto;
     }
   }
 
@@ -199,9 +236,9 @@ const ctas = [
     }
 
     .next-steps__ctas {
-      flex-direction: column;
+      grid-template-columns: 1fr;
       gap: 12px;
-      align-items: center;
+      width: 100%;
     }
   }
 </style>

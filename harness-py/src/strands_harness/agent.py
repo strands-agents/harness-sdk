@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 from strands import Agent, BackgroundTasksConfig
-from strands.experimental.context_manager import ContextManager
+from strands.context_manager import ContextManager
 from strands.memory import MemoryManager
 from strands.models import Model, ModelRouter
 from strands.plugins import Plugin
@@ -230,7 +230,7 @@ def _resolve_background_tasks(
         ]
 
     always = [*omit_forced(policy.get("always", [])), *forced]
-    resolved: BackgroundTasksConfig = {**policy}
+    resolved: BackgroundTasksConfig = {"manage_tool_name": "manage_background_task", **policy}
     if "agentic" in policy:
         resolved["agentic"] = omit_forced(policy["agentic"])
     if always or "always" in policy:
@@ -480,7 +480,7 @@ def create_harness(
             resolved_id = _sanitize_session_id(session_id) if session_id else uuid.uuid4().hex[:8]
             session_storage = LocalFileStorage(session_option.get("dir") or defaults.DEFAULT_SESSION_DIR)
             session_manager = SnapshotSessionManager(resolved_id, storage=session_storage, save_latest_on="message")
-            # The context manager's stash goes to files, not into the snapshot rewritten on every message.
+            # The context manager's archive goes to files, not into the snapshot rewritten on every message.
             # Sharing the session's root is safe because storage namespaces each subsystem (``session/``,
             # ``context/``).
             if agent_kwargs.get("storage") is None:

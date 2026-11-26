@@ -20,11 +20,10 @@ import { DEFAULT_SESSION_DIR, hasSavedSession, sessionDir, sessionSettings, with
 import { latestRootModelUsage, RunUsage } from '../usage.js'
 import {
   backgroundTaskUpdate,
+  finishAcpPrompt,
   projectPrompt,
   replaySessionHistory,
   sendChatEvent,
-  toAcpStopReason,
-  toAcpUsage,
 } from './acp-events.js'
 
 const SESSION_SHUTDOWN_TIMEOUT_MS = 1_000
@@ -173,22 +172,7 @@ export class AcpService {
         next = await stream.next()
       }
       const result = projectAgentResult(session.agent, next.value, latestModelUsage, runUsage.total())
-      const used = result.context?.projectedTokens ?? result.context?.currentTokens
-      if (used !== undefined && result.context?.contextWindow !== undefined) {
-        await client.notify(acp.methods.client.session.update, {
-          sessionId: params.sessionId,
-          update: {
-            sessionUpdate: 'usage_update',
-            used,
-            size: result.context.contextWindow,
-          },
-        })
-      }
-      const usage = result.usage ? toAcpUsage(result.usage) : undefined
-      return {
-        stopReason: toAcpStopReason(result.stopReason),
-        ...(usage ? { usage } : {}),
-      }
+      return await finishAcpPrompt(client, params.sessionId, result)
     } catch (error) {
       const iterator: AsyncIterator<unknown, unknown> = stream
       await iterator.return?.().catch(() => undefined)

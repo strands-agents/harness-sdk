@@ -198,6 +198,7 @@ def generate_docs():
     # Modules to exclude from documentation
     excluded_modules = {
         "strands.agent",  # Not useful, just re-exports
+        "strands.experimental.context_manager",  # Deprecated alias for strands.context_manager
     }
 
     # Generate index file

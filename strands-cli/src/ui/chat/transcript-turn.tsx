@@ -15,6 +15,7 @@ import {
   toolAction,
 } from '../presentation.js'
 import { expandTabs } from '../../terminal/text.js'
+import { isOnScreenQuestionTool } from './state.js'
 import { useSpinner } from '../animation.js'
 import { Text, useTheme } from '../theme.js'
 
@@ -25,12 +26,14 @@ export const PAUSED_MARKER = '◆'
 
 /** What the active turn is doing, shown on the line under its transcript. */
 export type TurnActivity =
-  'working' | 'awaitingApproval' | 'waitingForResponse' | 'reviewingBackground' | 'respondingToPeer'
+  'working' | 'awaitingApproval' | 'awaitingAnswer' | 'waitingForResponse' | 'reviewingBackground' | 'respondingToPeer'
 
 export const TURN_ACTIVITY: Record<TurnActivity, { label: string; animated: boolean; interruptible: boolean }> = {
   working: { label: 'Working', animated: true, interruptible: true },
   // The approval prompt owns Esc, so the turn line does not advertise interrupting.
   awaitingApproval: { label: 'Waiting for approval', animated: false, interruptible: false },
+  // The question on screen owns Esc too, and nothing runs until it is answered.
+  awaitingAnswer: { label: 'Waiting for your answer', animated: false, interruptible: false },
   waitingForResponse: { label: 'Waiting for model response', animated: true, interruptible: true },
   reviewingBackground: { label: 'Reviewing background result', animated: true, interruptible: true },
   respondingToPeer: { label: 'Responding to', animated: true, interruptible: true },
@@ -57,8 +60,14 @@ const TOOL_ACTIVITY_BY_STATUS: Record<ToolStatus, ToolActivity> = {
   cancelled: 'cancelled',
 }
 
+const isPendingQuestion = (entry: ChatEntry): boolean =>
+  entry.type === 'tool' && entry.status === 'running' && isOnScreenQuestionTool(entry.name)
+
+const askingOnScreen = ({ entries }: ChatTurn): boolean => entries.some(isPendingQuestion)
+
 export function turnActivity(turn: ChatTurn, awaitingApproval: boolean): TurnActivity {
   if (awaitingApproval) return 'awaitingApproval'
+  if (askingOnScreen(turn)) return 'awaitingAnswer'
   if (turn.responseDelayed) return 'waitingForResponse'
   if (turn.source === 'background') return 'reviewingBackground'
   return turn.source === 'peer' ? 'respondingToPeer' : 'working'
@@ -112,6 +121,8 @@ export function TurnView({
   const silentOpening = turn.prompt === '' && turn.source === undefined && !turn.attachments?.length
   const awaitingApproval = active && approvalToolName !== undefined
   const activity = turnActivity(turn, awaitingApproval)
+  // The question on screen says everything; a status line and a tool row next to it are noise.
+  const asking = active && askingOnScreen(turn)
   const spinner = useSpinner(
     active && turn.status === 'running' && !silentOpening && !awaitingApproval,
     settings.animations
@@ -120,7 +131,9 @@ export function TurnView({
   const visibleEntries = silentOpening
     ? turn.entries.filter((entry) => entry.type === 'assistant' || entry.type === 'media')
     : turn.entries
-  const groupedEntries = settings.toolOutput === 'hidden' ? visibleEntries : groupToolEntries(visibleEntries)
+  // Filtered before grouping: a group object would hide the pending question from an array check.
+  const shownEntries = asking ? visibleEntries.filter((entry) => !isPendingQuestion(entry)) : visibleEntries
+  const groupedEntries = settings.toolOutput === 'hidden' ? shownEntries : groupToolEntries(shownEntries)
   const entries = settings.showReasoning ? groupedEntries : groupedEntries.filter((entry) => entry.type !== 'reasoning')
   const firstEntry = entries[0]
   const startsWithTool = firstEntry?.type === 'tool' || firstEntry?.type === 'toolGroup'
@@ -173,7 +186,7 @@ export function TurnView({
           />
         )
       })}
-      {active && turn.status === 'running' && !silentOpening ? (
+      {active && turn.status === 'running' && !silentOpening && !asking ? (
         <Box flexDirection="column" marginTop={1}>
           <Text color={theme.warning}>{turnActivityText(activity, turn, spinner, interruptKey)}</Text>
           {activity === 'waitingForResponse' ? (
@@ -262,6 +275,7 @@ function ToolActivityGroup({
   const theme = useTheme()
   const id = entries[0]!.id
   const running = entries.filter((entry) => entry.status === 'running')
+  const previewed = running.filter((entry) => !isOnScreenQuestionTool(entry.name))
   const paused = approvalToolName !== undefined && running.some((entry) => entry.name === approvalToolName)
   const failed = entries.filter((entry) => entry.status === 'error').length
   const cancelled = entries.filter((entry) => entry.status === 'cancelled').length
@@ -293,7 +307,7 @@ function ToolActivityGroup({
           <Text dimColor> · {details.join(' · ')}</Text>
         </Text>
       </Box>
-      {(expanded ? entries : running.slice(-1)).map((entry) => (
+      {(expanded ? entries : previewed.slice(-1)).map((entry) => (
         <Box key={entry.id} paddingLeft={2} flexDirection="column">
           <EntryView
             entry={entry}

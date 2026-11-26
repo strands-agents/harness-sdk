@@ -1,0 +1,183 @@
+import { appendFile, mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
+
+import {
+  mergedJobsFeed,
+  Store,
+  tailEvalsLines,
+  evalsJobsFeed,
+  watchEvalsFileCount,
+} from '../../../src/dev/evals/jobs.js'
+import type { DevChatJob, DevChatJobs } from '../../../src/ui/chat/types.js'
+import { temporaryDirectory } from '../../fixtures/tempdir.js'
+
+const POLLED = { timeout: 5000 }
+
+class Counter extends Store<{ readonly running: readonly string[]; readonly tick: number }> {
+  constructor() {
+    super({ running: [], tick: 0 })
+  }
+
+  start(name: string): void {
+    this.set({ ...this.snapshot(), running: [...this.snapshot().running, name] })
+  }
+
+  touch(): void {
+    this.set({ ...this.snapshot(), tick: this.snapshot().tick + 1 })
+  }
+}
+
+const feedOf = (store: Counter) =>
+  evalsJobsFeed(store, ({ running }) => running.map((name) => ({ id: name, label: name })))
+
+describe('evalsJobsFeed', () => {
+  it('shouldCallTheListenerOnceWhenJobsChangeInAFastBurst', async () => {
+    vi.useFakeTimers()
+    const store = new Counter()
+    const feed = feedOf(store)
+    const listener = vi.fn()
+    feed.subscribe(listener)
+
+    store.start('refunds')
+    store.start('billing')
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(feed.snapshot().map(({ id }) => id)).toEqual(['refunds', 'billing'])
+    vi.useRealTimers()
+  })
+
+  it('shouldKeepTheSameSnapshotAndStayQuietWhenNothingAboutTheJobsChanges', async () => {
+    vi.useFakeTimers()
+    const store = new Counter()
+    store.start('refunds')
+    const feed = feedOf(store)
+    const listener = vi.fn()
+    feed.subscribe(listener)
+    const before = feed.snapshot()
+
+    store.touch()
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(feed.snapshot()).toBe(before)
+    expect(listener).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('shouldStopCallingTheListenerWhenItUnsubscribes', async () => {
+    vi.useFakeTimers()
+    const store = new Counter()
+    const feed = feedOf(store)
+    const listener = vi.fn()
+    const unsubscribe = feed.subscribe(listener)
+
+    store.start('refunds')
+    unsubscribe()
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(listener).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+})
+
+describe('tailEvalsLines', () => {
+  it('shouldDeliverEachCompleteLineOnceWhenTheFileGrows', async () => {
+    const path = join(await temporaryDirectory(), 'study.jsonl')
+    const lines: string[] = []
+    await writeFile(path, '{"type":"study"}\n{"type":')
+
+    const tail = tailEvalsLines(path, (line) => lines.push(line))
+    await vi.waitFor(() => expect(lines).toEqual(['{"type":"study"}']), POLLED)
+    await appendFile(path, '"run"}\n')
+    await vi.waitFor(() => expect(lines).toEqual(['{"type":"study"}', '{"type":"run"}']), POLLED)
+    await tail.stop()
+
+    expect(lines).toEqual(['{"type":"study"}', '{"type":"run"}'])
+  })
+
+  it('shouldWaitWithoutFailingWhenTheFileDoesNotExistYet', async () => {
+    const path = join(await temporaryDirectory(), 'later', 'study.jsonl')
+    const lines: string[] = []
+
+    const tail = tailEvalsLines(path, (line) => lines.push(line))
+    await mkdir(join(path, '..'), { recursive: true })
+    await writeFile(path, '{"type":"study"}\n')
+    await tail.stop()
+
+    expect(lines).toEqual(['{"type":"study"}'])
+  })
+})
+
+describe('watchEvalsFileCount', () => {
+  it('shouldReportTheNumberOfFinishedCaseFilesWhenTheFolderFills', async () => {
+    const folder = join(await temporaryDirectory(), 'cases')
+    const counts: number[] = []
+
+    const stop = watchEvalsFileCount(folder, (count) => counts.push(count))
+    await mkdir(folder)
+    await writeFile(join(folder, 'c0.json'), '{}')
+    await writeFile(join(folder, 'c1.json'), '{}')
+    await vi.waitFor(() => expect(counts.at(-1)).toBe(2), POLLED)
+    stop()
+
+    expect(counts).not.toContain(3)
+  })
+})
+
+const settableFeed = (initial: readonly DevChatJob[]) => {
+  let jobs = initial
+  const listeners = new Set<() => void>()
+  const jobsFeed: DevChatJobs = {
+    snapshot: () => jobs,
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+  }
+  const set = (next: readonly DevChatJob[]): void => {
+    jobs = next
+    listeners.forEach((listener) => listener())
+  }
+  return { jobsFeed, set, listeners }
+}
+
+describe('mergedJobsFeed', () => {
+  it('shouldListTheJobsOfEveryFeedInOrder', () => {
+    const generations = settableFeed([{ id: 'gen-1', label: 'refunds' }])
+    const evaluations = settableFeed([{ id: '/w/capital.json', label: 'capital', done: 1, total: 4 }])
+
+    const merged = mergedJobsFeed(generations.jobsFeed, evaluations.jobsFeed)
+
+    expect(merged.snapshot().map(({ id }) => id)).toEqual(['gen-1', '/w/capital.json'])
+  })
+
+  it('shouldKeepTheSnapshotIdentityUntilAPartChanges', () => {
+    const generations = settableFeed([])
+    const evaluations = settableFeed([])
+    const merged = mergedJobsFeed(generations.jobsFeed, evaluations.jobsFeed)
+
+    const first = merged.snapshot()
+    expect(merged.snapshot()).toBe(first)
+
+    evaluations.set([{ id: '/w/capital.json', label: 'capital' }])
+    expect(merged.snapshot()).not.toBe(first)
+  })
+
+  it('shouldHearEveryFeedAndStopHearingThemAll', () => {
+    const generations = settableFeed([])
+    const evaluations = settableFeed([])
+    const merged = mergedJobsFeed(generations.jobsFeed, evaluations.jobsFeed)
+    let heard = 0
+
+    const stop = merged.subscribe(() => {
+      heard += 1
+    })
+    generations.set([{ id: 'gen-1', label: 'refunds' }])
+    evaluations.set([{ id: '/w/capital.json', label: 'capital' }])
+    stop()
+
+    expect(heard).toBe(2)
+    expect(generations.listeners.size + evaluations.listeners.size).toBe(0)
+  })
+})

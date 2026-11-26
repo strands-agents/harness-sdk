@@ -1,5 +1,6 @@
 """Tests for the context_manager parameter on Agent."""
 
+import warnings
 from unittest.mock import MagicMock
 
 import pytest
@@ -149,3 +150,26 @@ class TestContextManagerProperty:
         context_manager = ContextManager()
         with pytest.raises(ValueError, match="passed via plugins"):
             Agent(model=mock_model, plugins=[context_manager])
+
+
+class TestDeprecatedStashKey:
+    """Tests for the pre-rename ``stash`` config key kept until v1.68.0."""
+
+    def test_stash_key_configures_the_archive(self, mock_model):
+        with pytest.warns(DeprecationWarning, match='"stash" key'):
+            agent = Agent(model=mock_model, context_manager={"stash": False})
+
+        assert agent.context_manager.archive is None
+
+    def test_warning_is_attributed_to_the_caller(self, mock_model):
+        with pytest.warns(DeprecationWarning, match='"stash" key') as caught:
+            Agent(model=mock_model, context_manager={"stash": False})
+
+        assert caught[0].filename == __file__
+
+    def test_archive_key_is_warning_free(self, mock_model):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            Agent(model=mock_model, context_manager={"archive": False})
+
+        assert [str(warning.message) for warning in caught if "stash" in str(warning.message)] == []

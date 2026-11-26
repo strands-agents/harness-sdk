@@ -7,7 +7,7 @@ import pytest
 
 import strands
 import strands.event_loop
-from strands.agent.invocation_context import _create_invocation_context
+from strands.agent.invocation_context import ModelUsage, _create_invocation_context
 from strands.types._events import (
     ModelStopReason,
     ModelStreamChunkEvent,
@@ -1307,6 +1307,40 @@ async def test_process_stream_adds_the_usage_when_the_consumer_stops_at_the_stop
     await stream.aclose()
 
     assert invocation_context.usage == {"turns_taken": 0, "inputTokens": 3, "outputTokens": 4, "totalTokens": 7}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "cancel", "exp_usage"),
+    [
+        (
+            [{"messageStart": {"role": "assistant"}}, {"messageStop": {"stopReason": "end_turn"}}, _USAGE_METADATA],
+            False,
+            {"inputTokens": 3, "outputTokens": 4, "totalTokens": 7},
+        ),
+        ([{"messageStart": {"role": "assistant"}}], True, {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}),
+        ([], True, {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}),
+    ],
+    ids=["finished", "cancelled-between-chunks", "cancelled-by-the-provider"],
+)
+async def test_process_stream_adds_the_call_usage_under_its_model(response, cancel, exp_usage, agenerator, alist):
+    invocation_context = _create_invocation_context()
+    cancel_signal = threading.Event()
+    if cancel:
+        cancel_signal.set()
+
+    await alist(
+        strands.event_loop.streaming.process_stream(
+            agenerator(response),
+            cancel_signal=cancel_signal,
+            invocation_context=invocation_context,
+            model_key=("bedrock", "model-a"),
+        )
+    )
+
+    assert invocation_context.usage_by_model == [
+        ModelUsage(provider_name="bedrock", model_id="model-a", usage=exp_usage)
+    ]
 
 
 @pytest.mark.asyncio

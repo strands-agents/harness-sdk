@@ -79,7 +79,7 @@ jobs:
           python-version: '3.12'
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
 
       - name: Install PortAudio
         if: runner.os == 'Linux'
@@ -98,6 +98,14 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Prepare the pinned strands-agents-evals for the evals agent tests
+        if: ${{ !matrix.shard }}
+        run: |
+          requirement=$(node --input-type=module -e "const { STRANDS_EVALS_REQUIREMENT } = await import('./dist/src/dev/evals/package.js'); console.log(STRANDS_EVALS_REQUIREMENT)")
+          python -m venv "$RUNNER_TEMP/evals-venv"
+          "$RUNNER_TEMP/evals-venv/bin/python" -m pip install --disable-pip-version-check --prefer-binary "$requirement" pytest
+          echo "STRANDS_TEST_EVALS_PYTHON=$RUNNER_TEMP/evals-venv/bin/python" >> "$GITHUB_ENV"
 
       # The step timeout below kills a hung run and its child processes, so record what is running a minute before
       # it: the 840 s here must stay under that step's 15 minutes.

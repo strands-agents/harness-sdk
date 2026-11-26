@@ -2,16 +2,14 @@ import json
 import logging
 import re
 import textwrap
-from importlib.metadata import version
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import boto3
 import pytest
-from packaging.version import Version
 from strands import Agent, BackgroundTasksConfig, tool
 from strands.agent.conversation_manager import NullConversationManager
-from strands.experimental.context_manager import ContextManager
+from strands.context_manager import ContextManager
 from strands.hooks import BeforeModelCallEvent, BeforeToolCallEvent, HookProvider, HookRegistry
 from strands.memory import MemoryManager
 from strands.models import BedrockModel, CacheConfig, Model, ModelRouter
@@ -76,7 +74,7 @@ def read_large() -> str:
 
 
 class _RetrievingModel(Model):
-    """Calls ``read_large``, then ``retrieve_context`` on the stash reference it gets back, recording each
+    """Calls ``read_large``, then ``retrieve_context`` on the archive reference it gets back, recording each
     tool result."""
 
     def __init__(self) -> None:
@@ -124,7 +122,7 @@ class _RetrievingModel(Model):
 def test_defaults():
     agent = create_harness()
     assert isinstance(agent, Agent)
-    assert {"shell", "read", "write", "edit", "web_fetch"} <= set(agent.tool_names)
+    assert {"shell", "read", "write", "edit", "web_fetch", "manage_background_task"} <= set(agent.tool_names)
     assert agent.system_prompt == HARNESS_CONTRACT
     assert _context_managed(agent)
     assert agent._background_tasks is not None
@@ -139,6 +137,7 @@ def test_background_tasks_true_matches_the_default():
 
 def test_subagent_stays_backgrounded_under_a_custom_policy():
     policy: BackgroundTasksConfig = {
+        "manage_tool_name": "task_admin",
         "agentic": ["subagent"],
         "always": [sample_tool, "subagent"],
         "never": ["*", "subagent"],
@@ -152,6 +151,7 @@ def test_subagent_stays_backgrounded_under_a_custom_policy():
     assert agent._background_tasks._config.get("wait_for_completion") is False
     assert agent._background_tasks._config.get("max_concurrency") == 2
     assert agent._background_tasks._config.get("timeout") == 5.0
+    assert "task_admin" in agent.tool_names
     assert policy.get("agentic") == ["subagent"]
     assert policy.get("always") == [sample_tool, "subagent"]
     assert policy.get("never") == ["*", "subagent"]
@@ -736,7 +736,7 @@ def test_context_manager_true_is_rejected_by_the_sdk():
 
 
 def test_context_manager_config_builds_an_sdk_context_manager():
-    agent = create_harness(context_manager={"stash": False})
+    agent = create_harness(context_manager={"archive": False})
     assert isinstance(agent.conversation_manager, NullConversationManager)
     assert any(isinstance(plugin, ContextManager) for plugin in agent._plugin_registry._plugins.values())
 
@@ -929,17 +929,12 @@ def test_offloaded_tool_result_returned_in_full_on_retrieval(tmp_path):
 
     assert len(model.seen_tool_results) == 2
     assert model.seen_tool_results[0].startswith("[Truncated:")
-    retrieved = model.seen_tool_results[1]
-    # strands-agents 1.65.0 and earlier return the stashed block serialized to JSON; since #6101 the SDK returns text.
-    # TODO: drop the JSON case once harness-py requires a strands-agents release that includes #6101.
-    if Version(version("strands-agents")) <= Version("1.65.0"):
-        retrieved = json.loads(retrieved)["text"]
-    assert retrieved == _LARGE_RESULT
-    assert agent.context_manager.stash_is_durable is True
+    assert model.seen_tool_results[1] == _LARGE_RESULT
+    assert agent.context_manager.archive_is_durable is True
     agent_scope = Path("scopes", "agent", agent.agent_id)
     snapshot_path = tmp_path / "session" / "retrieval" / agent_scope / "snapshots" / "snapshot_latest.json"
     snapshot = json.loads(snapshot_path.read_text())
-    assert snapshot["data"]["stash"] == {"location": "external", "storage_type": "LocalFileStorage"}
+    assert snapshot["data"]["archive"] == {"location": "external", "storage_type": "LocalFileStorage"}
     assert (tmp_path / "context" / "retrieval" / agent_scope / "tooluse-0_0").is_file()
 
 
@@ -959,23 +954,23 @@ def test_offloaded_tool_result_returned_in_full_on_retrieval(tmp_path):
         ),
     ],
 )
-def test_stash_in_memory_when_harness_does_not_build_the_session(session_kwargs, tmp_path):
+def test_archive_in_memory_when_harness_does_not_build_the_session(session_kwargs, tmp_path):
     agent = create_harness(**session_kwargs(str(tmp_path)))
     assert agent.storage is None
-    assert agent.context_manager.stash_is_durable is False
+    assert agent.context_manager.archive_is_durable is False
 
 
-def test_explicit_storage_backs_the_stash(tmp_path):
+def test_explicit_storage_backs_the_archive(tmp_path):
     storage = InMemoryStorage()
     agent = create_harness(storage=storage, session={"dir": str(tmp_path)})
     assert agent.storage is storage
-    assert agent.context_manager.stash_is_durable is False
+    assert agent.context_manager.archive_is_durable is False
 
 
 def test_storage_none_falls_back_to_the_session_storage(tmp_path):
     agent = create_harness(storage=None, session={"dir": str(tmp_path)})
     assert isinstance(agent.storage, LocalFileStorage)
-    assert agent.context_manager.stash_is_durable is True
+    assert agent.context_manager.archive_is_durable is True
 
 
 def test_skills_loaded_from_dir(tmp_path):

@@ -66,21 +66,33 @@ export interface ResumeSession {
   sessionDirectory: string
   workspace: string
   agentProject?: string
+  devWorkspace?: string
+}
+
+const SCRIPT_FILE = /\.[cm]?[jt]s$/iu
+const INSTALLED_PACKAGE = /[\\/]node_modules[\\/]/u
+
+const startedProgram = (entry = process.argv[1]): readonly string[] => {
+  if (!entry) return ['strands']
+  if (!SCRIPT_FILE.test(entry)) return [basename(entry)]
+  return INSTALLED_PACKAGE.test(entry) ? ['strands'] : ['node', entry]
 }
 
 export function sessionResumeCommand(
   session: ResumeSession,
-  options: { cwd?: string; platform?: NodeJS.Platform } = {}
+  options: { cwd?: string; platform?: NodeJS.Platform; entry?: string } = {}
 ): string {
   const platform = options.platform ?? process.platform
   const paths = platform === 'win32' ? win32 : posix
   const workspace = paths.resolve(session.workspace)
   const directory = paths.resolve(workspace, session.sessionDirectory)
   const quote = (value: string): string => quoteArgument(value, platform)
-  const command = ['strands']
+  const command = session.devWorkspace
+    ? [...startedProgram(options.entry).map(quote), 'dev', '--workspace', quote(paths.resolve(session.devWorkspace))]
+    : ['strands']
   if (session.agentProject) command.push('--agent', quote(session.agentProject))
   command.push('--session-id', quote(session.sessionId))
-  command.push('--set', quote(`session.dir=${JSON.stringify(directory)}`))
+  if (!session.devWorkspace) command.push('--set', quote(`session.dir=${JSON.stringify(directory)}`))
   const resume = command.join(' ')
   if (workspace === paths.resolve(options.cwd ?? process.cwd())) return resume
   const changeDirectory =
@@ -423,6 +435,11 @@ async function readSessionMetadata(sessionDirectory: string): Promise<SessionMet
     }
   }
   return undefined
+}
+
+export async function savedSessionCount(sessionDirectory: string, exclude?: string): Promise<number> {
+  const sessions = await listFileSessions(resolve(sessionDirectory), exclude)
+  return sessions.filter(({ active, messageCount }) => !active && (messageCount ?? 0) > 0).length
 }
 
 export async function hasSavedSession(sessionDirectory: string, sessionId: string): Promise<boolean> {

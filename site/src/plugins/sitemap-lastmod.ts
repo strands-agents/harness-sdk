@@ -3,8 +3,8 @@
  *
  * Adds <lastmod> dates to the XML sitemap by looking up each page's
  * last git commit date. Runs a single `git log` command at config time
- * to build a map of file paths to ISO dates, then injects them via
- * the @astrojs/sitemap `serialize` callback.
+ * across the site source tree to build a map of file paths to ISO dates,
+ * then injects them via the @astrojs/sitemap `serialize` callback.
  *
  * Dynamically-generated routes have no backing content file, so they
  * derive lastmod from the content that feeds them:
@@ -25,6 +25,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import sitemap from '@astrojs/sitemap'
+import { INDEXABLE_STANDALONE_PAGES } from '../config/standalone-pages'
 import { loadGeneratedExternalDocsNavigation } from '../external-docs-navigation'
 import type { SitemapItem } from '@astrojs/sitemap'
 import { buildLastModMap, getGitPrefix } from '../util/git-dates'
@@ -73,15 +74,47 @@ export function newestDateUnder(lastModMap: Map<string, string>, pathPrefix: str
   return newest
 }
 
+/**
+ * Newest commit date among exact files and directory prefixes.
+ *
+ * A source ending in `/` represents a directory; every other source is an
+ * exact file path. This prevents a file such as `box.astro-old` from
+ * accidentally contributing to the `/box/` route.
+ */
+export function newestDateForSources(lastModMap: Map<string, string>, sources: string[]): string | undefined {
+  let newest: string | undefined
+  let newestMs = -Infinity
+
+  for (const source of sources) {
+    const date = source.endsWith('/') ? newestDateUnder(lastModMap, source) : lastModMap.get(source)
+    if (!date) continue
+
+    const ms = Date.parse(date)
+    if (!Number.isNaN(ms) && ms > newestMs) {
+      newestMs = ms
+      newest = date
+    }
+  }
+
+  return newest
+}
+
 // Blog tag/author archives are noindexed thin content — keep them out of the
 // sitemap so it only lists indexable URLs. Anchored to the deploy base path
 // (subpath previews) so a content page like /docs/blog/tags/ can't be caught.
 const EXCLUDED_ROUTES = ['blog/tags/', 'blog/authors/', 'frogs/']
 const basePath = (process.env.ASTRO_BASE_PATH || '/').replace(/\/+$/, '')
 
-export function sitemapWithLastmod(contentDir: string = 'src/content') {
+interface SitemapLastmodOptions {
+  /** Content directory used to resolve generated routes to source files. */
+  contentDir?: string
+  /** Git-log scope covering content and every standalone page's lastmod sources. */
+  sourceRoot?: string
+}
+
+export function sitemapWithLastmod({ contentDir = 'src/content', sourceRoot = 'src' }: SitemapLastmodOptions = {}) {
   const gitPrefix = getGitPrefix()
-  const lastModMap = buildLastModMap(contentDir)
+  const lastModMap = buildLastModMap(sourceRoot)
   console.log(`[sitemap-lastmod] Loaded ${lastModMap.size} git dates`)
 
   const contentPrefix = (rel: string) => gitPrefix + path.posix.join(contentDir, rel)
@@ -95,6 +128,13 @@ export function sitemapWithLastmod(contentDir: string = 'src/content') {
     [`${basePath}/`]: newestDateUnder(lastModMap, contentPrefix('')),
     [`${basePath}/blog/`]: newestDateUnder(lastModMap, contentPrefix('blog/')),
     [`${basePath}/changelog/`]: newestDateUnder(lastModMap, contentPrefix('changelog/')),
+  }
+  for (const page of INDEXABLE_STANDALONE_PAGES) {
+    if (!page.lastmodSources) continue
+    indexDates[`${basePath}/${page.slug}/`] = newestDateForSources(
+      lastModMap,
+      page.lastmodSources.map((source) => gitPrefix + source)
+    )
   }
   // API reference pages are regenerated from SDK source at each release, and
   // every release commits a changelog file — its commit date approximates the

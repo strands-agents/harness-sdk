@@ -103,8 +103,9 @@ navbar:
 
 # Products — the single source of truth for the "Products" dropdown, in display
 # order. The docs nav is organized around products so the dropdown and the docs
-# stay aligned. Add a product here to surface it in the dropdown; the `href` is
-# its landing/hub page and `pages` are the key links shown on mobile.
+# stay aligned. Add a product here to surface it in the dropdown; `href` is its
+# landing page, `docsHref` is its docs hub when those differ, and `pages` are
+# the key links shown on mobile. `navDescription` can provide tighter menu copy.
 products:
   - label: Harness
     accent: orange
@@ -148,8 +149,10 @@ products:
     accent: purple
     name: Strands Box
     slug: "/box"
-    href: /docs/user-guide/box/
-    description: An agent sandbox that pairs OS containment with Dogwood policy.
+    href: /box/
+    docsHref: /docs/user-guide/box/
+    navDescription: Run AI agents in a sandbox with controlled access.
+    description: Run AI agents in a sandbox that limits the files, programs, websites, and credentials they can access locally or in supported cloud deployments.
     repository: https://github.com/strands-agents/box
     languages:
       - Rust
@@ -197,8 +200,9 @@ products:
     accent: red
     name: Strands Decider
     slug: "/decider"
-    href: /docs/labs/strands-decider/overview/
-    description: A small, fast decision model for agentic AI.
+    href: /decider/
+    docsHref: /docs/labs/strands-decider/overview/
+    description: Route, classify, and score with confidence.
     repository: https://github.com/strands-labs/strands-decider
     languages:
       - Python
@@ -401,6 +405,7 @@ sidebar:
             items:
               - docs/user-guide/sdk/model-providers
               - docs/user-guide/sdk/model-providers/model-routing
+              - docs/user-guide/sdk/model-providers/prompt-caching
               - docs/user-guide/sdk/model-providers/amazon-bedrock
               - docs/user-guide/sdk/model-providers/amazon-bedrock-prompt-caching
               - docs/user-guide/sdk/model-providers/amazon-nova
@@ -431,6 +436,9 @@ sidebar:
                   - label: "Overview"
                     slug: docs/user-guide/sdk/decision-models/models
                   - docs/user-guide/sdk/decision-models/models/llm
+                  - docs/user-guide/sdk/decision-models/models/typesafe
+                  - docs/user-guide/sdk/decision-models/models/decisions-api
+                  - docs/user-guide/sdk/decision-models/models/sagemaker
           - label: Tools
             items:
               - docs/user-guide/sdk/tools/tool-results
@@ -472,6 +480,7 @@ sidebar:
               - docs/user-guide/sdk/plugins/context-injector
               - docs/user-guide/sdk/plugins/todos
               - docs/user-guide/sdk/plugins/goal-loop
+              - docs/user-guide/sdk/plugins/genai-prices-estimator
               - docs/user-guide/sdk/plugins/custom-plugins
           - label: Interventions
             addedDate: 2026-06-03
@@ -645,6 +654,8 @@ sidebar:
                 slug: docs/user-guide/evals-sdk/evaluators/deterministic_evaluators
               - label: "Structured output similarity"
                 slug: docs/user-guide/evals-sdk/evaluators/structured_output_evaluator
+              - label: "Typed rubric"
+                slug: docs/user-guide/evals-sdk/evaluators/typed_rubric_evaluator
               - label: "Custom"
                 slug: docs/user-guide/evals-sdk/evaluators/custom_evaluator
           - label: Detectors
@@ -671,6 +682,16 @@ sidebar:
               - docs/user-guide/evals-sdk/red-teaming/custom_task
               - docs/user-guide/evals-sdk/red-teaming/evaluators
               - docs/user-guide/evals-sdk/red-teaming/reading_the_report
+          - label: Optimization
+            items:
+              - label: "Overview"
+                slug: docs/user-guide/evals-sdk/optimization
+              - docs/user-guide/evals-sdk/optimization/quickstart
+              - docs/user-guide/evals-sdk/optimization/tunables
+              - docs/user-guide/evals-sdk/optimization/entry_routes
+              - docs/user-guide/evals-sdk/optimization/objectives
+              - docs/user-guide/evals-sdk/optimization/search
+              - docs/user-guide/evals-sdk/optimization/results
           - docs/user-guide/evals-sdk/chaos_testing
       - label: CLI
         items:
@@ -680,6 +701,7 @@ sidebar:
           - docs/user-guide/evals-sdk/cli/generate
           - docs/user-guide/evals-sdk/cli/diagnose
           - docs/user-guide/evals-sdk/cli/report
+          - docs/user-guide/evals-sdk/cli/ui
 
   - label: Contribute
     items:

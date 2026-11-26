@@ -15,7 +15,7 @@ class OffloadedBlock(TypedDict):
 
     Attributes:
         method: Offload method that left the placeholder.
-        ref: Stash reference the original is retrievable under; absent when it was not stashed.
+        ref: Archive reference the original is retrievable under; absent when it was not archived.
         tokens: Size of the content it stands for, including any placeholder it replaced; absent when the token
             count could not measure it.
     """

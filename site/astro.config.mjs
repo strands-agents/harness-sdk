@@ -3,6 +3,7 @@ import { defineConfig } from 'astro/config'
 import { unified } from '@astrojs/markdown-remark'
 import starlight from '@astrojs/starlight'
 import path from 'node:path'
+import starlightImageZoom from 'starlight-image-zoom'
 import remarkMkdocsSnippets from './src/plugins/remark-mkdocs-snippets.ts'
 import sdkSetupPlugin from './src/plugins/vite-plugin-sdk-setup.ts'
 import remarkReadingTime from './src/plugins/remark-reading-time.ts'
@@ -53,7 +54,7 @@ export default defineConfig({
   integrations: [
     // Sitemap with git-based <lastmod> dates — must be before Starlight
     // so Starlight detects it and skips its own sitemap integration
-    sitemapWithLastmod('src/content'),
+    sitemapWithLastmod({ contentDir: 'src/content', sourceRoot: 'src' }),
     astroExpressiveCode({
       themes: ['github-light', 'github-dark'],
       // Follow Starlight's data-theme attribute instead of the browser's prefers-color-scheme
@@ -67,6 +68,9 @@ export default defineConfig({
     }),
     mdx(),
     starlight({
+      // Click-to-zoom for Markdown images. The site overrides MarkdownContent, so
+      // overrides/MarkdownContent.astro renders the plugin's <ImageZoom /> itself.
+      plugins: [starlightImageZoom()],
       social: [],
       head: [
         { tag: 'meta', attrs: { property: 'og:image', content: `${site}/og-image.png` } },
@@ -109,6 +113,7 @@ export default defineConfig({
         baseUrl: 'https://github.com/strands-agents/harness-sdk/edit/main/site/',
       },
       components: {
+        EditLink: './src/components/overrides/EditLink.astro',
         Footer: './src/components/overrides/Footer.astro',
         Head: './src/components/overrides/Head.astro',
         Header: './src/components/Header.astro',
