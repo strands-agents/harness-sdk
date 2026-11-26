@@ -1,0 +1,8 @@
+name: SocialScrape
+description: Hosted MCP server giving Strands agents profiles, posts, comments, search and transcripts from TikTok, Instagram, YouTube, X, Reddit and 30 more platforms.
+integrationType: tool
+languages:
+  python: {}
+github: https://github.com/SocialScraper/socialscrape-mcp
+docsUrl: https://socialscrape.dev/docs/strands?utm_source=strandsagents&utm_medium=integration&utm_campaign=strands-catalog
+addedDate: 2026-11-20
