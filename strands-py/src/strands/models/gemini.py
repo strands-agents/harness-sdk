@@ -8,6 +8,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import secrets
 from collections import Counter
 from collections.abc import AsyncGenerator, Mapping
@@ -29,6 +30,12 @@ from ._validation import _has_location_source, _log_skipped_blocks, validate_con
 from .model import BaseModelConfig, Model
 
 logger = logging.getLogger(__name__)
+
+# Documented Google placeholder for replaying functionCall parts whose original thought signature is
+# not available, for example a tool loop another provider started. Gemini 3 and later reject such calls
+# with a 400 unless the placeholder is set.
+# Docs: https://ai.google.dev/gemini-api/docs/thought-signatures
+_SKIP_THOUGHT_SIGNATURE_VALIDATOR = "skip_thought_signature_validator"
 
 T = TypeVar("T", bound=pydantic.BaseModel)
 
@@ -189,8 +196,22 @@ class GeminiModel(Model):
             # Create a new client from client_args
             return genai.Client(**self.client_args)
 
+    def _requires_thought_signature(self) -> bool:
+        """Whether the configured Gemini model enforces thought signatures on function call parts.
+
+        Gemini 3 and later reject a functionCall part that carries no thought_signature. Older models accept
+        unsigned histories, so no placeholder is added for them. Model ids that do not parse are treated as
+        enforcing, matching the API's direction.
+        """
+        match = re.search(r"gemini-(\d+)", str(self.config["model_id"]))
+        return match is None or int(match.group(1)) >= 3
+
     def _format_request_content_part(
-        self, content: ContentBlock, tool_use_id_to_name: dict[str, str], skipped: Counter[str]
+        self,
+        content: ContentBlock,
+        tool_use_id_to_name: dict[str, str],
+        skipped: Counter[str],
+        apply_placeholder: bool = False,
     ) -> genai.types.Part:
         """Format content block into a Gemini part instance.
 
@@ -203,6 +224,8 @@ class GeminiModel(Model):
                 as we format the request, ensuring that when we encounter toolResult blocks (which come after toolUse
                 blocks in the message history), we can look up the function name.
             skipped: Count of skipped tool result items per notice message.
+            apply_placeholder: Whether to apply the documented placeholder to this content's unsigned
+                function call. Set only for the first tool use of a fully unsigned tool turn.
 
         Returns:
             Gemini part.
@@ -254,6 +277,16 @@ class GeminiModel(Model):
             tool_use_id_to_name[tool_use_id] = content["toolUse"]["name"]
 
             reasoning_signature = content["toolUse"].get("reasoningSignature")
+            if reasoning_signature is None and apply_placeholder:
+                logger.debug(
+                    "tool_use_id=<%s> | unsigned cross-provider tool call, applying thought signature placeholder",
+                    tool_use_id,
+                )
+                # The documented placeholder is URL-safe base64 text, not a standard-base64 signature, so it
+                # is decoded with the URL-safe alphabet to survive the round trip through the Gemini client.
+                tool_call_signature: bytes | None = base64.urlsafe_b64decode(_SKIP_THOUGHT_SIGNATURE_VALIDATOR)
+            else:
+                tool_call_signature = base64.b64decode(reasoning_signature) if reasoning_signature else None
 
             return genai.types.Part(
                 function_call=genai.types.FunctionCall(
@@ -261,7 +294,7 @@ class GeminiModel(Model):
                     id=tool_use_id,
                     name=content["toolUse"]["name"],
                 ),
-                thought_signature=base64.b64decode(reasoning_signature) if reasoning_signature else None,
+                thought_signature=tool_call_signature,
             )
 
         raise TypeError(f"content_type=<{next(iter(content))}> | unsupported type")
@@ -326,6 +359,18 @@ class GeminiModel(Model):
         skipped: Counter[str] = Counter()
         for message in messages:
             parts = []
+            # A tool turn can carry no reasoningSignature on any of its toolUse blocks: a tool loop another
+            # provider started, an imported history, or a manually built message. Gemini 3 and later reject
+            # such unsigned function calls with a 400, so replay the first one with Google's documented
+            # placeholder and leave the rest bare: the same shape Gemini itself produces for parallel
+            # batches, where only the first call is signed. Turns that already carry a signature are left
+            # untouched, because fabricating one there would corrupt the turn.
+            tool_uses = [block for block in message["content"] if "toolUse" in block]
+            placeholder_pending = (
+                self._requires_thought_signature()
+                and len(tool_uses) > 0
+                and all(not block["toolUse"].get("reasoningSignature") for block in tool_uses)
+            )
             for content in message["content"]:
                 # Check for location sources and skip with warning
                 if _has_location_source(content):
@@ -334,7 +379,13 @@ class GeminiModel(Model):
                 if "cachePoint" in content:
                     skipped["cachePoint content block is not supported by Gemini | skipping"] += 1
                     continue
-                parts.append(self._format_request_content_part(content, tool_use_id_to_name, skipped))
+                apply_placeholder = placeholder_pending and "toolUse" in content
+                if apply_placeholder:
+                    # Only the first unsigned call carries the placeholder, mirroring the documented shape.
+                    placeholder_pending = False
+                parts.append(
+                    self._format_request_content_part(content, tool_use_id_to_name, skipped, apply_placeholder)
+                )
 
             contents.append(
                 genai.types.Content(

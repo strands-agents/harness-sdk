@@ -359,7 +359,7 @@ async def test_stream_request_with_tool_use(gemini_client, model, model_id):
 
 @pytest.mark.asyncio
 async def test_stream_request_with_tool_use_no_reasoning_signature(gemini_client, model, model_id):
-    """Test toolUse without reasoningSignature is sent as function_call without thought_signature."""
+    """Unsigned cross-provider toolUse gets the skip placeholder so Gemini 3 accepts the replayed loop."""
     messages = [
         {
             "role": "assistant",
@@ -385,6 +385,163 @@ async def test_stream_request_with_tool_use_no_reasoning_signature(gemini_client
                         "function_call": {
                             "args": {"expression": "2+2"},
                             "id": "c1",
+                            "name": "calculator",
+                        },
+                        "thought_signature": "skip_thought_signature_validator",
+                    },
+                ],
+                "role": "model",
+            },
+        ],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+@pytest.mark.asyncio
+async def test_stream_request_with_tool_use_no_reasoning_signature_older_model(gemini_client, model_id):
+    """Gemini models before version 3 accept unsigned histories, so no placeholder is added for them."""
+    _ = gemini_client
+    model = GeminiModel(model_id="gemini-2.5-flash")
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "toolUse": {
+                        "toolUseId": "c1",
+                        "name": "calculator",
+                        "input": {"expression": "2+2"},
+                    },
+                },
+            ],
+        },
+    ]
+    await anext(model.stream(messages))
+
+    exp_request = {
+        "config": {},
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "function_call": {
+                            "args": {"expression": "2+2"},
+                            "id": "c1",
+                            "name": "calculator",
+                        },
+                    },
+                ],
+                "role": "model",
+            },
+        ],
+        "model": "gemini-2.5-flash",
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+@pytest.mark.asyncio
+async def test_stream_request_with_foreign_parallel_tool_uses(gemini_client, model, model_id):
+    """A fully unsigned turn replays like a native parallel batch.
+
+    The first call gets the placeholder; sibling calls stay bare.
+    """
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "toolUse": {
+                        "toolUseId": "c1",
+                        "name": "calculator",
+                        "input": {"expression": "2+2"},
+                    },
+                },
+                {
+                    "toolUse": {
+                        "toolUseId": "c2",
+                        "name": "calculator",
+                        "input": {"expression": "3+3"},
+                    },
+                },
+            ],
+        },
+    ]
+    await anext(model.stream(messages))
+
+    exp_request = {
+        "config": {},
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "function_call": {
+                            "args": {"expression": "2+2"},
+                            "id": "c1",
+                            "name": "calculator",
+                        },
+                        "thought_signature": "skip_thought_signature_validator",
+                    },
+                    {
+                        "function_call": {
+                            "args": {"expression": "3+3"},
+                            "id": "c2",
+                            "name": "calculator",
+                        },
+                    },
+                ],
+                "role": "model",
+            },
+        ],
+        "model": model_id,
+    }
+    gemini_client.aio.models.generate_content_stream.assert_called_with(**exp_request)
+
+
+@pytest.mark.asyncio
+async def test_stream_request_with_partially_signed_tool_uses_unchanged(gemini_client, model, model_id):
+    """A turn that already carries a signature is left as is: signed call preserved, unsigned one not fabricated."""
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "toolUse": {
+                        "toolUseId": "c1",
+                        "name": "calculator",
+                        "input": {"expression": "2+2"},
+                        "reasoningSignature": "YWJj",  # base64 of "abc"
+                    },
+                },
+                {
+                    "toolUse": {
+                        "toolUseId": "c2",
+                        "name": "calculator",
+                        "input": {"expression": "3+3"},
+                    },
+                },
+            ],
+        },
+    ]
+    await anext(model.stream(messages))
+
+    exp_request = {
+        "config": {},
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "function_call": {
+                            "args": {"expression": "2+2"},
+                            "id": "c1",
+                            "name": "calculator",
+                        },
+                        "thought_signature": "YWJj",
+                    },
+                    {
+                        "function_call": {
+                            "args": {"expression": "3+3"},
+                            "id": "c2",
                             "name": "calculator",
                         },
                     },
@@ -510,6 +667,9 @@ async def test_stream_request_with_tool_results_preserving_name(gemini_client, m
                             "id": "t1",
                             "name": "tool_1",
                         },
+                        # Unsigned cross-provider tool call: the placeholder is applied so Gemini 3
+                        # accepts the replayed loop.
+                        "thought_signature": "skip_thought_signature_validator",
                     },
                 ],
                 "role": "model",
