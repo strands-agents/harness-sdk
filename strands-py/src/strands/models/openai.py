@@ -90,6 +90,22 @@ def _with_responses_hint(error: openai.BadRequestError, model_id: str) -> openai
     )
 
 
+def _tool_call_index(tool_call: Any, tool_calls: dict[int, list[Any]]) -> int:
+    """Return the index of the tool call a streamed delta belongs to.
+
+    Gemini's OpenAI-compatible endpoint and Mistral send each tool call whole with an id but no
+    index. For those, a new id starts a new tool call and a delta without an id continues the latest.
+    """
+    if tool_call.index is not None:
+        return int(tool_call.index)
+    for index, deltas in tool_calls.items():
+        if tool_call.id and any(delta.id == tool_call.id for delta in deltas):
+            return index
+    if tool_call.id or not tool_calls:
+        return max(tool_calls, default=-1) + 1
+    return list(tool_calls)[-1]
+
+
 class OpenAIModel(Model):
     """OpenAI model provider implementation."""
 
@@ -846,7 +862,7 @@ class OpenAIModel(Model):
                         )
 
                     for tool_call in choice.delta.tool_calls or []:
-                        tool_calls.setdefault(tool_call.index, []).append(tool_call)
+                        tool_calls.setdefault(_tool_call_index(tool_call, tool_calls), []).append(tool_call)
 
                     if choice.finish_reason:
                         finish_reason = choice.finish_reason  # Store for use outside loop

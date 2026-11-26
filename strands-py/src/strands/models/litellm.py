@@ -38,7 +38,7 @@ from ._cache_points import (
 from ._model_info import ModelCapabilities, ModelInfo, lookup_model, lookup_model_info
 from ._validation import _log_skipped_blocks, validate_config_keys
 from .model import BaseModelConfig, CacheConfig
-from .openai import OpenAIModel
+from .openai import OpenAIModel, _tool_call_index
 
 logger = logging.getLogger(__name__)
 
@@ -727,7 +727,7 @@ class LiteLLMModel(OpenAIModel):
             if is_streaming:
                 # Streaming: tool calls have index attribute for out-of-order delivery
                 for tool_call in content_source.tool_calls:
-                    tool_calls.setdefault(tool_call.index, []).append(tool_call)
+                    tool_calls.setdefault(_tool_call_index(tool_call, tool_calls), []).append(tool_call)
             else:
                 # Non-streaming: tool calls arrive in order, use enumerated index
                 for i, tool_call in enumerate(content_source.tool_calls):
