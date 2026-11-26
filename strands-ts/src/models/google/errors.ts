@@ -58,6 +58,7 @@ export function classifyGoogleError(error: Error): GoogleErrorType | undefined {
     return 'network'
   }
 
+  // A 429 or 503 can arrive with a non-JSON message or a reason-phrase status, so the HTTP code is the reliable signal.
   // Checked by shape because instanceof fails across the @google/genai ESM and CJS builds.
   if (
     error.name === 'ApiError' &&
