@@ -241,21 +241,10 @@ test('internal mode grants the permissions Bidi integration tests need', () => {
   const statements = Object.values(policies).flatMap(
     (p: any) => p.Properties?.PolicyDocument?.Statement ?? [],
   );
-  const novaSonicStatement = statements.find((statement: any) => {
-    const actions = Array.isArray(statement.Action) ? statement.Action : [statement.Action];
-    const resources = Array.isArray(statement.Resource) ? statement.Resource : [statement.Resource];
-
-    return (
-      actions.includes('bedrock:InvokeModel') &&
-      resources.includes('arn:aws:bedrock:*::foundation-model/amazon.nova-2-sonic-v1:0') &&
-      resources.includes('arn:aws:bedrock:*::foundation-model/amazon.nova-2-5-sonic')
-    );
-  });
   const pollyStatement = statements.find(
     (statement: any) => statement.Action === 'polly:SynthesizeSpeech',
   );
 
-  expect(novaSonicStatement).toBeDefined();
   expect(pollyStatement?.Resource).toBe('*');
 });
 
@@ -271,19 +260,21 @@ test('internal mode grants the Bedrock models the integ suites invoke', () => {
       Array.isArray(statement.Action) && statement.Action.includes('bedrock:InvokeModelWithResponseStream'),
   );
 
-  expect(invokeStatement.Resource).toEqual(
-    expect.arrayContaining([
-      'arn:aws:bedrock:*:*:inference-profile/us.xai.grok-4.7',
-      'arn:aws:bedrock:*::foundation-model/xai.grok-4.7',
-      'arn:aws:bedrock:*::foundation-model/mistral.mistral-large-3-675b-instruct',
-      'arn:aws:bedrock:*::foundation-model/openai.gpt-oss-120b-1:0',
-      'arn:aws:bedrock:*:*:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0',
-      'arn:aws:bedrock:*:*:foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0',
-      'arn:aws:bedrock:*:*:inference-profile/us.anthropic.claude-haiku-5-5',
-      'arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-5-5',
-      'arn:aws:bedrock:*::foundation-model/amazon.titan-embed-text-v2:0',
-    ]),
-  );
+  // The resources are wildcards, so the action list is what keeps this statement narrow.
+  expect(invokeStatement).toEqual({
+    Effect: 'Allow',
+    Action: [
+      'bedrock:InvokeModel',
+      'bedrock:InvokeModelWithResponseStream',
+      'bedrock:ListAsyncInvokes',
+      'bedrock:GetAsyncInvoke',
+    ],
+    Resource: [
+      'arn:aws:bedrock:*::foundation-model/*',
+      'arn:aws:bedrock:*:*:inference-profile/*',
+      'arn:aws:bedrock:*:*:async-invoke/*',
+    ],
+  });
 });
 
 test('community mode does not attach the legacy broad policy', () => {
