@@ -109,16 +109,22 @@ async function _createTurndownService(): Promise<TurndownService> {
   const escape = td.escape.bind(td)
   td.escape = (text: string): string => escape(text).replace(/^(\d+)\) /, '$1\\) ')
 
-  // Render the <title> as a top-level heading so it appears in the document
-  // body rather than being silently dropped (turndown ignores <head> elements).
+  // Without this rule turndown writes the title as bare text.
   td.addRule('title', {
     filter: 'title',
     replacement: (_content, node) => {
+      const element = node as HTMLElement
+      // turndown converts the content of a dropped element before it drops the element.
+      if (element.closest(DROPPED_ELEMENTS.join(','))) return ''
       // The title is one line of plain text. "*" and "_" are escaped as they are in body text.
-      const text = _escapeText((node as HTMLElement).textContent ?? '')
+      const text = _escapeText(element.textContent ?? '')
         .replace(/[*_]/g, '\\$&')
         .trim()
-      return text ? `\n\n# ${text}\n\n` : ''
+      if (!text) return ''
+      // A later title, as in a feed, is a heading where it stands.
+      if (_firstTitle) return `\n\n# ${text}\n\n`
+      _firstTitle = text
+      return ''
     },
   })
 
@@ -163,12 +169,15 @@ async function _createTurndownService(): Promise<TurndownService> {
 // Cache the configured service so rules are registered once across all calls.
 let _turndownServicePromise: Promise<TurndownService> | null = null
 
+// The first title of the page being converted. turndown converts synchronously, so calls cannot interleave.
+let _firstTitle = ''
+
 /**
  * Convert HTML to markdown suitable for a model to read.
  *
- * The page title, if present, is rendered as a top-level ATX heading so the
- * model sees it as part of the document. Returns the original HTML string if
- * conversion fails.
+ * The page title, if present, starts the output as a top-level ATX heading so
+ * the model sees it as part of the document. Returns the original HTML string
+ * if conversion fails.
  *
  * @param html - Raw HTML string to convert.
  * @returns The converted markdown string, or the original HTML if conversion failed.
@@ -177,7 +186,9 @@ export async function htmlToMarkdown(html: string): Promise<string> {
   _turndownServicePromise ??= _createTurndownService()
   const td = await _turndownServicePromise
   try {
-    const markdown = td.turndown(html).trim()
+    _firstTitle = ''
+    const body = td.turndown(html).trim()
+    const markdown = _firstTitle ? `# ${_firstTitle}\n\n${body}`.trim() : body
     return markdown ? markdown + '\n' : ''
   } catch (error) {
     logger.warn(`error=<${error}> | html_to_markdown failed, returning raw html`)
