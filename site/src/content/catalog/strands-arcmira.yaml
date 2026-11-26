@@ -1,0 +1,10 @@
+name: "strands-arcmira"
+description: "YouTube transcript search for AI agents: the exact quote, often who said it, and a watch link cued to the second."
+integrationType: "tool"
+maintainedBy: "partner"
+languages:
+  python:
+    package: strands-arcmira
+github: "https://github.com/arcmira/integrations"
+docsUrl: "https://arcmira.github.io/integrations/strands/"
+addedDate: "2026-11-09"
