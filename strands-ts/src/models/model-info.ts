@@ -184,8 +184,14 @@ export function lookupModel(modelId: string): ModelInfo | undefined {
   return key === undefined ? undefined : MODELS[key]
 }
 
-// Finds the key of the entry for a model id, by the rule `lookupModel` documents.
-function lookupKey(modelId: string): string | undefined {
+/**
+ * Finds the key of the entry for a model id, by the rule `lookupModel` documents.
+ *
+ * @internal
+ * @param modelId - The model id to look up
+ * @returns The key, or undefined when the id is not in the data
+ */
+export function lookupKey(modelId: string): string | undefined {
   let candidate = modelId
   for (;;) {
     const unversioned = candidate.replace(VERSION_SUFFIX, '')
