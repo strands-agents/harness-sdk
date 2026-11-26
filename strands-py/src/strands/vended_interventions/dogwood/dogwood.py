@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 ENRICHED_GROUP = "session"
 """The one context group a ``context_enricher`` can add."""
 
+INPUT_GROUP = "input"
+"""The context group carrying a tool call's arguments. Only a tool-call action declares it."""
+
 SYSTEM_GROUP = "system"
 """The context group Dogwood's MCP schema template declares for the wall clock."""
 
@@ -164,7 +167,7 @@ class DogwoodAuthorization(InterventionHandler):
 
                 Dogwood checks a request's context against the action's context type, so the
                 schema must declare the group: this requires an ``action_schema`` that declares
-                ``session`` on every action, and raises otherwise.
+                ``session`` on every tool action, and raises otherwise.
 
                 These fields reach the ``when { ... }`` condition only — a temporal predicate
                 cannot reference an enriched field, because the event schema does not declare one.
@@ -187,7 +190,7 @@ class DogwoodAuthorization(InterventionHandler):
         """
         if principal and principal_resolver:
             raise ValueError("Provide either `principal` or `principal_resolver`, not both")
-        if not action_schema and not tools:
+        if not action_schema and tools is None:
             raise ValueError("Provide either `action_schema` or `tools`")
         # A generated schema declares its entities with no attributes and no membership, so an
         # entity carrying either fails conformance and denies every call.
@@ -220,18 +223,18 @@ class DogwoodAuthorization(InterventionHandler):
         self._resource: EntityRef = {"type": f"{prefix}{RESOURCE}", "id": "agent"}
         # A hand-written schema may declare several principal types; a generated one declares `User`.
         self._principal_type = None if action_schema else f"{prefix}User"
-        self._default_principal: EntityRef | None = (
-            None if principal_resolver else (principal or {"type": f"{prefix}User", "id": "anonymous"})
-        )
+        anonymous: EntityRef = {"type": f"{prefix}User", "id": "anonymous"}
+        static_principal = anonymous if principal is None else principal
+        self._default_principal: EntityRef | None = None if principal_resolver else static_principal
 
-        default_type = None if self._default_principal is None else self._default_principal["type"]
+        default_type = None if self._default_principal is None else self._default_principal.get("type")
         if default_type is not None and not self._declares_principal_type(default_type):
             raise ValueError(f"`principal` must be of type `{self._principal_type}`, got `{default_type}`")
-        undeclared = [tool for tool in self._actions_by_tool if not self._declares_context_group(tool, ENRICHED_GROUP)]
+        undeclared = self._tools_without_context_group(ENRICHED_GROUP)
         if context_enricher and undeclared:
             raise ValueError(
                 f"`context_enricher` requires an `action_schema` declaring a `{ENRICHED_GROUP}` context group on every "
-                f"action; {', '.join(sorted(undeclared))} declare none"
+                f"tool action; {', '.join(undeclared)} declare none"
             )
 
         self._principal_resolver = principal_resolver
@@ -375,6 +378,19 @@ class DogwoodAuthorization(InterventionHandler):
         """Whether the action for ``tool_name`` admits ``group`` in its context."""
         return group in self._context_groups.get(tool_name, frozenset())
 
+    def _tools_without_context_group(self, group: str) -> list[str]:
+        """The tools whose action does not admit ``group``, sorted.
+
+        Only the actions a tool call can land on: the schema's gateway-level actions declare no
+        arguments, so no call is ever decided against one and no context this handler builds ever
+        reaches it.
+        """
+        return sorted(
+            tool
+            for tool in self._actions_by_tool
+            if self._declares_context_group(tool, INPUT_GROUP) and not self._declares_context_group(tool, group)
+        )
+
     def _event_fields(
         self, tool_input: Any, tool_name: str, timestamp: int, invocation_state: dict[str, Any]
     ) -> tuple[EventGroups, EventGroups]:
@@ -383,13 +399,15 @@ class DogwoodAuthorization(InterventionHandler):
         Only the tool's input is recorded, because the event schema declares nothing else a
         temporal predicate could read.
         """
-        logged: EventGroups = {"input": tool_input or {}}
+        logged: EventGroups = {INPUT_GROUP: tool_input or {}}
         context = self._context_of(tool_name, logged, timestamp)
-        if not self._context_enricher:
+        # An action that declares no `session` group rejects an event carrying one, and no policy
+        # can read it there either, so the enricher is not asked for fields with nowhere to go.
+        if not self._context_enricher or not self._declares_context_group(tool_name, ENRICHED_GROUP):
             return logged, context
 
         enriched = self._context_enricher(
-            {"tool_name": tool_name, "tool_input": logged["input"], "invocation_state": invocation_state}
+            {"tool_name": tool_name, "tool_input": logged[INPUT_GROUP], "invocation_state": invocation_state}
         )
         return logged, {**context, ENRICHED_GROUP: enriched}
 
@@ -429,12 +447,7 @@ def _denial_reason(decision: AuthorizerDecision | None, tool_name: str) -> str |
     if decision["allowed"]:
         return None
     if decision["errors"]:
-        # Dogwood checks a call against the schema before it will decide, so this is most often
-        # arguments the tool does not declare rather than anything wrong with the policy set.
-        return (
-            f"Call to '{tool_name}' denied: Dogwood could not evaluate it, most often because the arguments do not "
-            f"match the tool's declared schema — {', '.join(decision['errors'])}"
-        )
+        return f"Dogwood evaluation failed: {', '.join(decision['errors'])}"
 
     rules = ", ".join(str(rule) for rule in decision["determining_rules"])
     return f"Access denied by Dogwood policy{f' (rule {rules})' if rules else ''}"
@@ -459,7 +472,8 @@ def _context_groups_of(policies: str, action_schema: str) -> dict[str, frozenset
     Read from the lowered Cedar schema, so the handler sends a context the action's type admits:
     Dogwood rejects an event whose context carries an undeclared group, and a context missing a
     required one fails conformance. An action name is the tool name, so the schema's own
-    gateway-level actions are in the map too and simply never looked up.
+    gateway-level actions are in the map too; they declare no ``input`` group, which is what tells
+    them apart from an action a tool call can land on.
 
     Args:
         policies: Dogwood policy text.

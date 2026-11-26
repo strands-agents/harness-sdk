@@ -42,7 +42,7 @@ def generate_action_schema(tools: list[AgentTool | ToolSpec]) -> str:
     """
     specs = [tool.tool_spec if isinstance(tool, AgentTool) else tool for tool in tools]
     retyped = [_retype_for_raw_arguments(spec) for spec in specs]
-    return _rename_resource(mcp_to_cedar_schema(retyped))
+    return _allow_absent_input(_rename_resource(mcp_to_cedar_schema(retyped)), specs)
 
 
 def apply_namespace(schema: str, namespace: str | None) -> str:
@@ -130,6 +130,47 @@ def _rename_resource(schema: str) -> str:
     """
     renamed = schema.replace(f"entity {GENERATED_RESOURCE};", f"entity {RESOURCE};", 1)
     return renamed.replace(f"resource: [{GENERATED_RESOURCE}]", f"resource: [{RESOURCE}]")
+
+
+def _allow_absent_input(schema: str, specs: list[ToolSpec]) -> str:
+    """Declare ``input`` optional for every tool whose arguments are all optional.
+
+    Dogwood drops an empty record from an event, so a tool the model calls with no arguments
+    arrives with no ``input`` group at all; generation declares the group required, which fails
+    conformance and denies the call. A tool with a required parameter keeps it required, because
+    an empty call there is a genuine mismatch.
+
+    A policy reading one of those parameters already needs a ``has`` guard — the parameter is
+    optional too — so this adds ``context has input`` to a guard a policy was writing anyway.
+
+    Args:
+        schema: Generated Cedar action schema text.
+        specs: The tool specs the schema was generated from.
+
+    Returns:
+        The schema, with ``input`` optional on the actions whose arguments may be absent.
+    """
+    for spec in specs:
+        if _required_parameters(spec):
+            continue
+        # The action's input type is named `<tool>Input`; a parameter's own object type carries
+        # `_Input_`, so the action's context block is the only place this reads.
+        declaration = f"input: {spec['name']}Input"
+        schema = schema.replace(declaration, f"input?: {spec['name']}Input")
+    return schema
+
+
+def _required_parameters(spec: ToolSpec) -> list[str]:
+    """The parameters a tool spec requires, reading either input-schema shape the converter takes.
+
+    Args:
+        spec: A tool spec, with its JSON Schema either wrapped in ``json`` or bare.
+
+    Returns:
+        The required parameter names, empty when every parameter is optional.
+    """
+    input_schema = spec.get("inputSchema") or {}
+    return input_schema.get("json", input_schema).get("required") or []
 
 
 def _retype_for_raw_arguments(spec: ToolSpec | dict[str, Any]) -> dict[str, Any]:
