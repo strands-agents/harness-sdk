@@ -225,6 +225,8 @@ class AgentSkills(Plugin):
                     blocks.remove(injected_block)
                 else:
                     logger.warning("unable to find previously injected skills XML in system prompt, re-appending")
+            # State may be reset between calls; match on content so a stale block is still removed.
+            blocks = [b for b in blocks if b != {"text": skills_xml}]
             blocks.append({"text": skills_xml})
             self._set_state_field(agent, "last_injected_xml", skills_xml)
             agent.system_prompt = blocks
