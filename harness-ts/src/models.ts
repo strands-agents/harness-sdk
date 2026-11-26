@@ -73,6 +73,34 @@ const BEDROCK_GPT_PREFIXES = ['openai.gpt-5.', 'openai.gpt-daybreak-', 'openai.g
 // than as a request error.
 const ANTHROPIC_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const OPENAI_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'none'] as const
+const OPENAI_NO_MINIMAL_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'] as const
+const OPENAI_LOW_TO_XHIGH_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const
+const OPENAI_MEDIUM_TO_XHIGH_LEVELS = ['medium', 'high', 'xhigh'] as const
+const OPENAI_HIGH_ONLY_LEVELS = ['high'] as const
+const OPENAI_GPT5_LEVELS = ['minimal', 'low', 'medium', 'high'] as const
+const OPENAI_GPT5_1_LEVELS = ['none', 'low', 'medium', 'high'] as const
+const OPENAI_REASONING_BASIC_LEVELS = ['low', 'medium', 'high'] as const
+const OPENAI_NON_REASONING_PREFIXES = ['gpt-4o', 'gpt-4.1', 'gpt-4.5', 'gpt-4-', 'gpt-3.5', 'chatgpt-'] as const
+// Ordered from specialized variants (-pro, -codex) to broader version families.
+const OPENAI_LEVEL_RULES: readonly [readonly string[], readonly string[]][] = [
+  [['gpt-5-pro'], OPENAI_HIGH_ONLY_LEVELS],
+  [['gpt-5.2-pro', 'gpt-5.4-pro', 'gpt-5.5-pro'], OPENAI_MEDIUM_TO_XHIGH_LEVELS],
+  [
+    [
+      'gpt-5.1-codex-max',
+      'gpt-5.2-codex',
+      'gpt-5.3-codex',
+      'gpt-6-astra',
+      'gpt-6.1-sol',
+      'gpt-6.2-astra',
+      'gpt-6.2-sol',
+    ],
+    OPENAI_LOW_TO_XHIGH_LEVELS,
+  ],
+  [['gpt-5-codex', 'gpt-5.1-codex', 'o1-', 'o3', 'o4-', 'codex-mini', 'gpt-oss-'], OPENAI_REASONING_BASIC_LEVELS],
+  [['gpt-5.2', 'gpt-5.4', 'gpt-5.5'], OPENAI_NO_MINIMAL_LEVELS],
+  [['gpt-5.1'], OPENAI_GPT5_1_LEVELS],
+]
 const BEDROCK_GPT_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 // Converse rejects max on GPT-5.4/5.5 and none on GPT-6 Astra/6.1 Sol.
 const BEDROCK_GPT_NO_MAX_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'] as const
@@ -320,7 +348,36 @@ async function bedrockMantle(
   })
 }
 
+function openaiLevels(modelId: string): readonly string[] {
+  if (
+    modelId === 'gpt-4' ||
+    modelId === 'chat-latest' ||
+    modelId.includes('-chat-latest') ||
+    modelId === 'o1-mini' ||
+    modelId.startsWith('o1-mini-') ||
+    modelId === 'o1-preview' ||
+    modelId.startsWith('o1-preview-') ||
+    OPENAI_NON_REASONING_PREFIXES.some((prefix) => modelId.startsWith(prefix))
+  ) {
+    return NO_THINKING_LEVELS
+  }
+  if (modelId === 'o1') {
+    return OPENAI_REASONING_BASIC_LEVELS
+  }
+  const matched = OPENAI_LEVEL_RULES.find(([prefixes]) => prefixes.some((prefix) => modelId.startsWith(prefix)))
+  if (matched !== undefined) {
+    return matched[1]
+  }
+  if (modelId === 'gpt-5' || modelId.startsWith('gpt-5-')) {
+    return OPENAI_GPT5_LEVELS
+  }
+  return OPENAI_LEVELS
+}
+
 function modelLevels(providerName: string, modelId: string, fallback: readonly string[]): readonly string[] {
+  if (providerName === 'openai') {
+    return openaiLevels(modelId)
+  }
   return MODEL_LEVELS[providerName]?.find(([prefix]) => modelId.startsWith(prefix))?.[1] ?? fallback
 }
 
@@ -408,8 +465,14 @@ export const EFFORT_LEVELS: readonly Effort[] = ['auto', 'off', 'minimal', 'low'
  * (what Claude Code, Codex, or Gemini CLI run it at), else the provider's `recommended` level.
  */
 function defaultEffort(modelId: string, levels: readonly string[], recommended: string | null): string | null {
+  if (levels.length === 0) {
+    return null
+  }
   const vendorDefault = lookupModel(modelId).capabilities?.defaultEffort
-  return vendorDefault !== undefined && levels.includes(vendorDefault) ? vendorDefault : recommended
+  if (vendorDefault !== undefined && levels.includes(vendorDefault)) {
+    return vendorDefault
+  }
+  return recommended !== null && levels.includes(recommended) ? recommended : null
 }
 
 /**
@@ -587,7 +650,11 @@ export function supportsThinking(model: Model | ModelRouter | string | undefined
   if (providerName === 'anthropic') {
     return claudeThinkingMode(name) !== null
   }
-  return (PROVIDERS[providerName]?.levels.length ?? 0) > 0
+  const provider = PROVIDERS[providerName]
+  if (provider === undefined) {
+    return false
+  }
+  return modelLevels(providerName, name, provider.levels).length > 0
 }
 
 /** The SDK client a model wraps; it has no public accessor on the model. */

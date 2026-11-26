@@ -97,13 +97,37 @@ _BEDROCK_WEB_FETCH_FAMILY_MODELS = {
 # provider's set so an unsupported level fails here rather than as a request error.
 _ANTHROPIC_LEVELS = ("low", "medium", "high", "xhigh", "max")
 _OPENAI_LEVELS = ("minimal", "low", "medium", "high", "xhigh", "none")
-_OPENAI_NO_MAX_LEVELS = ("none", "low", "medium", "high", "xhigh")
-_OPENAI_NO_NONE_LEVELS = ("low", "medium", "high", "xhigh")
+_OPENAI_NO_MINIMAL_LEVELS = ("none", "low", "medium", "high", "xhigh")
+_OPENAI_LOW_TO_XHIGH_LEVELS = ("low", "medium", "high", "xhigh")
+_OPENAI_MEDIUM_TO_XHIGH_LEVELS = ("medium", "high", "xhigh")
+_OPENAI_HIGH_ONLY_LEVELS = ("high",)
 _OPENAI_GPT5_LEVELS = ("minimal", "low", "medium", "high")
 _OPENAI_GPT5_1_LEVELS = ("none", "low", "medium", "high")
 _OPENAI_REASONING_BASIC_LEVELS = ("low", "medium", "high")
 _OPENAI_NON_REASONING_PREFIXES = ("gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-4-", "gpt-3.5", "chatgpt-")
-_OPENAI_BASIC_REASONING_PREFIXES = ("o1-", "o3", "o4-", "codex-mini", "gpt-oss-")
+# Ordered from specialized variants (-pro, -codex) to broader version families.
+_OPENAI_LEVEL_RULES = (
+    (("gpt-5-pro",), _OPENAI_HIGH_ONLY_LEVELS),
+    (("gpt-5.2-pro", "gpt-5.4-pro", "gpt-5.5-pro"), _OPENAI_MEDIUM_TO_XHIGH_LEVELS),
+    (
+        (
+            "gpt-5.1-codex-max",
+            "gpt-5.2-codex",
+            "gpt-5.3-codex",
+            "gpt-6-astra",
+            "gpt-6.1-sol",
+            "gpt-6.2-astra",
+            "gpt-6.2-sol",
+        ),
+        _OPENAI_LOW_TO_XHIGH_LEVELS,
+    ),
+    (
+        ("gpt-5-codex", "gpt-5.1-codex", "o1-", "o3", "o4-", "codex-mini", "gpt-oss-"),
+        _OPENAI_REASONING_BASIC_LEVELS,
+    ),
+    (("gpt-5.2", "gpt-5.4", "gpt-5.5"), _OPENAI_NO_MINIMAL_LEVELS),
+    (("gpt-5.1",), _OPENAI_GPT5_1_LEVELS),
+)
 _BEDROCK_GPT_LEVELS = ("none", "low", "medium", "high", "xhigh", "max")
 # Converse rejects max on GPT-5.4/5.5 and none on GPT-6 Astra/6.1 Sol.
 _BEDROCK_GPT_NO_MAX_LEVELS = ("none", "low", "medium", "high", "xhigh")
@@ -401,22 +425,20 @@ def _check_effort(effort: object) -> None:
 
 def _openai_levels(model_id: str) -> tuple[str, ...]:
     if (
-        model_id == "gpt-4"
-        or model_id == "chat-latest"
+        model_id in ("gpt-4", "chat-latest")
         or "-chat-latest" in model_id
         or model_id == "o1-mini"
         or model_id.startswith("o1-mini-")
+        or model_id == "o1-preview"
+        or model_id.startswith("o1-preview-")
         or model_id.startswith(_OPENAI_NON_REASONING_PREFIXES)
     ):
         return ()
-    if model_id == "o1" or model_id.startswith(_OPENAI_BASIC_REASONING_PREFIXES):
+    if model_id == "o1":
         return _OPENAI_REASONING_BASIC_LEVELS
-    if model_id.startswith(("gpt-6-astra", "gpt-6.1-sol")):
-        return _OPENAI_NO_NONE_LEVELS
-    if model_id.startswith(("gpt-5.2", "gpt-5.4", "gpt-5.5", "gpt-5.1-codex-max")):
-        return _OPENAI_NO_MAX_LEVELS
-    if model_id.startswith("gpt-5.1"):
-        return _OPENAI_GPT5_1_LEVELS
+    for prefixes, levels in _OPENAI_LEVEL_RULES:
+        if model_id.startswith(prefixes):
+            return levels
     if model_id == "gpt-5" or model_id.startswith("gpt-5-"):
         return _OPENAI_GPT5_LEVELS
     return _OPENAI_LEVELS

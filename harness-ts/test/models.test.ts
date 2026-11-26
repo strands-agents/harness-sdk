@@ -1093,3 +1093,344 @@ describe('web_fetch summarizer on a repointed endpoint', () => {
     expect(model.getConfig().modelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0')
   })
 })
+
+describe('OpenAI per-model reasoning effort', () => {
+  // https://github.com/strands-agents/harness-sdk/issues/6522
+  it.each([
+    'gpt-4o',
+    'gpt-4o-mini',
+    'gpt-4o-mini-2024-07-18',
+    'gpt-4.1',
+    'gpt-4.1-mini',
+    'gpt-4.1-nano',
+    'gpt-4.5-preview',
+    'gpt-4-turbo',
+    'gpt-4',
+    'gpt-3.5-turbo',
+    'chatgpt-4o-latest',
+    'chat-latest',
+    'gpt-5-chat-latest',
+    'gpt-5.2-chat-latest',
+    'o1-mini',
+    'o1-mini-2024-09-12',
+    'o1-preview',
+    'o1-preview-2024-09-12',
+  ])('omits reasoning params for non-reasoning OpenAI model %s', async (modelId) => {
+    const spec = `openai/${modelId}`
+    expect(supportsThinking(spec)).toBe(false)
+    for (const effort of ['auto', 'off'] as const) {
+      expect((await resolve(spec, effort)).getConfig().params).toBeUndefined()
+    }
+    await expect(resolve(spec, 'high')).rejects.toThrow('supports no reasoning levels')
+  })
+
+  it('preserves web_search without reasoning params on non-reasoning OpenAI models', async () => {
+    // https://github.com/strands-agents/harness-sdk/issues/6522
+    const model = await resolve('openai/gpt-4o', 'auto', true)
+    expect(model.getConfig().params).toEqual({ tools: [{ type: 'web_search' }] })
+  })
+
+  it.each([
+    [
+      'o1',
+      [
+        ['auto', 'high'],
+        ['low', 'low'],
+        ['medium', 'medium'],
+        ['high', 'high'],
+        ['off', null],
+      ],
+      ['minimal', 'xhigh', 'max'],
+    ],
+    [
+      'o3',
+      [
+        ['auto', 'high'],
+        ['low', 'low'],
+        ['high', 'high'],
+        ['off', null],
+      ],
+      ['minimal', 'xhigh', 'max'],
+    ],
+    [
+      'o3-2025-04-16',
+      [
+        ['auto', 'high'],
+        ['low', 'low'],
+        ['high', 'high'],
+        ['off', null],
+      ],
+      ['minimal', 'xhigh', 'max'],
+    ],
+    [
+      'o3-mini',
+      [
+        ['auto', 'high'],
+        ['medium', 'medium'],
+        ['off', null],
+      ],
+      ['minimal', 'xhigh', 'max'],
+    ],
+    [
+      'o3-pro',
+      [
+        ['auto', 'high'],
+        ['medium', 'medium'],
+        ['off', null],
+      ],
+      ['minimal', 'xhigh', 'max'],
+    ],
+    [
+      'o4-mini',
+      [
+        ['auto', 'high'],
+        ['low', 'low'],
+        ['off', null],
+      ],
+      ['minimal', 'xhigh', 'max'],
+    ],
+    [
+      'codex-mini-latest',
+      [
+        ['auto', 'high'],
+        ['low', 'low'],
+        ['high', 'high'],
+        ['off', null],
+      ],
+      ['minimal', 'xhigh', 'max'],
+    ],
+    [
+      'gpt-oss-120b',
+      [
+        ['auto', 'medium'],
+        ['low', 'low'],
+        ['high', 'high'],
+        ['off', null],
+      ],
+      ['minimal', 'xhigh', 'max'],
+    ],
+    [
+      'gpt-5',
+      [
+        ['auto', 'medium'],
+        ['minimal', 'minimal'],
+        ['high', 'high'],
+        ['off', null],
+      ],
+      ['xhigh', 'max'],
+    ],
+    [
+      'gpt-5-mini',
+      [
+        ['auto', 'high'],
+        ['minimal', 'minimal'],
+        ['high', 'high'],
+        ['off', null],
+      ],
+      ['xhigh', 'max'],
+    ],
+    [
+      'gpt-5-pro',
+      [
+        ['auto', 'high'],
+        ['high', 'high'],
+        ['off', null],
+      ],
+      ['minimal', 'low', 'medium', 'xhigh', 'max'],
+    ],
+    [
+      'gpt-5-codex',
+      [
+        ['auto', 'high'],
+        ['low', 'low'],
+        ['high', 'high'],
+        ['off', null],
+      ],
+      ['minimal', 'xhigh', 'max'],
+    ],
+    [
+      'gpt-5.1',
+      [
+        ['auto', 'medium'],
+        ['low', 'low'],
+        ['high', 'high'],
+        ['off', 'none'],
+      ],
+      ['minimal', 'xhigh', 'max'],
+    ],
+    [
+      'gpt-5.1-codex',
+      [
+        ['auto', 'high'],
+        ['low', 'low'],
+        ['high', 'high'],
+        ['off', null],
+      ],
+      ['minimal', 'xhigh', 'max'],
+    ],
+    [
+      'gpt-5.1-codex-mini',
+      [
+        ['auto', 'high'],
+        ['low', 'low'],
+        ['high', 'high'],
+        ['off', null],
+      ],
+      ['minimal', 'xhigh', 'max'],
+    ],
+    [
+      'gpt-5.1-codex-max',
+      [
+        ['auto', 'high'],
+        ['low', 'low'],
+        ['xhigh', 'xhigh'],
+        ['off', null],
+      ],
+      ['minimal', 'max'],
+    ],
+    [
+      'gpt-5.2',
+      [
+        ['auto', 'medium'],
+        ['xhigh', 'xhigh'],
+        ['off', 'none'],
+      ],
+      ['minimal', 'max'],
+    ],
+    [
+      'gpt-5.2-pro',
+      [
+        ['auto', 'high'],
+        ['medium', 'medium'],
+        ['xhigh', 'xhigh'],
+        ['off', null],
+      ],
+      ['minimal', 'low', 'max'],
+    ],
+    [
+      'gpt-5.2-codex',
+      [
+        ['auto', 'high'],
+        ['low', 'low'],
+        ['xhigh', 'xhigh'],
+        ['off', null],
+      ],
+      ['minimal', 'max'],
+    ],
+    [
+      'gpt-5.3-codex',
+      [
+        ['auto', 'high'],
+        ['low', 'low'],
+        ['xhigh', 'xhigh'],
+        ['off', null],
+      ],
+      ['minimal', 'max'],
+    ],
+    [
+      'gpt-5.4',
+      [
+        ['auto', 'medium'],
+        ['xhigh', 'xhigh'],
+        ['off', 'none'],
+      ],
+      ['minimal', 'max'],
+    ],
+    [
+      'gpt-5.4-2026-03-05',
+      [
+        ['auto', 'medium'],
+        ['xhigh', 'xhigh'],
+        ['off', 'none'],
+      ],
+      ['minimal', 'max'],
+    ],
+    [
+      'gpt-5.4-pro',
+      [
+        ['auto', 'high'],
+        ['medium', 'medium'],
+        ['xhigh', 'xhigh'],
+        ['off', null],
+      ],
+      ['minimal', 'low', 'max'],
+    ],
+    [
+      'gpt-5.5',
+      [
+        ['auto', 'medium'],
+        ['xhigh', 'xhigh'],
+        ['off', 'none'],
+      ],
+      ['minimal', 'max'],
+    ],
+    [
+      'gpt-5.5-pro',
+      [
+        ['auto', 'high'],
+        ['medium', 'medium'],
+        ['xhigh', 'xhigh'],
+        ['off', null],
+      ],
+      ['minimal', 'low', 'max'],
+    ],
+    [
+      'gpt-6-astra',
+      [
+        ['auto', 'low'],
+        ['low', 'low'],
+        ['xhigh', 'xhigh'],
+        ['off', null],
+      ],
+      ['minimal', 'max'],
+    ],
+    [
+      'gpt-6.1-sol',
+      [
+        ['auto', 'low'],
+        ['low', 'low'],
+        ['xhigh', 'xhigh'],
+        ['off', null],
+      ],
+      ['minimal', 'max'],
+    ],
+    [
+      'gpt-6.2-astra',
+      [
+        ['auto', 'low'],
+        ['low', 'low'],
+        ['xhigh', 'xhigh'],
+        ['off', null],
+      ],
+      ['minimal', 'max'],
+    ],
+    [
+      'gpt-6.2-sol',
+      [
+        ['auto', 'low'],
+        ['low', 'low'],
+        ['xhigh', 'xhigh'],
+        ['off', null],
+      ],
+      ['minimal', 'max'],
+    ],
+  ] as [string, [Effort, string | null][], Effort[]][])(
+    'validates reasoning effort capabilities for %s',
+    async (modelId, accepted, rejected) => {
+      const spec = `openai/${modelId}`
+      expect(supportsThinking(spec)).toBe(true)
+      for (const [effort, expected] of accepted) {
+        const params = (await resolve(spec, effort)).getConfig().params as
+          { reasoning?: { effort: string } } | undefined
+        if (expected === null) {
+          expect(params).toBeUndefined()
+        } else {
+          expect(params?.reasoning).toEqual({ effort: expected })
+        }
+      }
+      for (const effort of rejected) {
+        await expect(resolve(spec, effort)).rejects.toThrow(`not supported by model ${modelId}`)
+      }
+    }
+  )
+})

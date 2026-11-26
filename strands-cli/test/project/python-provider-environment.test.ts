@@ -93,8 +93,8 @@ else:
 
   it('applies model and effort overrides to direct generated source', async () => {
     expect((await openAgent('"openai/gpt-5"', { model: bedrockModel, session: false })).info().model).toBe(bedrockModel)
-    const backend = await openAgent(undefined, { model: 'openai/gpt-5' })
-    expect(backend.info().model).toBe('openai/gpt-5')
+    const backend = await openAgent(undefined, { model: 'openai/gpt-5.4' })
+    expect(backend.info().model).toBe('openai/gpt-5.4')
     await expect(backend.setEffort('none')).resolves.toBe('Off')
     expect(backend.modelSelection().thinking).toBe('off')
   })

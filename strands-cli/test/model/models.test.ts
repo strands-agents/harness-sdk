@@ -284,6 +284,60 @@ describe('AgentModelRuntime thinking controls', () => {
     expect(runtime.listEfforts().map((option) => option.id)).toEqual(['low', 'medium', 'high', 'xhigh'])
     expect(runtime.listEfforts()).toContainEqual(expect.objectContaining({ id: 'high', active: true }))
   })
+
+  // https://github.com/strands-agents/harness-sdk/issues/6522
+  it.each([
+    'openai/gpt-4o',
+    'openai/gpt-4o-mini-2024-07-18',
+    'openai/gpt-4.1',
+    'openai/gpt-4.5-preview',
+    'openai/gpt-5-chat-latest',
+    'openai/o1-mini',
+    'openai/o1-preview',
+    'openai/o1-preview-2024-09-12',
+  ])('offers no effort options for non-reasoning OpenAI model %s', async (modelId) => {
+    const runtime = runtimeFor(modelId, 'auto')
+    expect(runtime.listEfforts()).toEqual([])
+    await expect(runtime.setEffort('high')).rejects.toThrow('not supported')
+  })
+
+  // https://github.com/strands-agents/harness-sdk/issues/6522
+  it.each([
+    ['openai/o1', ['low', 'medium', 'high']],
+    ['openai/o3-2025-04-16', ['low', 'medium', 'high']],
+    ['openai/o4-mini', ['low', 'medium', 'high']],
+    ['openai/codex-mini-latest', ['low', 'medium', 'high']],
+    ['openai/gpt-oss-120b', ['low', 'medium', 'high']],
+    ['openai/gpt-5', ['minimal', 'low', 'medium', 'high']],
+    ['openai/gpt-5-pro', ['high']],
+    ['openai/gpt-5-codex', ['low', 'medium', 'high']],
+    ['openai/gpt-5.1', ['none', 'low', 'medium', 'high']],
+    ['openai/gpt-5.1-codex', ['low', 'medium', 'high']],
+    ['openai/gpt-5.1-codex-mini', ['low', 'medium', 'high']],
+    ['openai/gpt-5.1-codex-max', ['low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-5.2', ['none', 'low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-5.2-pro', ['medium', 'high', 'xhigh']],
+    ['openai/gpt-5.2-codex', ['low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-5.3-codex', ['low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-5.4-pro', ['medium', 'high', 'xhigh']],
+    ['openai/gpt-5.5', ['none', 'low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-5.5-pro', ['medium', 'high', 'xhigh']],
+    ['openai/gpt-6.2-astra', ['low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-6.2-sol', ['low', 'medium', 'high', 'xhigh']],
+  ])('offers the OpenAI effort levels accepted by %s', (modelId, expected) => {
+    expect(effortOptions(modelId, 'auto').map((option) => option.id)).toEqual(expected)
+  })
+
+  it('rejects unsupported effort levels on subset OpenAI models while keeping off', async () => {
+    const runtime = runtimeFor(
+      'openai/gpt-5',
+      'auto',
+      async () => ({ model: new OpenAIModel('gpt-5') }) as unknown as Agent
+    )
+    await expect(runtime.setEffort('none')).rejects.toThrow('not supported')
+    await expect(runtime.setEffort('xhigh')).rejects.toThrow('not supported')
+    await expect(runtime.setEffort('off')).resolves.toBe('off')
+  })
 })
 
 describe('resolveModelTarget', () => {
@@ -645,7 +699,7 @@ describe('AgentModelRuntime persistence', () => {
     const runtime = new AgentModelRuntime({ model: new BedrockModel() } as unknown as Agent, {
       initialModel: 'bedrock/anthropic.claude-current-v1:0',
       thinking: 'auto',
-      restartAgent: async () => ({ model: new OpenAIModel('gpt-5') }) as unknown as Agent,
+      restartAgent: async () => ({ model: new OpenAIModel('gpt-5.4') }) as unknown as Agent,
       onModelChange,
     })
 
@@ -667,11 +721,11 @@ describe('AgentModelRuntime persistence', () => {
       effort: 'high',
     })
 
-    await runtime.restart('openai/gpt-5')
-    expect(onModelChange).toHaveBeenLastCalledWith({ model: 'openai/gpt-5', effort: 'high' })
+    await runtime.restart('openai/gpt-5.4')
+    expect(onModelChange).toHaveBeenLastCalledWith({ model: 'openai/gpt-5.4', effort: 'high' })
 
     await runtime.setEffort('none')
-    expect(onModelChange).toHaveBeenLastCalledWith({ model: 'openai/gpt-5', effort: 'off' })
+    expect(onModelChange).toHaveBeenLastCalledWith({ model: 'openai/gpt-5.4', effort: 'off' })
 
     await expect(runtime.setEffort('turbo')).rejects.toThrow('not supported')
     expect(onModelChange).toHaveBeenCalledTimes(6)
