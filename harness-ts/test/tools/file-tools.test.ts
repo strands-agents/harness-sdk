@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DocumentBlock, ImageBlock } from '@strands-agents/sdk'
@@ -64,6 +64,53 @@ describe('read/write/edit', () => {
     const path = join(dir, 'f.txt')
     await write.invoke({ path, content: 'dup\ndup\n' }, ctx())
     await expect(edit.invoke({ path, old_str: 'dup', new_str: 'x' }, ctx())).rejects.toThrow('appears 2 times')
+  })
+
+  it.each(['$$', '$&', '$`', "$'", '$1', "$$ $& $` $' $1"])(
+    'inserts new_str literally without expanding %s',
+    async (replacement) => {
+      const path = join(dir, 'script.sh')
+      await write.invoke({ path, content: 'echo PID\n' }, ctx())
+      await edit.invoke({ path, old_str: 'PID', new_str: replacement }, ctx())
+      expect(readFileSync(path, 'utf8')).toBe(`echo ${replacement}\n`)
+    }
+  )
+
+  it('handles regex metacharacters, multiline, backslashes, and unicode literally in edit', async () => {
+    const path = join(dir, 'unicode.txt')
+    await write.invoke({ path, content: 'line1 [a-z]+ (foo)\nline2 café 🚀\n' }, ctx())
+    await edit.invoke({ path, old_str: '[a-z]+ (foo)\nline2 café', new_str: '$$1 .* \\n\nline2 日本語' }, ctx())
+    expect(readFileSync(path, 'utf8')).toBe('line1 $$1 .* \\n\nline2 日本語 🚀\n')
+  })
+
+  it('rejects an empty old_str and leaves the file untouched', async () => {
+    const path = join(dir, 'empty-old.txt')
+    await write.invoke({ path, content: 'hello\n' }, ctx())
+    await expect(edit.invoke({ path, old_str: '', new_str: 'x' }, ctx())).rejects.toThrow('old_str must not be empty')
+    expect(readFileSync(path, 'utf8')).toBe('hello\n')
+  })
+
+  it('deletes the matched text when new_str is empty', async () => {
+    const path = join(dir, 'empty-new.txt')
+    await write.invoke({ path, content: 'keep\nremove-me\nkeep\n' }, ctx())
+    await edit.invoke({ path, old_str: 'remove-me\n', new_str: '' }, ctx())
+    expect(readFileSync(path, 'utf8')).toBe('keep\nkeep\n')
+  })
+
+  it('replaces content at the beginning and end of a file', async () => {
+    const path = join(dir, 'bounds.txt')
+    await write.invoke({ path, content: 'START middle END' }, ctx())
+    await edit.invoke({ path, old_str: 'START', new_str: '$$HEAD' }, ctx())
+    expect(readFileSync(path, 'utf8')).toBe('$$HEAD middle END')
+    await edit.invoke({ path, old_str: 'END', new_str: "$&TAIL$'" }, ctx())
+    expect(readFileSync(path, 'utf8')).toBe("$$HEAD middle $&TAIL$'")
+  })
+
+  it('preserves CRLF line endings during literal replacement', async () => {
+    const path = join(dir, 'crlf.txt')
+    await write.invoke({ path, content: 'first\r\ntarget\r\nlast\r\n' }, ctx())
+    await edit.invoke({ path, old_str: 'target', new_str: '$$\\r\\n$&' }, ctx())
+    expect(readFileSync(path, 'utf8')).toBe('first\r\n$$\\r\\n$&\r\nlast\r\n')
   })
 
   it('returns an ImageBlock for an image extension', async () => {
