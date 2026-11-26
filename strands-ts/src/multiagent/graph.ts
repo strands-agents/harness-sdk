@@ -283,8 +283,11 @@ export class Graph implements MultiAgent {
   ): AsyncGenerator<MultiAgentStreamEvent, MultiAgentResult, undefined> {
     // Reuse state from a prior INTERRUPTED run so `graph.invoke(responses)` can
     // resume on the same instance without a SessionManager.
-    const state = this._pendingInterruptState ?? new MultiAgentState({ nodeIds: [...this.nodes.keys()] })
+    const pending = this._pendingInterruptState
+    // Consume the pause synchronously so a concurrent resume cannot also read it; the
+    // finally below restores it when this run never starts.
     delete this._pendingInterruptState
+    const state = pending ?? new MultiAgentState({ nodeIds: [...this.nodes.keys()] })
     // Rebound on every run: a resumed run reuses the state but may belong to another request.
     state._bindInvocationContext(invocationContext)
 
@@ -297,39 +300,47 @@ export class Graph implements MultiAgent {
       input,
     })
 
-    // SessionManager (or plugins) may restore state.results here via the hook
-    yield* this._emit(new BeforeMultiAgentInvocationEvent({ orchestrator: this, state, invocationState }))
-
-    // Resume input bypasses dependency resolution (routed by interrupt id). On fresh
-    // runs, stash the input so resume can replay it to hook-gated nodes that never ran.
-    //
-    // Example: Source node A has a `BeforeNodeCallEvent` hook that interrupts. The user
-    // calls `graph.invoke('original task')`, the hook fires before A executes, the run
-    // pauses with status INTERRUPTED. On resume, `graph.invoke([response])` only carries
-    // the response — A still needs `'original task'` as its input because A never ran
-    // and has no snapshot or upstream results to fall back on. `state._pendingInput`
-    // carries `'original task'` across the pause so resume can replay it.
-    const resumeResponses = extractResumeResponses(input)
-    const interruptResponsesByNode = resumeResponses ? groupInterruptResponsesByNode(resumeResponses, state) : undefined
     let contentInput: MultiAgentContentInput | undefined
-    if (resumeResponses) {
-      contentInput = state._pendingInput as MultiAgentContentInput | undefined
-    } else {
-      contentInput = input as MultiAgentContentInput
-      state._pendingInput = contentInput
-    }
+    let targets: Node[]
+    let interruptResponsesByNode: Map<string, InterruptResponseContent[]> | undefined
+    let started = false
+    try {
+      // SessionManager (or plugins) may restore state.results here via the hook
+      yield* this._emit(new BeforeMultiAgentInvocationEvent({ orchestrator: this, state, invocationState }))
 
-    const targets = interruptResponsesByNode
-      ? [...interruptResponsesByNode.keys()].map((id) => {
-          const node = this.nodes.get(id)
-          if (!node) {
-            throw new Error(
-              `node_id=<${id}>, graph_id=<${this.id}> | resume response targets a node missing from the graph; topology changed between save and resume?`
-            )
-          }
-          return node
-        })
-      : ((await this._findResumeTargets(state)) ?? [...this._sources])
+      // Resume input bypasses dependency resolution (routed by interrupt id). On fresh
+      // runs, stash the input so resume can replay it to hook-gated nodes that never ran.
+      //
+      // Example: Source node A has a `BeforeNodeCallEvent` hook that interrupts. The user
+      // calls `graph.invoke('original task')`, the hook fires before A executes, the run
+      // pauses with status INTERRUPTED. On resume, `graph.invoke([response])` only carries
+      // the response — A still needs `'original task'` as its input because A never ran
+      // and has no snapshot or upstream results to fall back on. `state._pendingInput`
+      // carries `'original task'` across the pause so resume can replay it.
+      const resumeResponses = extractResumeResponses(input)
+      interruptResponsesByNode = resumeResponses ? groupInterruptResponsesByNode(resumeResponses, state) : undefined
+      if (resumeResponses) {
+        contentInput = state._pendingInput as MultiAgentContentInput | undefined
+      } else {
+        contentInput = input as MultiAgentContentInput
+        state._pendingInput = contentInput
+      }
+
+      targets = interruptResponsesByNode
+        ? [...interruptResponsesByNode.keys()].map((id) => {
+            const node = this.nodes.get(id)
+            if (!node) {
+              throw new Error(
+                `node_id=<${id}>, graph_id=<${this.id}> | resume response targets a node missing from the graph; topology changed between save and resume?`
+              )
+            }
+            return node
+          })
+        : ((await this._findResumeTargets(state)) ?? [...this._sources])
+      started = true
+    } finally {
+      if (!started && pending && !this._pendingInterruptState) this._pendingInterruptState = pending
+    }
 
     // Wall-clock timeout for the whole graph invocation. External cancellation is kept
     // on its own signal so the loop's abort checks below can distinguish the two causes
