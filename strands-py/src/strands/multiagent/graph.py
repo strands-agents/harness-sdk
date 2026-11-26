@@ -29,7 +29,7 @@ from opentelemetry import trace as trace_api
 from .._async import run_async
 from ..agent import Agent, AgentResult
 from ..agent.base import AgentBase
-from ..agent.invocation_context import InvocationContext, _create_invocation_context, _unwrap_invocation_context
+from ..agent.invocation_context import InvocationContext, _create_invocation_context, _resolve_invocation_context
 from ..agent.state import AgentState
 from ..hooks.events import (
     AfterMultiAgentInvocationEvent,
@@ -53,6 +53,7 @@ from ..types._events import (
     MultiAgentNodeStreamEvent,
     MultiAgentResultEvent,
 )
+from ..types.agent import Limits
 from ..types.content import ContentBlock, Messages
 from ..types.event_loop import _LIMIT_STOP_REASONS, Metrics, Usage, _limit_stop_message
 from ..types.multiagent import MultiAgentInput
@@ -131,6 +132,8 @@ class GraphState:
             Resets on each invocation, even when resuming from interrupt.
         execution_time: Execution time of current invocation in milliseconds.
             Excludes time spent waiting for interrupt responses.
+        invocation_context: The request the current run belongs to (``None`` before a run starts), so
+            edge conditions can read its usage. Read-only: the SDK rebinds it on every run. Not persisted.
     """
 
     # Task (with default empty string)
@@ -157,6 +160,8 @@ class GraphState:
     total_nodes: int = 0
     edges: list[tuple["GraphNode", "GraphNode"]] = field(default_factory=list)
     entry_points: list["GraphNode"] = field(default_factory=list)
+
+    invocation_context: InvocationContext | None = field(default=None, repr=False, compare=False)
 
     def should_continue(
         self,
@@ -594,6 +599,7 @@ class Graph(MultiAgentBase):
         invocation_state: dict[str, Any] | None = None,
         *,
         invocation_context: InvocationContext | None = None,
+        limits: Limits | None = None,
         **kwargs: Any,
     ) -> GraphResult:
         """Invoke the graph synchronously.
@@ -604,12 +610,20 @@ class Graph(MultiAgentBase):
                 Defaults to None to avoid mutable default argument issues.
             invocation_context: Runs the graph as a nested call in the request this handle belongs to,
                 so every node shares its limits and usage.
+            limits: Limits for the request this graph starts, shared by every node; a node whose agent
+                reaches one fails and the result is ``FAILED``. See ``stream_async``.
             **kwargs: Keyword arguments allowing backward compatible future changes.
+
+        Raises:
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive
+                integer, or ``invocation_context`` was not created by the SDK.
         """
         if invocation_state is None:
             invocation_state = {}
 
-        return run_async(lambda: self.invoke_async(task, invocation_state, invocation_context=invocation_context))
+        return run_async(
+            lambda: self.invoke_async(task, invocation_state, invocation_context=invocation_context, limits=limits)
+        )
 
     async def invoke_async(
         self,
@@ -617,6 +631,7 @@ class Graph(MultiAgentBase):
         invocation_state: dict[str, Any] | None = None,
         *,
         invocation_context: InvocationContext | None = None,
+        limits: Limits | None = None,
         **kwargs: Any,
     ) -> GraphResult:
         """Invoke the graph asynchronously.
@@ -630,9 +645,17 @@ class Graph(MultiAgentBase):
                 Defaults to None to avoid mutable default argument issues.
             invocation_context: Runs the graph as a nested call in the request this handle belongs to,
                 so every node shares its limits and usage.
+            limits: Limits for the request this graph starts, shared by every node; a node whose agent
+                reaches one fails and the result is ``FAILED``. See ``stream_async``.
             **kwargs: Keyword arguments allowing backward compatible future changes.
+
+        Raises:
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive
+                integer, or ``invocation_context`` was not created by the SDK.
         """
-        events = self.stream_async(task, invocation_state, invocation_context=invocation_context, **kwargs)
+        events = self.stream_async(
+            task, invocation_state, invocation_context=invocation_context, limits=limits, **kwargs
+        )
         final_event = None
         async for event in events:
             final_event = event
@@ -648,6 +671,7 @@ class Graph(MultiAgentBase):
         invocation_state: dict[str, Any] | None = None,
         *,
         invocation_context: InvocationContext | None = None,
+        limits: Limits | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream events during graph execution.
@@ -658,6 +682,14 @@ class Graph(MultiAgentBase):
                 Defaults to None to avoid mutable default argument issues.
             invocation_context: Runs the graph as a nested call in the request this handle belongs to,
                 so every node shares its limits and usage. A fresh request starts when omitted.
+            limits: Limits for the request this graph starts, shared by every node. Each agent node
+                checks them before each turn, so ``turns`` counts turns across all nodes (node
+                executions are bounded by ``max_node_executions``). A node whose agent reaches a limit
+                fails, so the result is ``FAILED``, and no node that depends on it runs. Set alongside
+                ``invocation_context``, they only add stricter limits to the request's. Resuming an
+                interrupted run starts a new request even though the graph keeps its state; pass the
+                interrupted result's ``invocation_context`` to continue its limits and usage. See
+                :class:`~strands.types.agent.Limits` for what they cover.
             **kwargs: Keyword arguments allowing backward compatible future changes.
 
         Yields:
@@ -666,14 +698,16 @@ class Graph(MultiAgentBase):
             - multi_agent_node_stream: Forwarded agent/multi-agent events with node context
             - multi_agent_node_stop: When a node stops execution
             - result: Final graph result
+
+        Raises:
+            TypeError: If ``limits`` contains an unrecognized key or a value that is not a positive
+                integer, or ``invocation_context`` was not created by the SDK.
         """
         if invocation_state is None:
             invocation_state = {}
 
         self._current_invocation_state = invocation_state
-        self._current_invocation_context = (
-            _unwrap_invocation_context(invocation_context) or _create_invocation_context()
-        )
+        self._current_invocation_context = _resolve_invocation_context(limits, invocation_context)
 
         await self.hooks.invoke_callbacks_async(
             BeforeMultiAgentInvocationEvent(self, invocation_state, invocation_context=self._current_invocation_context)
@@ -697,6 +731,8 @@ class Graph(MultiAgentBase):
         else:
             self.state.status = Status.EXECUTING
             self.state.start_time = start_time
+        # Rebound on every run: a resumed run reuses the state but may belong to another request.
+        self.state.invocation_context = self._current_invocation_context
 
         span = self.tracer.start_multiagent_span(task, "graph", custom_trace_attributes=self.trace_attributes)
         with trace_api.use_span(span, end_on_exit=True):
@@ -1054,7 +1090,9 @@ class Graph(MultiAgentBase):
         yield start_event
 
         before_event, interrupts = await self.hooks.invoke_callbacks_async(
-            BeforeNodeCallEvent(self, node.node_id, invocation_state)
+            BeforeNodeCallEvent(
+                self, node.node_id, invocation_state, invocation_context=self._current_invocation_context
+            )
         )
 
         start_time = time.time()
@@ -1227,7 +1265,11 @@ class Graph(MultiAgentBase):
 
         finally:
             if node.execution_status != Status.INTERRUPTED:
-                await self.hooks.invoke_callbacks_async(AfterNodeCallEvent(self, node.node_id, invocation_state))
+                await self.hooks.invoke_callbacks_async(
+                    AfterNodeCallEvent(
+                        self, node.node_id, invocation_state, invocation_context=self._current_invocation_context
+                    )
+                )
 
     def _accumulate_metrics(self, node_result: NodeResult) -> None:
         """Accumulate metrics from a node result."""
