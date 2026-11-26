@@ -34,7 +34,7 @@ BASE = ModelInfo(
 
 _CLAUDE_FORMATS = {
     "image_formats": ("png", "jpeg", "gif", "webp"),
-    "document_formats": ("pdf", "csv", "html", "md", "txt"),
+    "document_formats": ("pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"),
     "video_formats": (),
 }
 
@@ -217,8 +217,9 @@ def test_loader_reads_format_lists_as_tuples_and_skips_formats_this_version_does
     )
 
 
-def test_loader_treats_a_format_list_that_is_not_a_list_as_unknown():
-    entry = {"capabilities": {"imageFormats": "png"}}
+@pytest.mark.parametrize("formats", ["png", ["json"]])
+def test_loader_treats_a_format_list_it_cannot_read_as_unknown(formats):
+    entry = {"capabilities": {"documentFormats": formats}}
 
     assert _section(entry, "capabilities", _CAPABILITY_FIELDS, ModelCapabilities) == ModelCapabilities()
 

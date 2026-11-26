@@ -414,12 +414,24 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
-  /** Turns temporary messages and native deferred tools back on for the models the shared model info lists. */
+  /**
+   * Turns temporary messages and native deferred tools back on for the models the shared model info lists, and keeps
+   * only the document formats this provider sends.
+   */
   override get modelInfo(): ModelInfo {
-    const { temporaryMessages, deferredToolLoading } = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
+    const capabilities = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
+    const documentFormats = capabilities.documentFormats?.filter(
+      (format) => format === 'pdf' || TEXT_FILE_FORMATS.includes(format)
+    )
     return ModelInfo.merge(
       super.modelInfo,
-      { capabilities: { temporaryMessages, deferredToolLoading } },
+      {
+        capabilities: {
+          temporaryMessages: capabilities.temporaryMessages,
+          deferredToolLoading: capabilities.deferredToolLoading,
+          documentFormats,
+        },
+      },
       this._config.modelInfo
     )
   }

@@ -16,6 +16,7 @@ import pytest
 import strands
 from strands.agent.agent_metadata import AgentMetadata
 from strands.models import Model, ModelCapabilities, ModelInfo, ModelLimits, SummarizeResult
+from strands.models._model_info import lookup_model_info
 from strands.models._model_proxy import ModelProxy
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
@@ -2008,6 +2009,40 @@ def test_model_info_reads_cache_points_from_the_shared_model_info(anthropic_clie
     model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1)
 
     assert model.model_info.capabilities.prompt_caching == "cache_points"
+
+
+def test_model_info_keeps_only_the_document_formats_the_provider_sends(anthropic_client):
+    _ = anthropic_client
+
+    model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1)
+
+    assert lookup_model_info("claude-sonnet-4-6").capabilities.document_formats == (
+        "pdf",
+        "csv",
+        "doc",
+        "docx",
+        "xls",
+        "xlsx",
+        "html",
+        "txt",
+        "md",
+    )
+    assert model.model_info.capabilities.document_formats == ("pdf", "csv", "html", "txt", "md")
+    assert (
+        AnthropicModel(model_id="claude-3-opus-20240229", max_tokens=1).model_info.capabilities.document_formats is None
+    )
+
+
+def test_model_info_override_sets_the_document_formats(anthropic_client):
+    _ = anthropic_client
+
+    model = AnthropicModel(
+        model_id="claude-sonnet-4-6",
+        max_tokens=1,
+        model_info=ModelInfo(capabilities=ModelCapabilities(document_formats=("pdf",))),
+    )
+
+    assert model.model_info.capabilities.document_formats == ("pdf",)
 
 
 def test_model_info_exposes_the_output_ceiling_from_the_shared_model_info(anthropic_client):

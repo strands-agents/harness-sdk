@@ -17,7 +17,7 @@ const FORMATS: Record<string, string[]> = {
 
 const CLAUDE_FORMATS = {
   imageFormats: ['png', 'jpeg', 'gif', 'webp'],
-  documentFormats: ['pdf', 'csv', 'html', 'md', 'txt'],
+  documentFormats: ['pdf', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'txt', 'md'],
   videoFormats: [],
 }
 
@@ -62,6 +62,10 @@ describe('shared model info data', () => {
       },
       limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
     })
+  })
+
+  it('freezes the format lists it reads', () => {
+    expect(Object.isFrozen(lookupModelInfo('claude-opus-5-5').capabilities?.imageFormats)).toBe(true)
   })
 
   it('returns undefined for unknown ids', () => {

@@ -16,7 +16,7 @@
         "defaultEffort": "high",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -28,7 +28,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -43,7 +43,7 @@
         "nativeStructuredOutput": true,
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -57,7 +57,7 @@
         "defaultEffort": "high",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -71,7 +71,7 @@
         "defaultEffort": "xhigh",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -88,7 +88,7 @@
         "defaultEffort": "high",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -105,7 +105,7 @@
         "defaultEffort": "high",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -123,7 +123,7 @@
         "defaultEffort": "medium",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -138,7 +138,7 @@
         "defaultEffort": "high",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -155,7 +155,7 @@
         "defaultEffort": "high",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -173,7 +173,7 @@
         "defaultEffort": "high",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -189,7 +189,7 @@
         "defaultEffort": "high",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -207,7 +207,7 @@
         "defaultEffort": "medium",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -225,7 +225,7 @@
         "defaultEffort": "medium",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -238,7 +238,7 @@
         "promptCaching": "cachePoints",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -250,7 +250,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -262,7 +262,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -275,7 +275,7 @@
         "promptCaching": "cachePoints",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -287,7 +287,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -299,7 +299,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -311,7 +311,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -323,7 +323,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "imageFormats": [],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -346,7 +346,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -383,7 +383,7 @@
         "defaultEffort": "high",
         "deferredToolLoading": "native",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },
@@ -394,7 +394,7 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "html", "md", "txt"],
+        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
         "videoFormats": []
       }
     },

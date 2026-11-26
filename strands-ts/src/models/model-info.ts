@@ -27,8 +27,8 @@ export type DeferredToolLoading = 'unsupported' | 'native' | 'stubs'
 
 /**
  * What the model can do. A yes/no fact is a `boolean`; a fact with more than two states is a string
- * union, like {@link PromptCaching} (which mechanism). A fact about two features together gets its
- * own field named after the pair. `undefined` is unknown either way.
+ * union, like {@link PromptCaching} (which mechanism); a set of supported values is a list, where `[]` means none.
+ * A fact about two features together gets its own field named after the pair. `undefined` is unknown either way.
  */
 export interface ModelCapabilities {
   /** Whether the model keeps conversation state server-side; {@link Model.stateful} reads it. */
@@ -68,13 +68,13 @@ export interface ModelCapabilities {
    */
   readonly deferredToolLoading?: DeferredToolLoading | undefined
   /**
-   * Formats the model takes in image blocks; `[]` when it takes no images. The shared data lists a format only when
-   * every built-in provider can send it to the model.
+   * Formats the model and provider take in image blocks of a user message, where `jpeg` also covers `jpg`; `[]` when
+   * they take no images. Tool results can take fewer. Check for `undefined`, not falsiness: `[]` is known.
    */
   readonly imageFormats?: readonly ImageFormat[] | undefined
-  /** Formats the model takes in document blocks; `[]` when it takes no documents. Listed as for `imageFormats`. */
+  /** Formats the model and provider take in document blocks of a user message; see `imageFormats`. */
   readonly documentFormats?: readonly DocumentFormat[] | undefined
-  /** Formats the model takes in video blocks; `[]` when it takes no video. Listed as for `imageFormats`. */
+  /** Formats the model and provider take in video blocks of a user message; see `imageFormats`. */
   readonly videoFormats?: readonly VideoFormat[] | undefined
 }
 
@@ -172,7 +172,8 @@ function knownFields(entry: ModelInfo): ModelInfo {
     const picked = Object.fromEntries(Object.entries(section ?? {}).filter(([key]) => keys.includes(key)))
     return Object.keys(picked).length > 0 ? picked : undefined
   }
-  const capabilities = pick(entry.capabilities, CAPABILITY_FIELDS)
+  const capabilities = pick(entry.capabilities, CAPABILITY_FIELDS) as Record<string, unknown> | undefined
+  for (const value of Object.values(capabilities ?? {})) if (Array.isArray(value)) Object.freeze(value)
   const limits = pick(entry.limits, LIMIT_FIELDS)
   return { ...(capabilities ? { capabilities } : {}), ...(limits ? { limits } : {}) } as ModelInfo
 }

@@ -32,8 +32,8 @@ class ModelCapabilities:
     """What the model can do.
 
     A yes/no fact is a ``bool``; a fact with more than two states is a string literal, like
-    :data:`PromptCaching` (which mechanism). A fact about two features together gets its own field
-    named after the pair. ``None`` is unknown either way.
+    :data:`PromptCaching` (which mechanism); a set of supported values is a tuple, where ``()`` means none.
+    A fact about two features together gets its own field named after the pair. ``None`` is unknown either way.
 
     Attributes:
         stateful: Whether the model keeps conversation state server-side;
@@ -55,12 +55,11 @@ class ModelCapabilities:
             :attr:`strands.models.Model.model_info` reports False unless the provider can send them
             (``AnthropicModel``). Turning it on for a provider that cannot send them loses the injected text: Bedrock
             skips the block with a warning, Mistral drops it, other providers raise ``TypeError``.
-        image_formats: Formats the model takes in image blocks; empty when it takes no images. The shared data lists a
-            format only when every built-in provider can send it to the model.
-        document_formats: Formats the model takes in document blocks; empty when it takes no documents. Listed as for
+        image_formats: Formats the model and provider take in image blocks of a user message; ``()`` when they take
+            no images. Tool results can take fewer. Check for None, not falsiness: ``()`` is known.
+        document_formats: Formats the model and provider take in document blocks of a user message; see
             ``image_formats``.
-        video_formats: Formats the model takes in video blocks; empty when it takes no video. Listed as for
-            ``image_formats``.
+        video_formats: Formats the model and provider take in video blocks of a user message; see ``image_formats``.
     """
 
     stateful: bool | None = None
@@ -176,8 +175,11 @@ _DATE_SUFFIX = re.compile(r"[-@](?:\d{8}|\d{4}-\d{2}-\d{2})$")
 
 
 def _formats(value: object, names: dict[str, str]) -> tuple[str, ...] | None:
-    """Read a format list, skipping formats this version does not know; None when it is not a list."""
-    return tuple(names[name] for name in value if name in names) if isinstance(value, list) else None
+    """Read a format list, skipping formats this version does not know; None when it is not a list or none are known."""
+    if not isinstance(value, list):
+        return None
+    known = tuple(names[name] for name in value if name in names)
+    return known if known or not value else None
 
 
 def _section(entry: dict[str, Any], name: str, field_names: dict[str, str], section: type[_SectionT]) -> _SectionT:

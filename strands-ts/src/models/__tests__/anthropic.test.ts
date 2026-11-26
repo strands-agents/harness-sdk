@@ -236,6 +236,26 @@ describe('AnthropicModel', () => {
       expect(model.modelInfo.capabilities?.temporaryMessages).toBe(expected)
     })
 
+    it('keeps only the document formats it sends', () => {
+      expect(
+        new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' }).modelInfo.capabilities
+          ?.documentFormats
+      ).toEqual(['pdf', 'csv', 'html', 'txt', 'md'])
+      expect(
+        new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-3-opus-20240229' }).modelInfo.capabilities
+          ?.documentFormats
+      ).toBeUndefined()
+    })
+
+    it('lets the modelInfo config set the document formats', () => {
+      const model = new AnthropicModel({
+        apiKey: 'sk-ant-test',
+        modelId: 'claude-sonnet-4-6',
+        modelInfo: { capabilities: { documentFormats: ['pdf'] } },
+      })
+      expect(model.modelInfo.capabilities?.documentFormats).toEqual(['pdf'])
+    })
+
     it('lets the modelInfo config turn temporary messages off', () => {
       const model = new AnthropicModel({
         apiKey: 'sk-ant-test',
