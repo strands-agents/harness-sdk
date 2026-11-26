@@ -1,0 +1,10 @@
+name: HOL Guard
+description: Denies configured shell and other command-bearing tool calls before execution unless HOL Guard classifies the command as benign.
+integrationType: intervention
+languages:
+  python:
+    package: hol-guard
+github: https://github.com/hashgraph-online/hol-guard
+docsUrl: https://github.com/hashgraph-online/hol-guard/blob/main/docs/guard/strands-agents-integration.md
+maintainedBy: partner
+addedDate: 2026-08-24
