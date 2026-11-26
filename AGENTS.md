@@ -68,6 +68,12 @@ These rules apply to **both** SDKs. Each sub-guide (`strands-py/AGENTS.md`, `str
 
 When writing tests, follow the sub-project's testing guidance — `strands-py/docs/TESTING.md` for the Python SDK, `strands-ts/docs/TESTING.md` for the TypeScript SDK.
 
+**Harness scenario tests.** `harness-py` and `harness-ts` each carry a scenario suite that runs whole conversations through `create_harness()` / `createHarness()`: offline against a scripted model (in the unit run) and live against `STRANDS_INTEG_MODEL` (in the integration run). Both modes record every model request and check the same invariants (`check_invariants` / `checkInvariants`).
+
+- **Keep the two languages in step**: a scenario has the same file stem and test names in both, and asserts the same thing. Where the SDKs differ by design, say so in the test.
+- **Live scenarios assert outcomes** — files on disk, tool results, usage counters, codewords the prompt plants — never the model's prose. If the behavior under test only happens when the model chooses to do something, add a tool or fixture that forces it rather than a retry.
+- **A scenario that exposes a harness or SDK bug keeps its assertion** and is marked as a strict expected failure (`xfail(strict=True)` / `it.fails`) with a one-line reason.
+
 **`test-infra/` guardrails.** The `test-infra/` CDK stack deploys real AWS resources (Bedrock KBs, EC2 instances) that a small subset of integration tests depend on. Most tests do not need it — they run without provisioned infrastructure.
 
 - **Do not deploy this stack** unless you are explicitly working on the test infrastructure itself or iterating on tests that resolve SSM parameters from it.

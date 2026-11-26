@@ -112,4 +112,6 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The scenario helpers (recording, scripted_model) are shared by tests/scenarios and tests_integ/scenarios.
+pythonpath = ["tests/scenarios"]
 asyncio_mode = "auto"
