@@ -1,7 +1,9 @@
+import asyncio
 import logging
 import unittest.mock
 from typing import Any
 
+import httpx
 import pydantic
 import pytest
 import writerai
@@ -20,7 +22,9 @@ def writer_client_cls():
 
 @pytest.fixture
 def writer_client(writer_client_cls):
-    return writer_client_cls.return_value
+    mock_client = writer_client_cls.return_value
+    mock_client.__aenter__.return_value = mock_client
+    return mock_client
 
 
 @pytest.fixture
@@ -778,3 +782,57 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
     messages_logged = [record.getMessage() for record in caplog.records]
     assert len(messages_logged) == 1
     assert "count=<3> | Location sources are not supported by Writer" in messages_logged[0]
+
+
+class _LoopBoundTransport(httpx.AsyncBaseTransport):
+    """Serves a completion over a connection bound to the event loop that first used it, like a pooled one."""
+
+    def __init__(self):
+        self.loop = None
+
+    async def handle_async_request(self, request):
+        self.loop = self.loop or asyncio.get_running_loop()
+        self.loop.call_soon(lambda: None)  # raises "Event loop is closed" once that loop has exited
+        message = {"role": "assistant", "content": '{"name": "Ada", "age": 36}'}
+        return httpx.Response(200, json={"id": "c1", "choices": [{"index": 0, "message": message}]})
+
+
+def test_structured_output_succeeds_on_each_new_event_loop(model_id, messages):
+    """Each synchronous Agent call runs structured_output on a new event loop, and every call succeeds."""
+
+    class Person(pydantic.BaseModel):
+        name: str
+        age: int
+
+    real_client_cls = writerai.AsyncClient
+
+    def create_client(**client_args):
+        return real_client_cls(http_client=httpx.AsyncClient(transport=_LoopBoundTransport()), **client_args)
+
+    with unittest.mock.patch.object(strands.models.writer.writerai, "AsyncClient", side_effect=create_client):
+        model = WriterModel({"api_key": "test", "max_retries": 0}, model_id=model_id)
+
+        async def structured_output():
+            return [event async for event in model.structured_output(Person, messages)][-1]["output"]
+
+        tru_outputs = [asyncio.run(structured_output()), asyncio.run(structured_output())]
+
+    exp_outputs = [Person(name="Ada", age=36), Person(name="Ada", age=36)]
+    assert tru_outputs == exp_outputs
+
+
+@pytest.mark.asyncio
+async def test_structured_output_leaves_a_caller_http_client_open(model_id, messages, alist):
+    class Person(pydantic.BaseModel):
+        name: str
+
+    def handler(request):
+        message = {"role": "assistant", "content": '{"name": "Ada"}'}
+        return httpx.Response(200, json={"id": "c1", "choices": [{"index": 0, "message": message}]})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    model = WriterModel({"api_key": "test", "http_client": http_client}, model_id=model_id)
+
+    await alist(model.structured_output(Person, messages))
+
+    assert not http_client.is_closed
