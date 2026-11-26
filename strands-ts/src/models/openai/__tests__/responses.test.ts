@@ -9,6 +9,7 @@ import {
   TextBlock,
   ToolUseBlock,
   ToolResultBlock,
+  JsonBlock,
   OffloadedBlock,
   UnknownBlock,
 } from '../../../types/messages.js'
@@ -459,6 +460,25 @@ describe("OpenAIModel (api: 'responses')", () => {
       const req = await runOnce({}, messages)
       const out = req.input.find((i: any) => i.type === 'function_call_output')
       expect(out.output).toBe('[ERROR] boom')
+    })
+
+    it('serializes JSON tool result content into the output string', async () => {
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('x')] }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 't1',
+              status: 'success',
+              content: [new TextBlock('4'), new JsonBlock({ json: ['4'] })],
+            }),
+          ],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      const out = req.input.find((i: any) => i.type === 'function_call_output')
+      expect(out).toEqual({ type: 'function_call_output', call_id: 't1', output: '4\n["4"]' })
     })
 
     it('emits an array output with input_image when a tool result carries image bytes', async () => {

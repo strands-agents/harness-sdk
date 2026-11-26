@@ -10,6 +10,7 @@ import {
   TextBlock,
   ToolUseBlock,
   ToolResultBlock,
+  JsonBlock,
   GuardContentBlock,
   OffloadedBlock,
   UnknownBlock,
@@ -451,6 +452,26 @@ describe('OpenAIModel', () => {
         ])
       )
       expect(captured.request.messages).toEqual([{ role: 'tool', tool_call_id: 'tu-1', content: 'first\nsecond' }])
+    })
+
+    it('serializes JSON tool result content into the tool message', async () => {
+      const captured: { request: any } = { request: null }
+      const provider = new OpenAIModel({ api: 'chat', client: createMockClientWithCapture(captured) })
+      await collectIterator(
+        provider.stream([
+          new Message({
+            role: 'user',
+            content: [
+              new ToolResultBlock({
+                toolUseId: 'tu-1',
+                status: 'success',
+                content: [new TextBlock('4'), new JsonBlock({ json: ['4'] })],
+              }),
+            ],
+          }),
+        ])
+      )
+      expect(captured.request.messages).toEqual([{ role: 'tool', tool_call_id: 'tu-1', content: '4\n["4"]' }])
     })
   })
 
