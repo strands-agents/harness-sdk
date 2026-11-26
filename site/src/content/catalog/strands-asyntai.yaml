@@ -1,0 +1,10 @@
+name: Asyntai AI Chatbot
+description: Give your agent a whole website's knowledge, chats and leads from an Asyntai AI chatbot, kept current automatically, with no index to build.
+integrationType: tool
+languages:
+  python:
+    package: strands-asyntai
+github: https://github.com/asyntai/strands-asyntai
+docsUrl: https://asyntai.com/documentation/integrations/strands/
+addedDate: 2026-11-04
+maintainedBy: partner
