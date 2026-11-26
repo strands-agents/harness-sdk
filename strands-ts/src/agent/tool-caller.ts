@@ -17,7 +17,6 @@ import type { Tool, ToolContext } from '../tools/tool.js'
 import { ToolStreamEvent } from '../tools/tool.js'
 import type { ToolUse } from '../tools/types.js'
 import type { Agent } from './agent.js'
-import { ConcurrentInvocationError } from '../errors.js'
 
 /**
  * Options for direct tool call execution.
@@ -77,6 +76,9 @@ export type ToolCallerProxy = Record<string, ToolHandle>
  */
 export type AppendMessageFn = (message: Message, invocationState?: InvocationState) => Promise<void>
 
+/** @internal */
+export type AcquireDirectToolCallLockFn = () => () => void
+
 /**
  * Provides direct tool calling through the agent.
  *
@@ -107,6 +109,7 @@ export type AppendMessageFn = (message: Message, invocationState?: InvocationSta
 export class ToolCaller {
   private readonly _agent: Agent
   private readonly _appendMessage: AppendMessageFn
+  private readonly _acquireLock: AcquireDirectToolCallLockFn
 
   /**
    * Creates a ToolCaller proxy for the given agent.
@@ -119,14 +122,20 @@ export class ToolCaller {
    * @param appendMessage - Helper provided by the agent to append messages and fire hooks.
    *   Passed in (rather than calling a public agent method) so message mutation stays
    *   encapsulated within the agent.
+   * @param acquireLock - Helper provided by the agent to reserve its message history for a recorded call.
    */
-  static create(agent: Agent, appendMessage: AppendMessageFn): ToolCallerProxy {
-    return new ToolCaller(agent, appendMessage) as unknown as ToolCallerProxy
+  static create(
+    agent: Agent,
+    appendMessage: AppendMessageFn,
+    acquireLock: AcquireDirectToolCallLockFn
+  ): ToolCallerProxy {
+    return new ToolCaller(agent, appendMessage, acquireLock) as unknown as ToolCallerProxy
   }
 
-  private constructor(agent: Agent, appendMessage: AppendMessageFn) {
+  private constructor(agent: Agent, appendMessage: AppendMessageFn, acquireLock: AcquireDirectToolCallLockFn) {
     this._agent = agent
     this._appendMessage = appendMessage
+    this._acquireLock = acquireLock
 
     // Return a Proxy that intercepts property access to resolve tool names
     return new Proxy(this, {
@@ -202,46 +211,43 @@ export class ToolCaller {
     options?: DirectToolCallOptions
   ): AsyncGenerator<ToolStreamEvent, ToolResultBlock, undefined> {
     const shouldRecord = options?.recordDirectToolCall ?? true
+    const releaseLock = shouldRecord ? this._acquireLock() : undefined
 
-    // If recording, check that the agent is not currently invoking
-    if (shouldRecord && this._agent.isInvoking) {
-      throw new ConcurrentInvocationError(
-        'Direct tool call cannot be made while the agent is in the middle of an invocation. ' +
-          'Set recordDirectToolCall: false to allow direct tool calls during agent invocation.'
-      )
+    try {
+      // Resolve the tool via the registry's normalization (exact → hyphen → case-insensitive)
+      const tool = this._agent.toolRegistry.resolve(name)
+
+      // Generate unique tool use ID
+      const toolUseId = `tooluse_${globalThis.crypto.randomUUID()}`
+      const toolUse: ToolUse = {
+        toolUseId,
+        name: tool.name,
+        input,
+      }
+
+      // Create tool context
+      const toolContext: ToolContext = {
+        toolUse,
+        agent: this._agent,
+        invocationState: {},
+        cancelSignal: this._agent.cancelSignal,
+        interrupt: (): never => {
+          throw new Error('Interrupts are not supported in direct tool calls')
+        },
+      }
+
+      // Execute the tool, yielding stream events
+      const toolResult = yield* this._executeTool(tool, toolContext)
+
+      // Record in message history if configured
+      if (shouldRecord) {
+        await this._recordToolExecution(toolUse, toolResult)
+      }
+
+      return toolResult
+    } finally {
+      releaseLock?.()
     }
-
-    // Resolve the tool via the registry's normalization (exact → hyphen → case-insensitive)
-    const tool = this._agent.toolRegistry.resolve(name)
-
-    // Generate unique tool use ID
-    const toolUseId = `tooluse_${globalThis.crypto.randomUUID()}`
-    const toolUse: ToolUse = {
-      toolUseId,
-      name: tool.name,
-      input,
-    }
-
-    // Create tool context
-    const toolContext: ToolContext = {
-      toolUse,
-      agent: this._agent,
-      invocationState: {},
-      cancelSignal: this._agent.cancelSignal,
-      interrupt: (): never => {
-        throw new Error('Interrupts are not supported in direct tool calls')
-      },
-    }
-
-    // Execute the tool, yielding stream events
-    const toolResult = yield* this._executeTool(tool, toolContext)
-
-    // Record in message history if configured
-    if (shouldRecord) {
-      await this._recordToolExecution(toolUse, toolResult)
-    }
-
-    return toolResult
   }
 
   /**
