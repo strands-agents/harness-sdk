@@ -14,6 +14,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Keywords whose value is a map of subschemas.
+_SCHEMA_MAP_KEYWORDS = ("$defs", "definitions", "properties")
+# Keywords whose value is a list of subschemas.
+_SCHEMA_LIST_KEYWORDS = ("anyOf", "allOf", "oneOf")
+# Keywords whose value is a single subschema.
+_SCHEMA_VALUE_KEYWORDS = ("items", "additionalProperties")
+
 
 def ensure_strict_json_schema(
     schema: dict[str, Any],
@@ -25,7 +32,8 @@ def ensure_strict_json_schema(
     Creates a deep copy of the schema and recursively:
     1. Adds ``"additionalProperties": false`` to all ``object`` types that do not already define it
     2. Optionally adds all properties to the ``required`` array (needed for OpenAI)
-    3. Handles ``$defs``, ``definitions``, ``anyOf``, ``allOf``, ``items``, and ``$ref``
+    3. Handles ``$defs``, ``definitions``, ``anyOf``, ``allOf``, ``oneOf``, ``items``,
+       schema-valued ``additionalProperties``, and ``$ref``
 
     Args:
         schema: The JSON schema to process. A deep copy is made internally so the original is not mutated.
@@ -40,11 +48,34 @@ def ensure_strict_json_schema(
     return schema_copy
 
 
+def _child_schemas(schema: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the direct subschemas of a schema node, including ``$defs``/``definitions`` entries."""
+    children: list[Any] = []
+    for keyword in _SCHEMA_MAP_KEYWORDS:
+        mapping = schema.get(keyword)
+        if isinstance(mapping, dict):
+            children.extend(mapping.values())
+    for keyword in _SCHEMA_LIST_KEYWORDS:
+        entries = schema.get(keyword)
+        if isinstance(entries, list):
+            children.extend(entries)
+    for keyword in _SCHEMA_VALUE_KEYWORDS:
+        children.append(schema.get(keyword))
+    return [child for child in children if isinstance(child, dict)]
+
+
+def _is_object_type(schema: dict[str, Any]) -> bool:
+    """Return whether a schema node is an object type, including union types that include ``"object"``."""
+    schema_type = schema.get("type")
+    return schema_type == "object" or (isinstance(schema_type, list) and "object" in schema_type)
+
+
 def _apply_strict(
     schema: dict[str, Any],
     *,
     root: dict[str, Any],
     require_all_properties: bool,
+    inlining: frozenset[str] = frozenset(),
 ) -> None:
     """Recursively apply strict-mode constraints to a JSON schema in place.
 
@@ -52,67 +83,42 @@ def _apply_strict(
         schema: The schema node to process (modified in place).
         root: The root schema, used for resolving ``$ref`` pointers.
         require_all_properties: If True, add all properties to ``required``.
+        inlining: The ``$ref`` values currently being inlined on this path, so a recursive
+            ``$ref`` terminates instead of inlining forever.
     """
-    # Process $defs / definitions blocks
-    for defs_key in ("$defs", "definitions"):
-        defs = schema.get(defs_key)
-        if isinstance(defs, dict):
-            for def_schema in defs.values():
-                if isinstance(def_schema, dict):
-                    _apply_strict(def_schema, root=root, require_all_properties=require_all_properties)
-
-    # Add additionalProperties: false to object types that lack it
-    if schema.get("type") == "object" and "additionalProperties" not in schema:
+    # A node still carrying a $ref is left for the inline below, so the target's own value wins.
+    if _is_object_type(schema) and "additionalProperties" not in schema and "$ref" not in schema:
         schema["additionalProperties"] = False
 
-    # Process properties and optionally enforce required
     properties = schema.get("properties")
-    if isinstance(properties, dict):
-        if require_all_properties:
-            schema["required"] = list(properties.keys())
+    if require_all_properties and isinstance(properties, dict):
+        schema["required"] = list(properties.keys())
 
-        for prop_schema in properties.values():
-            if isinstance(prop_schema, dict):
-                _apply_strict(prop_schema, root=root, require_all_properties=require_all_properties)
-
-    # Process array items
-    items = schema.get("items")
-    if isinstance(items, dict):
-        _apply_strict(items, root=root, require_all_properties=require_all_properties)
-
-    # Process anyOf variants
-    any_of = schema.get("anyOf")
-    if isinstance(any_of, list):
-        for variant in any_of:
-            if isinstance(variant, dict):
-                _apply_strict(variant, root=root, require_all_properties=require_all_properties)
-
-    # Process allOf variants
-    all_of = schema.get("allOf")
-    if isinstance(all_of, list):
-        for entry in all_of:
-            if isinstance(entry, dict):
-                _apply_strict(entry, root=root, require_all_properties=require_all_properties)
-
-    # Process oneOf variants
-    one_of = schema.get("oneOf")
-    if isinstance(one_of, list):
-        for variant in one_of:
-            if isinstance(variant, dict):
-                _apply_strict(variant, root=root, require_all_properties=require_all_properties)
+    for child in _child_schemas(schema):
+        _apply_strict(child, root=root, require_all_properties=require_all_properties, inlining=inlining)
 
     # Resolve $ref combined with other keys by inlining the referenced schema
     ref = schema.get("$ref")
-    if isinstance(ref, str) and len(schema) > 1:
-        resolved = _resolve_ref(root, ref)
-        if isinstance(resolved, dict):
-            # Inline the resolved schema, giving priority to existing keys
-            merged = {**copy.deepcopy(resolved), **schema}
-            merged.pop("$ref", None)
-            schema.clear()
-            schema.update(merged)
-            # Re-apply strict to the inlined schema
-            _apply_strict(schema, root=root, require_all_properties=require_all_properties)
+    if not isinstance(ref, str) or len(schema) <= 1:
+        return
+    if ref in inlining:
+        logger.warning("ref=<%s> | recursive $ref cannot be inlined, leaving it unresolved", ref)
+        return
+    resolved = _resolve_ref(root, ref)
+    if not isinstance(resolved, dict):
+        return
+    # Inline the resolved schema, giving priority to existing keys
+    merged = {**copy.deepcopy(resolved), **schema}
+    merged.pop("$ref", None)
+    schema.clear()
+    schema.update(merged)
+    # Re-apply strict to the inlined schema
+    _apply_strict(
+        schema,
+        root=root,
+        require_all_properties=require_all_properties,
+        inlining=inlining | {ref},
+    )
 
 
 def _resolve_ref(root: dict[str, Any], ref: str) -> dict[str, Any] | None:
