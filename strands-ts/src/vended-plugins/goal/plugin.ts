@@ -3,7 +3,8 @@
  * Validates the agent's response after each invocation; if it doesn't
  * satisfy the goal, feeds validator feedback back as a user message and re-enters the
  * agent loop via `AfterInvocationEvent.resume`. Loops until validation passes,
- * `maxAttempts` is reached, `timeout` elapses, or one of the request's `limits` is reached.
+ * `maxAttempts` is reached, `timeout` elapses, one of the request's `limits` is reached,
+ * or the invocation is cancelled.
  *
  * @example
  * ```ts
@@ -67,7 +68,13 @@ import {
   unwrapInvocationContext,
   type InvocationContext,
 } from '../../agent/invocation-context.js'
-import { AfterInvocationEvent, BeforeInvocationEvent, BeforeModelCallEvent } from '../../hooks/events.js'
+import {
+  AfterInvocationEvent,
+  AgentResultEvent,
+  BeforeInvocationEvent,
+  BeforeModelCallEvent,
+} from '../../hooks/events.js'
+import { HookOrder } from '../../hooks/types.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import type { Model } from '../../models/model.js'
@@ -98,8 +105,12 @@ export type Validator = (
   agent: LocalAgent
 ) => boolean | ValidationOutcome | Promise<boolean | ValidationOutcome>
 
-/** Why a goal run ended. `'limit'` means one of the request's `limits` was reached, so no further attempt could run. */
-export type GoalStopReason = 'satisfied' | 'maxAttempts' | 'timeout' | 'limit'
+/**
+ * Why a goal run ended. `'limit'` means one of the request's `limits` was reached, so no
+ * further attempt could run; `'stopped'` means a cancel ended the run: the pass was cancelled,
+ * or the cancel was seen when grading finished.
+ */
+export type GoalStopReason = 'satisfied' | 'maxAttempts' | 'timeout' | 'limit' | 'stopped'
 
 /** Single attempt summary preserved on `GoalResult`. */
 export interface GoalAttempt {
@@ -211,6 +222,8 @@ interface RunState {
   attempts: GoalAttempt[]
   result?: GoalResult
   resumed?: boolean
+  /** The request that armed a retry; a pass of another request never continues it. */
+  retryArmedIn?: InvocationContext
   /** The latest assistant message when the current pass started, to tell whether the pass produced a new answer. */
   answerBeforePass: Message | undefined
   /**
@@ -307,10 +320,19 @@ export class GoalLoop implements Plugin {
     // current one. Clears stale state from a prior invoke that threw mid-run,
     // and starts a fresh RunState so later hooks (BeforeModelCall, After) can
     // attach to it without each having to lazy-create.
-    agent.addHook(BeforeInvocationEvent, () => {
+    agent.addHook(BeforeInvocationEvent, (event) => {
       const existing = this._runs.get(agent)
-      if (existing?.resumed) {
+      // The agent drops a retry when the invocation is cancelled, so the next request starts fresh.
+      const retryDropped =
+        existing?.retryArmedIn !== undefined &&
+        existing.retryArmedIn !== unwrapInvocationContext(event.invocationContext)
+      if (existing?.resumed && !retryDropped) {
         existing.resumed = false
+        if (existing.retryArmedIn !== undefined) {
+          delete existing.retryArmedIn
+          // Rewind only once the retry actually runs, so a dropped retry leaves the answer in place.
+          if (existing.initialSnapshot) agent.loadSnapshot(existing.initialSnapshot)
+        }
         existing.answerBeforePass = lastAssistantMessage(agent.messages)
         return
       }
@@ -357,6 +379,12 @@ export class GoalLoop implements Plugin {
         return
       }
 
+      // A cancelled pass produced no answer to grade, and resuming it would continue a run the caller gave up on.
+      if (event.result?.stopReason === 'cancelled') {
+        finishRun(run, 'stopped')
+        return
+      }
+
       const response = lastAssistantMessage(agent.messages)
       const invocationContext = unwrapInvocationContext(event.invocationContext)
       // The request's limit stopped this pass before it produced a new answer, so there is nothing to grade.
@@ -364,7 +392,7 @@ export class GoalLoop implements Plugin {
         finishRun(run, 'limit')
         return
       }
-      // Cancelled or model-threw before emitting an assistant message.
+      // The model threw before emitting an assistant message.
       if (!response) return
 
       const attemptNumber = run.attempts.length + 1
@@ -398,13 +426,27 @@ export class GoalLoop implements Plugin {
         finishRun(run, 'limit')
         return
       }
-
-      if (run.initialSnapshot) {
-        agent.loadSnapshot(run.initialSnapshot)
+      // A cancel that arrived while this answer was graded ends the run instead of a retry.
+      if (agent.cancelSignal.aborted) {
+        finishRun(run, 'stopped')
+        return
       }
+
       event.resume = this._resumePromptTemplate(outcome.feedback?.trim())
       run.resumed = true
+      if (invocationContext) run.retryArmedIn = invocationContext
     })
+
+    // AgentResultEvent fires only on the request's final pass, so a retry still armed here was
+    // dropped by the agent (a deferred cancel). SDK_FIRST so user hooks already see the result.
+    agent.addHook(
+      AgentResultEvent,
+      () => {
+        const run = this._runs.get(agent)
+        if (run?.retryArmedIn !== undefined) finishRun(run, 'stopped')
+      },
+      { order: HookOrder.SDK_FIRST }
+    )
   }
 
   /**
@@ -459,6 +501,7 @@ function finishRun(run: RunState, stopReason: GoalStopReason): void {
     attempts: run.attempts.slice(),
   }
   run.resumed = false
+  delete run.retryArmedIn
 }
 
 function defaultResumePrompt(feedback: string | undefined): string {

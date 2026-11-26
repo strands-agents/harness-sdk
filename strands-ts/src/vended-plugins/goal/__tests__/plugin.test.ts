@@ -6,6 +6,7 @@ import { Agent } from '../../../agent/agent.js'
 import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { AfterInvocationEvent } from '../../../hooks/events.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
+import { createMockTool } from '../../../__fixtures__/tool-helpers.js'
 import { JsonBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../../types/messages.js'
 import type { SystemPrompt } from '../../../types/messages.js'
 import { logger } from '../../../logging/logger.js'
@@ -579,6 +580,90 @@ describe('GoalLoop', () => {
         stopReason: 'satisfied',
         attempts: [{ attempt: 1, passed: true }],
       })
+    })
+  })
+
+  describe('cancellation', () => {
+    const cancelKinds = [
+      ['an immediate', undefined],
+      ['a deferred', { message: 'done', afterCurrentTools: true }],
+    ] as const
+    const text = (message: Message): string => (message.content[0] as TextBlock).text
+    const history = (agent: Agent): string[] => agent.messages.map((message) => `${message.role}: ${text(message)}`)
+
+    it.each(cancelKinds)('ends the run stopped without grading after %s cancel', async (_kind, options) => {
+      let agent!: Agent
+      const stop = createMockTool('stop', () => {
+        agent.cancel(options)
+        return new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('ok')] })
+      })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'stop', toolUseId: 't1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'retry' })
+      const goal = vi.fn(() => false)
+      const plugin = new GoalLoop({ goal, maxAttempts: 3 })
+      agent = new Agent({ model, tools: [stop], plugins: [plugin], printer: false })
+
+      const result = await agent.invoke('go')
+
+      expect(result.stopReason).toBe('cancelled')
+      expect(goal).not.toHaveBeenCalled()
+      expect(model.callCount).toBe(1)
+      expect(plugin.lastResult(agent)).toEqual({ passed: false, stopReason: 'stopped', attempts: [] })
+    })
+
+    it.each(cancelKinds)(
+      'ends the run without retrying or rewinding when %s cancel arrives during grading',
+      async (_kind, options) => {
+        const model = new MockMessageModel()
+          .addTurn({ type: 'textBlock', text: 'answer' })
+          .addTurn({ type: 'textBlock', text: 'retry' })
+        let agent!: Agent
+        const plugin = new GoalLoop({
+          maxAttempts: 3,
+          preserveContext: false,
+          goal: () => {
+            agent.cancel(options)
+            return { passed: false, feedback: 'try again' }
+          },
+        })
+        agent = new Agent({ model, plugins: [plugin], printer: false })
+
+        const result = await agent.invoke('go')
+
+        expect(text(result.lastMessage)).toBe('answer')
+        expect(model.callCount).toBe(1)
+        expect(history(agent)).toEqual(['user: go', 'assistant: answer'])
+        expect(plugin.lastResult(agent)).toEqual({
+          passed: false,
+          stopReason: 'stopped',
+          attempts: [{ attempt: 1, passed: false, feedback: 'try again' }],
+        })
+      }
+    )
+
+    it('starts a fresh run when the consumer abandoned the stream after a retry was armed', async () => {
+      const plugin = new GoalLoop({
+        maxAttempts: 3,
+        preserveContext: false,
+        goal: (message) => ({ passed: text(message) === 'GOOD-B', feedback: 'try again' }),
+      })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'textBlock', text: 'A-answer' })
+        .addTurn({ type: 'textBlock', text: 'GOOD-B' })
+      const agent = new Agent({ model, plugins: [plugin], printer: false })
+
+      for await (const event of agent.stream('a')) {
+        if (event.type === 'afterInvocationEvent') break
+      }
+      await agent.invoke('b')
+
+      expect(plugin.lastResult(agent)).toEqual({
+        passed: true,
+        stopReason: 'satisfied',
+        attempts: [{ attempt: 1, passed: true, feedback: 'try again' }],
+      })
+      expect(history(agent)).toEqual(['user: a', 'assistant: A-answer', 'user: b', 'assistant: GOOD-B'])
     })
   })
 })

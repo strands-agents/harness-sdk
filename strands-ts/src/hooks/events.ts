@@ -199,23 +199,33 @@ export class AfterInvocationEvent extends HookableEvent {
   readonly type = 'afterInvocationEvent' as const
   readonly agent: LocalAgent
   readonly invocationState: InvocationState
+  /**
+   * How the pass ended. `undefined` when it threw or the consumer abandoned the stream.
+   * Check `result.stopReason` before setting {@link resume}: a pass that ended on
+   * `'cancelled'` or `'interrupt'` produced no answer to react to.
+   */
+  readonly result?: AgentResult
 
   /**
    * Set by hook callbacks to trigger a follow-up agent invocation with new input.
    * When set, after this event's callbacks complete the agent re-enters its loop
    * with these args as new input, under the same invocation lock. A fresh
    * {@link BeforeInvocationEvent}/{@link AfterInvocationEvent} pair fires for the
-   * resumed run. Ignored if the invocation ended with an error or one of the
-   * request's limits is reached, since a resumed run would stop again at once.
+   * resumed run. Ignored if the invocation ended with an error, one of the
+   * request's limits is reached (a resumed run would stop again at once),
+   * the caller's `cancelSignal` has aborted, or `agent.cancel({ afterCurrentTools: true })`
+   * was requested. It is honoured after an immediate `agent.cancel()`, so check
+   * `result.stopReason` and `agent.cancelSignal.aborted` first.
    *
    * If multiple callbacks set `resume`, the last callback to run wins.
    */
   resume: InvokeArgs | undefined = undefined
 
-  constructor(data: { agent: LocalAgent; invocationState: InvocationState } & HookableEventData) {
+  constructor(data: { agent: LocalAgent; invocationState: InvocationState; result?: AgentResult } & HookableEventData) {
     super(data)
     this.agent = data.agent
     this.invocationState = data.invocationState
+    if (data.result !== undefined) this.result = data.result
   }
 
   override _shouldReverseCallbacks(): boolean {
