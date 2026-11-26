@@ -302,6 +302,11 @@ export class BeforeToolCallEvent extends HookableEvent implements Interruptible 
       toolUse: ToolUseData
       tool: Tool | undefined
       invocationState: InvocationState
+      /**
+       * Answers {@link BeforeToolCallEvent.interrupt} instead of pausing the agent.
+       * @internal
+       */
+      interrupt?: Interruptible['interrupt'] | undefined
     } & HookableEventData
   ) {
     super(data)
@@ -309,6 +314,10 @@ export class BeforeToolCallEvent extends HookableEvent implements Interruptible 
     this.toolUse = data.toolUse
     this.tool = data.tool
     this.invocationState = data.invocationState
+    // Non-enumerable, as invocationContext is, so the event's shape stays the same.
+    if (data.interrupt !== undefined) {
+      Object.defineProperty(this, 'interrupt', { value: data.interrupt, enumerable: false })
+    }
   }
 
   /**

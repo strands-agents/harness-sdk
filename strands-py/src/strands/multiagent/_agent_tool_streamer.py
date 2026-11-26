@@ -302,9 +302,13 @@ class _AgentToolStreamer:
 
     def _clear_interrupted_turn(self) -> None:
         """Discard stored child state after a non-interrupt terminal result."""
-        if self._interrupt_state is None:
-            return
-        turns = self._interrupt_state.context.get(_INTERRUPTED_TURNS_KEY)
-        if not isinstance(turns, dict) or turns.pop(self._tool_use_id, None) is None:
-            return
-        self._interrupt_state._version += 1
+        if self._interrupt_state is not None:
+            _discard_interrupted_turn(self._interrupt_state, self._tool_use_id)
+
+
+def _discard_interrupted_turn(interrupt_state: _InterruptState, tool_use_id: str) -> None:
+    """Drop the child turn stored for a tool call that will not be resumed."""
+    turns = interrupt_state.context.get(_INTERRUPTED_TURNS_KEY)
+    if not isinstance(turns, dict) or turns.pop(tool_use_id, None) is None:
+        return
+    interrupt_state._version += 1

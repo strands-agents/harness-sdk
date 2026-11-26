@@ -1,0 +1,265 @@
+---
+title: Programmatic tool caller
+description: "Let a Strands agent orchestrate its other tools with Python code that runs in a Monty sandbox, so only the output the code prints enters the model's context."
+tags: [tool-authoring]
+sourceLinks:
+  - path: strands-ts/src/vended-tools/programmatic-tool-caller/programmatic-tool-caller.ts
+  - path: strands-py/src/strands/vended_tools/programmatic_tool_caller/programmatic_tool_caller.py
+---
+
+Lets the model orchestrate the agent's other tools by writing Python, instead of making
+one tool call per model round trip. The model calls the tool with a single `code` string.
+The code runs in a [Monty](https://github.com/pydantic/monty) sandbox with every other
+registered tool exposed as an `async` function, and only the text it prints returns to
+the model.
+
+Add it when a task takes many tool calls that the model can plan up front (read twenty
+files, call an API once per row, fan out to subagents), or when intermediate results are
+large. A tool's return value stays in the code's scope unless the code prints it, so the
+bulk never enters the context window.
+
+_Supported in: Node.js (TypeScript); Python._
+
+:::note[Install required]
+<Tabs>
+<Tab label="Python">
+`programmatic_tool_caller` requires the optional `programmatic-tool-caller` extra, which
+installs `pydantic-monty`:
+
+```bash
+pip install 'strands-agents[programmatic-tool-caller]'
+```
+</Tab>
+<Tab label="TypeScript">
+The sandbox requires the `@pydantic/monty` package, version 1.6 or later, which the SDK
+does not install for you:
+
+```bash
+npm install @pydantic/monty@^1.6.0
+```
+</Tab>
+</Tabs>
+:::
+
+## Usage
+
+Register the tool next to the tools the code should call:
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/programmatic-tool-caller_imports.ts:programmatic_tool_caller_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/programmatic-tool-caller.ts:programmatic_tool_caller_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import programmatic_tool_caller, read
+
+agent = Agent(tools=[programmatic_tool_caller, read])
+agent("Count the TODOs in /app/src/agent.py, /app/src/tools.py, and /app/src/hooks.py")
+```
+
+</Tab>
+</Tabs>
+
+## What the code can do
+
+The tool description tells the model how to write the code:
+
+- **Call tools.** Each exposed tool is an `async` function that takes keyword arguments
+  only: `await tool_name(key=value)`. `asyncio.gather` runs calls concurrently.
+- **Print what matters.** Only text sent to `print()` returns to the model.
+- **Use results as data.** Structured content and JSON text (an object or array) arrive
+  parsed, as a `dict` or `list`. Anything else arrives as a string.
+- **Catch failures.** A tool that fails raises a `RuntimeError`, which the code can catch.
+- **Use aliases for awkward names.** A tool whose name is not a valid Python identifier,
+  such as `fetch-url` or `ns.fetch`, is also available with those characters replaced by
+  underscores: `fetch_url`, `ns_fetch`. No alias is created when it would collide with
+  another tool's name or alias.
+
+For the prompt above, the model might write:
+
+```python
+import asyncio
+
+paths = ["/app/src/agent.py", "/app/src/tools.py", "/app/src/hooks.py"]
+try:
+    files = await asyncio.gather(*[read(path=path) for path in paths])
+except RuntimeError as error:
+    print(f"read failed: {error}")
+else:
+    for path, text in zip(paths, files):
+        print(path, text.count("TODO"))
+```
+
+The model receives one short line per file. The file contents never enter the context
+window.
+
+Monty implements a subset of Python. The default description lists the standard library
+modules the code can import (`asyncio`, `json`, `re`, `math`, `datetime`, and a few more)
+and the features that are missing: generators, class inheritance, and `del`.
+
+## Stream the output
+
+While the code runs, the tool emits what it prints as
+[tool stream events](../custom-tools.mdx#tool-streaming), so an application can show
+progress before the run ends. The data of each event is an object with `type` set to
+`print` and the printed `text`:
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/programmatic-tool-caller_imports.ts:programmatic_tool_caller_stream_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/programmatic-tool-caller.ts:programmatic_tool_caller_stream_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+import asyncio
+
+from strands import Agent
+from strands.vended_tools import programmatic_tool_caller, read
+
+agent = Agent(tools=[programmatic_tool_caller, read], callback_handler=None)
+
+
+async def main():
+    prompt = "Count the TODOs in /app/src/agent.py, /app/src/tools.py, and /app/src/hooks.py"
+    async for event in agent.stream_async(prompt):
+        data = event.get("tool_stream_event", {}).get("data")
+        if isinstance(data, dict) and data.get("type") == "print":
+            print(data["text"], end="")
+
+
+asyncio.run(main())
+```
+
+</Tab>
+</Tabs>
+
+- The text arrives as it was printed, newlines included. One event can carry several
+  `print()` calls, and streaming stops at the [output limit](#limits).
+- The model does not see these events. It receives the whole output once, as the tool
+  result.
+- Only the code's own output is streamed. Stream events from the tools the code calls
+  are not forwarded.
+- In Python, the last stream event of a call carries the tool result instead of a print,
+  so check `type` before reading `text`.
+- In TypeScript on the WebAssembly fallback (see [Limits](#limits)), events arrive when
+  the code awaits a tool or ends, not while it computes.
+
+## Configuration
+
+<Syntax py="make_programmatic_tool_caller" ts="makeProgrammaticToolCaller" /> creates a
+tool with its own settings:
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/programmatic-tool-caller_imports.ts:programmatic_tool_caller_custom_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/programmatic-tool-caller.ts:programmatic_tool_caller_custom_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import make_programmatic_tool_caller, read, write
+
+programmatic_tool_caller = make_programmatic_tool_caller(
+    allowed_tools=["read"],  # the code can read files, but not write them
+    timeout=300,  # 5 minutes for the whole run
+    tool_timeout=60,  # 1 minute for each tool call the code makes
+)
+agent = Agent(tools=[programmatic_tool_caller, read, write])
+```
+
+</Tab>
+</Tabs>
+
+- <Syntax py="allowed_tools" ts="allowedTools" />: registry names of the tools the code
+  can call. Defaults to every other registered tool.
+- `timeout`: wall-clock ceiling for one run, tool calls included. Defaults to 60 minutes.
+  When it expires, the run stops and the model receives an error, along with anything the
+  code already printed.
+- <Syntax py="tool_timeout" ts="toolTimeout" />: wall-clock ceiling for one tool call
+  made by the code. Defaults to 30 minutes. An expired call raises a `RuntimeError` that
+  the code can catch. The tool is asked to cancel, but one that cannot be interrupted may
+  still finish.
+- `name` and `description`: the tool name (`programmatic_tool_caller` by default) and the
+  description shown to the model.
+
+Timeouts are in seconds in Python (defaults `3600` and `1800`) and in milliseconds in
+TypeScript (defaults `3_600_000` and `1_800_000`). Pass
+<Syntax py="None" ts="Infinity" /> to disable one. Any other value must be a positive
+number, and in TypeScript a whole number of at most 2,147,483,647 ms (about 24.8 days), or
+the tool cannot be created.
+
+The defaults are long on purpose, so the code can drive slow tools such as subagents.
+Lower them when you want tighter bounds.
+
+## Limits
+
+Every run has fixed limits that are separate from the timeouts:
+
+- **Compute:** 60 seconds of interpreter time. The clock pauses while a tool call is in
+  flight, so slow tools do not count against it.
+- **Memory:** 256 MiB.
+- **Suspensions:** 1,000 per run, which is roughly 500 to 1,000 tool calls. Calls made
+  with `asyncio.gather` cost more than calls awaited one at a time.
+- **Sleep:** `time.sleep` and `asyncio.sleep` wait for at most 10 seconds each. A sleep
+  is one suspension and does not count as compute, so the run timeout is what bounds
+  code that sleeps in a loop.
+- **Concurrency:** 10 tool calls in flight at once. Further calls wait for a free slot.
+- **Output:** 200,000 characters. Longer output is truncated.
+
+In TypeScript, the tool falls back to a WebAssembly build of Monty when the native addon
+cannot load, for example on Alpine Linux. That build has the same limits but runs the code
+more slowly, and a run that times out while the code is computing loses what it printed
+since its last tool call.
+
+Also in TypeScript, a run that times out or is cancelled while the code is computing
+returns at once, but its interpreter keeps running in the background until the compute
+limit ends it, and the Node.js process does not exit before then.
+
+## Hooks and interventions
+
+Tool calls made by the code fire the agent's `BeforeToolCallEvent` and
+`AfterToolCallEvent` [hooks](../../agents/hooks.mdx), so
+[interventions](../../agents/interventions/index.mdx) and other policies apply to them:
+
+- A call that a policy denies raises a `RuntimeError` in the code.
+- A call that needs approval through an [interrupt](../../interrupts.mdx) is refused the
+  same way, because a call made from code cannot prompt. The error tells the model to
+  make that call as a normal tool call instead.
+
+These calls go through the agent's tool executor, like the calls the model makes, so
+tool [middleware](../../agents/middleware.mdx) and `AfterToolCallEvent.retry` apply to
+them too.
+
+A programmatic tool caller is never exposed to the code: not itself, and not another
+instance, even when its name is in <Syntax py="allowed_tools" ts="allowedTools" />.
+
+## Security
+
+Monty is a language-level sandbox, not an OS-level one. The code has no filesystem,
+network, environment, or subprocess access of its own, but it reaches exactly what the
+agent's tools reach: with a shell tool registered, the code can run shell commands.
+Narrow what the code can call with
+<Syntax py="allowed_tools" ts="allowedTools" />. For an OS boundary around the tools
+themselves, run the agent in a [sandbox](../../sandbox/index.mdx).
+
+[Full API reference](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/programmatic-tool-caller/README.md)

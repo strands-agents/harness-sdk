@@ -462,6 +462,7 @@ sidebar:
                   - docs/user-guide/sdk/tools/vended-tools/web-fetch
                   - docs/user-guide/sdk/tools/vended-tools/a2a-client
                   - docs/user-guide/sdk/tools/vended-tools/python-repl
+                  - docs/user-guide/sdk/tools/vended-tools/programmatic-tool-caller
                   - docs/user-guide/sdk/tools/vended-tools/subagent
                   - docs/user-guide/sdk/tools/vended-tools/swarm
                   - docs/user-guide/sdk/tools/vended-tools/graph
