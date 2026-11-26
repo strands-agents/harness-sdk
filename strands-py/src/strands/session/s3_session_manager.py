@@ -54,6 +54,7 @@ class S3SessionManager(RepositorySessionManager, SessionRepository):
         boto_client_config: BotocoreConfig | None = None,
         region_name: str | None = None,
         endpoint_url: str | None = None,
+        put_object_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ):
         """Initialize S3SessionManager with S3 storage.
@@ -68,10 +69,22 @@ class S3SessionManager(RepositorySessionManager, SessionRepository):
             region_name: AWS region for S3 storage
             endpoint_url: Custom endpoint URL for S3-compatible storage backends (e.g., MinIO, LocalStack)
                 or VPC endpoints (PrivateLink)
+            put_object_kwargs: Additional parameters passed to every S3 put_object call
+                (e.g., ServerSideEncryption, SSEKMSKeyId)
             **kwargs: Additional keyword arguments for future extensibility.
+
+        Raises:
+            ValueError: If put_object_kwargs contains Bucket, Key, Body, or ContentType.
         """
         self.bucket = bucket
         self.prefix = prefix
+
+        put_object_kwargs = put_object_kwargs or {}
+        reserved_params = {"Bucket", "Key", "Body", "ContentType"}
+        invalid_params = reserved_params.intersection(put_object_kwargs.keys())
+        if invalid_params:
+            raise ValueError(f"put_object_kwargs cannot contain reserved parameters: {invalid_params}")
+        self._put_object_kwargs = put_object_kwargs
 
         session = boto_session or boto3.Session(region_name=region_name)
 
@@ -158,7 +171,11 @@ class S3SessionManager(RepositorySessionManager, SessionRepository):
         try:
             content = json.dumps(data, indent=2, ensure_ascii=False)
             self.client.put_object(
-                Bucket=self.bucket, Key=key, Body=content.encode("utf-8"), ContentType="application/json"
+                Bucket=self.bucket,
+                Key=key,
+                Body=content.encode("utf-8"),
+                ContentType="application/json",
+                **self._put_object_kwargs,
             )
         except ClientError as e:
             raise SessionException(f"Failed to write S3 object {key}: {e}") from e
