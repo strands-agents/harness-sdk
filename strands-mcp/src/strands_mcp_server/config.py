@@ -16,7 +16,7 @@ class Config:
 
     llm_texts_url: list[str] = field(
         default_factory=lambda: ["https://strandsagents.com/llms.txt"]
-    )  # Curated list of llms.txt files to index at startup
+    )  # Curated list of llms.txt files to index on first use
     title_only_urls: frozenset[str] = frozenset({"https://strandsagents.com/changelog/index.md"})
     integrations_feed_url: str = "https://strandsagents.com/integrations.json"
     integrations_feed_ttl: float = 600.0
