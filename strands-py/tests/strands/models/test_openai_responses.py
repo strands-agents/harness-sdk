@@ -1217,6 +1217,230 @@ async def test_stream_citation_annotations(openai_client, model, agenerator, ali
     }
 
 
+def _message_events(item_id, phase, *deltas, annotation=None):
+    """Stream events of one assistant message output item."""
+    events = [
+        unittest.mock.Mock(
+            type="response.output_item.added",
+            item=unittest.mock.Mock(type="message", id=item_id, phase=phase),
+        )
+    ]
+    events.extend(
+        unittest.mock.Mock(type="response.output_text.delta", item_id=item_id, delta=delta) for delta in deltas
+    )
+    if annotation:
+        events.append(
+            unittest.mock.Mock(type="response.output_text.annotation.added", item_id=item_id, annotation=annotation)
+        )
+    return events
+
+
+def _function_call_events(item_id, call_id, name):
+    """Stream events of one function call output item."""
+    item = unittest.mock.Mock(type="function_call", call_id=call_id, id=item_id)
+    item.name = name
+    return [
+        unittest.mock.Mock(type="response.output_item.added", item=item),
+        unittest.mock.Mock(type="response.function_call_arguments.done", item_id=item_id, arguments="{}"),
+    ]
+
+
+def _response_end_event(event_type="response.completed", incomplete_reason=None):
+    """Stream event that ends a response."""
+    return unittest.mock.Mock(
+        type=event_type,
+        response=unittest.mock.Mock(
+            usage=unittest.mock.Mock(input_tokens=10, output_tokens=5, total_tokens=15, input_tokens_details=None),
+            incomplete_details=unittest.mock.Mock(reason=incomplete_reason),
+        ),
+    )
+
+
+_BLOCK_START = {"contentBlockStart": {"start": {}}}
+_BLOCK_STOP = {"contentBlockStop": {}}
+_URL_CITATION = {"type": "url_citation", "title": "Source", "url": "https://example.com"}
+_CITATION_DELTA = {
+    "contentBlockDelta": {
+        "delta": {"citation": {"title": "Source", "location": {"web": {"url": "https://example.com"}}}}
+    }
+}
+
+
+def _text_delta(text):
+    """Expected event of one text delta."""
+    return {"contentBlockDelta": {"delta": {"text": text}}}
+
+
+def _tool_use_events(tool_use_id, name):
+    """Expected events of one tool use block."""
+    return [
+        {"contentBlockStart": {"start": {"toolUse": {"name": name, "toolUseId": tool_use_id}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": "{}"}}}},
+        _BLOCK_STOP,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("response_events", "exp_content_events", "exp_stop_reason"),
+    [
+        pytest.param(
+            [
+                *_message_events("msg_c", "commentary", "Which ", "color?"),
+                *_message_events("msg_f", "final_answer", "Which ", "color?"),
+                _response_end_event(),
+            ],
+            [_BLOCK_START, _text_delta("Which "), _text_delta("color?"), _BLOCK_STOP],
+            "end_turn",
+            id="same_text_in_both",
+        ),
+        pytest.param(
+            [
+                *_message_events("msg_c", "commentary", "Which color? Ask the user, no tool call."),
+                *_message_events("msg_f", "final_answer", "Which color?"),
+                _response_end_event(),
+            ],
+            [_BLOCK_START, _text_delta("Which color?"), _BLOCK_STOP],
+            "end_turn",
+            id="final_answer_differs",
+        ),
+        pytest.param(
+            [
+                *_message_events("msg_c", "commentary", "Which color?"),
+                *_message_events("msg_f", "final_answer", ""),
+                _response_end_event(),
+            ],
+            [_BLOCK_START, _text_delta(""), _text_delta("Which color?"), _BLOCK_STOP],
+            "end_turn",
+            id="final_answer_empty",
+        ),
+        pytest.param(
+            [
+                *_message_events("msg_c", "commentary", "Which color?"),
+                *_message_events("msg_f", "final_answer", " "),
+                _response_end_event(),
+            ],
+            [_BLOCK_START, _text_delta(" "), _text_delta("Which color?"), _BLOCK_STOP],
+            "end_turn",
+            id="final_answer_whitespace",
+        ),
+        pytest.param(
+            [
+                *_message_events("msg_c", "commentary", "Checking."),
+                *_function_call_events("fc_1", "call_1", "lookup"),
+                _response_end_event(),
+            ],
+            [_BLOCK_START, _text_delta("Checking."), _BLOCK_STOP, *_tool_use_events("call_1", "lookup")],
+            "tool_use",
+            id="commentary_before_tool_call",
+        ),
+        pytest.param(
+            [
+                *_message_events("msg_c", "commentary", "Checking."),
+                *_function_call_events("fc_1", "call_1", "lookup"),
+                *_message_events("msg_f", "final_answer", "Which color?"),
+                _response_end_event(),
+            ],
+            [_BLOCK_START, _text_delta("Which color?"), _BLOCK_STOP, *_tool_use_events("call_1", "lookup")],
+            "tool_use",
+            id="final_answer_after_tool_call",
+        ),
+        pytest.param(
+            [
+                *_message_events("msg_c", "commentary", "Checking."),
+                unittest.mock.Mock(type="response.reasoning_summary_text.delta", delta="Need the item."),
+                *_function_call_events("fc_1", "call_1", "lookup"),
+                _response_end_event(),
+            ],
+            [
+                _BLOCK_START,
+                {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "Need the item."}}}},
+                _BLOCK_STOP,
+                _BLOCK_START,
+                _text_delta("Checking."),
+                _BLOCK_STOP,
+                *_tool_use_events("call_1", "lookup"),
+            ],
+            "tool_use",
+            id="commentary_then_reasoning",
+        ),
+        pytest.param(
+            [
+                *_message_events("msg_c", "commentary", "Which co"),
+                _response_end_event("response.incomplete", incomplete_reason="max_output_tokens"),
+            ],
+            [_BLOCK_START, _text_delta("Which co"), _BLOCK_STOP],
+            "max_tokens",
+            id="commentary_cut_off",
+        ),
+        pytest.param(
+            [
+                *_message_events("msg_f", "final_answer", "Which color?"),
+                *_message_events("msg_c", "commentary", "Which color?"),
+                _response_end_event(),
+            ],
+            [_BLOCK_START, _text_delta("Which color?"), _BLOCK_STOP],
+            "end_turn",
+            id="commentary_after_final_answer",
+        ),
+        pytest.param(
+            [
+                *_message_events("msg_c", "commentary", "Draft.", annotation=_URL_CITATION),
+                *_message_events("msg_f", "final_answer", "Answer."),
+                _response_end_event(),
+            ],
+            [_BLOCK_START, _text_delta("Answer."), _BLOCK_STOP],
+            "end_turn",
+            id="citation_dropped_with_commentary",
+        ),
+        pytest.param(
+            [
+                *_message_events("msg_c", "commentary", "Draft.", annotation=_URL_CITATION),
+                _response_end_event(),
+            ],
+            [_BLOCK_START, _text_delta("Draft."), _CITATION_DELTA, _BLOCK_STOP],
+            "end_turn",
+            id="citation_emitted_with_commentary",
+        ),
+        pytest.param(
+            [
+                *_message_events("msg_1", "final_answer", "Hello"),
+                *_message_events("msg_2", "final_answer", " world"),
+                _response_end_event(),
+            ],
+            [_BLOCK_START, _text_delta("Hello"), _text_delta(" world"), _BLOCK_STOP],
+            "end_turn",
+            id="two_final_answers",
+        ),
+        pytest.param(
+            [
+                *_message_events("msg_1", None, "Hello"),
+                *_message_events("msg_2", None, " world"),
+                _response_end_event(),
+            ],
+            [_BLOCK_START, _text_delta("Hello"), _text_delta(" world"), _BLOCK_STOP],
+            "end_turn",
+            id="no_phase",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_commentary_message(
+    openai_client, model, agenerator, alist, response_events, exp_content_events, exp_stop_reason
+):
+    # guards against a reply emitted twice when a response holds a commentary and a final answer message (#6587)
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator(response_events))
+
+    tru_events = await alist(model.stream([{"role": "user", "content": [{"text": "test"}]}]))
+
+    exp_events = [
+        {"messageStart": {"role": "assistant"}},
+        *exp_content_events,
+        {"messageStop": {"stopReason": exp_stop_reason}},
+        {"metadata": unittest.mock.ANY},
+    ]
+    assert tru_events == exp_events
+
+
 @pytest.mark.asyncio
 async def test_stream_unsupported_annotation_type(openai_client, model, agenerator, alist, caplog):
     """Test that unsupported annotation types log a warning and are not emitted."""

@@ -130,6 +130,58 @@ class _ToolCallInfo(TypedDict):
     item_id: str
 
 
+def _commentary_item_id(event: Any) -> str | None:
+    """Return the item id when the stream event starts a ``commentary`` message."""
+    if getattr(event, "type", None) != "response.output_item.added":
+        return None
+    item = getattr(event, "item", None)
+    if getattr(item, "type", None) != "message" or getattr(item, "phase", None) != "commentary":
+        return None
+    return getattr(item, "id", None)
+
+
+async def _hold_commentary(events: AsyncIterator[Any]) -> AsyncGenerator[Any, None]:
+    """Pass a response's stream events through, holding back the text of ``commentary`` messages.
+
+    A ``commentary`` message can repeat the text of the ``final_answer`` message in the same response,
+    and which of the two is the reply is not known until the response ends. Commentary text and
+    citations are therefore held, and passed on ahead of the event that ends the response only when
+    the response carries no other non-blank text. Every other event is passed on as it arrives.
+
+    Args:
+        events: Stream events of one Responses API response.
+
+    Yields:
+        The stream events, without the commentary text that other text replaced.
+    """
+    commentary_item_ids: set[str] = set()
+    held: list[Any] = []
+    answer_started = False
+
+    async for event in events:
+        event_type = getattr(event, "type", None)
+        commentary_item_id = _commentary_item_id(event)
+        if commentary_item_id:
+            commentary_item_ids.add(commentary_item_id)
+        elif event_type in ("response.output_text.delta", "response.output_text.annotation.added"):
+            if getattr(event, "item_id", None) in commentary_item_ids:
+                if not answer_started:
+                    held.append(event)
+                continue
+            delta = getattr(event, "delta", None)
+            if event_type == "response.output_text.delta" and isinstance(delta, str) and delta.strip():
+                answer_started = True
+                held.clear()
+        elif event_type in ("response.completed", "response.incomplete"):
+            for held_event in held:
+                yield held_event
+            held.clear()
+        yield event
+
+    for held_event in held:
+        yield held_event
+
+
 class Client(Protocol):
     """Protocol defining the OpenAI Responses API interface for the underlying provider client."""
 
@@ -394,7 +446,7 @@ class OpenAIResponsesModel(Model):
                 data_type: str | None = None
                 stop_reason: str | None = None
 
-                async for event in response:
+                async for event in _hold_commentary(response):
                     if hasattr(event, "type"):
                         if event.type == "response.created":
                             # Capture response id for server-side conversation chaining
