@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import importlib
 import json
@@ -28,7 +29,9 @@ WEB_SEARCH_TOOL = {"type": "web_search_20260318", "name": "web_search", "max_use
 @pytest.fixture
 def anthropic_client():
     with unittest.mock.patch.object(strands.models.anthropic.anthropic, "AsyncAnthropic") as mock_client_cls:
-        yield mock_client_cls.return_value
+        mock_client = mock_client_cls.return_value
+        mock_client.__aenter__.return_value = mock_client
+        yield mock_client
 
 
 @pytest.fixture
@@ -3835,6 +3838,88 @@ def test_api_version_prefers_a_user_header_in_any_case(wire):
     model = AnthropicModel(client_args=client_args, model_id="m1", max_tokens=1)
 
     assert model._api_version() == "2023-06-01"
+
+
+@pytest.fixture
+def loop_bound_clients():
+    """Builds each client over a connection bound to the event loop that first used it, like a pooled one."""
+    httpx_module = importlib.import_module("httpx2" if int(anthropic.__version__.split(".")[0]) >= 1 else "httpx")
+    sse = "".join(
+        f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
+        for event in [
+            {
+                "type": "message_start",
+                "message": {
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [],
+                    "model": "m1",
+                    "stop_reason": None,
+                    "stop_sequence": None,
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            },
+            {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "hi"}},
+            {"type": "content_block_stop", "index": 0},
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 1}},
+            {"type": "message_stop"},
+        ]
+    )
+
+    class LoopBoundTransport(httpx_module.AsyncBaseTransport):
+        def __init__(self):
+            self.loop = None
+
+        async def handle_async_request(self, request):
+            self.loop = self.loop or asyncio.get_running_loop()
+            self.loop.call_soon(lambda: None)  # raises "Event loop is closed" once that loop has exited
+            if request.url.path.endswith("/count_tokens"):
+                return httpx_module.Response(200, json={"input_tokens": 1234})
+            return httpx_module.Response(200, headers={"content-type": "text/event-stream"}, text=sse)
+
+    real_client_cls = anthropic.AsyncAnthropic
+
+    def create_client(**client_args):
+        return real_client_cls(http_client=httpx_module.AsyncClient(transport=LoopBoundTransport()), **client_args)
+
+    with unittest.mock.patch.object(strands.models.anthropic.anthropic, "AsyncAnthropic", side_effect=create_client):
+        yield
+
+
+def test_stream_succeeds_on_each_new_event_loop(loop_bound_clients, messages):
+    """Each synchronous Agent call runs stream on a new event loop, and every call succeeds."""
+    model = AnthropicModel(client_args={"api_key": "test", "max_retries": 0}, model_id="m1", max_tokens=1)
+
+    async def stream_text():
+        events = [event async for event in model.stream(messages)]
+        return "".join(event["contentBlockDelta"]["delta"]["text"] for event in events if "contentBlockDelta" in event)
+
+    tru_texts = [asyncio.run(stream_text()), asyncio.run(stream_text())]
+    exp_texts = ["hi", "hi"]
+    assert tru_texts == exp_texts
+
+
+def test_count_tokens_succeeds_on_each_new_event_loop(loop_bound_clients, messages):
+    """Each synchronous Agent call counts tokens on a new event loop, and every count comes from the API."""
+    model = AnthropicModel(
+        client_args={"api_key": "test", "max_retries": 0}, model_id="m1", max_tokens=1, use_native_token_count=True
+    )
+
+    tru_counts = [asyncio.run(model.count_tokens(messages)), asyncio.run(model.count_tokens(messages))]
+    exp_counts = [1234, 1234]
+    assert tru_counts == exp_counts
+
+
+@pytest.mark.asyncio
+async def test_stream_leaves_a_caller_http_client_open(wire, alist, messages):
+    model = AnthropicModel(client_args=wire["client_args"], model_id="m1", max_tokens=1)
+
+    with pytest.raises(anthropic.BadRequestError):
+        await alist(model.stream(messages))
+
+    assert not wire["client_args"]["http_client"].is_closed
 
 
 @pytest.mark.parametrize("client", [unittest.mock.Mock(), unittest.mock.AsyncMock(), unittest.mock.MagicMock()])

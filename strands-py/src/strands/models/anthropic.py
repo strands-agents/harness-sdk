@@ -11,7 +11,8 @@ import re
 import threading
 import warnings
 from collections import Counter
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 from urllib.parse import urlparse
 
@@ -310,8 +311,25 @@ class AnthropicModel(Model):
 
         logger.debug("config=<%s> | initializing", self.config)
 
-        self.client: _AsyncClient = client if client is not None else anthropic.AsyncAnthropic(**(client_args or {}))
+        client_args = client_args or {}
+        self.client: _AsyncClient = client if client is not None else anthropic.AsyncAnthropic(**client_args)
+        self._client_args = client_args
+        self._client_per_request = client is None and "http_client" not in client_args
         self._drop_stale_thinking_model_id: str | None = None
+
+    @asynccontextmanager
+    async def _get_client(self) -> AsyncIterator["_AsyncClient"]:
+        """Yield the client for one request.
+
+        Pooled connections are bound to the event loop that opened them, and each synchronous Agent call runs on a
+        new loop, so a client built from ``client_args`` is created per request and closed after it. An injected
+        client, or one built around a caller's ``http_client``, is the caller's to manage and is used as is.
+        """
+        if not self._client_per_request:
+            yield self.client
+            return
+        async with anthropic.AsyncAnthropic(**self._client_args) as client:
+            yield client
 
     @override
     def update_config(self, **model_config: Unpack[AnthropicConfig]) -> None:  # type: ignore[override]
@@ -1212,7 +1230,8 @@ class AnthropicModel(Model):
             count_tokens_fields = {"model", "messages", "tools", "tool_choice", "system", "extra_headers"}
             request = {k: request[k] for k in request.keys() & count_tokens_fields}
 
-            response = await self.client.messages.count_tokens(**request)
+            async with self._get_client() as client:
+                response = await client.messages.count_tokens(**request)
             total_tokens: int = response.input_tokens
 
             logger.debug(
@@ -1288,7 +1307,7 @@ class AnthropicModel(Model):
         retry_with_next_mechanism = False
         try:
             while True:
-                async with self.client.messages.stream(**request) as stream:
+                async with self._get_client() as client, client.messages.stream(**request) as stream:
                     logger.debug("got response from model")
                     server_tool_block_indexes: set[int] = set()
                     next_block_index = block_index_offset
@@ -1513,7 +1532,7 @@ class AnthropicModel(Model):
         request = self._with_beta(request, COMPACTION_BETA)
 
         # The Bedrock/Vertex beta resources alias the first-party stream method, which mypy rejects as a self type.
-        async with self.client.beta.messages.stream(**request) as stream:  # type: ignore[misc]
+        async with self._get_client() as client, client.beta.messages.stream(**request) as stream:  # type: ignore[misc]
             response = cast(dict[str, Any], (await stream.get_final_message()).to_dict())
         usage = _format_compaction_usage(response["usage"]) if response.get("usage") else None
 
