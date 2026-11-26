@@ -195,10 +195,10 @@ class SlidingWindowConversationManager(ConversationManager):
         """
         messages = agent.messages
 
-        # Pin first N messages permanently (only on first reduction)
+        # Pin first N messages permanently; keep pinning on later reductions until the history holds N messages.
         if self.pin_first and not self._pin_first_applied:
             apply_pin_first(messages, self.pin_first)
-            self._pin_first_applied = True
+            self._pin_first_applied = len(messages) >= self.pin_first
 
         # window_size=0 means "remove all non-pinned messages"
         if self.window_size == 0:
