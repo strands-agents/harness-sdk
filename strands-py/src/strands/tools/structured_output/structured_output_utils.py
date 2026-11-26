@@ -52,10 +52,12 @@ def _flatten_schema(schema: dict[str, Any]) -> dict[str, Any]:
                     "properties": {},
                 }
 
-                # Process each nested property
+                # Process each nested property. Use a dedicated variable so the nested
+                # required-status does not clobber the outer property's ``is_required``,
+                # which is consulted below to decide the top-level ``required`` list.
                 for nested_prop_name, nested_prop_value in prop_value["properties"].items():
-                    is_required = "required" in prop_value and nested_prop_name in prop_value["required"]
-                    sub_property = _process_property(nested_prop_value, schema.get("$defs", {}), is_required)
+                    nested_is_required = "required" in prop_value and nested_prop_name in prop_value["required"]
+                    sub_property = _process_property(nested_prop_value, schema.get("$defs", {}), nested_is_required)
                     processed_prop["properties"][nested_prop_name] = sub_property
 
                 # Copy required fields if present
