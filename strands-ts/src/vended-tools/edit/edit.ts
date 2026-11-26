@@ -5,6 +5,10 @@
  * [Sandbox](../../sandbox/base.ts): either one bound at creation (as the
  * built-in Docker/SSH sandboxes do when vending tools) or the agent's
  * configured sandbox read from `context.agent.sandbox` at call time.
+ *
+ * Line breaks in `old_str` match the file's own line endings (LF or CRLF), and
+ * `new_str` is written with the line ending of the text it replaces (or the file's
+ * dominant one), so a model that always writes LF can still edit CRLF files.
  */
 
 import { tool } from '../../tools/tool-factory.js'
@@ -68,13 +72,21 @@ export function makeEdit(
       const sandbox = boundSandbox ?? context.agent.sandbox
 
       const content = await sandbox.readText(input.path)
-      const occurrences = content.split(input.old_str).length - 1
+      // Models write LF; retry with the file's other line ending before giving up.
+      const lfOldStr = input.old_str.replace(/\r\n/g, '\n')
+      const candidates = [input.old_str, lfOldStr, lfOldStr.replace(/\n/g, '\r\n')]
+      const needle = candidates.find((s) => content.includes(s)) ?? input.old_str
+      const occurrences = content.split(needle).length - 1
       if (occurrences === 0) throw new Error(`old_str did not appear verbatim in ${input.path}.`)
       if (occurrences > 1) throw new Error(`old_str appears ${occurrences} times in ${input.path}; make it unique.`)
+      const crlfCount = content.split('\r\n').length - 1
+      const fileNewline = crlfCount * 2 > content.split('\n').length - 1 ? '\r\n' : '\n'
+      const newline = needle.includes('\n') ? (needle.includes('\r\n') ? '\r\n' : '\n') : fileNewline
+      const replacement = input.new_str.replace(/\r\n/g, '\n').replace(/\n/g, newline)
       // Function replacer so `$&`-style patterns in new_str are inserted literally.
       await sandbox.writeText(
         input.path,
-        content.replace(input.old_str, () => input.new_str)
+        content.replace(needle, () => replacement)
       )
       return `Edited ${input.path}.`
     },

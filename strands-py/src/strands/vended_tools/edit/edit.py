@@ -5,6 +5,10 @@ Replaces an exact, unique string in a text file through a
 built-in Docker/SSH sandboxes do when vending tools) or the agent's configured
 sandbox read from ``tool_context.agent.sandbox`` at call time.
 
+Line breaks in ``old_str`` match the file's own line endings (LF or CRLF),
+and ``new_str`` is written with the line ending of the text it replaces (or the
+file's dominant one), so a model that always writes LF can still edit CRLF files.
+
 Pairs with the companion ``read`` and ``write`` vended tools.
 """
 
@@ -70,12 +74,21 @@ def make_edit(
         active = sandbox if sandbox is not None else tool_context.agent.sandbox
 
         content = await active.read_text(path)
-        occurrences = content.count(old_str)
+        # Models write LF; retry with the file's other line ending before giving up.
+        lf_old_str = old_str.replace("\r\n", "\n")
+        candidates = (old_str, lf_old_str, lf_old_str.replace("\n", "\r\n"))
+        needle = next((s for s in candidates if s in content), old_str)
+        occurrences = content.count(needle)
         if occurrences == 0:
             raise ValueError(f"old_str did not appear verbatim in {path}.")
         if occurrences > 1:
             raise ValueError(f"old_str appears {occurrences} times in {path}; make it unique.")
-        await active.write_text(path, content.replace(old_str, new_str, 1))
+        if "\n" in needle:
+            newline = "\r\n" if "\r\n" in needle else "\n"
+        else:
+            newline = "\r\n" if content.count("\r\n") * 2 > content.count("\n") else "\n"
+        replacement = new_str.replace("\r\n", "\n").replace("\n", newline)
+        await active.write_text(path, content.replace(needle, replacement, 1))
         return f"Edited {path}."
 
     return edit_tool
