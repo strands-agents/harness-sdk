@@ -6,6 +6,7 @@ import { InvocationContextImpl } from '../../../agent/invocation-context.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { makeWebFetch, webFetch, DEFAULT_MAX_BYTES, DEFAULT_MAX_CONTENT_CHARS } from '../web-fetch.js'
 import { WEB_FETCH_DESCRIPTION_MARKDOWN, WEB_FETCH_DESCRIPTION_AGENTIC } from '../types.js'
+import { isPublicHost } from '../address-guard.js'
 
 const mockInvoke = vi.fn()
 
@@ -28,11 +29,16 @@ vi.mock('../extract.js', () => ({
   htmlToMarkdown: vi.fn((html: string) => `md:${html}`),
 }))
 
+vi.mock('../address-guard.js', () => ({
+  isPublicHost: vi.fn(async () => true),
+}))
+
 describe('webFetch tool', () => {
   const originalFetch = globalThis.fetch
 
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(isPublicHost).mockReset()
   })
 
   afterEach(() => {
@@ -55,6 +61,16 @@ describe('webFetch tool', () => {
         },
       }),
     })
+  }
+
+  function mockRedirect(location: string | null, status = 302): Partial<Response> {
+    return {
+      ok: false,
+      status,
+      statusText: 'Found',
+      headers: { get: (key: string) => (key === 'location' ? location : null) } as Headers,
+      body: null,
+    }
   }
 
   function makeContext(overrides: Partial<ToolContext> = {}): ToolContext {
@@ -247,6 +263,136 @@ describe('webFetch tool', () => {
         expect.objectContaining({
           headers: expect.objectContaining({ 'User-Agent': 'strands-agents-web-fetch/1.0' }),
         })
+      )
+    })
+  })
+
+  describe('non-public addresses', () => {
+    it('refuses a host that is not public without sending a request', async () => {
+      mockFetch('secret')
+      vi.mocked(isPublicHost).mockResolvedValueOnce(false)
+
+      await expect(
+        makeWebFetch({ mode: 'markdown' }).invoke({ url: 'http://169.254.169.254/latest' })
+      ).rejects.toMatchObject({
+        message:
+          'url=<http://169.254.169.254/latest> | fetch refused: host is or resolves to a loopback, link-local, ' +
+          'private, or other non-public address. Set allowPrivateAddresses: true on makeWebFetch to allow it.',
+      })
+      expect(isPublicHost).toHaveBeenCalledWith('169.254.169.254')
+      expect(globalThis.fetch).not.toHaveBeenCalled()
+    })
+
+    it('refuses a host that cannot be resolved', async () => {
+      mockFetch('secret')
+      vi.mocked(isPublicHost).mockRejectedValueOnce(new Error('ENOTFOUND'))
+
+      await expect(makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://unknown.example/' })).rejects.toThrow(
+        'url=<https://unknown.example/> | fetch failed: could not check the host address: ENOTFOUND. ' +
+          'If a proxy resolves names for fetch, or the runtime is not Node.js, set allowPrivateAddresses: true on makeWebFetch.'
+      )
+      expect(globalThis.fetch).not.toHaveBeenCalled()
+    })
+
+    it('refuses a redirect to a host that is not public', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(mockRedirect('http://127.0.0.1:8080/admin'))
+      vi.mocked(isPublicHost).mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+
+      await expect(makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://example.com/' })).rejects.toThrow(
+        'url=<http://127.0.0.1:8080/admin> | fetch refused'
+      )
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://example.com/',
+        expect.objectContaining({ redirect: 'manual' })
+      )
+    })
+
+    it('refuses a redirect to a non-http scheme', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(mockRedirect('file:///etc/passwd'))
+
+      await expect(makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://example.com/' })).rejects.toThrow(
+        /only http and https/
+      )
+    })
+
+    it.each([301, 302, 303, 307, 308])(
+      'follows a %i to a public host, resolving a relative location',
+      async (status) => {
+        mockFetch('final page')
+        vi.mocked(globalThis.fetch).mockResolvedValueOnce(mockRedirect('/moved', status) as Response)
+
+        const result = await makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://example.com/old' })
+
+        expect(result).toBe('final page')
+        expect(vi.mocked(globalThis.fetch).mock.calls.map(([target]) => target)).toStrictEqual([
+          'https://example.com/old',
+          'https://example.com/moved',
+        ])
+        expect(vi.mocked(isPublicHost).mock.calls).toStrictEqual([['example.com'], ['example.com']])
+      }
+    )
+
+    it('stops after too many redirects', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(mockRedirect('https://example.com/loop'))
+
+      await expect(makeWebFetch({ mode: 'markdown' }).invoke({ url: 'https://example.com/loop' })).rejects.toThrow(
+        /too many redirects/
+      )
+      expect(globalThis.fetch).toHaveBeenCalledTimes(21)
+    })
+
+    it('cancels while the host is still being checked', async () => {
+      mockFetch('page')
+      vi.mocked(isPublicHost).mockReturnValueOnce(new Promise(() => {}))
+      const controller = new AbortController()
+
+      const result = makeWebFetch({ mode: 'markdown' }).invoke(
+        { url: 'https://example.com/' },
+        makeContext({ cancelSignal: controller.signal })
+      )
+      controller.abort()
+
+      await expect(result).rejects.toThrow('Web fetch tool request cancelled')
+      expect(globalThis.fetch).not.toHaveBeenCalled()
+    })
+
+    it('cancels without starting the host check when the signal is already aborted', async () => {
+      mockFetch('page')
+      const controller = new AbortController()
+      controller.abort()
+
+      await expect(
+        makeWebFetch({ mode: 'markdown' }).invoke(
+          { url: 'https://unknown.example/' },
+          makeContext({ cancelSignal: controller.signal })
+        )
+      ).rejects.toThrow('Web fetch tool request cancelled')
+      expect(isPublicHost).not.toHaveBeenCalled()
+      expect(globalThis.fetch).not.toHaveBeenCalled()
+    })
+
+    it('keeps the check for a truthy allowPrivateAddresses that is not true', async () => {
+      mockFetch('secret')
+      vi.mocked(isPublicHost).mockResolvedValueOnce(false)
+      const tool = makeWebFetch({ mode: 'markdown', allowPrivateAddresses: 'false' as never })
+
+      await expect(tool.invoke({ url: 'http://127.0.0.1:8080/' })).rejects.toThrow(/fetch refused/)
+      expect(globalThis.fetch).not.toHaveBeenCalled()
+    })
+
+    it('skips the check and lets fetch follow redirects when allowPrivateAddresses is set', async () => {
+      mockFetch('local page')
+
+      const result = await makeWebFetch({ mode: 'markdown', allowPrivateAddresses: true }).invoke({
+        url: 'http://127.0.0.1:8080/',
+      })
+
+      expect(result).toBe('local page')
+      expect(isPublicHost).not.toHaveBeenCalled()
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'http://127.0.0.1:8080/',
+        expect.objectContaining({ redirect: 'follow' })
       )
     })
   })

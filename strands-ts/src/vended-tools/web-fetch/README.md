@@ -11,6 +11,8 @@ Fetches an HTTP(S) URL and returns its relevant content. Distinct from the http-
 - For production deployments, consider running in a sandboxed environment (containers, VMs, etc.)
 - Never expose this tool to untrusted users or untrusted prompt input without additional security measures
 
+By default the tool refuses a URL whose host is, or resolves to, a loopback, link-local, private, or otherwise non-public address, and checks every redirect the same way. Pass `allowPrivateAddresses: true` to `makeWebFetch` to fetch local targets, or when a proxy resolves names or the runtime is not Node.js: the check resolves the host in the agent's process and needs Node.js. It catches mistakes and simple attacks but does not stop DNS rebinding, so keep network-level egress controls in place.
+
 ## Install
 
 HTML conversion requires the optional `turndown` peer dependency:
@@ -65,14 +67,15 @@ The default tool, produced by `makeWebFetch()` with `mode: 'agentic'` and defaul
 
 ### `makeWebFetch(options?)`
 
-| Option            | Type                      | Default       | Description                                                                                  |
-| ----------------- | ------------------------- | ------------- | -------------------------------------------------------------------------------------------- |
-| `mode`            | `'markdown' \| 'agentic'` | `'agentic'`   | Extraction mode (see below).                                                                 |
-| `name`            | `string`                  | `'web_fetch'` | Tool name shown to the model.                                                                |
-| `description`     | `string`                  | (built-in)    | Tool description shown to the model. Defaults to a mode-appropriate description.             |
-| `maxBytes`        | `number`                  | `5242880`     | Maximum response body size in bytes (5 MiB).                                                 |
-| `maxContentChars` | `number`                  | `50000`       | Maximum characters of extracted content delivered to the model.                              |
-| `model`           | `Model`                   |               | Analyst model for agentic mode. Falls back to the host agent's `auxModel` when not provided. |
+| Option                  | Type                      | Default       | Description                                                                                        |
+| ----------------------- | ------------------------- | ------------- | -------------------------------------------------------------------------------------------------- |
+| `mode`                  | `'markdown' \| 'agentic'` | `'agentic'`   | Extraction mode (see below).                                                                       |
+| `name`                  | `string`                  | `'web_fetch'` | Tool name shown to the model.                                                                      |
+| `description`           | `string`                  | (built-in)    | Tool description shown to the model. Defaults to a mode-appropriate description.                   |
+| `maxBytes`              | `number`                  | `5242880`     | Maximum response body size in bytes (5 MiB).                                                       |
+| `maxContentChars`       | `number`                  | `50000`       | Maximum characters of extracted content delivered to the model.                                    |
+| `model`                 | `Model`                   |               | Analyst model for agentic mode. Falls back to the host agent's `auxModel` when not provided.       |
+| `allowPrivateAddresses` | `boolean`                 | `false`       | Allow hosts that are, or resolve to, loopback, link-local, private, or other non-public addresses. |
 
 Throws if `maxBytes` or `maxContentChars` is not a positive number.
 

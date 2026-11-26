@@ -12,20 +12,23 @@ construction time:
 
 The tool delegates all networking to the ``httpx.AsyncClient`` instance
 provided by the operator, giving full control over transport configuration,
-caching, proxies, redirects, and connection pooling.
+caching, proxies, redirects, and connection pooling. Before each request,
+including each redirect hop, it resolves the host and refuses non-public
+addresses unless ``allow_private_addresses`` is set.
 """
 
 from __future__ import annotations
 
 import asyncio
 import threading
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 
 from ...agent.invocation_context import _create_auxiliary_invocation_context
 from ...tools.decorator import tool
 from ...types.tools import ToolContext
+from ._address_guard import is_public_host
 from ._extract import html_to_markdown
 from .types import WEB_FETCH_DESCRIPTION_AGENTIC, WEB_FETCH_DESCRIPTION_MARKDOWN
 
@@ -63,6 +66,7 @@ def make_web_fetch(
     client: httpx.AsyncClient | None = None,
     model: Model | None = None,
     mode: Literal["markdown", "agentic"] = "agentic",
+    allow_private_addresses: bool = False,
 ) -> DecoratedFunctionTool:
     """Create a web fetch tool.
 
@@ -84,6 +88,10 @@ def make_web_fetch(
             Resolution order: this ``model`` > ``agent.aux_model`` > ``agent.model`` of the host
             agent; ``WebFetchError`` if none is available.
         mode: Extraction mode. Defaults to ``agentic``.
+        allow_private_addresses: Allow URLs whose host is, or resolves to, a loopback, link-local,
+            private, or otherwise non-public address. Defaults to ``False``: such a URL, a redirect
+            to one, and a host this process cannot resolve are refused with ``WebFetchError``. Set
+            it when a proxy or custom transport resolves names. The check does not stop DNS rebinding.
 
     Returns:
         A decorated tool that fetches a URL and extracts content according to
@@ -126,6 +134,7 @@ def make_web_fetch(
             max_bytes=max_bytes,
             client=external_client,
             cancel_signal=cancel_signal,
+            allow_private_addresses=allow_private_addresses,
         )
 
         is_markup = "html" in content_type.lower() or "xml" in content_type.lower()
@@ -171,6 +180,7 @@ def make_web_fetch(
             max_bytes=max_bytes,
             client=external_client,
             cancel_signal=cancel_signal,
+            allow_private_addresses=allow_private_addresses,
         )
 
         # Fresh agent per call — no history from one fetch bleeds into the next.
@@ -212,8 +222,9 @@ async def _fetch_once(
     max_bytes: int,
     client: httpx.AsyncClient | None,
     cancel_signal: threading.Event | None,
+    allow_private_addresses: bool,
 ) -> tuple[str, str]:
-    """Perform one HTTP GET, returning ``(content_type, body_text)``.
+    """Fetch ``url``, returning ``(content_type, body_text)``.
 
     Raises:
         asyncio.CancelledError: When the agent cancel signal is set.
@@ -227,8 +238,9 @@ async def _fetch_once(
     active_client = client if client is not None else httpx.AsyncClient(follow_redirects=True)
     try:
         try:
-            request = active_client.build_request("GET", url, headers=_HEADERS)
-            response = await active_client.send(request, stream=True)
+            response = await _send(active_client, url, allow_private_addresses)
+        except WebFetchError:
+            raise
         except httpx.TimeoutException as error:
             raise WebFetchError(f"Fetch timed out: {url!r}") from error
         except (httpx.InvalidURL, httpx.RequestError, ValueError) as exc:
@@ -260,6 +272,55 @@ async def _fetch_once(
         raw = body.decode("utf-8", errors="replace")
 
     return content_type, raw
+
+
+async def _send(client: httpx.AsyncClient, url: str, allow_private_addresses: bool) -> httpx.Response:
+    """Send the GET, checking the target of every redirect hop unless private addresses are allowed."""
+    request = client.build_request("GET", url, headers=_HEADERS)
+    # Only a literal ``True`` opts out, so a truthy string from untyped config keeps the check on.
+    if allow_private_addresses is True:
+        return await client.send(request, stream=True)
+
+    origin = _origin(request.url)
+    auth: Any = httpx.USE_CLIENT_DEFAULT
+    for _ in range(client.max_redirects + 1):
+        await _check_public(request.url, client.timeout.connect)
+        response = await client.send(request, stream=True, follow_redirects=False, auth=auth)
+        if response.next_request is None or not client.follow_redirects:
+            return response
+        await response.aclose()
+        request = response.next_request
+        if _origin(request.url) != origin:
+            # As when httpx follows redirects itself, no credentials are offered to another origin.
+            auth = httpx.Auth()
+    raise WebFetchError(f"Fetch failed: too many redirects: {url!r}")
+
+
+def _origin(url: httpx.URL) -> tuple[str, str, int | None]:
+    return url.scheme, url.host, url.port
+
+
+async def _check_public(url: httpx.URL, timeout: float | None) -> None:
+    """Raise ``WebFetchError`` unless ``url`` is http(s) and its host resolves only to public addresses."""
+    # Credentials in the URL, such as those of the client's base_url, stay out of error messages.
+    shown = str(url.copy_with(userinfo=b""))
+    if url.scheme not in ("http", "https"):
+        raise WebFetchError(f"Fetch failed: only http and https URLs are supported: {shown!r}")
+    host = url.raw_host.decode("ascii")
+    try:
+        is_public = await asyncio.wait_for(is_public_host(host), timeout)
+    except asyncio.TimeoutError as error:
+        raise WebFetchError(f"Fetch timed out: {shown!r}") from error
+    except OSError as error:
+        raise WebFetchError(
+            f"Fetch failed: could not resolve host {host!r} to check its address. If a proxy or custom transport "
+            "resolves names for the client, set allow_private_addresses=True on make_web_fetch."
+        ) from error
+    if not is_public:
+        raise WebFetchError(
+            f"Fetch refused: {host!r} is or resolves to a loopback, link-local, private, or other non-public address. "
+            "Set allow_private_addresses=True on make_web_fetch to allow it."
+        )
 
 
 def _parse_charset(content_type: str) -> str:
