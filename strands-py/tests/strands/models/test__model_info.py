@@ -10,7 +10,6 @@ import pytest
 
 from strands.models._model_info import (
     _CAPABILITY_FIELDS,
-    _FORMAT_VALUES,
     _LIMIT_FIELDS,
     _PROMPT_CACHING_VALUES,
     DEFAULT_CONTEXT_WINDOW_LIMIT,
@@ -32,16 +31,38 @@ BASE = ModelInfo(
     limits=ModelLimits(context_window=200_000),
 )
 
-_CLAUDE_FORMATS = {
-    "image_formats": ("png", "jpeg", "gif", "webp"),
-    "document_formats": ("pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"),
-    "video_formats": (),
-}
+# Bedrock Converse's image and document types, the widest documented route for Claude and Nova.
+_CLAUDE_MIME_TYPES = (
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "application/pdf",
+    "text/csv",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/html",
+    "text/plain",
+    "text/markdown",
+)
+_NOVA_VIDEO_MIME_TYPES = (
+    "video/x-flv",
+    "video/x-matroska",
+    "video/quicktime",
+    "video/mpeg",
+    "video/mp4",
+    "video/3gpp",
+    "video/webm",
+    "video/x-ms-wmv",
+)
 
 _SHARED_DATA = pathlib.Path(__file__).parents[3] / ".." / "shared" / "model-info.json"
 _PACKAGE_COPY = pathlib.Path(__file__).parents[3] / "src" / "strands" / "models" / "model_info.json"
 
 _MODEL_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.:@-]*$")
+_MIME_TYPE_PATTERN = re.compile(r"^(image|video|audio|application|text)/([a-z0-9.+-]+|\*)$")
 _LIMIT_KEYS = ("contextWindow", "maxOutputTokens")
 # The TypeScript SDK reads this key; the Python loader skips it until the port.
 _DEFERRED_TOOL_LOADING_VALUES = ("unsupported", "native")
@@ -140,7 +161,7 @@ def test_lookup_model_returns_none_for_unknown_ids():
 
 def test_lookup_model_info_returns_the_entry_facts_and_nothing_for_unknown_ids():
     assert lookup_model_info("eu.anthropic.claude-sonnet-4-6") == ModelInfo(
-        capabilities=ModelCapabilities(prompt_caching="cache_points", **_CLAUDE_FORMATS),
+        capabilities=ModelCapabilities(prompt_caching="cache_points", accepted_mime_types=_CLAUDE_MIME_TYPES),
         limits=ModelLimits(context_window=1_000_000, max_output_tokens=128_000),
     )
     for model_id in ("anthropic.claude-opus-5-5", "global.anthropic.claude-fable-5-2", "claude-mythos-5-2"):
@@ -151,7 +172,7 @@ def test_lookup_model_info_returns_the_entry_facts_and_nothing_for_unknown_ids()
                 native_structured_output=True,
                 server_side_summary=True,
                 temporary_messages=True,
-                **_CLAUDE_FORMATS,
+                accepted_mime_types=_CLAUDE_MIME_TYPES,
             ),
             limits=ModelLimits(context_window=1_000_000, max_output_tokens=128_000),
         )
@@ -159,9 +180,7 @@ def test_lookup_model_info_returns_the_entry_facts_and_nothing_for_unknown_ids()
         capabilities=ModelCapabilities(
             forced_tool_choice=True,
             native_structured_output=False,
-            image_formats=("png", "jpeg", "gif", "webp"),
-            document_formats=("pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"),
-            video_formats=("flv", "mkv", "mov", "mpeg", "mpg", "mp4", "three_gp", "webm", "wmv"),
+            accepted_mime_types=_CLAUDE_MIME_TYPES + _NOVA_VIDEO_MIME_TYPES,
         ),
         limits=ModelLimits(context_window=300_000),
     )
@@ -209,28 +228,46 @@ def test_loader_returns_an_empty_section_when_the_section_is_missing_or_not_an_o
     assert _section(entry, "capabilities", _CAPABILITY_FIELDS, ModelCapabilities) == ModelCapabilities()
 
 
-def test_loader_reads_format_lists_as_tuples_and_skips_formats_this_version_does_not_know():
-    entry = {"capabilities": {"imageFormats": [], "documentFormats": ["pdf", "json"], "videoFormats": ["mp4", "3gp"]}}
+def test_loader_reads_accepted_mime_types_as_a_tuple():
+    entry = {"capabilities": {"acceptedMimeTypes": ["image/png", "video/*"]}}
 
     assert _section(entry, "capabilities", _CAPABILITY_FIELDS, ModelCapabilities) == ModelCapabilities(
-        image_formats=(), document_formats=("pdf",), video_formats=("mp4", "three_gp")
+        accepted_mime_types=("image/png", "video/*")
     )
 
 
-@pytest.mark.parametrize("formats", ["png", ["json"]])
-def test_loader_treats_a_format_list_it_cannot_read_as_unknown(formats):
-    entry = {"capabilities": {"documentFormats": formats}}
+def test_loader_treats_accepted_mime_types_that_are_not_a_list_as_unknown():
+    entry = {"capabilities": {"acceptedMimeTypes": "image/png"}}
 
     assert _section(entry, "capabilities", _CAPABILITY_FIELDS, ModelCapabilities) == ModelCapabilities()
 
 
-def test_model_info_merge_keeps_an_empty_format_list_as_known():
+def test_model_info_merge_keeps_an_empty_accepted_list_as_known():
     merged = ModelInfo.merge(
-        ModelInfo(capabilities=ModelCapabilities(image_formats=("png",))),
-        ModelInfo(capabilities=ModelCapabilities(image_formats=())),
+        ModelInfo(capabilities=ModelCapabilities(accepted_mime_types=("image/png",))),
+        ModelInfo(capabilities=ModelCapabilities(accepted_mime_types=())),
     )
 
-    assert merged.capabilities.image_formats == ()
+    assert merged.capabilities.accepted_mime_types == ()
+
+
+@pytest.mark.parametrize(
+    ("accepted", "mime_type", "exp_accepts"),
+    [
+        (None, "application/x-anything", True),
+        ((), "image/png", False),
+        (("image/png",), "image/png", True),
+        (("image/png",), "IMAGE/PNG", True),
+        (("text/plain",), "text/plain; charset=utf-8", True),
+        (("image/png",), "image/jpeg", False),
+        (("video/*",), "video/mp4", True),
+        (("video/*",), "audio/mp4", False),
+    ],
+)
+def test_model_info_accepts_reads_the_accepted_mime_types(accepted, mime_type, exp_accepts):
+    info = ModelInfo(capabilities=ModelCapabilities(accepted_mime_types=accepted))
+
+    assert info.accepts(mime_type) is exp_accepts
 
 
 def test_prompt_caching_value_map_covers_exactly_the_prompt_caching_type():
@@ -332,9 +369,9 @@ def test_shared_data_has_only_known_fields_with_the_right_types_in_every_entry()
                 assert value in _DEFAULT_EFFORT_VALUES, f"{model_id}.{key}"
             elif key == "deferredToolLoading":
                 assert value in _DEFERRED_TOOL_LOADING_VALUES, f"{model_id}.{key}"
-            elif key in ("imageFormats", "documentFormats", "videoFormats"):
+            elif key == "acceptedMimeTypes":
                 assert isinstance(value, list) and len(set(value)) == len(value), f"{model_id}.{key}"
-                assert set(value) <= set(_FORMAT_VALUES[_CAPABILITY_FIELDS[key]]), f"{model_id}.{key}"
+                assert all(_MIME_TYPE_PATTERN.match(mime_type) for mime_type in value), f"{model_id}.{key}"
             else:
                 assert key in _BOOLEAN_CAPABILITY_KEYS, f"{model_id}.capabilities.{key}"
                 assert isinstance(value, bool), f"{model_id}.{key}"
@@ -349,7 +386,7 @@ def test_lookup_keeps_the_typed_fields_and_skips_the_rest():
             native_structured_output=True,
             server_side_summary=True,
             temporary_messages=True,
-            **_CLAUDE_FORMATS,
+            accepted_mime_types=_CLAUDE_MIME_TYPES,
         ),
         limits=ModelLimits(context_window=1_000_000, max_output_tokens=128_000),
     )

@@ -2011,38 +2011,45 @@ def test_model_info_reads_cache_points_from_the_shared_model_info(anthropic_clie
     assert model.model_info.capabilities.prompt_caching == "cache_points"
 
 
-def test_model_info_keeps_only_the_document_formats_the_provider_sends(anthropic_client):
+_OFFICE_TYPES = (
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
+
+
+def test_model_info_drops_the_office_types_the_provider_cannot_send(anthropic_client):
     _ = anthropic_client
 
+    shared = lookup_model_info("claude-sonnet-4-6").capabilities.accepted_mime_types
     model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1)
 
-    assert lookup_model_info("claude-sonnet-4-6").capabilities.document_formats == (
-        "pdf",
-        "csv",
-        "doc",
-        "docx",
-        "xls",
-        "xlsx",
-        "html",
-        "txt",
-        "md",
-    )
-    assert model.model_info.capabilities.document_formats == ("pdf", "csv", "html", "txt", "md")
-    assert (
-        AnthropicModel(model_id="claude-3-opus-20240229", max_tokens=1).model_info.capabilities.document_formats is None
-    )
+    assert set(_OFFICE_TYPES) <= set(shared)
+    assert model.model_info.capabilities.accepted_mime_types == tuple(t for t in shared if t not in _OFFICE_TYPES)
+    assert model.model_info.accepts("application/pdf")
+    assert not model.model_info.accepts(_OFFICE_TYPES[1])
 
 
-def test_model_info_override_sets_the_document_formats(anthropic_client):
+def test_model_info_accepts_every_type_when_the_shared_data_has_no_list(anthropic_client):
+    _ = anthropic_client
+
+    model = AnthropicModel(model_id="claude-3-opus-20240229", max_tokens=1)
+
+    assert model.model_info.capabilities.accepted_mime_types is None
+    assert model.model_info.accepts(_OFFICE_TYPES[1])
+
+
+def test_model_info_override_sets_the_accepted_mime_types(anthropic_client):
     _ = anthropic_client
 
     model = AnthropicModel(
         model_id="claude-sonnet-4-6",
         max_tokens=1,
-        model_info=ModelInfo(capabilities=ModelCapabilities(document_formats=("docx",))),
+        model_info=ModelInfo(capabilities=ModelCapabilities(accepted_mime_types=(_OFFICE_TYPES[1],))),
     )
 
-    assert model.model_info.capabilities.document_formats == ("docx",)
+    assert model.model_info.capabilities.accepted_mime_types == (_OFFICE_TYPES[1],)
 
 
 def test_model_info_exposes_the_output_ceiling_from_the_shared_model_info(anthropic_client):

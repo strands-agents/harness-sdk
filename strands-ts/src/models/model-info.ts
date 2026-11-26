@@ -14,7 +14,6 @@
  */
 
 import modelInfoData from './model-info.json' with { type: 'json' }
-import type { DocumentFormat, ImageFormat, VideoFormat } from '../mime.js'
 /** How a model supports prompt caching. */
 export type PromptCaching = 'unsupported' | 'auto' | 'cachePoints'
 
@@ -68,14 +67,11 @@ export interface ModelCapabilities {
    */
   readonly deferredToolLoading?: DeferredToolLoading | undefined
   /**
-   * Formats the model and provider take in image blocks of a user message, where `jpeg` also covers `jpg`; `[]` when
-   * they take no images. Tool results can take fewer. `[]` is known: don't treat an empty list like `undefined`.
+   * MIME types the model and provider take in the media blocks of a user message (`image/png`, or `video/*` for every
+   * video type); `[]` when they take only text. `undefined` accepts every type. Tool results can take fewer. Check a
+   * type with {@link ModelInfo.accepts}.
    */
-  readonly imageFormats?: readonly ImageFormat[] | undefined
-  /** Formats the model and provider take in document blocks of a user message; see `imageFormats`. */
-  readonly documentFormats?: readonly DocumentFormat[] | undefined
-  /** Formats the model and provider take in video blocks of a user message; see `imageFormats`. */
-  readonly videoFormats?: readonly VideoFormat[] | undefined
+  readonly acceptedMimeTypes?: readonly string[] | undefined
 }
 
 /** Size limits of the model. */
@@ -124,6 +120,20 @@ export const ModelInfo = Object.freeze({
     if (mergedLimits) merged.limits = mergedLimits
     return Object.freeze(merged)
   },
+
+  /**
+   * Whether a model takes a MIME type in a user message, by its `acceptedMimeTypes`.
+   *
+   * @param info - What the SDK knows about the model, usually {@link Model.modelInfo}
+   * @param mimeType - The type to check, such as `image/png`; parameters (`; charset=utf-8`) are ignored
+   * @returns True when the list names the type or its `type/*`, or when the model has no list
+   */
+  accepts(info: ModelInfo, mimeType: string): boolean {
+    const accepted = info.capabilities?.acceptedMimeTypes
+    if (accepted === undefined) return true
+    const type = mimeType.split(';')[0]!.trim().toLowerCase()
+    return accepted.includes(type) || accepted.includes(`${type.split('/')[0]}/*`)
+  },
 })
 
 /**
@@ -158,9 +168,7 @@ const CAPABILITY_FIELDS = Object.keys({
   serverSideSummary: true,
   temporaryMessages: true,
   deferredToolLoading: true,
-  imageFormats: true,
-  documentFormats: true,
-  videoFormats: true,
+  acceptedMimeTypes: true,
 } satisfies Record<keyof ModelCapabilities, true>)
 const LIMIT_FIELDS = Object.keys({ contextWindow: true, maxOutputTokens: true } satisfies Record<
   keyof ModelLimits,

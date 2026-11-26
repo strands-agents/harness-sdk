@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { VERSION as SDK_VERSION } from '@anthropic-ai/sdk/version'
 import { isNode } from '../../__fixtures__/environment.js'
 import { AnthropicModel } from '../anthropic.js'
+import { lookupModelInfo, ModelInfo } from '../model-info.js'
 import { ModelProxy } from '../model-proxy.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
 import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
@@ -236,30 +237,33 @@ describe('AnthropicModel', () => {
       expect(model.modelInfo.capabilities?.temporaryMessages).toBe(expected)
     })
 
-    it('keeps only the document formats it sends', () => {
-      expect(
-        new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' }).modelInfo.capabilities
-          ?.documentFormats
-      ).toEqual(['pdf', 'csv', 'html', 'txt', 'md'])
-      expect(
-        Object.isFrozen(
-          new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' }).modelInfo.capabilities
-            ?.documentFormats
-        )
-      ).toBe(true)
-      expect(
-        new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-3-opus-20240229' }).modelInfo.capabilities
-          ?.documentFormats
-      ).toBeUndefined()
+    it('drops the Office types it cannot send', () => {
+      const docx = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      const shared = lookupModelInfo('claude-sonnet-4-6').capabilities?.acceptedMimeTypes
+      const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' }).modelInfo
+
+      expect(shared).toContain(docx)
+      expect(info.capabilities?.acceptedMimeTypes).toEqual(
+        shared?.filter((type) => !type.startsWith('application/vnd.') && type !== 'application/msword')
+      )
+      expect(ModelInfo.accepts(info, 'application/pdf')).toBe(true)
+      expect(ModelInfo.accepts(info, docx)).toBe(false)
+      expect(Object.isFrozen(info.capabilities?.acceptedMimeTypes)).toBe(true)
     })
 
-    it('lets the modelInfo config set the document formats', () => {
+    it('accepts every type when the shared data has no list', () => {
+      const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-3-opus-20240229' }).modelInfo
+      expect(info.capabilities?.acceptedMimeTypes).toBeUndefined()
+      expect(ModelInfo.accepts(info, 'application/msword')).toBe(true)
+    })
+
+    it('lets the modelInfo config set the accepted types', () => {
       const model = new AnthropicModel({
         apiKey: 'sk-ant-test',
         modelId: 'claude-sonnet-4-6',
-        modelInfo: { capabilities: { documentFormats: ['docx'] } },
+        modelInfo: { capabilities: { acceptedMimeTypes: ['application/msword'] } },
       })
-      expect(model.modelInfo.capabilities?.documentFormats).toEqual(['docx'])
+      expect(model.modelInfo.capabilities?.acceptedMimeTypes).toEqual(['application/msword'])
     })
 
     it('lets the modelInfo config turn temporary messages off', () => {

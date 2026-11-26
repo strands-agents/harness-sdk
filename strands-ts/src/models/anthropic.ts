@@ -88,6 +88,13 @@ interface TurnScopedSystemMessage {
   content: Anthropic.TextBlockParam[]
   clear_at: 'next_user_message'
 }
+// Document types the Anthropic API rejects; formatContentBlock throws on them.
+const OFFICE_MIME_TYPES = [
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]
 const TEXT_FILE_FORMATS = ['txt', 'md', 'markdown', 'csv', 'json', 'xml', 'html', 'yml', 'yaml', 'js', 'ts', 'py']
 
 // API version 2026-10-21 removed the sampling params and rejects document blocks in assistant messages.
@@ -415,21 +422,19 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   }
 
   /**
-   * Turns temporary messages and native deferred tools back on for the models the shared model info lists, and keeps
-   * only the document formats this provider sends.
+   * Turns temporary messages and native deferred tools back on for the models the shared model info lists, and drops
+   * the Office document types this provider can't send.
    */
   override get modelInfo(): ModelInfo {
     const capabilities = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
-    const documentFormats = capabilities.documentFormats?.filter(
-      (format) => format === 'pdf' || TEXT_FILE_FORMATS.includes(format)
-    )
+    const acceptedMimeTypes = capabilities.acceptedMimeTypes?.filter((type) => !OFFICE_MIME_TYPES.includes(type))
     return ModelInfo.merge(
       super.modelInfo,
       {
         capabilities: {
           temporaryMessages: capabilities.temporaryMessages,
           deferredToolLoading: capabilities.deferredToolLoading,
-          documentFormats,
+          acceptedMimeTypes,
         },
       },
       this._config.modelInfo

@@ -15,9 +15,21 @@
         "promptCaching": "cachePoints",
         "defaultEffort": "high",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-sonnet-4-20250514": {
@@ -27,9 +39,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "claude-sonnet-4-5": {
@@ -42,9 +52,21 @@
         "forcedToolChoice": true,
         "nativeStructuredOutput": true,
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-opus-4-6": {
@@ -56,9 +78,21 @@
         "promptCaching": "cachePoints",
         "defaultEffort": "high",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-opus-4-7": {
@@ -70,9 +104,21 @@
         "promptCaching": "cachePoints",
         "defaultEffort": "xhigh",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-opus-4-8": {
@@ -87,9 +133,21 @@
         "temporaryMessages": true,
         "defaultEffort": "high",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-opus-5": {
@@ -104,9 +162,21 @@
         "temporaryMessages": true,
         "defaultEffort": "high",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-opus-5-5": {
@@ -122,9 +192,21 @@
         "temporaryMessages": true,
         "defaultEffort": "medium",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-fable-5": {
@@ -137,9 +219,21 @@
         "temporaryMessages": true,
         "defaultEffort": "high",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-fable-5-1": {
@@ -154,9 +248,21 @@
         "temporaryMessages": true,
         "defaultEffort": "high",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-fable-5-2": {
@@ -172,9 +278,21 @@
         "temporaryMessages": true,
         "defaultEffort": "high",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-sonnet-5": {
@@ -188,9 +306,21 @@
         "nativeStructuredOutput": false,
         "defaultEffort": "high",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-sonnet-5-5": {
@@ -206,9 +336,21 @@
         "temporaryMessages": true,
         "defaultEffort": "medium",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-haiku-5-5": {
@@ -224,9 +366,21 @@
         "temporaryMessages": false,
         "defaultEffort": "medium",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-opus-4-5": {
@@ -237,9 +391,21 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-opus-4-20250514": {
@@ -248,10 +414,7 @@
         "maxOutputTokens": 32000
       },
       "capabilities": {
-        "promptCaching": "cachePoints",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "promptCaching": "cachePoints"
       }
     },
     "claude-opus-4-1": {
@@ -261,9 +424,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "claude-haiku-4-5": {
@@ -274,9 +435,21 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-3-7-sonnet-20250219": {
@@ -285,10 +458,7 @@
         "maxOutputTokens": 64000
       },
       "capabilities": {
-        "promptCaching": "cachePoints",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "promptCaching": "cachePoints"
       }
     },
     "claude-3-5-sonnet-20241022": {
@@ -297,10 +467,7 @@
         "maxOutputTokens": 8192
       },
       "capabilities": {
-        "promptCaching": "cachePoints",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "promptCaching": "cachePoints"
       }
     },
     "claude-3-5-sonnet-20240620": {
@@ -309,10 +476,7 @@
         "maxOutputTokens": 8192
       },
       "capabilities": {
-        "promptCaching": "cachePoints",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "promptCaching": "cachePoints"
       }
     },
     "claude-3-5-haiku-20241022": {
@@ -321,10 +485,7 @@
         "maxOutputTokens": 8192
       },
       "capabilities": {
-        "promptCaching": "cachePoints",
-        "imageFormats": [],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "promptCaching": "cachePoints"
       }
     },
     "claude-3-opus-20240229": {
@@ -333,9 +494,7 @@
         "maxOutputTokens": 4096
       },
       "capabilities": {
-        "promptCaching": "cachePoints",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "promptCaching": "cachePoints"
       }
     },
     "claude-3-haiku-20240307": {
@@ -345,9 +504,7 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "claude-3-7-sonnet-20240620": {
@@ -364,9 +521,7 @@
         "maxOutputTokens": 4096
       },
       "capabilities": {
-        "promptCaching": "cachePoints",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "promptCaching": "cachePoints"
       }
     },
     "claude-mythos-5-2": {
@@ -382,9 +537,21 @@
         "temporaryMessages": true,
         "defaultEffort": "high",
         "deferredToolLoading": "native",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown"
+        ]
       }
     },
     "claude-mythos-preview": {
@@ -393,9 +560,23 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/*",
+          "audio/*"
+        ]
       }
     },
     "amazon.nova-pro-v1:0": {
@@ -406,9 +587,29 @@
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
         "deferredToolLoading": "unsupported",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": ["flv", "mkv", "mov", "mpeg", "mpg", "mp4", "3gp", "webm", "wmv"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/x-matroska",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv"
+        ]
       }
     },
     "amazon.nova-lite-v1:0": {
@@ -419,9 +620,29 @@
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
         "deferredToolLoading": "unsupported",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": ["flv", "mkv", "mov", "mpeg", "mpg", "mp4", "3gp", "webm", "wmv"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/x-matroska",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv"
+        ]
       }
     },
     "amazon.nova-micro-v1:0": {
@@ -432,9 +653,7 @@
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
         "deferredToolLoading": "unsupported",
-        "imageFormats": [],
-        "documentFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": []
       }
     },
     "amazon.nova-premier-v1:0": {
@@ -445,9 +664,29 @@
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
         "deferredToolLoading": "unsupported",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": ["flv", "mkv", "mov", "mpeg", "mpg", "mp4", "3gp", "webm", "wmv"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/x-matroska",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv"
+        ]
       }
     },
     "amazon.nova-2-lite-v1:0": {
@@ -458,9 +697,30 @@
         "forcedToolChoice": true,
         "nativeStructuredOutput": false,
         "deferredToolLoading": "unsupported",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": ["flv", "mkv", "mov", "mpeg", "mpg", "mp4", "3gp", "webm", "wmv"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp",
+          "application/pdf",
+          "text/csv",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/x-matroska",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "amazon.nova-2-pro-preview-20251202-v1:0": {
@@ -478,8 +738,7 @@
         "contextWindow": 203000
       },
       "capabilities": {
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "zai.glm-4.7-flash": {
@@ -487,8 +746,7 @@
         "contextWindow": 203000
       },
       "capabilities": {
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "zai.glm-5": {
@@ -496,8 +754,7 @@
         "contextWindow": 200000
       },
       "capabilities": {
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "zai.glm-5.3": {
@@ -505,8 +762,7 @@
         "contextWindow": 1000000
       },
       "capabilities": {
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "gpt-6.2-astra": {
@@ -519,8 +775,7 @@
         "chatCompletionsTools": "unsupported",
         "systemPromptPlacement": "message",
         "defaultEffort": "low",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-6.2-sol": {
@@ -533,8 +788,7 @@
         "chatCompletionsTools": "unsupported",
         "systemPromptPlacement": "message",
         "defaultEffort": "low",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-6-astra": {
@@ -545,8 +799,7 @@
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "unsupported",
         "defaultEffort": "low",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-6.1-sol": {
@@ -557,9 +810,7 @@
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "unsupported",
         "defaultEffort": "low",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "openai.gpt-6.1-sol": {
@@ -570,8 +821,7 @@
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "unsupported",
         "defaultEffort": "low",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "gpt-6.1-terra": {
@@ -582,9 +832,7 @@
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "low",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "openai.gpt-6.1-terra": {
@@ -594,8 +842,7 @@
       "capabilities": {
         "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "low",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "gpt-6-sol": {
@@ -606,8 +853,7 @@
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "medium",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-6-luna": {
@@ -618,8 +864,7 @@
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "medium",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-6-cyber": {
@@ -627,7 +872,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5.6": {
@@ -638,9 +883,7 @@
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "medium",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5.6-sol": {
@@ -651,8 +894,7 @@
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "low",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5.6-terra": {
@@ -663,8 +905,7 @@
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "medium",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5.6-luna": {
@@ -675,8 +916,7 @@
         "promptCaching": "cachePoints",
         "chatCompletionsTools": "reasoningOff",
         "defaultEffort": "medium",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "openai.gpt-5.6-cyber": {
@@ -684,8 +924,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "openai.gpt-daybreak-blue-5.6-sol": {
@@ -693,8 +932,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "gpt-5.5": {
@@ -703,8 +941,7 @@
       },
       "capabilities": {
         "defaultEffort": "medium",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5.5-pro": {
@@ -712,9 +949,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5.4": {
@@ -723,8 +958,7 @@
       },
       "capabilities": {
         "defaultEffort": "medium",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5.4-pro": {
@@ -732,9 +966,7 @@
         "contextWindow": 1050000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5.4-mini": {
@@ -743,9 +975,7 @@
       },
       "capabilities": {
         "defaultEffort": "medium",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5.4-nano": {
@@ -753,9 +983,7 @@
         "contextWindow": 272000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5.2": {
@@ -764,9 +992,7 @@
       },
       "capabilities": {
         "defaultEffort": "medium",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5.2-pro": {
@@ -774,9 +1000,7 @@
         "contextWindow": 272000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5.1": {
@@ -785,9 +1009,7 @@
       },
       "capabilities": {
         "defaultEffort": "medium",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5": {
@@ -796,9 +1018,7 @@
       },
       "capabilities": {
         "defaultEffort": "medium",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5-mini": {
@@ -806,9 +1026,7 @@
         "contextWindow": 272000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5-nano": {
@@ -816,9 +1034,7 @@
         "contextWindow": 272000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-5-pro": {
@@ -826,9 +1042,7 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-4.1": {
@@ -836,9 +1050,7 @@
         "contextWindow": 1047576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-4.1-mini": {
@@ -846,9 +1058,7 @@
         "contextWindow": 1047576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-4.1-nano": {
@@ -856,9 +1066,7 @@
         "contextWindow": 1047576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-4o": {
@@ -866,9 +1074,7 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-4o-mini": {
@@ -876,9 +1082,7 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-4-turbo": {
@@ -886,9 +1090,7 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "o3": {
@@ -896,9 +1098,7 @@
         "contextWindow": 200000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "o3-mini": {
@@ -906,8 +1106,7 @@
         "contextWindow": 200000
       },
       "capabilities": {
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "o3-pro": {
@@ -915,9 +1114,7 @@
         "contextWindow": 200000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "o4-mini": {
@@ -925,9 +1122,7 @@
         "contextWindow": 200000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "o1": {
@@ -935,9 +1130,7 @@
         "contextWindow": 200000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gemini-2.5-flash": {
@@ -945,9 +1138,27 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-2.5-flash-lite": {
@@ -955,9 +1166,27 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-2.5-pro": {
@@ -965,9 +1194,27 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-2.0-flash": {
@@ -975,8 +1222,21 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "webp"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/*",
+          "text/*",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-2.0-flash-lite": {
@@ -984,8 +1244,21 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "webp"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/*",
+          "text/*",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-3-pro-preview": {
@@ -994,9 +1267,27 @@
       },
       "capabilities": {
         "defaultEffort": "high",
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-3-flash-preview": {
@@ -1005,9 +1296,27 @@
       },
       "capabilities": {
         "defaultEffort": "high",
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-3.6-flash": {
@@ -1015,9 +1324,27 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-3.5-flash": {
@@ -1026,9 +1353,27 @@
       },
       "capabilities": {
         "defaultEffort": "high",
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-3.5-flash-lite": {
@@ -1037,9 +1382,27 @@
       },
       "capabilities": {
         "defaultEffort": "high",
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-3.1-flash-lite": {
@@ -1048,9 +1411,27 @@
       },
       "capabilities": {
         "defaultEffort": "high",
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-3.1-pro-preview": {
@@ -1059,9 +1440,27 @@
       },
       "capabilities": {
         "defaultEffort": "high",
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-3.1-flash-lite-preview": {
@@ -1070,9 +1469,27 @@
       },
       "capabilities": {
         "defaultEffort": "high",
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "mistral-large-latest": {
@@ -1080,8 +1497,15 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "mistral-large-2512": {
@@ -1089,8 +1513,15 @@
         "contextWindow": 262144
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "mistral-large-3": {
@@ -1098,8 +1529,15 @@
         "contextWindow": 262144
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "mistral-medium-latest": {
@@ -1107,8 +1545,15 @@
         "contextWindow": 262144
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "mistral-medium-2505": {
@@ -1116,8 +1561,15 @@
         "contextWindow": 131072
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "mistral-small-latest": {
@@ -1125,8 +1577,15 @@
         "contextWindow": 262144
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "mistral-small-3-2-2506": {
@@ -1134,8 +1593,15 @@
         "contextWindow": 131072
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "openai.gpt-oss-120b": {
@@ -1144,8 +1610,7 @@
       },
       "capabilities": {
         "defaultEffort": "medium",
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "openai.gpt-oss-20b": {
@@ -1154,8 +1619,7 @@
       },
       "capabilities": {
         "defaultEffort": "medium",
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "openai.gpt-oss-safeguard-120b": {
@@ -1163,8 +1627,7 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "openai.gpt-oss-safeguard-20b": {
@@ -1172,8 +1635,7 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "mistral.mistral-large-3-675b-instruct": {
@@ -1181,8 +1643,7 @@
         "contextWindow": 256000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "mistral.ministral-3-14b-instruct": {
@@ -1190,8 +1651,7 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "mistral.ministral-3-8b-instruct": {
@@ -1199,8 +1659,7 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "mistral.ministral-3-3b-instruct": {
@@ -1208,8 +1667,7 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "mistral.magistral-small-2509": {
@@ -1218,8 +1676,7 @@
       },
       "capabilities": {
         "toolUse": false,
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "mistral.pixtral-large-2502": {
@@ -1227,8 +1684,7 @@
         "contextWindow": 128000
       },
       "capabilities": {
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "mistral.mistral-small-2402": {
@@ -1236,9 +1692,7 @@
         "contextWindow": 32000
       },
       "capabilities": {
-        "imageFormats": [],
-        "documentFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "mistral.mistral-large-2402": {
@@ -1247,19 +1701,23 @@
       },
       "capabilities": {
         "deferredToolLoading": "unsupported",
-        "imageFormats": [],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "google.gemma-4-31b": {
       "limits": {
         "contextWindow": 256000
+      },
+      "capabilities": {
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*", "video/*"]
       }
     },
     "google.gemma-4-26b-a4b": {
       "limits": {
         "contextWindow": 256000
+      },
+      "capabilities": {
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*", "video/*"]
       }
     },
     "google.gemma-4-e2b": {
@@ -1273,8 +1731,7 @@
       },
       "capabilities": {
         "deferredToolLoading": "unsupported",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "xai.grok-4.6": {
@@ -1283,8 +1740,7 @@
       },
       "capabilities": {
         "deferredToolLoading": "unsupported",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "xai.grok-4.3": {
@@ -1293,7 +1749,7 @@
       },
       "capabilities": {
         "deferredToolLoading": "unsupported",
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "meta.llama3-1-8b-instruct": {
@@ -1302,9 +1758,7 @@
       },
       "capabilities": {
         "deferredToolLoading": "unsupported",
-        "imageFormats": [],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "meta.llama3-1-70b-instruct": {
@@ -1313,9 +1767,7 @@
       },
       "capabilities": {
         "deferredToolLoading": "unsupported",
-        "imageFormats": [],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "meta.llama3-3-70b-instruct": {
@@ -1324,8 +1776,7 @@
       },
       "capabilities": {
         "deferredToolLoading": "unsupported",
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "meta.llama4-scout-17b-instruct": {
@@ -1334,9 +1785,7 @@
       },
       "capabilities": {
         "deferredToolLoading": "unsupported",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "meta.llama4-maverick-17b-instruct": {
@@ -1345,9 +1794,7 @@
       },
       "capabilities": {
         "deferredToolLoading": "unsupported",
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/*", "application/*", "text/*"]
       }
     },
     "deepseek.v3": {
@@ -1356,8 +1803,7 @@
       },
       "capabilities": {
         "deferredToolLoading": "unsupported",
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "qwen.qwen3-coder-480b-a35b": {
@@ -1366,8 +1812,7 @@
       },
       "capabilities": {
         "deferredToolLoading": "unsupported",
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "chat-latest": {
@@ -1375,9 +1820,7 @@
         "contextWindow": 272000
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "documentFormats": ["pdf"],
-        "videoFormats": []
+        "acceptedMimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp", "application/*", "text/*"]
       }
     },
     "gpt-oss-120b": {
@@ -1386,8 +1829,7 @@
       },
       "capabilities": {
         "defaultEffort": "medium",
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "gpt-oss-20b": {
@@ -1396,8 +1838,7 @@
       },
       "capabilities": {
         "defaultEffort": "medium",
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*"]
       }
     },
     "gemini-4-neon": {
@@ -1405,9 +1846,27 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-4-hydrogen": {
@@ -1415,9 +1874,27 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-4-argon": {
@@ -1425,9 +1902,27 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-3.8-flash": {
@@ -1435,9 +1930,27 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "gemini-3.7-flash": {
@@ -1445,9 +1958,27 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "webp"],
-        "documentFormats": ["pdf", "html", "txt", "md"],
-        "videoFormats": ["flv", "mpeg", "mpg", "mp4", "3gp", "webm"]
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "application/pdf",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "text/html",
+          "text/plain",
+          "text/markdown",
+          "video/x-flv",
+          "video/quicktime",
+          "video/mpeg",
+          "video/mp4",
+          "video/3gpp",
+          "video/webm",
+          "video/x-ms-wmv",
+          "audio/*"
+        ]
       }
     },
     "codestral-2508": {
@@ -1455,8 +1986,7 @@
         "contextWindow": 256000
       },
       "capabilities": {
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*", "video/*"]
       }
     },
     "codestral-latest": {
@@ -1464,8 +1994,7 @@
         "contextWindow": 256000
       },
       "capabilities": {
-        "imageFormats": [],
-        "videoFormats": []
+        "acceptedMimeTypes": ["application/*", "text/*", "video/*"]
       }
     },
     "mistral-large-4-0": {
@@ -1473,8 +2002,15 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "mistral-large-4": {
@@ -1482,8 +2018,15 @@
         "contextWindow": 1048576
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "mistral-medium-3-5": {
@@ -1491,8 +2034,15 @@
         "contextWindow": 262144
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "mistral-medium-3": {
@@ -1500,8 +2050,15 @@
         "contextWindow": 262144
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "ministral-14b-2512": {
@@ -1509,8 +2066,15 @@
         "contextWindow": 262144
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "ministral-14b-latest": {
@@ -1518,8 +2082,15 @@
         "contextWindow": 262144
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "ministral-8b-2512": {
@@ -1527,8 +2098,15 @@
         "contextWindow": 262144
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "ministral-8b-latest": {
@@ -1536,8 +2114,15 @@
         "contextWindow": 262144
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "ministral-3b-2512": {
@@ -1545,8 +2130,15 @@
         "contextWindow": 131072
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "ministral-3b-latest": {
@@ -1554,8 +2146,15 @@
         "contextWindow": 131072
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     },
     "mistral-small-2603": {
@@ -1563,8 +2162,15 @@
         "contextWindow": 262144
       },
       "capabilities": {
-        "imageFormats": ["png", "jpeg", "gif", "webp"],
-        "videoFormats": []
+        "acceptedMimeTypes": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif",
+          "application/*",
+          "text/*",
+          "video/*"
+        ]
       }
     }
   }

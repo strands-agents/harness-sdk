@@ -32,11 +32,14 @@ describe('ModelInfo.merge', () => {
     expect(merged.limits?.contextWindow).toBe(2)
   })
 
-  it('keeps an empty format list as known', () => {
-    const merged = ModelInfo.merge({ capabilities: { imageFormats: ['png'] } }, { capabilities: { imageFormats: [] } })
+  it('keeps an empty accepted list as known, frozen', () => {
+    const merged = ModelInfo.merge(
+      { capabilities: { acceptedMimeTypes: ['image/png'] } },
+      { capabilities: { acceptedMimeTypes: [] } }
+    )
 
-    expect(merged.capabilities?.imageFormats).toEqual([])
-    expect(Object.isFrozen(merged.capabilities?.imageFormats)).toBe(true)
+    expect(merged.capabilities?.acceptedMimeTypes).toEqual([])
+    expect(Object.isFrozen(merged.capabilities?.acceptedMimeTypes)).toBe(true)
   })
 
   it('leaves out sections with nothing known', () => {
@@ -49,5 +52,20 @@ describe('ModelInfo.merge', () => {
     expect(Object.isFrozen(merged)).toBe(true)
     expect(Object.isFrozen(merged.capabilities)).toBe(true)
     expect(Object.isFrozen(merged.limits)).toBe(true)
+  })
+})
+
+describe('ModelInfo.accepts', () => {
+  it.each<[readonly string[] | undefined, string, boolean]>([
+    [undefined, 'application/x-anything', true],
+    [[], 'image/png', false],
+    [['image/png'], 'image/png', true],
+    [['image/png'], 'IMAGE/PNG', true],
+    [['text/plain'], 'text/plain; charset=utf-8', true],
+    [['image/png'], 'image/jpeg', false],
+    [['video/*'], 'video/mp4', true],
+    [['video/*'], 'audio/mp4', false],
+  ])('with %j accepts %s: %s', (acceptedMimeTypes, mimeType, expected) => {
+    expect(ModelInfo.accepts({ capabilities: { acceptedMimeTypes } }, mimeType)).toBe(expected)
   })
 })

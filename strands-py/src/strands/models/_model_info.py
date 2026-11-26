@@ -13,9 +13,7 @@ import json
 import re
 from dataclasses import dataclass, fields, replace
 from importlib import resources
-from typing import Any, Literal, TypeAlias, TypeVar, get_args
-
-from ..types.media import DocumentFormat, ImageFormat, VideoFormat
+from typing import Any, Literal, TypeAlias, TypeVar
 
 PromptCaching: TypeAlias = Literal["unsupported", "auto", "cache_points"]
 """How a model supports prompt caching."""
@@ -55,11 +53,9 @@ class ModelCapabilities:
             :attr:`strands.models.Model.model_info` reports False unless the provider can send them
             (``AnthropicModel``). Turning it on for a provider that cannot send them loses the injected text: Bedrock
             skips the block with a warning, Mistral drops it, other providers raise ``TypeError``.
-        image_formats: Formats the model and provider take in image blocks of a user message; ``()`` when they take
-            no images. Tool results can take fewer. Check for None, not falsiness: ``()`` is known.
-        document_formats: Formats the model and provider take in document blocks of a user message; see
-            ``image_formats``.
-        video_formats: Formats the model and provider take in video blocks of a user message; see ``image_formats``.
+        accepted_mime_types: MIME types the model and provider take in the media blocks of a user message
+            (``image/png``, or ``video/*`` for every video type); ``()`` when they take only text. None accepts every
+            type. Tool results can take fewer. Check a type with :meth:`ModelInfo.accepts`.
     """
 
     stateful: bool | None = None
@@ -68,9 +64,7 @@ class ModelCapabilities:
     native_structured_output: bool | None = None
     server_side_summary: bool | None = None
     temporary_messages: bool | None = None
-    image_formats: tuple[ImageFormat, ...] | None = None
-    document_formats: tuple[DocumentFormat, ...] | None = None
-    video_formats: tuple[VideoFormat, ...] | None = None
+    accepted_mime_types: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -102,6 +96,21 @@ class ModelInfo:
 
     capabilities: ModelCapabilities = ModelCapabilities()
     limits: ModelLimits = ModelLimits()
+
+    def accepts(self, mime_type: str) -> bool:
+        """Report whether the model takes a MIME type in a user message, by ``capabilities.accepted_mime_types``.
+
+        Args:
+            mime_type: The type to check, such as ``image/png``; parameters (``; charset=utf-8``) are ignored.
+
+        Returns:
+            True when the list names the type or its ``type/*``, or when the model has no list.
+        """
+        accepted = self.capabilities.accepted_mime_types
+        if accepted is None:
+            return True
+        media_type = mime_type.split(";")[0].strip().lower()
+        return media_type in accepted or f"{media_type.split('/')[0]}/*" in accepted
 
     @classmethod
     def merge(cls, *parts: "ModelInfo | None") -> "ModelInfo":
@@ -149,9 +158,7 @@ _CAPABILITY_FIELDS = {
     "nativeStructuredOutput": "native_structured_output",
     "serverSideSummary": "server_side_summary",
     "temporaryMessages": "temporary_messages",
-    "imageFormats": "image_formats",
-    "documentFormats": "document_formats",
-    "videoFormats": "video_formats",
+    "acceptedMimeTypes": "accepted_mime_types",
 }
 _LIMIT_FIELDS = {"contextWindow": "context_window", "maxOutputTokens": "max_output_tokens"}
 # Shared-data values are camelCase; the Python literals are snake_case.
@@ -160,26 +167,12 @@ _PROMPT_CACHING_VALUES: dict[str, PromptCaching] = {
     "auto": "auto",
     "cachePoints": "cache_points",
 }
-# The format names each list takes, keyed by the shared-data spelling; the data spells three_gp as TypeScript does.
-_FORMAT_VALUES: dict[str, dict[str, str]] = {
-    "image_formats": {value: value for value in get_args(ImageFormat)},
-    "document_formats": {value: value for value in get_args(DocumentFormat)},
-    "video_formats": {"3gp" if value == "three_gp" else value: value for value in get_args(VideoFormat)},
-}
 
 # Bedrock appends a version to some ids (`claude-3-5-haiku-20241022-v1:0`); the base id carries the facts.
 _VERSION_SUFFIX = re.compile(r"-(?:v\d+(?::\d+)?|\d+:\d+)$")
 # Dated snapshots (`claude-opus-5-5-20260401`, `claude-haiku-4-5@20251001`, `gpt-5.4-2026-03-05`) share the undated
 # model's facts.
 _DATE_SUFFIX = re.compile(r"[-@](?:\d{8}|\d{4}-\d{2}-\d{2})$")
-
-
-def _formats(value: object, names: dict[str, str]) -> tuple[str, ...] | None:
-    """Read a format list, skipping formats this version does not know; None when it is not a list or none are known."""
-    if not isinstance(value, list):
-        return None
-    known = tuple(names[name] for name in value if name in names)
-    return known if known or not value else None
 
 
 def _section(entry: dict[str, Any], name: str, field_names: dict[str, str], section: type[_SectionT]) -> _SectionT:
@@ -195,7 +188,9 @@ def _section(entry: dict[str, Any], name: str, field_names: dict[str, str], sect
     if "prompt_caching" in known:
         value = known["prompt_caching"]
         known["prompt_caching"] = _PROMPT_CACHING_VALUES.get(value) if isinstance(value, str) else None
-    known.update({name: _formats(known[name], names) for name, names in _FORMAT_VALUES.items() if name in known})
+    if "accepted_mime_types" in known:
+        value = known["accepted_mime_types"]
+        known["accepted_mime_types"] = tuple(value) if isinstance(value, list) else None
     return section(**known)
 
 
