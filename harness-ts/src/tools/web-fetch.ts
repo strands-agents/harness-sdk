@@ -10,6 +10,9 @@
  * the file tools use), so a sandbox with network isolation or egress rules covers `web_fetch` too.
  * `transport: 'direct'` opts back into a plain global `fetch` from the harness process. Candidate to
  * port into the core SDK later; keep it minimal and SDK-idiomatic.
+ *
+ * Redirects are reported, never followed: the only URL read is the one the call named, which is the
+ * one a tool-call hook or permission rule saw.
  */
 
 import { Buffer } from 'node:buffer'
@@ -26,6 +29,7 @@ const TIMEOUT_SECONDS = 30
 const MAX_BYTES = 5 * 1024 * 1024
 const MAX_CHARS = 50_000
 const CACHE_TTL_MS = 15 * 60 * 1000
+const MAX_REDIRECT_CHARS = 8192
 // The characters RFC 3986 allows anywhere in a URL; anything else (whitespace, quotes, control
 // characters, non-ASCII) is rejected before the URL reaches a shell or a socket.
 const URL_CHARS = /^[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/
@@ -74,16 +78,17 @@ function shellQuote(value: string): string {
 }
 
 function curlCommand(url: string): string {
-  // -g keeps `{}`/`[]` in the URL literal; --proto/--proto-redir keep the request and any redirect on
-  // http(s) (curl would otherwise follow a redirect to ftp://); --fail turns HTTP errors into a non-zero
-  // exit; -sS keeps curl's own error text on stderr. The body is spooled to a file the shell picks with
-  // mktemp (so the path only ever has to make sense inside the sandbox), truncated there, and returned over
-  // stdout as base64: ASCII survives the chunked stdout decoding that raw bytes would not, and the charset is
-  // applied once here. stdout is the final hop's content type and URL, then the base64 body.
+  // -g keeps `{}`/`[]` in the URL literal; --proto keeps the request on http(s); --no-location stops at a
+  // redirect even when a curl config file turns following on; --fail turns HTTP errors into a non-zero exit;
+  // -sS keeps curl's own error text on stderr. The body is spooled to a file the shell picks with mktemp (so
+  // the path only ever has to make sense inside the sandbox), truncated there, and returned over stdout as
+  // base64: ASCII survives the chunked stdout decoding that raw bytes would not, and the charset is applied
+  // once here. stdout is the content type and the redirect target (empty unless the response is a redirect),
+  // then the base64 body.
   return (
     `f=$(mktemp -t strands-web-fetch.XXXXXX) && ` +
-    `curl -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time ${TIMEOUT_SECONDS} ` +
-    `-A ${shellQuote(USER_AGENT)} -o "$f" -w '%{content_type}\\n%{url_effective}\\n' -- ${shellQuote(url)} ` +
+    `curl -sS -g --fail --no-location --proto '=http,https' --max-time ${TIMEOUT_SECONDS} ` +
+    `-A ${shellQuote(USER_AGENT)} -o "$f" -w '%{content_type}\\n%{redirect_url}\\n' -- ${shellQuote(url)} ` +
     `&& head -c ${MAX_BYTES} "$f" | base64; s=$?; rm -f "$f"; exit $s`
   )
 }
@@ -99,8 +104,8 @@ function powershellCurlCommand(url: string): string {
     '$f = Join-Path ([IO.Path]::GetTempPath()) "strands-web-fetch-$([guid]::NewGuid())"',
     '$s = 127',
     'try {',
-    `  curl.exe -sSL -g --fail --proto '=http,https' --proto-redir '=http,https' --max-time ${TIMEOUT_SECONDS} ` +
-      `-A '${USER_AGENT}' -o $f --stderr "$f.err" -w '%{content_type}\\n%{url_effective}\\n' ${quoted}`,
+    `  curl.exe -sS -g --fail --no-location --proto '=http,https' --max-time ${TIMEOUT_SECONDS} ` +
+      `-A '${USER_AGENT}' -o $f --stderr "$f.err" -w '%{content_type}\\n%{redirect_url}\\n' ${quoted}`,
     '  $s = $LASTEXITCODE',
     '  if ($s -eq 0) {',
     '    $in = [IO.File]::OpenRead($f)',
@@ -123,16 +128,30 @@ function decode(data: Uint8Array, contentType: string): string {
   }
 }
 
-type Fetched = { resolvedUrl: string; text: string }
-
-function toText(data: Uint8Array, contentType: string, resolvedUrl: string, url: string): Fetched {
+function toText(data: Uint8Array, contentType: string): string {
   const raw = decode(data, contentType)
   const text = contentType.toLowerCase().includes('html') ? htmlToText(raw) : raw
-  return { resolvedUrl: resolvedUrl.trim() || url, text: text.slice(0, MAX_CHARS) }
+  return text.slice(0, MAX_CHARS)
 }
 
-/** Fetch a validated `url` with `curl` inside `sandbox`; throws when curl fails. */
-async function fetchCurl(sandbox: Sandbox, url: string): Promise<Fetched> {
+/** The error for a redirect to `location`, naming the target only when it is a URL `web_fetch` accepts. */
+function redirected(location: string, url: string): Error {
+  try {
+    // The URL serializer leaves these raw in a query; encode them so the target passes validateUrl.
+    const target = validateUrl(new URL(location, url).href.replace(/[\\^`{|}]/g, encodeURIComponent))
+    if (target.length <= MAX_REDIRECT_CHARS) {
+      return new Error(
+        `it redirects to ${target}, and web_fetch does not follow redirects. Call web_fetch with that URL to read it.`
+      )
+    }
+  } catch {
+    // Reported below without the target.
+  }
+  return new Error('it redirects to a location web_fetch cannot fetch.')
+}
+
+/** Fetch a validated `url` with `curl` inside `sandbox`; throws when curl fails or the URL redirects. */
+async function fetchCurl(sandbox: Sandbox, url: string): Promise<string> {
   const command = (await shellOf(sandbox)) === 'powershell' ? powershellCurlCommand(url) : curlCommand(url)
   const result = await sandbox.execute(command, { timeout: TIMEOUT_SECONDS + 5 })
   if (result.exitCode !== 0) {
@@ -140,17 +159,19 @@ async function fetchCurl(sandbox: Sandbox, url: string): Promise<Fetched> {
   }
   // Two header lines (the content-type line is empty when the header is absent), then the base64 body,
   // which base64(1) may wrap; whitespace is not part of the encoding.
-  const [contentType = '', resolvedUrl = '', ...body] = result.stdout.split('\n')
+  const [contentType = '', redirectUrl = '', ...body] = result.stdout.split('\n')
+  if (redirectUrl.trim()) throw redirected(redirectUrl.trim(), url)
   const data = new Uint8Array(Buffer.from(body.join('').replace(/\s+/g, ''), 'base64'))
-  return toText(data, contentType.trim(), resolvedUrl.trim(), url)
+  return toText(data, contentType.trim())
 }
 
 /** Fetch a validated `url` from the harness process with global `fetch` (bypasses the sandbox). */
-async function fetchDirect(url: string): Promise<Fetched> {
+async function fetchDirect(url: string): Promise<string> {
   let response: Response
   try {
     response = await fetch(url, {
       headers: { 'User-Agent': USER_AGENT },
+      redirect: 'manual',
       signal: AbortSignal.timeout(TIMEOUT_SECONDS * 1000),
     })
   } catch (err) {
@@ -159,10 +180,17 @@ async function fetchDirect(url: string): Promise<Fetched> {
     }
     throw err
   }
+  const location = response.headers.get('location')
+  if (response.status >= 300 && response.status < 400 && location) {
+    await response.body?.cancel()
+    // Header bytes arrive decoded as latin-1; percent-encoding the high ones keeps them as the server sent them.
+    const bytes = location.replace(/[\x80-\xff]/g, (byte) => `%${byte.charCodeAt(0).toString(16).toUpperCase()}`)
+    throw redirected(bytes, url)
+  }
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} ${response.statusText}`)
   }
-  return toText(await readCapped(response), response.headers.get('content-type') ?? '', response.url, url)
+  return toText(await readCapped(response), response.headers.get('content-type') ?? '')
 }
 
 /** Read at most `MAX_BYTES` of the (decoded) body, then cancel the stream rather than buffering the rest. */
@@ -189,7 +217,7 @@ async function readCapped(response: Response): Promise<Uint8Array> {
   return data
 }
 
-async function fetchText(sandbox: Sandbox, url: string, transport: WebFetchTransport): Promise<Fetched> {
+async function fetchText(sandbox: Sandbox, url: string, transport: WebFetchTransport): Promise<string> {
   url = validateUrl(url)
   return transport === 'curl' ? fetchCurl(sandbox, url) : fetchDirect(url)
 }
@@ -207,7 +235,7 @@ export function makeWebFetch({ model, transport = 'curl' }: MakeWebFetchOptions)
   if (transport !== 'curl' && transport !== 'direct') {
     throw new Error(`web_fetch transport must be 'curl' or 'direct', got ${JSON.stringify(transport)}.`)
   }
-  const cache = new Map<string, { expires: number; resolvedUrl: string; text: string }>()
+  const cache = new Map<string, { expires: number; text: string }>()
 
   return tool({
     name: 'web_fetch',
@@ -216,7 +244,8 @@ export function makeWebFetch({ model, transport = 'curl' }: MakeWebFetchOptions)
       'response to text, and asks a small fast model to answer the prompt using only that content, ' +
       'returning the answer rather than the raw page so large pages do not flood the conversation. ' +
       'Fetched content is cached for 15 minutes, so repeated fetches of the same URL are fast while ' +
-      'each prompt is answered fresh.',
+      'each prompt is answered fresh. Redirects are not followed: the result names the URL the page ' +
+      'redirects to, which you can fetch with another call.',
     inputSchema: z.object({
       url: z.string().describe('The http(s) URL to fetch.'),
       prompt: z
@@ -229,18 +258,17 @@ export function makeWebFetch({ model, transport = 'curl' }: MakeWebFetchOptions)
     }),
     callback: async (input, context) => {
       if (!context) throw new Error('Tool context is required for web_fetch.')
-      let resolvedUrl: string
       let text: string
       const cached = cache.get(input.url)
       if (cached && cached.expires > Date.now()) {
-        ;({ resolvedUrl, text } = cached)
+        text = cached.text
       } else {
         try {
-          ;({ resolvedUrl, text } = await fetchText(context.agent.sandbox, input.url, transport))
+          text = await fetchText(context.agent.sandbox, input.url, transport)
         } catch (err) {
           return `Failed to fetch ${input.url}: ${err instanceof Error ? err.message : String(err)}`
         }
-        cache.set(input.url, { expires: Date.now() + CACHE_TTL_MS, resolvedUrl, text })
+        cache.set(input.url, { expires: Date.now() + CACHE_TTL_MS, text })
       }
 
       if (!input.prompt?.trim()) {
@@ -249,7 +277,7 @@ export function makeWebFetch({ model, transport = 'curl' }: MakeWebFetchOptions)
 
       const summarizer = new Agent({ model, systemPrompt: SUMMARIZER_PROMPT, printer: false })
       const result = await summarizer.invoke(
-        `Fetched URL: ${resolvedUrl}\n\nRequest: ${input.prompt}\n\n--- Content ---\n${text}`
+        `Fetched URL: ${input.url}\n\nRequest: ${input.prompt}\n\n--- Content ---\n${text}`
       )
       return result.toString()
     },
