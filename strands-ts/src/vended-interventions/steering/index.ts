@@ -12,6 +12,10 @@
  * - SteeringHandler: base class for guidance logic
  * - SteeringContextProvider: interface for context data providers
  *
+ * Handler implementations:
+ * - LLMSteeringHandler: an LLM decides and writes the guidance
+ * - DecisionModelSteeringHandler: a DecisionModel decides; guidance is fixed, computed, or LLM-written
+ *
  * @example
  * ```typescript
  * import { Agent } from '@strands-agents/sdk'
@@ -34,3 +38,9 @@ export { ToolLedgerProvider, type ToolLedgerProviderConfig } from './providers/t
 
 // Handler implementations
 export { LLMSteeringHandler, type LLMSteeringHandlerConfig, type PromptBuilder } from './handlers/llm.js'
+export {
+  DecisionModelSteeringHandler,
+  type DecisionModelSteeringHandlerConfig,
+  type GuidanceBuilder,
+  type GuidanceInput,
+} from './handlers/decision-model.js'
