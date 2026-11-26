@@ -603,6 +603,23 @@ async def test_context_window_maps_to_typed_exception(litellm_acompletion, model
             pass
 
 
+# Guards against https://github.com/strands-agents/harness-sdk/issues/6180: a context window error from
+# either structured output path surfaces as the SDK's typed exception.
+@pytest.mark.asyncio
+@pytest.mark.parametrize("supports_schema", [True, False])
+async def test_structured_output_context_window_maps_to_typed_exception(
+    supports_schema, litellm_acompletion, model, messages, test_output_model_cls, alist
+):
+    error = ContextWindowExceededError(message="test error", model="x", llm_provider="y")
+    litellm_acompletion.side_effect = error
+
+    with unittest.mock.patch.object(strands.models.litellm, "supports_response_schema", return_value=supports_schema):
+        with pytest.raises(ContextWindowOverflowException) as exc_info:
+            await alist(model.structured_output(test_output_model_cls, messages))
+
+    assert exc_info.value.__cause__ is error
+
+
 def test_format_request_messages_with_system_prompt_content():
     """Test format_request_messages with system_prompt_content parameter."""
     messages = [{"role": "user", "content": [{"text": "Hello"}]}]
