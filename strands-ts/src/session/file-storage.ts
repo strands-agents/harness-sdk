@@ -2,6 +2,8 @@ import type { SnapshotStorage, SnapshotLocation } from './storage.js'
 import type { Snapshot, SnapshotManifest } from './types.js'
 
 import { SessionError } from '../errors.js'
+import { logger } from '../logging/logger.js'
+import { warnOnce } from '../logging/warn-once.js'
 import { validateIdentifier, validateScope, validateUuidV7 } from './validation.js'
 
 const MANIFEST = 'manifest.json'
@@ -9,6 +11,13 @@ const SNAPSHOT_LATEST = 'snapshot_latest.json'
 const IMMUTABLE_HISTORY = 'immutable_history'
 const SNAPSHOT_REGEX = /snapshot_([\w-]+)\.json$/
 const SCHEMA_VERSION = '1.0'
+// Windows may reject simultaneous replacements of the same destination.
+const PENDING_RENAMES = new Map<string, Promise<void>>()
+// Saves share these: under a module loader hook each `import()` settles after a varying number of
+// ticks, which would let overlapping saves reach the rename queue out of call order.
+let fsModule: Promise<typeof import('fs')> | undefined
+let pathModule: Promise<typeof import('path')> | undefined
+let cryptoModule: Promise<typeof import('crypto')> | undefined
 
 /**
  * File-based implementation of SnapshotStorage.
@@ -28,9 +37,12 @@ const SCHEMA_VERSION = '1.0'
 export class FileStorage implements SnapshotStorage {
   /** Absolute path to the root directory where all session data is stored. */
   private readonly _baseDir: string
+  private _rootChecked = false
 
   /**
-   * @param baseDir - Absolute path to the root directory for storing session snapshots.
+   * @param baseDir - Absolute path to the root directory for storing session snapshots. A missing
+   *   directory is created accessible to the owner only. An existing one keeps its permissions, and
+   *   on POSIX a warning is logged if it is accessible by group or others.
    */
   constructor(baseDir: string) {
     this._baseDir = baseDir
@@ -41,7 +53,7 @@ export class FileStorage implements SnapshotStorage {
    * Validates sessionId, scope, and scopeId before constructing the path.
    */
   private async _getPath(location: SnapshotLocation, filename: string): Promise<string> {
-    const { join } = await import('path')
+    const { join } = await (pathModule ??= import('path'))
     validateIdentifier(location.sessionId)
     validateScope(location.scope)
     validateIdentifier(location.scopeId)
@@ -162,30 +174,66 @@ export class FileStorage implements SnapshotStorage {
   }
 
   /**
-   * Atomically writes JSON to a file using a `.tmp` intermediary to prevent partial writes.
-   * Creates parent directories if they do not exist.
+   * Atomically writes JSON to a file through a unique `.tmp` intermediary to prevent partial writes.
+   * Creates parent directories if they do not exist. New directories and files are accessible
+   * to the owner only, and a symbolic link at `path` is refused.
+   * Overlapping saves to the same file write concurrently and are renamed one at a time in call
+   * order, so the last save called wins. This holds within one process only.
    */
   private async _writeJSON(path: string, data: unknown): Promise<void> {
+    let tmpPath: string | undefined
     try {
-      const { promises: fs } = await import('fs')
-      const { dirname } = await import('path')
-      await fs.mkdir(dirname(path), { recursive: true })
-      const tmpPath = `${path}.tmp`
-      await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf8')
-      await fs.rename(tmpPath, path)
+      const { promises: fs } = await (fsModule ??= import('fs'))
+      const { dirname, resolve } = await (pathModule ??= import('path'))
+      const { randomUUID } = await (cryptoModule ??= import('crypto'))
+      const uniquePath = `${path}.${randomUUID()}.tmp`
+      tmpPath = uniquePath
+      const target = resolve(path)
+      // Only the shared imports are awaited before this save takes its place in the queue, which keeps call order.
+      const written = (async (): Promise<void> => {
+        if (await this._isSymlink(path)) {
+          throw new SessionError(`Refusing to write to symbolic link at ${path}`)
+        }
+        // Directories above the storage root keep the default mode. Windows rejects mkdir on a drive
+        // root, and a real failure here also fails the mkdir below.
+        await fs.mkdir(dirname(resolve(this._baseDir)), { recursive: true }).catch(() => {})
+        await fs.mkdir(dirname(path), { recursive: true, mode: 0o700 })
+        await this._warnIfRootIsOpen()
+        await fs.writeFile(uniquePath, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+      })()
+      const pendingRename = Promise.allSettled([PENDING_RENAMES.get(target), written])
+        .then(() => written)
+        .then(() => fs.rename(uniquePath, path))
+      PENDING_RENAMES.set(target, pendingRename)
+      try {
+        await pendingRename
+      } finally {
+        if (PENDING_RENAMES.get(target) === pendingRename) PENDING_RENAMES.delete(target)
+      }
     } catch (error: unknown) {
+      if (error instanceof SessionError) throw error
+      // On EEXIST the temp path was not created by this call, so it is not ours to remove.
+      if (tmpPath && !this._hasErrorCode(error, 'EEXIST')) {
+        const { promises: fs } = await import('fs')
+        await fs.rm(tmpPath, { force: true }).catch(() => {})
+      }
       throw new SessionError(`Failed to write file ${path}`, { cause: error })
     }
   }
 
   /**
    * Reads and parses a JSON file. Returns null if the file does not exist.
-   * Throws SessionError on parse failure or unexpected filesystem errors.
+   * Throws SessionError on a symbolic link, parse failure, or unexpected filesystem errors.
    */
   private async _readJSON<T>(path: string): Promise<T | null> {
+    if (await this._isSymlink(path)) {
+      throw new SessionError(`Refusing to read symbolic link at ${path}`)
+    }
     try {
-      const { promises: fs } = await import('fs')
-      const content = await fs.readFile(path, 'utf8')
+      const { promises: fs, constants } = await import('fs')
+      // O_NOFOLLOW (not on Windows) also refuses a link swapped in after the check above.
+      const flag = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
+      const content = await fs.readFile(path, { encoding: 'utf8', flag })
       return JSON.parse(content)
     } catch (error: unknown) {
       if (this._isFileNotFoundError(error)) {
@@ -194,13 +242,56 @@ export class FileStorage implements SnapshotStorage {
       if (error instanceof SyntaxError) {
         throw new SessionError(`Invalid JSON in file ${path}`, { cause: error })
       }
+      // ELOOP on Linux and macOS, EMLINK on FreeBSD.
+      if (this._hasErrorCode(error, 'ELOOP') || this._hasErrorCode(error, 'EMLINK')) {
+        throw new SessionError(`Refusing to read symbolic link at ${path}`, { cause: error })
+      }
       throw new SessionError(`File system error reading ${path}`, { cause: error })
+    }
+  }
+
+  /**
+   * Warns once if the storage root is accessible by group or others; an existing root keeps its mode.
+   * The check is advisory, so it never fails a save. A check that fails is tried again on the next save.
+   */
+  private async _warnIfRootIsOpen(): Promise<void> {
+    // Windows does not report POSIX permission bits.
+    if (this._rootChecked || process.platform === 'win32') return
+    const { resolve } = await import('path')
+    const root = resolve(this._baseDir)
+    try {
+      const { promises: fs } = await import('fs')
+      const mode = (await fs.stat(root)).mode & 0o777
+      this._rootChecked = true
+      if (mode & 0o077) {
+        warnOnce(
+          logger,
+          `path=<${root}>, mode=<${mode.toString(8)}> | session storage directory is accessible by group or others | restrict it with chmod 700`
+        )
+      }
+    } catch (error: unknown) {
+      logger.debug(`path=<${root}>, error=<${error}> | could not check session storage directory permissions`)
+    }
+  }
+
+  /** Returns true if `path` is a symbolic link. */
+  private async _isSymlink(path: string): Promise<boolean> {
+    try {
+      const { promises: fs } = await import('fs')
+      return (await fs.lstat(path)).isSymbolicLink()
+    } catch {
+      return false
     }
   }
 
   /** Returns true if the error represents a missing file or directory (ENOENT). */
   private _isFileNotFoundError(error: unknown): boolean {
-    return error !== null && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'
+    return this._hasErrorCode(error, 'ENOENT')
+  }
+
+  /** Returns true if the error carries the given Node.js error code. */
+  private _hasErrorCode(error: unknown, code: string): boolean {
+    return error !== null && typeof error === 'object' && 'code' in error && error.code === code
   }
 
   /** Returns the file path for `snapshot_latest.json` within the given scope. */

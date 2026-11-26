@@ -144,6 +144,15 @@ arguments. Fast, zero-config, gone when the process exits.
 Each key becomes a file under a base directory. Writes are atomic
 (temp file + rename).
 
+In TypeScript, on the host filesystem, the directories it creates from the base
+directory down and the files it writes are accessible to the owner only (`0o700` and
+`0o600`), and reading or writing a key whose file is a symbolic link throws a
+`StorageError`. An existing directory keeps its permissions, and an existing file
+becomes `0o600` when it is next written. In Python, directories and files get the
+default permissions, a read follows a symbolic link, and a write replaces the link
+without touching its target. When bound to a sandbox, permissions and symbolic links
+are handled by the sandbox.
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | <Syntax py="base_dir" ts="baseDir" /> | `"./.strands/"` | Root directory |

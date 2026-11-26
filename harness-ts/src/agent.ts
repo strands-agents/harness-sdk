@@ -4,7 +4,8 @@
 
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdir } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import {
   Agent,
   type AgentConfig,
@@ -293,6 +294,21 @@ function checkNameCollisions(sources: ReadonlyArray<readonly [string, boolean, T
   }
 }
 
+/**
+ * Creates the session directory private before any other plugin initializes. The stash keeps only
+ * its own folder private and can write first: for initial messages, while the context manager initializes.
+ */
+function sessionDirectoryPlugin(dir: string): Plugin {
+  return {
+    name: 'strands:session-directory',
+    // A failure is left for the stores to report when they write.
+    initAgent: async (): Promise<void> => {
+      await mkdir(dirname(resolve(dir)), { recursive: true }).catch(() => {})
+      await mkdir(dir, { recursive: true, mode: 0o700 }).catch(() => {})
+    },
+  }
+}
+
 /** The tools each plugin vends (e.g. the todos plugin's `todo_write`), via the SDK's `getTools()`. */
 function pluginTools(plugins: readonly Plugin[]): ToolList {
   return plugins.flatMap((plugin) => plugin.getTools?.() ?? [])
@@ -439,6 +455,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
 
   let sessionManager = agentConfig.sessionManager
   let storage = agentConfig.storage
+  let sessionDir: string | undefined
   if (session && sessionManager === undefined) {
     if (session instanceof SessionManager) {
       sessionManager = session
@@ -447,7 +464,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
       if (sessionConfig.id !== undefined && sessionConfig.id.trim() === '') {
         throw new Error('session.id must be a non-empty string.')
       }
-      const sessionDir = sessionConfig.dir ?? DEFAULT_SESSION_DIR
+      sessionDir = sessionConfig.dir ?? DEFAULT_SESSION_DIR
       const sessionId = sessionConfig.id ? sanitizeSessionId(sessionConfig.id) : randomUUID().slice(0, 8)
       sessionManager = new SessionManager({
         sessionId,
@@ -514,7 +531,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
     ...agentConfig,
     model: resolvedModel,
     tools: agentTools,
-    plugins,
+    plugins: sessionDir === undefined ? plugins : [sessionDirectoryPlugin(sessionDir), ...plugins],
     backgroundTasks: resolvedBackgroundTasks,
     contextManager,
     ...(sessionManager !== undefined && { sessionManager }),

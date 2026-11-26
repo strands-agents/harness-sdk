@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -768,6 +768,63 @@ describe('createHarness', () => {
     expect(existsSync(join(dir, 'retrieval', 'context', 'retrieval', agentScope, 'tooluse-0_0'))).toBe(true)
     // Every folder under the session dir is read as a session, so the archive stays inside this one.
     expect(readdirSync(dir)).toEqual(['retrieval'])
+  })
+
+  // https://github.com/strands-agents/harness-sdk/issues/6248
+  describe.skipIf(process.platform === 'win32')('session directory', () => {
+    it.each([
+      ['the stash writes before the first snapshot', {}],
+      [
+        'initial messages are stashed while plugins initialize',
+        {
+          messages: [
+            { role: 'user' as const, content: [{ text: 'Earlier question' }] },
+            { role: 'assistant' as const, content: [{ text: 'Earlier answer' }] },
+          ],
+        },
+      ],
+      [
+        'a plugin writes to storage while it initializes',
+        {
+          plugins: [
+            {
+              name: 'writes-on-init',
+              initAgent: async (agent): Promise<void> => {
+                await agent.storage?.write('probe', new Uint8Array([1]))
+              },
+            } satisfies Plugin,
+          ],
+        },
+      ],
+    ])('is private when %s', async (_, options: HarnessAgentOptions) => {
+      const parent = makeTempDir()
+      mkdirSync(parent)
+      const dir = join(parent, 'agent', 'sessions')
+      // The SDK logs its warnings through the console by default.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const agent = await createHarness({
+          ...options,
+          model: new RetrievingModel(),
+          tools: [readLargeTool],
+          session: { id: 'retrieval', dir },
+          builtinTools: [],
+          builtinPlugins: [],
+          memory: false,
+          skills: false,
+          printer: false,
+        })
+        expect(existsSync(dir)).toBe(false)
+        await agent.invoke('Read the document.', { limits: { turns: 4 } })
+
+        const mode = (path: string): number => statSync(path).mode & 0o777
+        expect(mode(dir)).toBe(0o700)
+        expect(mode(join(parent, 'agent'))).toBe(mode(parent))
+        expect(warn.mock.calls.flat().filter((message) => String(message).includes('accessible by'))).toEqual([])
+      } finally {
+        warn.mockRestore()
+      }
+    })
   })
 
   it.each([
