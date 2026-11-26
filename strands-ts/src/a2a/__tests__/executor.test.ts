@@ -3,12 +3,14 @@ import { A2AExecutor } from '../executor.js'
 import type { AgentExecutionEvent, ExecutionEventBus, RequestContext } from '@a2a-js/sdk/server'
 import type { TaskArtifactUpdateEvent, TaskStatusUpdateEvent } from '@a2a-js/sdk'
 import { Agent } from '../../agent/agent.js'
+import { Interrupt } from '../../interrupt.js'
+import { CitationsBlock } from '../../types/citations.js'
 import type { InvokableAgent } from '../../types/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { createMockAgent } from '../../__fixtures__/agent-helpers.js'
-import { TextBlock } from '../../types/messages.js'
+import { ReasoningBlock, TextBlock } from '../../types/messages.js'
 import { ImageBlock, encodeBase64 } from '../../types/media.js'
-import { ContentBlockEvent, ModelStreamUpdateEvent } from '../../hooks/events.js'
+import { ContentBlockEvent, ModelStreamUpdateEvent, StreamEvent } from '../../hooks/events.js'
 import { AgentResult } from '../../types/agent.js'
 import { Message } from '../../types/messages.js'
 import type { ModelStreamEvent } from '../../models/streaming.js'
@@ -37,6 +39,25 @@ function createRequestContext(text: string, taskId: string = 'task-1'): RequestC
       messageId: 'msg-1',
       role: 'user',
       parts: [{ kind: 'text', text }],
+    },
+  }
+}
+
+class CustomStreamUpdateEvent extends StreamEvent {}
+
+class CustomRenderedAgentResult extends AgentResult {
+  public override toString(): string {
+    return 'SAFE_REDACTED_RESPONSE'
+  }
+}
+
+function createCustomAgent(result: AgentResult): InvokableAgent {
+  return {
+    id: 'custom-agent',
+    invoke: vi.fn(),
+    async *stream() {
+      yield new CustomStreamUpdateEvent()
+      return result
     },
   }
 }
@@ -108,6 +129,127 @@ describe('A2AExecutor', () => {
       expect(artifactEvents).toHaveLength(3)
       expect(artifactEvents.map((e) => e.append)).toStrictEqual([false, true, true])
       expect(artifactEvents[2]!.lastChunk).toBe(true)
+    })
+
+    it('publishes only response-facing content when no text deltas are streamed', async () => {
+      // Regression coverage for #3365: A2A artifacts expose response content without internal reasoning.
+      const mockAgent = createCustomAgent(
+        new CustomRenderedAgentResult({
+          stopReason: 'endTurn',
+          lastMessage: new Message({
+            role: 'assistant',
+            content: [new ReasoningBlock({ text: 'SECRET_INTERNAL_REASONING' }), new TextBlock('PUBLIC_ANSWER')],
+          }),
+          invocationState: {},
+        })
+      )
+      const executor = new A2AExecutor({ agentFactory: () => mockAgent })
+      const eventBus = createMockEventBus()
+
+      await executor.execute(createRequestContext('Hello'), eventBus)
+
+      expect(eventBus.events).toStrictEqual([
+        { kind: 'task', id: 'task-1', contextId: 'ctx-1', status: { state: 'working' } },
+        {
+          kind: 'artifact-update',
+          taskId: 'task-1',
+          contextId: 'ctx-1',
+          artifact: {
+            artifactId: expect.any(String),
+            parts: [{ kind: 'text', text: 'PUBLIC_ANSWER' }],
+          },
+          append: false,
+          lastChunk: true,
+        },
+        {
+          kind: 'status-update',
+          taskId: 'task-1',
+          contextId: 'ctx-1',
+          status: { state: 'completed' },
+          final: true,
+        },
+      ])
+    })
+
+    it.each([
+      {
+        name: 'custom result rendering',
+        result: new CustomRenderedAgentResult({
+          stopReason: 'endTurn',
+          lastMessage: new Message({
+            role: 'assistant',
+            content: [new TextBlock('SENSITIVE_RAW_TEXT')],
+          }),
+          invocationState: {},
+        }),
+        expectedText: 'SAFE_REDACTED_RESPONSE',
+      },
+      {
+        name: 'structured output',
+        result: new CustomRenderedAgentResult({
+          stopReason: 'endTurn',
+          lastMessage: new Message({
+            role: 'assistant',
+            content: [new ReasoningBlock({ text: 'SECRET_INTERNAL_REASONING' })],
+          }),
+          structuredOutput: { answer: 42 },
+          invocationState: {},
+        }),
+        expectedText: '{"answer":42}',
+      },
+      {
+        name: 'interrupts',
+        result: new CustomRenderedAgentResult({
+          stopReason: 'interrupt',
+          lastMessage: new Message({
+            role: 'assistant',
+            content: [new ReasoningBlock({ text: 'SECRET_INTERNAL_REASONING' })],
+          }),
+          interrupts: [new Interrupt({ id: 'interrupt-1', name: 'confirm' })],
+          invocationState: {},
+        }),
+        expectedText: '[{"id":"interrupt-1","name":"confirm","source":"hook"}]',
+      },
+      {
+        name: 'citation text',
+        result: new CustomRenderedAgentResult({
+          stopReason: 'endTurn',
+          lastMessage: new Message({
+            role: 'assistant',
+            content: [
+              new ReasoningBlock({ text: 'SECRET_INTERNAL_REASONING' }),
+              new CitationsBlock({
+                citations: [],
+                content: [{ text: 'CITED_ANSWER' }],
+              }),
+            ],
+          }),
+          invocationState: {},
+        }),
+        expectedText: 'CITED_ANSWER',
+      },
+    ])('preserves $name when no text deltas are streamed', async ({ result, expectedText }) => {
+      const executor = new A2AExecutor({ agentFactory: () => createCustomAgent(result) })
+      const eventBus = createMockEventBus()
+
+      await executor.execute(createRequestContext('Hello'), eventBus)
+
+      const artifactEvents = eventBus.events.filter(
+        (event): event is TaskArtifactUpdateEvent => event.kind === 'artifact-update'
+      )
+      expect(artifactEvents).toStrictEqual([
+        {
+          kind: 'artifact-update',
+          taskId: 'task-1',
+          contextId: 'ctx-1',
+          artifact: {
+            artifactId: expect.any(String),
+            parts: [{ kind: 'text', text: expectedText }],
+          },
+          append: false,
+          lastChunk: true,
+        },
+      ])
     })
 
     it('converts A2A parts to content blocks and passes to stream', async () => {
