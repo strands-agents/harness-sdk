@@ -5,7 +5,7 @@ Tests for the function-based tool decorator pattern.
 import warnings
 from asyncio import Queue
 from collections.abc import AsyncGenerator
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
@@ -556,6 +556,55 @@ async def test_agent_parameter_passing(alist):
     result = (await alist(stream))[-1]
     assert "Agent:" in result["tool_result"]["content"][0]["text"]
     assert "test" in result["tool_result"]["content"][0]["text"]
+
+
+def test_agent_parameter_with_non_agent_annotation_warns():
+    """Regression test for #3499: an `agent` parameter annotated as a model-facing type warns.
+
+    The parameter is excluded from the input schema and receives the Agent instance at call time,
+    so the annotation could never be honored and the collision is flagged at definition time.
+    """
+    with pytest.warns(UserWarning, match="'agent' is reserved for Agent injection"):
+
+        @strands.tool
+        def test_tool(task: str, agent: Literal["reviewer", "explorer"] = "reviewer") -> str:
+            """Test tool."""
+            return task
+
+    assert list(test_tool.tool_spec["inputSchema"]["json"]["properties"]) == ["task"]
+
+
+def test_agent_parameter_with_agent_annotation_is_special():
+    """An `agent` parameter annotated as Agent stays excluded from the input schema."""
+
+    @strands.tool
+    def test_tool(task: str, agent: Agent) -> str:
+        """Test tool."""
+        return task
+
+    assert list(test_tool.tool_spec["inputSchema"]["json"]["properties"]) == ["task"]
+
+
+def test_agent_parameter_with_optional_agent_annotation_is_special():
+    """An `agent` parameter annotated as Agent | None stays excluded from the input schema."""
+
+    @strands.tool
+    def test_tool(task: str, agent: Agent | None = None) -> str:
+        """Test tool."""
+        return task
+
+    assert list(test_tool.tool_spec["inputSchema"]["json"]["properties"]) == ["task"]
+
+
+def test_agent_parameter_as_context_parameter():
+    """A context parameter named `agent` is exempt from the Agent injection check."""
+
+    @strands.tool(context="agent")
+    def test_tool(task: str, agent: ToolContext) -> str:
+        """Test tool."""
+        return task
+
+    assert list(test_tool.tool_spec["inputSchema"]["json"]["properties"]) == ["task"]
 
 
 @pytest.mark.asyncio
