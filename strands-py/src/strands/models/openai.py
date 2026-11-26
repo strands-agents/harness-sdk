@@ -104,6 +104,10 @@ class OpenAIModel(Model):
             params: Model parameters (e.g., max_tokens).
                 For a complete list of supported parameters, see
                 https://platform.openai.com/docs/api-reference/chat/create.
+                A streaming request sends ``stream_options={"include_usage": True}`` unless ``params`` sets it.
+                A key set to ``None`` is left out of the request, such as ``stream_options=None`` for
+                compatible endpoints that reject the field; ``model``, ``messages`` and ``stream`` are always
+                sent. Without ``include_usage``, the endpoint may not report usage.
             stream: Whether to use OpenAI chat completion streaming. Defaults to True.
             cache_config: Prompt-caching configuration. OpenAI routes cache reads on
                 ``cache_key`` (mapped to ``prompt_cache_key``) and honors ``ttl`` only when it names
@@ -568,6 +572,10 @@ class OpenAIModel(Model):
                 format.
         """
         params = dict(cast(dict[str, Any], self.config.get("params") or {}))
+        # None cannot remove a field every request needs.
+        for key in ("model", "messages"):
+            if key in params and params[key] is None:
+                del params[key]
         stream = bool(self.config.get("stream", params.pop("stream", True)))
         stream_options = params.pop("stream_options", {"include_usage": True})
 
@@ -597,7 +605,8 @@ class OpenAIModel(Model):
 
         apply_cache_config(request, self._routing_cache_config(), agent_metadata)
 
-        return request
+        # A None left by params omits the field, for endpoints that reject it (such as stream_options).
+        return {key: value for key, value in request.items() if value is not None}
 
     def _routing_cache_config(self) -> CacheConfig | None:
         """The cache config the OpenAI routing fields are built from.
