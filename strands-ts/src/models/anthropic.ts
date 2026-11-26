@@ -88,12 +88,17 @@ interface TurnScopedSystemMessage {
   content: Anthropic.TextBlockParam[]
   clear_at: 'next_user_message'
 }
-// Document types the Anthropic API rejects; formatContentBlock throws on them.
-const OFFICE_MIME_TYPES = [
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+// The media types this provider's formatter sends; it raises on any other media block.
+const SENDABLE_MIME_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'application/pdf',
+  'text/csv',
+  'text/html',
+  'text/markdown',
+  'text/plain',
 ]
 const TEXT_FILE_FORMATS = ['txt', 'md', 'markdown', 'csv', 'json', 'xml', 'html', 'yml', 'yaml', 'js', 'ts', 'py']
 
@@ -422,12 +427,14 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   }
 
   /**
-   * Turns temporary messages and native deferred tools back on for the models the shared model info lists, and drops
-   * the Office document types this provider can't send.
+   * Turns temporary messages and native deferred tools back on for the models the shared model info lists, and narrows
+   * the accepted media types to those this provider sends.
    */
   override get modelInfo(): ModelInfo {
-    const capabilities = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
-    const acceptedMimeTypes = capabilities.acceptedMimeTypes?.filter((type) => !OFFICE_MIME_TYPES.includes(type))
+    const shared = lookupModelInfo(this.modelId ?? '')
+    const capabilities = shared.capabilities ?? {}
+    const acceptedMimeTypes =
+      capabilities.acceptedMimeTypes && SENDABLE_MIME_TYPES.filter((type) => ModelInfo.accepts(shared, type))
     return ModelInfo.merge(
       super.modelInfo,
       {

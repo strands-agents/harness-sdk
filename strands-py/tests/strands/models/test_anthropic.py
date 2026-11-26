@@ -2019,16 +2019,39 @@ _OFFICE_TYPES = (
 )
 
 
-def test_model_info_drops_the_office_types_the_provider_cannot_send(anthropic_client):
+_SENDABLE = (
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "application/pdf",
+    "text/csv",
+    "text/html",
+    "text/markdown",
+    "text/plain",
+)
+
+
+def test_model_info_keeps_only_the_listed_types_the_provider_sends(anthropic_client):
     _ = anthropic_client
 
-    shared = lookup_model_info("claude-sonnet-4-6").capabilities.accepted_mime_types
+    assert lookup_model_info("claude-sonnet-4-6").accepts(_OFFICE_TYPES[1])
     model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1)
 
-    assert set(_OFFICE_TYPES) <= set(shared)
-    assert model.model_info.capabilities.accepted_mime_types == tuple(t for t in shared if t not in _OFFICE_TYPES)
-    assert model.model_info.accepts("application/pdf")
+    assert model.model_info.capabilities.accepted_mime_types == _SENDABLE
     assert not model.model_info.accepts(_OFFICE_TYPES[1])
+
+
+@pytest.mark.parametrize("model_id", ["claude-sonnet-4-20250514", "claude-mythos-preview"])
+def test_model_info_narrows_wildcards_to_the_types_the_provider_sends(anthropic_client, model_id):
+    _ = anthropic_client
+    assert lookup_model_info(model_id).accepts("application/msword") or lookup_model_info(model_id).accepts("video/mp4")
+
+    info = AnthropicModel(model_id=model_id, max_tokens=1).model_info
+
+    assert set(info.capabilities.accepted_mime_types) <= set(_SENDABLE)
+    assert not info.accepts("application/msword")
+    assert not info.accepts("video/mp4")
 
 
 def test_model_info_accepts_every_type_when_the_shared_data_has_no_list(anthropic_client):

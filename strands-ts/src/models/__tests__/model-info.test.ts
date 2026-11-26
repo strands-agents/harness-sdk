@@ -61,6 +61,7 @@ describe('ModelInfo.accepts', () => {
     [[], 'image/png', false],
     [['image/png'], 'image/png', true],
     [['image/png'], 'IMAGE/PNG', true],
+    [['Image/PNG'], 'image/png', true],
     [['text/plain'], 'text/plain; charset=utf-8', true],
     [['image/png'], 'image/jpeg', false],
     [['video/*'], 'video/mp4', true],

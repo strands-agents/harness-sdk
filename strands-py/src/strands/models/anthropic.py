@@ -164,14 +164,17 @@ _IMAGE_MEDIA_TYPES = {
     "webp": "image/webp",
 }
 
-# Document types the Anthropic API rejects; _format_request_message_content raises on them.
-_OFFICE_MIME_TYPES = frozenset(
-    {
-        "application/msword",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/vnd.ms-excel",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }
+# The media types this provider's formatter sends; it raises on any other media block.
+_SENDABLE_MIME_TYPES = (
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "application/pdf",
+    "text/csv",
+    "text/html",
+    "text/markdown",
+    "text/plain",
 )
 
 # Anthropic document sources accept only pdf (base64) and plain text; these formats are delivered as text.
@@ -348,22 +351,22 @@ class AnthropicModel(Model):
     def model_info(self) -> ModelInfo:
         """Everything the SDK knows about the configured model, with ``temporary_messages`` on for supported Claude.
 
-        ``accepted_mime_types`` drops the Office document types this provider can't send. ``temporary_messages``
+        ``accepted_mime_types`` keeps only the media types this provider sends. ``temporary_messages``
         follows the model id, not the client, so it is also on through the Bedrock and Vertex clients. If those reject
         the turn-scoped system messages, set
         ``model_info=ModelInfo(capabilities=ModelCapabilities(temporary_messages=False))``.
         See :attr:`strands.models.Model.model_info`.
         """
-        capabilities = lookup_model_info(self.config.get("model_id")).capabilities
-        accepted = capabilities.accepted_mime_types
+        shared = lookup_model_info(self.config.get("model_id"))
+        capabilities = shared.capabilities
         return ModelInfo.merge(
             super().model_info,
             ModelInfo(
                 capabilities=ModelCapabilities(
                     temporary_messages=capabilities.temporary_messages,
                     accepted_mime_types=None
-                    if accepted is None
-                    else tuple(t for t in accepted if t not in _OFFICE_MIME_TYPES),
+                    if capabilities.accepted_mime_types is None
+                    else tuple(t for t in _SENDABLE_MIME_TYPES if shared.accepts(t)),
                 )
             ),
             self.get_config().get("model_info"),

@@ -110,7 +110,7 @@ class ModelInfo:
         if accepted is None:
             return True
         media_type = mime_type.split(";")[0].strip().lower()
-        return media_type in accepted or f"{media_type.split('/')[0]}/*" in accepted
+        return not {media_type, f"{media_type.split('/')[0]}/*"}.isdisjoint(entry.lower() for entry in accepted)
 
     @classmethod
     def merge(cls, *parts: "ModelInfo | None") -> "ModelInfo":

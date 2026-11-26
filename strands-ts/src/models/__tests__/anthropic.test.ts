@@ -237,19 +237,40 @@ describe('AnthropicModel', () => {
       expect(model.modelInfo.capabilities?.temporaryMessages).toBe(expected)
     })
 
-    it('drops the Office types it cannot send', () => {
+    const sendable = [
+      'image/png',
+      'image/jpeg',
+      'image/gif',
+      'image/webp',
+      'application/pdf',
+      'text/csv',
+      'text/html',
+      'text/markdown',
+      'text/plain',
+    ]
+
+    it('keeps only the listed types it sends', () => {
       const docx = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      const shared = lookupModelInfo('claude-sonnet-4-6').capabilities?.acceptedMimeTypes
+      expect(ModelInfo.accepts(lookupModelInfo('claude-sonnet-4-6'), docx)).toBe(true)
       const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' }).modelInfo
 
-      expect(shared).toContain(docx)
-      expect(info.capabilities?.acceptedMimeTypes).toEqual(
-        shared?.filter((type) => !type.startsWith('application/vnd.') && type !== 'application/msword')
-      )
-      expect(ModelInfo.accepts(info, 'application/pdf')).toBe(true)
+      expect(info.capabilities?.acceptedMimeTypes).toEqual(sendable)
       expect(ModelInfo.accepts(info, docx)).toBe(false)
       expect(Object.isFrozen(info.capabilities?.acceptedMimeTypes)).toBe(true)
     })
+
+    it.each(['claude-sonnet-4-20250514', 'claude-mythos-preview'])(
+      'narrows wildcards for %s to the types it sends',
+      (modelId) => {
+        const shared = lookupModelInfo(modelId)
+        expect(ModelInfo.accepts(shared, 'application/msword') || ModelInfo.accepts(shared, 'video/mp4')).toBe(true)
+        const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId }).modelInfo
+
+        for (const type of info.capabilities?.acceptedMimeTypes ?? []) expect(sendable).toContain(type)
+        expect(ModelInfo.accepts(info, 'application/msword')).toBe(false)
+        expect(ModelInfo.accepts(info, 'video/mp4')).toBe(false)
+      }
+    )
 
     it('accepts every type when the shared data has no list', () => {
       const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-3-opus-20240229' }).modelInfo

@@ -132,7 +132,8 @@ export const ModelInfo = Object.freeze({
     const accepted = info.capabilities?.acceptedMimeTypes
     if (accepted === undefined) return true
     const type = mimeType.split(';')[0]!.trim().toLowerCase()
-    return accepted.includes(type) || accepted.includes(`${type.split('/')[0]}/*`)
+    const wildcard = `${type.split('/')[0]}/*`
+    return accepted.some((entry) => [type, wildcard].includes(entry.toLowerCase()))
   },
 })
 

@@ -258,6 +258,7 @@ def test_model_info_merge_keeps_an_empty_accepted_list_as_known():
         ((), "image/png", False),
         (("image/png",), "image/png", True),
         (("image/png",), "IMAGE/PNG", True),
+        (("Image/PNG",), "image/png", True),
         (("text/plain",), "text/plain; charset=utf-8", True),
         (("image/png",), "image/jpeg", False),
         (("video/*",), "video/mp4", True),
