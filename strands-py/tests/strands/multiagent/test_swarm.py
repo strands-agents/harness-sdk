@@ -17,6 +17,7 @@ from strands.session.file_session_manager import FileSessionManager
 from strands.session.session_manager import SessionManager
 from strands.types._events import MultiAgentNodeStartEvent
 from strands.types.content import ContentBlock
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
 def create_mock_agent(name, response_text="Default response", metrics=None, agent_id=None, should_fail=False):
@@ -1086,6 +1087,26 @@ async def test_swarm_node_timeout_with_mocked_streaming():
     # Execute - should complete with FAILED status due to timeout
     result = await swarm.invoke_async("Test freezing generator")
     assert result.status == Status.FAILED
+
+
+@pytest.mark.asyncio
+async def test_swarm_node_timeout_excludes_time_the_caller_spends_on_events():
+    """A slow stream consumer must not trip node_timeout or receive a CancelledError (#6593)."""
+    agent = Agent(
+        name="fast_agent",
+        model=MockedModelProvider([{"role": "assistant", "content": [{"text": "done"}]}]),
+        callback_handler=None,
+    )
+    swarm = Swarm(nodes=[agent], node_timeout=0.2)
+
+    tru_result = None
+    async for event in swarm.stream_async("Test slow consumer"):
+        await asyncio.sleep(0.05)
+        if "result" in event:
+            tru_result = event["result"]
+
+    assert tru_result is not None
+    assert tru_result.status == Status.COMPLETED
 
 
 @pytest.mark.asyncio
