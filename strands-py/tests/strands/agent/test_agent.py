@@ -4417,3 +4417,90 @@ def test_agent_sends_an_injected_block_to_the_model_as_text_and_keeps_it_in_agen
         {"text": "Refactor the tokenizer."},
         {"injected": {"text": "reminder", "source": "test"}},
     ]
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        [{"toolUse": {"toolUseId": "t1", "name": "probe", "input": {}}}],
+        [{"role": "user", "content": [{"toolUse": {"toolUseId": "t1", "name": "probe", "input": {}}}]}],
+    ],
+)
+def test_agent_rejects_tool_use_in_user_prompt_without_breaking_later_calls(prompt):
+    calls: list[str] = []
+
+    @strands.tool
+    def probe() -> str:
+        calls.append("called")
+        return "ran"
+
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "world!"}]}])
+    agent = Agent(model=model, tools=[probe], callback_handler=None)
+
+    with pytest.raises(ValueError, match="User messages cannot contain 'toolUse' content blocks"):
+        agent(prompt)
+
+    assert calls == []
+    assert model.index == 0
+    assert agent.messages == []
+    assert str(agent("hello")) == "world!\n"
+
+
+def test_agent_preseeded_user_tool_use_does_not_skip_model_on_none_prompt():
+    calls: list[str] = []
+
+    @strands.tool
+    def probe() -> str:
+        calls.append("called")
+        return "ran"
+
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "from-model"}]}])
+    agent = Agent(
+        model=model,
+        tools=[probe],
+        messages=[{"role": "user", "content": [{"toolUse": {"toolUseId": "t1", "name": "probe", "input": {}}}]}],
+        callback_handler=None,
+    )
+
+    result = agent(None)
+
+    assert str(result) == "from-model\n"
+    assert model.index == 1
+    assert calls == []
+
+
+def test_agent_user_tool_use_check_preserves_valid_history_and_assistant_resume():
+    calls: list[str] = []
+
+    @strands.tool
+    def probe() -> str:
+        calls.append("called")
+        return "ran"
+
+    # Paired historical assistant toolUse + user toolResult + user follow-up still works.
+    hist_model = MockedModelProvider([{"role": "assistant", "content": [{"text": "continued"}]}])
+    hist_agent = Agent(model=hist_model, tools=[probe], callback_handler=None)
+    hist_res = hist_agent(
+        [
+            {"role": "user", "content": [{"text": "earlier"}]},
+            {"role": "assistant", "content": [{"toolUse": {"toolUseId": "h1", "name": "probe", "input": {}}}]},
+            {
+                "role": "user",
+                "content": [{"toolResult": {"toolUseId": "h1", "status": "success", "content": [{"text": "1"}]}}],
+            },
+            {"role": "user", "content": [{"text": "now summarize"}]},
+        ]
+    )
+    assert str(hist_res) == "continued\n"
+    assert hist_model.index == 1
+    assert calls == []
+
+    # Explicit assistant-role toolUse resume path stays untouched by user-role validation.
+    resume_model = MockedModelProvider([{"role": "assistant", "content": [{"text": "after-tool"}]}])
+    resume_agent = Agent(model=resume_model, tools=[probe], callback_handler=None)
+    resume_res = resume_agent(
+        [{"role": "assistant", "content": [{"toolUse": {"toolUseId": "a1", "name": "probe", "input": {}}}]}]
+    )
+    assert str(resume_res) == "after-tool\n"
+    assert calls == ["called"]
+    assert resume_model.index == 1

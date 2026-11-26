@@ -4136,3 +4136,32 @@ async def test_graph_node_failure_on_resume_clears_interrupted_agent_state(mock_
     agent.stream_async = create_mock_agent("test_agent").stream_async
     result = await graph.invoke_async("new task")
     assert result.status == Status.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_graph_rejects_content_block_tool_use_task():
+    """Passing a toolUse ContentBlock list into Graph must raise ValueError without calling the tool."""
+    import strands
+    from tests.fixtures.mocked_model_provider import MockedModelProvider
+
+    calls: list[str] = []
+
+    @strands.tool
+    def probe() -> str:
+        calls.append("called")
+        return "ran"
+
+    model = MockedModelProvider([])
+    entry = Agent(model=model, tools=[probe], callback_handler=None, name="entry")
+    builder = GraphBuilder()
+    builder.add_node(entry, "entry")
+    builder.set_entry_point("entry")
+    builder.set_max_node_executions(5)
+    graph = builder.build()
+
+    with pytest.raises(ValueError, match="User messages cannot contain 'toolUse' content blocks"):
+        await graph.invoke_async([{"toolUse": {"toolUseId": "g1", "name": "probe", "input": {}}}])
+
+    assert calls == []
+    assert model.index == 0
+    assert entry.messages == []

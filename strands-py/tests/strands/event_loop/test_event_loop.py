@@ -2706,3 +2706,17 @@ async def test_event_loop_cycle_cancel_after_tools_stops_without_checkpointing(
 
     assert events[-1]["stop"][0] == "cancelled"
     assert model.stream.call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("messages", "expected"),
+    [
+        ([], False),
+        ([{"role": "assistant", "content": [{"text": "hello"}]}], False),
+        ([{"role": "user", "content": [{"toolUse": {"toolUseId": "t1", "name": "probe", "input": {}}}]}], False),
+        ([{"role": "assistant", "content": [{"toolUse": {"toolUseId": "t1", "name": "probe", "input": {}}}]}], True),
+    ],
+)
+def test_has_tool_use_in_latest_message_requires_assistant_role(messages, expected):
+    """Only an assistant trailing message with toolUse should resume into tool execution."""
+    assert strands.event_loop.event_loop._has_tool_use_in_latest_message(messages) is expected
