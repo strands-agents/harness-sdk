@@ -32,7 +32,7 @@ model = LiteLLMModel(
         "api_key": "<KEY>",
     },
     # **model_config
-    model_id="anthropic/claude-3-7-sonnet-20250219",
+    model_id="anthropic/claude-sonnet-4-6",
     params={
         "max_tokens": 1000,
         "temperature": 0.7,
@@ -91,7 +91,7 @@ The `model_config` configures the underlying model selected for inference. The s
 
 |  Parameter | Description | Example | Options |
 |------------|-------------|---------|---------|
-| `model_id` | ID of a model to use | `anthropic/claude-3-7-sonnet-20250219` | [reference](https://docs.litellm.ai/docs/providers)
+| `model_id` | ID of a model to use | `anthropic/claude-sonnet-4-6` | [reference](https://docs.litellm.ai/docs/providers)
 | `params` | Model specific parameters | `{"max_tokens": 1000, "temperature": 0.7}` | [reference](https://docs.litellm.ai/docs/completion/input)
 
 ## Troubleshooting
@@ -168,7 +168,7 @@ class BookAnalysis(BaseModel):
     rating: int = Field(description="Rating from 1-10", ge=1, le=10)
 
 model = LiteLLMModel(
-    model_id="bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+    model_id="bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 )
 
 agent = Agent(model=model)
