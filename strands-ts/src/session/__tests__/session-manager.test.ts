@@ -12,6 +12,7 @@ import {
   type HookCleanup,
 } from '../../hooks/index.js'
 import { Agent } from '../../agent/agent.js'
+import { SlidingWindowConversationManager } from '../../conversation-manager/sliding-window-conversation-manager.js'
 import { Message, TextBlock } from '../../types/messages.js'
 import type { MessageData } from '../../types/messages.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
@@ -379,6 +380,27 @@ describe('SessionManager', () => {
   describe('AfterInvocationEvent handling', () => {
     beforeEach(() => {
       mockAgent = createMockAgent('test-agent')
+    })
+
+    it('saves the snapshot after the sliding window trim', async () => {
+      const model = new MockMessageModel()
+      for (let turn = 0; turn < 4; turn++) model.addTurn(new TextBlock(`reply ${turn}`))
+      sessionManager = new SessionManager({ sessionId: 'trim-session', storage: { snapshot: storage } })
+      const agent = new Agent({
+        id: 'trim-agent',
+        model,
+        printer: false,
+        conversationManager: new SlidingWindowConversationManager({ windowSize: 4 }),
+        sessionManager,
+      })
+
+      for (let turn = 0; turn < 4; turn++) await agent.invoke(`question ${turn}`)
+
+      const snapshot = await storage.loadSnapshot({
+        location: { sessionId: 'trim-session', scope: 'agent', scopeId: 'trim-agent' },
+      })
+      expect(agent.messages).toHaveLength(4)
+      expect((snapshot?.data as { messages: unknown[] }).messages).toHaveLength(4)
     })
 
     it('saves snapshot_latest when saveLatestOn is invocation', async () => {
