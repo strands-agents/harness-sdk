@@ -7,13 +7,13 @@ Fetches an HTTP(S) URL and returns its relevant content. Distinct from the http-
 **This tool makes outbound HTTP requests to URLs chosen by the model.**
 
 - Only use with trusted input
-- Requests execute with the network access of the host process
+- Requests execute with the network access of the host process. With `sandbox: true` they run through the agent's sandbox instead and are confined only as far as that sandbox is
 - For production deployments, consider running in a sandboxed environment (containers, VMs, etc.)
 - Never expose this tool to untrusted users or untrusted prompt input without additional security measures
 
 ## Install
 
-HTML conversion requires the optional `turndown` peer dependency:
+HTML conversion requires the optional `turndown` peer dependency, which is loaded on the first HTML conversion:
 
 ```bash
 npm install turndown
@@ -57,6 +57,19 @@ const webFetch = makeWebFetch({
 const agent = new Agent({ tools: [webFetch] })
 ```
 
+Sending the request through the agent's sandbox:
+
+```typescript
+import { Agent } from '@strands-agents/sdk'
+import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
+import { makeWebFetch } from '@strands-agents/sdk/vended-tools/web-fetch'
+
+const agent = new Agent({
+  sandbox: new DockerSandbox({ container: 'my-container-id' }),
+  tools: [makeWebFetch({ sandbox: true })],
+})
+```
+
 ## API
 
 ### `webFetch`
@@ -73,14 +86,25 @@ The default tool, produced by `makeWebFetch()` with `mode: 'agentic'` and defaul
 | `maxBytes`        | `number`                  | `5242880`     | Maximum response body size in bytes (5 MiB).                                                 |
 | `maxContentChars` | `number`                  | `50000`       | Maximum characters of extracted content delivered to the model.                              |
 | `model`           | `Model`                   |               | Analyst model for agentic mode. Falls back to the host agent's `auxModel` when not provided. |
+| `sandbox`         | `boolean \| Sandbox`      | `false`       | Run the request through the agent's sandbox, or through the one passed (see below).          |
 
-Throws if `maxBytes` or `maxContentChars` is not a positive number.
+Throws if `maxBytes` is not a positive integer, `maxContentChars` is not a positive number, or `sandbox` is neither a boolean nor a `Sandbox`.
+
+### Where the request runs
+
+By default the request is sent with global `fetch` from the agent process and does not go through the agent's sandbox.
+
+With `sandbox: true` the request runs as `curl` through the host agent's sandbox, so it is confined only as far as that sandbox is. With no sandbox configured, the agent's default local environment runs `curl` on the host. Pass a `Sandbox` instance to use that sandbox in place of the agent's. The sandbox must provide `curl`, `head`, and `base64` when its shell is POSIX, or `curl.exe` when it is PowerShell.
+
+Both follow redirects, reject bodies over `maxBytes`, and stop the request 30 seconds after it starts.
 
 ### Modes
 
 **`markdown`** — Fetches the URL and returns the page content as clean markdown directly in the agent's context. HTML is converted with scripts, styles, and noise stripped; other content types are returned as-is.
 
-**`agentic`** — Fetches the URL and routes the content through a dedicated analyst agent that answers the `prompt` about the page. The full page content never enters the main agent's context window — only the analyst's answer is returned.
+**`agentic`** — Fetches the URL and routes the content through a dedicated analyst agent that answers the `prompt` about the page. Only the analyst's answer is returned, keeping the page out of the main agent's context window.
+
+In agentic mode an empty `prompt` skips the analyst and returns the converted page content to the main agent.
 
 ### Input — markdown mode
 
@@ -93,11 +117,11 @@ Throws if `maxBytes` or `maxContentChars` is not a positive number.
 | Property | Type     | Required | Description                                     |
 | -------- | -------- | -------- | ----------------------------------------------- |
 | `url`    | `string` | Yes      | URL to fetch. Must be `http://` or `https://`.  |
-| `prompt` | `string` | Yes      | Question or instruction about the page content. |
+| `prompt` | `string` | No       | Question or instruction about the page content. |
 
 ### Output
 
-Both modes return a string. Markdown mode returns the extracted page content; agentic mode returns the analyst's answer.
+Both modes return a string. Markdown mode returns the extracted page content; agentic mode returns the analyst's answer, or the extracted page content when `prompt` is empty.
 
 ## What it does not do
 

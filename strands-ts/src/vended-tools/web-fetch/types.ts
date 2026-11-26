@@ -1,4 +1,5 @@
 import type { Model } from '../../models/model.js'
+import type { Sandbox } from '../../sandbox/base.js'
 
 /**
  * Input parameters for the markdown mode web fetch tool.
@@ -14,8 +15,8 @@ export interface WebFetchMarkdownInput {
 export interface WebFetchAgenticInput {
   /** URL to fetch. Must be http:// or https://. */
   url: string
-  /** Question or instruction about the page content. */
-  prompt: string
+  /** Question or instruction about the page content. Empty returns the page content itself. */
+  prompt?: string
 }
 
 export const WEB_FETCH_DESCRIPTION_MARKDOWN =
@@ -24,10 +25,8 @@ export const WEB_FETCH_DESCRIPTION_MARKDOWN =
   'other content types are returned as-is.'
 
 export const WEB_FETCH_DESCRIPTION_AGENTIC =
-  'Fetches an HTTP(S) URL and answers a prompt about its content. ' +
-  'The analyst processes the page directly so the full content never enters ' +
-  "the main agent's context. " +
-  'The prompt parameter is required.'
+  'Fetches an HTTP(S) URL. With a prompt, an analyst reads the page and returns only its answer, ' +
+  'keeping the page out of your context. Without one, returns the page as markdown.'
 
 /**
  * Options for {@link makeWebFetch}.
@@ -48,4 +47,10 @@ export interface MakeWebFetchOptions {
   model?: Model
   /** Extraction mode. Defaults to `'agentic'`. */
   mode?: 'markdown' | 'agentic'
+  /**
+   * When `true`, the request runs as `curl` through the host agent's sandbox and is confined only as
+   * far as that sandbox is. A `Sandbox` instance is used in place of the agent's. Defaults to `false`:
+   * global `fetch` from the agent process.
+   */
+  sandbox?: boolean | Sandbox
 }
