@@ -1,0 +1,18 @@
+---
+title: AnswerOf
+description: Infer a decision answer type from its Question definition.
+languages: [typescript]
+sourceLinks:
+  - path: strands-ts/src/decisions/types.ts
+---
+
+Use `AnswerOf<Q>` to derive the answer type from a question. A boolean question
+produces `boolean | Uncertain`; a string-choice tuple produces the union of its
+string literals plus `Uncertain`.
+
+For example, `Question<'boolean'>` maps to `boolean | Uncertain`, while
+`Question<readonly ['red', 'green']>` maps to `'red' | 'green' | Uncertain`.
+An un-narrowed `Question` falls back to `boolean | string | Uncertain`.
+
+`DecisionResult<Q>` applies `AnswerOf` to every key in the question map, so the
+answers object preserves the choices for each individual question.
