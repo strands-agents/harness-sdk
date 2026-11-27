@@ -17,7 +17,7 @@ So we built a tiered approach to curating the model's context window: context is
 
 ## Philosophy
 
-Early agentic systems relied on conversation managers as a stopgap between the application and the context window overflow error. In Strands, the conversation manager caught the overflow error after the model call failed, dropped (or summarized) the oldest 30% of context, and reinvoked the model.
+At their inception, agentic systems relied upon rudimentary conversation managers, which acted as a stopgap between the application and the dreaded context window overflow error. In Strands, the conversation manager caught the overflow error after the model call failed, dropped (or summarized) the oldest 30% of context, and reinvoked the model.
 
 <Diagram
   name="context-overflow-recovery"
@@ -26,7 +26,7 @@ Early agentic systems relied on conversation managers as a stopgap between the a
 
 This recovered gracefully, but each overflow wasted an entire turn: the failed call was already billed, and the retry billed again.
 
-We wanted the opposite default. The context window should hold only what the next model call needs, and everything else should stay accessible and lossless outside it. That cuts token spend, and it also cuts the "lost-in-the-middle" effect, where model accuracy drops over information buried in the middle of a large input.
+Applying the just-in-time standard to context management, we hypothesized that in an ideal world, the context window would hold only what is sufficient and necessary for the next model call, with everything else staying accessible and lossless outside it. That cuts token spend, and it also cuts the "lost-in-the-middle" effect, where model accuracy drops over information buried in the middle of a large input.
 
 ## Context Compression
 
@@ -91,7 +91,7 @@ agent = Agent(
 
 ## Context Relevance
 
-Retrieval raises its own question: how does the agent know what to pull back? Today, the agent narrows a block by pattern or line range, paying for the lines it needs instead of the whole result. Built-in search strategies rank the stash for it: BM25 and lexical search ship in the box, and the search interface accepts custom implementations. Surfacing these on the context manager, so the agent can search the stash against its current work, lands next.
+Yet this begets a new problem: how does the agent know what full context to retrieve? Today, the agent narrows a block by pattern or line range, paying for the lines it needs instead of the whole result. Built-in search strategies rank the stash for it: BM25 and lexical search ship in the box, and the search interface accepts custom implementations. Surfacing these on the context manager, so the agent can search the stash against its current work, lands next.
 
 ```python
 from strands.storage import LocalFileStorage
