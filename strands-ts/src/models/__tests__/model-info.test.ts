@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ModelInfo } from '../model-info.js'
+import { acceptsMimeType, ModelInfo } from '../model-info.js'
 
 const base: ModelInfo = {
   capabilities: { stateful: false, promptCaching: 'cachePoints' },
@@ -32,6 +32,16 @@ describe('ModelInfo.merge', () => {
     expect(merged.limits?.contextWindow).toBe(2)
   })
 
+  it('keeps an empty accepted list as known, frozen', () => {
+    const merged = ModelInfo.merge(
+      { capabilities: { acceptedMimeTypes: ['image/png'] } },
+      { capabilities: { acceptedMimeTypes: [] } }
+    )
+
+    expect(merged.capabilities?.acceptedMimeTypes).toEqual([])
+    expect(Object.isFrozen(merged.capabilities?.acceptedMimeTypes)).toBe(true)
+  })
+
   it('leaves out sections with nothing known', () => {
     expect(ModelInfo.merge({}, undefined, { limits: { contextWindow: undefined } })).toEqual({})
   })
@@ -42,5 +52,21 @@ describe('ModelInfo.merge', () => {
     expect(Object.isFrozen(merged)).toBe(true)
     expect(Object.isFrozen(merged.capabilities)).toBe(true)
     expect(Object.isFrozen(merged.limits)).toBe(true)
+  })
+})
+
+describe('acceptsMimeType', () => {
+  it.each<[readonly string[] | undefined, string, boolean]>([
+    [undefined, 'application/x-anything', true],
+    [[], 'image/png', false],
+    [['image/png'], 'image/png', true],
+    [['image/png'], 'IMAGE/PNG', true],
+    [['Image/PNG'], 'image/png', true],
+    [['text/plain'], 'text/plain; charset=utf-8', true],
+    [['image/png'], 'image/jpeg', false],
+    [['video/*'], 'video/mp4', true],
+    [['video/*'], 'audio/mp4', false],
+  ])('with %j accepts %s: %s', (acceptedMimeTypes, mimeType, expected) => {
+    expect(acceptsMimeType({ capabilities: { acceptedMimeTypes } }, mimeType)).toBe(expected)
   })
 })

@@ -13,10 +13,11 @@ const marker = { mode: 'explicit' }
 const config: OpenAIResponsesConfig = { modelId: 'gpt-6-sol', cacheConfig: {} }
 const user = (...texts: string[]): Message => new Message({ role: 'user', content: texts.map((t) => new TextBlock(t)) })
 
-/** Formats a request with the model info the provider resolves for `modelConfig`. */
+/** Formats a request with the model info the provider resolves for `modelConfig`, leaving out the `include` default. */
 function format(modelConfig: OpenAIResponsesConfig, messages: Message[], options?: StreamOptions): object {
   const { modelInfo } = new OpenAIModel({ ...modelConfig, api: 'responses', client: {} as OpenAI })
-  return formatResponsesRequest(modelConfig, messages, options, false, modelInfo)
+  const { include: _include, ...request } = formatResponsesRequest(modelConfig, messages, options, false, modelInfo)
+  return request
 }
 
 function request(messages: Message[], options?: StreamOptions, overrides?: OpenAIResponsesConfig): object {

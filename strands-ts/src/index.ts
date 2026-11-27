@@ -72,6 +72,7 @@ export type {
   ToolUseBlockData,
   ToolResultBlockData,
   ReasoningBlockData,
+  ReasoningProviderData,
   CachePointBlockData,
   GuardContentBlockData,
   SummaryBlockData,

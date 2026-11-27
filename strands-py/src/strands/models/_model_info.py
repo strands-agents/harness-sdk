@@ -30,8 +30,8 @@ class ModelCapabilities:
     """What the model can do.
 
     A yes/no fact is a ``bool``; a fact with more than two states is a string literal, like
-    :data:`PromptCaching` (which mechanism). A fact about two features together gets its own field
-    named after the pair. ``None`` is unknown either way.
+    :data:`PromptCaching` (which mechanism); a set of supported values is a tuple, where ``()`` means none.
+    A fact about two features together gets its own field named after the pair. ``None`` is unknown either way.
 
     Attributes:
         stateful: Whether the model keeps conversation state server-side;
@@ -53,6 +53,12 @@ class ModelCapabilities:
             :attr:`strands.models.Model.model_info` reports False unless the provider can send them
             (``AnthropicModel``). Turning it on for a provider that cannot send them loses the injected text: Bedrock
             skips the block with a warning, Mistral drops it, other providers raise ``TypeError``.
+        reasoning_provider: The ``providerData.provider`` tag of the reasoning the model takes back from history,
+            such as ``"openai_responses"``. Reasoning tagged otherwise does not reach the model.
+        accepted_mime_types: MIME types the model and provider take in the media blocks of a user message; ``()``
+            when they take only text, None for every type. An entry matches a type exactly (``image/png``) or by its
+            ``type/*``; case and ``; parameters`` are ignored. A wildcard can also mean the kind isn't verified (see
+            ``shared/README.md``). Tool results can take fewer.
     """
 
     stateful: bool | None = None
@@ -61,6 +67,8 @@ class ModelCapabilities:
     native_structured_output: bool | None = None
     server_side_summary: bool | None = None
     temporary_messages: bool | None = None
+    reasoning_provider: str | None = None
+    accepted_mime_types: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -128,6 +136,24 @@ def _merge_section(parts: list[_SectionT], empty: _SectionT) -> _SectionT:
     return merged
 
 
+def _accepts_mime_type(info: ModelInfo, mime_type: str) -> bool:
+    """Report whether a model takes a MIME type in a user message, by ``capabilities.accepted_mime_types``.
+
+    Args:
+        info: What the SDK knows about the model, usually :attr:`strands.models.Model.model_info`.
+        mime_type: The type to check, such as ``image/png``; parameters (``; charset=utf-8``) are ignored.
+
+    Returns:
+        True when the list names the type or its ``type/*``, or when the model has no list.
+    """
+    accepted = info.capabilities.accepted_mime_types
+    # Anything but a tuple or list is unknown, as the loader reads it.
+    if not isinstance(accepted, tuple | list):
+        return True
+    media_type = mime_type.split(";")[0].strip().lower()
+    return not {media_type, f"{media_type.split('/')[0]}/*"}.isdisjoint(entry.lower() for entry in accepted)
+
+
 SERVER_SIDE_SUMMARY_OFF = ModelInfo(capabilities=ModelCapabilities(server_side_summary=False))
 """Turns ``server_side_summary`` off for providers that serve a model the shared info lists it for but have no
 server-side summary of their own."""
@@ -139,6 +165,8 @@ _CAPABILITY_FIELDS = {
     "nativeStructuredOutput": "native_structured_output",
     "serverSideSummary": "server_side_summary",
     "temporaryMessages": "temporary_messages",
+    "reasoningProvider": "reasoning_provider",
+    "acceptedMimeTypes": "accepted_mime_types",
 }
 _LIMIT_FIELDS = {"contextWindow": "context_window", "maxOutputTokens": "max_output_tokens"}
 # Shared-data values are camelCase; the Python literals are snake_case.
@@ -168,6 +196,9 @@ def _section(entry: dict[str, Any], name: str, field_names: dict[str, str], sect
     if "prompt_caching" in known:
         value = known["prompt_caching"]
         known["prompt_caching"] = _PROMPT_CACHING_VALUES.get(value) if isinstance(value, str) else None
+    if "accepted_mime_types" in known:
+        value = known["accepted_mime_types"]
+        known["accepted_mime_types"] = tuple(value) if isinstance(value, list) else None
     return section(**known)
 
 

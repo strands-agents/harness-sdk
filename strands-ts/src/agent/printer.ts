@@ -127,7 +127,7 @@ export class AgentPrinter implements Printer {
       if (delta.text && delta.text.length > 0) {
         this.write(delta.text)
       }
-    } else if (delta.type === 'reasoningContentDelta') {
+    } else if (delta.type === 'reasoningContentDelta' && delta.text) {
       // Start reasoning block if not already in one
       if (!this._inReasoningBlock) {
         this._inReasoningBlock = true
@@ -136,9 +136,7 @@ export class AgentPrinter implements Printer {
       }
 
       // Stream reasoning text with proper indentation
-      if (delta.text && delta.text.length > 0) {
-        this.writeReasoningText(delta.text)
-      }
+      this.writeReasoningText(delta.text)
     }
     // Ignore toolUseInputDelta and other delta types
   }
