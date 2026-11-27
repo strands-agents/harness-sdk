@@ -8,7 +8,9 @@ every other model gets its text. An ``injected`` block reaches a model whose ``t
 stored, and that provider sends it so the model reads it only until the next user message. Every other model, custom
 ones included, gets the latest user message's injected blocks as text and none of the earlier ones. A reasoning block
 with ``providerData`` reaches only a model whose ``model_info.capabilities.reasoning_provider`` names its tag. An
-offload placeholder's ``offloaded`` bookkeeping reaches no model.
+offload placeholder's ``offloaded`` bookkeeping reaches no model. An image, document, video, or audio block whose MIME
+type the model's ``model_info.capabilities.accepted_mime_types`` leaves out is sent as a text saying it was omitted, in
+a message or a tool result; a model without the list gets every block.
 
 A proxy for an agent's own model calls records the tools each call sends, which a summary replays to share the call's
 prompt cache.
@@ -28,6 +30,7 @@ from ..types._events import ModelStopReason
 from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
 from ..types.event_loop import Metrics, Usage
 from ..types.tools import ToolSpec
+from ._model_info import ModelInfo, _accepts_mime_type
 from ._provider_name import _model_key
 
 if TYPE_CHECKING:
@@ -156,9 +159,17 @@ class ModelProxy:
         """
         return await self._model.count_tokens(self._prepare(messages)[0], **kwargs)
 
+    def _without_unaccepted_media(self, messages: Messages) -> Messages:
+        """Send media the model doesn't accept as a text saying so; reads ``model_info`` only when there is media."""
+        if not any(_has_media(block) for message in messages for block in message["content"]):
+            return messages
+        return _without_unaccepted_media(messages, self._model.model_info)
+
     def _prepare(self, messages: Messages) -> tuple[Messages, int]:
         """Return the messages the model accepts, and the trailing blocks the cache point must stay ahead of."""
-        messages = _without_foreign_reasoning(_without_offload_marks(messages), self._model)
+        messages = self._without_unaccepted_media(
+            _without_foreign_reasoning(_without_offload_marks(messages), self._model)
+        )
         has_summary = any(_has_block(message, "summary") for message in messages)
         has_injected = any(_has_block(message, "injected") for message in messages)
         if not has_summary and not has_injected:
@@ -253,6 +264,88 @@ def _without_foreign_reasoning(messages: Messages, model: "Model") -> Messages:
     return [
         without(message) if any(foreign(block) for block in message["content"]) else message for message in messages
     ]
+
+
+# The MIME type _accepts_mime_type checks for each media format; audio is ``audio/<format>``.
+_MEDIA_MIME_TYPES: dict[str, dict[str, str]] = {
+    "image": {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"},
+    "document": {
+        "pdf": "application/pdf",
+        "csv": "text/csv",
+        "doc": "application/msword",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls": "application/vnd.ms-excel",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "html": "text/html",
+        "txt": "text/plain",
+        "md": "text/markdown",
+    },
+    "video": {
+        "flv": "video/x-flv",
+        "mkv": "video/x-matroska",
+        "mov": "video/quicktime",
+        "mpeg": "video/mpeg",
+        "mpg": "video/mpeg",
+        "mp4": "video/mp4",
+        "three_gp": "video/3gpp",
+        "webm": "video/webm",
+        "wmv": "video/x-ms-wmv",
+    },
+}
+_MEDIA_KINDS = ("image", "document", "video", "audio")
+
+
+def _has_media(block: ContentBlock) -> bool:
+    """Whether a block, or an item of its tool result, is an image, document, video, or audio block."""
+    items = [block, *(block.get("toolResult", {}).get("content") or [])]
+    return any(kind in item for item in items for kind in _MEDIA_KINDS)
+
+
+def _without_unaccepted_media(messages: Messages, info: ModelInfo) -> Messages:
+    """The messages with each media block the model doesn't accept, in a message or a tool result, as a text saying so.
+
+    Messages with nothing to replace, and the list when none has, are passed through as they are.
+    """
+    if not isinstance(info.capabilities.accepted_mime_types, tuple | list):
+        return messages
+    prepared = [_with_message_media_omitted(message, info) for message in messages]
+    return messages if all(new is old for new, old in zip(prepared, messages, strict=True)) else prepared
+
+
+def _with_message_media_omitted(message: Message, info: ModelInfo) -> Message:
+    content = [
+        _with_tool_result_media_omitted(block, info) if "toolResult" in block else _omitted_media(block, info)
+        for block in message["content"]
+    ]
+    return (
+        message
+        if all(new is old for new, old in zip(content, message["content"], strict=True))
+        else {**message, "content": content}
+    )
+
+
+def _with_tool_result_media_omitted(block: ContentBlock, info: ModelInfo) -> ContentBlock:
+    tool_result = block["toolResult"]
+    items = tool_result.get("content") or []
+    content = [_omitted_media(cast("ContentBlock", item), info) for item in items]
+    if all(new is old for new, old in zip(content, items, strict=True)):
+        return block
+    return cast("ContentBlock", {**block, "toolResult": {**tool_result, "content": content}})
+
+
+def _omitted_media(block: ContentBlock, info: ModelInfo) -> ContentBlock:
+    """The block, or a text saying it was omitted when it is media the model doesn't accept."""
+    kind = next((kind for kind in _MEDIA_KINDS if kind in block), None)
+    if kind is None:
+        return block
+    media: dict[str, Any] = cast(dict[str, Any], block)[kind]
+    media_format = str(media.get("format", "")).lower()
+    mime_type = f"audio/{media_format}" if kind == "audio" else _MEDIA_MIME_TYPES[kind].get(media_format)
+    if mime_type is None or _accepts_mime_type(info, mime_type):
+        return block
+    logger.debug("mime_type=<%s> | model does not accept media type, sending a placeholder text", mime_type)
+    name = f' "{media["name"]}"' if kind == "document" and media.get("name") else ""
+    return ContentBlock(text=f"[{kind}{name} omitted: this model can't read {mime_type}]")
 
 
 def _marks_offload(block: ContentBlock) -> bool:

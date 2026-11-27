@@ -1,6 +1,6 @@
 import { unwrapInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import type { LocalAgent } from '../types/agent.js'
-import { Message, TextBlock, ToolResultBlock, type ContentBlock } from '../types/messages.js'
+import { Message, TextBlock, ToolResultBlock, type ContentBlock, type ToolResultContent } from '../types/messages.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
 import { latestUserIndex } from './model.js'
 import { hasToolReferences, withToolReferenceSchemas, withToolReferenceText } from './tool-references.js'
@@ -8,6 +8,9 @@ import type { ToolSpec } from '../tools/types.js'
 import type { CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
 import type { ModelStreamEvent } from './streaming.js'
 import { wellFormedRequest } from './well-formed-request.js'
+import { acceptsMimeType, type ModelInfo } from './model-info.js'
+import { toMimeType } from '../mime.js'
+import { logger } from '../logging/logger.js'
 
 /**
  * SDK-internal wrapper that sends a model call's messages in the form models accept and
@@ -28,6 +31,10 @@ import { wellFormedRequest } from './well-formed-request.js'
  * its API's way. With `'stubs'`, each deferred spec becomes a stub: its name, its description with a pointer to
  * `load_tools`, and an open schema, so the model can call the tool before it loads the schema. Every model but
  * a `'native'` one gets each `ToolReferenceBlock` as the parameters of the call's tool with that name, in text.
+ *
+ * An image, document, video, or audio block whose MIME type the model's `modelInfo.capabilities.acceptedMimeTypes` leaves
+ * out is sent as a text saying it was omitted, in a message or a tool result, so the model knows something was there
+ * and the provider doesn't reject the request. A model without the list gets every block.
  *
  * A tool result whose content is all `UnknownBlock`s gets a placeholder text, since providers skip unknown blocks and
  * some reject an empty tool result. Lone UTF-16 surrogates in the messages, system prompt, and tool specs are sent as
@@ -107,7 +114,10 @@ export class ModelProxy {
 
   private _prepare(messages: Message[], toolSpecs: ToolSpec[] = []): RenderedMessages {
     messages = withUnknownOnlyToolResultsFilled(
-      this._withToolReferenceText(this._withSummaryText(this._withoutForeignReasoning(messages)), toolSpecs)
+      this._withToolReferenceText(
+        this._withSummaryText(this._withUnacceptedMediaOmitted(this._withoutForeignReasoning(messages))),
+        toolSpecs
+      )
     )
     if (!messages.some(hasInjectedBlock) || this._model.modelInfo.capabilities?.temporaryMessages === true) {
       return { messages, dynamicTrailingBlocks: 0 }
@@ -150,6 +160,16 @@ export class ModelProxy {
           ...(message.metadata !== undefined && { metadata: message.metadata }),
         })
     )
+  }
+
+  /** Sends media the model doesn't accept as a text saying so; reads `modelInfo` only when there is media. */
+  private _withUnacceptedMediaOmitted(messages: Message[]): Message[] {
+    const hasMedia = messages.some((message) =>
+      message.content.some(
+        (block) => isMedia(block) || (block.type === 'toolResultBlock' && block.content.some(isMedia))
+      )
+    )
+    return hasMedia ? withUnacceptedMediaOmitted(messages, this._model.modelInfo) : messages
   }
 
   /** Sends tool references as text to a model that doesn't defer tools natively; a native provider sends them. */
@@ -280,6 +300,55 @@ function withUnknownOnlyToolResultsFilled(messages: Message[]): Message[] {
 }
 
 const UNSUPPORTED_CONTENT_PLACEHOLDER = '[unsupported content omitted]'
+
+const MEDIA_KINDS = {
+  imageBlock: 'image',
+  documentBlock: 'document',
+  videoBlock: 'video',
+  audioBlock: 'audio',
+} as const
+
+function isMedia(block: ContentBlock | ToolResultContent): boolean {
+  return block.type in MEDIA_KINDS
+}
+
+/**
+ * Replaces each media block the model doesn't accept, in a message or a tool result, with a text saying so. Messages
+ * with nothing to replace, and the array when none has, are passed through as they are.
+ */
+function withUnacceptedMediaOmitted(messages: Message[], info: ModelInfo): Message[] {
+  if (info.capabilities?.acceptedMimeTypes === undefined) return messages
+  const prepared = messages.map((message) => {
+    const content = message.content.map((block) =>
+      block.type === 'toolResultBlock' ? withToolResultMediaOmitted(block, info) : omittedMedia(block, info)
+    )
+    return content.every((block, index) => block === message.content[index]) ? message : withContent(message, content)
+  })
+  return prepared.every((message, index) => message === messages[index]) ? messages : prepared
+}
+
+function withToolResultMediaOmitted(block: ToolResultBlock, info: ModelInfo): ToolResultBlock {
+  const content = block.content.map((item) => omittedMedia(item, info))
+  if (content.every((item, index) => item === block.content[index])) return block
+  return new ToolResultBlock({
+    toolUseId: block.toolUseId,
+    status: block.status,
+    content,
+    ...(block.error !== undefined && { error: block.error }),
+  })
+}
+
+/** The block, or a text saying it was omitted when it is media the model doesn't accept. */
+function omittedMedia<T extends ContentBlock | ToolResultContent>(block: T, info: ModelInfo): T | TextBlock {
+  const kind = MEDIA_KINDS[block.type as keyof typeof MEDIA_KINDS]
+  if (kind === undefined) return block
+  const { format } = block as unknown as { format: string }
+  const mimeType = kind === 'audio' ? `audio/${format}` : toMimeType(format)
+  if (mimeType === undefined || acceptsMimeType(info, mimeType)) return block
+  logger.debug(`mime_type=<${mimeType}> | model does not accept media type, sending a placeholder text`)
+  const name = block.type === 'documentBlock' ? ` "${block.name}"` : ''
+  return new TextBlock(`[${kind}${name} omitted: this model can't read ${mimeType}]`)
+}
 
 function isUnknownOnlyToolResult(block: ContentBlock): block is ToolResultBlock {
   return (

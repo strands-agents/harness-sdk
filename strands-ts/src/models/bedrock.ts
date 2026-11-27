@@ -64,7 +64,7 @@ import {
   type ResolvedCacheSection,
 } from '../models/model.js'
 import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from './model-info.js'
-import { bedrockCacheModelInfo, bedrockLimitsCachePoints } from './bedrock-cache.js'
+import { bedrockCacheModelInfo, bedrockLimitsCachePoints, bedrockTakesGptCachePoints } from './bedrock-cache.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
@@ -145,6 +145,15 @@ const BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
  * Prevents repeated failing API calls that will never succeed for the lifetime of the process.
  */
 const SKIP_COUNT_TOKENS_MODELS = new Set<string>()
+
+/**
+ * The regions Converse refused cache points in, by OpenAI GPT model ID. Requests to a model in one of its regions go
+ * without cache points for the lifetime of the process.
+ */
+const CACHE_POINTS_REFUSED = new Map<string, Set<string>>()
+
+/** The `AccessDeniedException` message Converse refuses every cache point for a model with. */
+const CACHE_POINTS_REFUSED_MESSAGE = 'did not allow prompt caching'
 
 /**
  * Mapping of Bedrock stop reasons to SDK stop reasons.
@@ -518,6 +527,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   private _config: BedrockModelConfig
   private _client: BedrockRuntimeClient
   private _dropStaleThinkingModelId: string | undefined
+  /** The client's region, resolved before each request once Converse has refused cache points for this model ID. */
+  private _region: string | undefined
 
   /**
    * Clears the cache of model IDs for which CountTokens is skipped.
@@ -612,10 +623,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * Strict mode needs each tool's full input schema, so it can't take a deferred tool as a stub.
    */
   override get modelInfo(): ModelInfo {
+    const info = super.modelInfo
     return ModelInfo.merge(
-      super.modelInfo,
+      info,
       SERVER_SIDE_SUMMARY_OFF,
-      bedrockCacheModelInfo(this.modelId ?? ''),
+      this._takesGptCachePoints(info) ? undefined : bedrockCacheModelInfo(this.modelId ?? ''),
       this._config.strictTools === true ? { capabilities: { deferredToolLoading: 'unsupported' } } : undefined,
       this._config.modelInfo
     )
@@ -677,10 +689,37 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * Whether Converse limits where this model takes cache points (no tools cache point, no TTL, only directly after
    * text).
    *
-   * @returns True for a Nova model that takes cache points
+   * @returns True for a Nova or OpenAI GPT model that takes cache points
    */
   private _limitsCachePoints(): boolean {
-    return bedrockLimitsCachePoints(this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId)
+    return (
+      bedrockLimitsCachePoints(this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId) ||
+      this._takesGptCachePoints(super.modelInfo)
+    )
+  }
+
+  /**
+   * Whether this is an OpenAI GPT model that takes cache points, unless Converse has refused them for it in the
+   * client's region.
+   *
+   * The region is resolved before each request once the model ID has a refusal, so a read before this instance's first
+   * such request does not see a refusal in its region.
+   *
+   * @param info - The model info before the Converse caching override
+   * @returns True when cache points are placed for an OpenAI GPT model
+   */
+  private _takesGptCachePoints(info: ModelInfo): boolean {
+    return bedrockTakesGptCachePoints(this.modelId ?? '', info) && !this._cachePointsRefused()
+  }
+
+  /**
+   * Whether Converse has refused cache points for this model ID in the client's last resolved region.
+   *
+   * @returns True once a refusal is recorded for the model ID and region
+   */
+  private _cachePointsRefused(): boolean {
+    const regions = CACHE_POINTS_REFUSED.get(this.modelId ?? '')
+    return this._region !== undefined && regions?.has(this._region) === true
   }
 
   /**
@@ -1001,10 +1040,6 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * Formats and sends the request, with the strongest structured output mechanism the model accepts when the call
    * must produce a schema.
    *
-   * Mechanisms the model rejects are remembered for the process, so later requests start at the one that works.
-   * Rejections happen during request validation, before the model generates anything. AnthropicModel follows the
-   * same order but resends through stream(), since its rejection arrives inside the stream.
-   *
    * @param messages - Conversation messages
    * @param options - Stream options
    * @param send - Sends a request to the Converse or ConverseStream API
@@ -1015,12 +1050,39 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     options: StreamOptions | undefined,
     send: (input: ConverseStreamCommandInput) => Promise<T>
   ): Promise<T> {
+    // Resolved before formatting so placement sees a refusal in this region; other model IDs format without waiting.
+    if (CACHE_POINTS_REFUSED.has(this.modelId ?? '')) {
+      this._region = await this._client.config.region()
+    }
     const schema = options?.structuredOutputSchema
     const modelId = this._config.modelId
     if (!schema || !modelId) {
       return this._send(this._formatRequest(messages, options), send)
     }
+    return this._sendStructuredOutputRequest(messages, options, schema, modelId, send)
+  }
 
+  /**
+   * Formats and sends the request with the strongest structured output mechanism the model accepts.
+   *
+   * Mechanisms the model rejects are remembered for the process, so later requests start at the one that works.
+   * Rejections happen during request validation, before the model generates anything. AnthropicModel follows the
+   * same order but resends through stream(), since its rejection arrives inside the stream.
+   *
+   * @param messages - Conversation messages
+   * @param options - Stream options
+   * @param schema - The schema the response must produce
+   * @param modelId - The configured model ID
+   * @param send - Sends a request to the Converse or ConverseStream API
+   * @returns The API response
+   */
+  private async _sendStructuredOutputRequest<T>(
+    messages: Message[],
+    options: StreamOptions,
+    schema: z.ZodSchema,
+    modelId: string,
+    send: (input: ConverseStreamCommandInput) => Promise<T>
+  ): Promise<T> {
     const mechanisms = structuredOutputMechanisms('bedrock', modelId, options.toolChoice, schema, this.modelInfo)
     for (const mechanism of mechanisms.slice(0, -1)) {
       try {
@@ -1077,7 +1139,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   ): Promise<T> {
     const sent = (this._dropStaleThinkingModelId === request.modelId && requestWithDropBlock(request)) || request
     try {
-      return await send(sent)
+      return await this._sendWithCachePointFallback(sent, send)
     } catch (error) {
       const isBindingError =
         error instanceof Error && error.name === 'ValidationException' && isThinkingBindingError(error)
@@ -1087,11 +1149,70 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       logger.warn(
         `model_id=<${request.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
       )
-      const response = await send(retryRequest)
+      const response = await this._sendWithCachePointFallback(retryRequest, send)
       // Latched only once the retry is accepted, so a rejected retry does not alter later requests.
       this._dropStaleThinkingModelId = request.modelId
       return response
     }
+  }
+
+  /**
+   * Sends the request, resending it once without cache points when Converse refuses every cache point for an OpenAI
+   * GPT model this provider places them for.
+   *
+   * Converse takes cache points for some OpenAI GPT models and refuses them for others with an
+   * `AccessDeniedException`. Once the resend is accepted, every later request to this model ID in the client's region
+   * goes without cache points for the process, caller-placed ones included. Any other error, including a
+   * `ValidationException` for one misplaced cache point, and any error for another model, is rethrown.
+   *
+   * @param request - Formatted Bedrock request
+   * @param send - Sends a request to the Converse or ConverseStream API
+   * @returns The API response
+   */
+  private async _sendWithCachePointFallback<T>(
+    request: ConverseStreamCommandInput,
+    send: (input: ConverseStreamCommandInput) => Promise<T>
+  ): Promise<T> {
+    if (!this._fallsBackFromCachePoints()) {
+      return send(request)
+    }
+    if (this._cachePointsRefused()) {
+      return send(requestWithoutCachePoints(request) ?? request)
+    }
+    try {
+      return await send(request)
+    } catch (error) {
+      const retryRequest = isCachePointsRefusal(error) ? requestWithoutCachePoints(request) : undefined
+      if (!retryRequest) throw error
+
+      const response = await send(retryRequest)
+      await this._recordCachePointsRefusal()
+      return response
+    }
+  }
+
+  /**
+   * Whether a refusal of every cache point is resent without them: only for an OpenAI GPT model this provider places
+   * cache points for, whether or not Converse has refused them yet.
+   *
+   * @returns True when the cache point fallback applies
+   */
+  private _fallsBackFromCachePoints(): boolean {
+    return bedrockTakesGptCachePoints(this.modelId ?? '', super.modelInfo)
+  }
+
+  /**
+   * Records that Converse refused cache points for this model ID in the client's region, warning once per pair.
+   */
+  private async _recordCachePointsRefusal(): Promise<void> {
+    const modelId = this.modelId ?? ''
+    const region = await this._client.config.region()
+    this._region = region
+    CACHE_POINTS_REFUSED.set(modelId, (CACHE_POINTS_REFUSED.get(modelId) ?? new Set()).add(region))
+    warnOnce(
+      logger,
+      `model_id=<${modelId}>, region=<${region}> | converse rejected cache points for this model, sending none`
+    )
   }
 
   /**
@@ -1335,8 +1456,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @returns True when the point was kept, possibly relocated. False when nothing cacheable precedes
    *   it, or, on a model that takes a cache point only after text, no text precedes it, so the point was
    *   removed: Bedrock rejects a cache point with no content ahead of it ("There is nothing available
-   *   to cache"). The caller then retries automatic placement, which lands a point only if the
-   *   remaining content allows one - for a leading document it declines too.
+   *   to cache"). The caller then retries automatic placement, except after a leading document,
+   *   where the blocks after the point are per-call content and no position ahead of them is legal.
    */
   private _honorPlacedCachePoint(
     content: BedrockContentBlock[],
@@ -1383,7 +1504,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         return false
       }
       if (targetIdx === 0) {
-        // Nothing precedes the documents, so there is no prefix to cache.
+        // Nothing precedes the documents, so the point has nowhere legal to go ahead of the caller's boundary.
         logger.warn(`msg_idx=<${msgIdx}> | dropped cache point ahead of a leading document`)
         return false
       }
@@ -1504,6 +1625,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
             logger.debug(`msg_idx=<${lastUserIdx}> | no content left to cache`)
             return
           }
+          if (placedIdx > 0 && !this._limitsCachePoints()) {
+            // Only leading documents preceded the point, and the blocks after it are per-call content.
+            logger.debug(`msg_idx=<${lastUserIdx}> | no position ahead of the caller's boundary`)
+            return
+          }
           // The point could not legally stay, so fall through to automatic placement below.
         }
 
@@ -1527,8 +1653,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
             return
           }
           content.splice(boundaryIdx, 0, { cachePoint })
-          // A false here means a leading document left no prefix to cache; automatic placement declines
-          // for the same reason, so there is nothing to fall back to.
+          // A false here means a leading document left no legal position ahead of the per-call blocks.
           this._honorPlacedCachePoint(content, boundaryIdx, lastUserIdx, ttl)
           return
         }
@@ -1545,20 +1670,20 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Where automatic placement puts the conversation cache point in the last user message: before the first non-PDF
-   * document, since Bedrock rejects a cache point directly after one, else at the end.
+   * Where automatic placement puts the conversation cache point in the last user message: at the end, stepped back
+   * over any trailing non-PDF documents, since Bedrock rejects a cache point directly after one.
    *
    * @param content - Content blocks of the last user message
    * @param msgIdx - Index of the message, for logging
-   * @returns The insertion index, or undefined when a leading document leaves nothing to cache
+   * @returns The insertion index, or undefined when the message holds only non-PDF documents
    */
   private _autoCachePointIdx(content: BedrockContentBlock[], msgIdx: number): number | undefined {
-    const firstNonPdfDocIdx = content.findIndex((block) => 'document' in block && block.document?.format !== 'pdf')
-    if (firstNonPdfDocIdx === 0) {
-      logger.debug(`msg_idx=<${msgIdx}> | skipped cache point for leading non-PDF document`)
+    const insertIdx = stepBackOverDocuments(content, content.length)
+    if (insertIdx === 0) {
+      logger.debug(`msg_idx=<${msgIdx}> | skipped cache point, message holds only non-PDF documents`)
       return undefined
     }
-    return firstNonPdfDocIdx === -1 ? content.length : firstNonPdfDocIdx
+    return insertIdx
   }
 
   /**
@@ -2556,6 +2681,55 @@ function requestWithDropBlock(request: ConverseStreamCommandInput): ConverseStre
   const betas = Array.isArray(fields.anthropic_beta) ? fields.anthropic_beta : []
   const anthropicBeta = betas.includes(THINKING_BINDING_BETA) ? betas : [...betas, THINKING_BINDING_BETA]
   return { ...request, additionalModelRequestFields: { ...fields, anthropic_beta: anthropicBeta, thinking } }
+}
+
+/**
+ * Whether Converse refused the request because the model takes no cache points at all.
+ *
+ * @param error - The error the request failed with
+ * @returns True for a refusal of every cache point
+ */
+function isCachePointsRefusal(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.name === 'AccessDeniedException' &&
+    error.message.includes(CACHE_POINTS_REFUSED_MESSAGE)
+  )
+}
+
+/**
+ * Return the request with every cache point removed from the system prompt, messages and tool definitions, or
+ * undefined if it carries none.
+ *
+ * @param request - The Bedrock request
+ * @returns The request without cache points, or undefined
+ */
+function requestWithoutCachePoints(request: ConverseStreamCommandInput): ConverseStreamCommandInput | undefined {
+  const { system, messages, toolConfig } = request
+  const blocks = [
+    ...(system ?? []),
+    ...(toolConfig?.tools ?? []),
+    ...(messages ?? []).flatMap((message) => message.content ?? []),
+  ]
+  if (!blocks.some(isCachePoint)) return undefined
+  const stripped = { ...request }
+  if (system) {
+    stripped.system = system.filter((block) => !isCachePoint(block))
+  }
+  if (messages) {
+    stripped.messages = messages.map((message) => ({
+      ...message,
+      content: message.content?.filter((block) => !isCachePoint(block)),
+    }))
+  }
+  if (toolConfig?.tools) {
+    stripped.toolConfig = { ...toolConfig, tools: toolConfig.tools.filter((tool) => !isCachePoint(tool)) }
+  }
+  return stripped
+}
+
+function isCachePoint(block: object): boolean {
+  return 'cachePoint' in block
 }
 
 /**
