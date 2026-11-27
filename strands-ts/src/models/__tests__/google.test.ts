@@ -959,7 +959,12 @@ describe('GoogleModel', () => {
       )
       expect(deltaEvent).toEqual({
         type: 'modelContentBlockDeltaEvent',
-        delta: { type: 'reasoningContentDelta', text: 'Thinking...', signature: 'sig456' },
+        delta: {
+          type: 'reasoningContentDelta',
+          text: 'Thinking...',
+          signature: 'sig456',
+          providerData: { provider: 'google', modelId: expect.any(String), data: {} },
+        },
       })
     })
   })
@@ -1476,6 +1481,7 @@ describe('GoogleModel', () => {
   describe('tool use streaming', () => {
     function createStreamState(): GoogleStreamState {
       return {
+        modelId: 'gemini-test',
         messageStarted: true,
         textContentBlockStarted: false,
         reasoningContentBlockStarted: false,

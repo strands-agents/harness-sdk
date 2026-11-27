@@ -465,7 +465,7 @@ export interface ReasoningContentDelta {
   redactedContent?: Uint8Array
 
   /**
-   * Provider-native reasoning for the block, sent only to the provider and model that produced it.
+   * Provider-native reasoning for the block, sent only to models that take it back.
    */
   providerData?: ReasoningProviderData
 }

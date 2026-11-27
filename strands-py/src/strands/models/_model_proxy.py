@@ -7,10 +7,11 @@ A ``summary`` block reaches a model whose ``model_info.capabilities.server_side_
 every other model gets its text. An ``injected`` block reaches a model whose ``temporary_messages`` is True as it is
 stored, and that provider sends it so the model reads it only until the next user message. Every other model, custom
 ones included, gets the latest user message's injected blocks as text and none of the earlier ones. A reasoning block
-with ``providerData`` reaches only a model whose ``model_info.capabilities.reasoning_provider`` names its tag. An
-offload placeholder's ``offloaded`` bookkeeping reaches no model. An image, document, video, or audio block whose MIME
-type the model's ``model_info.capabilities.accepted_mime_types`` leaves out is sent as a text saying it was omitted, in
-a message or a tool result; a model without the list gets every block.
+with ``providerData`` reaches a model whose ``model_info.capabilities.reasoning_provider`` names its tag as it is
+stored; every other model gets only its text. An offload placeholder's ``offloaded`` bookkeeping reaches no model. An
+image, document, video, or audio block whose MIME type the model's ``model_info.capabilities.accepted_mime_types``
+leaves out is sent as a text saying it was omitted, in a message or a tool result; a model without the list gets every
+block.
 
 A proxy for an agent's own model calls records the tools each call sends, which a summary replays to share the call's
 prompt cache.
@@ -239,7 +240,10 @@ def _without_offload_marks(messages: Messages) -> Messages:
 
 
 def _without_foreign_reasoning(messages: Messages, model: "Model") -> Messages:
-    """The messages without the reasoning blocks whose ``providerData`` names a provider other than the model's."""
+    """The messages with each reasoning block whose ``providerData`` names another provider reduced to its text.
+
+    The signature, redacted payload and provider data stay out, and a block without text is left out.
+    """
 
     def tag(block: ContentBlock) -> str | None:
         provider_data = block.get("reasoningContent", {}).get("providerData")
@@ -256,8 +260,12 @@ def _without_foreign_reasoning(messages: Messages, model: "Model") -> Messages:
     def foreign(block: ContentBlock) -> bool:
         return tag(block) not in (None, accepted)
 
+    def as_text(block: ContentBlock) -> list[ContentBlock]:
+        text = block["reasoningContent"].get("reasoningText", {}).get("text")
+        return [{"reasoningContent": {"reasoningText": {"text": text}}}] if text else []
+
     def without(message: Message) -> Message:
-        content = [block for block in message["content"] if not foreign(block)]
+        content = [kept for block in message["content"] for kept in (as_text(block) if foreign(block) else [block])]
         # A turn that held only such reasoning gets the placeholder an empty assistant turn gets.
         return {**message, "content": content or [{"text": "[blank text]"}]}
 

@@ -623,11 +623,16 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * Strict mode needs each tool's full input schema, so it can't take a deferred tool as a stub.
    */
   override get modelInfo(): ModelInfo {
+    // Claude-signed reasoning is taken back on a Claude model ID, and on one that names no vendor (an application
+    // inference profile ARN); reasoning produced through the latter is not tagged, so it is not kept from other vendors.
+    const namesNoVendor = !(this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId).split('/').pop()!.includes('.')
+    const reasoning = this._namesAnthropic() || namesNoVendor ? { reasoningProvider: 'anthropic' } : {}
     const info = super.modelInfo
     return ModelInfo.merge(
       info,
       SERVER_SIDE_SUMMARY_OFF,
       this._takesGptCachePoints(info) ? undefined : bedrockCacheModelInfo(this.modelId ?? ''),
+      { capabilities: reasoning },
       this._config.strictTools === true ? { capabilities: { deferredToolLoading: 'unsupported' } } : undefined,
       this._config.modelInfo
     )
@@ -1417,6 +1422,19 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     return formattedMessages
   }
 
+  /** Whether the model ID names an Anthropic model. */
+  private _namesAnthropic(): boolean {
+    const modelId = (this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId).toLowerCase()
+    return modelId.includes('anthropic') || modelId.includes('claude')
+  }
+
+  /** Tags a Claude model's signed or redacted reasoning; a model ID that names no vendor stays untagged. */
+  private _tagReasoning(delta: ReasoningContentDelta): ReasoningContentDelta {
+    if (!this._namesAnthropic() || (!delta.signature && !delta.redactedContent)) return delta
+    const modelId = this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId
+    return { ...delta, providerData: { provider: 'anthropic', modelId, data: {} } }
+  }
+
   /**
    * Whether the configured model would reject this reasoning block if it were replayed.
    *
@@ -2174,7 +2192,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
 
         if (Object.keys(delta).length > 1) {
-          events.push({ type: 'modelContentBlockDeltaEvent', delta })
+          events.push({ type: 'modelContentBlockDeltaEvent', delta: this._tagReasoning(delta) })
         }
 
         events.push({ type: 'modelContentBlockStopEvent' })
@@ -2325,7 +2343,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
             if (reasoning.redactedContent) reasoningDelta.redactedContent = reasoning.redactedContent
 
             if (Object.keys(reasoningDelta).length > 1) {
-              events.push({ type: 'modelContentBlockDeltaEvent', delta: reasoningDelta })
+              events.push({ type: 'modelContentBlockDeltaEvent', delta: this._tagReasoning(reasoningDelta) })
             }
           },
           citation: (citation: BedrockCitationsDelta): void => {

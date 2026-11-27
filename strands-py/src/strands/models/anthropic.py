@@ -365,6 +365,8 @@ class AnthropicModel(Model):
                 capabilities=ModelCapabilities(
                     temporary_messages=capabilities.temporary_messages,
                     accepted_mime_types=tuple(t for t in _SENDABLE_MIME_TYPES if _accepts_mime_type(shared, t)),
+                    # Claude signatures are bound to the vendor, so any Claude model or endpoint takes them back.
+                    reasoning_provider="anthropic",
                 )
             ),
             self.get_config().get("model_info"),
@@ -1121,6 +1123,12 @@ class AnthropicModel(Model):
                                 "delta": {
                                     "reasoningContent": {
                                         "signature": delta["signature"],
+                                        # Bound to the vendor, so any Claude model takes it back.
+                                        "providerData": {
+                                            "provider": "anthropic",
+                                            "modelId": self.config["model_id"],
+                                            "data": {},
+                                        },
                                     },
                                 },
                             },

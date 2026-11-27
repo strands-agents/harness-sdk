@@ -272,6 +272,17 @@ def test_prepare_keeps_a_turn_that_held_only_dropped_reasoning_as_blank_text(mod
     assert sent[0] is messages[0]
 
 
+def test_prepare_sends_only_the_text_of_reasoning_the_model_does_not_take_back(model):
+    tag = {"provider": "anthropic", "modelId": "m", "data": {}}
+    signed = {"reasoningContent": {"reasoningText": {"text": "plan", "signature": "SIG"}, "providerData": tag}}
+    redacted = {"reasoningContent": {"redactedContent": b"x", "providerData": tag}}
+    messages = [user({"text": "go"}), {"role": "assistant", "content": [signed, redacted, {"text": "done"}]}]
+
+    sent, _ = ModelProxy(model)._prepare(messages)
+
+    assert sent[1]["content"] == [{"reasoningContent": {"reasoningText": {"text": "plan"}}}, {"text": "done"}]
+
+
 def _accepting(*accepted_mime_types: str) -> unittest.mock.MagicMock:
     model = unittest.mock.MagicMock()
     model.model_info = ModelInfo(capabilities=ModelCapabilities(accepted_mime_types=accepted_mime_types))
