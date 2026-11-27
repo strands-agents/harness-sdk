@@ -1,11 +1,13 @@
 """Unit tests for retry strategy implementations."""
 
+import asyncio
 import threading
 from unittest.mock import Mock
 
 import pytest
 
 from strands import ModelRetryStrategy
+from strands.event_loop._retry import _wait_for_retry_delay
 from strands.hooks import AfterInvocationEvent, AfterModelCallEvent, HookRegistry
 from strands.types._events import EventLoopThrottleEvent
 from strands.types.exceptions import ModelThrottledException
@@ -113,6 +115,29 @@ async def test_model_retry_strategy_skips_delay_when_already_cancelled(monkeypat
     await strategy._handle_after_model_call(event)
 
     assert event.retry is True
+
+
+@pytest.mark.asyncio
+async def test_wait_for_retry_delay_waits_until_delay_expires():
+    """An uncancelled retry observes its full configured delay."""
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    await _wait_for_retry_delay(0.1, threading.Event())
+
+    assert loop.time() - started >= 0.1
+
+
+@pytest.mark.asyncio
+async def test_wait_for_retry_delay_returns_when_cancelled():
+    """Cancellation interrupts a long retry delay."""
+    loop = asyncio.get_running_loop()
+    cancel_signal = threading.Event()
+    loop.call_later(0.01, cancel_signal.set)
+
+    await asyncio.wait_for(_wait_for_retry_delay(30, cancel_signal), timeout=1)
+
+    assert cancel_signal.is_set()
 
 
 @pytest.mark.asyncio

@@ -2,13 +2,13 @@
 
 import asyncio
 import threading
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 
 import pytest
 
 from strands import Agent, ModelRetryStrategy
 from strands.event_loop.event_loop import INITIAL_DELAY, MAX_ATTEMPTS, MAX_DELAY
-from strands.hooks import AfterModelCallEvent
+from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent
 from strands.types.exceptions import ModelThrottledException
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
@@ -137,14 +137,24 @@ async def test_agent_cancel_interrupts_retry_backoff_without_another_model_call(
     strategy = ModelRetryStrategy(max_attempts=3, initial_delay=30, max_delay=30)
     agent = Agent(model=model, retry_strategy=strategy)
     external_signal = threading.Event()
+    first_failure = asyncio.Event()
+    hook_events: list[type] = []
 
+    async def record_before(_event: BeforeModelCallEvent) -> None:
+        hook_events.append(BeforeModelCallEvent)
+
+    async def record_after(event: AfterModelCallEvent) -> None:
+        hook_events.append(AfterModelCallEvent)
+        if isinstance(event.exception, ModelThrottledException):
+            first_failure.set()
+
+    agent.add_hook(record_before, BeforeModelCallEvent)
+    agent.add_hook(record_after, AfterModelCallEvent)
     if use_external_signal:
         invocation = asyncio.create_task(agent.invoke_async("test prompt", cancel_signal=external_signal))
     else:
         invocation = asyncio.create_task(agent.invoke_async("test prompt"))
-    while strategy._current_attempt == 0:
-        await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    await first_failure.wait()
     if use_external_signal:
         external_signal.set()
     else:
@@ -152,6 +162,16 @@ async def test_agent_cancel_interrupts_retry_backoff_without_another_model_call(
 
     result = await asyncio.wait_for(invocation, timeout=1)
 
+    assert hook_events == [BeforeModelCallEvent, AfterModelCallEvent]
+    assert result.message == {
+        "role": "assistant",
+        "content": [{"text": "Cancelled by user"}],
+        "metadata": {
+            "usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+            "metrics": {"latencyMs": 0},
+        },
+        "tracking_id": ANY,
+    }
     assert result.stop_reason == "cancelled"
     assert model.stream.call_count == 1
 

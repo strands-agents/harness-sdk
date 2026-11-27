@@ -1,6 +1,7 @@
 """Tests for ``ModelProxy``, which sends a model call's messages in the form the model accepts."""
 
 import copy
+import threading
 import unittest.mock
 
 import pytest
@@ -120,6 +121,24 @@ def test_prepare_passes_injected_blocks_through_to_a_model_that_takes_temporary_
 
     assert tru_messages is messages
     assert tru_trailing == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_skips_model_when_cancel_signal_is_already_set(alist):
+    model = unittest.mock.MagicMock()
+    cancel_signal = threading.Event()
+    cancel_signal.set()
+
+    events = await alist(ModelProxy(model).stream([user({"text": "go"})], None, None, cancel_signal=cancel_signal))
+
+    assert len(events) == 1
+    assert events[0]["stop"] == (
+        "cancelled",
+        {"role": "assistant", "content": [{"text": "Cancelled by user"}]},
+        {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+        {"latencyMs": 0},
+    )
+    model.stream.assert_not_called()
 
 
 @pytest.mark.asyncio
