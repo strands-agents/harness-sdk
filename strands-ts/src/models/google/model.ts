@@ -16,6 +16,7 @@ import {
 import { Model, resolveConfigMetadata } from '../model.js'
 import type { CountTokensOptions, StreamOptions } from '../model.js'
 import type { Message } from '../../types/messages.js'
+import { GOOGLE_REASONING } from '../reasoning-provenance.js'
 import type { ModelStreamEvent, Usage } from '../streaming.js'
 import {
   ContextWindowOverflowError,
@@ -167,9 +168,10 @@ export class GoogleModel extends Model<GoogleModelConfig> {
     return this._config.modelId ?? MODEL_DEFAULTS.gemini.modelId
   }
 
-  /** Turns `serverSideSummary` off, which a `modelInfo` override still wins over. */
+  /** Turns `serverSideSummary` off and reports Gemini-signed reasoning as taken back; a `modelInfo` override wins. */
   override get modelInfo(): ModelInfo {
-    return ModelInfo.merge(super.modelInfo, SERVER_SIDE_SUMMARY_OFF, this._config.modelInfo)
+    const reasoning = { capabilities: { reasoningProvider: GOOGLE_REASONING } }
+    return ModelInfo.merge(super.modelInfo, SERVER_SIDE_SUMMARY_OFF, reasoning, this._config.modelInfo)
   }
 
   /**
@@ -255,6 +257,7 @@ export class GoogleModel extends Model<GoogleModelConfig> {
       const stream = await this._client.models.generateContentStream(params)
 
       const streamState: GoogleStreamState = {
+        modelId: this.modelId,
         messageStarted: false,
         textContentBlockStarted: false,
         reasoningContentBlockStarted: false,

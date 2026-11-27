@@ -1,6 +1,13 @@
 import { unwrapInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import type { LocalAgent } from '../types/agent.js'
-import { Message, TextBlock, ToolResultBlock, type ContentBlock, type ToolResultContent } from '../types/messages.js'
+import {
+  Message,
+  ReasoningBlock,
+  TextBlock,
+  ToolResultBlock,
+  type ContentBlock,
+  type ToolResultContent,
+} from '../types/messages.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
 import { latestUserIndex } from './model.js'
 import { hasToolReferences, withToolReferenceSchemas, withToolReferenceText } from './tool-references.js'
@@ -23,8 +30,8 @@ import { logger } from '../logging/logger.js'
  * An `InjectedBlock` reaches a model whose `modelInfo.capabilities.temporaryMessages` is `true` as it is
  * stored, and that provider sends it so the model reads it only until the next user message. Every
  * other model, custom ones included, gets the latest user message's injected blocks as text and none
- * of the earlier ones. A `ReasoningBlock` with `providerData` reaches only a model whose
- * `modelInfo.capabilities.reasoningProvider` names its tag.
+ * of the earlier ones. A `ReasoningBlock` with `providerData` reaches a model whose
+ * `modelInfo.capabilities.reasoningProvider` names its tag as it is stored; every other model gets only its text.
  *
  * Deferred tools take one of two paths, by the model's `modelInfo.capabilities.deferredToolLoading`. With `'native'`,
  * the call's `deferredTools` and every `ToolReferenceBlock` reach the provider as they are, and the provider sends them
@@ -125,7 +132,10 @@ export class ModelProxy {
     return renderInjectedBlocks(messages)
   }
 
-  /** Leaves out reasoning blocks whose `providerData` names a provider other than the model's. */
+  /**
+   * Reduces each reasoning block whose `providerData` names another provider to its text. The signature, redacted
+   * payload and provider data stay out, and a block without text is left out.
+   */
   private _withoutForeignReasoning(messages: Message[]): Message[] {
     const tagged = (block: ContentBlock): boolean => block.type === 'reasoningBlock' && block.providerData !== undefined
     // Only a call that carries tagged reasoning reads the model info.
@@ -136,7 +146,10 @@ export class ModelProxy {
     if (!messages.some((message) => message.content.some(foreign))) return messages
     return messages.map((message) => {
       if (!message.content.some(foreign)) return message
-      const content = message.content.filter((block) => !foreign(block))
+      const content = message.content.flatMap((block) => {
+        if (!foreign(block)) return [block]
+        return block.type === 'reasoningBlock' && block.text ? [new ReasoningBlock({ text: block.text })] : []
+      })
       return new Message({
         role: message.role,
         // A turn that held only such reasoning gets the placeholder an empty assistant turn gets.

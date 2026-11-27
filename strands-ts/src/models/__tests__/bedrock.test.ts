@@ -1728,7 +1728,11 @@ describe('BedrockModel', () => {
       expect(events).toContainEqual({ type: 'modelContentBlockStartEvent' })
       expect(events).toContainEqual({
         type: 'modelContentBlockDeltaEvent',
-        delta: { type: 'reasoningContentDelta', redactedContent: redactedBytes },
+        delta: {
+          type: 'reasoningContentDelta',
+          redactedContent: redactedBytes,
+          providerData: { provider: 'anthropic', modelId: expect.any(String), data: {} },
+        },
       })
       expect(events).toContainEqual({ type: 'modelContentBlockStopEvent' })
       expect(events).toContainEqual({ stopReason: 'endTurn', type: 'modelMessageStopEvent' })
@@ -2420,6 +2424,7 @@ describe('BedrockModel', () => {
           type: 'reasoningContentDelta',
           text: 'thinking...',
           signature: 'sig123',
+          providerData: { provider: 'anthropic', modelId: expect.any(String), data: {} },
         },
       })
       expect(events).toContainEqual({
@@ -2427,6 +2432,7 @@ describe('BedrockModel', () => {
         delta: {
           type: 'reasoningContentDelta',
           redactedContent: new Uint8Array(1),
+          providerData: { provider: 'anthropic', modelId: expect.any(String), data: {} },
         },
       })
     })

@@ -892,7 +892,16 @@ async def test_stream_response_reasoning(gemini_client, model, messages, agenera
         {"messageStart": {"role": "assistant"}},
         {"contentBlockStart": {"start": {}}},
         {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "test reason"}}}},
-        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "YWJj"}}}},
+        {
+            "contentBlockDelta": {
+                "delta": {
+                    "reasoningContent": {
+                        "signature": "YWJj",
+                        "providerData": {"provider": "google", "modelId": "m1", "data": {}},
+                    }
+                }
+            }
+        },
         {"contentBlockStop": {}},
         {"messageStop": {"stopReason": "end_turn"}},
         {"metadata": {"usage": {"inputTokens": 1, "outputTokens": 2, "totalTokens": 3}, "metrics": {"latencyMs": 0}}},
@@ -1036,7 +1045,12 @@ async def test_stream_response_signature_after_text_opens_reasoning_block(
     tru_content = message["content"]
     exp_content = [
         {"text": "hello"},
-        {"reasoningContent": {"reasoningText": {"text": "", "signature": "YWJj"}}},
+        {
+            "reasoningContent": {
+                "reasoningText": {"text": "", "signature": "YWJj"},
+                "providerData": {"provider": "google", "modelId": "m1", "data": {}},
+            }
+        },
     ]
     assert tru_content == exp_content
 
@@ -1089,7 +1103,12 @@ async def test_stream_response_signature_on_text_part_keeps_text_contiguous(
     tru_content = message["content"]
     exp_content = [
         {"text": "The time is 12:00 and it is sunny."},
-        {"reasoningContent": {"reasoningText": {"text": "", "signature": "YWJj"}}},
+        {
+            "reasoningContent": {
+                "reasoningText": {"text": "", "signature": "YWJj"},
+                "providerData": {"provider": "google", "modelId": "m1", "data": {}},
+            }
+        },
     ]
     assert tru_content == exp_content
 
@@ -1145,8 +1164,18 @@ async def test_stream_response_every_signature_inside_text_block_survives(
     tru_content = message["content"]
     exp_content = [
         {"text": "The time is 12:00 and it is sunny."},
-        {"reasoningContent": {"reasoningText": {"text": "", "signature": "c2lnMQ=="}}},
-        {"reasoningContent": {"reasoningText": {"text": "", "signature": "c2lnMg=="}}},
+        {
+            "reasoningContent": {
+                "reasoningText": {"text": "", "signature": "c2lnMQ=="},
+                "providerData": {"provider": "google", "modelId": "m1", "data": {}},
+            }
+        },
+        {
+            "reasoningContent": {
+                "reasoningText": {"text": "", "signature": "c2lnMg=="},
+                "providerData": {"provider": "google", "modelId": "m1", "data": {}},
+            }
+        },
     ]
     assert tru_content == exp_content
 
@@ -1192,7 +1221,14 @@ async def test_stream_response_signature_only_part_opens_reasoning_block(
     message = events[-1]["stop"][1]
 
     tru_content = message["content"]
-    exp_content = [{"reasoningContent": {"reasoningText": {"text": "", "signature": "YWJj"}}}]
+    exp_content = [
+        {
+            "reasoningContent": {
+                "reasoningText": {"text": "", "signature": "YWJj"},
+                "providerData": {"provider": "google", "modelId": "m1", "data": {}},
+            }
+        }
+    ]
     assert tru_content == exp_content
 
     # Feeding the aggregated message back must reproduce the original signature bytes.
@@ -1252,7 +1288,16 @@ async def test_stream_response_reasoning_and_text(gemini_client, model, messages
         {"messageStart": {"role": "assistant"}},
         {"contentBlockStart": {"start": {}}},
         {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "thinking about math"}}}},
-        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "c2lnMQ=="}}}},
+        {
+            "contentBlockDelta": {
+                "delta": {
+                    "reasoningContent": {
+                        "signature": "c2lnMQ==",
+                        "providerData": {"provider": "google", "modelId": "m1", "data": {}},
+                    }
+                }
+            }
+        },
         {"contentBlockStop": {}},
         {"contentBlockStart": {"start": {}}},
         {"contentBlockDelta": {"delta": {"text": "2 + 2 = 4"}}},

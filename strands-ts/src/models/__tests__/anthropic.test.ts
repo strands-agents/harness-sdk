@@ -506,7 +506,11 @@ describe('AnthropicModel', () => {
       })
       expect(events).toContainEqual({
         type: 'modelContentBlockDeltaEvent',
-        delta: { type: 'reasoningContentDelta', signature: 'sig_123' },
+        delta: {
+          type: 'reasoningContentDelta',
+          signature: 'sig_123',
+          providerData: { provider: 'anthropic', modelId: expect.any(String), data: {} },
+        },
       })
     })
 
@@ -530,7 +534,11 @@ describe('AnthropicModel', () => {
 
       expect(events).toContainEqual({
         type: 'modelContentBlockDeltaEvent',
-        delta: { type: 'reasoningContentDelta', redactedContent: new Uint8Array([117, 171, 90]) },
+        delta: {
+          type: 'reasoningContentDelta',
+          redactedContent: new Uint8Array([117, 171, 90]),
+          providerData: { provider: 'anthropic', modelId: expect.any(String), data: {} },
+        },
       })
     })
 

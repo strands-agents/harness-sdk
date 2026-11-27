@@ -44,6 +44,7 @@ from ._native_output import (
     structured_output_mechanisms,
     unsupported_mechanisms,
 )
+from ._reasoning_provenance import ANTHROPIC, tag_reasoning_delta
 from ._summarize import SummarizeResult
 from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
 from ._validation import (
@@ -365,6 +366,8 @@ class AnthropicModel(Model):
                 capabilities=ModelCapabilities(
                     temporary_messages=capabilities.temporary_messages,
                     accepted_mime_types=tuple(t for t in _SENDABLE_MIME_TYPES if _accepts_mime_type(shared, t)),
+                    # Claude signatures are bound to the vendor, so any Claude model or endpoint takes them back.
+                    reasoning_provider=ANTHROPIC,
                 )
             ),
             self.get_config().get("model_info"),
@@ -1115,7 +1118,7 @@ class AnthropicModel(Model):
 
                 match delta["type"]:
                     case "signature_delta":
-                        return {
+                        signature_event: StreamEvent = {
                             "contentBlockDelta": {
                                 "contentBlockIndex": event["index"],
                                 "delta": {
@@ -1125,6 +1128,7 @@ class AnthropicModel(Model):
                                 },
                             },
                         }
+                        return tag_reasoning_delta(signature_event, ANTHROPIC, self.config["model_id"])
 
                     case "thinking_delta":
                         return {

@@ -54,14 +54,17 @@ class ReasoningTextBlock(TypedDict, total=False):
 
 
 class ReasoningProviderData(TypedDict):
-    """Provider-native reasoning that only the provider and model that produced it can replay.
+    """Provider-native reasoning that only a model whose model info names its ``provider`` tag can replay.
 
-    Written and read only by the SDK model provider named in ``provider``; other models never receive the block.
+    Written by an SDK model provider; every other model receives only the block's text. For a signature that is
+    every model of the signing vendor.
 
     Attributes:
-        provider: The format tag of the provider that wrote it, e.g. ``"openai_responses"``.
+        provider: The format tag of the provider that wrote it: ``"openai_responses"``, or the vendor that signed it
+            (``"anthropic"``, ``"google"``).
         modelId: The model that produced the reasoning.
-        data: The provider's own JSON payload; private to that provider and not a stable shape.
+        data: The provider's own JSON payload; private to that provider and not a stable shape. Empty when the
+            block's own fields already hold everything, as for a signature.
     """
 
     provider: str
@@ -75,7 +78,7 @@ class ReasoningContentBlock(TypedDict, total=False):
     Attributes:
         reasoningText: The reasoning that the model used to return the output.
         redactedContent: The content in the reasoning that was encrypted by the model provider for safety reasons.
-        providerData: Provider-native reasoning, sent only to the provider and model that produced it.
+        providerData: Provider-native reasoning, sent only to models that take it back.
     """
 
     reasoningText: ReasoningTextBlock

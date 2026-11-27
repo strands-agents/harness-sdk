@@ -284,7 +284,9 @@ def handle_content_block_delta(
             typed_event = ReasoningRedactedContentStreamEvent(redacted_content=redacted_content, delta=delta_content)
 
         if "providerData" in reasoning_delta:
-            state["reasoningProviderData"] = reasoning_delta["providerData"]
+            # A redacted payload becomes its own block, so its tag must not land on the reasoning text block.
+            key = "redactedProviderData" if "redactedContent" in reasoning_delta else "reasoningProviderData"
+            state[key] = reasoning_delta["providerData"]
 
     return state, typed_event
 
@@ -377,7 +379,10 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
 
     _finalize_reasoning_text(state)
     if redacted_content:
-        content.append({"reasoningContent": {"redactedContent": redacted_content}})
+        redacted: ReasoningContentBlock = {"redactedContent": redacted_content}
+        if provider_data := state.pop("redactedProviderData", None):
+            redacted["providerData"] = provider_data
+        content.append({"reasoningContent": redacted})
         state["redactedContent"] = b""
 
     return state

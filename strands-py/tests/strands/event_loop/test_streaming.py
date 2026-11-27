@@ -2221,3 +2221,23 @@ def test_handle_content_block_delta_keeps_provider_data_sent_with_text():
     assert state["content"] == [
         {"reasoningContent": {"reasoningText": {"text": "plan"}, "providerData": provider_data}}
     ]
+
+
+def test_handle_content_block_delta_keeps_a_redacted_payloads_tag_on_its_own_block():
+    tag = {"provider": "anthropic", "modelId": "m", "data": {}}
+    state = {"content": [], "current_tool_use": {}, "text": "", "reasoningText": "", "citationsContent": []}
+    for delta in [
+        {"text": "plan"},
+        {"signature": "SIG", "providerData": tag},
+        {"redactedContent": b"x", "providerData": tag},
+    ]:
+        state, _ = strands.event_loop.streaming.handle_content_block_delta(
+            {"delta": {"reasoningContent": delta}}, state
+        )
+
+    state = strands.event_loop.streaming.handle_content_block_stop(state)
+
+    assert state["content"] == [
+        {"reasoningContent": {"reasoningText": {"text": "plan", "signature": "SIG"}, "providerData": tag}},
+        {"reasoningContent": {"redactedContent": b"x", "providerData": tag}},
+    ]
