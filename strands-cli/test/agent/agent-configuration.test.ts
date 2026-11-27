@@ -311,11 +311,15 @@ describe('strands_config tool', () => {
     await control.invoke({ action: 'update', profile: { name: 'Renamed' } })
     await expect(control.invoke({ action: 'apply', revision: 1 })).resolves.toContain('Configuration validated')
     expect(control.takePending()?.profile).toEqual({ ...config.snapshot().profile, name: 'Renamed' })
+    // The default Bedrock model serves web_search through AgentCore; ollama has no built-in search.
     await control.invoke({ action: 'update', profile: { builtinTools: ['read', 'web_search'] } })
-    await expect(control.invoke({ action: 'apply', revision: 2 })).rejects.toThrow('has no built-in web search')
+    await expect(control.invoke({ action: 'apply', revision: 2 })).resolves.toContain('Configuration validated')
+    expect(control.takePending()?.profile?.builtinTools).toEqual(['read', 'web_search'])
+    await control.invoke({ action: 'update', profile: { model: 'ollama/review-model', effort: 'auto' } })
+    await expect(control.invoke({ action: 'apply', revision: 3 })).rejects.toThrow('has no built-in web search')
     expect(control.takePending()).toBeUndefined()
     expect(control.profile().builtinTools).toEqual(['read', 'web_search'])
-    expect(JSON.parse(await control.invoke({ action: 'inspect' })).revision).toBe(2)
+    expect(JSON.parse(await control.invoke({ action: 'inspect' })).revision).toBe(3)
   })
 
   it('rejects new literal credentials without changing the draft and accepts environment references', async () => {

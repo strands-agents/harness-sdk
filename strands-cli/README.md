@@ -39,8 +39,8 @@ npm install -g @strands-agents/cli   # gives you the `strands` command
 strands "summarize what this repo does"
 ```
 
-By default you get Claude Opus 5 on Amazon Bedrock, with reasoning, shell and file tools, web
-access, caching, todos, environment context, a `subagent` delegate, Agent Skills, resumable
+By default you get Claude Opus 5.5 on Amazon Bedrock, with reasoning, shell and file tools, web
+access, caching, environment context, a `subagent` delegate, Agent Skills, resumable
 sessions, long-term memory, and automatic context management. The full-screen terminal keeps
 background delegates non-blocking and automatically continues the agent when their results arrive.
 
@@ -518,7 +518,7 @@ Run `strands --help` for the parser's current list.
 | `--effort <level>`            | Harness backend | Reasoning effort: `auto` (default), `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`                                        |
 | `--instructions <text>`       | Harness backend | Append domain instructions to the system prompt                                                                                         |
 | `--builtin-tools <tools>`     | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `shell,read,write,edit,web_fetch,web_search,programmatic_tool_caller,subagent` |
-| `--builtin-plugins <plugins>` | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `todos,environment`                                                            |
+| `--builtin-plugins <plugins>` | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `environment` (`todos` is opt-in)                                              |
 | `--caching <mode>`            | Harness backend | Prompt caching: `auto` (default) or `off`                                                                                               |
 | `--context-manager <mode>`    | Harness backend | `auto` (default), `agentic`, or `off`; object forms go through `--set`                                                                  |
 | `--session <mode>`            | Harness backend | Conversation persistence: `on` (default) or `off`                                                                                       |
@@ -553,7 +553,10 @@ profile. Applying `/setup` changes reloads the agent while preserving the conver
 ### Web search and Exa
 
 `web_search` uses the model provider's own search where it has one (OpenAI, Google, GPT-5, GPT-6, and Daybreak
-models on `bedrock-mantle`, Anthropic). On a model without native search the Tools step offers
+models on `bedrock-mantle`, Anthropic). Other Amazon Bedrock models search through Amazon Bedrock AgentCore
+web search, which needs AWS credentials with `bedrock-agentcore:InvokeWebSearch` (a Bedrock API key does not cover
+it; a search without access fails as a tool error). Quickstart turns `web_search` on wherever the model has search.
+On any other model without native search the Tools step offers
 `web_search` through [Exa](https://exa.ai) instead, unchecked; ticking it writes
 `"web_search": "exa"` to the profile.
 

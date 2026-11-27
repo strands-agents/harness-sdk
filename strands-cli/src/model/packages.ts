@@ -6,6 +6,8 @@ import type { ProviderId } from '../config/store.js'
 // all of them so every provider offered during setup works after the initial CLI installation.
 export const PROVIDER_PACKAGES: Readonly<Partial<Record<ProviderId, string>>> = {
   anthropic: '@anthropic-ai/sdk',
+  // The harness runs Claude on Bedrock through Anthropic's Bedrock client.
+  bedrock: '@anthropic-ai/sdk',
   openai: 'openai',
   'bedrock-mantle': 'openai',
   ollama: 'openai',

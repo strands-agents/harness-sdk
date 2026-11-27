@@ -9,6 +9,7 @@ import {
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
+  UnknownBlock,
   VideoBlock,
 } from '@strands-agents/sdk'
 
@@ -108,6 +109,12 @@ describe('SDK media projection', () => {
       expect(live.content.source.bytes).toEqual(bytes)
       expect(restoredMedia.content.source.bytes).toEqual(bytes)
     }
+  })
+  it('shows a placeholder for content a newer SDK saved', () => {
+    expect(projectToolResultContent(new UnknownBlock({ futureBlock: { value: 1 } }))).toEqual({
+      type: 'text',
+      text: '[unsupported content]',
+    })
   })
 })
 

@@ -270,9 +270,14 @@ describe('interactive runtime lifecycle', () => {
 
     try {
       const contextManager = mocks.createHarness.mock.calls[0]?.[0].contextManager as {
-        strategies: readonly { _threshold?: number; _utilizationThreshold?: number }[]
+        strategies: readonly {
+          _conditions: { blockThreshold?: { value: number }; contextUtilization?: { value: number } }
+        }[]
       }
-      expect(contextManager.strategies).toMatchObject([{ _threshold: 2_500 }, { _utilizationThreshold: 0.85 }])
+      expect(contextManager.strategies).toMatchObject([
+        { _conditions: { blockThreshold: { value: 2_500 } } },
+        { _conditions: { contextUtilization: { value: 85 } } },
+      ])
     } finally {
       await controller.dispose()
     }

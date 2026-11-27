@@ -3,6 +3,7 @@ import {
   Agent,
   FunctionTool,
   ImageBlock,
+  InjectedBlock,
   InvokeModelStage,
   Message,
   Model,
@@ -117,6 +118,26 @@ describe('context breakdown', () => {
     expect(agent.messages.at(-2)?.content).toEqual([new TextBlock('go')])
     expect(memorySearch).toHaveBeenCalledOnce()
     expect(model.countCalls).toBe(1)
+  })
+
+  it('leaves out injected blocks of earlier user messages, which the model does not read', async () => {
+    const model = new ContextModel()
+    const agent = new Agent({
+      model,
+      printer: false,
+      contextManager: false,
+      messages: [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('old'), new InjectedBlock({ text: 'abcdefghabcdefgh', source: 'environment' })],
+        }),
+        new Message({ role: 'assistant', content: [new TextBlock('past')] }),
+      ],
+    })
+    const result = await run(new StrandsChatBackend(new AgentModelRuntime(agent)))
+
+    expect(categories(result).userMessages).toBe(2)
+    expect(categories(result).injectedContext ?? 0).toBe(0)
   })
 
   it('scales overestimates down and keeps media and uncounted overhead in Other', async () => {
