@@ -25,6 +25,8 @@ export interface ErrorStatusConfig {
   messagePatterns?: Set<string>
 }
 
+const RETRYABLE_HTTP_CODES: ReadonlySet<number> = new Set([408, 429, 500, 502, 503, 504])
+
 /**
  * Mapping of Google GenAI API error statuses to error handling configuration.
  * Maps status codes to either direct error types or message-pattern-based detection.
@@ -56,9 +58,13 @@ export function classifyGoogleError(error: Error): GoogleErrorType | undefined {
     return 'network'
   }
 
-  // A 429 can arrive with a non-JSON message or a reason-phrase status, so the HTTP code is the reliable signal.
   // Checked by shape because instanceof fails across the @google/genai ESM and CJS builds.
-  if (error.name === 'ApiError' && 'status' in error && error.status === 429) {
+  if (
+    error.name === 'ApiError' &&
+    'status' in error &&
+    typeof error.status === 'number' &&
+    RETRYABLE_HTTP_CODES.has(error.status)
+  ) {
     return 'throttling'
   }
 
@@ -80,7 +86,7 @@ export function classifyGoogleError(error: Error): GoogleErrorType | undefined {
     return undefined
   }
 
-  if (code === 429) {
+  if (typeof code === 'number' && RETRYABLE_HTTP_CODES.has(code)) {
     return 'throttling'
   }
 
