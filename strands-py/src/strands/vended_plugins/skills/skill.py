@@ -110,7 +110,10 @@ def _fix_yaml_colons(yaml_str: str) -> str:
             key, value = match.group(1), match.group(2)
             # If value contains a colon and isn't already quoted
             if ":" in value and not (value.startswith('"') or value.startswith("'")):
-                line = f'{key}: "{value}"'
+                # Escape backslashes and double quotes before wrapping so values like
+                # `Use when: user says "hello"` or Windows paths stay valid YAML.
+                escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+                line = f'{key}: "{escaped}"'
         lines.append(line)
     return "\n".join(lines)
 

@@ -287,6 +287,21 @@ class TestFixYamlColons:
         raw = "  - item one\n  - item two"
         assert _fix_yaml_colons(raw) == raw
 
+    def test_escapes_double_quotes_in_value(self):
+        """Test that embedded double quotes are escaped before wrapping."""
+        raw = 'description: Use when: user says "hello"'
+        assert _fix_yaml_colons(raw) == r'description: "Use when: user says \"hello\""'
+
+    def test_escapes_backslashes_in_value(self):
+        """Test that backslashes (e.g. Windows paths or escape sequences) are escaped before wrapping."""
+        raw = r"description: Use when: path is C:\Users\test\notes"
+        assert _fix_yaml_colons(raw) == r'description: "Use when: path is C:\\Users\\test\\notes"'
+
+    def test_escapes_backslashes_and_quotes_together(self):
+        """Test that backslashes are escaped before double quotes, including a trailing backslash."""
+        raw = 'description: Use when: user says "C:\\temp\\new" \\'
+        assert _fix_yaml_colons(raw) == 'description: "Use when: user says \\"C:\\\\temp\\\\new\\" \\\\"'
+
 
 class TestParseFrontmatterYamlFallback:
     """Tests for YAML colon-quoting fallback in _parse_frontmatter."""
@@ -297,6 +312,14 @@ class TestParseFrontmatterYamlFallback:
         frontmatter, body = _parse_frontmatter(content)
         assert frontmatter["name"] == "my-skill"
         assert "Use when" in frontmatter["description"]
+        assert body == "Body."
+
+    def test_fallback_preserves_embedded_quotes_and_backslashes(self):
+        """Test that colon fallback parses values containing quotes and backslashes verbatim."""
+        content = '---\nname: my-skill\ndescription: Use when: user says "hello" at C:\\Users\\test\\new\\\n---\nBody.'
+        frontmatter, body = _parse_frontmatter(content)
+        assert frontmatter["name"] == "my-skill"
+        assert frontmatter["description"] == 'Use when: user says "hello" at C:\\Users\\test\\new\\'
         assert body == "Body."
 
     def test_fallback_preserves_valid_yaml(self):
