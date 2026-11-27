@@ -7,6 +7,7 @@ import unittest.mock
 import pytest
 
 from strands.agent.invocation_context import ModelUsage, _create_invocation_context
+from strands.models import ModelCapabilities, ModelInfo
 from strands.models._model_proxy import ModelProxy
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
@@ -253,7 +254,10 @@ def test_prepare_sends_reasoning_with_provider_data_only_to_a_model_that_takes_i
     sent, _ = ModelProxy(model)._prepare(messages)
     assert sent[1]["content"] == [plain, {"text": "done"}]
 
-    with unittest.mock.patch.object(type(model), "_accepts_reasoning", return_value=True):
+    info = ModelInfo(capabilities=ModelCapabilities(reasoning_provider="openai_responses"))
+    with unittest.mock.patch.object(
+        type(model), "model_info", new_callable=unittest.mock.PropertyMock, return_value=info
+    ):
         assert ModelProxy(model)._prepare(messages)[0] == messages
     assert messages == original
 

@@ -53,6 +53,8 @@ class ModelCapabilities:
             :attr:`strands.models.Model.model_info` reports False unless the provider can send them
             (``AnthropicModel``). Turning it on for a provider that cannot send them loses the injected text: Bedrock
             skips the block with a warning, Mistral drops it, other providers raise ``TypeError``.
+        reasoning_provider: The ``providerData.provider`` tag of the reasoning the model takes back from history,
+            such as ``"openai_responses"``. Reasoning tagged otherwise does not reach the model.
     """
 
     stateful: bool | None = None
@@ -61,6 +63,7 @@ class ModelCapabilities:
     native_structured_output: bool | None = None
     server_side_summary: bool | None = None
     temporary_messages: bool | None = None
+    reasoning_provider: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -139,6 +142,7 @@ _CAPABILITY_FIELDS = {
     "nativeStructuredOutput": "native_structured_output",
     "serverSideSummary": "server_side_summary",
     "temporaryMessages": "temporary_messages",
+    "reasoningProvider": "reasoning_provider",
 }
 _LIMIT_FIELDS = {"contextWindow": "context_window", "maxOutputTokens": "max_output_tokens"}
 # Shared-data values are camelCase; the Python literals are snake_case.

@@ -1511,12 +1511,11 @@ describe('OpenAIModel (api: responses) stateless reasoning replay', () => {
     it('retries once without the reasoning and stops replaying it', async () => {
       const messages = history()
       const rejection = badRequest('The encrypted content for item rs_1 could not be verified.')
-      const { requests, model } = await run(messages, rejection, 2)
+      const { requests } = await run(messages, rejection, 2)
       expect(requests).toHaveLength(3)
       expect(requests[0].input.some((item: any) => item.type === 'reasoning')).toBe(true)
       expect(requests.slice(1).some((req) => req.input.some((item: any) => item.type === 'reasoning'))).toBe(false)
       expect(messages[1]!.content[0]).toEqual(tagged('rs_1'))
-      expect(model._acceptsReasoning(tagged('rs_1').providerData!)).toBe(false)
     })
 
     it.each([
@@ -1532,12 +1531,11 @@ describe('OpenAIModel (api: responses) stateless reasoning replay', () => {
     expect(req.input.some((item: any) => item.type === 'reasoning')).toBe(false)
   })
 
-  it('accepts back only reasoning it captured from the configured model', () => {
+  it('names the reasoning provider it takes back in its model info', () => {
     const model = new OpenAIModel({ api: 'responses', client: {} as OpenAI, modelId: 'gpt-4o' })
-    expect(model._acceptsReasoning(tagged('rs_1').providerData!)).toBe(true)
-    expect(model._acceptsReasoning(tagged('rs_1', 'gpt-5').providerData!)).toBe(false)
+    expect(model.modelInfo.capabilities?.reasoningProvider).toBe('openai_responses')
     const chat = new OpenAIModel({ api: 'chat', client: {} as OpenAI, modelId: 'gpt-4o' })
-    expect(chat._acceptsReasoning(tagged('rs_1').providerData!)).toBe(false)
+    expect(chat.modelInfo.capabilities?.reasoningProvider).toBeUndefined()
   })
 
   it('keeps provider data through a JSON round trip', () => {

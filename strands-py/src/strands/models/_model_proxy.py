@@ -7,8 +7,8 @@ A ``summary`` block reaches a model whose ``model_info.capabilities.server_side_
 every other model gets its text. An ``injected`` block reaches a model whose ``temporary_messages`` is True as it is
 stored, and that provider sends it so the model reads it only until the next user message. Every other model, custom
 ones included, gets the latest user message's injected blocks as text and none of the earlier ones. A reasoning block
-with ``providerData`` reaches only a model whose ``_accepts_reasoning`` takes it back. An offload
-placeholder's ``offloaded`` bookkeeping reaches no model.
+with ``providerData`` reaches only a model whose ``model_info.capabilities.reasoning_provider`` names its tag. An
+offload placeholder's ``offloaded`` bookkeeping reaches no model.
 
 A proxy for an agent's own model calls records the tools each call sends, which a summary replays to share the call's
 prompt cache.
@@ -228,19 +228,28 @@ def _without_offload_marks(messages: Messages) -> Messages:
 
 
 def _without_foreign_reasoning(messages: Messages, model: "Model") -> Messages:
-    """The messages without the reasoning blocks whose ``providerData`` the model does not take back."""
+    """The messages without the reasoning blocks whose ``providerData`` names a provider other than the model's."""
+
+    def tag(block: ContentBlock) -> str | None:
+        provider_data = block.get("reasoningContent", {}).get("providerData")
+        return provider_data["provider"] if provider_data else None
+
+    tags = {tag(block) for message in messages for block in message["content"]} - {None}
+    # Only a call that carries tagged reasoning reads the model info.
+    if not tags:
+        return messages
+    accepted = model.model_info.capabilities.reasoning_provider
+    if tags == {accepted}:
+        return messages
 
     def foreign(block: ContentBlock) -> bool:
-        provider_data = block.get("reasoningContent", {}).get("providerData")
-        return provider_data is not None and not model._accepts_reasoning(provider_data)
+        return tag(block) not in (None, accepted)
 
     def without(message: Message) -> Message:
         content = [block for block in message["content"] if not foreign(block)]
         # A turn that held only such reasoning gets the placeholder an empty assistant turn gets.
         return {**message, "content": content or [{"text": "[blank text]"}]}
 
-    if not any(foreign(block) for message in messages for block in message["content"]):
-        return messages
     return [
         without(message) if any(foreign(block) for block in message["content"]) else message for message in messages
     ]

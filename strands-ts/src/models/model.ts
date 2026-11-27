@@ -469,15 +469,6 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
   abstract stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent>
 
   /**
-   * Whether this model takes back reasoning tagged with `providerData`; the provider that wrote it says so.
-   *
-   * @internal
-   */
-  _acceptsReasoning(_providerData: ReasoningProviderData): boolean {
-    return false
-  }
-
-  /**
    * Count tokens for the given input before sending to the model.
    *
    * Used for proactive context management (e.g., triggering compression at a threshold).

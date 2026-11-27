@@ -263,14 +263,19 @@ class OpenAIResponsesModel(Model):
     @property
     @override
     def model_info(self) -> ModelInfo:
-        """Adds whether server-side conversation storage is enabled, and reports server-side summary as off.
+        """Adds whether server-side conversation storage is enabled and the reasoning this provider takes back.
 
-        Storage is taken from the ``stateful`` configuration option; a ``model_info`` override still wins over both.
+        Server-side summary is reported as off. Storage is taken from the ``stateful`` configuration option. Only
+        reasoning from the configured model is replayed, which the request formatting checks. A ``model_info``
+        override still wins over all of these.
         """
+        capabilities = ModelCapabilities(
+            stateful=bool(self.config.get("stateful")), reasoning_provider=_REASONING_PROVIDER
+        )
         return ModelInfo.merge(
             super().model_info,
             SERVER_SIDE_SUMMARY_OFF,
-            ModelInfo(capabilities=ModelCapabilities(stateful=bool(self.config.get("stateful")))),
+            ModelInfo(capabilities=capabilities),
             cast(ModelInfo | None, self.config.get("model_info")),
         )
 
@@ -283,16 +288,6 @@ class OpenAIResponsesModel(Model):
         """
         validate_config_keys(model_config, self.OpenAIResponsesConfig)
         self.config.update(model_config)
-
-    @override
-    def _accepts_reasoning(self, provider_data: ReasoningProviderData) -> bool:
-        """Take back the reasoning this adapter captured from the configured model, when stateless."""
-        return (
-            not self.stateful
-            and provider_data["provider"] == _REASONING_PROVIDER
-            and provider_data["modelId"] == self.config["model_id"]
-            and provider_data["modelId"] != self._rejected_reasoning_model_id
-        )
 
     @override
     def get_config(self) -> OpenAIResponsesConfig:

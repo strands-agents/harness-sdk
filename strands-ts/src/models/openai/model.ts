@@ -14,7 +14,7 @@ import { Model, resolveConfigMetadata } from '../model.js'
 import type { StreamOptions } from '../model.js'
 import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from '../model-info.js'
 import type { ChatCompletionsTools } from '../model-info.js'
-import type { Message, ReasoningProviderData } from '../../types/messages.js'
+import type { Message } from '../../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../streaming.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
@@ -160,31 +160,18 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   }
 
   /**
-   * Takes back the reasoning the Responses adapter captured from the configured model, when stateless.
-   *
-   * @internal
-   */
-  override _acceptsReasoning(providerData: ReasoningProviderData): boolean {
-    return (
-      this._api === 'responses' &&
-      !this.stateful &&
-      providerData.provider === REASONING_PROVIDER &&
-      providerData.modelId === (this.modelId ?? DEFAULT_RESPONSES_MODEL_ID) &&
-      providerData.modelId !== this._rejectedReasoningModelId
-    )
-  }
-
-  /**
    * Adds whether this model manages conversation state server-side: `true` only for
    * `api: 'responses'` with `stateful === true`. Chat Completions is always stateless, and
    * Responses defaults to stateless. Turns `serverSideSummary` off.
    */
   override get modelInfo(): ModelInfo {
     const stateful = this._api === 'responses' && this._config.stateful === true
+    // Only reasoning from the configured model is replayed, which the request formatting checks.
+    const reasoningProvider = this._api === 'responses' ? REASONING_PROVIDER : undefined
     return ModelInfo.merge(
       super.modelInfo,
       SERVER_SIDE_SUMMARY_OFF,
-      { capabilities: { stateful } },
+      { capabilities: { stateful, ...(reasoningProvider && { reasoningProvider }) } },
       this._config.modelInfo
     )
   }

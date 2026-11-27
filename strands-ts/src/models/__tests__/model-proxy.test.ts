@@ -534,7 +534,8 @@ describe('ModelProxy', () => {
 
     async function sent(accepts: boolean): Promise<ContentBlock[]> {
       const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
-      vi.spyOn(model, '_acceptsReasoning').mockReturnValue(accepts)
+      if (accepts)
+        vi.spyOn(model, 'modelInfo', 'get').mockReturnValue({ capabilities: { reasoningProvider: 'openai_responses' } })
       const spy = vi.spyOn(model, 'streamAggregated')
       await drain(new ModelProxy(model).streamAggregated(history()))
       return spy.mock.calls[0]![0][1]!.content

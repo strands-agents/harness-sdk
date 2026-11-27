@@ -66,6 +66,11 @@ export interface ModelCapabilities {
    * `BedrockModel` names each loaded tool and other providers leave it out.
    */
   readonly deferredToolLoading?: DeferredToolLoading | undefined
+  /**
+   * The `providerData.provider` tag of the reasoning the model takes back from history, such as `'openai_responses'`.
+   * Reasoning tagged otherwise does not reach the model.
+   */
+  readonly reasoningProvider?: string | undefined
 }
 
 /** Size limits of the model. */
@@ -146,6 +151,7 @@ const CAPABILITY_FIELDS = Object.keys({
   serverSideSummary: true,
   temporaryMessages: true,
   deferredToolLoading: true,
+  reasoningProvider: true,
 } satisfies Record<keyof ModelCapabilities, true>)
 const LIMIT_FIELDS = Object.keys({ contextWindow: true, maxOutputTokens: true } satisfies Record<
   keyof ModelLimits,

@@ -3079,12 +3079,8 @@ def test_format_request_explicit_null_include_opts_out_of_encrypted_reasoning():
     assert "include" not in model._format_request([{"role": "user", "content": [{"text": "hi"}]}])
 
 
-def test_accepts_reasoning_only_from_this_provider_and_model():
-    model = OpenAIResponsesModel(model_id="gpt-4o")
-
-    assert model._accepts_reasoning({"provider": "openai_responses", "modelId": "gpt-4o", "data": {}})
-    assert not model._accepts_reasoning({"provider": "openai_responses", "modelId": "gpt-5", "data": {}})
-    assert not model._accepts_reasoning({"provider": "other", "modelId": "gpt-4o", "data": {}})
+def test_model_info_names_the_reasoning_provider_it_takes_back():
+    assert OpenAIResponsesModel(model_id="gpt-4o").model_info.capabilities.reasoning_provider == "openai_responses"
 
 
 def test_format_request_stateful_neither_includes_nor_replays_reasoning():
@@ -3099,7 +3095,6 @@ def test_format_request_stateful_neither_includes_nor_replays_reasoning():
     assert request["previous_response_id"] == "resp_1"
     assert "include" not in request
     assert all(item.get("type") != "reasoning" for item in request["input"])
-    assert not model._accepts_reasoning(messages[1]["content"][0]["reasoningContent"]["providerData"])
 
 
 @pytest.mark.asyncio
@@ -3271,7 +3266,6 @@ async def test_stream_retries_once_without_reasoning_the_endpoint_rejects(openai
     first, second, third = (call.kwargs["input"] for call in openai_client.responses.create.call_args_list)
     assert [item.get("type") for item in first].count("reasoning") == 1
     assert all(item.get("type") != "reasoning" for item in second + third)
-    assert not model._accepts_reasoning(_REPLAY_HISTORY[1]["content"][0]["reasoningContent"]["providerData"])
 
 
 @pytest.mark.asyncio
