@@ -141,23 +141,59 @@ describe('Agent contextManager', () => {
       expect(agent.contextManager?.getTools()).toEqual([retrieval, loader])
     })
 
-    it('rejects an agent tool named load_tools when it defers tools', async () => {
-      const loadTools = tool({
-        name: 'load_tools',
+    it.each([
+      ['load_tools', 'Offload.defer without search', Offload.defer('toolSpecs')],
+      ['search_tools', 'the deferredToolLoading preset', 'deferredToolLoading' as const],
+    ])('rejects an agent tool named %s, the loader of %s', async (name, _strategyName, strategy) => {
+      const agentTool = tool({
+        name,
         description: 'Load data.',
         inputSchema: z.object({}),
         callback: () => 'done',
       })
       const agent = new Agent({
         model: new MockMessageModel(),
-        tools: [loadTools],
-        contextManager: { strategies: ['deferredToolLoading'] },
+        tools: [agentTool],
+        contextManager: { strategies: [strategy] },
+      })
+      await expect(agent.initialize()).rejects.toThrow(
+        `contextManager adds a tool named '${name}' for Offload.defer and the 'deferredToolLoading' preset, and the ` +
+          "agent already has one; rename the agent's tool"
+      )
+    })
+
+    it.each([
+      ['search_tools', 'Offload.defer without search', undefined],
+      ['load_tools', 'search', 'client' as const],
+    ])('runs an agent tool named %s, which is not the loader of %s', async (name, _strategyName, search) => {
+      const callback = vi.fn(() => 'done')
+      const agentTool = tool({
+        name,
+        description: 'Look up data.',
+        inputSchema: z.object({ id: z.string() }),
+        callback,
+      })
+      const other = tool({ name: 'other', description: 'Other.', inputSchema: z.object({ id: z.string() }), callback })
+      const model = new MockMessageModel()
+      model.updateConfig({ modelInfo: { capabilities: { deferredToolLoading: 'stubs' } } })
+      vi.spyOn(model, 'stream')
+      model
+        .addTurn({ type: 'toolUseBlock', name, toolUseId: 'call-1', input: { id: 'a' } })
+        .addTurn({ type: 'textBlock', text: 'done' })
+      const strategy = Offload.defer([`!${name}`], search ? { search } : {})
+      const agent = new Agent({
+        model,
+        tools: [agentTool, other],
+        contextManager: { strategies: [strategy] },
+        printer: false,
       })
 
-      await expect(agent.initialize()).rejects.toThrow(
-        "contextManager adds a tool named 'load_tools' for Offload.defer and the 'deferredToolLoading' preset, and " +
-          "the agent already has one; rename the agent's tool"
-      )
+      await agent.invoke('Look it up.')
+
+      const [, options] = vi.mocked(model.stream).mock.calls[0]!
+      expect(options?.deferredTools).toEqual(new Set(['other']))
+      expect(options?.toolSpecs?.find((spec) => spec.name === name)).toEqual(agentTool.toolSpec)
+      expect(callback).toHaveBeenCalledTimes(1)
     })
   })
 

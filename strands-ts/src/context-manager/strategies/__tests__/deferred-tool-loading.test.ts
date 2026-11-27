@@ -12,6 +12,8 @@ import type { Tool } from '../../../tools/tool.js'
 import { InterruptResponseContent } from '../../../types/interrupt.js'
 import type { ToolSpec } from '../../../tools/types.js'
 import { JsonBlock, Message, TextBlock, ToolReferenceBlock, ToolResultBlock } from '../../../types/messages.js'
+import { McpTool } from '../../../tools/mcp-tool.js'
+import type { McpClient } from '../../../mcp/index.js'
 import type { JSONSchema, JSONValue } from '../../../types/json.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
 import type { BackgroundTasksConfig } from '../../../background-tasks/types.js'
@@ -20,6 +22,8 @@ import type { ContextStrategy } from '../../types.js'
 import type { StrategyPresetName } from '../../presets.js'
 import type { Snapshot } from '../../../types/snapshot.js'
 import { Offload, type DeferTarget } from '../offload/index.js'
+import type { DeferConfig, ToolSearch } from '../deferred-tool-loading.js'
+import type { ToolSearchContext, ToolSearcher } from '../../../tools/search-tools.js'
 import { ContextOffloader } from '../../../vended-plugins/context-offloader/plugin.js'
 import { ModelRouter } from '../../../models/routing/router.js'
 
@@ -187,6 +191,392 @@ describe('DeferredToolLoadingStrategy', () => {
     await agent.invoke('List the files.')
 
     expect((agent.messages[2]!.content[0] as ToolResultBlock).status).toBe('error')
+  })
+
+  describe('search', () => {
+    const weatherTools = [
+      ['get_weather', 'Get the current weather for a city.'],
+      ['get_forecast', 'Get the weather forecast for the next days.'],
+      ['create_ticket', 'Create a support ticket.'],
+      ['weather', 'Look up weather station data.'],
+    ].map(([name, description]) =>
+      tool({
+        name: name!,
+        description: description!,
+        inputSchema: z.object({ city: z.string() }),
+        callback: () => 'ok',
+      })
+    )
+    const searching = (search: ToolSearch = 'client'): ContextStrategy => Offload.defer('toolSpecs', { search })
+
+    /** The result of the model's one search_tools call with this input. */
+    async function searchResult(input: JSONValue, tools: Tool[] = weatherTools): Promise<ToolResultBlock> {
+      const { agent, model } = makeAgent('native', { tools, strategy: searching() })
+      model
+        .addTurn({ type: 'toolUseBlock', name: 'search_tools', toolUseId: 'search-1', input })
+        .addTurn({ type: 'textBlock', text: 'done' })
+      await agent.invoke('Find the tools.')
+      return agent.messages[2]!.content[0] as ToolResultBlock
+    }
+
+    it.each([
+      ['load_tools without search', undefined, 'load_tools'],
+      ['search_tools with search', 'client' as const, 'search_tools'],
+    ])('registers %s', async (_name, search, loader) => {
+      const strategy = search ? searching(search) : Offload.defer('toolSpecs')
+      const { agent, model } = makeAgent('native', { strategy })
+      model.addTurn({ type: 'textBlock', text: 'ok' })
+
+      await agent.invoke('Hi.')
+
+      const names = sentToolSpecs(model)[0]!.map((spec) => spec.name)
+      expect(names).toContain(loader)
+      expect(names).not.toContain(loader === 'load_tools' ? 'search_tools' : 'load_tools')
+    })
+
+    it.each([
+      [{ query: 'weather' }, ['weather', 'get_weather', 'get_forecast']],
+      [{ query: 'weather', limit: 2 }, ['weather', 'get_weather']],
+      [{ query: 'support tickets' }, ['create_ticket']],
+      [{ names: ['create_ticket'], query: 'forecast' }, ['create_ticket', 'get_forecast']],
+    ])('with %o loads %o: an exact name first, then the best keyword matches', async (input, expected) => {
+      expect((await searchResult(input)).content).toEqual(expected.map((name) => new ToolReferenceBlock({ name })))
+    })
+
+    it('rejects a query asking for more than 20 tools', async () => {
+      const result = await searchResult({ query: 'weather', limit: 21 })
+
+      expect(result.status).toBe('error')
+      expect(JSON.stringify(result.content)).toContain('limit')
+    })
+
+    describe('searcher', () => {
+      /** The model's one search_tools call with this input, searched by this searcher. */
+      async function searchedBy(searcher: ToolSearcher, input: JSONValue): Promise<ToolResultBlock> {
+        const strategy = Offload.defer('toolSpecs', { search: 'client', searcher }).when({ toolCount: 1 })
+        const { agent, model } = makeAgent('native', { tools: weatherTools, strategy })
+        model
+          .addTurn({ type: 'toolUseBlock', name: 'search_tools', toolUseId: 'search-1', input })
+          .addTurn({ type: 'textBlock', text: 'done' })
+        await agent.invoke('Find the tools.')
+        return agent.messages[2]!.content[0] as ToolResultBlock
+      }
+
+      /** The tools of the search with these names, in this order. */
+      const named = (context: ToolSearchContext, ...names: string[]): Tool[] =>
+        names.map((name) => context.tools.find((candidate) => candidate.name === name)!)
+
+      it('loads what it picks, without tools it may not return or repeats, and at most the limit', async () => {
+        const lookalike = makeTool('get_forecast')
+        const search = vi.fn(async (context: ToolSearchContext) => [
+          lookalike,
+          ...named(context, 'get_forecast', 'get_forecast', 'get_weather', 'weather'),
+        ])
+
+        const result = await searchedBy({ search }, { query: 'rain', limit: 2 })
+
+        expect(result.content).toEqual([
+          new ToolReferenceBlock({ name: 'get_forecast' }),
+          new ToolReferenceBlock({ name: 'get_weather' }),
+        ])
+        const [context] = search.mock.calls[0]!
+        expect(context).toMatchObject({ query: 'rain', limit: 2 })
+        expect(context.tools.map((candidate) => candidate.name)).toEqual([
+          'get_weather',
+          'get_forecast',
+          'create_ticket',
+          'weather',
+        ])
+        expect(context.cancelSignal).toBeInstanceOf(AbortSignal)
+      })
+
+      it('searches only the tools the call does not name', async () => {
+        const search = vi.fn(async (context: ToolSearchContext) => named(context, 'get_forecast'))
+
+        const result = await searchedBy({ search }, { names: ['create_ticket'], query: 'rain' })
+
+        expect(result.content).toEqual([
+          new ToolReferenceBlock({ name: 'create_ticket' }),
+          new ToolReferenceBlock({ name: 'get_forecast' }),
+        ])
+        const [context] = search.mock.calls[0]!
+        expect(context.tools.map((candidate) => candidate.name)).not.toContain('create_ticket')
+      })
+
+      it('leaves the search to the keywords when it declines', async () => {
+        const result = await searchedBy({ search: async () => undefined }, { query: 'weather' })
+
+        expect(result.content).toEqual(
+          ['weather', 'get_weather', 'get_forecast'].map((name) => new ToolReferenceBlock({ name }))
+        )
+      })
+
+      it('answers the call with its error when it throws', async () => {
+        const result = await searchedBy(
+          { search: async () => Promise.reject(new Error('index offline')) },
+          { query: 'rain' }
+        )
+
+        expect(result.status).toBe('error')
+        expect(result.content).toEqual([new TextBlock('Error: index offline')])
+      })
+
+      it.each([
+        [{ searcher: { search: async () => [] } }, 'searcher never runs with no search, where the model loads by name'],
+        [{ search: 'server', searcher: { search: async () => [] } }, "searcher never runs with search 'server'"],
+        [{ search: 'client', searcher: {} }, 'searcher is invalid: expected an object with a search method'],
+      ])('rejects %o', (config, message) => {
+        expect(() => Offload.defer('toolSpecs', config as DeferConfig)).toThrow(message)
+      })
+    })
+
+    it("matches a query to an MCP tool's server name", async () => {
+      const client = { serverVersion: { name: 'github', version: '1.0.0' } } as unknown as McpClient
+      const issues = new McpTool({
+        name: 'list_issues',
+        description: 'List issues.',
+        inputSchema: { type: 'object', properties: { repo: { type: 'string' } } },
+        client,
+      })
+
+      expect((await searchResult({ query: 'github' }, [shell, issues])).content).toEqual([
+        new ToolReferenceBlock({ name: 'list_issues' }),
+      ])
+    })
+
+    it.each([
+      [{ query: 'pizza' }, 'no tool matches "pizza". Search with other words, or name the tools.'],
+      [{ query: '  ' }, 'name the tools to load, or search for them with a query.'],
+      [{}, 'name the tools to load, or search for them with a query.'],
+    ])('loads nothing and says why with %o', async (input, reason) => {
+      expect((await searchResult(input)).content).toEqual([new TextBlock(`Error: Nothing loaded: ${reason}`)])
+    })
+
+    it.each([
+      ['auto', 'native'],
+      ['server', 'native'],
+      ['client', 'native'],
+      ['auto', 'stubs'],
+      ['client', 'stubs'],
+    ] as const)("with search '%s' on a %s model, passes it on as the call's toolSearch", async (search, delivery) => {
+      const { agent, model } = makeAgent(delivery, { strategy: searching(search) })
+      model.addTurn({ type: 'textBlock', text: 'ok' })
+
+      await agent.invoke('Hi.')
+
+      expect(vi.mocked(model.stream).mock.calls[0]![1]!.toolSearch).toBe(search)
+      expect(deferredNames(model)).toEqual(['shell', 'read', 'write'])
+    })
+
+    it('points each stub at search_tools', async () => {
+      const { agent, model } = makeAgent('stubs', { strategy: searching('auto') })
+      model.addTurn({ type: 'textBlock', text: 'ok' })
+
+      await agent.invoke('Hi.')
+
+      expect(sentToolSpecs(model)[0]!.find((spec) => spec.name === 'shell')!.description).toBe(
+        'Run shell.\nCall search_tools with this name for its parameters first.'
+      )
+    })
+
+    it.each(['stubs', 'unsupported'] as const)(
+      "throws with search 'server' on a %s model, which has no provider tool search",
+      async (delivery) => {
+        const { agent, model } = makeAgent(delivery, { strategy: searching('server') })
+        model.addTurn({ type: 'textBlock', text: 'ok' })
+
+        await expect(agent.invoke('Hi.')).rejects.toThrow(
+          "Offload.defer search 'server' needs the provider's tool search, which model test-model doesn't have: " +
+            "set search to 'auto' or 'client'"
+        )
+      }
+    )
+
+    it("sends a model that can not take stubs only the tools it searched for under 'client', in full, in load order", async () => {
+      const { agent, model } = makeAgent('unsupported', { strategy: searching('client') })
+      model
+        .addTurn({ type: 'toolUseBlock', name: 'search_tools', toolUseId: 'search-1', input: { names: ['write'] } })
+        .addTurn({ type: 'toolUseBlock', name: 'search_tools', toolUseId: 'search-2', input: { names: ['shell'] } })
+        .addTurn({ type: 'toolUseBlock', name: 'shell', toolUseId: 'shell-1', input: { value: 'ls' } })
+        .addTurn({ type: 'textBlock', text: 'done' })
+
+      await agent.invoke('List the files.')
+
+      const sent = sentToolSpecs(model).map((specs) => specs.map((spec) => spec.name))
+      expect(sent).toEqual([
+        ['retrieve_context', 'search_tools'],
+        ['retrieve_context', 'search_tools', 'write'],
+        ['retrieve_context', 'search_tools', 'write', 'shell'],
+        ['retrieve_context', 'search_tools', 'write', 'shell'],
+      ])
+      expect(sentToolSpecs(model)[2]!.at(-1)).toEqual(shell.toolSpec)
+      const listings = sentToolSpecs(model).map(
+        (specs) => specs.find((spec) => spec.name === 'search_tools')!.description.split('Tools you can load:\n')[1]
+      )
+      expect(listings.slice(0, 3)).toEqual([
+        '- shell: Run shell.\n- read: Run read.\n- write: Run write.',
+        '- shell: Run shell.\n- read: Run read.',
+        '- read: Run read.',
+      ])
+      expect(vi.mocked(model.stream).mock.calls.map(([, options]) => options?.deferredTools)).toEqual(
+        Array(4).fill(undefined)
+      )
+      expect(agent.messages[6]!.content[0]).toMatchObject({ toolUseId: 'shell-1', status: 'success' })
+    })
+
+    it('answers a call to a tool a model that can not take stubs has not searched for, and loads it', async () => {
+      const { agent, model } = makeAgent('unsupported', { strategy: searching('client') })
+      model
+        .addTurn({ type: 'toolUseBlock', name: 'shell', toolUseId: 'early', input: { value: 'ls' } })
+        .addTurn({ type: 'textBlock', text: 'done' })
+
+      await agent.invoke('List the files.')
+
+      expect((agent.messages[2]!.content[0] as ToolResultBlock).content).toEqual([
+        new TextBlock(
+          'Not run: shell was called before its parameters were loaded. They are loaded now; call it again.'
+        ),
+        new ToolReferenceBlock({ name: 'shell' }),
+      ])
+      expect(sentToolSpecs(model)[1]!.map((spec) => spec.name)).toEqual(['retrieve_context', 'search_tools', 'shell'])
+    })
+
+    it.each([
+      ['the model loads by name', undefined],
+      ["search is 'auto'", 'auto' as const],
+    ])('sends every full spec without a loader to a model that can not take stubs when %s', async (_name, search) => {
+      const { agent, model } = makeAgent('unsupported', search ? { strategy: searching(search) } : {})
+      model.addTurn({ type: 'toolUseBlock', name: 'shell', toolUseId: 'shell-1', input: { value: 'ls' } })
+      model.addTurn({ type: 'textBlock', text: 'done' })
+
+      await agent.invoke('List the files.')
+
+      expect(sentToolSpecs(model)[0]!.slice(0, 3)).toEqual([shell, read, write].map((each) => each.toolSpec))
+      expect(sentToolSpecs(model)[0]!.map((spec) => spec.name)).toEqual(['shell', 'read', 'write', 'retrieve_context'])
+      expect(agent.messages[2]!.content[0]).toMatchObject({ toolUseId: 'shell-1', status: 'success' })
+    })
+
+    it("runs a call to a tool the provider's own search loaded", async () => {
+      const callback = vi.fn(() => 'ok')
+      const searched = tool({
+        name: 'shell',
+        description: 'Run shell.',
+        inputSchema: z.object({ value: z.string() }),
+        callback,
+      })
+      const { agent, model } = makeAgent('native', { tools: [searched, read, write], strategy: searching('auto') })
+      model
+        .addTurn([
+          {
+            type: 'serverToolBlock',
+            provider: 'anthropic',
+            data: { type: 'tool_search_tool_result' },
+            loadedTools: ['shell'],
+          },
+          { type: 'toolUseBlock', name: 'shell', toolUseId: 'shell-1', input: { value: 'ls' } },
+        ])
+        .addTurn({ type: 'textBlock', text: 'done' })
+
+      await agent.invoke('List the files.')
+
+      expect(callback).toHaveBeenCalledTimes(1)
+    })
+
+    it("runs an approved call on a restored agent to a tool the provider's search loaded in the same response", async () => {
+      const callback = vi.fn(() => 'ok')
+      const build = (): { agent: Agent; model: MockMessageModel } => {
+        const searched = tool({
+          name: 'shell',
+          description: 'Run shell.',
+          inputSchema: z.object({ value: z.string() }),
+          callback,
+        })
+        const built = makeAgent('native', { tools: [searched, read, write], strategy: searching('auto') })
+        built.agent.addHook(BeforeToolCallEvent, (event) => {
+          if (event.interrupt<string>({ name: 'approve', reason: 'Run this tool?' }) !== 'yes') event.cancel = 'no'
+        })
+        return built
+      }
+      const { agent, model } = build()
+      model.addTurn([
+        {
+          type: 'serverToolBlock',
+          provider: 'anthropic',
+          data: { type: 'tool_search_tool_result' },
+          loadedTools: ['shell'],
+        },
+        { type: 'toolUseBlock', name: 'shell', toolUseId: 'shell-1', input: { value: 'ls' } },
+      ])
+      const first = await agent.invoke('List the files.')
+      const snapshot = JSON.parse(JSON.stringify(agent.takeSnapshot({ preset: 'session' }))) as Snapshot
+      const { agent: restored, model: restoredModel } = build()
+      restoredModel.addTurn({ type: 'textBlock', text: 'done' })
+      restored.loadSnapshot(snapshot)
+
+      await restored.invoke([new InterruptResponseContent({ interruptId: first.interrupts![0]!.id, response: 'yes' })])
+
+      expect(callback).toHaveBeenCalledTimes(1)
+    })
+
+    it("answers a call to a tool the provider's search loaded when the call's model only got its stub", async () => {
+      const callback = vi.fn(() => 'ok')
+      const searched = tool({
+        name: 'shell',
+        description: 'Run shell.',
+        inputSchema: z.object({ value: z.string() }),
+        callback,
+      })
+      const native = new MockMessageModel()
+      native.updateConfig({ modelInfo: { capabilities: { deferredToolLoading: 'native' } } })
+      const stubs = new MockMessageModel()
+      stubs.updateConfig({ modelInfo: { capabilities: { deferredToolLoading: 'stubs' } } })
+      native.addTurn([
+        {
+          type: 'serverToolBlock',
+          provider: 'anthropic',
+          data: { type: 'tool_search_tool_result' },
+          loadedTools: ['shell'],
+        },
+        { type: 'textBlock', text: 'Which directory?' },
+      ])
+      stubs
+        .addTurn({ type: 'toolUseBlock', name: 'shell', toolUseId: 'shell-1', input: { value: 'ls' } })
+        .addTurn({ type: 'textBlock', text: 'done' })
+      let call = 0
+      const agent = new Agent({
+        model: new ModelRouter([native, stubs], {
+          strategy: { select: async (context) => context.candidates[call++ === 0 ? 0 : 1] },
+        }),
+        tools: [searched, read, write],
+        contextManager: { strategies: [searching('auto')] },
+        printer: false,
+      })
+
+      await agent.invoke('List the files.')
+      await agent.invoke('The current one.')
+
+      expect(callback).not.toHaveBeenCalled()
+      expect((agent.messages[4]!.content[0] as ToolResultBlock).content.at(-1)).toEqual(
+        new ToolReferenceBlock({ name: 'shell' })
+      )
+    })
+
+    it('keeps the config when .when() sets conditions', async () => {
+      const { agent, model } = makeAgent('native', {
+        strategy: Offload.defer('toolSpecs', { search: 'client' }).when({ toolCount: 1 }),
+      })
+      model.addTurn({ type: 'textBlock', text: 'ok' })
+
+      await agent.invoke('Hi.')
+
+      expect(sentToolSpecs(model)[0]!.map((spec) => spec.name)).toContain('search_tools')
+    })
+
+    it('rejects a search it does not know', () => {
+      expect(() => Offload.defer('toolSpecs', { search: 'hosted' } as unknown as DeferConfig)).toThrow(
+        "search=\"hosted\" is invalid: expected 'auto', 'client' or 'server'"
+      )
+    })
   })
 
   it("keeps the ContextOffloader's retrieval tool, which its previews tell the model to call, out of the deferred tools", async () => {
@@ -427,6 +817,42 @@ describe('DeferredToolLoadingStrategy', () => {
     }
   )
 
+  it("runs an approved call on a restored agent behind a router whose default takes stubs, when the provider's search loaded the tool in the same response", async () => {
+    const callback = vi.fn(() => 'ok')
+    const build = (): { agent: Agent; model: MockMessageModel } => {
+      const searched = tool({
+        name: 'shell',
+        description: 'Run shell.',
+        inputSchema: z.object({ value: z.string() }),
+        callback,
+      })
+      const built = makeAgent('native', { tools: [searched, read, write], routerDefault: 'stubs' })
+      built.agent.addHook(BeforeToolCallEvent, (event) => {
+        if (event.interrupt<string>({ name: 'approve', reason: 'Run this tool?' }) !== 'yes') event.cancel = 'no'
+      })
+      return built
+    }
+    const { agent, model } = build()
+    model.addTurn([
+      {
+        type: 'serverToolBlock',
+        provider: 'anthropic',
+        data: { type: 'tool_search_tool_result' },
+        loadedTools: ['shell'],
+      },
+      { type: 'toolUseBlock', name: 'shell', toolUseId: 'shell-1', input: { value: 'ls' } },
+    ])
+    const first = await agent.invoke('List the files.')
+    const snapshot = JSON.parse(JSON.stringify(agent.takeSnapshot({ preset: 'session' }))) as Snapshot
+    const { agent: restored, model: restoredModel } = build()
+    restoredModel.addTurn({ type: 'textBlock', text: 'done' })
+    restored.loadSnapshot(snapshot)
+
+    await restored.invoke([new InterruptResponseContent({ interruptId: first.interrupts![0]!.id, response: 'yes' })])
+
+    expect(callback).toHaveBeenCalledTimes(1)
+  })
+
   it('runs a resumed call on a restored agent to a tool its conversation loaded', async () => {
     const { result } = await resumeCall([
       { name: 'load_tools', input: { names: ['shell'] } },
@@ -512,6 +938,36 @@ describe('DeferredToolLoadingStrategy', () => {
     expect(countSpy.mock.calls.at(-1)![1]!.toolSpecs!.map((spec) => spec.name)).toEqual(sorted)
   })
 
+  it.each([
+    ['in full on a native model', 'native' as const, shell.toolSpec],
+    [
+      'as its stub on a model that only got the stub',
+      'stubs' as const,
+      expect.objectContaining({ inputSchema: { type: 'object' } }),
+    ],
+  ])(
+    "counts a tool the provider's search loaded %s when the context manager measures the next request",
+    async (_name, deferredToolLoading, counted) => {
+      const { agent, model } = makeAgent(deferredToolLoading)
+      model.addTurn([
+        {
+          type: 'serverToolBlock',
+          provider: 'anthropic',
+          data: { type: 'tool_search_tool_result' },
+          loadedTools: ['shell'],
+        },
+        { type: 'textBlock', text: 'Which directory?' },
+      ])
+      await agent.invoke('List the files.')
+      const countSpy = vi.spyOn(model, 'countTokens')
+
+      await countRequestTokens(agent, agent.messages)
+
+      const [, options] = countSpy.mock.calls[0]!
+      expect(options!.toolSpecs!.find((spec) => spec.name === 'shell')).toEqual(counted)
+    }
+  )
+
   it('counts a loaded tool by its full schema when the context manager measures the next request', async () => {
     const { agent, model } = makeAgent('native')
     model
@@ -528,11 +984,17 @@ describe('DeferredToolLoadingStrategy', () => {
     ])
   })
 
-  it('sends every spec without the loader on a model that can not defer tools', async () => {
+  it.each([
+    ['', undefined, 'never-defers'],
+    [" with search 'auto'", 'auto' as const, 'never-defers-auto'],
+  ])('sends every spec without the loader on a model that can not defer tools%s', async (_name, search, modelId) => {
     using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const { agent, model } = makeAgent('unsupported')
+    const { agent, model } = makeAgent(
+      'unsupported',
+      search ? { strategy: Offload.defer('toolSpecs', { search }) } : {}
+    )
     // The warning is once per process and model, so this model has an id no other test uses.
-    model.updateConfig({ modelId: 'never-defers' })
+    model.updateConfig({ modelId })
     model.addTurn({ type: 'textBlock', text: 'ok' })
 
     await agent.invoke('Hi.')
@@ -540,8 +1002,9 @@ describe('DeferredToolLoadingStrategy', () => {
     const [toolSpecs] = sentToolSpecs(model)
     expect(deferredNames(model)).toEqual([])
     expect(toolSpecs!.map((spec) => spec.name)).not.toContain('load_tools')
+    expect(toolSpecs!.map((spec) => spec.name)).not.toContain('search_tools')
     expect(warnSpy).toHaveBeenCalledWith(
-      'model_id=<never-defers> | model or its config can not defer tool schemas | sending every tool spec'
+      `model_id=<${modelId}> | model or its config can not defer tool schemas | sending every tool spec`
     )
   })
 

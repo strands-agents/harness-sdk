@@ -397,15 +397,23 @@ export interface ToolUseStart {
    * Must be preserved and sent back to the model for multi-turn tool use.
    */
   reasoningSignature?: string
+
+  /**
+   * Namespace the model called the tool in, which the OpenAI Responses API reports for a tool it loaded with tool
+   * search.
+   *
+   * @experimental
+   */
+  namespace?: string
 }
 
 /**
  * A delta (incremental chunk) of content within a content block.
- * Can be text, tool use input, or reasoning content.
+ * Can be text, tool use input, reasoning content, citations, or a server tool block.
  *
  * This is a discriminated union for type-safe delta handling.
  */
-export type ContentBlockDelta = TextDelta | ToolUseInputDelta | ReasoningContentDelta | CitationsDelta
+export type ContentBlockDelta = TextDelta | ToolUseInputDelta | ReasoningContentDelta | CitationsDelta | ServerToolDelta
 
 /**
  * Text delta within a content block.
@@ -484,6 +492,33 @@ export interface CitationsDelta {
    * The generated content associated with these citations.
    */
   content: CitationGeneratedContent[]
+}
+
+/**
+ * A whole server tool block: a call to a tool the provider's API runs itself, or its result.
+ *
+ * @experimental
+ */
+export interface ServerToolDelta {
+  /**
+   * Discriminator for server tool delta.
+   */
+  type: 'serverToolDelta'
+
+  /**
+   * Name of the provider whose API ran the tool.
+   */
+  provider: string
+
+  /**
+   * The provider's own content block or output item.
+   */
+  data: JSONValue
+
+  /**
+   * Names of the tools the block loaded into the model's context.
+   */
+  loadedTools?: string[]
 }
 
 /**

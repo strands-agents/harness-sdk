@@ -62,8 +62,8 @@ export function hasToolReferences(messages: Message[]): boolean {
 }
 
 /**
- * Whether a tool result holds a tool reference, as a `load_tools` result and the answer to a call made before its
- * tool's load do. Such a result is what keeps a loaded tool's schema in the model's context.
+ * Whether a tool result holds a tool reference, as a loader's result and the answer to a call made before its tool's
+ * load do. Such a result is what keeps a loaded tool's schema in the model's context.
  *
  * @param block - The tool result
  * @returns `true` when a block of the result is a `ToolReferenceBlock`
@@ -109,9 +109,32 @@ function replaceReferences(
   )
 }
 
-function referenceText(name: string, spec: ToolSpec | undefined): string {
+/**
+ * The text a tool reference becomes where it can't stay a reference: the parameters of the request's tool with its
+ * name.
+ *
+ * @param name - The referenced tool's name
+ * @param spec - The request's tool with that name, if it has one
+ * @returns The text to send in the reference's place
+ * @internal
+ */
+export function referenceText(name: string, spec: ToolSpec | undefined): string {
   if (!spec) return `Loaded tool ${name}, which this request doesn't include.`
   return `${name} parameters: ${JSON.stringify(spec.inputSchema ?? {})}`
+}
+
+/**
+ * A deferred tool's spec as a model that takes stubs receives it: its name and description with a pointer to the
+ * loader, and an open schema.
+ *
+ * @param spec - The deferred tool's spec
+ * @param loader - The call's loader
+ * @returns The stub
+ * @internal
+ */
+export function stub(spec: ToolSpec, loader: string): ToolSpec {
+  const description = `${spec.description}\nCall ${loader} with this name for its parameters first.`
+  return { name: spec.name, description, inputSchema: { type: 'object' } }
 }
 
 function hasToolReference(block: ContentBlock): block is ToolResultBlock {

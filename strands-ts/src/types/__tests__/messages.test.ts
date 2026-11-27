@@ -11,6 +11,7 @@ import {
   InjectedBlock,
   SummaryBlock,
   type SummaryBlockData,
+  ServerToolBlock,
   ToolReferenceBlock,
   UnknownBlock,
   contentBlockFromData,
@@ -412,6 +413,22 @@ describe('SummaryBlock', () => {
 
     expect(block.signature).toBeUndefined()
     expect(block.toJSON()).toEqual({ summary: { provider: 'anthropic', text: 'summary' } })
+  })
+})
+
+describe('ServerToolBlock', () => {
+  test('roundtrips through toJSON and contentBlockFromData', () => {
+    const data = { type: 'tool_search_tool_result', tool_use_id: 'srvtoolu_1' }
+    const block = new ServerToolBlock({ provider: 'anthropic', data, loadedTools: ['get_weather'] })
+
+    expect(block.toJSON()).toEqual({ serverTool: { provider: 'anthropic', data, loadedTools: ['get_weather'] } })
+    expect(contentBlockFromData(block.toJSON())).toEqual(block)
+  })
+
+  test('omits unset loadedTools in toJSON', () => {
+    expect(new ServerToolBlock({ provider: 'openai', data: { type: 'tool_search_call' } }).toJSON()).toEqual({
+      serverTool: { provider: 'openai', data: { type: 'tool_search_call' } },
+    })
   })
 })
 
@@ -1051,6 +1068,7 @@ describe('toJSON/fromJSON round-trips', () => {
     ['TextBlock',                              () => new TextBlock('Hello world')],
     ['ToolUseBlock without reasoningSignature',() => new ToolUseBlock({ name: 'test-tool', toolUseId: '123', input: { param: 'value' } })],
     ['ToolUseBlock with reasoningSignature',   () => new ToolUseBlock({ name: 'test-tool', toolUseId: '123', input: { param: 'value' }, reasoningSignature: 'sig123' })],
+    ['ToolUseBlock with namespace',            () => new ToolUseBlock({ name: 'test-tool', toolUseId: '123', input: { param: 'value' }, namespace: 'test-tool' })],
     ['ToolResultBlock with text content',      () => new ToolResultBlock({ toolUseId: '123', status: 'success', content: [new TextBlock('Result text')] })],
     ['ToolResultBlock with json content',      () => new ToolResultBlock({ toolUseId: '456', status: 'success', content: [new JsonBlock({ json: { result: 'data' } })] })],
     ['ToolResultBlock with error status',      () => new ToolResultBlock({ toolUseId: '789', status: 'error', content: [new TextBlock('Error message')] })],

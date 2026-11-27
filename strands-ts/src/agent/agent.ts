@@ -2733,6 +2733,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             ...(self.agentMetadata && { agentMetadata: self.agentMetadata }),
             ...(ctx.structuredOutputSchema && { structuredOutputSchema: ctx.structuredOutputSchema }),
             ...(ctx.deferredTools?.size ? { deferredTools: ctx.deferredTools } : {}),
+            ...(ctx.toolSearch && { toolSearch: ctx.toolSearch }),
           }
           const gen = self._streamFromModel(
             ctx.model,

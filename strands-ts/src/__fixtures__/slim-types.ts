@@ -14,6 +14,7 @@ import type {
   JsonBlock,
   InjectedBlock,
   SummaryBlock,
+  ServerToolBlock,
   UnknownBlock,
 } from '../types/messages.js'
 import type { AudioBlock, ImageBlock, VideoBlock, DocumentBlock } from '../types/media.js'
@@ -50,6 +51,7 @@ export type PlainContentBlock =
   | NoJSON<CitationsBlock>
   | NoJSON<InjectedBlock>
   | NoJSON<SummaryBlock>
+  | NoJSON<ServerToolBlock>
   | NoJSON<UnknownBlock>
 
 /**

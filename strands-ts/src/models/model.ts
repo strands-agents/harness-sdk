@@ -5,6 +5,7 @@ import {
   ReasoningBlock,
   type Role,
   type StopReason,
+  ServerToolBlock,
   type SystemPrompt,
   TextBlock,
   ToolUseBlock,
@@ -24,6 +25,7 @@ import {
   ModelMetadataEvent,
   ModelRedactionEvent,
   type ModelStreamEvent,
+  type ServerToolDelta,
 } from './streaming.js'
 import { MaxTokensError, ModelError, normalizeError } from '../errors.js'
 import type { Redaction } from '../hooks/events.js'
@@ -299,6 +301,16 @@ export interface StreamOptions {
    * @internal
    */
   deferredTools?: ReadonlySet<string>
+
+  /**
+   * The `Offload.defer` config's `search`, on a call that defers tools. Unset, the call's loader in `toolSpecs` is
+   * `load_tools`; set, it is `search_tools`, and a provider whose model defers tools natively searches with its own tool
+   * search in its place under `'auto'` or `'server'`. A provider treats only the call's loader as the loader, so a tool
+   * with the other name is an ordinary tool.
+   *
+   * @internal
+   */
+  toolSearch?: 'auto' | 'client' | 'server'
 }
 
 /**
@@ -354,6 +366,13 @@ export interface SummarizeOptions {
    * @internal
    */
   deferredTools?: ReadonlySet<string>
+
+  /**
+   * How the request's deferred tools are searched, as in {@link StreamOptions.toolSearch}.
+   *
+   * @internal
+   */
+  toolSearch?: 'auto' | 'client' | 'server'
 }
 
 /**
@@ -601,6 +620,8 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
       let toolName = ''
       let toolUseId = ''
       let toolReasoningSignature = ''
+      let toolNamespace = ''
+      let serverTool: ServerToolDelta | undefined
       let accumulatedReasoning: {
         text?: string
         signature?: string
@@ -629,11 +650,13 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               toolName = event.start.name
               toolUseId = event.start.toolUseId
               toolReasoningSignature = event.start.reasoningSignature ?? ''
+              toolNamespace = event.start.namespace ?? ''
             }
             accumulatedToolInput = ''
             accumulatedText = ''
             accumulatedReasoning = {}
             accumulatedCitations.reset()
+            serverTool = undefined
             break
 
           case 'modelContentBlockDeltaEvent': {
@@ -652,6 +675,9 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
               case 'citationsDelta':
                 accumulatedCitations.push(event.delta.citations, event.delta.content)
                 break
+              case 'serverToolDelta':
+                serverTool = event.delta
+                break
             }
             break
           }
@@ -666,10 +692,15 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
                   toolUseId: toolUseId,
                   input: accumulatedToolInput ? JSON.parse(accumulatedToolInput) : {},
                   ...(toolReasoningSignature && { reasoningSignature: toolReasoningSignature }),
+                  ...(toolNamespace && { namespace: toolNamespace }),
                 })
                 toolUseId = '' // Reset
                 toolName = ''
                 toolReasoningSignature = ''
+                toolNamespace = ''
+              } else if (serverTool) {
+                block = new ServerToolBlock(serverTool)
+                serverTool = undefined
               } else if (Object.keys(accumulatedReasoning).length > 0) {
                 block = new ReasoningBlock({
                   ...accumulatedReasoning,
@@ -836,6 +867,9 @@ function estimateContentBlockTokens(block: ContentBlock): number {
       break
     case 'summaryBlock':
       total += heuristicText(block.text)
+      break
+    case 'serverToolBlock':
+      total += heuristicJson(block.data)
       break
     default:
       break

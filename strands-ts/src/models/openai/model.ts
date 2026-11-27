@@ -12,7 +12,7 @@ import OpenAI, { APIUserAbortError } from 'openai'
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses'
 import { Model, resolveConfigMetadata } from '../model.js'
 import type { StreamOptions } from '../model.js'
-import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from '../model-info.js'
+import { SERVER_SIDE_SUMMARY_OFF, ModelInfo, lookupModelInfo } from '../model-info.js'
 import type { ChatCompletionsTools } from '../model-info.js'
 import type { Message } from '../../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../streaming.js'
@@ -157,14 +157,21 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
   /**
    * Adds whether this model manages conversation state server-side: `true` only for
    * `api: 'responses'` with `stateful === true`. Chat Completions is always stateless, and
-   * Responses defaults to stateless. Turns `serverSideSummary` off.
+   * Responses defaults to stateless. Turns `serverSideSummary` off, and native deferred tools back on
+   * for the models the shared model info lists on the OpenAI API's Responses endpoint, where they were
+   * measured with tool search. A deferred function loads only through tool search, so a call that loads by name
+   * (`load_tools`) sends stubs, and only a call that searches defers natively.
    */
   override get modelInfo(): ModelInfo {
     const stateful = this._api === 'responses' && this._config.stateful === true
+    const searchesTools = this._api === 'responses' && isOpenAIApi(this._client.baseURL)
+    const deferredToolLoading = searchesTools
+      ? lookupModelInfo(this.modelId).capabilities?.deferredToolLoading
+      : undefined
     return ModelInfo.merge(
       super.modelInfo,
       SERVER_SIDE_SUMMARY_OFF,
-      { capabilities: { stateful } },
+      { capabilities: { stateful, deferredToolLoading } },
       this._config.modelInfo
     )
   }
@@ -358,6 +365,15 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
     }
 
     return error
+  }
+}
+
+/** Whether a client's base URL is the OpenAI API, where the shared model info's tool search marks were measured. */
+function isOpenAIApi(baseURL: string | undefined): boolean {
+  try {
+    return new URL(baseURL ?? '').hostname === 'api.openai.com'
+  } catch {
+    return false
   }
 }
 
