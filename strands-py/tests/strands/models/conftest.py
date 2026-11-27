@@ -2,6 +2,7 @@
 
 import sys
 import unittest.mock
+import weakref
 
 import pytest
 
@@ -33,4 +34,4 @@ if "strands.models.openai_responses" not in sys.modules:
 def native_output_caches(monkeypatch):
     """Isolate the structured output support each test learns from the process-global caches."""
     monkeypatch.setattr(_native_output, "_UNSUPPORTED_MECHANISMS", {})
-    monkeypatch.setattr(_native_output, "_REJECTED_NATIVE_SCHEMAS", set())
+    monkeypatch.setattr(_native_output, "_REJECTED_NATIVE_SCHEMAS", weakref.WeakKeyDictionary())
