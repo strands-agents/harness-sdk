@@ -292,6 +292,11 @@ export function rowsForStep(
         const nativeSearch = supportsWebSearch(draft.profile.model)
         const exaSearch = exaWebSearchActive(draft.profile) || !nativeSearch
         const agentcoreSearch = nativeSearch && webSearchMode(true, false, draft.profile.model) === 'agentcore'
+        const bedrockTokenOnly =
+          environment.AWS_BEARER_TOKEN_BEDROCK &&
+          !environment.AWS_PROFILE &&
+          !environment.AWS_ACCESS_KEY_ID &&
+          !awsDiscovery.profiles.includes('default')
         const enabled = profileToolEnabled(draft.profile.builtinTools, 'web_search')
         rows.push({
           id: 'quickstart-web-search',
@@ -301,7 +306,9 @@ export function rowsForStep(
             ? exaSearch
               ? 'Third-party search via Exa'
               : agentcoreSearch
-                ? 'Bedrock AgentCore web search'
+                ? bedrockTokenOnly
+                  ? 'Needs IAM credentials, not an API token'
+                  : 'Bedrock AgentCore web search'
                 : "Provider's built-in search"
             : nativeSearch
               ? 'Built-in search available'

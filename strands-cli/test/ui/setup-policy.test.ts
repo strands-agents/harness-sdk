@@ -199,6 +199,19 @@ describe('setup feature controls', () => {
     expect(controls.row(3, 'select-all').label).toBe('Deselect all')
   })
 
+  it.each([
+    [[], ['environment']],
+    [['todos'], ['todos', 'environment']],
+  ] as const)('leaves opt-in Todos as it was when selecting all from plugins %j', (plugins, selected) => {
+    const controls = setupControls({ builtinPlugins: [...plugins] })
+    expect(controls.row(4, 'select-all').label).toBe('Select all')
+    controls.row(4, 'select-all').activate()
+    expect(controls.draft.profile.builtinPlugins).toEqual(selected)
+    expect(controls.row(4, 'select-all').label).toBe('Deselect all')
+    controls.row(4, 'select-all').activate()
+    expect(controls.draft.profile.builtinPlugins).toEqual([])
+  })
+
   it('enables defaults without adding Exa or converting a tool list to a mapping', () => {
     const controls = setupControls({
       model: NO_SEARCH_MODEL,
@@ -581,6 +594,43 @@ describe('setup web_search availability', () => {
     expect(profileToolEnabled(profile.builtinTools, 'web_search')).toBe(true)
     expect(webSearchFallback(profile.builtinTools)).toBe(mode === 'exa' ? 'exa' : undefined)
   })
+
+  it.each([
+    [{ AWS_BEARER_TOKEN_BEDROCK: 'token' }, [], 'Needs IAM credentials, not an API token'],
+    [{ AWS_BEARER_TOKEN_BEDROCK: 'token', AWS_ACCESS_KEY_ID: 'key' }, [], 'Bedrock AgentCore web search'],
+    [{ AWS_BEARER_TOKEN_BEDROCK: 'token', AWS_PROFILE: 'dev' }, [], 'Bedrock AgentCore web search'],
+    [{ AWS_BEARER_TOKEN_BEDROCK: 'token' }, ['default'], 'Bedrock AgentCore web search'],
+    [{}, [], 'Bedrock AgentCore web search'],
+  ])(
+    'describes AgentCore web search for Bedrock credentials %j and profiles %j',
+    (variables, profiles, description) => {
+      const detected = Object.fromEntries(
+        Object.entries(variables).map(([key, value]) => [key, { value, source: 'process' as const }])
+      )
+      const rows = rowsForStep(
+        1,
+        'quickstart',
+        quickstartDraft(),
+        '',
+        {},
+        detected,
+        'bedrock',
+        ['bedrock'],
+        { profiles, regions: [] },
+        undefined,
+        () => {},
+        () => {},
+        () => {}
+      )
+      expect(rows.find(({ id }) => id === 'quickstart-web-search')).toMatchObject({
+        description,
+        choices: [
+          { label: 'Off', active: false },
+          { label: 'AgentCore', active: true },
+        ],
+      })
+    }
+  )
 
   it('keeps the Exa web search opt-in for Bedrock', () => {
     const bedrock = quickstartDraft().profile

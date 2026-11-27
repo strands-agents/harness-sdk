@@ -32,10 +32,19 @@ describe('model display names', () => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
 
 class BedrockModel {
   constructor(readonly modelId = 'anthropic.claude-current-v1:0') {}
+
+  getConfig(): object {
+    return {}
+  }
+}
+
+class AnthropicModel {
+  constructor(readonly _client: object) {}
 
   getConfig(): object {
     return {}
@@ -154,7 +163,42 @@ describe('AgentModelRuntime provider', () => {
     expect(model.constructor.name).toBe('AnthropicModel')
     expect(runtime.provider).toBe('bedrock')
     expect(runtime.changeMode('bedrock/us.anthropic.claude-opus-5-5')).toBe('live')
-    vi.unstubAllEnvs()
+  })
+
+  it.each([
+    ['https://bedrock-runtime.eu-west-1.amazonaws.com', 'bedrock'],
+    ['https://bedrock-runtime-fips.us-east-1.amazonaws.com', 'bedrock'],
+    ['https://vpce-0abc.bedrock-runtime.eu-west-1.vpce.amazonaws.com', 'bedrock'],
+    ['https://bedrock-mantle.eu-west-1.api.aws/anthropic', 'bedrock-mantle'],
+    ['https://api.anthropic.com', 'anthropic'],
+  ])('detects an AnthropicModel on %s as %s from its client base URL', (baseURL, provider) => {
+    class RenamedClient {
+      readonly baseURL = baseURL
+    }
+    const runtime = new AgentModelRuntime({ model: new AnthropicModel(new RenamedClient()) } as unknown as Agent)
+
+    expect(runtime.provider).toBe(provider)
+  })
+
+  it('lists Bedrock models in the region of an AnthropicModel client', async () => {
+    const client = {
+      send: async () => ({ inferenceProfileSummaries: [], modelSummaries: [] }),
+      destroy: vi.fn(),
+    } as unknown as BedrockCatalogClient
+    const createBedrockClient = vi.fn(() => client)
+    const model = new AnthropicModel({
+      baseURL: 'https://bedrock-runtime.eu-west-1.amazonaws.com',
+      awsRegion: 'eu-west-1',
+    })
+    const runtime = new AgentModelRuntime({ model } as unknown as Agent, {
+      initialModel: 'bedrock/global.anthropic.claude-opus-5-5',
+      createBedrockClient,
+      providerEnvironment: { AWS_REGION: { value: 'us-east-1', source: 'process' } },
+    })
+
+    await runtime.list()
+
+    expect(createBedrockClient).toHaveBeenCalledWith('eu-west-1')
   })
 })
 
