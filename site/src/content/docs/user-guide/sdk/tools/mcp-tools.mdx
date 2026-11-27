@@ -267,6 +267,12 @@ other_client = MCPClient(
 agent = Agent(tools=[aws_docs_client, other_client])
 ```
 
+Characters that model providers reject in tool names (anything other than letters,
+digits, `_` and `-`, such as the `.` in `files.read`) are replaced with `_` in the name
+the agent sees, so `files.read` becomes `files_read`. Calls still send the original
+server tool name. If two tools from one server map to the same name, `list_tools_sync`
+raises a `ValueError`; exclude one of them with `tool_filters`.
+
 **Reconnecting Dropped Sessions**
 
 Long-running agents talking to remote servers over streamable HTTP routinely lose the session between tool calls (idle timeouts, server restarts). By default a dropped session makes every later tool call fail until the client is restarted. Set `auto_reconnect=True` to have a tool call that hits a dropped session open a fresh connection and retry once:
