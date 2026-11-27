@@ -68,18 +68,13 @@ async function identityExample() {
   // --8<-- [start:identity]
   const dogwood = new DogwoodAuthorization({
     policies: `
-      permit(principal, action, resource)
-      when { context.session.role == "admin" };
+      permit(principal == User::"alice", action, resource);
 
-      permit(principal, action == Action::"search", resource)
-      when { context.session.role == "analyst" };
+      permit(principal == User::"bob", action == Action::"search", resource);
     `,
     tools: [searchTool, deleteTool],
     principalResolver: (state) =>
       state.userId ? { type: 'User', id: String(state.userId) } : undefined,
-    contextEnricher: ({ invocationState }) => ({
-      role: String(invocationState.role ?? 'none'),
-    }),
   })
 
   const agent = new Agent({
@@ -88,12 +83,12 @@ async function identityExample() {
   })
 
   await agent.invoke('Delete record 42', {
-    invocationState: { userId: 'alice', role: 'admin' },
+    invocationState: { userId: 'alice' },
   })
 
-  // Denied: an analyst may only search
+  // Denied: bob may only search
   await agent.invoke('Delete record 42', {
-    invocationState: { userId: 'bob', role: 'analyst' },
+    invocationState: { userId: 'bob' },
   })
   // --8<-- [end:identity]
 }
