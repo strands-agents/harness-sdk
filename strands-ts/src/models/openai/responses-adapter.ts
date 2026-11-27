@@ -365,6 +365,8 @@ function formatResponsesMessages(messages: Message[], reasoningModelId?: string)
     } else {
       input.push(...reasoningItems)
     }
+    // Tool outputs must immediately follow their calls, before any user text in the same message.
+    input.push(...toolResultItems)
     if (contentItems.length > 0) {
       if (role === 'assistant') {
         // Only the string EasyInputMessage form is a valid assistant *input* shape
@@ -395,7 +397,6 @@ function formatResponsesMessages(messages: Message[], reasoningModelId?: string)
     }
 
     input.push(...toolCallItems)
-    input.push(...toolResultItems)
   }
 
   return input

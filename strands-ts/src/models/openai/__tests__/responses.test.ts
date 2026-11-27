@@ -642,6 +642,32 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'quoted passage' }] })
     })
 
+    it('puts tool outputs before user text in the same message', async () => {
+      const messages = [
+        new Message({ role: 'assistant', content: [new ToolUseBlock({ name: 'lookup', toolUseId: 'c1', input: {} })] }),
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('before'),
+            new ToolResultBlock({ toolUseId: 'c1', status: 'success', content: [new TextBlock('result')] }),
+            new TextBlock('after'),
+          ],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input).toEqual([
+        { type: 'function_call', call_id: 'c1', name: 'lookup', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'c1', output: 'result' },
+        {
+          role: 'user',
+          content: [
+            { type: 'input_text', text: 'before' },
+            { type: 'input_text', text: 'after' },
+          ],
+        },
+      ])
+    })
+
     it('skips unknown blocks in messages and tool results, without a warning', async () => {
       using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
       const unknownBlock = new UnknownBlock({ futureBlock: { value: 1 } })

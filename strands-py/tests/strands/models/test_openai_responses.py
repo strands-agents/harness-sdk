@@ -380,10 +380,13 @@ def test_format_request_messages_puts_tool_outputs_before_user_text():
 
     formatted = OpenAIResponsesModel._format_request_messages(messages)
 
-    assert [item.get("type") or item["role"] for item in formatted] == ["function_call", "function_call_output", "user"]
-    assert formatted[2]["content"] == [
-        {"type": "input_text", "text": "before"},
-        {"type": "input_text", "text": "after"},
+    assert formatted == [
+        {"type": "function_call", "call_id": "c1", "name": "lookup", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "c1", "output": "result"},
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "before"}, {"type": "input_text", "text": "after"}],
+        },
     ]
 
 
