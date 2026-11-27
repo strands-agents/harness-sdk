@@ -221,6 +221,12 @@ export class BackgroundAgentActivityStore {
   }
 }
 
+/** Harness 0.6 renamed the background-tasks management tool; earlier releases use the `strands_` name. */
+export function isBackgroundTaskTool(name: string): boolean {
+  const key = name.replaceAll('-', '_').toLowerCase()
+  return key === 'manage_background_task' || key === 'strands_manage_background_task'
+}
+
 export function observeSubagentActivity(subagentTool: Tool, observer: BackgroundAgentActivityStore): () => void {
   if (subagentTool.name !== 'subagent') {
     throw new TypeError('observeSubagentActivity requires the subagent tool')

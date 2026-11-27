@@ -1637,71 +1637,74 @@ describe('ChatView', () => {
     expect(output).not.toContain('Stopped: maxTokens')
   })
 
-  it('renders forced and model-driven background tasks identically', () => {
-    const output = renderView({
-      snapshot: snapshot({
-        completedTurns: [
-          {
-            id: 'turn-1',
-            prompt: 'delegate this',
-            agentName: 'Strands harness',
-            entries: [
-              {
-                id: 'turn-1:1',
-                type: 'tool',
-                toolUseId: 'subagent-1',
-                name: 'subagent',
-                input: { task: 'Review authentication.' },
-                status: 'success',
-                background: true,
-                result: [
-                  {
-                    type: 'text',
-                    text: 'Background task dispatched.\n\nTask ID: task-1\nTool: subagent\nStatus: queued',
-                  },
-                ],
-              },
-              {
-                id: 'turn-1:2',
-                type: 'tool',
-                toolUseId: 'read-1',
-                name: 'read',
-                input: { path: 'src/auth.ts', _background_execution: true },
-                status: 'success',
-                background: true,
-                result: [
-                  {
-                    type: 'text',
-                    text: 'Background task dispatched.\n\nTask ID: task-2\nTool: read\nStatus: queued',
-                  },
-                ],
-              },
-              {
-                id: 'turn-1:3',
-                type: 'tool',
-                toolUseId: 'list-1',
-                name: 'strands_manage_background_task',
-                input: { mode: 'list' },
-                status: 'success',
-              },
-            ],
-            status: 'complete',
-          },
-        ],
-      }),
-      terminalWidth: 100,
-      terminalHeight: 40,
-    })
+  it.each(['strands_manage_background_task', 'manage_background_task'])(
+    'renders forced and model-driven background tasks identically with %s',
+    (manageToolName) => {
+      const output = renderView({
+        snapshot: snapshot({
+          completedTurns: [
+            {
+              id: 'turn-1',
+              prompt: 'delegate this',
+              agentName: 'Strands harness',
+              entries: [
+                {
+                  id: 'turn-1:1',
+                  type: 'tool',
+                  toolUseId: 'subagent-1',
+                  name: 'subagent',
+                  input: { task: 'Review authentication.' },
+                  status: 'success',
+                  background: true,
+                  result: [
+                    {
+                      type: 'text',
+                      text: 'Background task dispatched.\n\nTask ID: task-1\nTool: subagent\nStatus: queued',
+                    },
+                  ],
+                },
+                {
+                  id: 'turn-1:2',
+                  type: 'tool',
+                  toolUseId: 'read-1',
+                  name: 'read',
+                  input: { path: 'src/auth.ts', _background_execution: true },
+                  status: 'success',
+                  background: true,
+                  result: [
+                    {
+                      type: 'text',
+                      text: 'Background task dispatched.\n\nTask ID: task-2\nTool: read\nStatus: queued',
+                    },
+                  ],
+                },
+                {
+                  id: 'turn-1:3',
+                  type: 'tool',
+                  toolUseId: 'list-1',
+                  name: manageToolName,
+                  input: { mode: 'list' },
+                  status: 'success',
+                },
+              ],
+              status: 'complete',
+            },
+          ],
+        }),
+        terminalWidth: 100,
+        terminalHeight: 40,
+      })
 
-    expect(output).toContain('↗ Background task started (subagent) - task-1')
-    expect(output).toContain('↗ Background task started (read) - task-2')
-    expect(output).not.toContain('Subagent Review authentication.')
-    expect(output).not.toContain('Read src/auth.ts')
-    expect(output).not.toContain('Background task dispatched.')
-    expect(output).not.toContain('Status: queued')
-    expect(output).toContain('List background tasks')
-    expect(output).not.toContain('Background list')
-  })
+      expect(output).toContain('↗ Background task started (subagent) - task-1')
+      expect(output).toContain('↗ Background task started (read) - task-2')
+      expect(output).not.toContain('Subagent Review authentication.')
+      expect(output).not.toContain('Read src/auth.ts')
+      expect(output).not.toContain('Background task dispatched.')
+      expect(output).not.toContain('Status: queued')
+      expect(output).toContain('List background tasks')
+      expect(output).not.toContain('Background list')
+    }
+  )
 
   it('shows a subagent as background before its dispatch result arrives', () => {
     const output = renderView({

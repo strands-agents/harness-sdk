@@ -3,7 +3,7 @@ import stringWidth from 'string-width'
 
 import type { ChatDetailPanel, ChatPermissionPanel, ChatSnapshot } from './chat/controller.js'
 import type { ChatEntry } from '../agent/types.js'
-import type { BackgroundAgentActivity } from '../agent/background.js'
+import { isBackgroundTaskTool, type BackgroundAgentActivity } from '../agent/background.js'
 import { DEFAULT_CHAT_SETTINGS, type ThemeColors } from './chat/types.js'
 import { modelDisplayName } from '../model/metadata.js'
 import { escapePermissionText } from './chat/panel-state.js'
@@ -443,7 +443,6 @@ const TOOL_ACTIONS: Readonly<Record<string, string>> = {
   strands_dev_number_input: 'Ask',
   strands_dev_optimization_plan: 'Optimization plan',
   strands_dev_single_select: 'Ask',
-  strands_manage_background_task: 'Background tasks',
   todo_write: 'Update tasks',
   web_fetch: 'Fetch',
   web_search: 'Search',
@@ -452,11 +451,12 @@ const TOOL_ACTIONS: Readonly<Record<string, string>> = {
 
 export function toolAction(name: string, input?: JSONValue): string {
   const key = name.replaceAll('-', '_').toLowerCase()
-  if (key === 'strands_manage_background_task' && isRecord(input)) {
-    const action = input.mode ?? input.action
+  if (isBackgroundTaskTool(key)) {
+    const action = isRecord(input) ? (input.mode ?? input.action) : undefined
     if (action === 'list') return 'List background tasks'
     if (action === 'get') return 'Read background task'
     if (action === 'cancel') return 'Cancel background task'
+    return 'Background tasks'
   }
   return Object.hasOwn(TOOL_ACTIONS, key) ? TOOL_ACTIONS[key]! : name
 }
@@ -521,7 +521,7 @@ export function summarizeToolInput(name: string, input: JSONValue): string {
       typeof input.action === 'string' ? input.action : typeof input.mode === 'string' ? input.mode : undefined
     const taskId =
       typeof input.task_id === 'string' ? input.task_id : typeof input.taskId === 'string' ? input.taskId : undefined
-    if (normalizedName === 'strands_manage_background_task') {
+    if (isBackgroundTaskTool(normalizedName)) {
       return truncateText(taskId ?? '', 160)
     }
     if (action || taskId) {
