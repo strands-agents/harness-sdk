@@ -473,7 +473,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
    *
    * @internal
    */
-  acceptsReasoning(_providerData: ReasoningProviderData): boolean {
+  _acceptsReasoning(_providerData: ReasoningProviderData): boolean {
     return false
   }
 

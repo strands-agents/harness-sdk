@@ -161,7 +161,7 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
    *
    * @internal
    */
-  override acceptsReasoning(providerData: ReasoningProviderData): boolean {
+  override _acceptsReasoning(providerData: ReasoningProviderData): boolean {
     return (
       this._api === 'responses' &&
       !this.stateful &&

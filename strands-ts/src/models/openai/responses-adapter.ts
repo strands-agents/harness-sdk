@@ -56,7 +56,8 @@ type InputPart = { type: string; prompt_cache_breakpoint?: { mode: 'explicit'; t
 const MANAGED_PARAMS: ReadonlySet<string> = new Set(['model', 'input', 'stream', 'store'])
 
 /**
- * Tags the reasoning items this adapter captures, so only a Responses model with the same model id replays them.
+ * The `providerData.provider` tag of the reasoning items this adapter captures: their format, not the endpoint.
+ * Byte-identical to the Python SDK's, since it is persisted.
  *
  * @internal
  */
@@ -116,6 +117,9 @@ export function formatResponsesRequest(
     if (responseId) {
       request.previous_response_id = responseId
     }
+  } else if (request.include === null) {
+    // An explicit null opts out of the SDK default.
+    delete request.include
   } else if (!request.include?.includes(ENCRYPTED_REASONING)) {
     // The encrypted reasoning is what lets the next stateless request continue from it.
     request.include = [...(request.include ?? []), ENCRYPTED_REASONING]
@@ -795,8 +799,8 @@ function captureReasoning(items: ResponseOutputItem[] | undefined, state: Respon
       const value = item[key]
       if (value && (!Array.isArray(value) || value.length > 0)) data[key] = value as JSONValue
     }
-    const parts = item.content?.length ? item.content : item.summary
-    const text = parts.map((part) => part.text).join('\n')
+    const parts = (item.content?.length ? item.content : item.summary) ?? []
+    const text = parts.map((part) => part.text ?? '').join('\n')
     const replayable = data.content !== undefined || data.encrypted_content !== undefined
     if (state.dataType !== 'reasoning') {
       if (!text && !replayable) continue

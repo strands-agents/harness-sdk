@@ -694,14 +694,13 @@ function parseToolResultContent(data: ToolResultContentData, onUnknown: OnUnknow
 }
 
 /**
- * Data for a reasoning block.
- */
-/**
  * Provider-native reasoning that only the provider and model that produced it can replay.
+ *
+ * Written and read only by the SDK model provider named in `provider`; other models never receive the block.
  */
 export interface ReasoningProviderData {
   /**
-   * The provider API that produced the reasoning, e.g. `'openai_responses'`.
+   * The format tag of the provider that wrote it, e.g. `'openai_responses'`.
    */
   provider: string
 
@@ -711,11 +710,14 @@ export interface ReasoningProviderData {
   modelId: string
 
   /**
-   * The provider's own reasoning payload, opaque to the SDK.
+   * The provider's own JSON payload; private to that provider and not a stable shape.
    */
   data: { [key: string]: JSONValue }
 }
 
+/**
+ * Data for a reasoning block.
+ */
 export interface ReasoningBlockData {
   /**
    * The text content of the reasoning process.

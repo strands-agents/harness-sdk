@@ -56,10 +56,12 @@ class ReasoningTextBlock(TypedDict, total=False):
 class ReasoningProviderData(TypedDict):
     """Provider-native reasoning that only the provider and model that produced it can replay.
 
+    Written and read only by the SDK model provider named in ``provider``; other models never receive the block.
+
     Attributes:
-        provider: The provider API that produced the reasoning, e.g. ``"openai_responses"``.
+        provider: The format tag of the provider that wrote it, e.g. ``"openai_responses"``.
         modelId: The model that produced the reasoning.
-        data: The provider's own reasoning payload, opaque to the SDK.
+        data: The provider's own JSON payload; private to that provider and not a stable shape.
     """
 
     provider: str

@@ -234,10 +234,15 @@ def _without_foreign_reasoning(messages: Messages, model: "Model") -> Messages:
         provider_data = block.get("reasoningContent", {}).get("providerData")
         return provider_data is not None and not model._accepts_reasoning(provider_data)
 
+    def without(message: Message) -> Message:
+        content = [block for block in message["content"] if not foreign(block)]
+        # A turn that held only such reasoning gets the placeholder an empty assistant turn gets.
+        return {**message, "content": content or [{"text": "[blank text]"}]}
+
     if not any(foreign(block) for message in messages for block in message["content"]):
         return messages
     return [
-        {**message, "content": [block for block in message["content"] if not foreign(block)]} for message in messages
+        without(message) if any(foreign(block) for block in message["content"]) else message for message in messages
     ]
 
 

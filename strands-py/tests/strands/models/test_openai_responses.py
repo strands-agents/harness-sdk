@@ -3073,6 +3073,20 @@ def test_format_request_merges_encrypted_reasoning_into_include(params, include)
     assert model.config["params"] == original
 
 
+def test_format_request_explicit_null_include_opts_out_of_encrypted_reasoning():
+    model = OpenAIResponsesModel(model_id="gpt-4o", params={"include": None})
+
+    assert "include" not in model._format_request([{"role": "user", "content": [{"text": "hi"}]}])
+
+
+def test_accepts_reasoning_only_from_this_provider_and_model():
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+
+    assert model._accepts_reasoning({"provider": "openai_responses", "modelId": "gpt-4o", "data": {}})
+    assert not model._accepts_reasoning({"provider": "openai_responses", "modelId": "gpt-5", "data": {}})
+    assert not model._accepts_reasoning({"provider": "other", "modelId": "gpt-4o", "data": {}})
+
+
 def test_format_request_stateful_neither_includes_nor_replays_reasoning():
     model = OpenAIResponsesModel(model_id="gpt-4o", stateful=True)
     messages = [

@@ -2192,3 +2192,19 @@ async def test_stream_messages_forwards_structured_output_model_to_model(agenera
     await alist(stream)
 
     assert mock_model.stream.call_args.kwargs["structured_output_model"] is Answer
+
+
+@pytest.mark.parametrize("text", ["", "plan"])
+def test_handle_content_block_stop_keeps_reasoning_provider_data_on_its_block(text):
+    provider_data = {"provider": "openai_responses", "modelId": "m", "data": {"id": "rs_1"}}
+    state = {"content": [], "current_tool_use": {}, "text": "", "reasoningText": "", "citationsContent": []}
+    for delta in ([{"text": text}] if text else []) + [{"providerData": provider_data}]:
+        state, _ = strands.event_loop.streaming.handle_content_block_delta(
+            {"delta": {"reasoningContent": delta}}, state
+        )
+
+    state = strands.event_loop.streaming.handle_content_block_stop(state)
+
+    reasoning = {"reasoningText": {"text": text}} if text else {}
+    assert state["content"] == [{"reasoningContent": {**reasoning, "providerData": provider_data}}]
+    assert "reasoningProviderData" not in state

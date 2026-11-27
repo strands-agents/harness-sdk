@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import OpenAI, { APIUserAbortError } from 'openai'
+import { z } from 'zod'
+import { Agent } from '../../../agent/agent.js'
+import { tool } from '../../../tools/tool-factory.js'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
 import { ContextWindowOverflowError, MaxTokensError, ModelThrottledError } from '../../../errors.js'
@@ -1307,6 +1310,11 @@ describe('OpenAIModel (api: responses) stateless reasoning replay', () => {
     expect(params).toEqual(include ? { include } : {})
   })
 
+  it('omits include when params set it to null', async () => {
+    const req = await request([user('hi')], { params: { include: null } })
+    expect('include' in req).toBe(false)
+  })
+
   it('keeps the stateful path as is: no include and no replayed reasoning', async () => {
     const modelState = new StateStore()
     modelState.set('responseId', 'resp_0')
@@ -1346,6 +1354,55 @@ describe('OpenAIModel (api: responses) stateless reasoning replay', () => {
       }),
       new TextBlock('answer'),
     ])
+  })
+
+  it('captures a reasoning item that has no summary', async () => {
+    const message = await streamMessage([
+      { type: 'response.output_item.done', item: { type: 'reasoning', id: 'rs_1', encrypted_content: 'enc' } },
+      { type: 'response.completed', response: {} },
+    ])
+    expect(message.content).toEqual([tagged('rs_1')])
+  })
+
+  it('replays captured reasoning on the next tool turn of an agent', async () => {
+    const requests: any[] = []
+    const turns = [
+      [
+        { type: 'response.output_item.done', item: reasoningItem('rs_1') },
+        { type: 'response.output_item.added', item: { type: 'function_call', id: 'fc_1', call_id: 'c1', name: 'add' } },
+        { type: 'response.function_call_arguments.done', item_id: 'fc_1', arguments: '{"a":1}' },
+        { type: 'response.completed', response: {} },
+      ],
+      [
+        { type: 'response.output_text.delta', delta: '2' },
+        { type: 'response.completed', response: {} },
+      ],
+    ]
+    const client = {
+      responses: {
+        create: vi.fn(async (req: any) => {
+          requests.push(req)
+          const events = turns[requests.length - 1]!
+          return (async function* () {
+            yield* events
+          })()
+        }),
+      },
+    } as any
+    const add = tool({
+      name: 'add',
+      description: 'Add one.',
+      inputSchema: z.object({ a: z.number() }),
+      callback: ({ a }) => a + 1,
+    })
+    const model = new OpenAIModel({ api: 'responses', client, modelId: 'gpt-4o' })
+    await new Agent({ model, tools: [add], printer: false }).invoke('add one to 1')
+    expect(requests[1].input.slice(1).map((item: any) => item.type)).toEqual([
+      'reasoning',
+      'function_call',
+      'function_call_output',
+    ])
+    expect(requests[1].input[1]).toEqual({ type: 'reasoning', summary: [], id: 'rs_1', encrypted_content: 'enc' })
   })
 
   it('captures reasoning found only in the terminal output', async () => {
@@ -1431,10 +1488,10 @@ describe('OpenAIModel (api: responses) stateless reasoning replay', () => {
 
   it('accepts back only reasoning it captured from the configured model', () => {
     const model = new OpenAIModel({ api: 'responses', client: {} as OpenAI, modelId: 'gpt-4o' })
-    expect(model.acceptsReasoning(tagged('rs_1').providerData!)).toBe(true)
-    expect(model.acceptsReasoning(tagged('rs_1', 'gpt-5').providerData!)).toBe(false)
+    expect(model._acceptsReasoning(tagged('rs_1').providerData!)).toBe(true)
+    expect(model._acceptsReasoning(tagged('rs_1', 'gpt-5').providerData!)).toBe(false)
     const chat = new OpenAIModel({ api: 'chat', client: {} as OpenAI, modelId: 'gpt-4o' })
-    expect(chat.acceptsReasoning(tagged('rs_1').providerData!)).toBe(false)
+    expect(chat._acceptsReasoning(tagged('rs_1').providerData!)).toBe(false)
   })
 
   it('keeps provider data through a JSON round trip', () => {

@@ -94,7 +94,7 @@ _CONTEXT_WINDOW_OVERFLOW_MSG = "OpenAI Responses API threw context window overfl
 _RATE_LIMIT_MSG = "OpenAI Responses API threw rate limit error"
 # Input content types that accept prompt_cache_breakpoint (gpt-5.6+).
 _CACHEABLE_INPUT_TYPES = frozenset({"input_text", "input_image", "input_file"})
-# Tags the reasoning items this adapter captures, so only a Responses model with the same model id replays them.
+# The ``providerData.provider`` tag of the reasoning items this adapter captures: their format, not the endpoint.
 _REASONING_PROVIDER = "openai_responses"
 _ENCRYPTED_REASONING = "reasoning.encrypted_content"
 
@@ -701,9 +701,14 @@ class OpenAIResponsesModel(Model):
         response_id = model_state.get("response_id") if model_state else None
         if response_id and stateful:
             request["previous_response_id"] = response_id
-        elif not stateful and _ENCRYPTED_REASONING not in (request.get("include") or []):
-            # The encrypted reasoning is what lets the next stateless request continue from it.
-            request["include"] = [*(request.get("include") or []), _ENCRYPTED_REASONING]
+        elif not stateful:
+            include = request.get("include", [])
+            if include is None:
+                # An explicit null opts out of the SDK default.
+                del request["include"]
+            elif _ENCRYPTED_REASONING not in include:
+                # The encrypted reasoning is what lets the next stateless request continue from it.
+                request["include"] = [*include, _ENCRYPTED_REASONING]
 
         if system_prompt:
             request.update(self._format_request_system_prompt(system_prompt, request))

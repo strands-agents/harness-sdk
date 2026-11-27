@@ -256,3 +256,13 @@ def test_prepare_sends_reasoning_with_provider_data_only_to_a_model_that_takes_i
     with unittest.mock.patch.object(type(model), "_accepts_reasoning", return_value=True):
         assert ModelProxy(model)._prepare(messages)[0] == messages
     assert messages == original
+
+
+def test_prepare_keeps_a_turn_that_held_only_dropped_reasoning_as_blank_text(model):
+    tagged = {"reasoningContent": {"providerData": {"provider": "openai_responses", "modelId": "m", "data": {}}}}
+    messages = [user({"text": "go"}), {"role": "assistant", "content": [tagged]}, user({"text": "next"})]
+
+    sent, _ = ModelProxy(model)._prepare(messages)
+
+    assert sent[1] == {"role": "assistant", "content": [{"text": "[blank text]"}]}
+    assert sent[0] is messages[0]

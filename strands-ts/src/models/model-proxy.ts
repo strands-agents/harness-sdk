@@ -20,7 +20,7 @@ import { wellFormedRequest } from './well-formed-request.js'
  * An `InjectedBlock` reaches a model whose `modelInfo.capabilities.temporaryMessages` is `true` as it is
  * stored, and that provider sends it so the model reads it only until the next user message. Every
  * other model, custom ones included, gets the latest user message's injected blocks as text and none
- * of the earlier ones. A `ReasoningBlock` with `providerData` reaches only a model whose `acceptsReasoning` takes
+ * of the earlier ones. A `ReasoningBlock` with `providerData` reaches only a model whose `_acceptsReasoning` takes
  * it back.
  *
  * Deferred tools take one of two paths, by the model's `modelInfo.capabilities.deferredToolLoading`. With `'native'`,
@@ -120,17 +120,19 @@ export class ModelProxy {
     const foreign = (block: ContentBlock): boolean =>
       block.type === 'reasoningBlock' &&
       block.providerData !== undefined &&
-      !this._model.acceptsReasoning(block.providerData)
+      !this._model._acceptsReasoning(block.providerData)
     if (!messages.some((message) => message.content.some(foreign))) return messages
-    return messages.map(
-      (message) =>
-        new Message({
-          role: message.role,
-          content: message.content.filter((block) => !foreign(block)),
-          trackingId: message.trackingId,
-          ...(message.metadata !== undefined && { metadata: message.metadata }),
-        })
-    )
+    return messages.map((message) => {
+      if (!message.content.some(foreign)) return message
+      const content = message.content.filter((block) => !foreign(block))
+      return new Message({
+        role: message.role,
+        // A turn that held only such reasoning gets the placeholder an empty assistant turn gets.
+        content: content.length > 0 ? content : [new TextBlock('[blank text]')],
+        trackingId: message.trackingId,
+        ...(message.metadata !== undefined && { metadata: message.metadata }),
+      })
+    })
   }
 
   /** Replaces summary blocks with their text, since only a provider with server-side summaries reads them. */
