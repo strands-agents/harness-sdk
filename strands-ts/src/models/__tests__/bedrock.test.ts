@@ -515,7 +515,7 @@ describe('BedrockModel', () => {
       )
     })
 
-    it.each(['us.openai.gpt-6-luna', 'openai.gpt-6.1-sol', 'openai.gpt-5.6-sol', 'us.xai.grok-4.7'])(
+    it.each(['us.openai.gpt-5.5', 'openai.gpt-5.4', 'us.xai.grok-4.7'])(
       'reports an OpenAI GPT or xAI model as implicitly cached and sends no cache point: %s',
       async (modelId) => {
         const provider = new BedrockModel({ modelId, cacheConfig: { strategy: 'auto' } })
@@ -4231,6 +4231,465 @@ describe('BedrockModel', () => {
         ])
         expect(lastContent()).toStrictEqual([formattedToolResult, { cachePoint: { type: 'default', ttl: '1h' } }])
         expect(warnOnce).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('ttl is not supported'))
+      })
+    })
+
+    describe('OpenAI GPT cache points', () => {
+      const toolSpecs = [{ name: 'calculator', description: 'Calculate', inputSchema: { type: 'object' as const } }]
+      const toolUse = (toolUseId: string): Message =>
+        new Message({ role: 'assistant', content: [new ToolUseBlock({ name: 'calculator', toolUseId, input: {} })] })
+      const toolResult = (toolUseId: string): ToolResultBlock =>
+        new ToolResultBlock({ toolUseId, status: 'success', content: [new TextBlock('42')] })
+      const toolLoop = [
+        new Message({ role: 'user', content: [new TextBlock('What is 6 x 7?')] }),
+        toolUse('id-1'),
+        new Message({ role: 'user', content: [toolResult('id-1')] }),
+        toolUse('id-2'),
+        new Message({ role: 'user', content: [toolResult('id-2')] }),
+      ]
+
+      const request = (): ConverseStreamCommandInput | undefined => mockConverseStreamCommand.mock.lastCall?.[0]
+      const allCachePoints = (): unknown[] => {
+        const call = request()
+        const blocks = [
+          ...(call?.toolConfig?.tools ?? []),
+          ...(call?.system ?? []),
+          ...(call?.messages ?? []).flatMap((message) => message.content ?? []),
+        ]
+        return blocks.flatMap((block) => ('cachePoint' in block && block.cachePoint ? [block.cachePoint] : []))
+      }
+      const formattedToolUse = (toolUseId: string): unknown => ({
+        role: 'assistant',
+        content: [{ toolUse: expect.objectContaining({ toolUseId }) }],
+      })
+      const formattedToolResult = (toolUseId: string): unknown => ({
+        role: 'user',
+        content: [{ toolResult: expect.objectContaining({ toolUseId }) }],
+      })
+
+      it.each(['us.openai.gpt-6-luna', 'us.openai.gpt-5.6-sol', 'global.openai.gpt-6.2-astra'])(
+        'caches the system prompt and the prompt that started a tool loop but not the tool definitions: %s',
+        (modelId) => {
+          const provider = new BedrockModel({ modelId, cacheConfig: {} })
+
+          collectIterator(provider.stream(toolLoop, { systemPrompt: 'Be helpful', toolSpecs }))
+
+          expect(provider.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+          expect(request()?.system).toStrictEqual([{ text: 'Be helpful' }, { cachePoint: { type: 'default' } }])
+          expect(request()?.toolConfig?.tools).toStrictEqual([
+            { toolSpec: expect.objectContaining({ name: 'calculator' }) },
+          ])
+          expect(request()?.messages).toStrictEqual([
+            { role: 'user', content: [{ text: 'What is 6 x 7?' }, { cachePoint: { type: 'default' } }] },
+            formattedToolUse('id-1'),
+            formattedToolResult('id-1'),
+            formattedToolUse('id-2'),
+            formattedToolResult('id-2'),
+          ])
+          expect(warnOnce).not.toHaveBeenCalledWith(
+            expect.anything(),
+            expect.stringContaining('does not support automatic caching')
+          )
+        }
+      )
+
+      it('keeps per-call text after a tool result out of the cached prefix', () => {
+        const provider = new BedrockModel({ modelId: 'us.openai.gpt-6-luna', cacheConfig: {} })
+        const messages = [
+          ...toolLoop.slice(0, 2),
+          new Message({ role: 'user', content: [toolResult('id-1'), new TextBlock('<reminder>turn 2</reminder>')] }),
+        ]
+
+        collectIterator(provider.stream(messages, { systemPrompt: 'Be helpful', dynamicTrailingBlocks: 1 }))
+
+        expect(request()?.messages?.[0]?.content).toStrictEqual([
+          { text: 'What is 6 x 7?' },
+          { cachePoint: { type: 'default' } },
+        ])
+        expect(request()?.messages?.at(-1)?.content).toStrictEqual([
+          { toolResult: expect.objectContaining({ toolUseId: 'id-1' }) },
+          { text: '<reminder>turn 2</reminder>' },
+        ])
+      })
+
+      it('drops every configured TTL and warns', () => {
+        const modelId = 'us.openai.gpt-6-luna'
+        const provider = new BedrockModel({
+          modelId,
+          cacheConfig: { ttl: '1h', messagesTTL: '1h', systemPromptTTL: '1h' },
+        })
+
+        collectIterator(provider.stream(toolLoop, { systemPrompt: 'Be helpful', toolSpecs }))
+
+        expect(allCachePoints()).toStrictEqual([{ type: 'default' }, { type: 'default' }])
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          `model_id=<${modelId}> | ttl is not supported by this model, using the default cache duration`
+        )
+      })
+
+      it('warns that an explicit toolsTTL has no effect', () => {
+        const modelId = 'us.openai.gpt-6-luna'
+        const provider = new BedrockModel({ modelId, cacheConfig: { toolsTTL: '1h' } })
+
+        collectIterator(provider.stream(toolLoop, { toolSpecs }))
+
+        expect(request()?.toolConfig?.tools).toStrictEqual([
+          { toolSpec: expect.objectContaining({ name: 'calculator' }) },
+        ])
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          `model_id=<${modelId}>, toolsTTL=<1h> | this model accepts no tool-level cache point, tool definitions are cached only as part of the system prompt prefix`
+        )
+      })
+
+      it.each([
+        'openai.gpt-5.4',
+        'us.openai.gpt-5.5',
+        'openai.gpt-oss-120b-1:0',
+        'us.xai.grok-4.7',
+        'openai.gpt-5.6-cyber',
+      ])('sends no cache point for a model Converse does not take them for: %s', (modelId) => {
+        const provider = new BedrockModel({ modelId, cacheConfig: {} })
+
+        collectIterator(provider.stream(toolLoop, { systemPrompt: 'Be helpful', toolSpecs }))
+
+        expect(allCachePoints()).toStrictEqual([])
+      })
+    })
+
+    describe('cache point fallback', () => {
+      const unsupportedModel = Object.assign(
+        new Error(
+          'You invoked an unsupported model or your request did not allow prompt caching. See the documentation for more information.'
+        ),
+        { name: 'AccessDeniedException' }
+      )
+      const unsupportedField = new ValidationException({
+        message: "This model doesn't support the cachePoint field. Remove cachePoint and try again.",
+        $metadata: {},
+      })
+      const unsupportedAssistantField = new ValidationException({
+        message:
+          "This model doesn't support the cachePoint field for assistant messages. Remove cachePoint and try again.",
+        $metadata: {},
+      })
+      const toolSpecs = [{ name: 'calculator', description: 'Calculate', inputSchema: { type: 'object' as const } }]
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+      const options: StreamOptions = { systemPrompt: 'Be helpful', toolSpecs }
+      const streamResponse = (): { stream: AsyncIterable<unknown> } => ({
+        stream: (async function* (): AsyncGenerator<unknown> {
+          yield { messageStart: { role: 'assistant' } }
+          yield { contentBlockDelta: { delta: { text: 'Hi' } } }
+          yield { messageStop: { stopReason: 'end_turn' } }
+        })(),
+      })
+      const converseResponse = {
+        output: { message: { role: 'assistant', content: [{ text: 'Hi' }] } },
+        stopReason: 'end_turn',
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      }
+      const fallbackWarning = (modelId: string, region = 'us-east-1'): string =>
+        `model_id=<${modelId}>, region=<${region}> | converse rejected cache points for this model, sending none`
+      const fallbackWarnings = (modelId: string): unknown[] =>
+        vi
+          .mocked(warnOnce)
+          .mock.calls.map(([, message]) => message)
+          .filter((message) => message.startsWith(`model_id=<${modelId}>, region=`))
+
+      const sentRequests = (
+        command: typeof ConverseStreamCommand | typeof ConverseCommand = ConverseStreamCommand
+      ): ConverseStreamCommandInput[] => vi.mocked(command).mock.calls.map((call) => call[0])
+      const cachePointCount = (sent: ConverseStreamCommandInput | undefined): number =>
+        [
+          ...(sent?.toolConfig?.tools ?? []),
+          ...(sent?.system ?? []),
+          ...(sent?.messages ?? []).flatMap((message) => message.content ?? []),
+        ].filter((block) => 'cachePoint' in block).length
+
+      /** Mocks send to reject with each error in turn, then return a successful response. */
+      const mockRejections = (stream: boolean, ...errors: Error[]): ReturnType<typeof vi.fn> => {
+        const mockSend = vi.fn()
+        for (const error of errors) mockSend.mockRejectedValueOnce(error)
+        mockSend.mockImplementation(async () => (stream ? streamResponse() : converseResponse))
+        mockBedrockClientImplementation({ send: mockSend })
+        return mockSend
+      }
+
+      beforeEach(() => {
+        clearStructuredOutputSupport()
+      })
+
+      // Each case latches its own model id, since the fallback lasts for the process.
+      it.each([
+        { name: 'a GPT-5.6+ id', config: { modelId: 'us.openai.gpt-6-sol' }, stream: true },
+        { name: 'a GPT-5.6+ id', config: { modelId: 'eu.openai.gpt-6-sol' }, stream: false },
+        {
+          name: 'a GPT id marked as taking cache points',
+          config: {
+            modelId: 'us.openai.gpt-5.2',
+            modelInfo: { capabilities: { promptCaching: 'cachePoints' as const } },
+          },
+          stream: true,
+        },
+      ])(
+        'resends without cache points after a prompt caching refusal and keeps them off for $name (stream: $stream)',
+        async ({ config, stream }) => {
+          const command = stream ? ConverseStreamCommand : ConverseCommand
+          const mockSend = mockRejections(stream, unsupportedModel)
+          const provider = new BedrockModel({ ...config, stream, cacheConfig: {} })
+
+          const events = await collectIterator(provider.stream(messages, options))
+
+          expect(events).toContainEqual(expect.objectContaining({ type: 'modelMessageStopEvent' }))
+          const [rejected, resent] = sentRequests(command)
+          expect(cachePointCount(rejected)).toBe(2)
+          expect(resent).toStrictEqual({
+            ...rejected,
+            system: [{ text: 'Be helpful' }],
+            messages: [{ role: 'user', content: [{ text: 'Hello' }] }],
+          })
+
+          const callerPlaced = [
+            new Message({
+              role: 'user',
+              content: [new TextBlock('Hello'), new CachePointBlock({ cacheType: 'default' })],
+            }),
+          ]
+          const systemPrompt = [new TextBlock('Be helpful'), new CachePointBlock({ cacheType: 'default' })]
+          await collectIterator(new BedrockModel({ ...config, stream, cacheConfig: {} }).stream(messages, options))
+          await collectIterator(new BedrockModel({ ...config, stream }).stream(callerPlaced, { systemPrompt }))
+
+          expect(mockSend).toHaveBeenCalledTimes(4)
+          expect(sentRequests(command).slice(2).map(cachePointCount)).toStrictEqual([0, 0])
+          expect(fallbackWarnings(config.modelId)).toStrictEqual([fallbackWarning(config.modelId)])
+        }
+      )
+
+      it('reports implicit caching for a GPT-5.6+ id once its cache points are refused', async () => {
+        mockRejections(true, unsupportedModel)
+        const provider = new BedrockModel({ modelId: 'apac.openai.gpt-6-sol', cacheConfig: {} })
+
+        await collectIterator(provider.stream(messages, options))
+
+        expect(provider.modelInfo.capabilities?.promptCaching).toBe('auto')
+      })
+
+      it.each([
+        {
+          name: 'a cachePoint field rejection',
+          error: unsupportedField,
+          modelId: 'us.openai.gpt-6.1-sol',
+          stream: true,
+        },
+        {
+          name: 'a cachePoint field rejection',
+          error: unsupportedField,
+          modelId: 'eu.openai.gpt-6.1-sol',
+          stream: false,
+        },
+        {
+          name: 'an assistant message cachePoint rejection',
+          error: unsupportedAssistantField,
+          modelId: 'us.openai.gpt-6.2-astra',
+          stream: true,
+        },
+        {
+          name: 'an assistant message cachePoint rejection',
+          error: unsupportedAssistantField,
+          modelId: 'eu.openai.gpt-6.2-astra',
+          stream: false,
+        },
+      ])(
+        'rethrows $name without resending or turning cache points off (stream: $stream)',
+        async ({ error, modelId, stream }) => {
+          const command = stream ? ConverseStreamCommand : ConverseCommand
+          const mockSend = mockRejections(stream, error)
+          const provider = new BedrockModel({ modelId, stream, cacheConfig: {} })
+
+          await expect(collectIterator(provider.stream(messages, options))).rejects.toThrow(error.message)
+          expect(mockSend).toHaveBeenCalledOnce()
+
+          await collectIterator(new BedrockModel({ modelId, stream, cacheConfig: {} }).stream(messages, options))
+
+          expect(sentRequests(command).map(cachePointCount)).toStrictEqual([2, 2])
+          expect(fallbackWarnings(modelId)).toStrictEqual([])
+        }
+      )
+
+      it.each([
+        { modelId: 'us.anthropic.claude-sonnet-4-6', cacheConfig: {} },
+        { modelId: 'us.meta.llama3-3-70b-instruct-v1:0', cacheConfig: { strategy: 'anthropic' as const } },
+        { modelId: 'mistral.mistral-large-2407-v1:0', cacheConfig: { strategy: 'anthropic' as const } },
+        { modelId: 'openai.gpt-oss-120b-1:0', cacheConfig: { strategy: 'anthropic' as const } },
+      ])(
+        'rethrows a prompt caching refusal without resending or turning cache points off: $modelId',
+        async (config) => {
+          const mockSend = mockRejections(true, unsupportedModel)
+          const provider = new BedrockModel(config)
+
+          await expect(collectIterator(provider.stream(messages, options))).rejects.toThrow(unsupportedModel.message)
+          expect(mockSend).toHaveBeenCalledOnce()
+
+          await collectIterator(new BedrockModel(config).stream(messages, options))
+
+          const [rejected, later] = sentRequests().map(cachePointCount)
+          expect(rejected).toBeGreaterThan(0)
+          expect(later).toBe(rejected)
+          expect(fallbackWarnings(config.modelId)).toStrictEqual([])
+        }
+      )
+
+      it('keeps cache points off only in the region that refused them', async () => {
+        const modelId = 'us.openai.gpt-5.6-luna'
+        const mockSend = mockRejections(true, unsupportedModel)
+
+        await collectIterator(
+          new BedrockModel({ modelId, region: 'us-west-2', cacheConfig: {} }).stream(messages, options)
+        )
+        await collectIterator(
+          new BedrockModel({ modelId, region: 'us-east-1', cacheConfig: {} }).stream(messages, options)
+        )
+        await collectIterator(
+          new BedrockModel({ modelId, region: 'us-west-2', cacheConfig: {} }).stream(messages, options)
+        )
+
+        expect(mockSend).toHaveBeenCalledTimes(4)
+        expect(sentRequests().map(cachePointCount)).toStrictEqual([2, 0, 2, 0])
+        expect(fallbackWarnings(modelId)).toStrictEqual([fallbackWarning(modelId, 'us-west-2')])
+      })
+
+      /** Spies on the requests a provider formats, before the fallback strips any cache point. */
+      const spyOnFormatted = (provider: BedrockModel): ReturnType<typeof vi.fn> =>
+        vi.spyOn(
+          provider as unknown as { _formatRequest: (...args: unknown[]) => ConverseStreamCommandInput },
+          '_formatRequest'
+        ) as unknown as ReturnType<typeof vi.fn>
+
+      it('formats the first request of a new instance in a refusing region without cache points', async () => {
+        const modelId = 'apac.openai.gpt-6.2-sol'
+        const mockSend = mockRejections(true, unsupportedModel)
+        await collectIterator(new BedrockModel({ modelId, cacheConfig: {} }).stream(messages, options))
+        const provider = new BedrockModel({ modelId, cacheConfig: {} })
+        const formatted = spyOnFormatted(provider)
+
+        await collectIterator(provider.stream(messages, options))
+
+        expect(mockSend).toHaveBeenCalledTimes(3)
+        expect(cachePointCount(formatted.mock.results[0]?.value)).toBe(0)
+        expect(cachePointCount(sentRequests()[2])).toBe(0)
+        expect(provider.modelInfo.capabilities?.promptCaching).toBe('auto')
+      })
+
+      it('strips a tools cache point and keeps the rest of the tool config', async () => {
+        const modelId = 'global.openai.gpt-5.6-terra'
+        const mockSend = mockRejections(true, unsupportedModel)
+        const twoTools = [
+          ...toolSpecs,
+          { name: 'clock', description: 'Tell the time', inputSchema: { type: 'object' as const } },
+        ]
+        const toolOptions: StreamOptions = { ...options, toolSpecs: twoTools, toolChoice: { any: {} } }
+        await collectIterator(new BedrockModel({ modelId, cacheConfig: {} }).stream(messages, toolOptions))
+        // In a refusing region the GPT placement rules no longer apply, so an explicit strategy places a tools point.
+        const provider = new BedrockModel({ modelId, cacheConfig: { strategy: 'anthropic' } })
+        const formatted = spyOnFormatted(provider)
+
+        await collectIterator(provider.stream(messages, toolOptions))
+
+        expect(mockSend).toHaveBeenCalledTimes(3)
+        const toolConfig = {
+          tools: [
+            { toolSpec: expect.objectContaining({ name: 'calculator' }) },
+            { toolSpec: expect.objectContaining({ name: 'clock' }) },
+          ],
+          toolChoice: { any: {} },
+        }
+        const placed: ConverseStreamCommandInput = formatted.mock.results[0]?.value
+        expect(placed.toolConfig).toStrictEqual({
+          ...toolConfig,
+          tools: [...toolConfig.tools, { cachePoint: { type: 'default' } }],
+        })
+        const sent = sentRequests()[2]
+        expect(cachePointCount(sent)).toBe(0)
+        expect(sent?.toolConfig).toStrictEqual(toolConfig)
+      })
+
+      it('keeps cache points on when the resend is rejected', async () => {
+        const modelId = 'us.openai.gpt-5.6-terra'
+        const throttle = Object.assign(new Error('Too many requests'), { name: 'ThrottlingException' })
+        mockRejections(true, unsupportedModel, throttle)
+        const provider = new BedrockModel({ modelId, cacheConfig: {} })
+
+        await expect(collectIterator(provider.stream(messages, options))).rejects.toThrow('Too many requests')
+        await collectIterator(provider.stream(messages, options))
+
+        expect(sentRequests().map(cachePointCount)).toStrictEqual([2, 0, 2])
+        expect(fallbackWarnings(modelId)).toStrictEqual([])
+      })
+
+      it.each([
+        {
+          name: 'a different validation error',
+          error: new ValidationException({ message: 'Malformed input request', $metadata: {} }),
+        },
+        {
+          name: 'a throttle',
+          error: Object.assign(new Error('Too many requests'), { name: 'ThrottlingException' }),
+        },
+        {
+          name: 'the prompt caching message under another error name',
+          error: new Error(unsupportedModel.message),
+        },
+      ])('rethrows $name without resending or turning cache points off', async ({ error }) => {
+        const modelId = 'us.openai.gpt-6-astra'
+        const mockSend = mockRejections(true, error)
+        const provider = new BedrockModel({ modelId, cacheConfig: {} })
+
+        await expect(collectIterator(provider.stream(messages, options))).rejects.toThrow(error.message)
+        expect(mockSend).toHaveBeenCalledOnce()
+
+        await collectIterator(provider.stream(messages, options))
+
+        expect(sentRequests().map(cachePointCount)).toStrictEqual([2, 2])
+      })
+
+      it('rethrows a cache point rejection for a request without cache points', async () => {
+        const modelId = 'us.openai.gpt-6-astra'
+        const mockSend = mockRejections(true, unsupportedModel)
+        const provider = new BedrockModel({ modelId })
+
+        await expect(collectIterator(provider.stream(messages, options))).rejects.toThrow(unsupportedModel.message)
+        expect(mockSend).toHaveBeenCalledOnce()
+
+        await collectIterator(new BedrockModel({ modelId, cacheConfig: {} }).stream(messages, options))
+
+        expect(sentRequests().map(cachePointCount)).toStrictEqual([0, 2])
+      })
+
+      it('keeps the structured output mechanism when cache points are rejected', async () => {
+        const schema = z.object({ answer: z.string() })
+        const structuredOutputOptions: StreamOptions = {
+          systemPrompt: 'Be helpful',
+          toolSpecs: [
+            { name: 'strands_structured_output', description: 'Output', inputSchema: zodSchemaToJsonSchema(schema) },
+          ],
+          toolChoice: { tool: { name: 'strands_structured_output' } },
+          structuredOutputSchema: schema,
+        }
+        const mockSend = mockRejections(true, unsupportedModel)
+        const provider = new BedrockModel({ modelId: 'us.openai.gpt-6.2-sol', cacheConfig: {} })
+
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+        await collectIterator(provider.stream(messages, structuredOutputOptions))
+
+        expect(mockSend).toHaveBeenCalledTimes(3)
+        const [rejected, ...resent] = sentRequests()
+        const withoutCachePoints = {
+          ...rejected,
+          system: [{ text: 'Be helpful' }],
+          messages: [{ role: 'user', content: [{ text: 'Hello' }] }],
+        }
+        expect(resent).toStrictEqual([withoutCachePoints, withoutCachePoints])
       })
     })
 
