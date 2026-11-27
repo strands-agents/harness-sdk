@@ -12,7 +12,7 @@ import type { ModelInfo } from './model-info.js'
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
-import { childSchemas, isRecord, type SchemaNode } from './strict-schema.js'
+import { appendToDescription, childSchemas, isRecord, type SchemaNode } from './strict-schema.js'
 
 /**
  * Ways a provider can enforce a structured output request, strongest first.
@@ -282,11 +282,7 @@ function convertNode(schema: SchemaNode): SchemaNode {
   else if (type === 'array') convertArray(remaining, converted)
 
   const leftover = Object.entries(remaining)
-  if (leftover.length > 0) {
-    const unsupported = `{${leftover.map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(', ')}}`
-    const description = converted['description']
-    converted['description'] = description !== undefined ? `${description}\n\n${unsupported}` : unsupported
-  }
+  if (leftover.length > 0) appendToDescription(converted, leftover)
 
   return converted
 }
