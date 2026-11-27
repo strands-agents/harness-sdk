@@ -96,17 +96,19 @@ model sent it.
 ## Run the tool and resume the agent
 
 When the model calls a client tool, the agent stops with a stop reason of `interrupt`.
-Each pending call is an interrupt named `CLIENT_TOOL_INTERRUPT_NAME` (the string
-`strands:client-tool`) whose reason is the tool use: `toolUseId`, `name`, and `input`. In
-TypeScript, `isClientToolInterrupt(interrupt)` checks the name and types the reason. Run the
-tool, then invoke the agent again with one interrupt response per call:
+Each pending call is an interrupt whose name is the tool's
+<Syntax py="interrupt_name" ts="interruptName" /> (`strands:client-tool` unless you pass
+another one to the constructor) and whose reason is the tool use: `toolUseId`, `name`, and
+`input`. <Syntax py="tool.is_interrupt(interrupt)" ts="tool.isInterrupt(interrupt)" />
+tells you whether an interrupt is a call to that tool, and in TypeScript also types the
+reason. Run the tool, then invoke the agent again with one interrupt response per call:
 
 <Tabs>
 <Tab label="Python">
 
 ```python
 from strands import Agent
-from strands.tools import CLIENT_TOOL_INTERRUPT_NAME, ClientTool
+from strands.tools import ClientTool
 
 get_location = ClientTool(
     name="get_location",
@@ -126,7 +128,7 @@ result = agent("Is it a good day for a walk where I am?")
 while result.stop_reason == "interrupt":
     responses = []
     for interrupt in result.interrupts:
-        if interrupt.name == CLIENT_TOOL_INTERRUPT_NAME:
+        if get_location.is_interrupt(interrupt):
             call = interrupt.reason
             output = run_on_client(call["name"], call["input"])
             responses.append(
@@ -226,7 +228,7 @@ the agent stops and restores them when the next request creates the agent again.
 ```python
 from strands import Agent
 from strands.session import FileSessionManager
-from strands.tools import CLIENT_TOOL_INTERRUPT_NAME, ClientTool
+from strands.tools import ClientTool
 from strands.types.agent import AgentInput
 
 get_location = ClientTool(
@@ -248,7 +250,7 @@ def handle_request(session_id: str, payload: AgentInput) -> dict:
         "tool_calls": [
             {"id": interrupt.id, **interrupt.reason}
             for interrupt in result.interrupts
-            if interrupt.name == CLIENT_TOOL_INTERRUPT_NAME
+            if get_location.is_interrupt(interrupt)
         ]
     }
 
@@ -326,7 +328,8 @@ def submit_ci_job(branch: str, session_id: str, interrupt_id: str) -> None:
 def start(session_id: str, prompt: str) -> None:
     result = create_agent(session_id)(prompt)
     for interrupt in result.interrupts or []:
-        submit_ci_job(interrupt.reason["input"]["branch"], session_id, interrupt.id)
+        if run_tests.is_interrupt(interrupt):
+            submit_ci_job(interrupt.reason["input"]["branch"], session_id, interrupt.id)
     # Return now: nothing stays in memory while the tests run
 
 
@@ -375,7 +378,8 @@ doesn't fit:
   interrupt for conversation, not a way to run code on the client.
 
 Every pattern shares one resume path, so a single loop can answer client tool calls and
-approval prompts in the same resume. Match on the interrupt name to tell them apart. If a
+approval prompts in the same resume. Use
+<Syntax py="is_interrupt" ts="isInterrupt" /> or the interrupt name to tell them apart. If a
 hook or the [`HumanInTheLoop`](../agents/interventions/human-in-the-loop.md) intervention
 also gates a client tool, one call produces two interrupts: the approval first, then the
 client tool call.

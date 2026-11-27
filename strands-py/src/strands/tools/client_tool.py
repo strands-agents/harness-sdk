@@ -1,7 +1,7 @@
 """A tool that the caller executes outside the agent.
 
 A :class:`ClientTool` has a spec but no body. When the model calls it, the agent stops with an
-interrupt named :data:`CLIENT_TOOL_INTERRUPT_NAME` whose ``reason`` holds the tool name and input.
+interrupt named :attr:`ClientTool.interrupt_name` whose ``reason`` holds the tool use.
 The caller runs the tool and resumes the agent with an ``interruptResponse``; that response becomes
 the tool result.
 """
@@ -13,13 +13,13 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import PydanticSerializationError
 from typing_extensions import override
 
-from ..interrupt import InterruptException
+from ..interrupt import Interrupt, InterruptException
 from ..types._events import ToolInterruptEvent, ToolResultEvent
 from ..types.tools import AgentTool, JSONSchema, ToolContext, ToolGenerator, ToolResult, ToolSpec, ToolUse
 from .decorator import FunctionToolMetadata
 
 CLIENT_TOOL_INTERRUPT_NAME = "strands:client-tool"
-"""Name of every interrupt a client tool raises (``Interrupt.name``)."""
+"""Default ``Interrupt.name`` of the interrupts a client tool raises."""
 
 _CONTENT_KEYS = {"text", "json", "image", "document"}
 
@@ -33,9 +33,10 @@ class ClientTool(AgentTool):
 
     Example:
         ```python
-        agent = Agent(tools=[ClientTool(name="get_location", description="Get the user's location.")])
+        get_location = ClientTool(name="get_location", description="Get the user's location.")
+        agent = Agent(tools=[get_location])
         result = agent("Where am I?")
-        interrupt = result.interrupts[0]  # interrupt.reason["name"] == "get_location"
+        interrupt = next(i for i in result.interrupts if get_location.is_interrupt(i))
         agent([{"interruptResponse": {"interruptId": interrupt.id, "response": {"city": "Seattle"}}}])
         ```
     """
@@ -46,6 +47,7 @@ class ClientTool(AgentTool):
         name: str,
         description: str,
         input_schema: type[BaseModel] | JSONSchema | None = None,
+        interrupt_name: str = CLIENT_TOOL_INTERRUPT_NAME,
     ) -> None:
         """Create a client tool.
 
@@ -54,6 +56,7 @@ class ClientTool(AgentTool):
             description: Tool description shown to the model.
             input_schema: A pydantic model, which also validates the model's input before the interrupt,
                 or a JSON schema, passed through unvalidated. Defaults to an object with no properties.
+            interrupt_name: ``Interrupt.name`` of the interrupts this tool raises.
 
         Raises:
             TypeError: If ``input_schema`` is neither a pydantic model class nor a dict.
@@ -73,6 +76,7 @@ class ClientTool(AgentTool):
             raise TypeError(f"input_schema must be a pydantic model class or a dict, got {type(input_schema).__name__}")
 
         self._tool_spec: ToolSpec = {"name": name, "description": description, "inputSchema": {"json": schema}}
+        self._interrupt_name = interrupt_name
 
     @property
     def tool_name(self) -> str:
@@ -83,6 +87,25 @@ class ClientTool(AgentTool):
     def tool_spec(self) -> ToolSpec:
         """The tool specification."""
         return self._tool_spec
+
+    @property
+    def interrupt_name(self) -> str:
+        """``Interrupt.name`` of the interrupts this tool raises."""
+        return self._interrupt_name
+
+    def is_interrupt(self, interrupt: Interrupt) -> bool:
+        """Whether ``interrupt`` is a call to this tool.
+
+        Args:
+            interrupt: An interrupt from ``AgentResult.interrupts``.
+
+        Returns:
+            True if this tool raised the interrupt.
+        """
+        reason = interrupt.reason
+        return (
+            interrupt.name == self._interrupt_name and isinstance(reason, dict) and reason.get("name") == self.tool_name
+        )
 
     @property
     def tool_type(self) -> str:
@@ -118,7 +141,7 @@ class ClientTool(AgentTool):
         tool_context: ToolContext = kwargs["_tool_context"]
         reason = {"toolUseId": tool_use_id, "name": self.tool_name, "input": tool_input}
         try:
-            response = tool_context.interrupt(CLIENT_TOOL_INTERRUPT_NAME, reason=reason)
+            response = tool_context.interrupt(self._interrupt_name, reason=reason)
         except InterruptException as e:
             yield ToolInterruptEvent(tool_use, [e.interrupt])
             return

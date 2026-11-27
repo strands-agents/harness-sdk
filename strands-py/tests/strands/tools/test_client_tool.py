@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from strands import Agent
 from strands.hooks import BeforeToolCallEvent
+from strands.interrupt import Interrupt
 from strands.middleware.stages import ExecuteToolStage
 from strands.tools import CLIENT_TOOL_INTERRUPT_NAME, ClientTool
 from strands.types._events import ToolResultEvent
@@ -178,7 +179,7 @@ def test_stream_parallel_calls_interrupt_together(tool):
 
     result = agent("weather?")
 
-    assert sorted(i.reason["toolUseId"] for i in result.interrupts) == ["a", "b"]
+    assert sorted(i.reason["toolUseId"] for i in result.interrupts if tool.is_interrupt(i)) == ["a", "b"]
     responses = [
         {"interruptResponse": {"interruptId": i.id, "response": i.reason["input"]["city"]}} for i in result.interrupts
     ]
@@ -223,3 +224,30 @@ def test_stream_after_approval_interrupt(tool):
     assert (approval.name, client_call.name) == ("approve", CLIENT_TOOL_INTERRUPT_NAME)
     assert resumed.stop_reason == "end_turn"
     assert _tool_results(agent)[0]["content"] == [{"text": "sunny"}]
+
+
+def test_interrupt_name_default_and_override():
+    tool = ClientTool(name="get_weather", description="d", interrupt_name="app:weather")
+    agent = _agent(tool, ("t1", {}))
+
+    tru_names = (
+        ClientTool(name="t", description="d").interrupt_name,
+        tool.interrupt_name,
+        agent("weather?").interrupts[0].name,
+    )
+    exp_names = (CLIENT_TOOL_INTERRUPT_NAME, "app:weather", "app:weather")
+
+    assert tru_names == exp_names
+
+
+@pytest.mark.parametrize(
+    ("name", "reason", "exp_match"),
+    [
+        (CLIENT_TOOL_INTERRUPT_NAME, {"toolUseId": "t1", "name": "get_weather", "input": {}}, True),
+        (CLIENT_TOOL_INTERRUPT_NAME, {"toolUseId": "t1", "name": "get_location", "input": {}}, False),
+        ("approve", {"toolUseId": "t1", "name": "get_weather", "input": {}}, False),
+        (CLIENT_TOOL_INTERRUPT_NAME, "get_weather", False),
+    ],
+)
+def test_is_interrupt(tool, name, reason, exp_match):
+    assert tool.is_interrupt(Interrupt(id="1", name=name, reason=reason)) is exp_match

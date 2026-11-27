@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { z } from 'zod'
-import { ClientTool, CLIENT_TOOL_INTERRUPT_NAME, isClientToolInterrupt } from '../client-tool.js'
+import { ClientTool, CLIENT_TOOL_INTERRUPT_NAME } from '../client-tool.js'
 import { Agent } from '../../agent/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
@@ -148,11 +148,12 @@ describe('ClientTool', () => {
     })
 
     it('interrupts once per parallel call and resumes with all responses', async () => {
-      const agent = createAgent(weatherTool(), ['a', { city: 'Oslo' }], ['b', { city: 'Rome' }])
+      const tool = weatherTool()
+      const agent = createAgent(tool, ['a', { city: 'Oslo' }], ['b', { city: 'Rome' }])
 
       const result = await agent.invoke('weather?')
 
-      const calls = result.interrupts!.filter(isClientToolInterrupt)
+      const calls = result.interrupts!.filter((i) => tool.isInterrupt(i))
       expect(calls.map((i) => i.reason.toolUseId).sort()).toEqual(['a', 'b'])
       const resumed = await agent.invoke(
         calls.map(
@@ -166,12 +167,27 @@ describe('ClientTool', () => {
     })
   })
 
-  describe('isClientToolInterrupt', () => {
-    it('matches only client tool interrupts', () => {
-      const reason = { toolUseId: 't1', name: 'get_weather', input: {} }
+  describe('interruptName', () => {
+    it('defaults to CLIENT_TOOL_INTERRUPT_NAME and can be overridden', async () => {
+      const tool = new ClientTool({ name: 'get_weather', description: 'Get weather.', interruptName: 'app:weather' })
+      const agent = createAgent(tool, ['t1', {}])
 
-      expect(isClientToolInterrupt(new Interrupt({ id: '1', name: CLIENT_TOOL_INTERRUPT_NAME, reason }))).toBe(true)
-      expect(isClientToolInterrupt(new Interrupt({ id: '2', name: 'approve', reason }))).toBe(false)
+      const result = await agent.invoke('weather?')
+
+      expect(weatherTool().interruptName).toBe(CLIENT_TOOL_INTERRUPT_NAME)
+      expect(tool.interruptName).toBe('app:weather')
+      expect(result.interrupts![0]!.name).toBe('app:weather')
+    })
+  })
+
+  describe('isInterrupt', () => {
+    it.each([
+      ['its own call', CLIENT_TOOL_INTERRUPT_NAME, { toolUseId: 't1', name: 'get_weather', input: {} }, true],
+      ['another client tool', CLIENT_TOOL_INTERRUPT_NAME, { toolUseId: 't1', name: 'get_location', input: {} }, false],
+      ['another interrupt name', 'approve', { toolUseId: 't1', name: 'get_weather', input: {} }, false],
+      ['a non-object reason', CLIENT_TOOL_INTERRUPT_NAME, 'get_weather', false],
+    ])('matches %s: %s', (_label, name, reason, expected) => {
+      expect(weatherTool().isInterrupt(new Interrupt({ id: '1', name, reason }))).toBe(expected)
     })
   })
 })

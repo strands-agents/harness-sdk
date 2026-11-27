@@ -2,7 +2,6 @@ import {
   Agent,
   ClientTool,
   InterruptResponseContent,
-  isClientToolInterrupt,
   SessionManager,
 } from '@strands-agents/sdk'
 import { LocalFileStorage } from '@strands-agents/sdk/storage'
@@ -50,13 +49,15 @@ async function resumeExample() {
 
   let result = await agent.invoke('Is it a good day for a walk where I am?')
   while (result.stopReason === 'interrupt') {
-    const responses = result.interrupts!.filter(isClientToolInterrupt).map(
-      (interrupt) =>
-        new InterruptResponseContent({
-          interruptId: interrupt.id,
-          response: runOnClient(interrupt.reason.name, interrupt.reason.input),
-        })
-    )
+    const responses = result
+      .interrupts!.filter((i) => getLocation.isInterrupt(i))
+      .map(
+        (interrupt) =>
+          new InterruptResponseContent({
+            interruptId: interrupt.id,
+            response: runOnClient(interrupt.reason.name, interrupt.reason.input),
+          })
+      )
     result = await agent.invoke(responses)
   }
 
@@ -109,11 +110,13 @@ async function serverClientExample() {
     const result = await agent.invoke(payload)
     if (result.stopReason !== 'interrupt') return { reply: result.toString() }
     return {
-      toolCalls: result.interrupts!.filter(isClientToolInterrupt).map((interrupt) => ({
-        id: interrupt.id,
-        name: interrupt.reason.name,
-        input: interrupt.reason.input,
-      })),
+      toolCalls: result
+        .interrupts!.filter((i) => getLocation.isInterrupt(i))
+        .map((interrupt) => ({
+          id: interrupt.id,
+          name: interrupt.reason.name,
+          input: interrupt.reason.input,
+        })),
     }
   }
 
@@ -165,7 +168,9 @@ async function longRunningExample() {
 
   async function start(sessionId: string, prompt: string): Promise<void> {
     const result = await createAgent(sessionId).invoke(prompt)
-    for (const interrupt of (result.interrupts ?? []).filter(isClientToolInterrupt)) {
+    for (const interrupt of (result.interrupts ?? []).filter((i) =>
+      runTests.isInterrupt(i)
+    )) {
       const { branch } = interrupt.reason.input as { branch: string }
       submitCiJob(branch, sessionId, interrupt.id)
     }

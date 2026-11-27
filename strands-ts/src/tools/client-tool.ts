@@ -14,7 +14,7 @@ import {
 import type { Interrupt } from '../interrupt.js'
 
 /**
- * Name of every interrupt a client tool raises (`Interrupt.name`).
+ * Default `Interrupt.name` of the interrupts a client tool raises.
  */
 export const CLIENT_TOOL_INTERRUPT_NAME = 'strands:client-tool'
 
@@ -31,21 +31,24 @@ export interface ClientToolConfig {
    * passed through unvalidated. Defaults to an object with no properties.
    */
   inputSchema?: z.ZodType | JSONSchema
+  /** `Interrupt.name` of the interrupts this tool raises. Defaults to {@link CLIENT_TOOL_INTERRUPT_NAME}. */
+  interruptName?: string
 }
 
 /**
  * A tool whose execution is handed back to the caller through an interrupt.
  *
- * When the model calls it, the agent stops with an interrupt named {@link CLIENT_TOOL_INTERRUPT_NAME}
+ * When the model calls it, the agent stops with an interrupt named {@link ClientTool.interruptName}
  * whose `reason` is the tool use, `{ toolUseId, name, input }`. Resume the agent with an `InterruptResponseContent`; the
  * response becomes the tool result. A `{ status: 'success' | 'error', content: [...] }` response is
  * used as the tool result as-is, which lets the caller report a failure.
  *
  * @example
  * ```typescript
- * const agent = new Agent({ tools: [new ClientTool({ name: 'get_location', description: "Get the user's location." })] })
+ * const getLocation = new ClientTool({ name: 'get_location', description: "Get the user's location." })
+ * const agent = new Agent({ tools: [getLocation] })
  * const result = await agent.invoke('Where am I?')
- * const interrupt = result.interrupts![0]! // isClientToolInterrupt(interrupt) narrows reason to ToolUse
+ * const interrupt = result.interrupts!.find((i) => getLocation.isInterrupt(i))! // reason narrowed to ToolUse
  * await agent.invoke([new InterruptResponseContent({ interruptId: interrupt.id, response: { city: 'Seattle' } })])
  * ```
  */
@@ -53,12 +56,15 @@ export class ClientTool extends Tool {
   readonly name: string
   readonly description: string
   readonly toolSpec: ToolSpec
+  /** `Interrupt.name` of the interrupts this tool raises. */
+  readonly interruptName: string
   private readonly _zodSchema?: z.ZodType
 
   constructor(config: ClientToolConfig) {
     super()
     this.name = config.name
     this.description = config.description
+    this.interruptName = config.interruptName ?? CLIENT_TOOL_INTERRUPT_NAME
     let inputSchema: JSONSchema = { type: 'object', properties: {}, additionalProperties: false }
     if (config.inputSchema instanceof z.ZodType) {
       this._zodSchema = config.inputSchema
@@ -79,7 +85,7 @@ export class ClientTool extends Tool {
     }
 
     const reason = { toolUseId: toolUse.toolUseId, name: this.name, input } satisfies ToolUse
-    const response = toolContext.interrupt<JSONValue>({ name: CLIENT_TOOL_INTERRUPT_NAME, reason })
+    const response = toolContext.interrupt<JSONValue>({ name: this.interruptName, reason })
     const content = toolResultContent(response)
     if (content) {
       const { status } = response as { status: 'success' | 'error' }
@@ -90,13 +96,20 @@ export class ClientTool extends Tool {
       toolContext
     )
   }
-}
 
-/**
- * Whether an interrupt was raised by a {@link ClientTool}, narrowing its `reason` to the tool use.
- */
-export function isClientToolInterrupt(interrupt: Interrupt): interrupt is Interrupt & { reason: ToolUse } {
-  return interrupt.name === CLIENT_TOOL_INTERRUPT_NAME
+  /**
+   * Whether `interrupt` is a call to this tool, narrowing its `reason` to the tool use.
+   */
+  isInterrupt(interrupt: Interrupt): interrupt is Interrupt & { reason: ToolUse } {
+    const reason = interrupt.reason
+    return (
+      interrupt.name === this.interruptName &&
+      typeof reason === 'object' &&
+      reason !== null &&
+      !Array.isArray(reason) &&
+      reason.name === this.name
+    )
+  }
 }
 
 /** Content blocks of a `{ status, content }` tool-result response, or undefined for any other value. */
