@@ -294,10 +294,6 @@ response = agent("What is my name?")
 
 When using a stateful model, the agent automatically uses a null conversation manager and throws an error if a conversation manager is also supplied.
 
-## Reasoning across turns
-
-Without server-side state, the provider keeps a reasoning model's reasoning between turns itself. It asks for `reasoning.encrypted_content` (added to any `include` you pass in `params`; set `include` to `None` / `null` to leave it out), stores each reasoning item on the assistant message as a reasoning block, and sends it back ahead of that turn's tool calls on the next request. A reasoning block is sent back only to the provider and model that produced it, so switching `agent.model` to another model or provider leaves the earlier reasoning out instead of failing the request. A stateful model keeps its reasoning server-side and sends none of it.
-
 ## Prompt caching
 
 OpenAI caches prompt prefixes automatically server-side. Set a cache configuration to route reads on a stable `prompt_cache_key`: the configured `cache_key` (`cacheKey`), or `strands-<session id>` when the agent has a session manager.
