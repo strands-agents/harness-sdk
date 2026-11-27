@@ -212,6 +212,11 @@
   name: Liz Radway
   role: "Software Engineer, AWS"
   bio: Liz Radway is a Software Engineer at AWS working on the Strands Harness SDK.
+
+- id: thomas-oosterhuis
+  name: Thomas Oosterhuis
+  role: "Software Engineer, AWS"
+  bio: Thomas Oosterhuis is a Software Engineer at AWS working on the Strands Harness SDK.
 - id: ariel-nabavian
   name: Ariel Nabavian
   role: "Software Engineer, AWS Agentic AI"
