@@ -3,6 +3,7 @@ import {
   Message,
   type MessageMetadata,
   ReasoningBlock,
+  type ReasoningProviderData,
   type Role,
   type StopReason,
   type SystemPrompt,
@@ -605,6 +606,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
         text?: string
         signature?: string
         redactedContent?: Uint8Array
+        providerData?: ReasoningProviderData
       } = {}
       const accumulatedCitations = new CitationAccumulator()
       let stoppedMessage: Message | null = null
@@ -648,6 +650,7 @@ export abstract class Model<T extends BaseModelConfig = BaseModelConfig> {
                 if (event.delta.text) accumulatedReasoning.text = (accumulatedReasoning.text ?? '') + event.delta.text
                 if (event.delta.signature) accumulatedReasoning.signature = event.delta.signature
                 if (event.delta.redactedContent) accumulatedReasoning.redactedContent = event.delta.redactedContent
+                if (event.delta.providerData) accumulatedReasoning.providerData = event.delta.providerData
                 break
               case 'citationsDelta':
                 accumulatedCitations.push(event.delta.citations, event.delta.content)

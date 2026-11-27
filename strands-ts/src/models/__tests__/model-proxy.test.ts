@@ -10,6 +10,7 @@ import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import {
   InjectedBlock,
   Message,
+  ReasoningBlock,
   SummaryBlock,
   TextBlock,
   ToolReferenceBlock,
@@ -17,6 +18,9 @@ import {
   UnknownBlock,
   type ContentBlock,
 } from '../../types/messages.js'
+
+import { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
+import type { ImageFormat } from '../../mime.js'
 
 function userMessage(text: string): Message {
   return new Message({ role: 'user', content: [new TextBlock(text)] })
@@ -156,6 +160,118 @@ describe('ModelProxy', () => {
       expect(messages[0]!.content[0]).toEqual(
         new ToolResultBlock({ toolUseId: 't-1', status: 'success', content: [unknown, unknown] })
       )
+    })
+  })
+
+  describe('media the model does not accept', () => {
+    const bytes = new Uint8Array([1])
+    const png = new ImageBlock({ format: 'png', source: { bytes } })
+    const gif = new ImageBlock({ format: 'gif', source: { bytes } })
+    const docx = new DocumentBlock({ name: 'report', format: 'docx', source: { bytes } })
+    const mp4 = new VideoBlock({ format: 'mp4', source: { bytes } })
+
+    async function sent(messages: Message[], acceptedMimeTypes?: string[]): Promise<Message[]> {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      if (acceptedMimeTypes) model.updateConfig({ modelInfo: { capabilities: { acceptedMimeTypes } } })
+      const streamSpy = vi.spyOn(model, 'stream')
+      await drain(new ModelProxy(model).streamAggregated(messages))
+      return streamSpy.mock.calls[0]![0]
+    }
+
+    it('sends a text in place of each media block the model does not accept, in messages and tool results', async () => {
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('look'), png, gif, docx], trackingId: 'msg-1' }),
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 't-1', status: 'success', content: [mp4, png] })],
+          trackingId: 'msg-2',
+        }),
+      ]
+
+      expect(await sent(messages, ['image/png', 'application/pdf'])).toEqual([
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('look'),
+            png,
+            new TextBlock("[image omitted: this model can't read image/gif]"),
+            new TextBlock(
+              `[document "report" omitted: this model can't read ${'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}]`
+            ),
+          ],
+          trackingId: 'msg-1',
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 't-1',
+              status: 'success',
+              content: [new TextBlock("[video omitted: this model can't read video/mp4]"), png],
+            }),
+          ],
+          trackingId: 'msg-2',
+        }),
+      ])
+      expect(messages[0]!.content[2]).toBe(gif)
+    })
+
+    it('passes a message through unchanged when the model accepts all of its media', async () => {
+      const message = new Message({ role: 'user', content: [png, mp4] })
+
+      expect((await sent([message], ['image/*', 'video/*']))[0]).toBe(message)
+    })
+
+    it('sends every block to a model without an accepted list', async () => {
+      const message = new Message({ role: 'user', content: [gif, docx, mp4] })
+
+      expect((await sent([message]))[0]).toBe(message)
+    })
+
+    it('counts the placeholder it would send', async () => {
+      const model = new MockMessageModel()
+      model.updateConfig({ modelInfo: { capabilities: { acceptedMimeTypes: ['image/png'] } } })
+      const countSpy = vi.spyOn(model, 'countTokens').mockResolvedValue(1)
+
+      await new ModelProxy(model).countTokens([new Message({ role: 'user', content: [gif] })])
+
+      expect(countSpy.mock.calls[0]![0][0]!.content).toEqual([
+        new TextBlock("[image omitted: this model can't read image/gif]"),
+      ])
+    })
+
+    it('keeps a tool result error and status, and a block whose format has no MIME type', async () => {
+      const heic = new ImageBlock({ format: 'heic' as ImageFormat, source: { bytes } })
+      const failed = new ToolResultBlock({
+        toolUseId: 't-1',
+        status: 'error',
+        content: [gif],
+        error: new Error('boom'),
+      })
+      const [message] = await sent([new Message({ role: 'user', content: [heic, failed] })], [])
+
+      expect(message!.content[0]).toBe(heic)
+      expect(message!.content[1]).toEqual(
+        new ToolResultBlock({
+          toolUseId: 't-1',
+          status: 'error',
+          content: [new TextBlock("[image omitted: this model can't read image/gif]")],
+          error: failed.error!,
+        })
+      )
+    })
+
+    it('replaces audio by its audio/* type', async () => {
+      const audio = new AudioBlock({ format: 'mp3', source: { bytes } })
+      const [message] = await sent([new Message({ role: 'user', content: [audio] })], ['image/*'])
+
+      expect(message!.content).toEqual([new TextBlock("[audio omitted: this model can't read audio/mp3]")])
+    })
+
+    it('sends only text to a text-only model', async () => {
+      const [message] = await sent([new Message({ role: 'user', content: [png] })], [])
+
+      expect(message!.content).toEqual([new TextBlock("[image omitted: this model can't read image/png]")])
     })
   })
 
@@ -520,6 +636,40 @@ describe('ModelProxy', () => {
       expect(streamSpy.mock.calls[0]).toEqual(wellFormed)
       expect(countSpy.mock.calls[0]).toEqual(wellFormed)
       expect(messages[0]!.content).toEqual([new TextBlock('a\ud83d')])
+    })
+  })
+  describe('reasoning provider data', () => {
+    const tagged = new ReasoningBlock({ providerData: { provider: 'openai_responses', modelId: 'm', data: {} } })
+    const plain = new ReasoningBlock({ text: 'plain' })
+    const history = (): Message[] => [
+      userMessage('go'),
+      new Message({ role: 'assistant', content: [tagged, plain, new TextBlock('done')] }),
+      userMessage('next'),
+    ]
+
+    async function sent(accepts: boolean): Promise<ContentBlock[]> {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      if (accepts)
+        vi.spyOn(model, 'modelInfo', 'get').mockReturnValue({ capabilities: { reasoningProvider: 'openai_responses' } })
+      const spy = vi.spyOn(model, 'streamAggregated')
+      await drain(new ModelProxy(model).streamAggregated(history()))
+      return spy.mock.calls[0]![0][1]!.content
+    }
+
+    it('leaves reasoning with provider data out for a model that does not take it back', async () => {
+      expect(await sent(false)).toEqual([plain, new TextBlock('done')])
+    })
+
+    it('keeps a turn that held only dropped reasoning as blank text', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const spy = vi.spyOn(model, 'streamAggregated')
+      const messages = [userMessage('go'), new Message({ role: 'assistant', content: [tagged] }), userMessage('next')]
+      await drain(new ModelProxy(model).streamAggregated(messages))
+      expect(spy.mock.calls[0]![0][1]!.content).toEqual([new TextBlock('[blank text]')])
+    })
+
+    it('sends reasoning with provider data to a model that takes it back', async () => {
+      expect(await sent(true)).toEqual([tagged, plain, new TextBlock('done')])
     })
   })
 })

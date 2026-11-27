@@ -86,6 +86,8 @@ cedar = ["cedarpy==4.12.2", "cedar-policy-mcp-schema-generator==0.7.0"]
 # genai-prices needs Python 3.11; on 3.10 the extra installs nothing and the plugin raises ImportError.
 cost-estimator = ["genai-prices>=0.2.4,<0.3; python_version>='3.11'"]
 
+dogwood = ["dogwood-aws>=1.2.0,<2.0.0"]
+
 bidi = [
     "aws_sdk_bedrock_runtime[awscrt]>=0.11.0,<0.12.0; python_version>='3.12'",
     "awscrt==0.32.2; python_version>='3.12'",
@@ -104,7 +106,7 @@ bidi-pyaudio = ["pyaudio>=0.2.0,<0.3.0"]
 bidi-all = ["strands-agents[a2a,bidi,bidi-aec,bidi-google,bidi-io,bidi-openai,docs,otel]"]
 
 all = [
-    "strands-agents[a2a,anthropic,bidi-all,cedar,cost-estimator,docs,gemini,litellm,llamaapi,mistral,ollama,openai,writer,sagemaker,otel,web-fetch]"
+    "strands-agents[a2a,anthropic,bidi-all,cedar,cost-estimator,docs,dogwood,gemini,litellm,llamaapi,mistral,ollama,openai,writer,sagemaker,otel,web-fetch]"
 ]
 
 dev = [
