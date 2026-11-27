@@ -8,6 +8,7 @@ when and how to retry failed model calls.
 
 import asyncio
 import logging
+import threading
 from typing import Any
 
 from ..hooks.events import AfterInvocationEvent, AfterModelCallEvent
@@ -16,6 +17,18 @@ from ..types._events import EventLoopThrottleEvent, TypedEvent
 from ..types.exceptions import ModelThrottledException
 
 logger = logging.getLogger(__name__)
+
+
+async def _wait_for_retry_delay(delay: float, cancel_signal: threading.Event) -> None:
+    """Wait for a retry delay or cancellation without blocking an executor thread."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + delay
+    # threading.Event has no async notification hook; poll as the Agent's external-signal linker does.
+    while not cancel_signal.is_set():
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return
+        await asyncio.sleep(min(remaining, 0.05))
 
 
 class ModelRetryStrategy(HookProvider):
@@ -164,8 +177,8 @@ class ModelRetryStrategy(HookProvider):
             type(event.exception).__name__,
         )
 
-        # Sleep for current delay
-        await asyncio.sleep(delay)
+        # Wait for the delay or cancellation, whichever comes first.
+        await _wait_for_retry_delay(delay, event.agent.cancel_signal)
 
-        # Set retry flag and track that this strategy triggered it
+        # Set retry so the event loop can observe cancellation before another model call.
         event.retry = True

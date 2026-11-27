@@ -47,7 +47,12 @@ from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 @pytest.fixture
 def mock_sleep():
-    with patch.object(strands.event_loop._retry.asyncio, "sleep", new_callable=AsyncMock) as mock:
+    mock = AsyncMock()
+
+    async def wait_for_retry_delay(delay, _cancel_signal):
+        await mock(delay)
+
+    with patch.object(strands.event_loop._retry, "_wait_for_retry_delay", wait_for_retry_delay):
         yield mock
 
 
