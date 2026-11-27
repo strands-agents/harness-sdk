@@ -23,7 +23,7 @@ These models take explicit cache points:
 - Anthropic Claude, on Amazon Bedrock and through the Anthropic API.
 - Amazon Nova on Amazon Bedrock.
 - OpenAI GPT-5.6 and later on the Responses API, through OpenAI or Bedrock Mantle.
-- OpenAI GPT-5.6 and later on the Amazon Bedrock Converse API, in TypeScript only. See
+- OpenAI GPT-5.6 and later on the Amazon Bedrock Converse API. See
   [OpenAI models on the Converse API](#openai-models-on-the-converse-api).
 
 To use them, set a cache configuration on the model with the `auto` strategy, which is
@@ -71,8 +71,7 @@ cache through normal use.
 Strands relies on Gemini's implicit caching and doesn't use its explicit cached-content
 API. See [Gemini context caching](https://aistudio.google.com/docs/caching). On the
 Amazon Bedrock Converse API, Strands relies on implicit caching for xAI models and for
-OpenAI GPT-5.5 and earlier, and in Python for every OpenAI GPT model. Strands doesn't
-cache `gpt-oss` there. Amazon Bedrock lists which APIs take explicit
+OpenAI GPT-5.5 and earlier, and doesn't cache `gpt-oss`. Amazon Bedrock lists which APIs take explicit
 cache points for each OpenAI model in
 [Prompt caching for models from OpenAI](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html#prompt-caching-openai).
 
@@ -107,7 +106,7 @@ gap above applies: with a context injector that fires on every model call, every
 writes to the cache and none reads from it. On GPT-5.6 and later, writes cost 1.25 times
 the input rate.
 
-In TypeScript, the `auto` strategy places cache points for GPT-5.6 and later on Converse.
+The `auto` strategy places cache points for GPT-5.6 and later on Converse.
 Amazon Bedrock documents only implicit caching for these models on Converse, but Converse
 accepts the points under the same rules as Amazon Nova: none after the tool definitions,
 no TTL, and a point only directly after text. In a tool loop, the later user messages
@@ -124,9 +123,9 @@ cache configuration.
 Converse rejects cache points for GPT-5.5 and earlier, `gpt-oss`, and xAI models with an
 `AccessDeniedException`, so don't place them by hand or use the
 <Syntax py='"anthropic"' ts="'anthropic'" /> strategy with these models. The default
-`auto` strategy places none for them. Where Strands places no cache points on GPT-5.6 and
-later (in Python, or in TypeScript without a cache configuration), you can stay on
-Converse without paying for writes that are never read by turning implicit caching off:
+`auto` strategy places none for them. Without a cache configuration, Strands places no
+cache points on GPT-5.6 and later either. To stay on Converse without paying for writes
+that are never read, turn implicit caching off:
 
 <Tabs>
 <Tab label="Python">
