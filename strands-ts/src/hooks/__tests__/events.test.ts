@@ -1144,6 +1144,7 @@ describe('toJSON serialization completeness', () => {
     'messages',
     'selectedTool',
     'resume',
+    'result',
     'endTurn',
   ])
 

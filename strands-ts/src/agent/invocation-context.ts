@@ -48,6 +48,7 @@ export class InvocationContextImpl implements InvocationContext {
   readonly usage: InvocationContextUsage = { turnsTaken: 0, ...createEmptyUsage() }
 
   private _structuredOutputFailures = 0
+  private _interruptedTurns = 0
 
   /**
    * @param limits - Limits checked against this instance's usage; `undefined` for none
@@ -90,6 +91,29 @@ export class InvocationContextImpl implements InvocationContext {
   recordStructuredOutputFailure(): void {
     this._structuredOutputFailures += 1
     this.limitingParent?.recordStructuredOutputFailure()
+  }
+
+  /** Whether a turn an interrupt cut short awaits its resume, here or in a parent whose limits apply to this instance. */
+  get hasInterruptedTurn(): boolean {
+    return this._interruptedTurns > 0 || (this.limitingParent?.hasInterruptedTurn ?? false)
+  }
+
+  /** Marks a counted turn as cut short by an interrupt, here and in every parent whose limits apply to this instance. */
+  recordInterruptedTurn(): void {
+    this._interruptedTurns += 1
+    this.limitingParent?.recordInterruptedTurn()
+  }
+
+  /**
+   * Claims a turn an interrupt cut short, so the resume finishes it instead of starting a new one.
+   *
+   * @returns `true` if this instance or a parent whose limits apply to it had one
+   */
+  resumeInterruptedTurn(): boolean {
+    const resumedInParent = this.limitingParent?.resumeInterruptedTurn() ?? false
+    if (this._interruptedTurns === 0) return resumedInParent
+    this._interruptedTurns -= 1
+    return true
   }
 
   /**
