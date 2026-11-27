@@ -866,9 +866,9 @@ class BedrockModel(Model):
             True when the point was kept, possibly relocated. False when nothing cacheable precedes it,
             or, on a model that takes a cache point only after text, no text precedes it, so the point was
             removed: Bedrock rejects a cache point with no content ahead of it ("There
-            is nothing available to cache"). The caller then retries automatic placement, which lands a
-            point only if the remaining content allows one - for a leading document it declines too, so
-            the message ends up with no cache point at all.
+            is nothing available to cache"). The caller then retries automatic placement, except after a
+            leading document, where the blocks after the point are per-call content and no position ahead
+            of them is legal, so the message ends up with no cache point at all.
         """
         placed = content[placed_idx]
 
@@ -905,8 +905,7 @@ class BedrockModel(Model):
                 )
                 return False
             if target_idx == 0:
-                # Nothing precedes the documents, so there is no prefix to cache. Automatic placement
-                # declines for the same reason, leaving the message with no cache point.
+                # Nothing precedes the documents, so the point has nowhere legal to go ahead of the caller's boundary.
                 logger.warning("msg_idx=<%s> | dropped cache point ahead of a leading document", msg_idx)
                 return False
             content.insert(target_idx, placed)
@@ -1002,6 +1001,10 @@ class BedrockModel(Model):
                     # empty message too, exactly as the pre-existing strip path already did.
                     logger.debug("msg_idx=<%s> | no content left to cache", last_user_idx)
                     return
+                if placed_idxs[0] > 0 and not self._limits_cache_points:
+                    # Only leading documents preceded the point, and the blocks after it are per-call content.
+                    logger.debug("msg_idx=<%s> | no position ahead of the caller's boundary", last_user_idx)
+                    return
                 # The point could not legally stay, so fall through to automatic placement below.
 
             if self._limits_cache_points:
@@ -1015,28 +1018,15 @@ class BedrockModel(Model):
                     logger.debug("msg_idx=<%s> | skipped cache point, no durable prefix", last_user_idx)
                     return
                 content.insert(boundary_idx, {"cachePoint": point})
-                # A False here means a leading document left no prefix to cache; automatic placement
-                # declines for the same reason, so there is nothing to fall back to.
+                # A False here means a leading document left no legal position ahead of the per-call blocks.
                 self._honor_placed_cache_point(content, boundary_idx, last_user_idx)
                 return
 
-            # Insert before non-PDF document blocks to avoid Bedrock ValidationException
-            first_non_pdf_doc_idx: int | None = None
-            for i, block in enumerate(content):
-                if "document" in block and block["document"].get("format", "") != "pdf":
-                    first_non_pdf_doc_idx = i
-                    break
-
-            # Insert the cache point before the first non-PDF document so it is not directly
-            # preceded by that block, which Bedrock rejects with a ValidationException
-            if first_non_pdf_doc_idx is None:
-                content.append({"cachePoint": point})
-            elif first_non_pdf_doc_idx > 0:
-                content.insert(first_non_pdf_doc_idx, {"cachePoint": point})
-            else:
-                # A leading non-PDF document leaves no prefix to cache and Bedrock rejects it
-                logger.debug("msg_idx=<%s> | skipped cache point for leading non-PDF document", last_user_idx)
+            insert_idx = step_back_over_documents(content, len(content))
+            if insert_idx == 0:
+                logger.debug("msg_idx=<%s> | skipped cache point, message holds only non-PDF documents", last_user_idx)
                 return
+            content.insert(insert_idx, {"cachePoint": point})
 
             logger.debug("msg_idx=<%s> | added cache point to last user message", last_user_idx)
 
