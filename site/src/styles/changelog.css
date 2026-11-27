@@ -64,6 +64,7 @@
   border: 0; cursor: pointer; white-space: nowrap; }
 .cl-sdk button + button { border-left: 1px solid var(--sl-color-gray-5); }
 .cl-sdk button[aria-pressed='true'] { background: color-mix(in srgb, var(--sl-color-accent) 14%, transparent); color: var(--cl-accent-text); }
+.cl-sdk button[aria-pressed='false']:hover { background: var(--docs-hover-bg); color: var(--sl-color-white); }
 .cl-sdk .cl-langs { display: inline-flex; align-items: center; gap: 0.3rem; opacity: 0.85; }
 .cl-icon { display: inline-block; vertical-align: middle; flex-shrink: 0; }
 
@@ -74,6 +75,7 @@
   border: 0; cursor: pointer; white-space: nowrap; }
 .cl-lang button + button { border-left: 1px solid var(--sl-color-gray-5); }
 .cl-lang button[aria-pressed='true'] { background: color-mix(in srgb, var(--sl-color-accent) 14%, transparent); color: var(--cl-accent-text); }
+.cl-lang button[aria-pressed='false']:hover { background: var(--docs-hover-bg); color: var(--sl-color-white); }
 
 /* layout: rail + feed */
 .cl-body { display: flex; border: 1px solid var(--sl-color-hairline); border-radius: 12px; overflow: hidden; }
@@ -156,6 +158,7 @@
 /* Links inside running prose are underlined so they're distinguishable by more
    than color (WCAG link-in-text-block). */
 .cl-version-notes a { color: var(--cl-accent-text); text-decoration: underline; text-underline-offset: 2px; }
+.cl-version-notes a:hover { text-decoration-thickness: 2px; }
 .cl-version-notes code { font-size: 0.85em; }
 
 .cl-group { font-size: 1rem; font-weight: 700; letter-spacing: 0.02em; color: var(--sl-color-white);
@@ -191,6 +194,7 @@ a.cl-entry-title:hover { color: var(--cl-accent-text); text-decoration: underlin
 /* fallback when a release has no parsed entries (e.g. upstream notes omitted) */
 .cl-no-entries { color: var(--sl-color-gray-3); font-size: 0.9rem; margin: 0.5rem 0; }
 .cl-no-entries a { color: var(--cl-accent-text); text-decoration: underline; text-underline-offset: 2px; }
+.cl-no-entries a:hover { text-decoration-thickness: 2px; }
 
 /* first-time contributor celebration (sits right under highlights) */
 .cl-new-contributors { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;

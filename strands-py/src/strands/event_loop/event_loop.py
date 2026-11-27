@@ -617,10 +617,25 @@ async def _handle_model_execution(
     cycle_trace.add_child(stream_trace)
 
     empty_tool_use_attempts = 0
+    is_retry_attempt = False
+    stop_reason: StopReason
+    message: Message
+    usage: Usage
+    metrics: Metrics
 
     # Retry loop - actual retry logic is handled by retry_strategy hook
     # Hooks control when to stop retrying via the event.retry flag
     while True:
+        if is_retry_attempt and agent._observe_cancellation():
+            stop_reason = "cancelled"
+            cancel_text = agent._cancel_message if agent._cancel_message is not None else "Cancelled by user"
+            message = {"role": "assistant", "content": [{"text": cancel_text}]}
+            usage = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
+            metrics = {"latencyMs": 0}
+            message["metadata"] = {"usage": usage, "metrics": metrics}
+            yield ModelStopReason(stop_reason=stop_reason, message=message, usage=usage, metrics=metrics)
+            break
+
         try:
             # Estimate input tokens for the upcoming model call (non-fatal)
             projected_input_tokens: int | None = None
@@ -661,10 +676,10 @@ async def _handle_model_execution(
                     if isinstance(before_model_call_event.cancel, str)
                     else "model call denied by hook"
                 )
-                message: Message = {"role": "assistant", "content": [{"text": cancel_text}]}
-                stop_reason: StopReason = "end_turn"
-                usage: Usage = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
-                metrics: Metrics = {"latencyMs": 0}
+                message = {"role": "assistant", "content": [{"text": cancel_text}]}
+                stop_reason = "end_turn"
+                usage = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
+                metrics = {"latencyMs": 0}
 
                 after_model_call_event = AfterModelCallEvent(
                     agent=agent,
@@ -678,6 +693,7 @@ async def _handle_model_execution(
                 await agent.hooks.invoke_callbacks_async(after_model_call_event)
 
                 if after_model_call_event.retry:
+                    is_retry_attempt = True
                     continue
                 yield ModelStopReason(stop_reason=stop_reason, message=message, usage=usage, metrics=metrics)
                 break
@@ -788,6 +804,7 @@ async def _handle_model_execution(
                     "stop_reason=<%s>, retry_requested=<True> | hook requested model retry",
                     stop_reason,
                 )
+                is_retry_attempt = True
                 continue  # Retry the model call
 
             if stop_reason == "tool_use" and not any("toolUse" in block for block in message["content"]):
@@ -799,6 +816,7 @@ async def _handle_model_execution(
                         "attempt=<%s> | tool_use stop with no toolUse blocks | retrying the model call",
                         empty_tool_use_attempts,
                     )
+                    is_retry_attempt = True
                     continue
 
             if stop_reason == "max_tokens":
@@ -831,6 +849,7 @@ async def _handle_model_execution(
                     type(e).__name__,
                 )
 
+                is_retry_attempt = True
                 continue  # Retry the model call
 
             # No retry requested, raise the exception
