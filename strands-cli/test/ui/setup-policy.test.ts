@@ -69,7 +69,7 @@ const configuredTools: HarnessConfigBuiltinTools = {
   read: { media: false },
   web_fetch: { model: 'bedrock/anthropic.claude-haiku-4-5-20251001-v1:0' },
   programmatic_tool_caller: { timeout: 60, allowedTools: ['read'] },
-  subagent: { maxDepth: 0 },
+  subagent: { maxDepth: 1 },
 }
 
 describe('setup feature controls', () => {
