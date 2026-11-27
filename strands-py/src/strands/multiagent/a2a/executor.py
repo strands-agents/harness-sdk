@@ -9,35 +9,26 @@ streamed requests to the A2AServer.
 """
 
 import asyncio
-import base64
 import json
 import logging
 import mimetypes
 import uuid
 import warnings
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
+from a2a.helpers import new_data_part, new_task_from_user_message, new_text_message, new_text_part
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import (
-    DataPart,
-    FilePart,
-    InternalError,
-    InvalidParamsError,
-    Part,
-    TaskState,
-    TextPart,
-    UnsupportedOperationError,
-)
-from a2a.utils import new_agent_text_message, new_task
-from a2a.utils.errors import ServerError
+from a2a.types import Part, TaskState
+from a2a.utils.errors import InternalError, InvalidParamsError, UnsupportedOperationError
+from google.protobuf.json_format import MessageToDict
 
 from ...agent.agent import Agent as SAAgent
-from ...agent.agent import AgentResult as SAAgentResult
+from ...agent.agent_result import AgentResult as SAAgentResult
 from ...session.session_manager import SessionManager
 from ...types._snapshot import Snapshot
 from ...types.content import ContentBlock
@@ -56,7 +47,7 @@ logger = logging.getLogger(__name__)
 # A factory that builds a fresh Agent for a given A2A context_id.
 AgentFactory = Callable[[str], SAAgent]
 
-# Key identifying a DataPart that carries a Strands interrupt response. The A2A payload mirrors the
+# Key identifying a data Part that carries a Strands interrupt response. The A2A payload mirrors the
 # `InterruptResponseContent` type verbatim so the wire contract and the SDK type cannot drift.
 INTERRUPT_RESPONSE_KEY = "interruptResponse"
 
@@ -278,7 +269,7 @@ class StrandsA2AExecutor(AgentExecutor):
         """Stream one agent invocation and translate its events to A2A updates.
 
         Raises:
-            ServerError: If the input does not match the agent's interrupt state — interrupt
+            InvalidParamsError: If the input does not match the agent's interrupt state — interrupt
                 responses that name no parked interrupt, or fresh content for a parked task. Both
                 fail before the agent runs, so a parked interrupt survives a rejected resume.
         """
@@ -287,10 +278,8 @@ class StrandsA2AExecutor(AgentExecutor):
         if _is_interrupt_resume(prompt):
             self._validate_interrupt_resume(agent, cast(list[InterruptResponseContent], prompt))
         elif agent._interrupt_state.activated:
-            raise ServerError(
-                error=InvalidParamsError(
-                    message="Task is awaiting an interrupt response and cannot accept a new message"
-                )
+            raise InvalidParamsError(
+                message="Task is awaiting an interrupt response and cannot accept a new message"
             ) from None
 
         try:
@@ -329,21 +318,21 @@ class StrandsA2AExecutor(AgentExecutor):
             event_queue: The A2A event queue used to send response events back to the client.
 
         Raises:
-            ServerError: If an unrecoverable error occurs during agent execution setup
-                (e.g., missing input). Agent execution errors are handled gracefully
-                by transitioning the task to the failed state.
+            InvalidParamsError: If the request carries malformed or unresolvable parameters.
+            InternalError: If the request is missing required content.
+            UnsupportedOperationError: If the operation is not supported in the current state.
         """
         task = context.current_task
         if not task:
-            task = new_task(context.message)  # type: ignore
+            task = new_task_from_user_message(context.message)  # type: ignore
             await event_queue.enqueue_event(task)
 
         updater = TaskUpdater(event_queue, task.id, task.context_id)
 
         try:
             await self._execute_streaming(context, updater)
-        except ServerError:
-            # Re-raise ServerErrors (setup failures like missing input)
+        except (InvalidParamsError, InternalError, UnsupportedOperationError):
+            # Re-raise server-side setup failures (missing input, bad params, unsupported op).
             raise
         except asyncio.CancelledError:
             # asyncio.CancelledError is a BaseException (not Exception) — raised when
@@ -353,7 +342,7 @@ class StrandsA2AExecutor(AgentExecutor):
             try:
                 await updater.cancel(
                     message=updater.new_agent_message(
-                        parts=[Part(root=TextPart(text="Task cancelled due to connection termination"))]
+                        parts=[new_text_part("Task cancelled due to connection termination")]
                     )
                 )
             except RuntimeError:
@@ -364,9 +353,7 @@ class StrandsA2AExecutor(AgentExecutor):
             # Agent execution failures transition to failed state
             logger.exception("task_id=<%s> | agent execution failed, transitioning to failed state", task.id)
             try:
-                await updater.failed(
-                    message=updater.new_agent_message(parts=[Part(root=TextPart(text="Agent execution failed"))])
-                )
+                await updater.failed(message=updater.new_agent_message(parts=[new_text_part("Agent execution failed")]))
             except RuntimeError:
                 # Task already in terminal state (e.g., completed before error in cleanup)
                 logger.debug("task_id=<%s> | task already in terminal state, cannot transition to failed", task.id)
@@ -382,11 +369,11 @@ class StrandsA2AExecutor(AgentExecutor):
             updater: The task updater for managing task state and sending updates.
 
         Raises:
-            ServerError: If input conversion fails (missing or empty content), or if the message
-                carries malformed interrupt responses.
+            InternalError: If input conversion fails (missing or empty content).
+            InvalidParamsError: If the message carries malformed interrupt responses.
         """
         if not (context.message and hasattr(context.message, "parts")):
-            raise ServerError(error=InternalError(message="Request message is missing or has no parts")) from None
+            raise InternalError(message="Request message is missing or has no parts") from None
 
         # Interrupt responses resume a parked task, so they are recognized before the generic
         # conversion below would flatten them into text.
@@ -394,9 +381,7 @@ class StrandsA2AExecutor(AgentExecutor):
         if prompt is None:
             prompt = self._convert_a2a_parts_to_content_blocks(context.message.parts)
             if not prompt:
-                raise ServerError(
-                    error=InternalError(message="No valid content found in request message parts")
-                ) from None
+                raise InternalError(message="No valid content found in request message parts") from None
 
         if not self.enable_a2a_compliant_streaming:
             warnings.warn(
@@ -417,7 +402,7 @@ class StrandsA2AExecutor(AgentExecutor):
         # The framework always populates context_id before execute() runs; isolation is keyed on it.
         context_id = context.context_id
         if not context_id:
-            raise ServerError(error=InternalError(message="Request is missing a context_id")) from None
+            raise InternalError(message="Request is missing a context_id") from None
 
         if self._agent_factory is not None:
             await self._run_with_context_agent(context_id, prompt, invocation_state, updater, stream_state)
@@ -431,7 +416,7 @@ class StrandsA2AExecutor(AgentExecutor):
         the A2A `input_required` state. The interrupt details are communicated to
         the client via the status message.
 
-        The details are carried twice: a TextPart describing what is needed, and a DataPart holding
+        The details are carried twice: a text Part describing what is needed, and a data Part holding
         each interrupt's id. Only the id lets a client address its response back to the interrupt
         that raised it, and an id is generated server-side so it cannot be inferred from the prose.
 
@@ -458,10 +443,10 @@ class StrandsA2AExecutor(AgentExecutor):
             # Still transition to input_required — the agent signaled it needs input.
             input_message = "Agent requires additional input to continue"
 
-        # The TextPart stays first so clients that only read prose are unaffected.
-        parts = [Part(root=TextPart(text=input_message))]
+        # The text Part stays first so clients that only read prose are unaffected.
+        parts = [new_text_part(input_message)]
         if pending_interrupts:
-            parts.append(Part(root=DataPart(data={INTERRUPTS_KEY: pending_interrupts})))
+            parts.append(new_data_part({INTERRUPTS_KEY: pending_interrupts}))
 
         await updater.requires_input(message=updater.new_agent_message(parts=parts))
 
@@ -485,7 +470,7 @@ class StrandsA2AExecutor(AgentExecutor):
             if text_content := event["data"]:
                 if stream_state is not None:
                     await updater.add_artifact(
-                        [Part(root=TextPart(text=text_content))],
+                        [new_text_part(text_content)],
                         artifact_id=stream_state.artifact_id,
                         name="agent_response",
                         append=not stream_state.is_first_chunk,
@@ -494,11 +479,11 @@ class StrandsA2AExecutor(AgentExecutor):
                 else:
                     # Legacy use update_status with agent message
                     await updater.update_status(
-                        TaskState.working,
-                        new_agent_text_message(
+                        TaskState.TASK_STATE_WORKING,
+                        new_text_message(
                             text_content,
-                            updater.context_id,
-                            updater.task_id,
+                            context_id=updater.context_id,
+                            task_id=updater.task_id,
                         ),
                     )
 
@@ -524,14 +509,14 @@ class StrandsA2AExecutor(AgentExecutor):
             if stream_state.is_first_chunk:
                 final_content = str(result) if result else ""
                 await updater.add_artifact(
-                    [Part(root=TextPart(text=final_content))],
+                    [new_text_part(final_content)],
                     artifact_id=stream_state.artifact_id,
                     name="agent_response",
                     last_chunk=True,
                 )
             else:
                 await updater.add_artifact(
-                    [Part(root=TextPart(text=""))],
+                    [new_text_part("")],
                     artifact_id=stream_state.artifact_id,
                     name="agent_response",
                     append=True,
@@ -539,7 +524,7 @@ class StrandsA2AExecutor(AgentExecutor):
                 )
         elif final_content := str(result):
             await updater.add_artifact(
-                [Part(root=TextPart(text=final_content))],
+                [new_text_part(final_content)],
                 name="agent_response",
             )
         await updater.complete()
@@ -559,12 +544,13 @@ class StrandsA2AExecutor(AgentExecutor):
             event_queue: The A2A event queue.
 
         Raises:
-            ServerError: If no current task exists or the task is already in a terminal state.
+            UnsupportedOperationError: If no current task exists or the task is already in a
+                terminal state.
         """
         task = context.current_task
         if not task:
             logger.warning("context_id=<%s> | cancel requested but no current task found", context.context_id)
-            raise ServerError(error=UnsupportedOperationError()) from None
+            raise UnsupportedOperationError() from None
 
         # Cooperatively cancel the agent's execution (best-effort). In factory mode, resolve the
         # agent for this context; in single-agent mode, the shared agent.
@@ -582,12 +568,12 @@ class StrandsA2AExecutor(AgentExecutor):
 
         try:
             await updater.cancel(
-                message=updater.new_agent_message(parts=[Part(root=TextPart(text="Task cancelled by client request"))])
+                message=updater.new_agent_message(parts=[new_text_part("Task cancelled by client request")])
             )
         except RuntimeError:
             # TaskUpdater raises RuntimeError when task is already in a terminal state
             logger.warning("task_id=<%s> | cannot cancel, already in terminal state", task.id)
-            raise ServerError(error=UnsupportedOperationError()) from None
+            raise UnsupportedOperationError() from None
 
     def _get_file_type_from_mime_type(self, mime_type: str | None) -> Literal["document", "image", "video", "unknown"]:
         """Classify file type based on MIME type.
@@ -660,16 +646,23 @@ class StrandsA2AExecutor(AgentExecutor):
             return file_name.rsplit(".", 1)[0]
         return file_name
 
-    def _extract_interrupt_responses(self, parts: list[Part]) -> list[InterruptResponseContent] | None:
+    def _extract_interrupt_responses(self, parts: Sequence[Part]) -> list[InterruptResponseContent] | None:
         """Extract Strands interrupt responses from inbound A2A message parts.
 
-        A client resumes a task parked in ``input_required`` by sending a DataPart shaped like the
+        A client resumes a task parked in ``input_required`` by sending a data Part shaped like the
         Strands ``InterruptResponseContent`` type::
 
-            {"kind": "data", "data": {"interruptResponse": {"interruptId": "<id>", "response": <any>}}}
+            Part(data={"interruptResponse": {"interruptId": "<id>", "response": <any>}})
 
         Recognition is deliberately narrow: only the explicit shape above is treated as a resume, so
-        an ordinary DataPart still reaches the generic content-block path unchanged.
+        an ordinary data Part still reaches the generic content-block path unchanged.
+
+        Note:
+            A2A data parts use protobuf ``Value``, which has no integer type — all numbers are
+            IEEE 754 doubles. ``MessageToDict`` renders every number as a Python ``float``, so an
+            integer a peer sent (e.g. ``3``) arrives as ``3.0``. This is a v1 wire-format
+            limitation, not a Strands bug. Downstream code resuming an interrupt should handle
+            numeric ``response`` values as floats.
 
         Args:
             parts: List of A2A Part objects from the inbound message.
@@ -679,49 +672,40 @@ class StrandsA2AExecutor(AgentExecutor):
             caller should fall back to generic content-block conversion.
 
         Raises:
-            ServerError: If an interrupt response is malformed, carries a null response, repeats an
-                interrupt id, or is accompanied by unrelated content in the same message.
+            InvalidParamsError: If an interrupt response is malformed, carries a null response,
+                repeats an interrupt id, or is accompanied by unrelated content in the same message.
         """
         responses: list[InterruptResponseContent] = []
         seen_ids: set[str] = set()
         unrelated_parts = 0
 
         for part in parts:
-            part_root = part.root
-            data = part_root.data if isinstance(part_root, DataPart) else None
+            data = MessageToDict(part.data) if part.HasField("data") else None
             if not isinstance(data, dict) or INTERRUPT_RESPONSE_KEY not in data:
                 unrelated_parts += 1
                 continue
 
             response = data[INTERRUPT_RESPONSE_KEY]
             if not isinstance(response, dict):
-                raise ServerError(
-                    error=InvalidParamsError(
-                        message=f"'{INTERRUPT_RESPONSE_KEY}' must be an object with 'interruptId' and 'response'"
-                    )
+                raise InvalidParamsError(
+                    message=f"'{INTERRUPT_RESPONSE_KEY}' must be an object with 'interruptId' and 'response'"
                 ) from None
 
             interrupt_id = response.get("interruptId")
             if not isinstance(interrupt_id, str) or not interrupt_id:
-                raise ServerError(
-                    error=InvalidParamsError(message="Interrupt response is missing a non-empty 'interruptId'")
-                ) from None
+                raise InvalidParamsError(message="Interrupt response is missing a non-empty 'interruptId'") from None
 
             # `Interrupt.response` of None means "not yet answered", so a null answer would leave
             # the interrupt unsatisfied and re-raise it — the client would see an identical
             # input_required and no error. Falsy answers such as False are fine.
             if response.get("response") is None:
-                raise ServerError(
-                    error=InvalidParamsError(
-                        message=f"Interrupt response for '{interrupt_id}' must provide a non-null 'response'"
-                    )
+                raise InvalidParamsError(
+                    message=f"Interrupt response for '{interrupt_id}' must provide a non-null 'response'"
                 ) from None
 
             # Two answers for one interrupt are ambiguous; reject rather than silently choosing one.
             if interrupt_id in seen_ids:
-                raise ServerError(
-                    error=InvalidParamsError(message=f"Duplicate interrupt response for '{interrupt_id}'")
-                ) from None
+                raise InvalidParamsError(message=f"Duplicate interrupt response for '{interrupt_id}'") from None
 
             seen_ids.add(interrupt_id)
             responses.append(
@@ -736,10 +720,8 @@ class StrandsA2AExecutor(AgentExecutor):
         # The agent resumes from interrupt responses alone; delivering both would mean dropping the
         # conversational content, which is exactly the silent behavior the resume path must avoid.
         if unrelated_parts:
-            raise ServerError(
-                error=InvalidParamsError(
-                    message="A message carrying interrupt responses must not contain other content parts"
-                )
+            raise InvalidParamsError(
+                message="A message carrying interrupt responses must not contain other content parts"
             ) from None
 
         logger.debug("interrupt_ids=<%s> | extracted interrupt responses from request", sorted(seen_ids))
@@ -753,15 +735,13 @@ class StrandsA2AExecutor(AgentExecutor):
             responses: Interrupt responses extracted from the inbound message.
 
         Raises:
-            ServerError: If the agent holds no parked interrupts, or a response names an interrupt
-                the agent is not waiting on.
+            InvalidParamsError: If the agent holds no parked interrupts, or a response names an
+                interrupt the agent is not waiting on.
         """
         interrupt_state = agent._interrupt_state
 
         if not interrupt_state.activated:
-            raise ServerError(
-                error=InvalidParamsError(message="Received interrupt responses but no interrupt is pending")
-            ) from None
+            raise InvalidParamsError(message="Received interrupt responses but no interrupt is pending") from None
 
         unknown_ids = sorted(
             content["interruptResponse"]["interruptId"]
@@ -769,11 +749,9 @@ class StrandsA2AExecutor(AgentExecutor):
             if content["interruptResponse"]["interruptId"] not in interrupt_state.interrupts
         )
         if unknown_ids:
-            raise ServerError(
-                error=InvalidParamsError(message=f"No pending interrupt matches id(s): {', '.join(unknown_ids)}")
-            ) from None
+            raise InvalidParamsError(message=f"No pending interrupt matches id(s): {', '.join(unknown_ids)}") from None
 
-    def _convert_a2a_parts_to_content_blocks(self, parts: list[Part]) -> list[ContentBlock]:
+    def _convert_a2a_parts_to_content_blocks(self, parts: Sequence[Part]) -> list[ContentBlock]:
         """Convert A2A message parts to Strands ContentBlocks.
 
         Args:
@@ -786,70 +764,59 @@ class StrandsA2AExecutor(AgentExecutor):
 
         for part in parts:
             try:
-                part_root = part.root
+                if part.HasField("text"):
+                    content_blocks.append(ContentBlock(text=part.text))
 
-                if isinstance(part_root, TextPart):
-                    # Handle TextPart
-                    content_blocks.append(ContentBlock(text=part_root.text))
-
-                elif isinstance(part_root, FilePart):
-                    # Handle FilePart
-                    file_obj = part_root.file
-                    mime_type = getattr(file_obj, "mime_type", None)
-                    raw_file_name = getattr(file_obj, "name", "FileNameNotProvided")
+                elif part.HasField("raw"):
+                    mime_type = part.media_type or None
+                    raw_file_name = part.filename or "FileNameNotProvided"
                     file_name = self._strip_file_extension(raw_file_name)
                     file_type = self._get_file_type_from_mime_type(mime_type)
                     file_format = self._get_file_format_from_mime_type(mime_type, file_type)
+                    raw_bytes = part.raw
 
-                    # Handle FileWithBytes vs FileWithUri
-                    bytes_data = getattr(file_obj, "bytes", None)
-                    uri_data = getattr(file_obj, "uri", None)
-
-                    if bytes_data:
-                        try:
-                            # A2A bytes are always base64-encoded strings
-                            decoded_bytes = base64.b64decode(bytes_data)
-                        except Exception as e:
-                            raise ValueError(f"Failed to decode base64 data for file '{raw_file_name}': {e}") from e
-
-                        if file_type == "image":
-                            content_blocks.append(
-                                ContentBlock(
-                                    image=ImageContent(
-                                        format=file_format,  # type: ignore
-                                        source=ImageSource(bytes=decoded_bytes),
-                                    )
-                                )
-                            )
-                        elif file_type == "video":
-                            content_blocks.append(
-                                ContentBlock(
-                                    video=VideoContent(
-                                        format=file_format,  # type: ignore
-                                        source=VideoSource(bytes=decoded_bytes),
-                                    )
-                                )
-                            )
-                        else:  # document or unknown
-                            content_blocks.append(
-                                ContentBlock(
-                                    document=DocumentContent(
-                                        format=file_format,  # type: ignore
-                                        name=file_name,
-                                        source=DocumentSource(bytes=decoded_bytes),
-                                    )
-                                )
-                            )
-                    # Handle FileWithUri
-                    elif uri_data:
-                        # For URI files, create a text representation since Strands ContentBlocks expect bytes
+                    if file_type == "image":
                         content_blocks.append(
-                            ContentBlock(text=f"[File: {file_name} ({mime_type})] - Referenced file at: {uri_data}")
+                            ContentBlock(
+                                image=ImageContent(
+                                    format=file_format,  # type: ignore
+                                    source=ImageSource(bytes=raw_bytes),
+                                )
+                            )
                         )
-                elif isinstance(part_root, DataPart):
-                    # Handle DataPart - convert structured data to JSON text
+                    elif file_type == "video":
+                        content_blocks.append(
+                            ContentBlock(
+                                video=VideoContent(
+                                    format=file_format,  # type: ignore
+                                    source=VideoSource(bytes=raw_bytes),
+                                )
+                            )
+                        )
+                    else:  # document or unknown
+                        content_blocks.append(
+                            ContentBlock(
+                                document=DocumentContent(
+                                    format=file_format,  # type: ignore
+                                    name=file_name,
+                                    source=DocumentSource(bytes=raw_bytes),
+                                )
+                            )
+                        )
+
+                elif part.HasField("url"):
+                    mime_type = part.media_type or None
+                    raw_file_name = part.filename or "FileNameNotProvided"
+                    file_name = self._strip_file_extension(raw_file_name)
+                    # For URL files, create a text representation since Strands ContentBlocks expect bytes
+                    content_blocks.append(
+                        ContentBlock(text=f"[File: {file_name} ({mime_type})] - Referenced file at: {part.url}")
+                    )
+
+                elif part.HasField("data"):
+                    # Handle a data Part - convert structured data to JSON text
                     try:
-                        data_text = json.dumps(part_root.data, indent=2)
+                        data_text = json.dumps(MessageToDict(part.data), indent=2)
                         content_blocks.append(ContentBlock(text=f"[Structured Data]\n{data_text}"))
                     except Exception:
                         logger.exception("Failed to serialize data part")
