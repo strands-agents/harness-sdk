@@ -107,10 +107,15 @@ _BEDROCK_XAI_LEVELS = ("low", "medium", "high", "xhigh")
 _BEDROCK_NOVA_LEVELS = ("low", "medium", "high")
 _GOOGLE_LEVELS = ("low", "medium", "high")
 _GOOGLE_MINIMAL_LEVELS = ("minimal", "low", "medium", "high")
+# Gemini 2.5 models take an integer thinking budget, not the string thinking level of Gemini 3+.
+# ``none`` keeps effort="off" explicit as a zero budget instead of dropping the config.
+_GEMINI_25_LEVELS = ("none", "low", "medium", "high")
+_GEMINI_25_THINKING_BUDGETS = {"none": 0, "low": 2_048, "medium": 8_192, "high": 16_384}
 # Per-model levels: https://ai.google.dev/gemini-api/docs/thinking#controlling-thinking for Gemini;
 # Gemma 4 on Mantle only reasons at ``high``.
 _MODEL_LEVELS = {
     "google": (
+        ("gemini-2.5", _GEMINI_25_LEVELS),
         ("gemini-3.1-flash-lite-image", ("minimal", "high")),
         ("gemini-3.6-flash", _GOOGLE_MINIMAL_LEVELS),
         ("gemini-3.5-flash", _GOOGLE_MINIMAL_LEVELS),
@@ -316,7 +321,10 @@ def _gemini(model_id: str, effort: str | None, web_search: bool, caching: bool) 
 
     extra: dict[str, Any] = {}
     if effort is not None:
-        extra["params"] = {"thinking_config": {"thinking_level": effort}}
+        if model_id.startswith("gemini-2.5"):
+            extra["params"] = {"thinking_config": {"thinking_budget": _GEMINI_25_THINKING_BUDGETS[effort]}}
+        else:
+            extra["params"] = {"thinking_config": {"thinking_level": effort}}
     # ``gemini_tools`` is appended alongside function declarations, so search coexists with tools.
     if web_search:
         extra["gemini_tools"] = [genai_types.Tool(google_search=genai_types.GoogleSearch())]

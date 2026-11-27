@@ -994,3 +994,25 @@ def test_supports_media_requires_every_router_candidate_to_support_it():
         ]
     )
     assert _supports_media(mixed) is False
+
+
+@pytest.mark.parametrize(
+    ("model", "effort"),
+    [
+        ("google/gemini-2.5-pro", "auto"),
+        ("google/gemini-2.5-pro", "high"),
+        ("google/gemini-2.5-flash", "medium"),
+        ("google/gemini-2.5-flash", "low"),
+    ],
+)
+def test_gemini_25_uses_thinking_budget(model, effort):
+    params = resolve(model, effort=effort).config["params"]
+    thinking = params["thinking_config"]
+    assert "thinking_level" not in thinking
+    assert isinstance(thinking["thinking_budget"], int)
+    assert thinking["thinking_budget"] > 0
+
+
+def test_gemini_25_off_uses_zero_thinking_budget():
+    params = resolve("google/gemini-2.5-flash", effort="off").config["params"]
+    assert params["thinking_config"] == {"thinking_budget": 0}
