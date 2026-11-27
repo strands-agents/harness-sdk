@@ -273,10 +273,12 @@ describe('AnthropicModel', () => {
       }
     )
 
-    it('accepts every type when the shared data has no list', () => {
+    it('reports the types it sends when the shared data has no list', () => {
+      expect(lookupModelInfo('claude-3-opus-20240229').capabilities?.acceptedMimeTypes).toBeUndefined()
       const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-3-opus-20240229' }).modelInfo
-      expect(info.capabilities?.acceptedMimeTypes).toBeUndefined()
-      expect(acceptsMimeType(info, 'application/msword')).toBe(true)
+
+      expect(info.capabilities?.acceptedMimeTypes).toEqual([...sendable, 'application/json', 'application/xml'])
+      expect(acceptsMimeType(info, 'video/mp4')).toBe(false)
     })
 
     it('lets the modelInfo config set the accepted types', () => {

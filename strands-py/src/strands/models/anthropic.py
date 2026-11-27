@@ -364,9 +364,7 @@ class AnthropicModel(Model):
             ModelInfo(
                 capabilities=ModelCapabilities(
                     temporary_messages=capabilities.temporary_messages,
-                    accepted_mime_types=None
-                    if capabilities.accepted_mime_types is None
-                    else tuple(t for t in _SENDABLE_MIME_TYPES if _accepts_mime_type(shared, t)),
+                    accepted_mime_types=tuple(t for t in _SENDABLE_MIME_TYPES if _accepts_mime_type(shared, t)),
                 )
             ),
             self.get_config().get("model_info"),

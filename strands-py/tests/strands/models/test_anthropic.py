@@ -2056,13 +2056,14 @@ def test_model_info_narrows_wildcards_to_the_types_the_provider_sends(anthropic_
     assert not _accepts_mime_type(info, "video/mp4")
 
 
-def test_model_info_accepts_every_type_when_the_shared_data_has_no_list(anthropic_client):
+def test_model_info_reports_the_types_it_sends_when_the_shared_data_has_no_list(anthropic_client):
     _ = anthropic_client
+    assert lookup_model_info("claude-3-opus-20240229").capabilities.accepted_mime_types is None
 
     model = AnthropicModel(model_id="claude-3-opus-20240229", max_tokens=1)
 
-    assert model.model_info.capabilities.accepted_mime_types is None
-    assert _accepts_mime_type(model.model_info, _OFFICE_TYPES[1])
+    assert model.model_info.capabilities.accepted_mime_types == _SENDABLE
+    assert not _accepts_mime_type(model.model_info, "video/mp4")
 
 
 def test_model_info_override_sets_the_accepted_mime_types(anthropic_client):

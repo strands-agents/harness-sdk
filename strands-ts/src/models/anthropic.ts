@@ -435,10 +435,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     const capabilities = shared.capabilities ?? {}
     // JSON and XML documents go out as text, so a model that reads text reads them.
     const asText = acceptsMimeType(shared, 'text/plain') ? ['application/json', 'application/xml'] : []
-    const acceptedMimeTypes = capabilities.acceptedMimeTypes && [
-      ...SENDABLE_MIME_TYPES.filter((type) => acceptsMimeType(shared, type)),
-      ...asText,
-    ]
+    const acceptedMimeTypes = [...SENDABLE_MIME_TYPES.filter((type) => acceptsMimeType(shared, type)), ...asText]
     return ModelInfo.merge(
       super.modelInfo,
       {

@@ -53,9 +53,10 @@ class ModelCapabilities:
             :attr:`strands.models.Model.model_info` reports False unless the provider can send them
             (``AnthropicModel``). Turning it on for a provider that cannot send them loses the injected text: Bedrock
             skips the block with a warning, Mistral drops it, other providers raise ``TypeError``.
-        accepted_mime_types: MIME types the model and provider take in the media blocks of a user message
-            (``image/png``, or ``video/*`` for every video type); ``()`` when they take only text. None accepts every
-            type. Tool results can take fewer. Check a type with ``_accepts_mime_type``.
+        accepted_mime_types: MIME types the model and provider take in the media blocks of a user message; ``()``
+            when they take only text, None for every type. An entry matches a type exactly (``image/png``) or by its
+            ``type/*``; case and ``; parameters`` are ignored. A wildcard can also mean the kind isn't verified (see
+            ``shared/README.md``). Tool results can take fewer.
     """
 
     stateful: bool | None = None

@@ -67,9 +67,10 @@ export interface ModelCapabilities {
    */
   readonly deferredToolLoading?: DeferredToolLoading | undefined
   /**
-   * MIME types the model and provider take in the media blocks of a user message (`image/png`, or `video/*` for every
-   * video type); `[]` when they take only text. `undefined` accepts every type. Tool results can take fewer. Check a
-   * type with `acceptsMimeType`.
+   * MIME types the model and provider take in the media blocks of a user message; `[]` when they take only text,
+   * `undefined` for every type. An entry matches a type exactly (`image/png`) or by its `type/*`; case and
+   * `; parameters` are ignored. A wildcard can also mean the kind isn't verified (see `shared/README.md`). Tool results
+   * can take fewer.
    */
   readonly acceptedMimeTypes?: readonly string[] | undefined
 }
