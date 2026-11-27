@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" class="context-retrieval-decision" viewBox="0 0 720 248" width="720" height="248">
+<svg xmlns="http://www.w3.org/2000/svg" class="context-retrieval-decision" viewBox="0 0 720 208" width="720" height="208">
   <!-- Type: decision fan-out. Story: the model answers from the preview when it can, and pays only for the matching lines when it can't. -->
   <!-- Standalone fallback: zero-specificity rules, so diagrams.css wins whenever the SVG is inlined on the site. -->
   <style>
@@ -35,7 +35,7 @@
       <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
     </marker>
   </defs>
-  <rect class="dg-bg" width="720" height="248"/>
+  <rect class="dg-bg" width="720" height="208"/>
 
   <!-- Edges -->
   <path class="dg-edge" d="M216,96 Q224,96 224,88 V68 Q224,60 232,60 H318" marker-end="url(#arrow)"/>

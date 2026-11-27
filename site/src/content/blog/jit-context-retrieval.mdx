@@ -24,7 +24,7 @@ At their inception, agentic systems relied upon rudimentary conversation manager
   alt="The reactive recovery loop. An agent turn triggers a model call. If the context fits, the model returns a response. If it is over the limit, the call fails with a context overflow error and the turn is wasted. The conversation manager then drops or summarizes the oldest 30% of context and retries the model call."
 />
 
-This recovered gracefully, but each overflow wasted an entire turn: the failed call was already billed, and the retry billed again.
+This recovered gracefully, but each overflow wasted an entire turn: a failed round-trip, then a retry that re-sent most of the context.
 
 Applying the just-in-time standard to context management, we hypothesized that in an ideal world, the context window would hold only what is sufficient and necessary for the next model call, with everything else staying accessible and lossless outside it. That cuts token spend, and it also cuts the "lost-in-the-middle" effect, where model accuracy drops over information buried in the middle of a large input.
 
@@ -85,7 +85,7 @@ Strands keeps a lossless copy of everything sent to the agent in a log called th
 
 <Diagram
   name="context-archive-preview"
-  alt="The archive next to the context window. The context window, billed every turn, holds only a preview: the head and tail of tool result tu_abc123 with about 12,500 tokens cut. The archive, which lives in storage and is never billed, holds the lossless block tu_abc123_0 with the full 12,500-token result. The agent calls retrieve_context against the archive, and only the slice it asked for returns to the context window."
+  alt="The archive next to the context window. The context window, billed every turn, holds only a preview: the head and tail of the roughly 12,500-token tool result tu_abc123. The archive, which lives in storage and is never billed, holds the lossless block tu_abc123_0 with the full 12,500-token result. The agent calls retrieve_context against the archive, and only the slice it asked for returns to the context window."
 />
 
 <Tabs>
@@ -115,7 +115,7 @@ Strands keeps a lossless copy of everything sent to the agent in a log called th
 
 ## Context Relevance
 
-Yet this begets a new problem: how does the agent know what full context to retrieve? Today, the agent narrows a block by pattern or line range, paying for the lines it needs instead of the whole result. Built-in search strategies rank the archive for it: BM25 and keyword search ship in the box, and the search interface accepts custom implementations. Surfacing these on the context manager, so the agent can search the archive against its current work, lands next.
+Yet this begets a new problem: how does the agent know what full context to retrieve? Today, the agent narrows a block by pattern or line range, paying for the lines it needs instead of the whole result. Built-in search strategies already rank storage: BM25 and keyword search ship in the box, and the search interface accepts custom implementations. Surfacing them on the context manager, so the agent can search the archive against its current work, lands next.
 
 <Tabs>
   <Tab label="Python">
@@ -142,7 +142,7 @@ Yet this begets a new problem: how does the agent know what full context to retr
 
 <Diagram
   name="context-retrieval-decision"
-  alt="The retrieval decision. The model reads a preview: a compacted block plus its reference. If the preview is enough, it answers directly at zero extra tokens. If it needs the rest, it calls retrieve_context with the reference and a pattern; search ranks and filters the lossless blocks, and only the matching lines re-enter the context window."
+  alt="The retrieval decision. The model reads a preview: a compacted block plus its reference. If the preview is enough, it answers directly at zero extra tokens. If it needs the rest, it calls retrieve_context with the reference and a pattern or line range, and only the matching lines re-enter the context window."
 />
 
 ## Context Isolation
@@ -197,9 +197,9 @@ We ran the same agent over all 642 tasks of SWE-bench Pro v2 with GPT-5.6, once 
 | Errored trials | 23 | **4** |
 | Context window overflow crashes | 17 | **0** |
 
-On the tasks both configurations completed, accuracy is equal. The difference is everything else. The context manager cut input tokens by 46% and eliminated the overflow crash entirely: 17 trials died to it with the manager off, zero with `auto`.
+Excluding errored trials, accuracy is within 0.6 points (90.0% vs 90.6%). The difference is everything else. The context manager cut input tokens by 46% and eliminated the overflow crash entirely: 17 trials died to it with the manager off, zero with `auto`.
 
-ContextBench, a 50-task benchmark built to stress long-horizon context handling, shows the same shape with Claude Opus 4.8: `auto` at 72.3% against the unmanaged baseline's 71.1%, and a tuned retrieval configuration matching the baseline on 35% fewer input tokens. Tuned configurations beat `auto`. That gap is why the context manager accepts fine-grained strategies and not just a switch.
+ContextBench, a 50-task benchmark built to stress long-horizon context handling, shows the same shape with Claude Opus 4.8: `auto` scores highest at 72.3% against the unmanaged baseline's 71.1%, and a tuned retrieval configuration gives up 1.2 points for 35% fewer input tokens. That trade-off is why the context manager accepts fine-grained strategies and not just a switch.
 
 ## Conclusion
 
