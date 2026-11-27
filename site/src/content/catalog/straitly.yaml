@@ -1,0 +1,9 @@
+name: Straitly
+description: Run Strands agents on more than 150 models, including Claude, GPT, Gemini, Grok and DeepSeek, through Straitly's OpenAI-compatible API with one key.
+integrationType: model-provider
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/Straitly-ai/straitly
+docsUrl: https://github.com/Straitly-ai/straitly/blob/main/docs/strands-agents.md
+addedDate: 2026-11-26
