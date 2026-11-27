@@ -14,7 +14,7 @@ import { Model, resolveConfigMetadata } from '../model.js'
 import type { StreamOptions } from '../model.js'
 import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from '../model-info.js'
 import type { ChatCompletionsTools } from '../model-info.js'
-import type { Message } from '../../types/messages.js'
+import type { Message, ReasoningProviderData } from '../../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../streaming.js'
 import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
@@ -30,6 +30,8 @@ import {
   withResponsesHint,
 } from './chat-adapter.js'
 import {
+  DEFAULT_RESPONSES_MODEL_ID,
+  REASONING_PROVIDER,
   createResponsesStreamState,
   finalizeResponsesStream,
   formatResponsesRequest,
@@ -152,6 +154,20 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
    */
   get api(): OpenAIApi {
     return this._api
+  }
+
+  /**
+   * Takes back the reasoning the Responses adapter captured from the configured model, when stateless.
+   *
+   * @internal
+   */
+  override acceptsReasoning(providerData: ReasoningProviderData): boolean {
+    return (
+      this._api === 'responses' &&
+      !this.stateful &&
+      providerData.provider === REASONING_PROVIDER &&
+      providerData.modelId === (this.modelId ?? DEFAULT_RESPONSES_MODEL_ID)
+    )
   }
 
   /**
@@ -323,7 +339,8 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
       )
       const stream = await this._client.responses.create(request, { signal: options?.cancelSignal })
 
-      const state = createResponsesStreamState()
+      // Stateless only: a stored conversation keeps its reasoning server-side.
+      const state = createResponsesStreamState(stateful ? undefined : request.model)
 
       for await (const event of stream as AsyncIterable<ResponseStreamEvent>) {
         for (const sdkEvent of mapResponsesEventToSDK(event, state, stateful, options?.modelState)) {

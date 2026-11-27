@@ -1,4 +1,4 @@
-import type { Role, StopReason } from '../types/messages.js'
+import type { ReasoningProviderData, Role, StopReason } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
 import type { Citation, CitationGeneratedContent } from '../types/citations.js'
 
@@ -463,6 +463,11 @@ export interface ReasoningContentDelta {
    * Incremental redacted content data.
    */
   redactedContent?: Uint8Array
+
+  /**
+   * Provider-native reasoning for the block, sent only to the provider and model that produced it.
+   */
+  providerData?: ReasoningProviderData
 }
 
 /**

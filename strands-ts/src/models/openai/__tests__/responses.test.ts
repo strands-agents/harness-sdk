@@ -10,6 +10,7 @@ import {
   ToolUseBlock,
   ToolResultBlock,
   OffloadedBlock,
+  ReasoningBlock,
   UnknownBlock,
 } from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock } from '../../../types/media.js'
@@ -1257,5 +1258,187 @@ describe("OpenAIModel (api: 'responses')", () => {
         collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
       ).rejects.toThrow('some other failure')
     })
+  })
+})
+
+describe('OpenAIModel (api: responses) stateless reasoning replay', () => {
+  const user = (text: string): Message => new Message({ role: 'user', content: [new TextBlock(text)] })
+  const reasoningItem = (id: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    type: 'reasoning',
+    id,
+    summary: [],
+    content: [],
+    encrypted_content: 'enc',
+    ...extra,
+  })
+  const tagged = (id: string, modelId = 'gpt-4o', data: Record<string, unknown> = {}): ReasoningBlock =>
+    new ReasoningBlock({
+      providerData: { provider: 'openai_responses', modelId, data: { id, encrypted_content: 'enc', ...data } as any },
+    })
+
+  async function streamMessage(events: unknown[], config: Record<string, unknown> = {}): Promise<Message> {
+    const client = createMockClient(async function* () {
+      yield { type: 'response.created', response: { id: 'resp_1' } }
+      yield* events
+    })
+    const model = new OpenAIModel({ api: 'responses', client, modelId: 'gpt-4o', ...config })
+    const { result } = await collectGenerator(model.streamAggregated([user('go')]))
+    return result.message
+  }
+
+  async function request(messages: Message[], config: Record<string, unknown> = {}, options = {}): Promise<any> {
+    const capture: { request?: any } = {}
+    const client = createMockClient(async function* () {
+      yield { type: 'response.completed', response: { output: [] } }
+    }, capture)
+    const model = new OpenAIModel({ api: 'responses', client, modelId: 'gpt-4o', ...config })
+    await collectIterator(model.stream(messages, options))
+    return capture.request
+  }
+
+  it.each([
+    [undefined, ['reasoning.encrypted_content']],
+    [['web_search_call.results'], ['web_search_call.results', 'reasoning.encrypted_content']],
+    [['reasoning.encrypted_content'], ['reasoning.encrypted_content']],
+  ])('merges reasoning.encrypted_content into include %j', async (include, expected) => {
+    const params = include ? { include: [...include] } : {}
+    const req = await request([user('hi')], { params })
+    expect(req.include).toEqual(expected)
+    expect(params).toEqual(include ? { include } : {})
+  })
+
+  it('keeps the stateful path as is: no include and no replayed reasoning', async () => {
+    const modelState = new StateStore()
+    modelState.set('responseId', 'resp_0')
+    const messages = [user('hi'), new Message({ role: 'assistant', content: [tagged('rs_1')] }), user('next')]
+    const req = await request(messages, { stateful: true }, { modelState })
+    expect(req.previous_response_id).toBe('resp_0')
+    expect(req.include).toBeUndefined()
+    expect(req.input.some((item: any) => item.type === 'reasoning')).toBe(false)
+  })
+
+  it('captures each reasoning output item as its own block, keeping streamed text', async () => {
+    const message = await streamMessage([
+      { type: 'response.reasoning_summary_text.delta', delta: 'streamed' },
+      {
+        type: 'response.output_item.done',
+        item: reasoningItem('rs_1', { summary: [{ type: 'summary_text', text: 'streamed' }] }),
+      },
+      { type: 'response.output_item.done', item: reasoningItem('rs_2', { encrypted_content: 'enc2' }) },
+      { type: 'response.output_text.delta', delta: 'answer' },
+      { type: 'response.completed', response: { output: [reasoningItem('rs_1'), reasoningItem('rs_2')] } },
+    ])
+    expect(message.content).toEqual([
+      new ReasoningBlock({
+        text: 'streamed',
+        providerData: {
+          provider: 'openai_responses',
+          modelId: 'gpt-4o',
+          data: { id: 'rs_1', summary: [{ type: 'summary_text', text: 'streamed' }], encrypted_content: 'enc' },
+        },
+      }),
+      new ReasoningBlock({
+        providerData: {
+          provider: 'openai_responses',
+          modelId: 'gpt-4o',
+          data: { id: 'rs_2', encrypted_content: 'enc2' },
+        },
+      }),
+      new TextBlock('answer'),
+    ])
+  })
+
+  it('captures reasoning found only in the terminal output', async () => {
+    const content = [{ type: 'reasoning_text', text: 'full reasoning' }]
+    const message = await streamMessage([
+      { type: 'response.output_text.delta', delta: 'answer' },
+      {
+        type: 'response.completed',
+        response: { output: [reasoningItem('rs_1', { content, encrypted_content: null })] },
+      },
+    ])
+    expect(message.content).toEqual([
+      new TextBlock('answer'),
+      new ReasoningBlock({
+        text: 'full reasoning',
+        providerData: { provider: 'openai_responses', modelId: 'gpt-4o', data: { id: 'rs_1', content } },
+      }),
+    ])
+  })
+
+  it('streams response.reasoning.delta as reasoning content', async () => {
+    const message = await streamMessage([
+      { type: 'response.reasoning.delta', delta: 'thinking' },
+      { type: 'response.completed', response: {} },
+    ])
+    expect(message.content).toEqual([new ReasoningBlock({ text: 'thinking' })])
+  })
+
+  it('does not capture reasoning items when stateful', async () => {
+    const message = await streamMessage(
+      [
+        { type: 'response.output_item.done', item: reasoningItem('rs_1') },
+        { type: 'response.output_text.delta', delta: 'answer' },
+        { type: 'response.completed', response: { output: [reasoningItem('rs_1')] } },
+      ],
+      { stateful: true }
+    )
+    expect(message.content).toEqual([new TextBlock('answer')])
+  })
+
+  it('replays captured reasoning ahead of the turn it belongs to, in a fixed key order', async () => {
+    const summary = [{ type: 'summary_text', text: 'plan' }]
+    const messages = [
+      user('add'),
+      new Message({
+        role: 'assistant',
+        content: [
+          new TextBlock('calling'),
+          new ReasoningBlock({ text: 'plan', ...tagged('rs_1', 'gpt-4o', { summary }) }),
+          new ToolUseBlock({ name: 'add', toolUseId: 'c1', input: { a: 1 } }),
+        ],
+      }),
+      new Message({
+        role: 'user',
+        content: [new ToolResultBlock({ toolUseId: 'c1', status: 'success', content: [new TextBlock('2')] })],
+      }),
+    ]
+    const req = await request(messages)
+    expect(req.input.slice(1)).toEqual([
+      { type: 'reasoning', summary, id: 'rs_1', encrypted_content: 'enc' },
+      { role: 'assistant', content: 'calling' },
+      { type: 'function_call', call_id: 'c1', name: 'add', arguments: '{"a":1}' },
+      { type: 'function_call_output', call_id: 'c1', output: '2' },
+    ])
+    expect(Object.keys(req.input[1])).toEqual(['type', 'summary', 'id', 'encrypted_content'])
+  })
+
+  it.each([
+    ['another model', tagged('rs_1', 'gpt-5')],
+    [
+      'another provider',
+      new ReasoningBlock({ providerData: { provider: 'other', modelId: 'gpt-4o', data: { id: 'rs_1' } } }),
+    ],
+    ['plain text reasoning', new ReasoningBlock({ text: 'plain', signature: 'sig' })],
+    ['redacted reasoning', new ReasoningBlock({ redactedContent: new Uint8Array([1]) })],
+  ])('drops reasoning from %s', async (_label, block) => {
+    const warn = vi.spyOn(logger, 'warn')
+    const req = await request([user('hi'), new Message({ role: 'assistant', content: [block, new TextBlock('a')] })])
+    expect(req.input.slice(1)).toEqual([{ role: 'assistant', content: 'a' }])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('reasoning from another provider or model'))
+    warn.mockRestore()
+  })
+
+  it('accepts back only reasoning it captured from the configured model', () => {
+    const model = new OpenAIModel({ api: 'responses', client: {} as OpenAI, modelId: 'gpt-4o' })
+    expect(model.acceptsReasoning(tagged('rs_1').providerData!)).toBe(true)
+    expect(model.acceptsReasoning(tagged('rs_1', 'gpt-5').providerData!)).toBe(false)
+    const chat = new OpenAIModel({ api: 'chat', client: {} as OpenAI, modelId: 'gpt-4o' })
+    expect(chat.acceptsReasoning(tagged('rs_1').providerData!)).toBe(false)
+  })
+
+  it('keeps provider data through a JSON round trip', () => {
+    const block = tagged('rs_1')
+    expect(ReasoningBlock.fromJSON(JSON.parse(JSON.stringify(block)))).toEqual(block)
   })
 })

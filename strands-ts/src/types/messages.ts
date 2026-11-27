@@ -696,6 +696,26 @@ function parseToolResultContent(data: ToolResultContentData, onUnknown: OnUnknow
 /**
  * Data for a reasoning block.
  */
+/**
+ * Provider-native reasoning that only the provider and model that produced it can replay.
+ */
+export interface ReasoningProviderData {
+  /**
+   * The provider API that produced the reasoning, e.g. `'openai_responses'`.
+   */
+  provider: string
+
+  /**
+   * The model that produced the reasoning.
+   */
+  modelId: string
+
+  /**
+   * The provider's own reasoning payload, opaque to the SDK.
+   */
+  data: { [key: string]: JSONValue }
+}
+
 export interface ReasoningBlockData {
   /**
    * The text content of the reasoning process.
@@ -711,6 +731,11 @@ export interface ReasoningBlockData {
    * The redacted content of the reasoning process.
    */
   redactedContent?: Uint8Array
+
+  /**
+   * Provider-native reasoning, sent only to the provider and model that produced it.
+   */
+  providerData?: ReasoningProviderData
 }
 
 /**
@@ -739,6 +764,11 @@ export class ReasoningBlock
    */
   readonly redactedContent?: Uint8Array
 
+  /**
+   * Provider-native reasoning, sent only to the provider and model that produced it.
+   */
+  readonly providerData?: ReasoningProviderData
+
   constructor(data: ReasoningBlockData) {
     if (data.text !== undefined) {
       this.text = data.text
@@ -748,6 +778,9 @@ export class ReasoningBlock
     }
     if (data.redactedContent !== undefined) {
       this.redactedContent = data.redactedContent
+    }
+    if (data.providerData !== undefined) {
+      this.providerData = data.providerData
     }
   }
 
@@ -762,6 +795,7 @@ export class ReasoningBlock
         text: this.text,
         signature: this.signature,
         redactedContent: this.redactedContent ? encodeBase64(this.redactedContent) : undefined,
+        providerData: this.providerData,
       }),
     }
   }
@@ -787,6 +821,9 @@ export class ReasoningBlock
         typeof reasoning.redactedContent === 'string'
           ? decodeBase64(reasoning.redactedContent)
           : reasoning.redactedContent
+    }
+    if (reasoning.providerData !== undefined) {
+      result.providerData = reasoning.providerData
     }
     return new ReasoningBlock(result)
   }

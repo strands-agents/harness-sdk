@@ -41,6 +41,7 @@ describe('Responses durable prompt caching', () => {
       model: 'gpt-6-sol',
       stream: true,
       store: false,
+      include: ['reasoning.encrypted_content'],
       prompt_cache_options: { mode: 'explicit' },
       input: [
         {
@@ -231,6 +232,7 @@ describe('Responses durable prompt caching', () => {
       input: textInput('question', enabled ? marker : undefined),
       stream: true,
       store: false,
+      include: ['reasoning.encrypted_content'],
       ...(enabled && { prompt_cache_options: { mode: 'explicit' } }),
     })
   })
@@ -250,7 +252,13 @@ describe('Responses durable prompt caching', () => {
   it.each([undefined, { messagesTTL: false }])('does not opt in with cacheConfig=%j', (cacheConfig) => {
     const modelConfig: OpenAIResponsesConfig = { modelId: 'gpt-6-sol', ...(cacheConfig ? { cacheConfig } : {}) }
     const req = format(modelConfig, [user('question')])
-    expect(req).toStrictEqual({ model: 'gpt-6-sol', input: textInput('question'), stream: true, store: false })
+    expect(req).toStrictEqual({
+      model: 'gpt-6-sol',
+      input: textInput('question'),
+      stream: true,
+      store: false,
+      include: ['reasoning.encrypted_content'],
+    })
   })
 
   it.each<[CacheConfig, Record<string, unknown>, object, object]>([
@@ -267,6 +275,7 @@ describe('Responses durable prompt caching', () => {
       input: textInput('question', checkpoint),
       stream: true,
       store: false,
+      include: ['reasoning.encrypted_content'],
       prompt_cache_options: options,
     })
     expect(warnSpy).not.toHaveBeenCalled()
@@ -279,6 +288,7 @@ describe('Responses durable prompt caching', () => {
       input: textInput('question'),
       stream: true,
       store: false,
+      include: ['reasoning.encrypted_content'],
       prompt_cache_options: { ttl: '12h' },
     })
   })
@@ -301,7 +311,13 @@ describe('Responses durable prompt caching', () => {
 
   it('does not map cache lifetimes on models without cache points', () => {
     const req = format({ modelId: 'gpt-5.5', cacheConfig: { ttl: '12h', messagesTTL: '12h' } }, [user('question')])
-    expect(req).toStrictEqual({ model: 'gpt-5.5', input: textInput('question'), stream: true, store: false })
+    expect(req).toStrictEqual({
+      model: 'gpt-5.5',
+      input: textInput('question'),
+      stream: true,
+      store: false,
+      include: ['reasoning.encrypted_content'],
+    })
   })
 
   it.each([{ mode: 'implicit', ttl: '30m' }, { mode: 'explicit' }, { ttl: '30m' }])(
