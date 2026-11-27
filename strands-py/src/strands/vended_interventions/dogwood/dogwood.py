@@ -30,15 +30,13 @@ from ._schema_generator import (
 )
 
 if TYPE_CHECKING:
-    # Read by a module-private helper only, so it can stay type-only; the types the public surface
-    # needs are declared below instead.
     from dogwood._dogwood import AuthorizerDecision
 
 logger = logging.getLogger(__name__)
 
-# Declared here rather than imported from `dogwood._dogwood`: the binding ships these in its stub
-# only, so importing them at runtime raises ImportError, and a public signature annotated with one
-# cannot be resolved by anything that introspects type hints.
+# The binding ships its types in a stub only, so importing one at runtime raises ImportError and
+# nothing introspecting a public signature annotated with it can resolve it. Only a private
+# signature annotates the import above; the types the public surface needs are declared here.
 
 DogwoodValue = None | bool | int | float | str | Decimal | Sequence["DogwoodValue"] | Mapping[str, "DogwoodValue"]
 """A value Dogwood accepts in an event. ``{"__entity": EntityRef}`` and ``{"__decimal": "1.50"}``
@@ -216,19 +214,15 @@ class DogwoodAuthorization(InterventionHandler):
             if action_schema
             else apply_namespace(generate_action_schema(tools or []), namespace)
         )
-        # A hand-written schema declares its own types, so its author chose what each parameter
-        # accepts and nothing here should widen a value against that choice.
+        # A hand-written schema's author chose what each parameter accepts, so no value is widened
+        # against that choice.
         self._decimal_parameters = {} if action_schema else decimal_parameters(specs_of(tools or []))
-        # Reject a policy set that does not type-check here, rather than denying at the first call.
         errors = validate(self._policies, self._action_schema)["errors"]
         if errors:
             raise ValueError(f"Dogwood policy validation failed: {', '.join(error['message'] for error in errors)}")
 
         self._authorizer = DogwoodAuthorizer(self._policies, self._action_schema)
-        # The schema is the source of truth for both the action ids and the namespace, so a policy
-        # and a schema can never disagree about either.
         prefix = namespace_prefix_of(self._authorizer.actions)
-        # Keyed by the unquoted tool name in each fully qualified action id.
         self._actions_by_tool = {
             action[action.rfind("::") + 2 :].strip('"'): action for action in self._authorizer.actions
         }
@@ -255,11 +249,9 @@ class DogwoodAuthorization(InterventionHandler):
         self._context_enricher = context_enricher
         self._entities = entities or []
         self._on_error = on_error
-        # Calls decided and allowed, by tool-use id, until their result is recorded. Keeps a call
-        # another handler blocked out of the temporal history, and keeps a resumed interrupt from
-        # being decided twice. Holds what the result event needs so the after phase runs no user
-        # code: a resolver must not be asked twice and allowed to answer differently, or to raise
-        # after the tool has already run.
+        # Allowed calls by tool-use id, until their result is recorded. Captured rather than
+        # re-resolved so the after phase runs no user code: a resolver must not be asked twice and
+        # allowed to answer differently, or to raise after the tool has already run.
         self._allowed_calls: dict[str, _AllowedCall] = {}
 
     def before_tool_call(self, event: BeforeToolCallEvent, **kwargs: Any) -> Proceed | Deny:
@@ -268,8 +260,7 @@ class DogwoodAuthorization(InterventionHandler):
         tool_use_id = event.tool_use["toolUseId"]
         # Resuming an interrupt re-fires this event; the call is already in the history, so
         # deciding again would count it twice. The tool name is matched too, so an abandoned
-        # interrupt's entry cannot wave through a later call that reuses its id for a different
-        # tool.
+        # interrupt's entry cannot wave through a later call that reuses its id for another tool.
         allowed = self._allowed_calls.get(tool_use_id)
         if allowed is not None and allowed.tool_name == tool_name:
             return Proceed()
@@ -306,10 +297,9 @@ class DogwoodAuthorization(InterventionHandler):
                 }
             )
         except DogwoodError as error:
-            # Upstream's contract is that a failed call is *no decision* and the host must treat it
-            # as a deny. Tool arguments are model output, so letting it escape would hand a
-            # fail-open path to `on_error='proceed'` that the model can reach by adding one junk
-            # argument.
+            # Upstream's contract is that a failed call is *no decision*, which the host must treat
+            # as a deny. Tool arguments are model output, so letting it escape would give the model
+            # a fail-open path under `on_error='proceed'` by adding one junk argument.
             return Deny(reason=f"Dogwood could not decide: {error}")
 
         denial = _denial_reason(decision, tool_name)
@@ -324,8 +314,7 @@ class DogwoodAuthorization(InterventionHandler):
     def after_tool_call(self, event: AfterToolCallEvent, **kwargs: Any) -> Proceed:
         """Record the result of a call this handler allowed, so temporal rules can read it."""
         tool_use_id = event.tool_use["toolUseId"]
-        # A blocked call still reaches here, so only a call this handler allowed is a candidate for
-        # the history.
+        # A blocked call still reaches here, so only a call this handler allowed can be recorded.
         allowed = self._allowed_calls.get(tool_use_id)
         if allowed is None or allowed.tool_name != event.tool_use["name"]:
             return Proceed()
@@ -358,8 +347,8 @@ class DogwoodAuthorization(InterventionHandler):
                 }
             )
         except DogwoodError as error:
-            # An unrecorded result cannot be enforced, so a later rule keyed on it does not fire.
-            # Failing the tool call that already ran is worse.
+            # An unrecorded result cannot be enforced, but failing a tool call that already ran is
+            # worse.
             logger.warning(
                 "tool=<%s>, kind=<%s> | dogwood could not record a tool result, %s", allowed.tool_name, kind, error
             )
@@ -493,7 +482,7 @@ def _cedar_datetime(timestamp: int) -> dict[str, Any]:
 
 def _denial_reason(decision: AuthorizerDecision | None, tool_name: str) -> str | None:
     """The denial reason for a decision, or None when it allowed."""
-    # A decision kind always yields a verdict; treat an absent one as fail-closed.
+    # Every decision kind yields a verdict, so an absent decision is a broken contract, not an allow.
     if decision is None:
         return f"No Dogwood decision returned for '{tool_name}'; denying"
     if decision["allowed"]:
