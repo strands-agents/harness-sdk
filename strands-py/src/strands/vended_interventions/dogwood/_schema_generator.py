@@ -39,6 +39,7 @@ def generate_action_schema(tools: list[AgentTool | ToolSpec]) -> str:
 
     Raises:
         DogwoodError: If a tool spec is not a manifest the converter accepts.
+        ValueError: If the generated schema is not in the shape :func:`_allow_absent_input` reads.
     """
     specs = [tool.tool_spec if isinstance(tool, AgentTool) else tool for tool in tools]
     retyped = [_retype_for_raw_arguments(spec) for spec in specs]
@@ -149,14 +150,25 @@ def _allow_absent_input(schema: str, specs: list[ToolSpec]) -> str:
 
     Returns:
         The schema, with ``input`` optional on the actions whose arguments may be absent.
+
+    Raises:
+        ValueError: If a tool's ``input`` declaration is not found exactly once, which means the
+            installed Dogwood generates a shape this does not recognize.
     """
     for spec in specs:
         if _required_parameters(spec):
             continue
-        # The action's input type is named `<tool>Input`; a parameter's own object type carries
-        # `_Input_`, so the action's context block is the only place this reads.
-        declaration = f"input: {spec['name']}Input"
-        schema = schema.replace(declaration, f"input?: {spec['name']}Input")
+        name = spec["name"]
+        # The declaration has to be matched whole: `input: aInput` is a prefix of the next tool's
+        # `input: aInputInput`, and relaxing that one would admit a call missing a required
+        # argument. The type name ends the declaration, so the lookahead anchors it.
+        declaration = re.compile(rf"\binput: {re.escape(name)}Input(?=[,\s])")
+        schema, found = declaration.subn(f"input?: {name}Input", schema)
+        if found != 1:
+            raise ValueError(
+                f"expected one `input: {name}Input` declaration in the generated schema for tool '{name}', "
+                f"found {found}; the installed `dogwood-aws` generates a shape this handler cannot relax"
+            )
     return schema
 
 
