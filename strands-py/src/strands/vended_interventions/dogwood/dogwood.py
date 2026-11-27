@@ -5,18 +5,20 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from dogwood import DogwoodAuthorizer, DogwoodError, lower, validate
+from typing_extensions import NotRequired, TypedDict
 
 from ...hooks.events import AfterToolCallEvent, BeforeToolCallEvent
 from ...interventions.actions import Deny, Proceed
 from ...interventions.handler import InterventionHandler, OnError
 from ...types.tools import AgentTool, ToolSpec
-from ._file_loaders import load_source
 from ._schema_generator import (
     RESOURCE,
     apply_namespace,
@@ -26,9 +28,36 @@ from ._schema_generator import (
 )
 
 if TYPE_CHECKING:
-    from dogwood._dogwood import AuthorizerDecision, Diagnostic, DogwoodValue, EntityInput, EntityRef
+    # Read by a module-private helper only, so it can stay type-only; the types the public surface
+    # needs are declared below instead.
+    from dogwood._dogwood import AuthorizerDecision
 
 logger = logging.getLogger(__name__)
+
+# Declared here rather than imported from `dogwood._dogwood`: the binding ships these in its stub
+# only, so importing them at runtime raises ImportError, and a public signature annotated with one
+# cannot be resolved by anything that introspects type hints.
+
+DogwoodValue = None | bool | int | float | str | Decimal | Sequence["DogwoodValue"] | Mapping[str, "DogwoodValue"]
+"""A value Dogwood accepts in an event. ``{"__entity": EntityRef}`` and ``{"__decimal": "1.50"}``
+are its tagged escapes."""
+
+
+class EntityRef(TypedDict):
+    """A reference to an entity by type and id."""
+
+    type: str
+    id: str
+
+
+class EntityInput(TypedDict):
+    """An entity supplied to a decision: its id, and the attributes and parents a policy reads."""
+
+    type: str
+    id: str
+    attrs: NotRequired[Mapping[str, DogwoodValue]]
+    parents: NotRequired[list[EntityRef]]
+
 
 ENRICHED_GROUP = "session"
 """The one context group a ``context_enricher`` can add."""
@@ -39,13 +68,13 @@ INPUT_GROUP = "input"
 SYSTEM_GROUP = "system"
 """The context group Dogwood's MCP schema template declares for the wall clock."""
 
-PrincipalResolver = Callable[[dict[str, Any]], "EntityRef | None"]
+PrincipalResolver = Callable[[dict[str, Any]], EntityRef | None]
 """Resolves a principal from invocation_state. Return None to deny (fail-closed)."""
 
-ContextEnricher = Callable[[dict[str, Any]], "dict[str, DogwoodValue]"]
+ContextEnricher = Callable[[dict[str, Any]], dict[str, DogwoodValue]]
 """Adds fields to context.session. Receives {'tool_name', 'tool_input', 'invocation_state'}."""
 
-EventGroups = dict[str, "dict[str, DogwoodValue]"]
+EventGroups = dict[str, dict[str, DogwoodValue]]
 """Event field groups, ``group -> {field -> value}``."""
 
 
@@ -81,13 +110,12 @@ class DogwoodAuthorization(InterventionHandler):
     histories mixing. History is never pruned; :meth:`reset` drops every principal's at once.
 
     A tool's result is not recorded, only the fact that it returned, so a predicate on a result
-    field (``response{ output.x: ... }``) type-checks and then never matches. A condition compares
-    the tool arguments as the model emitted them, and a generated schema is typed to match, so an
-    enum parameter is compared as a string and a number parameter as a whole number.
+    field (``response{ output.x: ... }``) type-checks and then never matches. Arguments are
+    compared as the model emitted them: an enum parameter as a string, a number as a whole number.
 
-    Dogwood checks a call against the schema before it will decide, so arguments the tool does not
-    declare — or a required one the model left out — deny the call rather than reaching the tool.
-    The denial names the mismatch, which a model can act on when it retries.
+    Dogwood checks a call against the schema before it will decide, so an argument the tool does
+    not declare — or a required one the model left out — denies the call rather than reaching the
+    tool. The denial names the mismatch, which a model can act on when it retries.
 
     Requires the ``dogwood-aws`` package.
 
@@ -124,55 +152,32 @@ class DogwoodAuthorization(InterventionHandler):
 
         Args:
             policies: Dogwood policy text, or a path to a ``.dw`` file on disk.
-            tools: Tools the action schema is generated from. Pass the tools themselves or their
+            tools: Tools the action schema is generated from, as the tools themselves or their
                 specs.
             action_schema: Cedar action schema text, or a path to a ``.cedarschema`` file.
-                Generated from ``tools`` when omitted.
-
-                The handler reads the namespace from the schema's actions and derives the default
-                principal and the resource from it, so the schema must declare its user entity as
-                ``User`` and its resource entity as ``Resource``.
+                Generated from ``tools`` when omitted. The namespace, the default principal and
+                the resource are read from it, so it must declare its user entity as ``User`` and
+                its resource entity as ``Resource``.
             entities: Entities supplied to every decision — attributes and hierarchy a policy
-                reads.
-
-                Requires ``action_schema``; a non-empty list alongside ``tools`` raises, because a
-                generated schema declares ``entity User;`` / ``entity Resource;`` with no
-                attributes and no membership, so an entity carrying either fails conformance at
+                reads. Requires ``action_schema``: a generated schema declares its entities with
+                no attributes and no membership, so an entity carrying either fails conformance at
                 decision time and denies every call.
-            namespace: Namespace for a generated action schema. Omit it and the actions and
-                entities are declared at the top level, so policies name ``Action::"<tool>"`` and
-                the default principal is ``User::"anonymous"``.
-
-                Set it to qualify every one of those — ``Acme::Action::"<tool>"`` — which a policy
-                then spells out in each rule that scopes an action, names a principal, reads
-                ``context.input``, or writes a temporal predicate. A ``principal`` or
-                ``principal_resolver`` carries the qualified type too, as in
-                ``{'type': 'Acme::User', 'id': 'alice'}``.
-
-                Only valid with ``tools``; a hand-written ``action_schema`` declares its own.
-            principal: Static principal. Defaults to ``User::"anonymous"``, qualified by the
-                schema's namespace when it declares one. Mutually exclusive with
-                ``principal_resolver``.
-
-                A generated schema declares ``User`` as its only principal type, so any other type
-                raises. A hand-written ``action_schema`` declares its own.
+            namespace: Namespace for a generated action schema, qualifying every action and entity
+                it declares — ``Acme::Action::"<tool>"``, and a principal given as
+                ``{'type': 'Acme::User', 'id': 'alice'}``. Omit it and they are declared at the top
+                level, so a policy names ``Action::"<tool>"`` and the default principal is
+                ``User::"anonymous"``. Only valid with ``tools``.
+            principal: Static principal, ``User::"anonymous"`` by default, qualified by the
+                schema's namespace when it declares one. Against a generated schema the type must
+                be ``User``. Mutually exclusive with ``principal_resolver``.
             principal_resolver: Dynamic principal resolver for multi-tenant agents. Return None to
                 deny (fail-closed). Mutually exclusive with ``principal``.
-
-                Against a generated schema the type must be ``User``, qualified by ``namespace``;
-                any other type denies the call.
             context_enricher: Adds fields to the ``session`` group of the Cedar request context,
-                read by a policy as ``context.session.<field>``. Use it to forward
-                ``invocation_state`` values a tool's arguments do not carry.
-
-                Dogwood checks a request's context against the action's context type, so the
-                schema must declare the group: this requires an ``action_schema`` that declares
-                ``session`` on every tool action, and raises otherwise.
-
-                These fields reach the ``when { ... }`` condition only — a temporal predicate
-                cannot reference an enriched field, because the event schema does not declare one.
-                Correlating history by principal needs no enricher — the default schema pins every
-                predicate to the deciding principal already.
+                read by a policy as ``context.session.<field>``, for ``invocation_state`` values a
+                tool's arguments do not carry. Dogwood checks a request's context against the
+                action's context type, so this requires an ``action_schema`` declaring ``session``
+                on every tool action. The fields reach a ``when`` condition only, never a temporal
+                predicate.
             on_error: What to do when ``principal_resolver`` or ``context_enricher`` raises:
                 ``'throw'`` (default) re-raises, ``'deny'`` denies the tool call (fail-closed).
 
@@ -180,8 +185,8 @@ class DogwoodAuthorization(InterventionHandler):
                 check. A failed Dogwood decision always denies regardless of this setting.
 
         Raises:
-            ValueError: If neither ``action_schema`` nor ``tools`` is supplied, if both
-                ``principal`` and ``principal_resolver`` are, if ``entities`` is non-empty without
+            ValueError: If neither ``action_schema`` nor ``tools`` is supplied, if ``principal``
+                and ``principal_resolver`` are both, if ``entities`` is non-empty without
                 ``action_schema``, if ``namespace`` is supplied with one or is not a legal Cedar
                 namespace, if ``principal`` is not of the type a generated schema declares, if
                 ``context_enricher`` is supplied against a schema that declares no ``session``
@@ -202,13 +207,16 @@ class DogwoodAuthorization(InterventionHandler):
             )
         assert_cedar_namespace(namespace)
 
-        self._policies = load_source(policies, ".dw")
+        self._policies = _load_source(policies, ".dw")
         self._action_schema = (
-            load_source(action_schema, ".cedarschema")
+            _load_source(action_schema, ".cedarschema")
             if action_schema
             else apply_namespace(generate_action_schema(tools or []), namespace)
         )
-        _assert_policy_type_checks(validate(self._policies, self._action_schema)["errors"])
+        # Reject a policy set that does not type-check here, rather than denying at the first call.
+        errors = validate(self._policies, self._action_schema)["errors"]
+        if errors:
+            raise ValueError(f"Dogwood policy validation failed: {', '.join(error['message'] for error in errors)}")
 
         self._authorizer = DogwoodAuthorizer(self._policies, self._action_schema)
         # The schema is the source of truth for both the action ids and the namespace, so a policy
@@ -382,8 +390,7 @@ class DogwoodAuthorization(InterventionHandler):
         """The tools whose action does not admit ``group``, sorted.
 
         Only the actions a tool call can land on: the schema's gateway-level actions declare no
-        arguments, so no call is ever decided against one and no context this handler builds ever
-        reaches it.
+        arguments, so no call is ever decided against one.
         """
         return sorted(
             tool
@@ -433,6 +440,21 @@ class DogwoodAuthorization(InterventionHandler):
         return max(int(time.time()), self._authorizer.last_timestamp or 0)
 
 
+def _load_source(value: str, extension: str) -> str:
+    """Read ``value`` from disk when it names a file with ``extension``, else take it as source text.
+
+    Raises:
+        FileNotFoundError: If ``value`` names a file that does not exist.
+    """
+    if not value.endswith(extension):
+        return value
+
+    path = Path(value)
+    if not path.exists():
+        raise FileNotFoundError(f"Dogwood {extension} file not found: {value}")
+    return path.read_text(encoding="utf-8")
+
+
 def _cedar_datetime(timestamp: int) -> dict[str, Any]:
     """``timestamp`` as a Cedar ``datetime`` extension value, the JSON escape Dogwood accepts."""
     moment = datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -453,31 +475,13 @@ def _denial_reason(decision: AuthorizerDecision | None, tool_name: str) -> str |
     return f"Access denied by Dogwood policy{f' (rule {rules})' if rules else ''}"
 
 
-def _assert_policy_type_checks(errors: list[Diagnostic]) -> None:
-    """Reject a policy set that does not type-check, rather than denying at the first tool call.
-
-    Args:
-        errors: The validation errors to judge.
-
-    Raises:
-        ValueError: Naming every error.
-    """
-    if errors:
-        raise ValueError(f"Dogwood policy validation failed: {', '.join(error['message'] for error in errors)}")
-
-
 def _context_groups_of(policies: str, action_schema: str) -> dict[str, frozenset[str]]:
     """The context groups each action declares, by unqualified action name.
 
     Read from the lowered Cedar schema, so the handler sends a context the action's type admits:
-    Dogwood rejects an event whose context carries an undeclared group, and a context missing a
-    required one fails conformance. An action name is the tool name, so the schema's own
-    gateway-level actions are in the map too; they declare no ``input`` group, which is what tells
-    them apart from an action a tool call can land on.
-
-    Args:
-        policies: Dogwood policy text.
-        action_schema: Cedar action schema text.
+    Dogwood rejects an event carrying an undeclared group, and one missing a required group fails
+    conformance. An action name is the tool name, so the schema's own gateway-level actions are in
+    the map too, told apart by declaring no ``input`` group.
 
     Returns:
         Declared context group names by action name, empty when the schema declares no actions.
