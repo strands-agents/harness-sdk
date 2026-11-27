@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="context-archive-preview" viewBox="0 0 720 220" width="720" height="220">
+  <!-- Type: architecture with boundary. Story: the context window holds only a preview; the lossless block waits in the archive and only the requested slice comes back. -->
+  <!-- Standalone fallback: zero-specificity rules, so diagrams.css wins whenever the SVG is inlined on the site. -->
+  <style>
+    :where(.context-archive-preview) { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; }
+    :where(.context-archive-preview .dg-bg) { fill: #ffffff; }
+    :where(.context-archive-preview .dg-zone) { fill: #f7f7f7; stroke: rgba(0, 0, 0, 0.16); stroke-width: 1; }
+    :where(.context-archive-preview .dg-node) { fill: #ffffff; stroke: rgba(0, 0, 0, 0.55); stroke-width: 1; }
+    :where(.context-archive-preview .dg-node.is-focal) { fill: #e8f3ee; stroke: #007a3d; }
+    :where(.context-archive-preview .dg-name) { fill: #000000; font-size: 14px; font-weight: 600; }
+    :where(.context-archive-preview .is-focal-text) { fill: #007a3d; }
+    :where(.context-archive-preview .dg-sub) { fill: #666464; font-size: 12px; }
+    :where(.context-archive-preview .dg-code) { fill: #666464; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+    :where(.context-archive-preview .dg-label) { fill: #666464; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; letter-spacing: 0.06em; }
+    :where(.context-archive-preview .dg-eyebrow) { fill: #666464; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; font-weight: 500; letter-spacing: 0.12em; }
+    :where(.context-archive-preview .dg-edge) { fill: none; stroke: #666464; stroke-width: 1.25; }
+    :where(.context-archive-preview .dg-edge.is-dashed) { stroke-width: 1; stroke-dasharray: 4 3; }
+    :where(.context-archive-preview .dg-head) { fill: #666464; }
+    :where(.context-archive-preview .dg-mask) { fill: #ffffff; }
+    @media (prefers-color-scheme: dark) {
+    :where(.context-archive-preview .dg-bg) { fill: #000000; }
+    :where(.context-archive-preview .dg-zone) { fill: #080808; stroke: rgba(255, 255, 255, 0.16); }
+    :where(.context-archive-preview .dg-node) { fill: #000000; stroke: rgba(255, 255, 255, 0.55); }
+    :where(.context-archive-preview .dg-node.is-focal) { fill: #00120a; stroke: #00cc60; }
+    :where(.context-archive-preview .dg-name) { fill: #ffffff; }
+    :where(.context-archive-preview .is-focal-text) { fill: #00cc60; }
+    :where(.context-archive-preview .dg-sub) { fill: #999696; }
+    :where(.context-archive-preview .dg-code) { fill: #999696; }
+    :where(.context-archive-preview .dg-label) { fill: #999696; }
+    :where(.context-archive-preview .dg-eyebrow) { fill: #999696; }
+    :where(.context-archive-preview .dg-edge) { stroke: #999696; }
+    :where(.context-archive-preview .dg-head) { fill: #999696; }
+    :where(.context-archive-preview .dg-mask) { fill: #000000; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+  <rect class="dg-bg" width="720" height="220"/>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="16" y="40" width="272" height="148" rx="8"/>
+  <text class="dg-eyebrow" x="32" y="64">CONTEXT WINDOW · BILLED EVERY TURN</text>
+  <rect class="dg-zone" x="432" y="40" width="272" height="148" rx="8"/>
+  <text class="dg-eyebrow" x="448" y="64">ARCHIVE · STORAGE, NEVER BILLED</text>
+
+  <!-- Edges -->
+  <path class="dg-edge is-dashed" d="M264,112 H454" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-dashed" d="M456,148 H266" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask" x="300" y="92" width="120" height="12" rx="2"/>
+  <text class="dg-label" x="360" y="101" text-anchor="middle">RETRIEVE CONTEXT</text>
+  <rect class="dg-mask" x="292" y="152" width="136" height="12" rx="2"/>
+  <text class="dg-label" x="360" y="161" text-anchor="middle">ONLY THE SLICE ASKED</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-focal" x="40" y="84" width="224" height="80" rx="6"/>
+  <text class="dg-name is-focal-text" x="152" y="110" text-anchor="middle">Preview</text>
+  <text class="dg-sub" x="152" y="128" text-anchor="middle">head + tail of ~12,500 tokens</text>
+  <text class="dg-code" x="152" y="146" text-anchor="middle">toolResult tu_abc123</text>
+
+  <rect class="dg-node" x="456" y="84" width="224" height="80" rx="6"/>
+  <text class="dg-name" x="568" y="110" text-anchor="middle">Lossless block</text>
+  <text class="dg-sub" x="568" y="128" text-anchor="middle">the full 12,500-token result</text>
+  <text class="dg-code" x="568" y="146" text-anchor="middle">tu_abc123_0</text>
+</svg>

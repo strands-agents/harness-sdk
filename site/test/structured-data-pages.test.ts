@@ -302,7 +302,8 @@ describe('structured data per page type', () => {
   })
 
   it('keeps BlogPosting in the page graph', async () => {
-    const posts = await getPublishedPosts()
+    // The dist build is production, which drops drafts; this test env is dev, where getPublishedPosts keeps them.
+    const posts = (await getPublishedPosts()).filter((post) => !post.data.draft)
     expect(posts.length).toBeGreaterThan(0)
     for (const post of posts) {
       const route = `/blog/${post.id}/`
