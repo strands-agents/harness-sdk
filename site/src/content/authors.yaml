@@ -105,8 +105,8 @@
 
 - id: jonathan-buck
   name: Jonathan Buck
-  role: "Senior Software Engineer, AWS"
-  bio: Jonathan Buck is a Senior Software Engineer at Amazon Web Services focused on building agent environments, evaluation infrastructure, and systems to support productization of agentic AI.
+  role: "Principal Engineer, AWS"
+  bio: Jonathan Buck is a Principal Engineer at AWS working on making AI agents more reliable and cost-effective. His work spans the whole improvement loop, from environments to evaluation to optimization, across Strands and Amazon Bedrock AgentCore. He works with research and engineering teams to shape AWS's agentic AI products and services.
 
 - id: vinayak-arannil
   name: Vinayak Arannil
