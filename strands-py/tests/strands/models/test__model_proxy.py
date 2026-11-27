@@ -7,6 +7,7 @@ import unittest.mock
 import pytest
 
 from strands.agent.invocation_context import ModelUsage, _create_invocation_context
+from strands.models._model_info import ModelCapabilities, ModelInfo
 from strands.models._model_proxy import ModelProxy
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
@@ -242,3 +243,100 @@ def test_prepare_sends_summary_text_unless_the_model_summarizes_server_side(serv
     ]
     assert trailing_blocks == 1
     assert messages == original
+
+
+def _accepting(*accepted_mime_types: str) -> unittest.mock.MagicMock:
+    model = unittest.mock.MagicMock()
+    model.model_info = ModelInfo(capabilities=ModelCapabilities(accepted_mime_types=accepted_mime_types))
+    return model
+
+
+_PNG = {"image": {"format": "png", "source": {"bytes": b"1"}}}
+_GIF = {"image": {"format": "gif", "source": {"bytes": b"1"}}}
+_DOCX = {"document": {"name": "report", "format": "docx", "source": {"bytes": b"1"}}}
+_MP4 = {"video": {"format": "mp4", "source": {"bytes": b"1"}}}
+_THREE_GP = {"video": {"format": "three_gp", "source": {"bytes": b"1"}}}
+
+
+def test_prepare_sends_a_text_in_place_of_each_media_block_the_model_does_not_accept():
+    tool_result = {"toolUseId": "t-1", "status": "success", "content": [_GIF, {"text": "done"}]}
+    messages = [user({"text": "look"}, _PNG, _DOCX, _THREE_GP), user({"toolResult": tool_result})]
+    original = copy.deepcopy(messages)
+
+    sent, _ = ModelProxy(_accepting("image/png", "application/pdf"))._prepare(messages)
+
+    docx_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    assert sent == [
+        user(
+            {"text": "look"},
+            _PNG,
+            {"text": f'[document "report" omitted: this model can\'t read {docx_type}]'},
+            {"text": "[video omitted: this model can't read video/3gpp]"},
+        ),
+        user(
+            {
+                "toolResult": {
+                    **tool_result,
+                    "content": [{"text": "[image omitted: this model can't read image/gif]"}, {"text": "done"}],
+                }
+            }
+        ),
+    ]
+    assert messages == original
+
+
+def test_prepare_passes_a_message_through_when_the_model_accepts_all_of_its_media():
+    message = user(_PNG, _MP4)
+
+    sent, _ = ModelProxy(_accepting("image/*", "video/*"))._prepare([message])
+
+    assert sent[0] is message
+
+
+def test_prepare_sends_every_block_to_a_model_without_an_accepted_list(model):
+    messages = [user(_GIF, _DOCX, _MP4)]
+
+    sent, _ = ModelProxy(model)._prepare(messages)
+
+    assert sent is messages
+
+
+def test_prepare_sends_only_text_to_a_text_only_model():
+    sent, _ = ModelProxy(_accepting())._prepare([user(_PNG)])
+
+    assert sent == [user({"text": "[image omitted: this model can't read image/png]"})]
+
+
+def test_prepare_replaces_audio_by_its_audio_type():
+    audio = {"audio": {"format": "mp3", "source": {"bytes": b"1"}}}
+
+    sent, _ = ModelProxy(_accepting("image/*"))._prepare([user(audio)])
+
+    assert sent == [user({"text": "[audio omitted: this model can't read audio/mp3]"})]
+
+
+@pytest.mark.asyncio
+async def test_count_tokens_counts_the_placeholder_it_would_send():
+    model = _accepting("image/png")
+    model.count_tokens = unittest.mock.AsyncMock(return_value=1)
+
+    await ModelProxy(model).count_tokens([user(_GIF)])
+
+    model.count_tokens.assert_awaited_once_with([user({"text": "[image omitted: this model can't read image/gif]"})])
+
+
+@pytest.mark.parametrize("image_format", ["jpg", "JPEG"])
+def test_prepare_reads_the_jpg_alias_and_any_case(image_format):
+    image = {"image": {"format": image_format, "source": {"bytes": b"1"}}}
+
+    sent, _ = ModelProxy(_accepting("image/png"))._prepare([user(image)])
+
+    assert sent == [user({"text": "[image omitted: this model can't read image/jpeg]"})]
+
+
+def test_prepare_keeps_a_block_whose_format_has_no_mime_type():
+    message = user({"image": {"format": "heic", "source": {"bytes": b"1"}}})
+
+    sent, _ = ModelProxy(_accepting())._prepare([message])
+
+    assert sent[0] is message

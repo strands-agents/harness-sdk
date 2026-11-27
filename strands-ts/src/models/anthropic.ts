@@ -22,7 +22,7 @@ import {
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
 import type { ToolSpec } from '../tools/types.js'
-import { lookupModelInfo, ModelInfo } from './model-info.js'
+import { acceptsMimeType, lookupModelInfo, ModelInfo } from './model-info.js'
 import { withToolReferenceText } from './tool-references.js'
 import { Message, SummaryBlock } from '../types/messages.js'
 import type { ContentBlock, SystemPrompt, ToolResultContent } from '../types/messages.js'
@@ -88,6 +88,18 @@ interface TurnScopedSystemMessage {
   content: Anthropic.TextBlockParam[]
   clear_at: 'next_user_message'
 }
+// The media types this provider's formatter sends; it raises on any other media block.
+const SENDABLE_MIME_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'application/pdf',
+  'text/csv',
+  'text/html',
+  'text/markdown',
+  'text/plain',
+]
 const TEXT_FILE_FORMATS = ['txt', 'md', 'markdown', 'csv', 'json', 'xml', 'html', 'yml', 'yaml', 'js', 'ts', 'py']
 
 // API version 2026-10-21 removed the sampling params and rejects document blocks in assistant messages.
@@ -414,12 +426,25 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
-  /** Turns temporary messages and native deferred tools back on for the models the shared model info lists. */
+  /**
+   * Turns temporary messages and native deferred tools back on for the models the shared model info lists, and narrows
+   * the accepted media types to those this provider sends.
+   */
   override get modelInfo(): ModelInfo {
-    const { temporaryMessages, deferredToolLoading } = lookupModelInfo(this.modelId ?? '').capabilities ?? {}
+    const shared = lookupModelInfo(this.modelId ?? '')
+    const capabilities = shared.capabilities ?? {}
+    // JSON and XML documents go out as text, so a model that reads text reads them.
+    const asText = acceptsMimeType(shared, 'text/plain') ? ['application/json', 'application/xml'] : []
+    const acceptedMimeTypes = [...SENDABLE_MIME_TYPES.filter((type) => acceptsMimeType(shared, type)), ...asText]
     return ModelInfo.merge(
       super.modelInfo,
-      { capabilities: { temporaryMessages, deferredToolLoading } },
+      {
+        capabilities: {
+          temporaryMessages: capabilities.temporaryMessages,
+          deferredToolLoading: capabilities.deferredToolLoading,
+          acceptedMimeTypes,
+        },
+      },
       this._config.modelInfo
     )
   }
