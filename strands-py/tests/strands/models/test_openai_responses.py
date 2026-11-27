@@ -365,6 +365,31 @@ def test_format_request_messages(system_prompt):
     assert tru_result == exp_result
 
 
+def test_format_request_messages_puts_tool_outputs_before_user_text():
+    messages = [
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "c1", "name": "lookup", "input": {}}}]},
+        {
+            "role": "user",
+            "content": [
+                {"text": "before"},
+                {"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"text": "result"}]}},
+                {"text": "after"},
+            ],
+        },
+    ]
+
+    formatted = OpenAIResponsesModel._format_request_messages(messages)
+
+    assert formatted == [
+        {"type": "function_call", "call_id": "c1", "name": "lookup", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "c1", "output": "result"},
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "before"}, {"type": "input_text", "text": "after"}],
+        },
+    ]
+
+
 def test_format_request_messages_assistant_text_uses_string_content():
     """Assistant history must use the string EasyInputMessage form.
 
@@ -2631,9 +2656,10 @@ def test_message_cache_tool_result_prefix_survives_replay_with_multiple_tools():
         ]
     )
 
-    assert first["input"][:3] == second["input"][:3]
+    checkpoint = {"mode": "explicit"}
+    assert first["input"][:2] == second["input"][:2]
+    assert first["input"][2]["content"][0] == second["input"][2]["content"][0]
     assert first["input"] == [
-        *_text_input("durable explanation"),
         {
             "type": "function_call_output",
             "call_id": "c1",
@@ -2642,13 +2668,12 @@ def test_message_cache_tool_result_prefix_survives_replay_with_multiple_tools():
         {
             "type": "function_call_output",
             "call_id": "c2",
-            "output": [
-                {"type": "input_text", "text": "second result", "prompt_cache_breakpoint": {"mode": "explicit"}}
-            ],
+            "output": [{"type": "input_text", "text": "second result"}],
         },
         {
             "role": "user",
             "content": [
+                {"type": "input_text", "text": "durable explanation", "prompt_cache_breakpoint": checkpoint},
                 {"type": "input_text", "text": "temporary one"},
                 {"type": "input_text", "text": "temporary two"},
             ],
