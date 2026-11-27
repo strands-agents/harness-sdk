@@ -7,6 +7,7 @@ import pytest
 from strands._context_manager.strategies.offload import Offload
 from strands._context_manager.strategies.offload.base import current_turn_opener
 from strands._context_manager.types import ContextState
+from strands.agent._turn_opener import is_turn_opener, mark_turn_opener
 from strands.models import Model
 from strands.models._summarize import _SUMMARIZE_GUARD, DEFAULT_SUMMARIZE_INSTRUCTIONS
 from strands.types.content import ContentBlock, Message, Messages
@@ -45,6 +46,14 @@ def _tool_loop() -> Messages:
     ]
 
 
+def _marked_tool_loop() -> Messages:
+    """The tool loop as the agent stores it, with each prompt marked as its turn's opener."""
+    messages = _tool_loop()
+    messages[0] = mark_turn_opener([messages[0]])[0]
+    messages[2] = mark_turn_opener([messages[2]])[0]
+    return messages
+
+
 def _summarizing_model() -> unittest.mock.MagicMock:
     async def stream(*args, **kwargs):
         yield {"messageStart": {"role": "assistant"}}
@@ -77,6 +86,39 @@ class TestCurrentTurnOpener:
     def test_is_none_in_the_first_turn_since_message_0_is_protected_already(self):
         assert current_turn_opener([_text("user", TASK), _tool_use("t1"), _tool_result("t1")]) is None
 
+    def test_prefers_the_marked_request_over_later_user_text_the_sdk_added(self):
+        # A forced structured output pass appends its own prompt as a user message mid-turn.
+        messages = _marked_tool_loop()
+        messages += [_text("assistant", "Done."), _text("user", "Use the structured output tool now.")]
+
+        assert current_turn_opener(messages) == 2
+
+    def test_is_none_when_the_marked_request_is_message_0(self):
+        messages = [*mark_turn_opener([_text("user", TASK)]), _tool_use("t1"), _tool_result("t1"), _text("user", "x")]
+
+        assert current_turn_opener(messages) is None
+
+
+class TestMarkTurnOpener:
+    def test_marks_a_copy_of_the_last_user_message_without_a_tool_result(self):
+        prompt = [_text("user", "context"), _text("assistant", "ok"), _text("user", TASK)]
+
+        marked = mark_turn_opener(prompt)
+
+        assert [is_turn_opener(message) for message in marked] == [False, False, True]
+        assert marked[2]["content"] == prompt[2]["content"]
+        assert "metadata" not in prompt[2]
+
+    def test_keeps_existing_metadata(self):
+        pinned = Message(role="user", content=[ContentBlock(text=TASK)], metadata={"custom": {"pinned": True}})
+
+        assert mark_turn_opener([pinned])[0]["metadata"] == {"custom": {"pinned": True, "turn_opener": True}}
+
+    def test_leaves_messages_without_a_request_unchanged(self):
+        messages = [_tool_result("t1")]
+
+        assert mark_turn_opener(messages) is messages
+
 
 class TestSummarizeKeepsTheCurrentRequest:
     @pytest.mark.asyncio
@@ -89,8 +131,13 @@ class TestSummarizeKeepsTheCurrentRequest:
 
         assert await strategy.apply(ContextState(messages=messages, agent=agent, utilization=0.9)) is True
 
-        assert any(message is opener for message in messages)
-        assert _user_texts(messages) == ["hello", TASK]
+        # The greeting reply and the finished tool steps are one summary after the request, which stays user text
+        # beside the greeting it now follows directly.
+        assert [message["role"] for message in messages] == ["user", "assistant", "user"]
+        assert messages[0]["content"] == [*_tool_loop()[0]["content"], *opener["content"]]
+        assert messages[1]["content"][0]["text"].startswith("[Summarized")
+        assert "toolUse" in messages[1]["content"][-1]
+        assert model.summarize.await_count == 1
 
     @pytest.mark.asyncio
     async def test_summarizes_the_tool_loop_over_the_agent_prefix_which_holds_the_request(self):
@@ -102,9 +149,9 @@ class TestSummarizeKeepsTheCurrentRequest:
 
         await strategy.apply(ContextState(messages=messages, agent=agent, utilization=0.9))
 
-        # The later run goes first: the tool loop's request is the history up to its last message, as the agent sent
-        # it, so it shares the agent's prompt cache and the summarizer sees the request the tool loop works toward.
-        assert model.summarize.await_args_list[0].args[0] == expected_prefix
+        # One request, the history up to the run's last message as the agent sent it, so it shares the agent's prompt
+        # cache, its instruction joins the tool result turn, and the summarizer sees the request the loop works on.
+        assert [call.args[0] for call in model.summarize.await_args_list] == [expected_prefix]
 
 
 class TestDropKeepsTheCurrentRequest:
@@ -123,9 +170,13 @@ class TestDropKeepsTheCurrentRequest:
 
 
 class TestSummarizeInstructions:
-    def test_the_guard_says_it_is_not_from_the_user(self):
-        assert "This is not a message from the user." in _SUMMARIZE_GUARD
-        assert "Do not mention this compaction request in the summary." in _SUMMARIZE_GUARD
+    def test_the_guard_opens_with_the_stop_and_the_tool_ban(self):
+        # A guard that opens by saying it is not from the user led GPT and Nova to call a tool instead.
+        assert _SUMMARIZE_GUARD.startswith("STOP. Do not call any tools")
+
+    def test_the_guard_says_it_is_not_part_of_the_users_request(self):
+        assert "not part of the user's request" in _SUMMARIZE_GUARD
+        assert "it is still in progress" in _SUMMARIZE_GUARD
 
     def test_the_instructions_ask_for_the_most_recent_request_verbatim(self):
         expected = "the user's most recent request, quoted verbatim, and progress toward it"

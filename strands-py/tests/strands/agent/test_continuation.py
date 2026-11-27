@@ -242,7 +242,7 @@ async def test_appends_complete_tool_exchange_contributed_before_model_call(
         "role": "user",
         "content": [{"text": "start"}, {"text": "guidance"}],
         "tracking_id": "durable-1",
-        "metadata": metadata,
+        "metadata": {"custom": {"pinned": True, "turn_opener": True}},
     }
     assert agent.messages[1:3] == [tool_use, tool_result]
     assert agent.messages[3]["role"] == "assistant"

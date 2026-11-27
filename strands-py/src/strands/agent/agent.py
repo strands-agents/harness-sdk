@@ -116,6 +116,7 @@ from ..types.traces import AttributeValue
 from . import _continuation
 from ._agent_as_tool import _AgentAsTool
 from ._concurrency import _ConcurrencyController
+from ._turn_opener import mark_turn_opener
 from .agent_metadata import AgentMetadata
 from .agent_result import AgentResult
 from .base import AgentBase
@@ -1619,7 +1620,7 @@ class Agent(AgentBase, LocalAgent):
                 callback_handler = kwargs.get("callback_handler", self.callback_handler)
 
             # Process input and get message to add (if any)
-            messages = await self._convert_prompt_to_messages(prompt)
+            messages = mark_turn_opener(await self._convert_prompt_to_messages(prompt))
 
             baggage_ctx = context_api.get_current()
             for key, value in self.baggage_attributes.items():
@@ -1922,7 +1923,9 @@ class Agent(AgentBase, LocalAgent):
                         # This mirrors the _interrupt_state.resume() call in stream_async and will
                         # raise TypeError if the resume input is not valid interrupt responses.
                         self._interrupt_state.resume(after_invocation_event.resume)
-                        current_messages = await self._convert_prompt_to_messages(after_invocation_event.resume)
+                        current_messages = mark_turn_opener(
+                            await self._convert_prompt_to_messages(after_invocation_event.resume)
+                        )
                 else:
                     current_messages = None
             except BaseException as error:

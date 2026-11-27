@@ -126,14 +126,17 @@ class SummarizeStrategy(BaseOffloadStrategy):
             return await self._summarize_server_side(context, model, end)
 
         acted = False
+        opener_index = current_turn_opener(messages)
+        opener = None if opener_index is None else messages[opener_index]
+        runs = _bridge_opener(messages, _split_into_runs(messages, with_pairs(messages, removable)), opener)
         # Last run first, so removing a run leaves the earlier runs' positions unchanged.
-        for run in reversed(_split_into_runs(messages, with_pairs(messages, removable))):
+        for run in reversed(runs):
             summary = await self._summarize_run(context, model, run)
             if not summary:
                 continue
-            tokens = await removed_tokens(run, model)
+            tokens = await removed_tokens([message for message in run if message is not opener], model)
             marker = format_summarized(REMOVED_MESSAGES, tokens, summary)
-            if await _replace_run(messages, run, marker, tokens, "summarize", context.archive):
+            if await _replace_run(messages, run, marker, tokens, "summarize", context.archive, keep=opener):
                 logger.debug("summarized=<%s>, tokens=<%s> | summarized message run", len(run), tokens)
                 acted = True
         return acted
@@ -360,6 +363,28 @@ def _model_id(model: Model) -> object:
     """The configured model id, read off the provider's config as :attr:`Model.model_info` reads it."""
     config = model.get_config()
     return config.get("model_id") if isinstance(config, dict) else getattr(config, "model_id", None)
+
+
+def _bridge_opener(messages: Messages, runs: list[Messages], opener: Message | None) -> list[Messages]:
+    """``runs`` with the two runs either side of the current turn's opener joined into one, through the opener.
+
+    The opener is kept, so it splits the eligible messages into a run before it and a run after it. Summarized apart,
+    the earlier run's request would end with an assistant message, so its summarize instruction would be a user
+    message of its own, which a summary can then report as the user's; and it would be a second, uncached call.
+    Joined, the run is one stretch of the history again, summarized in one call over the agent's own request, and
+    the opener stays in place when the run is replaced.
+    """
+    if opener is None:
+        return runs
+    index = next((position for position, message in enumerate(messages) if message is opener), None)
+    if index is None or index + 1 >= len(messages):
+        return runs
+    before, after = messages[index - 1], messages[index + 1]
+    for position in range(len(runs) - 1):
+        if runs[position][-1] is before and runs[position + 1][0] is after:
+            joined = [*runs[position], opener, *runs[position + 1]]
+            return [*runs[:position], joined, *runs[position + 2 :]]
+    return runs
 
 
 def _run_request(messages: Messages, run: Messages) -> Messages:

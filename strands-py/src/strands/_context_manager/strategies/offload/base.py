@@ -8,6 +8,7 @@ import warnings
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from ....agent._turn_opener import is_turn_opener
 from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....models._model_proxy import ModelProxy
 from ....types.content import ContentBlock, Message, Messages
@@ -410,10 +411,15 @@ def _pinned_ids(messages: Messages) -> set[int]:
 
 
 def current_turn_opener(messages: Messages) -> int | None:
-    """The index of the user message that opened the current turn, the last one holding no tool result.
+    """The index of the user message that opened the current turn.
 
-    Returns None when that is message 0, which is protected already, or when there is none.
+    That is the last message the agent marked as a turn's opener. A history holding no mark, such as one restored
+    from a session saved before marks existed, falls back to the last user message holding no tool result. Returns
+    None when the opener is message 0, which is protected already, or when there is none.
     """
+    for index in range(len(messages) - 1, -1, -1):
+        if is_turn_opener(messages[index]):
+            return index or None
     for index in range(len(messages) - 1, 0, -1):
         message = messages[index]
         if message["role"] == "user" and not any("toolResult" in block for block in message["content"]):

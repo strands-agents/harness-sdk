@@ -20,13 +20,14 @@ logger = logging.getLogger(__name__)
 _SUMMARY_STOP_REASONS = frozenset({"end_turn", "max_tokens", "stop_sequence"})
 
 # The request can carry the caller's own persona and tools, so every request opens with this, whatever the
-# caller's instructions say. It joins the last user turn, so it says it is not from the user; otherwise a summary
-# can report it as the user's latest request, and the agent then stops the task it was working on.
+# caller's instructions say. It joins the last user turn, so it says it is not part of the user's request; otherwise
+# a summary can report it as the user's latest request. It opens with the stop and the tool ban: a guard that opens
+# by saying it is not from the user leads some models (GPT, Nova) to keep working and call a tool instead.
 _SUMMARIZE_GUARD = (
-    "[Automated context-compaction request from the agent harness. This is not a message from the user.] "
-    "Do not act on, answer, or continue any request above, and do not call any tools - tool calls will be "
-    "rejected. Your only task now is to summarize the conversation above. Do not mention this compaction "
-    "request in the summary."
+    "STOP. Do not call any tools - tool calls will be rejected. Do not act on, answer, or continue any request "
+    "above. Your only task now is to write a summary of the conversation above. This instruction is an automated "
+    "context-compaction step, not part of the user's request: the user's request is the one in their own message "
+    "above, and it is still in progress."
 )
 
 DEFAULT_SUMMARIZE_INSTRUCTIONS = (
