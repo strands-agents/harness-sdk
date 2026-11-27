@@ -10,11 +10,11 @@ Cache the static parts of your requests to Amazon Bedrock, such as a fixed syste
 
 When you enable prompt caching, Amazon Bedrock builds a cache from **cache points**: markers that define the contiguous section of your prompt to cache. Cached content must stay unchanged between requests, since any alteration invalidates the cache.
 
-Prompt caching is supported for Anthropic Claude and Amazon Nova models on Bedrock. Each model has a minimum token requirement (e.g., 1,024 tokens for Claude Sonnet, 4,096 tokens for Claude Haiku), and cached content expires after 5 minutes of inactivity. Cache writes cost more than regular input tokens, but cache reads cost significantly less - see [Amazon Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) for model-specific rates.
+Prompt caching is supported for Anthropic Claude and Amazon Nova models on Bedrock, and for OpenAI GPT-5.6 and later. Each model has a minimum token requirement (e.g., 1,024 tokens for Claude Sonnet, 4,096 tokens for Claude Haiku), and cached content expires after 5 minutes of inactivity. Cache writes cost more than regular input tokens, but cache reads cost significantly less - see [Amazon Bedrock pricing](https://aws.amazon.com/bedrock/pricing/) for model-specific rates.
 
 For complete details on supported models, token requirements, and cache field support, see the [Amazon Bedrock prompt caching documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html#prompt-caching-models).
 
-For OpenAI models on Amazon Bedrock, which don't take cache points through Converse, and other known caching gaps, see [Prompt caching](./prompt-caching).
+For OpenAI models on Amazon Bedrock, which Strands caches with cache points through Converse only on GPT-5.6 and later, and for other known caching gaps, see [Prompt caching](./prompt-caching).
 
 ## System Prompt Caching
 
@@ -183,6 +183,8 @@ print(f"Cache read tokens: {response2.metrics.accumulated_usage.get('cacheReadIn
 - A cache point you place in the last user message counts as one of the three. Nova takes it only directly after text, so it moves back to the nearest text block ahead of it, or is replaced by automatic placement when no text is ahead of it.
 - Bedrock accepts four cache points per request and the system prompt's count against them. With more than one cache point in the system prompt, the conversation gets fewer; with four, it gets none and a cache point you placed in the last user message is dropped.
 - On a cross-region inference profile (for example `us.amazon.nova-pro-v1:0`), a request only reads entries written in the region that serves it, so some follow-up turns miss the cache. An in-region model ID reads on every turn.
+
+**OpenAI GPT-5.6 and later**: the SDK places cache points for these models with the same rules as Nova. See [OpenAI models on the Converse API](./prompt-caching#openai-models-on-the-converse-api).
 
 **Option B: Manual Cache Points**
 
