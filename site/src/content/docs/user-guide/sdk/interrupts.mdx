@@ -474,6 +474,13 @@ Session managing interrupts involves the following key components:
 </Tab>
 </Tabs>
 
+## Client Tools
+
+When the tool itself has to run outside the agent, for example in the user's browser or
+as a job that takes hours, define a client tool. The agent stops with an interrupt that
+carries the tool call, and your response becomes the tool result. See
+[Client tools](./tools/client-tools.md).
+
 ## MCP Elicitation
 
 To collect additional information from a user during an MCP tool call, use elicitation. An MCP server sends an elicitation request to the connecting client, which is handled by an elicitation callback. See [MCP Elicitation](./tools/mcp-tools.md#elicitation) for details.

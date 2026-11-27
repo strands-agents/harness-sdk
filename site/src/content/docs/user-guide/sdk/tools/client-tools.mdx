@@ -1,0 +1,384 @@
+---
+title: Client tools
+description: "Define tools the model calls but your application runs, on a client device, in another system, or hours later, then resume the agent with the result."
+tags: [tool-authoring, tool-execution]
+addedDate: 2026-11-27
+sourceLinks:
+  - path: strands-py/src/strands/tools/client_tool.py
+  - path: strands-ts/src/tools/client-tool.ts
+---
+
+Use a client tool when the model should be able to call a tool, but the code that runs it
+lives outside the agent. A client tool has a name, a description, and an input schema, but
+no body. When the model calls it, the agent stops and returns the call to you as an
+[interrupt](../interrupts.md). You run the tool however and wherever you like, then resume
+the agent with the output, which becomes the tool result the model sees.
+
+## When to use a client tool
+
+**The tool must run on the client.** Your agent runs on a server, but the tool needs
+something only the user's browser, mobile app, or desktop app has: the device location, a
+local file, a UI action such as opening a dialog, or credentials that never leave the
+client. The server returns the tool call to the client, the client runs it, and sends the
+output back so the server can resume the agent.
+
+**The tool takes minutes, hours, or days.** A CI run, a batch job, a human workflow, or an
+external approval can take far longer than you want an agent invocation to stay open.
+Instead of holding a process, its memory, and a connection while you wait, let the agent
+stop, persist it with a session manager, and resume it when the result arrives, from
+whichever process receives it.
+
+**Another system runs the tool.** The work happens in a job queue, a worker fleet, or a
+service owned by another team. The agent hands over the call, and whatever system
+finishes the work reports back.
+
+If the agent's own process can run the tool and return within the invocation, write a
+[custom tool](custom-tools.md) instead. You skip the stop-and-resume round trip.
+
+## Define a client tool
+
+Give the tool a name and a description the model can act on, plus an optional input
+schema. With no schema, the tool takes no input.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from typing import Literal
+
+from pydantic import BaseModel, Field
+from strands import Agent
+from strands.tools import ClientTool
+
+
+class LocationRequest(BaseModel):
+    precision: Literal["city", "exact"] = Field(description="How precise to be")
+
+
+# A pydantic model: the agent validates the model's input before stopping
+get_location = ClientTool(
+    name="get_location",
+    description="Get the user's current location from their device.",
+    input_schema=LocationRequest,
+)
+
+# A JSON schema: sent to the model as-is, without validation
+pick_file = ClientTool(
+    name="pick_file",
+    description="Ask the user to pick a file from their computer.",
+    input_schema={
+        "type": "object",
+        "properties": {"extensions": {"type": "array", "items": {"type": "string"}}},
+    },
+)
+
+agent = Agent(tools=[get_location, pick_file])
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/client-tools_imports.ts:define_imports"
+
+--8<-- "user-guide/sdk/tools/client-tools.ts:define"
+```
+
+</Tab>
+</Tabs>
+
+Prefer the validated schema. When the model sends input that doesn't match it, the agent
+returns an error tool result to the model and doesn't stop, so your client never receives
+a malformed call. The call you receive carries the validated input, with type coercion and
+defaults applied. With a plain JSON schema, the agent passes the input through as the
+model sent it.
+
+## Run the tool and resume the agent
+
+When the model calls a client tool, the agent stops with a stop reason of `interrupt`.
+Each pending call is an interrupt named `CLIENT_TOOL_INTERRUPT_NAME` (the string
+`strands:client-tool`) whose reason is the tool use: `toolUseId`, `name`, and `input`. In
+TypeScript, `isClientToolInterrupt(interrupt)` checks the name and types the reason. Run the
+tool, then invoke the agent again with one interrupt response per call:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.tools import CLIENT_TOOL_INTERRUPT_NAME, ClientTool
+
+get_location = ClientTool(
+    name="get_location",
+    description="Get the user's current location from their device.",
+)
+agent = Agent(tools=[get_location], callback_handler=None)
+
+
+def run_on_client(name: str, tool_input: dict) -> dict:
+    # Stands in for the code that runs where the tool lives
+    if name == "get_location":
+        return {"city": "Seattle", "country": "US"}
+    raise ValueError(f"Unknown client tool: {name}")
+
+
+result = agent("Is it a good day for a walk where I am?")
+while result.stop_reason == "interrupt":
+    responses = []
+    for interrupt in result.interrupts:
+        if interrupt.name == CLIENT_TOOL_INTERRUPT_NAME:
+            call = interrupt.reason
+            output = run_on_client(call["name"], call["input"])
+            responses.append(
+                {"interruptResponse": {"interruptId": interrupt.id, "response": output}}
+            )
+    result = agent(responses)
+
+print(result)
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/client-tools_imports.ts:resume_imports"
+
+--8<-- "user-guide/sdk/tools/client-tools.ts:resume"
+```
+
+</Tab>
+</Tabs>
+
+The response becomes the tool result and reaches the model as text or JSON. Don't respond
+with <Syntax py="None" ts="null" />: Python rejects it on resume with a `ValueError`, and
+TypeScript sends the model the text `null`. For a tool with no meaningful output, send
+something explicit, such as a short string.
+
+## Report a failure
+
+When the tool can't run (the user denied location access, the job crashed), tell the
+model so it can recover instead of trusting an empty result. Respond with a tool result:
+an object whose `status` is `success` or `error` and whose `content` is a non-empty list
+of content blocks. The agent uses its `status` and `content` as the tool result:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.tools import ClientTool
+
+get_location = ClientTool(
+    name="get_location",
+    description="Get the user's current location from their device.",
+)
+agent = Agent(tools=[get_location], callback_handler=None)
+
+result = agent("Is it a good day for a walk where I am?")
+denied = {"status": "error", "content": [{"text": "The user denied location access."}]}
+result = agent(
+    [
+        {"interruptResponse": {"interruptId": interrupt.id, "response": denied}}
+        for interrupt in result.interrupts
+    ]
+)
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/client-tools_imports.ts:error_imports"
+
+--8<-- "user-guide/sdk/tools/client-tools.ts:error"
+```
+
+</Tab>
+</Tabs>
+
+The same shape lets a successful response choose its own content, such as several text
+blocks or a `json` block. See [tool results](tool-results.md) for the content types. Any
+other object, such as `{"status": 200, "content": "<html>"}`, is treated as plain data,
+like any other response.
+
+## Handle parallel calls
+
+When the model calls several client tools in one turn, or the same tool several times,
+the agent stops once with an interrupt per call. Answering all of them in a single resume,
+as the loop above does, is the simplest path. You can also answer some now and the rest
+later: the agent records the answered calls and stops again with only the unanswered
+interrupts, under the same IDs.
+
+This applies to the default concurrent [tool executor](executors.md). With the sequential
+executor, the agent runs one call at a time and stops once per call.
+
+## Return tool calls to a client
+
+To run tools on a client while the agent runs on a server, return the pending calls in
+your server's response, and accept the client's outputs on the next request. Each request
+usually reaches a fresh agent, possibly on a different host, so give the agent a
+[session manager](../agents/session-management.md): it saves the pending interrupts when
+the agent stops and restores them when the next request creates the agent again.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.session import FileSessionManager
+from strands.tools import CLIENT_TOOL_INTERRUPT_NAME, ClientTool
+from strands.types.agent import AgentInput
+
+get_location = ClientTool(
+    name="get_location",
+    description="Get the user's current location from their device.",
+)
+
+
+def handle_request(session_id: str, payload: AgentInput) -> dict:
+    """Server: run one agent turn and return the reply or the pending tool calls."""
+    session_manager = FileSessionManager(session_id=session_id, storage_dir="./sessions")
+    agent = Agent(
+        tools=[get_location], session_manager=session_manager, callback_handler=None
+    )
+    result = agent(payload)
+    if result.stop_reason != "interrupt":
+        return {"reply": str(result)}
+    return {
+        "tool_calls": [
+            {"id": interrupt.id, **interrupt.reason}
+            for interrupt in result.interrupts
+            if interrupt.name == CLIENT_TOOL_INTERRUPT_NAME
+        ]
+    }
+
+
+def run_on_device(call: dict) -> dict:
+    # Client: in a real app this reads the device's location API
+    return {"city": "Seattle", "country": "US"}
+
+
+# Client: each handle_request call stands in for an HTTP request to the server
+reply = handle_request("user-42", "Is it a good day for a walk where I am?")
+while "tool_calls" in reply:
+    responses = [
+        {"interruptResponse": {"interruptId": c["id"], "response": run_on_device(c)}}
+        for c in reply["tool_calls"]
+    ]
+    reply = handle_request("user-42", responses)
+
+print(reply["reply"])
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/client-tools_imports.ts:server_client_imports"
+
+--8<-- "user-guide/sdk/tools/client-tools.ts:server_client"
+```
+
+</Tab>
+</Tabs>
+
+The client's output reaches the model as a tool result, so treat it like any other user
+input. Session state is trusted input too: load sessions only from storage you control.
+
+## Resume after long-running work
+
+For a tool that runs for hours, stop the agent, hand the call to the system that does the
+work, and let the invocation end. Pass the session ID and interrupt ID along with the job.
+When the job finishes, its completion handler creates the agent from the same session and
+resumes it with the result, in whatever process the handler runs.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.session import FileSessionManager
+from strands.tools import ClientTool
+
+run_tests = ClientTool(
+    name="run_tests",
+    description="Run the integration test suite on a branch. Takes up to an hour.",
+    input_schema={
+        "type": "object",
+        "properties": {"branch": {"type": "string"}},
+        "required": ["branch"],
+    },
+)
+
+
+def create_agent(session_id: str) -> Agent:
+    session_manager = FileSessionManager(session_id=session_id, storage_dir="./sessions")
+    return Agent(
+        tools=[run_tests], session_manager=session_manager, callback_handler=None
+    )
+
+
+def submit_ci_job(branch: str, session_id: str, interrupt_id: str) -> None:
+    # Stands in for your CI system's API; store the IDs with the job
+    print(f"Started tests on {branch}")
+
+
+def start(session_id: str, prompt: str) -> None:
+    result = create_agent(session_id)(prompt)
+    for interrupt in result.interrupts or []:
+        submit_ci_job(interrupt.reason["input"]["branch"], session_id, interrupt.id)
+    # Return now: nothing stays in memory while the tests run
+
+
+def on_ci_finished(session_id: str, interrupt_id: str, outcome: dict) -> None:
+    # Runs when the CI system reports back, possibly in another process
+    agent = create_agent(session_id)
+    result = agent(
+        [{"interruptResponse": {"interruptId": interrupt_id, "response": outcome}}]
+    )
+    print(result)
+
+
+start("release-7", "Run the tests on main and tell me if it's safe to release.")
+# Later, from your CI webhook handler:
+# on_ci_finished("release-7", interrupt_id, {"passed": 412, "failed": 0})
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/client-tools_imports.ts:long_running_imports"
+
+--8<-- "user-guide/sdk/tools/client-tools.ts:long_running"
+```
+
+</Tab>
+</Tabs>
+
+If several jobs run in parallel, each completion handler can resume with its own
+response, and the agent stops again until the last one arrives. Session managers don't
+lock a session across processes, so resume a given session from one handler at a time:
+concurrent resumes can overwrite each other's saved state.
+
+## Client tools and other interrupts
+
+A client tool is an interrupt with a fixed shape: you don't write the tool body, and the
+response is the tool result. Reach for the other interrupt patterns when that shape
+doesn't fit:
+
+- To pause *inside* a tool that has its own logic, for example to ask for approval before
+  deleting files, raise an interrupt from the tool or from a hook. See
+  [Interrupts](../interrupts.md).
+- To let the model ask the user a free-form question, use the
+  [`handoff_to_user`](vended-tools/handoff-to-user.md) vended tool. It is a ready-made
+  interrupt for conversation, not a way to run code on the client.
+
+Every pattern shares one resume path, so a single loop can answer client tool calls and
+approval prompts in the same resume. Match on the interrupt name to tell them apart. If a
+hook or the [`HumanInTheLoop`](../agents/interventions/human-in-the-loop.md) intervention
+also gates a client tool, one call produces two interrupts: the approval first, then the
+client tool call.
+
+Python's [`BidiAgent`](../bidi/agent.md) doesn't support tool interrupts, so it can't run
+client tools.
