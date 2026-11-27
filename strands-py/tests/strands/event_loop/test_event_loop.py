@@ -38,6 +38,7 @@ from strands.types._events import EventLoopStopEvent
 from strands.types.exceptions import (
     ContextWindowOverflowException,
     EventLoopException,
+    IncompleteStreamError,
     MaxTokensReachedException,
     ModelThrottledException,
 )
@@ -277,6 +278,7 @@ async def test_event_loop_cycle_text_response(
         [
             {"contentBlockDelta": {"delta": {"text": "test text"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 
@@ -303,6 +305,7 @@ async def test_event_loop_cycle_accepts_the_deprecated_limits_argument(
         [
             {"contentBlockDelta": {"delta": {"text": "test text"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
     limits = {"turns": 1}
@@ -324,6 +327,7 @@ async def test_recurse_event_loop_accepts_the_deprecated_limits_argument(agent, 
         [
             {"contentBlockDelta": {"delta": {"text": "test text"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 
@@ -364,6 +368,7 @@ async def test_event_loop_cycle_text_response_throttling(
             [
                 {"contentBlockDelta": {"delta": {"text": "test text"}}},
                 {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
             ]
         ),
     ]
@@ -402,6 +407,7 @@ async def test_event_loop_cycle_exponential_backoff(
             [
                 {"contentBlockDelta": {"delta": {"text": "test text"}}},
                 {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
             ]
         ),
     ]
@@ -474,6 +480,46 @@ async def test_event_loop_cycle_text_response_error(
         await alist(stream)
 
 
+@pytest.mark.asyncio
+async def test_event_loop_cycle_retries_incomplete_stream_without_persisting_partial(agent, model, agenerator, alist):
+    model.stream.side_effect = [
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "partial"}}},
+                {"contentBlockStop": {}},
+            ]
+        ),
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "complete"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ]
+        ),
+    ]
+
+    async def retry_incomplete_stream(event: AfterModelCallEvent) -> None:
+        if isinstance(event.exception, IncompleteStreamError):
+            event.retry = True
+
+    agent.hooks.add_callback(AfterModelCallEvent, retry_incomplete_stream)
+
+    await alist(strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={}))
+
+    tru_messages = agent.messages
+    exp_messages = [
+        {"role": "user", "content": [{"text": "Hello"}]},
+        {
+            "role": "assistant",
+            "content": [{"text": "complete"}],
+            "metadata": ANY,
+            "tracking_id": ANY,
+        },
+    ]
+    assert tru_messages == exp_messages
+    assert model.stream.call_count == 2
+
+
 @patch("strands.event_loop.event_loop.recover_message_on_max_tokens_reached")
 @pytest.mark.asyncio
 async def test_event_loop_cycle_tool_result(
@@ -493,6 +539,7 @@ async def test_event_loop_cycle_tool_result(
             [
                 {"contentBlockDelta": {"delta": {"text": "test text"}}},
                 {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
             ]
         ),
     ]
@@ -791,6 +838,7 @@ async def test_post_stream_exception_logs_exception_type_without_traceback(
         [
             {"contentBlockDelta": {"delta": {"text": "test text"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
     agent.event_loop_metrics.update_metrics = MagicMock(side_effect=ValueError("Invalid error presented"))
@@ -836,6 +884,7 @@ async def test_event_loop_cycle_creates_spans(
         [
             {"contentBlockDelta": {"delta": {"text": "test text"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 
@@ -967,6 +1016,7 @@ async def test_event_loop_tracing_with_tool_execution(
             [
                 {"contentBlockDelta": {"delta": {"text": "test text"}}},
                 {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
             ]
         ),
     ]
@@ -1004,6 +1054,7 @@ async def test_event_loop_cycle_closes_cycle_span_before_recursive_cycle(
         yield {"contentBlockDelta": {"delta": {"text": "test text"}}}
         await asyncio.sleep(0.05)
         yield {"contentBlockStop": {}}
+        yield {"messageStop": {"stopReason": "end_turn"}}
 
     agent.trace_span = None
     agent._system_prompt_content = None
@@ -1055,6 +1106,7 @@ async def test_event_loop_tracing_with_throttling_exception(
             [
                 {"contentBlockDelta": {"delta": {"text": "test text"}}},
                 {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
             ]
         ),
     ]
@@ -1094,6 +1146,7 @@ async def test_event_loop_cycle_with_parent_span(
         [
             {"contentBlockDelta": {"delta": {"text": "test text"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 
@@ -1117,7 +1170,7 @@ async def test_event_loop_cycle_with_parent_span(
 
 
 @pytest.mark.asyncio
-async def test_request_state_initialization(alist):
+async def test_request_state_initialization(agenerator, alist):
     # Create a mock agent
     mock_agent = MagicMock()
     # not setting this to False results in endless recursion
@@ -1135,6 +1188,9 @@ async def test_request_state_initialization(alist):
     mock_agent.event_loop_metrics.start_cycle.return_value = (0, MagicMock())
     mock_agent.hooks.invoke_callbacks_async = AsyncMock(side_effect=lambda event: (event, []))
     mock_agent._append_messages = Agent._append_messages.__get__(mock_agent, Agent)
+    mock_agent.model.stream.side_effect = lambda *args, **kwargs: agenerator(
+        [{"messageStop": {"stopReason": "end_turn"}}]
+    )
 
     # Call without providing request_state
     stream = strands.event_loop.event_loop.event_loop_cycle(
@@ -1217,6 +1273,7 @@ async def test_event_loop_cycle_exception_model_hooks(mock_sleep, agent, model, 
             [
                 {"contentBlockDelta": {"delta": {"text": "test text"}}},
                 {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
             ]
         ),
     ]
@@ -1324,7 +1381,13 @@ async def test_event_loop_cycle_before_tools_payload_order_and_result(agent, mod
     agent.hooks.add_callback(BeforeToolCallEvent, before_tool_callback)
     model.stream.side_effect = [
         agenerator(tool_stream),
-        agenerator([{"contentBlockDelta": {"delta": {"text": "done"}}}, {"contentBlockStop": {}}]),
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "done"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ]
+        ),
     ]
 
     await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
@@ -1362,7 +1425,13 @@ async def test_event_loop_cycle_before_tools_fires_once_per_batch(agent, model, 
                 {"messageStop": {"stopReason": "tool_use"}},
             ]
         ),
-        agenerator([{"contentBlockDelta": {"delta": {"text": "done"}}}, {"contentBlockStop": {}}]),
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "done"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ]
+        ),
     ]
 
     await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
@@ -1390,7 +1459,13 @@ async def test_event_loop_cycle_after_tools_order_and_message(agent, model, tool
     agent.hooks.add_callback(AfterToolsEvent, after_tools_callback)
     model.stream.side_effect = [
         agenerator(tool_stream),
-        agenerator([{"contentBlockDelta": {"delta": {"text": "done"}}}, {"contentBlockStop": {}}]),
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "done"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ]
+        ),
     ]
 
     await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
@@ -1455,7 +1530,13 @@ async def test_event_loop_cycle_after_tools_message_reflects_mutated_result(
     agent.hooks.add_callback(AfterToolsEvent, record_after_tools)
     model.stream.side_effect = [
         agenerator(tool_stream),
-        agenerator([{"contentBlockDelta": {"delta": {"text": "done"}}}, {"contentBlockStop": {}}]),
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "done"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ]
+        ),
     ]
 
     await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
@@ -1487,7 +1568,13 @@ async def test_event_loop_cycle_after_tools_message_preserves_source_order_concu
                 {"messageStop": {"stopReason": "tool_use"}},
             ]
         ),
-        agenerator([{"contentBlockDelta": {"delta": {"text": "done"}}}, {"contentBlockStop": {}}]),
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "done"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ]
+        ),
     ]
 
     await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
@@ -1612,7 +1699,13 @@ async def test_event_loop_cycle_after_tools_falsy_end_turn_does_not_halt(
     agent.hooks.add_callback(AfterToolsEvent, set_falsy_end_turn)
     model.stream.side_effect = [
         agenerator(tool_stream),
-        agenerator([{"contentBlockDelta": {"delta": {"text": "done"}}}, {"contentBlockStop": {}}]),
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "done"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ]
+        ),
     ]
 
     events = await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
@@ -1694,7 +1787,13 @@ async def test_event_loop_cycle_after_tools_fires_per_cycle_across_per_tool_inte
                 {"messageStop": {"stopReason": "tool_use"}},
             ]
         ),
-        agenerator([{"contentBlockDelta": {"delta": {"text": "done"}}}, {"contentBlockStop": {}}]),
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "done"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ]
+        ),
     ]
 
     first_events = await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
@@ -1771,7 +1870,13 @@ async def test_event_loop_cycle_before_tools_cancels_batch(
                 {"messageStop": {"stopReason": "tool_use"}},
             ]
         ),
-        agenerator([{"contentBlockDelta": {"delta": {"text": "done"}}}, {"contentBlockStop": {}}]),
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "done"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ]
+        ),
     ]
     per_tool_events = []
     executor = agent.tool_executor
@@ -1957,7 +2062,13 @@ async def test_event_loop_cycle_before_tools_interrupt_resume_with_checkpoint(ag
     agent._checkpoint = Checkpoint(position="after_model", cycle_index=0)
     agent.model.stream.side_effect = [
         agenerator(tool_stream),
-        agenerator([{"contentBlockDelta": {"delta": {"text": "done"}}}, {"contentBlockStop": {}}]),
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "done"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ]
+        ),
     ]
     response = None
 
@@ -2002,7 +2113,13 @@ async def test_event_loop_cycle_before_tools_interrupts_and_resume_without_model
     agent.hooks.add_callback(BeforeToolCallEvent, record_execution)
     model.stream.side_effect = [
         agenerator(tool_stream),
-        agenerator([{"contentBlockDelta": {"delta": {"text": "done"}}}, {"contentBlockStop": {}}]),
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "done"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ]
+        ),
     ]
 
     first_events = await alist(strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={}))
@@ -2052,7 +2169,13 @@ async def test_event_loop_cycle_before_tools_interrupts_again_on_later_cycle(age
     model.stream.side_effect = [
         agenerator(tool_stream("t1", "first")),
         agenerator(tool_stream("t2", "second")),
-        agenerator([{"contentBlockDelta": {"delta": {"text": "done"}}}, {"contentBlockStop": {}}]),
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "done"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+            ]
+        ),
     ]
     responses = []
 
@@ -2190,7 +2313,7 @@ async def test_event_loop_cycle_interrupt_resume(agent, model, tool, tool_times_
 
     agent.hooks.add_callback(BeforeToolCallEvent, interrupt_callback)
 
-    model.stream.side_effect = [agenerator([{"contentBlockStop": {}}])]
+    model.stream.side_effect = [agenerator([{"contentBlockStop": {}}, {"messageStop": {"stopReason": "end_turn"}}])]
 
     stream = strands.event_loop.event_loop.event_loop_cycle(agent, invocation_state={})
     events = await alist(stream)
@@ -2260,6 +2383,7 @@ async def test_event_loop_cycle_ignores_pending_tool_execution_when_interrupt_st
         [
             {"contentBlockDelta": {"delta": {"text": "test text"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 
@@ -2355,6 +2479,7 @@ async def test_event_loop_metrics_recorded_before_recursion(
             [
                 {"contentBlockDelta": {"delta": {"text": "test text"}}},
                 {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
             ]
         ),
     ]

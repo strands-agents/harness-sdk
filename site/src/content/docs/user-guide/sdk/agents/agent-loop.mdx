@@ -447,6 +447,17 @@ When the model's response exceeds the configured token limit, the loop raises a 
 
 Handle this exception by reducing context size, increasing the token limit, or breaking the task into smaller steps.
 
+### IncompleteStreamError
+
+If a model stream ends without its terminal `messageStop` event, the loop raises
+`IncompleteStreamError` instead of treating partial output as a completed turn. The
+partial assistant message is not added to conversation history, although streaming
+consumers may already have received its content events.
+
+The default retry strategy does not retry this error. Use a
+[model call retry hook](hooks.md#model-call-retry) or a custom model retry strategy
+when retrying an incomplete response is appropriate for your application.
+
 ## What Comes Next
 
 The agent loop is the execution primitive. Higher-level patterns build on top of it:

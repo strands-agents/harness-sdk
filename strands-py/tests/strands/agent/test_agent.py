@@ -41,6 +41,7 @@ from strands.types.exceptions import (
     ConcurrencyException,
     ContextWindowOverflowException,
     EventLoopException,
+    IncompleteStreamError,
 )
 from strands.types.session import Session, SessionAgent, SessionMessage, SessionType
 from tests.fixtures.mock_session_repository import MockedSessionRepository
@@ -422,6 +423,7 @@ def test_agent__call__(
             [
                 {"contentBlockDelta": {"delta": {"text": "test text"}}},
                 {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
             ]
         ),
     ]
@@ -748,7 +750,7 @@ def test_agent__call__retry_with_overwritten_tool(mock_model, agent, tool, agene
         ContextWindowOverflowException(RuntimeError("Input is too long for requested model")),
         # Will reduce the context
         ContextWindowOverflowException(RuntimeError("Input is too long for requested model")),
-        agenerator([]),
+        agenerator([{"messageStop": {"stopReason": "end_turn"}}]),
     ]
 
     agent("test message")
@@ -1017,6 +1019,7 @@ def test_agent__call__callback(mock_model, agent, callback_handler, agenerator):
             {"contentBlockStart": {"start": {}}},
             {"contentBlockDelta": {"delta": {"text": "value"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "content_filtered"}},
         ]
     )
 
@@ -1074,6 +1077,7 @@ def test_agent__call__callback(mock_model, agent, callback_handler, agenerator):
             request_state={},
         ),
         unittest.mock.call(event={"contentBlockStop": {}}),
+        unittest.mock.call(event={"messageStop": {"stopReason": "content_filtered"}}),
         unittest.mock.call(
             message={
                 "role": "assistant",
@@ -1088,7 +1092,7 @@ def test_agent__call__callback(mock_model, agent, callback_handler, agenerator):
         ),
         unittest.mock.call(
             result=AgentResult(
-                stop_reason="end_turn",
+                stop_reason="content_filtered",
                 message={
                     "role": "assistant",
                     "content": [
@@ -1750,6 +1754,7 @@ def test_agent_call_creates_and_ends_span_on_success(mock_get_tracer, mock_model
             [
                 {"contentBlockDelta": {"delta": {"text": "test response"}}},
                 {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
             ]
         ),
     ]
@@ -2051,6 +2056,28 @@ def test_shared_model_carries_each_agents_own_session(mock_model, agenerator):
 
     session_ids = [call.kwargs["agent_metadata"].session_id for call in mock_model.mock_stream.call_args_list]
     assert session_ids == ["s1", "s2"]
+
+
+def test_incomplete_stream_does_not_persist_partial_assistant_message(mock_model, agenerator):
+    mock_model.mock_stream.return_value = agenerator(
+        [
+            {"contentBlockDelta": {"delta": {"text": "partial"}}},
+            {"contentBlockStop": {}},
+        ]
+    )
+    repository = MockedSessionRepository()
+    session_manager = RepositorySessionManager(session_id="incomplete", session_repository=repository)
+    agent = Agent(model=mock_model, session_manager=session_manager)
+
+    with pytest.raises(IncompleteStreamError):
+        agent("hello")
+
+    tru_messages = agent.messages
+    exp_messages = [{"role": "user", "content": [{"text": "hello"}], "tracking_id": unittest.mock.ANY}]
+    assert tru_messages == exp_messages
+    persisted = repository.list_messages("incomplete", "default")
+    assert [message.message for message in persisted] == exp_messages
+    assert mock_model.mock_stream.call_count == 1
 
 
 def test_agent_session_management():
@@ -2400,6 +2427,7 @@ def test_agent__call__handles_none_invocation_state(mock_model, agent):
     mock_model.mock_stream.return_value = [
         {"contentBlockDelta": {"delta": {"text": "test response"}}},
         {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "end_turn"}},
     ]
 
     # This should not raise AttributeError: 'NoneType' object has no attribute 'get'
@@ -2494,6 +2522,7 @@ def test_agent__call__resume_interrupt(mock_model, tool_decorated, agenerator):
             {"contentBlockStart": {"start": {"text": ""}}},
             {"contentBlockDelta": {"delta": {"text": "resumed"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 

@@ -38,6 +38,15 @@ class MaxTokensReachedException(Exception):
         super().__init__(message)
 
 
+class IncompleteStreamError(Exception):
+    """Raised when a model response stream ends without ``messageStop``.
+
+    The partial assistant message is discarded rather than reported as a completed turn. This
+    exception is not retried by the default model retry strategy; callers can retry it with an
+    ``AfterModelCallEvent`` hook or a custom ``ModelRetryStrategy``.
+    """
+
+
 class ContextWindowOverflowException(Exception):
     """Exception raised when the context window is exceeded.
 

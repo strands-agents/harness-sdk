@@ -202,6 +202,7 @@ async def event_loop_cycle(
     Raises:
         EventLoopException: If an error occurs during execution
         ContextWindowOverflowException: If the input is too large for the model
+        IncompleteStreamError: If the model stream ends without a ``messageStop`` event
     """
     structured_output_context = structured_output_context or StructuredOutputContext()
     invocation_context = _resolve_cycle_invocation_context(invocation_context, limits)
