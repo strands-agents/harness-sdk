@@ -555,7 +555,8 @@ profile. Applying `/setup` changes reloads the agent while preserving the conver
 `web_search` uses the model provider's own search where it has one (OpenAI, Google, GPT-5, GPT-6, and Daybreak
 models on `bedrock-mantle`, Anthropic). Other Amazon Bedrock models search through Amazon Bedrock AgentCore
 web search, which needs AWS credentials with `bedrock-agentcore:InvokeWebSearch` (a Bedrock API key does not cover
-it). On any other model without native search the Tools step offers
+it; a search without access fails as a tool error). Quickstart turns `web_search` on wherever the model has search.
+On any other model without native search the Tools step offers
 `web_search` through [Exa](https://exa.ai) instead, unchecked; ticking it writes
 `"web_search": "exa"` to the profile.
 

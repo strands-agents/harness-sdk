@@ -528,12 +528,17 @@ describe('setup provider credentials', () => {
 })
 
 describe('setup web_search availability', () => {
-  it.each(['bedrock', 'bedrock-mantle', 'openai'] as const)(
-    'enables every quickstart capability except web_search for %s',
-    (provider) => {
+  it.each([
+    ['bedrock', true],
+    ['bedrock-mantle', true],
+    ['openai', true],
+    ['ollama', false],
+  ] as const)(
+    'enables every quickstart capability for %s, with web_search only where the model has search',
+    (provider, search) => {
       const draft = quickstartDraft(`${provider}/openai.gpt-6.1-sol`)
       expect(enabledProfileTools(draft.profile.builtinTools)).toEqual(
-        enabledProfileTools(DEFAULT_HARNESS_AGENT_CONFIG.builtinTools).filter((tool) => tool !== 'web_search')
+        enabledProfileTools(DEFAULT_HARNESS_AGENT_CONFIG.builtinTools).filter((tool) => search || tool !== 'web_search')
       )
       expect(draft.profile.builtinPlugins).toEqual(DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins)
       expect(draft.settings).toEqual({ mcpDiscovery: true, skillDiscovery: true, agentMessaging: true })
@@ -544,7 +549,7 @@ describe('setup web_search availability', () => {
     ['Exa', 'ollama', 'exa'],
     ['AgentCore', 'bedrock', 'native'],
     ['Native', 'bedrock-mantle', 'native'],
-  ] as const)('offers an explicit %s web search opt-in for %s', (label, provider, mode) => {
+  ] as const)('offers %s web search for %s', (label, provider, mode) => {
     const draft = quickstartDraft(`${provider}/openai.gpt-6.1-sol`)
     let profile = draft.profile
     const rows = rowsForStep(
@@ -565,9 +570,10 @@ describe('setup web_search availability', () => {
       () => {}
     )
     const webSearch = rows.find((row) => row.id === 'quickstart-web-search')
+    const searchByDefault = mode === 'native'
     expect(webSearch?.choices?.map((choice) => [choice.label, choice.active])).toEqual([
-      ['Off', true],
-      [label, false],
+      ['Off', !searchByDefault],
+      [label, searchByDefault],
     ])
 
     webSearch?.choices?.[1]?.activate()
