@@ -22,8 +22,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# The class name is the provider-facing tool name. Nova strips a leading underscore, which breaks registry lookup.
 class LLMSteering(BaseModel):
-    """Structured output model whose class name is also the provider-facing tool name."""
+    """Structured output model for LLM steering decisions."""
 
     decision: Literal["proceed", "guide", "interrupt"] = Field(
         description="Steering decision: 'proceed' to continue, 'guide' to provide feedback, 'interrupt' for human input"

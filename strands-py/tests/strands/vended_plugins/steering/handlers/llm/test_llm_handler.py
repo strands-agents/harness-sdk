@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from strands.agent.invocation_context import _create_invocation_context, _reached_limit
+from strands.tools.structured_output.structured_output_utils import convert_pydantic_to_tool_spec
 from strands.vended_plugins.steering.core.action import Guide, Interrupt, Proceed
 from strands.vended_plugins.steering.handlers.llm.llm_handler import LLMSteering, LLMSteeringHandler
 from strands.vended_plugins.steering.handlers.llm.mappers import DefaultPromptMapper
@@ -47,6 +48,9 @@ def test_llm_steering_handler_with_custom_context_providers():
 @pytest.mark.asyncio
 async def test_steer_accepts_provider_tool_name_without_leading_underscore():
     """The structured-output tool name works when a provider normalizes leading underscores."""
+    spec = convert_pydantic_to_tool_spec(LLMSteering)
+    assert not spec["name"].startswith("_")
+
     model = MockedModelProvider(
         [
             {
