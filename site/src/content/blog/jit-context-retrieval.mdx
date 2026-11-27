@@ -1,7 +1,7 @@
 ---
 title: "Dropped, never forgotten: the context engine behind the Strands harness"
 date: 2026-12-08
-description: "The Strands harness reports 28% lower token cost than other harnesses. Context management is a large part of why. Here is the tiered approach behind it."
+description: "The Strands harness reports 34% lower cost than other harnesses. Context management is a large part of why. Here is the tiered approach behind it."
 authors:
   - liz-radway
 tags:
@@ -13,7 +13,7 @@ import Diagram from '@components/Diagram.astro'
 
 When you build an agentic system, the context window quickly becomes your scarcest resource. The Strands team knows this well: model performance degrades as context bloats, applications crash on context window overflows, and agents loop trying to re-read context they just shrunk. Meanwhile, token costs keep rising.
 
-So we built a tiered approach to curating the model's context window: context is dropped, but never forgotten. These are the defaults behind [Strands harness](/blog/introducing-strands-harness/), and a large part of why it costs 28% less than other harnesses across six benchmarks.
+So we built a tiered approach to curating the model's context window: context is dropped, but never forgotten. These are the defaults behind [Strands harness](/blog/introducing-strands-harness/), and a large part of why it costs [34% less than other harnesses](/blog/we-ran-94000-trials-to-measure-the-cost-of-harness-choice/) across benchmarks ranging from coding to other knowledge work.
 
 ## Philosophy
 
@@ -205,4 +205,4 @@ ContextBench, a 50-task benchmark built to stress long-horizon context handling,
 
 The overflow error was never the problem. It was the symptom of treating the context window as the only place context could live. Once context has somewhere else to go, the window becomes what it should have been all along: a working set, assembled for the turn in front of it.
 
-Storage is cheap; the context window is not. Context management reduces to deciding, each turn, which tier every piece of context belongs in. Start with `context_manager="auto"`, and drop down to fine-grained strategies as you learn what your workflow needs.
+Storage is cheap; the context window is not. Context management reduces to deciding, each turn, which tier every piece of context belongs in. Start with `context_manager="auto"`, and drop down to [fine-grained strategies](/docs/user-guide/sdk/context-management/) as you learn what your workflow needs. The team and I are also on [Discord](https://discord.gg/strands), so reach out if you'd like help with context management in your agent.
