@@ -19,7 +19,7 @@ are on by default and need no configuration for the common case.
 With `context_manager` on, Strands harness keeps the relevant history in the model's window,
 summarizing older turns as the conversation grows so a long task does not overflow the
 context. It also offloads bulky tool results: each is replaced with a short preview and a
-reference, and the full content stays in the context manager's stash, where the agent reads
+reference, and the full content stays in the context manager's archive, where the agent reads
 it back with the `retrieve_context` tool when it actually needs it.
 
 The option takes `"auto"` (the default), `"agentic"`, or off:
@@ -90,8 +90,16 @@ How caching reaches the provider depends on the provider:
 
 - On Amazon Bedrock and Anthropic direct, Strands harness configures cache points and cached tool
   definitions.
-- On OpenAI, Google, and bedrock-mantle, caching happens automatically server-side, so
-  there is nothing for Strands harness to configure.
+- On OpenAI and bedrock-mantle, Strands harness sends a per-session cache key (when a session is
+  active) and, on GPT-5.6+ models listed in the SDK model info, places cache points ahead of the
+  per-turn memory, todo, and environment context, so the conversation prefix stays cached across
+  turns.
+- On Google, caching happens automatically server-side, so there is nothing for Strands harness to
+  configure.
+
+On models with only implicit caching, such as OpenAI models on the Amazon Bedrock Converse API, the
+context Strands harness injects each turn changes the request and breaks the cache. See
+[Prompt caching: known gaps](../../../sdk/model-providers/prompt-caching/#known-gaps).
 
 Pass `caching` off to disable what Strands harness configures:
 
@@ -148,6 +156,8 @@ on a pre-built `Model` instance is ignored with a warning, because Strands harne
 instance's provider: configure caching on the instance itself in that case. For the
 provider-side details, see
 [Amazon Bedrock prompt caching](../../../sdk/model-providers/amazon-bedrock-prompt-caching/).
+For which models take cache points and where caching falls short, see
+[Prompt caching](../../../sdk/model-providers/prompt-caching/).
 
 For the full option list, see the
 [configuration reference](../../reference/configuration/).

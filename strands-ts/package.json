@@ -40,6 +40,15 @@
       "types": "./dist/src/models/google/index.d.ts",
       "default": "./dist/src/models/google/index.js"
     },
+    "./decisions/sagemaker": {
+      "types": "./dist/src/decisions/sagemaker.d.ts",
+      "default": "./dist/src/decisions/sagemaker.js"
+    },
+    "./decisions/http": {
+      "types": "./dist/src/decisions/http-decision-model.d.ts",
+      "node": "./dist/src/decisions/http-decision-model.node.js",
+      "default": "./dist/src/decisions/http-decision-model.js"
+    },
     "./models/vercel": {
       "types": "./dist/src/models/vercel.d.ts",
       "default": "./dist/src/models/vercel.js"
@@ -51,6 +60,10 @@
     "./multiagent": {
       "types": "./dist/src/multiagent/index.d.ts",
       "default": "./dist/src/multiagent/index.js"
+    },
+    "./context-manager": {
+      "types": "./dist/src/context-manager/index.d.ts",
+      "default": "./dist/src/context-manager/index.js"
     },
     "./experimental": {
       "types": "./dist/src/experimental/index.d.ts",
@@ -176,6 +189,10 @@
       "types": "./dist/src/vended-plugins/goal/index.d.ts",
       "default": "./dist/src/vended-plugins/goal/index.js"
     },
+    "./vended-plugins/todos": {
+      "types": "./dist/src/vended-plugins/todos/index.d.ts",
+      "default": "./dist/src/vended-plugins/todos/index.js"
+    },
     "./vended-interventions/hitl": {
       "types": "./dist/src/vended-interventions/hitl/index.d.ts",
       "default": "./dist/src/vended-interventions/hitl/index.js"
@@ -187,6 +204,10 @@
     "./vended-interventions/cedar": {
       "types": "./dist/src/vended-interventions/cedar/index.d.ts",
       "default": "./dist/src/vended-interventions/cedar/index.js"
+    },
+    "./vended-interventions/dogwood": {
+      "types": "./dist/src/vended-interventions/dogwood/index.d.ts",
+      "default": "./dist/src/vended-interventions/dogwood/index.js"
     },
     "./vended-tools": {
       "types": "./dist/src/vended-tools/index.d.ts",
@@ -253,7 +274,7 @@
     "test:browser:install": "npx playwright install --with-deps chromium",
     "test:all": "vitest run --project unit-node --project unit-browser",
     "test:all:coverage": "vitest run --coverage --project unit-node --project unit-browser",
-    "test:package": "npm run build && cd test/packages/esm-module && npm install && node esm.js && cd ../cjs-module && npm install && node cjs.js && cd ../../.. && npm pack --dry-run --ignore-scripts --json | node test/packages/assert-package-contents.js",
+    "test:package": "npm run build && cd test/packages/esm-module && npm install && node esm.js && cd ../cjs-module && npm install && node cjs.js && npx tsx cjs-static.ts && cd ../../.. && npm pack --dry-run --ignore-scripts --json | node test/packages/assert-package-contents.js",
     "lint": "eslint src test/integ",
     "lint:fix": "eslint src test/integ --fix",
     "format": "prettier --write src test/integ",
@@ -275,17 +296,19 @@
     "@ai-sdk/amazon-bedrock": "^4.0.129",
     "@ai-sdk/openai": "^3.0.41",
     "@ai-sdk/provider": "^3.0.0",
-    "@anthropic-ai/sdk": "^0.109.1",
+    "@anthropic-ai/sdk": "^1.7.0",
     "@aws-sdk/client-bedrock": "^3.1153.0",
     "@aws-sdk/client-bedrock-agent": "^3.1153.0",
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1153.0",
     "@aws-sdk/client-s3": "^3.1153.0",
     "@aws-sdk/client-s3vectors": "^3.1125.0",
+    "@aws-sdk/client-sagemaker-runtime": "^3.1158.0",
     "@aws-sdk/client-secrets-manager": "^3.1153.0",
     "@aws-sdk/client-ssm": "^3.1153.0",
     "@aws-sdk/client-sts": "^3.1153.0",
     "@aws-sdk/credential-providers": "^3.1153.0",
     "@aws/bedrock-token-generator": "^1.1.0",
+    "@aws/dogwood-wasm": "^1.1.0",
     "@cedar-policy/cedar-wasm": "^4.14.0",
     "@cedar-policy/mcp-schema-generator-wasm": "^0.6.1",
     "@eslint/js": "^10.0.1",
@@ -333,8 +356,11 @@
   "homepage": "https://github.com/strands-agents/harness-sdk#readme",
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1154.0",
+    "@aws-sdk/credential-provider-node": "^3.972.87",
     "@modelcontextprotocol/ext-tasks": "^0.2.2",
+    "@smithy/core": "^3.36.0",
     "@smithy/fetch-http-handler": "^5.8.0",
+    "@smithy/signature-v4": "^5.7.4",
     "@types/json-schema": "^7.0.15",
     "uuid": "^14.0.3",
     "yaml": "^2.9.1"
@@ -342,12 +368,14 @@
   "peerDependencies": {
     "@a2a-js/sdk": "^0.3.10",
     "@ai-sdk/provider": "^3.0.0",
-    "@anthropic-ai/sdk": "^0.109.1",
+    "@anthropic-ai/sdk": ">=0.109.1 <2.0.0",
     "@aws-sdk/client-bedrock-agent": "^3.1078.0",
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1078.0",
     "@aws-sdk/client-s3": "^3.1078.0",
     "@aws-sdk/client-s3vectors": "^3.1125.0",
+    "@aws-sdk/client-sagemaker-runtime": "^3.1078.0",
     "@aws/bedrock-token-generator": "^1.1.0",
+    "@aws/dogwood-wasm": "^1.1.0",
     "@cedar-policy/cedar-wasm": "^4.0.0",
     "@cedar-policy/mcp-schema-generator-wasm": "^0.6.0",
     "@google/genai": "^2.6.0",
@@ -398,6 +426,9 @@
     "@aws-sdk/client-s3vectors": {
       "optional": true
     },
+    "@aws-sdk/client-sagemaker-runtime": {
+      "optional": true
+    },
     "@google/genai": {
       "optional": true
     },
@@ -429,6 +460,9 @@
       "optional": true
     },
     "@cedar-policy/mcp-schema-generator-wasm": {
+      "optional": true
+    },
+    "@aws/dogwood-wasm": {
       "optional": true
     },
     "@tobilu/qmd": {

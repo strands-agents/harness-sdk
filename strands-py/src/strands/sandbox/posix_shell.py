@@ -9,8 +9,10 @@ Mirrors ``strands-ts/src/sandbox/posix-shell.ts``.
 """
 
 import base64
+import errno
 import logging
 import shlex
+import threading
 import uuid
 from abc import ABC
 from collections.abc import AsyncGenerator
@@ -100,6 +102,8 @@ class PosixShellSandbox(Sandbox, ABC):
       does not wire ``timeout`` into its process supervision will silently run
       without any time limit.
     - ``cwd`` — similarly must be applied by the subclass.
+    - ``cancel_signal`` — a subclass that does not watch it keeps running after
+      the caller cancels.
     """
 
     async def execute_code_streaming(
@@ -110,6 +114,7 @@ class PosixShellSandbox(Sandbox, ABC):
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ExecutionResult, None]:
         """Execute code by piping it to a language interpreter over the shell.
@@ -126,6 +131,7 @@ class PosixShellSandbox(Sandbox, ABC):
             timeout: Maximum execution time in seconds. ``None`` means no timeout.
             cwd: Working directory for execution.
             env: Environment variables to set for this execution.
+            cancel_signal: Aborts the execution when set.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
@@ -140,6 +146,8 @@ class PosixShellSandbox(Sandbox, ABC):
         encoded = base64.b64encode(code.encode()).decode("ascii")
         eof = _eof_marker()
         command = f"base64 -d << '{eof}' | {language}\n{encoded}\n{eof}"
+        if cancel_signal is not None:
+            kwargs["cancel_signal"] = cancel_signal
         async for chunk in self.execute_streaming(command, timeout=timeout, cwd=cwd, env=env, **kwargs):
             yield chunk
 
@@ -154,13 +162,29 @@ class PosixShellSandbox(Sandbox, ABC):
             The file contents as raw bytes.
 
         Raises:
-            FileNotFoundError: If the file does not exist or cannot be read.
-            OSError: If the command succeeds but its output is not valid base64
-                (e.g. a shell profile or locale warning prepended text to stdout).
+            SandboxPathNotFoundError: If the file does not exist.
+            IsADirectoryError: If ``path`` is a directory.
+            PermissionError: If the file or its parent directory is not accessible.
+            OSError: If the file cannot be read for another reason, or the command succeeds but its output
+                is not valid base64 (e.g. a shell profile or locale warning prepended text to stdout).
         """
-        result = await self.execute(f"base64 < {shlex.quote(path)}")
+        quoted = shlex.quote(path)
+        # Locale-independent exit codes: 77 = missing, 78 = directory, 79 = permission denied. `test -e` is also
+        # false under an unsearchable ancestor, so check the deepest existing one. The braces keep a backend's
+        # `cd ... &&` prefix out of the `||`.
+        result = await self.execute(
+            f'{{ test -e {quoted} || {{ p={quoted}; while p=$(dirname -- "$p"); ! test -d "$p"; do :; done; '
+            f'test -x "$p" || exit 79; exit 77; }}; '
+            f"test -r {quoted} || exit 79; test -d {quoted} && exit 78; base64 < {quoted}; }}"
+        )
+        if result.exit_code == 77:
+            raise SandboxPathNotFoundError(path)
+        if result.exit_code == 78:
+            raise IsADirectoryError(errno.EISDIR, "Is a directory", path)
+        if result.exit_code == 79:
+            raise PermissionError(errno.EACCES, "Permission denied", path)
         if result.exit_code != 0:
-            raise FileNotFoundError(result.stderr or f"Failed to read file: {path}")
+            raise OSError(result.stderr or f"Failed to read file: {path}")
         # base64 output is ASCII-safe text; strip whitespace (line wrapping) and decode.
         try:
             # binascii.Error (raised by b64decode on malformed input) subclasses ValueError.

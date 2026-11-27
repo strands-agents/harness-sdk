@@ -1,4 +1,5 @@
 import type { Tool } from '../tools/tool.js'
+import type { ToolSpec } from '../tools/types.js'
 import { ToolValidationError, ToolNotFoundError } from '../errors.js'
 
 /** @internal Maximum tool-name length accepted by the registry. */
@@ -10,12 +11,18 @@ export const MAX_TOOL_NAME_LENGTH = 64
 export class ToolRegistry {
   private _tools: Map<string, Tool> = new Map()
 
+  /** Whether {@link toolSpecs} returns specs sorted by name. */
+  sortToolSpecs: boolean
+
   /**
    * Creates a new ToolRegistry, optionally pre-populated with tools.
    *
    * @param tools - Optional initial tools to register
+   * @param options - Registry options. `sortToolSpecs` makes {@link toolSpecs} return specs sorted by name;
+   *   defaults to false, which keeps registration order.
    */
-  constructor(tools?: Tool[]) {
+  constructor(tools?: Tool[], options?: { sortToolSpecs?: boolean }) {
+    this.sortToolSpecs = options?.sortToolSpecs ?? false
     if (tools) {
       this.add(tools)
     }
@@ -30,13 +37,56 @@ export class ToolRegistry {
   add(tool: Tool | Tool[]): void {
     const tools = Array.isArray(tool) ? tool : [tool]
     for (const t of tools) {
-      this._validateProperties(t)
-      if (this._tools.has(t.name)) {
-        throw new ToolValidationError(`Tool with name '${t.name}' already registered`)
-      }
-      this._checkNormalizedConflict(t.name)
+      this._validateNewTool(t, this._tools)
       this._tools.set(t.name, t)
     }
+  }
+
+  /**
+   * Swaps one source's tools for its new list in a single step, preserving the source's registration position. Each new
+   * tool is checked against the registry without `current` and against the new tools before it. A tool that fails the
+   * check is skipped, so another source's tool with the same name stays registered.
+   *
+   * @param current - The source's registered tools; a tool not registered under its name is left alone
+   * @param next - The source's new tools
+   * @param insertBefore - Where to insert when none of `current` remain registered; defaults to the end
+   * @returns The tools of `next` that were skipped, each with the reason
+   * @internal
+   */
+  swap(current: Tool[], next: Tool[], insertBefore?: Tool): { tool: Tool; error: ToolValidationError }[] {
+    const currentByName = new Map(current.map((tool) => [tool.name, tool]))
+    const entries = [...this._tools]
+    let insertAt = entries.length
+    let removed = false
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const [name, tool] = entries[index]!
+      if (currentByName.get(name) === tool) {
+        entries.splice(index, 1)
+        insertAt = index
+        removed = true
+      }
+    }
+    if (!removed && insertBefore) {
+      const anchorIndex = entries.findIndex(([name, tool]) => name === insertBefore.name && tool === insertBefore)
+      if (anchorIndex >= 0) insertAt = anchorIndex
+    }
+
+    const tools = new Map(entries)
+    const accepted: Tool[] = []
+    const skipped: { tool: Tool; error: ToolValidationError }[] = []
+    for (const tool of next) {
+      try {
+        this._validateNewTool(tool, tools)
+        tools.set(tool.name, tool)
+        accepted.push(tool)
+      } catch (error) {
+        if (!(error instanceof ToolValidationError)) throw error
+        skipped.push({ tool, error })
+      }
+    }
+    entries.splice(insertAt, 0, ...accepted.map((tool) => [tool.name, tool] as [string, Tool]))
+    this._tools = new Map(entries)
+    return skipped
   }
 
   /**
@@ -129,6 +179,17 @@ export class ToolRegistry {
     return Array.from(this._tools.values())
   }
 
+  /**
+   * Returns the specs of all registered tools, sorted by name when {@link sortToolSpecs} is set.
+   *
+   * @returns Array of tool specs, sorted by name or in registration order
+   */
+  toolSpecs(): ToolSpec[] {
+    const specs = this.list().map((tool) => tool.toolSpec)
+    if (!this.sortToolSpecs) return specs
+    return specs.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+  }
+
   private _validateProperties(tool: Tool): void {
     if (typeof tool.name !== 'string') {
       throw new ToolValidationError('Tool name must be a string')
@@ -150,9 +211,17 @@ export class ToolRegistry {
     }
   }
 
-  private _checkNormalizedConflict(name: string): void {
+  private _validateNewTool(tool: Tool, tools: Map<string, Tool>): void {
+    this._validateProperties(tool)
+    if (tools.has(tool.name)) {
+      throw new ToolValidationError(`Tool with name '${tool.name}' already registered`)
+    }
+    this._checkNormalizedConflict(tool.name, tools)
+  }
+
+  private _checkNormalizedConflict(name: string, tools: Map<string, Tool> = this._tools): void {
     const normalized = name.replaceAll('-', '_')
-    for (const existing of this._tools.keys()) {
+    for (const existing of tools.keys()) {
       if (existing !== name && existing.replaceAll('-', '_') === normalized) {
         throw new ToolValidationError(
           `Tool name '${name}' already exists as '${existing}'.` +

@@ -79,12 +79,13 @@ export interface HarnessAgentOptions extends Omit<
   /**
    * A `Model` or `ModelRouter` instance, a `"provider/name"` string (e.g.
    * `"anthropic/claude-fable-5"`), a bare Bedrock model id, or `undefined` for the harness default
-   * (Bedrock Opus 5).
+   * (Bedrock Opus 5.5).
    */
   model?: Model | ModelRouter | string
   /**
    * Reasoning effort applied to the resolved model, mapped to each provider's request fields.
-   * `'auto'` (the default) uses the provider's recommended level, `'off'` turns reasoning off
+   * `'auto'` (the default) uses the model vendor's default level (what Claude Code, Codex, or Gemini CLI run it
+   * at; the provider's `'high'` otherwise), `'off'` turns reasoning off
    * (the provider's `none` level where it has one), and a named level (`'minimal'`, `'low'`,
    * `'medium'`, `'high'`, `'xhigh'`, `'max'`) sets it explicitly; a level the resolved provider
    * does not support throws. Ignored when `model` is a `Model` or `ModelRouter` instance.
@@ -98,8 +99,7 @@ export interface HarnessAgentOptions extends Omit<
    * (built-in tools, `tools`, plugins); a collision throws at construction. To replace a built-in,
    * drop it first via `builtinTools` so the name is free. Consumer tools also join the `subagent`
    * tool's narrowable set, so a delegate can be granted them too; a connected `McpClient` passed here
-   * is offered on its `mcp_servers` axis under its `clientName` (set `applicationName`), like the
-   * servers loaded from `mcpServers`; an unnamed or same-named client is warned about and left off it.
+   * is always handed to delegates (shared, not reconnected), like the servers loaded from `mcpServers`.
    */
   tools?: ToolList
   /**
@@ -123,8 +123,9 @@ export interface HarnessAgentOptions extends Omit<
    * mapping edits the defaults (`DEFAULT_BUILTIN_TOOLS`): `'*'` (default `true`) is the baseline,
    * `false` drops a tool, `true` adds one, and a config object enables and configures one
    * (`ToolConfig`; the keys per tool are `BUILTIN_TOOL_CONFIG_KEYS`). `web_search` turns on the
-   * provider's native web search (OpenAI, Anthropic, Google, GPT-5, GPT-6, and Daybreak models on bedrock-mantle);
-   * elsewhere it is off, and naming it there throws. `{ web_search: 'exa' }` instead gives the model a
+   * provider's native web search (OpenAI, Anthropic, Google, GPT-5, GPT-6, and Daybreak models on bedrock-mantle),
+   * or a tool backed by Amazon Bedrock AgentCore web search on other Bedrock models; elsewhere it is
+   * off, and naming it there throws. `{ web_search: 'exa' }` instead gives the model a
    * `web_search` tool backed by Exa's hosted search on any model, a third party that receives the
    * queries (keyless; `EXA_API_KEY` lifts its rate limit). A `subagent` child inherits this agent's
    * configuration, bounded by a delegation-depth guard.
@@ -138,9 +139,9 @@ export interface HarnessAgentOptions extends Omit<
    */
   backgroundTasks?: boolean | BackgroundTasksConfig
   /**
-   * Enables prompt caching to save cost and latency where the provider supports it (Bedrock and
-   * Anthropic direct set cache points and cached tools; OpenAI, Google, and bedrock-mantle cache
-   * automatically server-side). Defaults to on. `false`/`null` turns off what the harness configures, and
+   * Enables prompt caching to save cost and latency where the provider supports it. Bedrock,
+   * Anthropic direct, OpenAI, and bedrock-mantle receive an SDK cache config; Google and litellm
+   * cache automatically server-side. Defaults to on. `false`/`null` turns off what the harness configures, and
    * has no effect where caching is automatic. On a pre-built `Model`/`ModelRouter` the option is
    * not applied; the harness warns once and passes the instance through — configure caching on the
    * instance.
@@ -187,11 +188,11 @@ export interface HarnessAgentOptions extends Omit<
    */
   memory?: boolean | MemoryConfig | MemoryManager | null
   /**
-   * Names of the built-in feature plugins to enable. Defaults to `['todos', 'environment']`:
-   * `todos` adds a `todo_write` tool that tracks multi-step work and re-surfaces the list before
-   * each step; `environment` injects the platform, date, working directory, and the project's
-   * `AGENTS.md` (plus links to nearby `AGENTS.md`/`README.md` files) before each user turn. Pass
-   * `[]` to disable them.
+   * Names of the built-in feature plugins to enable. Defaults to `['environment']`, which injects
+   * the platform, date, working directory, and the project's `AGENTS.md` (plus links to nearby
+   * `AGENTS.md`/`README.md` files) before each user turn. `todos` is opt-in: it adds a `todo_write`
+   * tool that tracks multi-step work and re-surfaces the list before each step. Pass `[]` to
+   * disable them all.
    */
   builtinPlugins?: readonly BuiltinPluginName[]
   /**
@@ -325,6 +326,7 @@ function resolveBackgroundTasks(
 
   return {
     ...policy,
+    manageToolName: policy.manageToolName ?? 'manage_background_task',
     ...(policy.agentic !== undefined ? { agentic: omitForced(policy.agentic) } : {}),
     ...(always.length > 0 || policy.always !== undefined ? { always } : {}),
     ...(policy.never !== undefined ? { never: omitForced(policy.never) } : {}),
@@ -426,8 +428,8 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
   }
 
   const builtin = selectBuiltinTools(
-    enabledBuiltinTools({ ...resolvedBuiltins, web_search: webSearch === 'exa' }),
-    await buildBuiltinTools(createHarness, parentConfig, resolvedBuiltins)
+    enabledBuiltinTools({ ...resolvedBuiltins, web_search: webSearch === 'exa' || webSearch === 'agentcore' }),
+    await buildBuiltinTools(createHarness, parentConfig, resolvedBuiltins, webSearch)
   )
 
   // Assemble plugins before the collision check so plugin-vended tools are checked too; consumer
@@ -452,7 +454,7 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
         storage: { snapshot: new SessionFileStorage(sessionDir) },
         saveLatestOn: 'message',
       })
-      // The context manager's stash goes to files, not into the snapshot rewritten on every message. It
+      // The context manager's archive goes to files, not into the snapshot rewritten on every message. It
       // lives in the session's own folder because each folder under the session dir is read as a session.
       storage ??= new LocalFileStorage(join(sessionDir, sessionId))
     }

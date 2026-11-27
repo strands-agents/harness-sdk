@@ -8,6 +8,7 @@ import pytest
 from strands import Agent, Plugin
 from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent
 from strands.middleware.stages import InvokeModelContext, InvokeModelResult, InvokeModelStage
+from strands.models._model_proxy import _latest_call_tools
 from strands.types._events import ModelStopReason, TextStreamEvent
 from strands.types.streaming import Metrics, Usage
 from tests.fixtures.mock_hook_provider import MockHookProvider
@@ -162,6 +163,25 @@ def test_wrap_context_transformation_tool_specs(agent):
     agent("test")
 
     assert received_tool_specs == []
+
+
+def test_records_the_tool_specs_the_call_sent(agent):
+    """A summary replay sends the recorded specs, so they are the ones middleware produced (#6332)."""
+    shell = {"name": "shell", "description": "Run a command", "inputSchema": {"json": {}}}
+    grep = {"name": "grep", "description": "Search files", "inputSchema": {"json": {}}}
+
+    async def replace_specs(context):
+        return replace(context, tool_specs=[shell])
+
+    async def add_spec(context, next_fn):
+        async for event in next_fn(replace(context, tool_specs=[*context.tool_specs, grep])):
+            yield event
+
+    agent.add_middleware(InvokeModelStage.Input, replace_specs)
+    agent.add_middleware(InvokeModelStage, add_spec)
+    agent("test")
+
+    assert _latest_call_tools(agent) == [shell, grep]
 
 
 def test_string_system_prompt_reaches_model_as_both_forms():

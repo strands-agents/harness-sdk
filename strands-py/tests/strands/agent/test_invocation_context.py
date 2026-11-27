@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from strands import InvocationContext
+from strands import InvocationContext, ModelUsage
 from strands.agent import invocation_context as invocation_context_module
 from strands.agent.invocation_context import (
     _create_auxiliary_invocation_context,
@@ -53,6 +53,119 @@ def test_records_every_update_made_from_concurrent_threads():
         "totalTokens": 160_000,
         "cacheReadInputTokens": 80_000,
     }
+
+
+def _summed(usages):
+    keys = ("inputTokens", "outputTokens", "totalTokens", "cacheReadInputTokens", "cacheWriteInputTokens")
+    return {key: sum(usage.get(key, 0) for usage in usages) for key in keys}
+
+
+def test_usage_by_model_keeps_one_record_per_provider_name_and_model_id():
+    request = _create_invocation_context()
+    call = {"inputTokens": 3, "outputTokens": 1, "totalTokens": 4}
+
+    request._record_usage(call, "bedrock", "model-a")
+    request._record_usage({**call, "cacheReadInputTokens": 2}, "bedrock", "model-a")
+    request._record_usage(call, "openai", "model-a")
+    request._record_usage(call, "bedrock", "model-b")
+
+    assert request.usage_by_model == [
+        ModelUsage(
+            provider_name="bedrock",
+            model_id="model-a",
+            usage={"inputTokens": 6, "outputTokens": 2, "totalTokens": 8, "cacheReadInputTokens": 2},
+        ),
+        ModelUsage(provider_name="openai", model_id="model-a", usage=call),
+        ModelUsage(provider_name="bedrock", model_id="model-b", usage=call),
+    ]
+
+
+def test_usage_by_model_keeps_usage_of_an_unknown_model_apart():
+    request = _create_invocation_context()
+    call = {"inputTokens": 3, "outputTokens": 1, "totalTokens": 4}
+
+    request._record_usage(call)
+    request._record_usage(call, "bedrock")
+    request._record_usage(call, "bedrock", "model-a")
+
+    assert request.usage_by_model == [
+        ModelUsage(provider_name=None, model_id=None, usage=call),
+        ModelUsage(provider_name="bedrock", model_id=None, usage=call),
+        ModelUsage(provider_name="bedrock", model_id="model-a", usage=call),
+    ]
+
+
+def test_usage_by_model_adds_up_to_usage_in_the_context_and_every_parent():
+    request = _create_invocation_context()
+    nested = _create_invocation_context({"turns": 5}, request)
+    auxiliary = _create_auxiliary_invocation_context(nested)
+
+    request._record_usage({"inputTokens": 1, "outputTokens": 1, "totalTokens": 2}, "bedrock", "model-a")
+    nested._record_usage({"inputTokens": 10, "outputTokens": 1, "totalTokens": 11}, "bedrock", "model-a")
+    nested._record_usage({"inputTokens": 5, "outputTokens": 5, "totalTokens": 20, "cacheWriteInputTokens": 10})
+    auxiliary._record_usage({"inputTokens": 100, "outputTokens": 1, "totalTokens": 101}, "openai", "model-b")
+
+    assert [len(context.usage_by_model) for context in (request, nested, auxiliary)] == [3, 3, 1]
+    for context in (request, nested, auxiliary):
+        tru_usage = _summed([record.usage for record in context.usage_by_model])
+        exp_usage = _summed([context.usage])
+        assert tru_usage == exp_usage
+
+
+def test_usage_by_model_returns_a_copy():
+    request = _create_invocation_context()
+    request._record_usage({"inputTokens": 3, "outputTokens": 1, "totalTokens": 4}, "bedrock", "model-a")
+
+    snapshot = request.usage_by_model
+    snapshot[0].usage["inputTokens"] = 99
+    snapshot.clear()
+    request._record_usage({"inputTokens": 3, "outputTokens": 1, "totalTokens": 4}, "bedrock", "model-a")
+
+    assert request.usage_by_model == [
+        ModelUsage(
+            provider_name="bedrock", model_id="model-a", usage={"inputTokens": 6, "outputTokens": 2, "totalTokens": 8}
+        )
+    ]
+    with pytest.raises(AttributeError):
+        request.usage_by_model[0].model_id = "model-b"
+
+
+def test_model_usage_records_that_are_equal_hash_equal():
+    usage = {"inputTokens": 3, "outputTokens": 1, "totalTokens": 4}
+
+    tru_records = {
+        ModelUsage(provider_name="bedrock", model_id="model-a", usage=usage),
+        ModelUsage(provider_name="bedrock", model_id="model-a", usage=dict(usage)),
+        ModelUsage(provider_name="bedrock", model_id="model-a", usage={**usage, "inputTokens": 4}),
+    }
+
+    assert len(tru_records) == 2
+
+
+@pytest.mark.usefixtures("frequent_thread_switches")
+def test_usage_by_model_records_every_update_made_from_concurrent_threads():
+    request = _create_invocation_context()
+    nested = _create_invocation_context({"turns": 5}, request)
+    usage = {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2}
+    reads = []
+
+    def record(thread_number: int) -> None:
+        for _call_number in range(5_000):
+            nested._record_usage(usage, "bedrock", f"model-{thread_number % 2}")
+            reads.append(len(request.usage_by_model))
+
+    threads = [threading.Thread(target=record, args=(thread_number,)) for thread_number in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    exp_usage = {"inputTokens": 10_000, "outputTokens": 10_000, "totalTokens": 20_000}
+    assert request.usage_by_model == [
+        ModelUsage(provider_name="bedrock", model_id="model-0", usage=exp_usage),
+        ModelUsage(provider_name="bedrock", model_id="model-1", usage=exp_usage),
+    ]
+    assert set(reads) <= {1, 2}
 
 
 def test_lets_concurrent_threads_take_no_more_turns_than_the_limit(monkeypatch):

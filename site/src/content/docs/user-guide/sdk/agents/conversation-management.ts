@@ -105,7 +105,6 @@ async function summarizingAdvanced() {
   const summarizationModel = new AnthropicModel({
     modelId: 'claude-haiku-4-5-20251001',
     maxTokens: 1000,
-    params: { temperature: 0.1 }, // Low temperature for consistent summaries
   })
 
   const conversationManager = new SummarizingConversationManager({

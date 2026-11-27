@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 from strands import Agent, BackgroundTasksConfig
-from strands.experimental.context_manager import ContextManager
+from strands.context_manager import ContextManager
 from strands.memory import MemoryManager
 from strands.models import Model, ModelRouter
 from strands.plugins import Plugin
@@ -25,9 +25,9 @@ from strands_harness.interventions import InterventionsOption, resolve_intervent
 from strands_harness.memory import resolve_memory
 from strands_harness.models import (
     _supports_media,
+    _web_search_kind,
     resolve_model,
     resolve_web_fetch_model,
-    supports_web_search,
 )
 from strands_harness.options import (
     _builtin_tool_config,
@@ -43,6 +43,7 @@ from strands_harness.telemetry import setup_telemetry
 from strands_harness.tools import (
     edit,
     exa_web_search,
+    make_agentcore_web_search,
     make_programmatic_tool_caller,
     make_read,
     make_web_fetch,
@@ -76,13 +77,13 @@ _ALWAYS_BACKGROUND_TOOL_NAMES = frozenset({"subagent"})
 _UNSET: Any = object()
 
 
-def _builtin_tools(parent_config: dict[str, Any]) -> dict[str, Any]:
+def _builtin_tools(parent_config: dict[str, Any], web_search: str | None) -> dict[str, Any]:
     """The built-in tools by name. Each configurable one is built from its factory with the config it
     was enabled with (``{}`` for ``True``, see ``_BUILTIN_TOOL_CONFIG_KEYS``); ``web_fetch`` also
     derives its summarizer from the agent's model, ``subagent`` takes the whole parent config so it
     can rebuild a child the way this agent was built. ``subagent``'s own delegation-depth budget
-    lives on ``agent.state``, tracked by the tool itself. ``web_search`` here is the Exa tool;
-    ``create_harness`` selects it only when the setting is ``"exa"``."""
+    lives on ``agent.state``, tracked by the tool itself. ``web_search`` is the AgentCore tool when
+    that is its mode (``_web_search_mode``) and the Exa tool otherwise."""
     enabled = parent_config["builtin_tools"]
     web_fetch_config = _builtin_tool_config(enabled, "web_fetch")
     web_fetch_model = resolve_web_fetch_model(parent_config["model"], web_fetch_config.pop("model", None))
@@ -92,7 +93,7 @@ def _builtin_tools(parent_config: dict[str, Any]) -> dict[str, Any]:
         write,
         edit,
         make_web_fetch(model=web_fetch_model, **web_fetch_config),
-        exa_web_search,
+        make_agentcore_web_search() if web_search == "agentcore" else exa_web_search,
         make_programmatic_tool_caller(**_builtin_tool_config(enabled, "programmatic_tool_caller")),
         build_default_subagent(create_harness, parent_config, **_builtin_tool_config(enabled, "subagent")),
     )
@@ -107,9 +108,10 @@ def _select_builtin_tools(enabled: Mapping[str, Any], tools: dict[str, Any]) -> 
 
 def _web_search_mode(
     setting: Any, explicit: bool, model: Model | ModelRouter | str | None
-) -> Literal["native", "exa"] | None:
+) -> Literal["native", "agentcore", "exa"] | None:
     """How ``web_search`` is served for ``model``: ``"exa"`` (the third-party tool, whenever opted
-    into with ``"exa"``), ``"native"`` (a model flag), or ``None`` (off)."""
+    into with ``"exa"``), ``"native"`` (a model flag), ``"agentcore"`` (the AgentCore tool, on
+    Bedrock), or ``None`` (off)."""
     if setting is False:
         return None
     if setting == "exa":
@@ -118,11 +120,14 @@ def _web_search_mode(
             "environment and is subject to Exa's privacy policy (https://exa.ai/privacy-policy)."
         )
         return "exa"
-    if supports_web_search(model):
-        return "native"
+    kind = _web_search_kind(model)
+    if kind is not None:
+        return kind
     target = (
-        "A pre-built Model instance"
-        if isinstance(model, (Model, ModelRouter))
+        "A pre-built ModelRouter"
+        if isinstance(model, ModelRouter)
+        else "A pre-built Model instance"
+        if isinstance(model, Model)
         else f"Model {model or defaults.DEFAULT_MODEL}"
     )
     if explicit:
@@ -225,7 +230,7 @@ def _resolve_background_tasks(
         ]
 
     always = [*omit_forced(policy.get("always", [])), *forced]
-    resolved: BackgroundTasksConfig = {**policy}
+    resolved: BackgroundTasksConfig = {"manage_tool_name": "manage_background_task", **policy}
     if "agentic" in policy:
         resolved["agentic"] = omit_forced(policy["agentic"])
     if always or "always" in policy:
@@ -264,9 +269,10 @@ def create_harness(
     Args:
         model: A ``Model`` or ``ModelRouter`` instance, a ``"provider/name"`` string (e.g.
             ``"anthropic/claude-fable-5"``), a bare Bedrock model id, or ``None`` for the
-            harness default (Bedrock Opus 5).
+            harness default (Bedrock Opus 5.5).
         effort: Reasoning effort applied to the resolved model, mapped to each provider's request
-            fields. ``"auto"`` (the default) uses the provider's recommended level, ``"off"`` turns
+            fields. ``"auto"`` (the default) uses the model vendor's default level (what Claude Code,
+            Codex, or Gemini CLI run it at; the provider's ``"high"`` otherwise), ``"off"`` turns
             reasoning off, and ``"minimal"``/``"low"``/``"medium"``/``"high"``/``"xhigh"``/``"max"``
             set it explicitly; a level the provider does not offer raises. When ``model`` is a
             ``Model`` or ``ModelRouter`` instance a non-``"auto"`` effort is ignored with a warning
@@ -277,10 +283,8 @@ def create_harness(
             as a tool, wrap it with ``Agent.as_tool()`` and pass it here. A tool name must be unique
             across all sources (built-in tools, ``tools``, plugins); a collision raises at
             construction. To replace a built-in, drop it first via ``builtin_tools`` so the name is
-            free. A connected ``MCPClient`` passed here is offered to delegates on the ``subagent``
-            tool's ``mcp_servers`` axis under its ``client_name`` (set ``application_name``), like the
-            servers loaded from ``mcp_servers``; an unnamed or same-named client is warned about and
-            left off that axis.
+            free. A connected ``MCPClient`` passed here is always handed to ``subagent`` delegates
+            (shared, not reconnected), like the servers loaded from ``mcp_servers``.
         plugins: Consumer SDK plugins, added alongside the built-in plugins (consumer plugins run
             first). Tools a plugin vends take part in the name-collision check, and the plugins reach
             ``subagent`` children too. An ``AgentSkills`` passed here replaces the one the harness
@@ -308,8 +312,9 @@ def create_harness(
             {"transport": "direct"}}`` fetches from the harness process instead of running ``curl`` in the
             agent's sandbox (the default, ``"curl"``).
             ``web_search`` turns on the model provider's native web search (OpenAI, Anthropic, Google,
-            GPT-5, GPT-6, and Daybreak models on bedrock-mantle). Elsewhere (Bedrock Converse, other Mantle models,
-            ``Model`` instances) it is off, and naming it there raises. ``{"web_search": "exa"}``
+            GPT-5, GPT-6, and Daybreak models on bedrock-mantle), or a tool backed by Amazon Bedrock
+            AgentCore web search on other Bedrock models. Elsewhere (another provider's ``Model``
+            instance) it is off, and naming it there raises. ``{"web_search": "exa"}``
             instead gives the model a ``web_search`` tool backed by Exa's hosted search on any model,
             a third party that receives the queries (keyless; ``EXA_API_KEY`` lifts its rate limit).
             ``programmatic_tool_caller`` lets the model orchestrate its other tools by writing Python
@@ -330,9 +335,9 @@ def create_harness(
             compatible tool. The invocation waits for completion and continues with the result.
             Pass ``False`` to disable Background Tasks, or provide a policy to control other tools,
             concurrency, completion, and timeouts.
-        caching: Enables prompt caching to save cost and latency where the provider supports it
-            (Bedrock and Anthropic direct set cache points and cached tools; OpenAI, Gemini, and
-            bedrock-mantle cache automatically server-side). Defaults to on. ``False``/``None`` turns
+        caching: Enables prompt caching to save cost and latency where the provider supports it.
+            Bedrock, Anthropic direct, OpenAI, and bedrock-mantle receive an SDK cache config; Gemini
+            and litellm cache automatically server-side. Defaults to on. ``False``/``None`` turns
             off what the harness configures, and has no effect where caching is automatic. Explicitly
             enabling caching (``"auto"`` or ``True``) on a provider without it raises; on a pre-built
             ``Model`` instance it is ignored with a warning (configure it on the instance). Any other
@@ -372,10 +377,10 @@ def create_harness(
             run its shutdown on exit, or call ``agent.shutdown()`` (``await agent.shutdown_async()``
             from async code) at your shutdown boundary, to persist what's pending.
         builtin_plugins: Names of the built-in feature plugins to enable. Defaults to
-            ``["todos", "environment"]``: ``todos`` adds a ``todo_write`` tool that tracks
-            multi-step work and re-surfaces the list before each step; ``environment`` injects the
-            platform, date, working directory, and the project's ``AGENTS.md`` (plus links to nearby
-            ``AGENTS.md``/``README.md`` files) before each user turn. Pass ``[]`` to disable them.
+            ``["environment"]``, which injects the platform, date, working directory, and the
+            project's ``AGENTS.md`` (plus links to nearby ``AGENTS.md``/``README.md`` files) before
+            each user turn. ``todos`` is opt-in: it adds a ``todo_write`` tool that tracks multi-step
+            work and re-surfaces the list before each step. Pass ``[]`` to disable them all.
         interventions: Gate tool calls behind approval or a policy; defaults to ``None`` (off —
             every call runs). Accepts a preset (``"ask"`` approves every call, ``"smart"`` lets the
             SDK's LLM risk classifier flag risky ones), a natural-language policy used as that
@@ -456,7 +461,9 @@ def create_harness(
         "sandbox": agent_kwargs.get("sandbox"),
     }
 
-    builtin = _select_builtin_tools({**enabled_tools, "web_search": web_search == "exa"}, _builtin_tools(parent_config))
+    builtin = _select_builtin_tools(
+        {**enabled_tools, "web_search": web_search in ("exa", "agentcore")}, _builtin_tools(parent_config, web_search)
+    )
     context_enabled = context_manager is not None and context_manager is not False
     # The SDK's Agent rejects a bare config dict; build the instance from it here.
     if isinstance(context_manager, Mapping):
@@ -473,7 +480,7 @@ def create_harness(
             resolved_id = _sanitize_session_id(session_id) if session_id else uuid.uuid4().hex[:8]
             session_storage = LocalFileStorage(session_option.get("dir") or defaults.DEFAULT_SESSION_DIR)
             session_manager = SnapshotSessionManager(resolved_id, storage=session_storage, save_latest_on="message")
-            # The context manager's stash goes to files, not into the snapshot rewritten on every message.
+            # The context manager's archive goes to files, not into the snapshot rewritten on every message.
             # Sharing the session's root is safe because storage namespaces each subsystem (``session/``,
             # ``context/``).
             if agent_kwargs.get("storage") is None:

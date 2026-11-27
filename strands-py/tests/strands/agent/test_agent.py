@@ -26,7 +26,7 @@ from strands.agent.conversation_manager.null_conversation_manager import NullCon
 from strands.agent.conversation_manager.sliding_window_conversation_manager import SlidingWindowConversationManager
 from strands.agent.state import AgentState
 from strands.handlers.callback_handler import PrintingCallbackHandler, null_callback_handler
-from strands.hooks import BeforeInvocationEvent, BeforeModelCallEvent, BeforeToolCallEvent
+from strands.hooks import BeforeInvocationEvent, BeforeModelCallEvent, BeforeToolCallEvent, MessageAddedEvent
 from strands.interrupt import Interrupt, PendingToolExecution
 from strands.memory import MemoryManager, MemoryManagerConfig
 from strands.models.bedrock import DEFAULT_BEDROCK_MODEL_ID, BedrockModel
@@ -793,6 +793,192 @@ def test_agent__call__retry_with_overwritten_tool(mock_model, agent, tool, agene
     assert conversation_manager_spy.apply_management.call_count == 1
 
 
+@pytest.mark.parametrize(
+    "glitch_deltas",
+    [
+        pytest.param([{"text": "<thinking>let me look that up</parameter>"}], id="text_only"),
+        pytest.param([{"toolUse": {"input": '{"key": "val"}'}}], id="incomplete_tool_use"),
+        pytest.param([{"reasoningContent": {"text": "let me look that up"}}], id="reasoning_only"),
+        pytest.param(
+            [{"text": "<thinking>let me look that up</parameter>"}, {"reasoningContent": {"text": "still looking"}}],
+            id="two_glitches",
+        ),
+    ],
+)
+def test_agent__call__retries_tool_use_that_names_no_tool(glitch_deltas, mock_model, agent, agenerator):
+    usage = {
+        "metadata": {"usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}, "metrics": {"latencyMs": 100}}
+    }
+    mock_model.mock_stream.side_effect = [
+        *(
+            agenerator(
+                [
+                    {"contentBlockDelta": {"delta": delta}},
+                    {"contentBlockStop": {}},
+                    {"messageStop": {"stopReason": "tool_use"}},
+                    usage,
+                ]
+            )
+            for delta in glitch_deltas
+        ),
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "the vault code is 4417"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "end_turn"}},
+                usage,
+            ]
+        ),
+    ]
+
+    result = agent("test message")
+
+    calls = len(glitch_deltas) + 1
+    assert mock_model.mock_stream.call_count == calls
+    # Discarded attempts still count toward usage and latency.
+    assert agent.event_loop_metrics.accumulated_usage == {
+        "inputTokens": 10 * calls,
+        "outputTokens": 5 * calls,
+        "totalTokens": 15 * calls,
+    }
+    assert agent.event_loop_metrics.accumulated_metrics["latencyMs"] == 100 * calls
+    assert result.message["content"] == [{"text": "the vault code is 4417"}]
+    assert agent.messages == [
+        {"role": "user", "content": [{"text": "test message"}], "tracking_id": unittest.mock.ANY},
+        {
+            "role": "assistant",
+            "content": [{"text": "the vault code is 4417"}],
+            "metadata": unittest.mock.ANY,
+            "tracking_id": unittest.mock.ANY,
+        },
+    ]
+
+
+@pytest.fixture
+def glitch():
+    return [
+        {"contentBlockDelta": {"delta": {"text": "<thinking>let me look that up</parameter>"}}},
+        {"contentBlockStop": {}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+
+
+@pytest.fixture(
+    params=[
+        pytest.param(
+            (
+                [
+                    {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "t1", "name": "tool_decorated"}}}},
+                    {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"random_string": "abc"}'}}}},
+                    {"contentBlockStop": {}},
+                    {"messageStop": {"stopReason": "tool_use"}},
+                ],
+                [
+                    {"toolUse": {"toolUseId": "t1", "name": "tool_decorated", "input": {"random_string": "abc"}}},
+                    {"toolResult": {"toolUseId": "t1", "status": "success", "content": [{"text": "abc"}]}},
+                ],
+            ),
+            id="after_tool_round",
+        ),
+        pytest.param(
+            (
+                [
+                    {"contentBlockDelta": {"delta": {"text": "plain text instead of structured output"}}},
+                    {"contentBlockStop": {}},
+                    {"messageStop": {"stopReason": "end_turn"}},
+                ],
+                [
+                    {"text": "plain text instead of structured output"},
+                    {"text": "You must format the previous response as structured output."},
+                ],
+            ),
+            id="on_forced_structured_output_pass",
+        ),
+    ]
+)
+def prior_turn(request):
+    """A first reply that moves the glitch into a later cycle, and the assistant and user blocks it leaves."""
+    return request.param
+
+
+def test_agent__call__tool_use_names_no_tool_in_a_later_cycle_raises_event_loop_exception(
+    prior_turn, glitch, mock_model, agent, agenerator, user
+):
+    first_reply, (assistant_block, user_block) = prior_turn
+    mock_model.mock_stream.side_effect = [agenerator(first_reply), *(agenerator(glitch) for _ in range(3))]
+
+    with pytest.raises(EventLoopException) as caught:
+        agent("test message", structured_output_model=type(user), limits={"structured_output_attempts": 3})
+
+    assert isinstance(caught.value.original_exception, ValueError)
+    assert "no toolUse block" in str(caught.value.original_exception)
+    assert mock_model.mock_stream.call_count == 4
+    assert agent.messages == [
+        {"role": "user", "content": [{"text": "test message"}], "tracking_id": unittest.mock.ANY},
+        {
+            "role": "assistant",
+            "content": [assistant_block],
+            "metadata": unittest.mock.ANY,
+            "tracking_id": unittest.mock.ANY,
+        },
+        {"role": "user", "content": [user_block], "tracking_id": unittest.mock.ANY},
+    ]
+
+
+def test_agent__call__tool_use_names_no_tool_in_a_later_cycle_recovers(
+    prior_turn, glitch, mock_model, agent, agenerator, user
+):
+    first_reply, (assistant_block, user_block) = prior_turn
+    mock_model.mock_stream.side_effect = [
+        agenerator(first_reply),
+        agenerator(glitch),
+        agenerator(
+            [
+                {"contentBlockStart": {"start": {"toolUse": {"name": type(user).__name__, "toolUseId": "output"}}}},
+                {"contentBlockDelta": {"delta": {"toolUse": {"input": user.model_dump_json()}}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "tool_use"}},
+            ]
+        ),
+    ]
+
+    # A single attempt: the retry must not consume it.
+    result = agent("test message", structured_output_model=type(user), limits={"structured_output_attempts": 1})
+
+    assert result.structured_output == user
+    assert mock_model.mock_stream.call_count == 3
+    # The glitch reply and the empty tool-result message it would have produced stay out of history.
+    assert agent.messages == [
+        {"role": "user", "content": [{"text": "test message"}], "tracking_id": unittest.mock.ANY},
+        {
+            "role": "assistant",
+            "content": [assistant_block],
+            "metadata": unittest.mock.ANY,
+            "tracking_id": unittest.mock.ANY,
+        },
+        {"role": "user", "content": [user_block], "tracking_id": unittest.mock.ANY},
+        {
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "output", "name": type(user).__name__, "input": user.model_dump()}}],
+            "metadata": unittest.mock.ANY,
+            "tracking_id": unittest.mock.ANY,
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "toolResult": {
+                        "toolUseId": "output",
+                        "status": "success",
+                        "content": [{"text": f"Successfully validated {type(user).__name__} structured output"}],
+                    }
+                }
+            ],
+            "tracking_id": unittest.mock.ANY,
+        },
+    ]
+
+
 def test_agent__call__invalid_tool_use_event_loop_exception(mock_model, agent, tool, agenerator):
     mock_model.mock_stream.side_effect = [
         agenerator(
@@ -1222,6 +1408,48 @@ async def test_agent_structured_output_async(agent, system_prompt, user, agenera
     agent.model.structured_output.assert_called_once_with(
         type(user), [{"role": "user", "content": [{"text": prompt}]}], system_prompt=system_prompt
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "system_prompt",
+    [[{"text": "You are a helpful assistant."}, {"cachePoint": {"type": "default"}}]],
+    indirect=True,
+)
+async def test_agent_structured_output_async_warns_on_dropped_system_prompt_blocks(agent, user, agenerator):
+    """Non-text system prompt blocks are dropped on this path, so the caller is told instead of failing silently."""
+    agent.model.structured_output = unittest.mock.Mock(return_value=agenerator([{"output": user}]))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        await agent.structured_output_async(type(user), "Jane Doe is 30 years old")
+
+    dropped_warnings = [
+        warning
+        for warning in caught
+        if issubclass(warning.category, UserWarning) and "cachePoint" in str(warning.message)
+    ]
+    assert len(dropped_warnings) == 1
+
+    # The provider still only receives the flattened string; this path is deprecated and is not being widened.
+    agent.model.structured_output.assert_called_once_with(
+        type(user),
+        [{"role": "user", "content": [{"text": "Jane Doe is 30 years old"}]}],
+        system_prompt="You are a helpful assistant.",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("system_prompt", ["You are a helpful assistant."], indirect=True)
+async def test_agent_structured_output_async_does_not_warn_for_plain_system_prompt(agent, user, agenerator):
+    """A plain string system prompt loses nothing, so it must stay quiet."""
+    agent.model.structured_output = unittest.mock.Mock(return_value=agenerator([{"output": user}]))
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        await agent.structured_output_async(type(user), "Jane Doe is 30 years old")
+
+    assert [warning for warning in caught if issubclass(warning.category, UserWarning)] == []
 
 
 @pytest.mark.asyncio
@@ -1928,6 +2156,57 @@ def test_agent_restored_from_session_management_with_redacted_input():
 
     # Assert that the restored agent redacted message is equal to the original agent
     assert agent.messages[0] == agent_2.messages[0]
+
+
+def test_agent_redacts_user_message_not_ltm_context():
+    """Guardrail redaction preserves trailing session context (#1639)."""
+    mocked_model = MockedModelProvider(
+        [{"redactedUserContent": "BLOCKED!", "redactedAssistantContent": "INPUT BLOCKED!"}]
+    )
+    agent = Agent(model=mocked_model, callback_handler=None)
+    ltm_message = {"role": "assistant", "content": [{"text": "<user_context>likes cats</user_context>"}]}
+
+    def append_ltm_context(event):
+        if event.message["role"] == "user":
+            event.agent.messages.append(copy.deepcopy(ltm_message))
+
+    agent.hooks.add_callback(MessageAddedEvent, append_ltm_context)
+    agent("Tell me something bad")
+
+    assert agent.messages == [
+        {"role": "user", "content": [{"text": "BLOCKED!"}], "tracking_id": unittest.mock.ANY},
+        ltm_message,
+        {
+            "role": "assistant",
+            "content": [{"text": "INPUT BLOCKED!"}],
+            "metadata": unittest.mock.ANY,
+            "tracking_id": unittest.mock.ANY,
+        },
+    ]
+
+
+def test_agent_skips_redaction_without_user_message(caplog):
+    mocked_model = MockedModelProvider(
+        [{"redactedUserContent": "BLOCKED!", "redactedAssistantContent": "INPUT BLOCKED!"}]
+    )
+    agent = Agent(
+        model=mocked_model,
+        messages=[{"role": "assistant", "content": [{"text": "hello"}]}],
+        callback_handler=None,
+    )
+
+    agent()
+
+    assert agent.messages == [
+        {"role": "assistant", "content": [{"text": "hello"}], "tracking_id": unittest.mock.ANY},
+        {
+            "role": "assistant",
+            "content": [{"text": "INPUT BLOCKED!"}],
+            "metadata": unittest.mock.ANY,
+            "tracking_id": unittest.mock.ANY,
+        },
+    ]
+    assert "no user message found to redact" in caplog.text
 
 
 def test_agent_restored_from_session_management_with_correct_index():
@@ -3846,6 +4125,52 @@ async def test_checkpoint_resume_schema_mismatch_raises_checkpoint_exception() -
         await agent.invoke_async(prompt)
 
 
+@pytest.mark.parametrize(
+    ("opt_in", "expected_input", "expected_output"),
+    [
+        # Default: the agent span repeats its calls' usage, so summing every span counts each call twice.
+        ("", 600, 60),
+        ("gen_ai_usage_on_model_spans_only", 300, 30),
+    ],
+)
+def test_trace_usage_sum_with_usage_on_model_spans_only(monkeypatch, opt_in, expected_input, expected_output):
+    """Summing gen_ai.usage.* over every span, as Opik or Datadog do, matches the real usage once opted in."""
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", opt_in)
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = Tracer()
+    tracer.tracer_provider = provider
+    tracer.tracer = provider.get_tracer(tracer.service_name)
+    monkeypatch.setattr(strands.telemetry.tracer, "_tracer_instance", tracer)
+
+    @strands.tool
+    def add(a: int, b: int) -> int:
+        """Add two numbers."""
+        return a + b
+
+    model = MockedModelProvider(
+        [
+            {
+                "role": "assistant",
+                "content": [{"toolUse": {"toolUseId": "t1", "name": "add", "input": {"a": 1, "b": 2}}}],
+            },
+            {"role": "assistant", "content": [{"text": "3"}]},
+        ],
+        usages=[
+            {"inputTokens": 100, "outputTokens": 10, "totalTokens": 110},
+            {"inputTokens": 200, "outputTokens": 20, "totalTokens": 220},
+        ],
+    )
+    Agent(model=model, tools=[add], callback_handler=None)("add 1 and 2")
+
+    provider.force_flush()
+    spans = exporter.get_finished_spans()
+    assert len([span for span in spans if span.name == "chat"]) == 2
+    assert sum(span.attributes.get("gen_ai.usage.input_tokens", 0) for span in spans) == expected_input
+    assert sum(span.attributes.get("gen_ai.usage.output_tokens", 0) for span in spans) == expected_output
+
+
 @pytest.mark.asyncio
 async def test_agent_span_ends_on_cancellation():
     """Root agent span is exported when the invocation is cancelled via asyncio timeout."""
@@ -4076,3 +4401,19 @@ def test_baggage_attributes_nested_agent_override_and_restore():
     assert seen_after_inner["tenant.id"] == "outer-corp", (
         f"after inner: expected 'outer-corp', got {seen_after_inner['tenant.id']}"
     )
+
+
+def test_agent_sends_an_injected_block_to_the_model_as_text_and_keeps_it_in_agent_messages():
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "ok"}]}])
+    stream = unittest.mock.Mock(wraps=model.stream)
+    model.stream = stream
+    agent = Agent(model=model, callback_handler=None)
+
+    agent([{"text": "Refactor the tokenizer."}, {"injected": {"text": "reminder", "source": "test"}}])
+
+    tru_sent = stream.call_args.args[0][0]["content"]
+    assert tru_sent == [{"text": "Refactor the tokenizer."}, {"text": "\n\nreminder"}]
+    assert agent.messages[0]["content"] == [
+        {"text": "Refactor the tokenizer."},
+        {"injected": {"text": "reminder", "source": "test"}},
+    ]

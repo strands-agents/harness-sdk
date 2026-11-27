@@ -9,14 +9,13 @@ import { relatedUserGuideFor } from './related-docs'
 import type { SourceLink } from '../content.config'
 import { resolveLanguage, languageLabel, sourceLinkUrl } from './source-links'
 
+type MarkdownEntry = CollectionEntry<'docs'> | CollectionEntry<'blog'> | CollectionEntry<'sampleGuides'>
+
 /**
  * Render the "Related pages" block for headless consumers. Appended only to
  * markdown surfaces (/<slug>/index.md, /llms-full.txt) — never the HTML page.
  */
-async function renderRelatedPages(
-  entry: CollectionEntry<'docs'> | CollectionEntry<'blog'>,
-  allDocs?: readonly CollectionEntry<'docs'>[]
-): Promise<string> {
+async function renderRelatedPages(entry: MarkdownEntry, allDocs?: readonly CollectionEntry<'docs'>[]): Promise<string> {
   if (entry.collection !== 'docs') return ''
   const docs = allDocs ?? (await getCollection('docs'))
   const related = relatedUserGuideFor(entry, docs)
@@ -28,6 +27,11 @@ async function renderRelatedPages(
   return `\n\n## Related pages\n\n${items.join('\n')}\n`
 }
 
+function renderSampleSource(entry: MarkdownEntry): string {
+  if (entry.collection !== 'sampleGuides') return ''
+  return `\n\n## Upstream source\n\n- [View this sample at the imported commit](${entry.data.sourceUrl})\n`
+}
+
 /**
  * Render the "Implementation" block for headless consumers. Appended only to
  * the markdown surfaces (/<slug>/index.md, /llms-full.txt) — never the HTML
@@ -37,7 +41,7 @@ async function renderRelatedPages(
  * explicit `language` override). Link text and URL both embed repo+path so
  * parsers can extract either.
  */
-export function renderImplementation(entry: CollectionEntry<'docs'> | CollectionEntry<'blog'>): string {
+export function renderImplementation(entry: MarkdownEntry): string {
   if (entry.collection !== 'docs') return ''
   const links: SourceLink[] | undefined = entry.data.sourceLinks
   if (!links || links.length === 0) return ''
@@ -69,7 +73,7 @@ export function renderImplementation(entry: CollectionEntry<'docs'> | Collection
  * @returns The rendered markdown and HTML strings
  */
 export async function renderEntryToMarkdown(
-  entry: CollectionEntry<'docs'> | CollectionEntry<'blog'>,
+  entry: MarkdownEntry,
   basePath?: string,
   allDocs?: readonly CollectionEntry<'docs'>[]
 ): Promise<{ markdown: string; html: string }> {
@@ -87,7 +91,8 @@ export async function renderEntryToMarkdown(
   })
 
   const body = htmlToMarkdown(html)
+  const sampleSource = renderSampleSource(entry)
   const related = await renderRelatedPages(entry, allDocs)
   const implementation = renderImplementation(entry)
-  return { markdown: body + related + implementation, html }
+  return { markdown: body + sampleSource + related + implementation, html }
 }

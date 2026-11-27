@@ -1,0 +1,314 @@
+---
+import ProductContentPlaceholder from './ProductContentPlaceholder.astro'
+import {
+  getProductContent,
+  PRODUCT_CONTENT_PROJECTS,
+  type ProductContentProject,
+} from '../config/product-content'
+import { formatDate } from '../util/blog'
+import { pathWithBase } from '../util/links'
+
+interface Props {
+  project: ProductContentProject
+  limit?: number
+}
+
+const { project, limit } = Astro.props
+const projectConfig = PRODUCT_CONTENT_PROJECTS[project]
+const items = await getProductContent(project, limit)
+---
+
+{
+  items.length > 0 && (
+    <section
+      class="product-content"
+      data-product-content={project}
+      data-accent={projectConfig.accent}
+      aria-labelledby={`product-content-${project}-title`}
+    >
+      <div class="product-content__inner">
+        <h2 id={`product-content-${project}-title`} class="product-content__visually-hidden">
+          {projectConfig.label} content
+        </h2>
+        <p class="product-content__label" data-product-content-label>Watch and read</p>
+        <ul class="product-content__grid">
+          {items.map((item) => {
+            const href = item.external ? item.href : pathWithBase(item.href)
+            const image = item.image?.startsWith('http') ? item.image : item.image ? pathWithBase(item.image) : undefined
+            return (
+              <li>
+                <article class="product-content__card" data-content-kind={item.kind}>
+                  <a
+                    href={href}
+                    target={item.external ? '_blank' : undefined}
+                    rel={item.external ? 'noopener' : undefined}
+                    data-product-content-link={item.id}
+                  >
+                    {image ? (
+                      <div class="product-content__media" aria-hidden="true">
+                        <img src={image} alt="" loading="lazy" decoding="async" />
+                        {item.kind === 'video' && (
+                          <span class="product-content__play" aria-hidden="true">
+                            ▶
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div class="product-content__media" aria-hidden="true">
+                        <ProductContentPlaceholder />
+                      </div>
+                    )}
+
+                    <div class="product-content__body">
+                      <p class="product-content__source">
+                        <span>{item.kind}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>{item.source}</span>
+                      </p>
+                      <h3>{item.title}</h3>
+                      <p class="product-content__description">{item.description}</p>
+                      <p class="product-content__meta">
+                        <time datetime={item.date.toISOString()}>{formatDate(item.date)}</time>
+                        {item.duration && <span>{item.duration}</span>}
+                        <span class="product-content__arrow" aria-hidden="true">
+                          {item.external ? '↗' : '→'}
+                        </span>
+                        {item.external && <span class="product-content__visually-hidden">Opens in a new tab</span>}
+                      </p>
+                    </div>
+                  </a>
+                </article>
+              </li>
+            )
+          })}
+        </ul>
+      </div>
+    </section>
+  )
+}
+
+<style>
+  .product-content {
+    --product-content-accent: var(--card-accent-purple);
+    --product-content-text-accent: var(--product-content-accent);
+
+    padding: 48px 48px 72px;
+    background: var(--bg);
+    color: var(--fg);
+  }
+
+  .product-content[data-accent='red'] {
+    --product-content-accent: var(--card-accent-red);
+  }
+
+  :global([data-theme='dark']) .product-content[data-accent='red'] {
+    --product-content-text-accent: color-mix(in srgb, var(--product-content-accent) 82%, white);
+  }
+
+  .product-content__inner {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .product-content__label {
+    margin: 0 0 24px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 1.4px;
+    text-align: center;
+    text-transform: uppercase;
+    color: var(--product-content-text-accent);
+  }
+
+  .product-content__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(270px, 100%), 1fr));
+    gap: 20px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .product-content__grid > li,
+  .product-content__card,
+  .product-content__card > a {
+    min-width: 0;
+    height: 100%;
+  }
+
+  .product-content__card {
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    background: var(--card-bg);
+    transition:
+      border-color 0.18s ease,
+      transform 0.18s ease;
+  }
+
+  .product-content__card:has(a:hover) {
+    border-color: var(--product-content-accent);
+    transform: translateY(-2px);
+  }
+
+  .product-content__card > a {
+    display: flex;
+    flex-direction: column;
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .product-content__card > a:focus-visible {
+    outline: 3px solid var(--product-content-accent);
+    outline-offset: -4px;
+  }
+
+  .product-content__media {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    margin: 12px 12px 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+  }
+
+  .product-content__media img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .product-content__card[data-content-kind='video'] .product-content__media img {
+    object-fit: cover;
+  }
+
+  .product-content__play {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    display: grid;
+    width: 40px;
+    height: 40px;
+    place-items: center;
+    padding-left: 3px;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--product-content-accent);
+    color: var(--strands-black);
+    font-size: 15px;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
+  }
+
+  .product-content__body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    padding: 18px;
+  }
+
+  .product-content__source {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: 0 0 10px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--product-content-text-accent);
+  }
+
+  .product-content__source span:last-child {
+    color: var(--use-case-muted);
+  }
+
+  .product-content__body h3 {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--fg);
+  }
+
+  .product-content__description {
+    flex: 1;
+    display: -webkit-box;
+    margin: 10px 0 18px;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--use-case-muted);
+  }
+
+  .product-content__meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--use-case-muted);
+  }
+
+  .product-content__meta > span:not(.product-content__arrow, .product-content__visually-hidden)::before {
+    content: '·';
+    margin-right: 12px;
+  }
+
+  .product-content__arrow {
+    margin-left: auto;
+    font-size: 20px;
+    line-height: 1;
+    color: var(--product-content-accent);
+  }
+
+  .product-content__visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  @media (max-width: 1023px) {
+    .product-content__grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 767px) {
+    .product-content {
+      padding: 40px 19px 56px;
+    }
+
+    .product-content__grid {
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .product-content__card {
+      transition: none;
+    }
+
+    .product-content__card:has(a:hover) {
+      transform: none;
+    }
+  }
+</style>

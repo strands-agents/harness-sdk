@@ -4,6 +4,7 @@
  * @internal This module is not part of the public API.
  */
 
+import { isFetchNetworkError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
 
 /**
@@ -12,7 +13,7 @@ import { logger } from '../../logging/logger.js'
  * This union type will expand as more error types are supported
  * (e.g., 'throttling', 'invalidRequest').
  */
-export type GoogleErrorType = 'contextOverflow' | 'throttling'
+export type GoogleErrorType = 'contextOverflow' | 'throttling' | 'network'
 
 /**
  * Configuration for handling a specific error status.
@@ -51,20 +52,36 @@ export const ERROR_STATUS_MAP: Record<string, ErrorStatusConfig> = {
  * @internal
  */
 export function classifyGoogleError(error: Error): GoogleErrorType | undefined {
+  if (isFetchNetworkError(error)) {
+    return 'network'
+  }
+
+  // A 429 can arrive with a non-JSON message or a reason-phrase status, so the HTTP code is the reliable signal.
+  // Checked by shape because instanceof fails across the @google/genai ESM and CJS builds.
+  if (error.name === 'ApiError' && 'status' in error && error.status === 429) {
+    return 'throttling'
+  }
+
   if (!error.message) {
     return undefined
   }
 
+  let code: unknown
   let status: string
   let message: string
 
   try {
     const parsed = JSON.parse(error.message)
+    code = parsed?.error?.code
     status = parsed?.error?.status || ''
     message = parsed?.error?.message || ''
   } catch {
     logger.debug(`error_message=<${error.message}> | google genai api returned non-json error`)
     return undefined
+  }
+
+  if (code === 429) {
+    return 'throttling'
   }
 
   const config = ERROR_STATUS_MAP[status.toUpperCase()]

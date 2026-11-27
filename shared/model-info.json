@@ -12,7 +12,9 @@
         "maxOutputTokens": 128000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "defaultEffort": "high",
+        "deferredToolLoading": "native"
       }
     },
     "claude-sonnet-4-20250514": {
@@ -32,7 +34,8 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "deferredToolLoading": "native"
       }
     },
     "claude-opus-4-6": {
@@ -41,7 +44,9 @@
         "maxOutputTokens": 128000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "defaultEffort": "high",
+        "deferredToolLoading": "native"
       }
     },
     "claude-opus-4-7": {
@@ -50,7 +55,9 @@
         "maxOutputTokens": 128000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "defaultEffort": "xhigh",
+        "deferredToolLoading": "native"
       }
     },
     "claude-opus-4-8": {
@@ -61,7 +68,10 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "temporaryMessages": true,
+        "defaultEffort": "high",
+        "deferredToolLoading": "native"
       }
     },
     "claude-opus-5": {
@@ -72,7 +82,10 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "temporaryMessages": true,
+        "defaultEffort": "high",
+        "deferredToolLoading": "native"
       }
     },
     "claude-opus-5-5": {
@@ -83,7 +96,11 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": false,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true,
+        "defaultEffort": "medium",
+        "deferredToolLoading": "native"
       }
     },
     "claude-fable-5": {
@@ -92,7 +109,10 @@
         "maxOutputTokens": 128000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "temporaryMessages": true,
+        "defaultEffort": "high",
+        "deferredToolLoading": "native"
       }
     },
     "claude-fable-5-1": {
@@ -102,7 +122,26 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "forcedToolChoice": false
+        "forcedToolChoice": false,
+        "serverSideSummary": true,
+        "temporaryMessages": true,
+        "defaultEffort": "high",
+        "deferredToolLoading": "native"
+      }
+    },
+    "claude-fable-5-2": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": false,
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true,
+        "defaultEffort": "high",
+        "deferredToolLoading": "native"
       }
     },
     "claude-sonnet-5": {
@@ -113,7 +152,9 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "defaultEffort": "high",
+        "deferredToolLoading": "native"
       }
     },
     "claude-sonnet-5-5": {
@@ -124,7 +165,11 @@
       "capabilities": {
         "promptCaching": "cachePoints",
         "forcedToolChoice": false,
-        "nativeStructuredOutput": true
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true,
+        "defaultEffort": "medium",
+        "deferredToolLoading": "native"
       }
     },
     "claude-haiku-5-5": {
@@ -134,8 +179,12 @@
       },
       "capabilities": {
         "promptCaching": "cachePoints",
-        "forcedToolChoice": true,
-        "nativeStructuredOutput": true
+        "forcedToolChoice": false,
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": false,
+        "defaultEffort": "medium",
+        "deferredToolLoading": "native"
       }
     },
     "claude-opus-4-5": {
@@ -144,7 +193,8 @@
         "maxOutputTokens": 64000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "deferredToolLoading": "native"
       }
     },
     "claude-opus-4-20250514": {
@@ -171,7 +221,8 @@
         "maxOutputTokens": 64000
       },
       "capabilities": {
-        "promptCaching": "cachePoints"
+        "promptCaching": "cachePoints",
+        "deferredToolLoading": "native"
       }
     },
     "claude-3-7-sonnet-20250219": {
@@ -245,6 +296,21 @@
         "promptCaching": "cachePoints"
       }
     },
+    "claude-mythos-5-2": {
+      "limits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "forcedToolChoice": false,
+        "nativeStructuredOutput": true,
+        "serverSideSummary": true,
+        "temporaryMessages": true,
+        "defaultEffort": "high",
+        "deferredToolLoading": "native"
+      }
+    },
     "claude-mythos-preview": {
       "limits": {
         "contextWindow": 1000000
@@ -259,7 +325,8 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "deferredToolLoading": "unsupported"
       }
     },
     "amazon.nova-lite-v1:0": {
@@ -268,7 +335,8 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "deferredToolLoading": "unsupported"
       }
     },
     "amazon.nova-micro-v1:0": {
@@ -277,7 +345,8 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "deferredToolLoading": "unsupported"
       }
     },
     "amazon.nova-premier-v1:0": {
@@ -286,7 +355,8 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "deferredToolLoading": "unsupported"
       }
     },
     "amazon.nova-2-lite-v1:0": {
@@ -295,7 +365,8 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "deferredToolLoading": "unsupported"
       }
     },
     "amazon.nova-2-pro-preview-20251202-v1:0": {
@@ -304,7 +375,8 @@
       },
       "capabilities": {
         "forcedToolChoice": true,
-        "nativeStructuredOutput": false
+        "nativeStructuredOutput": false,
+        "deferredToolLoading": "unsupported"
       }
     },
     "zai.glm-4.7": {
@@ -327,37 +399,100 @@
         "contextWindow": 1000000
       }
     },
+    "gpt-6.2-astra": {
+      "limits": {
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "chatCompletionsTools": "unsupported",
+        "systemPromptPlacement": "message",
+        "defaultEffort": "low"
+      }
+    },
+    "gpt-6.2-sol": {
+      "limits": {
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "chatCompletionsTools": "unsupported",
+        "systemPromptPlacement": "message",
+        "defaultEffort": "low"
+      }
+    },
     "gpt-6-astra": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "chatCompletionsTools": "unsupported",
+        "defaultEffort": "low"
       }
     },
     "gpt-6.1-sol": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "chatCompletionsTools": "unsupported",
+        "defaultEffort": "low"
       }
     },
     "openai.gpt-6.1-sol": {
       "limits": {
         "contextWindow": 1000000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "chatCompletionsTools": "unsupported",
+        "defaultEffort": "low"
       }
     },
     "gpt-6.1-terra": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "chatCompletionsTools": "reasoningOff",
+        "defaultEffort": "low"
       }
     },
     "openai.gpt-6.1-terra": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "chatCompletionsTools": "reasoningOff",
+        "defaultEffort": "low"
       }
     },
     "gpt-6-sol": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "chatCompletionsTools": "reasoningOff",
+        "defaultEffort": "medium"
       }
     },
     "gpt-6-luna": {
+      "limits": {
+        "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "chatCompletionsTools": "reasoningOff",
+        "defaultEffort": "medium"
+      }
+    },
+    "gpt-6-cyber": {
       "limits": {
         "contextWindow": 1050000
       }
@@ -365,21 +500,41 @@
     "gpt-5.6": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "chatCompletionsTools": "reasoningOff",
+        "defaultEffort": "medium"
       }
     },
     "gpt-5.6-sol": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "chatCompletionsTools": "reasoningOff",
+        "defaultEffort": "low"
       }
     },
     "gpt-5.6-terra": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "chatCompletionsTools": "reasoningOff",
+        "defaultEffort": "medium"
       }
     },
     "gpt-5.6-luna": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "promptCaching": "cachePoints",
+        "chatCompletionsTools": "reasoningOff",
+        "defaultEffort": "medium"
       }
     },
     "openai.gpt-5.6-cyber": {
@@ -395,6 +550,9 @@
     "gpt-5.5": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "defaultEffort": "medium"
       }
     },
     "gpt-5.5-pro": {
@@ -405,6 +563,9 @@
     "gpt-5.4": {
       "limits": {
         "contextWindow": 1050000
+      },
+      "capabilities": {
+        "defaultEffort": "medium"
       }
     },
     "gpt-5.4-pro": {
@@ -415,6 +576,9 @@
     "gpt-5.4-mini": {
       "limits": {
         "contextWindow": 272000
+      },
+      "capabilities": {
+        "defaultEffort": "medium"
       }
     },
     "gpt-5.4-nano": {
@@ -425,6 +589,9 @@
     "gpt-5.2": {
       "limits": {
         "contextWindow": 272000
+      },
+      "capabilities": {
+        "defaultEffort": "medium"
       }
     },
     "gpt-5.2-pro": {
@@ -435,11 +602,17 @@
     "gpt-5.1": {
       "limits": {
         "contextWindow": 272000
+      },
+      "capabilities": {
+        "defaultEffort": "medium"
       }
     },
     "gpt-5": {
       "limits": {
         "contextWindow": 272000
+      },
+      "capabilities": {
+        "defaultEffort": "medium"
       }
     },
     "gpt-5-mini": {
@@ -540,11 +713,17 @@
     "gemini-3-pro-preview": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "defaultEffort": "high"
       }
     },
     "gemini-3-flash-preview": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "defaultEffort": "high"
       }
     },
     "gemini-3.6-flash": {
@@ -555,31 +734,46 @@
     "gemini-3.5-flash": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "defaultEffort": "high"
       }
     },
     "gemini-3.5-flash-lite": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "defaultEffort": "high"
       }
     },
     "gemini-3.1-flash-lite": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "defaultEffort": "high"
       }
     },
     "gemini-3.1-pro-preview": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "defaultEffort": "high"
       }
     },
     "gemini-3.1-flash-lite-preview": {
       "limits": {
         "contextWindow": 1048576
+      },
+      "capabilities": {
+        "defaultEffort": "high"
       }
     },
     "mistral-large-latest": {
       "limits": {
-        "contextWindow": 262144
+        "contextWindow": 1048576
       }
     },
     "mistral-large-2512": {
@@ -615,11 +809,17 @@
     "openai.gpt-oss-120b": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "defaultEffort": "medium"
       }
     },
     "openai.gpt-oss-20b": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "defaultEffort": "medium"
       }
     },
     "openai.gpt-oss-safeguard-120b": {
@@ -655,6 +855,9 @@
     "mistral.magistral-small-2509": {
       "limits": {
         "contextWindow": 128000
+      },
+      "capabilities": {
+        "toolUse": false
       }
     },
     "mistral.pixtral-large-2502": {
@@ -670,6 +873,9 @@
     "mistral.mistral-large-2402": {
       "limits": {
         "contextWindow": 32000
+      },
+      "capabilities": {
+        "deferredToolLoading": "unsupported"
       }
     },
     "google.gemma-4-31b": {
@@ -690,16 +896,81 @@
     "xai.grok-4.7": {
       "limits": {
         "contextWindow": 524288
+      },
+      "capabilities": {
+        "deferredToolLoading": "unsupported"
       }
     },
     "xai.grok-4.6": {
       "limits": {
         "contextWindow": 500000
+      },
+      "capabilities": {
+        "deferredToolLoading": "unsupported"
       }
     },
     "xai.grok-4.3": {
       "limits": {
         "contextWindow": 1000000
+      },
+      "capabilities": {
+        "deferredToolLoading": "unsupported"
+      }
+    },
+    "meta.llama3-1-8b-instruct": {
+      "limits": {
+        "contextWindow": 128000
+      },
+      "capabilities": {
+        "deferredToolLoading": "unsupported"
+      }
+    },
+    "meta.llama3-1-70b-instruct": {
+      "limits": {
+        "contextWindow": 128000
+      },
+      "capabilities": {
+        "deferredToolLoading": "unsupported"
+      }
+    },
+    "meta.llama3-3-70b-instruct": {
+      "limits": {
+        "contextWindow": 128000
+      },
+      "capabilities": {
+        "deferredToolLoading": "unsupported"
+      }
+    },
+    "meta.llama4-scout-17b-instruct": {
+      "limits": {
+        "contextWindow": 10000000
+      },
+      "capabilities": {
+        "deferredToolLoading": "unsupported"
+      }
+    },
+    "meta.llama4-maverick-17b-instruct": {
+      "limits": {
+        "contextWindow": 1000000
+      },
+      "capabilities": {
+        "deferredToolLoading": "unsupported"
+      }
+    },
+    "deepseek.v3": {
+      "limits": {
+        "contextWindow": 128000
+      },
+      "capabilities": {
+        "deferredToolLoading": "unsupported"
+      }
+    },
+    "qwen.qwen3-coder-480b-a35b": {
+      "limits": {
+        "contextWindow": 256000
+      },
+      "capabilities": {
+        "deferredToolLoading": "unsupported"
       }
     },
     "chat-latest": {
@@ -710,11 +981,27 @@
     "gpt-oss-120b": {
       "limits": {
         "contextWindow": 131072
+      },
+      "capabilities": {
+        "defaultEffort": "medium"
       }
     },
     "gpt-oss-20b": {
       "limits": {
         "contextWindow": 131072
+      },
+      "capabilities": {
+        "defaultEffort": "medium"
+      }
+    },
+    "gemini-4-neon": {
+      "limits": {
+        "contextWindow": 1048576
+      }
+    },
+    "gemini-4-hydrogen": {
+      "limits": {
+        "contextWindow": 1048576
       }
     },
     "gemini-4-argon": {

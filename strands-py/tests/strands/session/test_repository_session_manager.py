@@ -1,7 +1,7 @@
 """Tests for AgentSessionManager."""
 
 import copy
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 
 import pytest
 
@@ -11,7 +11,7 @@ from strands.agent.conversation_manager.sliding_window_conversation_manager impo
 from strands.agent.conversation_manager.summarizing_conversation_manager import SummarizingConversationManager
 from strands.agent.state import AgentState
 from strands.bidi.agent import BidiAgent
-from strands.hooks import AfterInvocationEvent
+from strands.hooks import AfterInvocationEvent, MessageAddedEvent
 from strands.interrupt import _InterruptState
 from strands.session.file_session_manager import FileSessionManager
 from strands.session.repository_session_manager import RepositorySessionManager
@@ -19,6 +19,7 @@ from strands.types.content import ContentBlock
 from strands.types.exceptions import SessionException
 from strands.types.session import Session, SessionAgent, SessionMessage, SessionType
 from tests.fixtures.mock_session_repository import MockedSessionRepository
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
 @pytest.fixture
@@ -1365,3 +1366,66 @@ def test_restore_after_redacting_alias_records_returns_redacted_conversation(tmp
     assert len(restored.messages) == 2
     assert restored.messages[0]["content"] == [{"text": "[redacted]"}]
     assert restored.messages[1]["content"] == [{"text": "[redacted]"}]
+
+
+def test_restore_after_redacting_with_trailing_stored_message_returns_redacted_user_message(tmp_path):
+    """Redaction rewrites the record holding the user message, not a record stored after it (#1639)."""
+    sm = FileSessionManager(session_id="s", storage_dir=str(tmp_path))
+    model = MockedModelProvider([{"redactedUserContent": "BLOCKED!", "redactedAssistantContent": "INPUT BLOCKED!"}])
+    agent = Agent(agent_id="a", model=model, callback_handler=None, session_manager=sm)
+    context_message = {"role": "assistant", "content": [{"text": "<user_context>likes cats</user_context>"}]}
+
+    def append_stored_context(event):
+        if event.message["role"] == "user":
+            event.agent.messages.append(context_message)
+            sm.append_message(context_message, event.agent)
+
+    agent.hooks.add_callback(MessageAddedEvent, append_stored_context)
+    agent("Tell me something bad")
+
+    sm2 = FileSessionManager(session_id="s", storage_dir=str(tmp_path))
+    restored = Agent(agent_id="a", model=model, callback_handler=None, session_manager=sm2)
+
+    assert restored.messages == [
+        {"role": "user", "content": [{"text": "BLOCKED!"}], "tracking_id": ANY},
+        context_message,
+        {
+            "role": "assistant",
+            "content": [{"text": "INPUT BLOCKED!"}],
+            "metadata": ANY,
+            "tracking_id": ANY,
+        },
+    ]
+
+
+def test_redact_latest_message_falls_back_to_latest_record(session_manager, mock_repository):
+    agent = Agent(agent_id="a", session_manager=session_manager)
+    session_manager.append_message({"role": "user", "content": [{"text": "secret"}]}, agent)
+    redacted = {"role": "user", "content": [{"text": "[redacted]"}]}
+
+    session_manager.redact_latest_message(redacted, agent)
+
+    assert [m.to_message() for m in mock_repository.list_messages("test-session", "a")] == [redacted]
+
+
+def test_redact_latest_message_updates_record_with_same_tracking_id(session_manager, mock_repository):
+    agent = Agent(agent_id="a", session_manager=session_manager)
+    context_message = {"role": "assistant", "content": [{"text": "context"}], "tracking_id": "t2"}
+    session_manager.append_message({"role": "user", "content": [{"text": "secret"}], "tracking_id": "t1"}, agent)
+    session_manager.append_message(context_message, agent)
+    redacted = {"role": "user", "content": [{"text": "[redacted]"}], "tracking_id": "t1"}
+
+    session_manager.redact_latest_message(redacted, agent)
+
+    assert [m.to_message() for m in mock_repository.list_messages("test-session", "a")] == [redacted, context_message]
+
+
+def test_redact_latest_message_skips_latest_record_with_different_role(session_manager, mock_repository, caplog):
+    agent = Agent(agent_id="a", session_manager=session_manager)
+    context_message = {"role": "assistant", "content": [{"text": "context"}]}
+    session_manager.append_message(context_message, agent)
+
+    session_manager.redact_latest_message({"role": "user", "content": [{"text": "[redacted]"}]}, agent)
+
+    assert [m.to_message() for m in mock_repository.list_messages("test-session", "a")] == [context_message]
+    assert "no stored message holds the redacted message" in caplog.text

@@ -1,5 +1,5 @@
 import { Agent } from '@strands-agents/sdk'
-import { Offload } from '@strands-agents/sdk/experimental'
+import { Offload } from '@strands-agents/sdk/context-manager'
 
 async function basicConfig() {
   // --8<-- [start:basic_config]
@@ -7,10 +7,10 @@ async function basicConfig() {
     contextManager: {
       strategies: [
         Offload.truncate('toolResults').when({
-          threshold: 2000,
+          blockThreshold: 2000,
         }),
         Offload.summarize('*').when({
-          utilization: 0.8,
+          contextUtilization: '80%',
           preserveRecent: 4,
         }),
       ],
@@ -23,14 +23,14 @@ async function truncate() {
   // --8<-- [start:truncate]
   Offload.truncate('toolResults', {
     previewTokens: 750,
-  }).when({ threshold: 1500 })
+  }).when({ blockThreshold: 1500 })
   // --8<-- [end:truncate]
 }
 
 async function summarize() {
   // --8<-- [start:summarize]
   Offload.summarize('*').when({
-    utilization: 0.85,
+    contextUtilization: '85%',
     preserveRecent: 4,
   })
   // --8<-- [end:summarize]
@@ -47,31 +47,31 @@ async function drop() {
 async function conditions() {
   // --8<-- [start:conditions_threshold]
   Offload.truncate('toolResults').when({
-    threshold: 2000,
+    blockThreshold: 2000,
   })
   // --8<-- [end:conditions_threshold]
 
   // --8<-- [start:conditions_utilization]
   Offload.summarize('*').when({
-    utilization: 0.85,
+    contextUtilization: '85%',
     preserveRecent: 4,
   })
   // --8<-- [end:conditions_utilization]
 
   // --8<-- [start:conditions_both]
   Offload.truncate('toolResults').when({
-    threshold: 1500,
-    utilization: 0.9,
+    blockThreshold: 1500,
+    contextUtilization: '90%',
   })
   // --8<-- [end:conditions_both]
 }
 
-async function stash() {
-  // --8<-- [start:stash_disabled]
+async function archive() {
+  // --8<-- [start:archive_disabled]
   const agent = new Agent({
     contextManager: {
-      stash: false,
+      archive: false,
     },
   })
-  // --8<-- [end:stash_disabled]
+  // --8<-- [end:archive_disabled]
 }

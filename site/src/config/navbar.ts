@@ -86,5 +86,6 @@ export const githubSections: GitHubSection[] = rawGithubSections
 export const products: Product[] = rawProducts.map((p) => ({
   ...p,
   href: withBase(p.href),
+  ...(p.docsHref ? { docsHref: withBase(p.docsHref) } : {}),
   ...(p.pages ? { pages: p.pages.map((pg) => ({ ...pg, href: withBase(pg.href) })) } : {}),
 }))

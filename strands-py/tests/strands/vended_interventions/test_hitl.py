@@ -3,7 +3,7 @@
 import logging
 from collections.abc import AsyncGenerator
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
@@ -1532,3 +1532,108 @@ class TestDecisionModelClassifier:
 
         assert result.stop_reason == "end_turn"
         assert executed == [True]
+
+
+class TestAutoMode:
+    def test_auto_uses_built_in_classifier(self):
+        with patch("strands.vended_interventions.hitl.hitl._create_llm_risk_classifier") as create:
+            HumanInTheLoop("auto")
+
+        create.assert_called_once_with()
+
+    def test_auto_classifies_with_the_agent_model(self):
+        executed = []
+
+        @tool(name="read_file")
+        def read_file(path: str) -> str:
+            executed.append(True)
+            return "content"
+
+        model = MockedModelProvider(
+            [
+                tool_use_message("read_file", tool_input={"path": "/tmp/x"}),
+                tool_use_message(
+                    "_RiskDecision", tool_use_id="risk-1", tool_input={"requires_approval": False, "reason": "read"}
+                ),
+                text_message("Done"),
+            ]
+        )
+        agent = Agent(model=model, tools=[read_file], interventions=[HumanInTheLoop("auto")])
+
+        result = agent("Read the file")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+
+    def test_auto_allowed_tools_skip_the_classifier(self):
+        executed = []
+
+        @tool(name="read_file")
+        def read_file(path: str) -> str:
+            executed.append(True)
+            return "content"
+
+        model = MockedModelProvider(
+            [tool_use_message("read_file", tool_input={"path": "/tmp/x"}), text_message("Done")]
+        )
+        agent = Agent(
+            model=model, tools=[read_file], interventions=[HumanInTheLoop("auto", allowed_tools=["read_file"])]
+        )
+
+        result = agent("Read the file")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == [True]
+
+    def test_auto_escalates_through_ask(self):
+        executed = []
+        prompts = []
+
+        @tool(name="delete_file")
+        def delete_file(path: str) -> str:
+            executed.append(True)
+            return "deleted"
+
+        def ask(prompt: str, **kwargs: Any) -> str:
+            prompts.append(prompt)
+            return "n"
+
+        model = MockedModelProvider(
+            [
+                tool_use_message("delete_file", tool_input={"path": "/data"}),
+                tool_use_message(
+                    "_RiskDecision", tool_use_id="risk-1", tool_input={"requires_approval": True, "reason": "deletes"}
+                ),
+                text_message("Done"),
+            ]
+        )
+        agent = Agent(model=model, tools=[delete_file], interventions=[HumanInTheLoop("auto", ask=ask)])
+
+        result = agent("Delete the file")
+
+        assert result.stop_reason == "end_turn"
+        assert executed == []
+        assert len(prompts) == 1
+        assert "delete_file" in prompts[0]
+
+    @pytest.mark.parametrize(
+        "option",
+        [
+            {"classifier": True},
+            {"classifier": False},
+            {"enable_trust": True},
+            {"evaluate": lambda response: True},
+            {"evaluate_trust": lambda response: True},
+        ],
+    )
+    def test_auto_rejects_strategy_options(self, option):
+        with pytest.raises(ValueError, match='"auto" only accepts ask and allowed_tools'):
+            HumanInTheLoop("auto", **option)
+
+    def test_unknown_mode_raises(self):
+        with pytest.raises(ValueError, match='mode must be "auto"'):
+            HumanInTheLoop("yolo")  # type: ignore[arg-type]
+
+    def test_mode_is_positional_only(self):
+        with pytest.raises(TypeError):
+            HumanInTheLoop(mode="auto")  # type: ignore[call-arg]

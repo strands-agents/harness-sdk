@@ -27,6 +27,8 @@ import { BedrockModel as BedrockFromSubpath } from '@strands-agents/sdk/models/b
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'
 import { AnthropicModel } from '@strands-agents/sdk/models/anthropic'
 import { GoogleModel } from '@strands-agents/sdk/models/google'
+import { SageMakerDecisionModel } from '@strands-agents/sdk/decisions/sagemaker'
+import { HttpDecisionModel } from '@strands-agents/sdk/decisions/http'
 
 import { z } from 'zod'
 
@@ -130,6 +132,16 @@ if (ModelRouterFromSubpath !== ModelRouter) {
   throw new Error('ModelRouter from subpath should match main export')
 }
 console.log('✓ Model subpath exports verified')
+
+if (typeof SageMakerDecisionModel !== 'function') {
+  throw new Error('SageMakerDecisionModel should be exported from decisions/sagemaker')
+}
+console.log('✓ decisions/sagemaker subpath export verified')
+
+if (typeof HttpDecisionModel !== 'function') {
+  throw new Error('HttpDecisionModel should be exported from decisions/http')
+}
+console.log('✓ decisions/http subpath export verified')
 
 // Verify barrel exports match individual subpath exports
 if (

@@ -38,7 +38,25 @@ We're using [Astro](https://astro.build/) with the [Starlight](https://starlight
 
 **Pagination pruning for regular pages:** Starlight pre-computes prev/next links from the full sidebar before middleware runs. The middleware now prunes any links that fall outside the current nav section and overrides labels with actual page titles.
 
-### 3. MkDocs Snippets Plugin (`src/plugins/remark-mkdocs-snippets.ts`)
+### 3. Generated Sample Guides (`scripts/samples/`, `src/pages/examples/`)
+
+The build imports the samples repository's `samples.json` catalog and guide content into `.build/samples/pages`.
+For curated manifests, the ordered top-level collections are the publication allowlist: uncollected samples remain
+available in the repository but do not generate website routes.
+
+- Set `SAMPLES_SOURCE_DIR` to a checkout of the samples repository.
+- Set `SAMPLES_REQUIRE_SOURCE=1` to fail when the source checkout is missing or has no samples. Without it, the build clears generated guides and renders the local setup message at `/examples/`.
+
+Docs CI and pull request previews check out `strands-agents/samples@main` once. Manual production
+deploys do the same by default, but an emergency `content_ref_overrides` input can select an exact
+Samples commit. `samples:sync` reads only that checkout for the rest of the build. Production
+records the resolved Samples revision alongside the external documentation revisions in the
+workflow summary and resulting `gh-pages` commit. Samples commits and merges do not trigger site
+rebuilds, but the next website build picks them up.
+
+The importer warns when a guide links to a missing file and fails when a guide references a missing image.
+
+### 4. MkDocs Snippets Plugin (`src/plugins/remark-mkdocs-snippets.ts`)
 
 **What it does:** Processes MkDocs-style code snippet references in markdown files.
 
@@ -58,7 +76,7 @@ const example = "This code will be included"
 // --8<-- [end:section_name]
 ```
 
-### 4. Relative Link Resolution (`src/util/links.ts`, `src/components/PageLink.astro`)
+### 5. Relative Link Resolution (`src/util/links.ts`, `src/components/PageLink.astro`)
 
 **What it does:** Converts MkDocs-style relative file links to Astro slug-based URLs at render time.
 
@@ -83,7 +101,7 @@ From page `user-guide/concepts/agents/state.mdx`:
 
 The collection base is `src/content` (not `src/content/docs`), so all doc slugs include a `docs/` prefix (e.g., `docs/user-guide/concepts/agents/state`). The `generateId` function strips this prefix from path-based slugs so that URLs remain clean (e.g., `/docs/user-guide/...`). Files with an explicit `slug` frontmatter field (such as generated API docs) use that value directly and must include the `docs/` prefix themselves.
 
-### 5. API Reference Links (`@api` shorthand)
+### 6. API Reference Links (`@api` shorthand)
 
 **What it does:** Provides a shorthand format for linking to API reference pages that's cleaner than relative paths.
 
@@ -119,6 +137,190 @@ The collection base is `src/content` (not `src/content/docs`), so all doc slugs 
 [AgentResult](@api/python/strands.agent.agent_result#AgentResult)
 ```
 
+### 7. External Documentation Federation
+
+**What it does:** Imports versioned Markdown from product repositories into the Starlight
+content collection. The current integrations publish Box under `/docs/user-guide/box/` and
+Strands Decider under `/docs/labs/strands-decider/`.
+
+**Why:** Product documentation changes with its implementation. Keeping the source Markdown
+in the product repository lets one commit update behavior and documentation together. The
+site owns the route prefix, publication status, navigation placement, presentation, and tracked
+ref; the upstream manifest owns each page's route suffix.
+
+#### Upstream contract
+
+Each product publishes `docs/site-manifest.json` with `schemaVersion`, product metadata, and
+an ordered page list. Each page declares a unique lowercase kebab-case ID, a unique normalized
+Markdown source under `docs/`, a unique route suffix composed of lowercase kebab-case path
+components, title, description, and `nav: { group: string, order: positive integer }`.
+Group/order pairs must also be unique. Source files are Markdown; the generator writes
+`.mdx` so upstream pages can use any JSX component the site has auto-imported, under the
+MDX safety rules described below.
+
+`nav.group` accepts either a non-empty string (a flat top-level group) or an array of
+non-empty strings (a path of nested sidebar groups, outermost first). Uniqueness still
+holds: no two pages may share the same `(group-path, order)` tuple. A nested group's
+sidebar position comes from the minimum `order` of its descendants, so the first entry in
+a subgroup also fixes where the subgroup sits in its parent.
+
+The transformer parses each page with `remark-mdx` and rejects, anywhere in the
+tree:
+
+- `mdxjsEsm` — `import` / `export` statements
+- `mdxFlowExpression`, `mdxTextExpression` — bare `{expression}` in prose
+- `mdxJsxExpressionAttribute` — spread or expression-only attributes (`<Foo {...rest} />`)
+- `mdxJsxAttributeValueExpression` — expression-valued attributes (`<Foo n={1} />`)
+
+A JSX element whose attributes are all literal strings (or boolean-style bare
+attributes) passes regardless of name — including raw HTML tags. Data flow
+from upstream to components stays a literal pipe. The trust boundary is
+`astro-auto-import` in `astro.config.mjs`: upstream may use any component the
+site has auto-imported, and an unknown capitalized tag fails at Astro build
+time (a CI error, not a security event). Adding a new component for upstream
+repos to use is one auto-import entry in `astro.config.mjs`; the external-docs
+pipeline needs no change.
+
+Schema version 1 accepts source files anywhere under `docs/`. This broadens the `docs/user/`
+restriction without invalidating existing manifests. Within `docs/`, the manifest's explicit
+page list is the publication boundary; unlisted files are never imported.
+
+The manifest's optional `product.status` field is deprecated schema-v1 compatibility metadata.
+When present, it must be `preview` or `stable`, but it never gates publication. The site registry
+is the publication authority: its `publicationStatus` determines whether imported pages are
+preview or stable on this site. Preview pages render a documentation-preview caution and remain
+out of search and machine-readable publication surfaces. Stable imported pages are automatically
+included in `llms.txt`, `llms-full.txt`, search, and the sitemap; there is no separate
+machine-readable indexing switch. Changing publication status does not require a coordinated
+source-repository change.
+
+#### Site registry and source resolution
+
+`external-docs.config.json` owns the GitHub repository, tracked ref, manifest path, route
+prefix, sidebar label, and publication status. Box and Decider both track `main`; every other ref
+is rejected by the config schema.
+
+Every `external-docs:generate` invocation creates a fresh shallow checkout for each product,
+fetches its configured `main` branch, and resolves `FETCH_HEAD` once. The manifest, Markdown pages,
+and linked assets all come from that checkout. Local builds, CI, pull request previews, and
+production deploys therefore use the latest `main` commit available when each product is fetched.
+A failed fetch fails the build instead of falling back to stale content.
+
+Manual production deploys accept an emergency-only `content_ref_overrides` input. The value is a
+comma-separated list of source IDs and exact revisions, such as
+`samples=<40-character SHA>,strands-box=<40-character SHA>,strands-decider=<40-character SHA>`.
+Overrides apply only to that production run. CI, pull request previews, and production otherwise
+follow `main` for every source. Local builds follow `main` for external documentation products;
+Samples uses the `SAMPLES_SOURCE_DIR` behavior described above.
+
+If a documentation source's `main` revision breaks sample import, external documentation
+generation, or redirect validation:
+
+1. Copy the last known-good source revision from a successful deployment summary or `gh-pages`
+   commit message.
+2. Dispatch `Docs: Deploy to GitHub Pages` with that source and revision in
+   `content_ref_overrides`.
+3. Repair the upstream repository, then leave the input empty on the next production deploy.
+
+External product revisions are recorded in generated page provenance and generated navigation. The
+production deployment summary and resulting `gh-pages` commit record those revisions together with
+the resolved Samples revision. These are per-build records, not committed inputs. They also keep
+source and asset links internally consistent if a branch advances while a build is running.
+Upstream product commits do not trigger site rebuilds, but the next website build picks them up.
+
+#### Generated layout
+
+`npm run external-docs:generate` writes each product to:
+
+```text
+.build/external-docs/<product-id>/
+├── content/          # Generated .mdx pages
+└── navigation.json  # Generated groups and page links
+```
+
+Tracked content symlinks expose each product's generated content to Astro. Each
+`externalDocs: <product-id>` entry in `navigation.yml` expands that product's `navigation.json`;
+page lists do not need a second manually maintained copy. Static aliases serve the Box
+quickstart at `/docs/user-guide/box/` and Decider's overview at
+`/docs/labs/strands-decider/`.
+
+The generator:
+
+- strips the upstream H1 because Starlight renders the manifest title;
+- adds Starlight frontmatter, an upstream edit link to the configured ref, and source
+  provenance;
+- rewrites links to other published manifest pages as page-relative site routes so they work
+  under production and preview base paths;
+- rewrites other relative links and same-repository `blob`, `tree`, and raw `main` URLs to the
+  resolved build commit while keeping GitHub edit URLs on the configured editable ref;
+- treats unsupported `dw` and `cedar` code fences as plain text;
+- passes JSX elements through to the `.mdx` output so Astro resolves them via
+  auto-import, subject to the MDX safety rules above (no `import`/`export`, no
+  bare `{expression}`, no spread or expression-valued attributes);
+- rejects unsafe paths, source symlinks, frontmatter, executable snippet
+  includes, and anything the MDX validator blocks.
+
+#### Adding a product
+
+The importer core is reusable, but each product still requires explicit site wiring:
+
+1. Add the repository, tracked ref, manifest, route prefix, navigation label, and publication
+   status to `external-docs.config.json`.
+2. Keep source files under `docs/`. The manifest page list explicitly selects which files the
+   site publishes.
+3. Add a content symlink for the generated product directory and include its Markdown path in
+   the `docs` collection glob in `src/content.config.ts`.
+4. Add one `externalDocs: <product-id>` placeholder at the intended location in
+   `src/config/navigation.yml`.
+5. Run the full CMS build and content-collection tests; the sidebar-slug validation catches a
+   generated route that the content collection failed to load.
+
+Preview pages set `pagefind: false` and `noindex, nofollow`. The sitemap and
+machine-readable documentation endpoints also omit them until the site's publication status
+changes to `stable`. Once stable, every page is included automatically.
+
+Build and development scripts generate external docs before Astro starts. To preview changes
+from a local product checkout instead of the configured remote ref, set its source environment
+variable:
+
+```bash
+EXTERNAL_DOCS_STRANDS_BOX_SOURCE=/path/to/box \
+EXTERNAL_DOCS_STRANDS_DECIDER_SOURCE=/path/to/decider \
+npm run dev
+```
+
+Remote generation replaces each cached checkout and requires network access. Set a local source
+for every configured product, as above, to start the development server offline.
+
+### 8. Image Zoom (`starlight-image-zoom`)
+
+**What it does:** The [starlight-image-zoom](https://github.com/HiDeoo/starlight-image-zoom) Starlight plugin wraps every Markdown image in a zoom control, so readers can click a shrunk screenshot to see it at full size. Add `data-zoom-off` to an `<img>` to opt out; images inside links are never zoomable.
+
+**Site wiring:** The plugin normally installs its own `MarkdownContent` override, but it skips that when one already exists. Our `src/components/overrides/MarkdownContent.astro` therefore renders the plugin's `<ImageZoom />` element itself. The plugin also adds `rehype-raw` to the Markdown pipeline so it can see images written as raw HTML.
+
+**Limits:** It only wraps `<img>` and `<picture>` in Markdown. `<Diagram>` SVGs are inlined by a component and aren't zoomable.
+
+### 9. Docs Layout (`src/styles/custom.css`)
+
+**What it does:** Sets the docs text column to `--sl-content-width: 55rem` and, at 72rem and up on every page with both sidebars, gives the TOC a fixed column of `--sl-sidebar-width` (300px), matching the left sidebar, with the text centred between the two (`.right-sidebar-container` and `.main-pane` rules).
+
+**Why:** Starlight gives the TOC a column of the TOC width plus half the spare width and pushes the text against it, so on wide screens the text sits off centre with the spare space on its left. Centring the text balances the page, and gives wide tables and images equal room on both sides.
+
+**What readers see:** Below about 1480px there is no spare width, so the layout looks the same as Starlight's. Above that, the TOC stays pinned to the window's right edge, so it sits further from the text as the screen grows: about 220px away at 1920px and about 540px at 2560px, where Starlight keeps it 24px away.
+
+### 10. Wide Tables and Images (`src/styles/custom.css`)
+
+**What it does:** On large screens, a top-level table that doesn't fit the text column, or a Markdown image wider than it, grows into the spare room on both sides of the text, staying centred on it, up to `--wide-max` (72rem). Anything that fits keeps its normal width and position. Authors mark nothing, so imported product docs get it too. A component can opt in to the full wide width from its own styles with `--wide-grow` and `cqw`, as `FoundationComparison.astro` does, since the comparison wraps heavily at column width.
+
+**Why:** Tables with long cells wrap into tall rows at column width, and large screenshots are shrunk. A page-wide content width would make every paragraph harder to read, so only tables and images grow; prose and code blocks keep the column width.
+
+**How the width is worked out:** Only pages with the left sidebar get wider elements, and only at 72rem and up. Each side has `(100vw - sidebar - TOC - column) / 2 - panel padding` of room with a TOC (the text is centred between the sidebar and the TOC, see [Docs Layout](#9-docs-layout-srcstylescustomcss)), or `(100vw - sidebar - column) / 2 - panel padding` without one. With a 55rem column there is no room up to about 1536px screens; at 1728px each side gains 100px, and the 136px-per-side cap is reached at about 1850px.
+
+- **Tables** get `width: max-content` with `min-width: 100%` and the cap as `max-width`, so a table grows only as far as its unwrapped cells need, and a table too wide even at the cap still scrolls inside itself.
+- **Images** get the cap as `max-width`, so only an image wider than the column grows.
+- **Centring:** `.sl-markdown-content` is an inline-size container (which stops its first child's top margin collapsing through it, so that margin is set to 0), and each element is moved by `translateX(min(0px, 50cqw - 50%))`. That is 0 for an element no wider than the column and half its overhang for a wider one.
+- Only direct children of `.sl-markdown-content` widen. Inside an aside or a `<TabItem>` they stay at the width of their box. The block stops one 1.5rem panel padding short of the TOC, the sidebar or the window edge, which also absorbs the up to ~8px a classic scrollbar adds to `100vw`.
+
 ## Configuration (`astro.config.mjs`)
 
 The main config ties everything together:
@@ -145,8 +347,11 @@ export default defineConfig({
     }),
     starlight({
       markdown: {
-        // Ensures Starlight's rehype plugins run on API docs symlinked from .build/api-docs
-        processedDirs: [path.resolve('.build/api-docs')],
+        // Process generated docs through Starlight after following their content symlinks.
+        processedDirs: [
+          path.resolve('.build/api-docs'),
+          path.resolve('.build/external-docs'),
+        ],
       },
       sidebar: sidebar,
       routeMiddleware: './src/route-middleware.ts',
@@ -165,12 +370,19 @@ export default defineConfig({
 
 Notable config details:
 - `themeCssSelector` on Expressive Code makes code block themes follow Starlight's `[data-theme]` attribute rather than the browser's `prefers-color-scheme`, keeping syntax highlighting in sync with the site's theme toggle.
-- `processedDirs` tells Starlight to run its rehype plugins (e.g. heading anchor links) on the real resolved paths of the API docs symlinks.
+- `processedDirs` tells Starlight to run its rehype plugins (e.g. heading anchor links) on the real resolved paths of generated documentation symlinks.
 - `AutoImport` makes the following components available in every MDX page without an explicit import: `Tabs` (AutoSyncTabs), `Tab` (Starlight's TabItem), `Syntax`, and `YouTube` (from `@astro-community/astro-embed-youtube`).
 
 ## Custom Frontmatter Fields
 
 The documentation extends Starlight's default schema with custom fields that automatically render contextual banners at the top of pages.
+
+### `externalDocs`
+
+Generated external pages record their product, repository, tracked ref, resolved revision,
+and source file. Authors do not set this field by hand. The verified site publication status is
+recorded in the generated frontmatter: `preview` renders the upstream caution, while `stable`
+keeps the provenance without the caution.
 
 ### `languages`
 
@@ -213,7 +425,8 @@ Renders a tip aside warning the feature may change in future versions.
 
 ### Rendering Order
 
-When multiple fields are set, banners render top to bottom: experimental → community → languages.
+When multiple fields are set, banners render top to bottom: experimental → external preview →
+community → languages. Community pages suppress the separate language banner.
 
 ### Sidebar Badges
 
@@ -298,11 +511,13 @@ Replaces the default anchor element to enable MkDocs-style relative linking. Res
 
 These override default Starlight components:
 
-- **`Head.astro`**: Adds Mermaid diagram support and loads `SiteScripts` (Shortbread + WebSDK).
+- **`Head.astro`**: Adds Mermaid diagram support, loads `SiteScripts` (Shortbread + WebSDK), and emits the page JSON-LD `@graph` built by `src/util/structured-data.ts`. Non-docs pages add their own nodes (blog post, changelog release, integrations list, sample guide) by setting `Astro.locals.structuredData` in frontmatter.
+- **`EditLink.astro`**: Renders nothing, so Starlight's footer has no "Edit page" link; the edit link is in `PageActions` beside the title.
 - **`Header.astro`**: Custom header with navigation tabs and theme-aware logos (see [Header Navigation](#header-navigation) below).
 - **`Hero.astro`**: Suppresses the Starlight hero on `/blog/` paths. Blog pages pass a dummy `hero: { actions: [] }` to collapse Starlight's two-panel layout, and this override ensures that dummy hero has no visual output.
-- **`MarkdownContent.astro`**: Injects the custom frontmatter banners (experimental, community, languages) at the top of page content.
+- **`MarkdownContent.astro`**: Injects the custom frontmatter banners (experimental, external preview, community, languages) at the top of page content.
 - **`PageFrame.astro`**: Extends Starlight's default `PageFrame` to add a full-width site footer containing the `Copyright` component. The footer spans the content area (respecting sidebar offset) with `--sl-color-bg-nav` background to match the header.
+- **`PageTitle.astro`**: Renders the H1 (or the product hub hero) with `PageActions` beside it: small "View as Markdown" and "Edit on GitHub" links that sit next to the title when it fits and wrap below it otherwise. The Markdown link shows only on pages with an `/index.md` twin, decided by `src/util/markdown-twin.ts`, which `Head.astro` also uses for its `rel="alternate"` link.
 - **`Sidebar.astro`** and **`SidebarSublist.astro`**: Custom sidebar navigation that mimics MkDocs Material theme's `navigation.sections` behavior.
 
 #### Sidebar Navigation Style
@@ -360,6 +575,7 @@ const rawNavLinks: NavLink[] = [
 Used by `MarkdownContent.astro` to render frontmatter banners:
 
 - `ExperimentalAside.astro`
+- `ExternalDocsPreviewAside.astro`
 - `CommunityContributionAside.astro`
 - `LanguageSupportAside.astro`
 
@@ -766,17 +982,23 @@ Our implementation renders documentation through Astro's container API, applies 
 
 ### Endpoints
 
-- `/llms.txt` - Index with links to all docs organized by sidebar structure
-- `/llms-full.txt` - Complete documentation content (excludes API reference)
+- `/llms.txt` - Index with every live doc plus generated sample guides, blog posts, and changelog entries
+- `/llms-full.txt` - Complete docs, generated sample guide, and blog content (excludes API reference)
 - `/{slug}/index.md` - Any doc page in raw markdown format
+- `/examples/{sample}/index.md` - Any generated sample guide in raw markdown format
+- `/integrations.json` - Integrations catalog feed built from the `catalog` collection, described by `/integrations.schema.json`
+- `/openapi.json` - OpenAPI 3.1 description of the public website data feeds
 
 ### Implementation Files
 
 | File | Purpose |
 |------|---------|
-| `src/pages/llms.txt.ts` | Generates index from sidebar structure |
+| `src/pages/llms.txt.ts` | Generates a sidebar-ordered index, then appends any remaining live docs |
 | `src/pages/llms-full.txt.ts` | Renders all docs inline |
 | `src/pages/[...slug]/index.md.ts` | Dynamic endpoint for individual pages |
+| `src/pages/examples/[...sample]/index.md.ts` | Dynamic endpoint for generated sample guides |
+| `src/pages/integrations.json.ts`, `src/pages/integrations.schema.json.ts` | Integrations feed and its JSON Schema (`src/util/catalog-feed.ts`) |
+| `src/pages/openapi.json.ts`, `src/util/openapi.ts` | OpenAPI document for the public integrations feed |
 | `src/util/render-to-markdown.ts` | Renders MDX entries via AstroContainer |
 | `src/util/html-to-markdown.ts` | HTML→Markdown conversion with custom rules |
 
@@ -863,11 +1085,20 @@ Helper functions used across all blog pages:
 | `tagToSlug(tag)` / `slugToTag(slug)` | Bidirectional tag↔URL conversion |
 | `formatDate(date)` | Human-readable date (e.g., "February 20, 2026") |
 
+### Homepage Banner
+
+`AnnouncementBanner.astro` compares the newest published blog post with the newest active entry in
+`src/content/announcements/`. The newer item appears in the banner. A same-day manual announcement wins as an explicit
+override, while an explicit `expires` date pins the manual announcement through that day. Manual announcements expire
+after 14 days by default, then the banner returns to the newest blog post. When the banner promotes the newest post, the
+homepage community panel features the next-most-recent post instead. During a manual campaign, the panel keeps the newest
+blog post visible.
+
 ### Layouts
 
 **`BlogLayout.astro`** — Base layout for all blog pages. Uses Starlight's `<StarlightPage>` component to get the full page shell (head, styles, theme, header) for free. Passes `hasSidebar={false}` and `template: 'splash'` to suppress sidebar and doc-page chrome. Passes `hero: { actions: [] }` to collapse Starlight's two-panel layout into a single content panel (suppressing the auto-generated `PageTitle`). Extra head tags (canonical URL, OG/Twitter meta, RSS autodiscovery) are injected via the `frontmatter.head` array. A named `<slot name="head" />` is forwarded for page-specific head content (e.g. JSON-LD). The `Hero` component override (`src/components/overrides/Hero.astro`) suppresses the hero on `/blog/` paths so the dummy hero value has no visual effect.
 
-**`BlogPostLayout.astro`** — Wraps `BlogLayout` with article-specific chrome: title, date, reading time, description, author byline, tags, cover image. Injects JSON-LD Article schema via the head slot. OG image URL: `/blog/og/{slug}.png`.
+**`BlogPostLayout.astro`** — Wraps `BlogLayout` with article-specific chrome: title, date, reading time, description, author byline, tags, cover image. Passes its `BlogPosting` node to the page JSON-LD graph through `Astro.locals.structuredData` (see `src/util/structured-data.ts`). OG image URL: `/blog/og/{slug}.png`.
 
 ### Components (`src/components/blog/`)
 

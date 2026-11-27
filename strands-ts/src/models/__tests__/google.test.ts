@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { GoogleGenAI, FunctionCallingConfigMode, type GenerateContentResponse } from '@google/genai'
+import { ApiError, GoogleGenAI, FunctionCallingConfigMode, type GenerateContentResponse } from '@google/genai'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import { GoogleModel } from '../google/model.js'
-import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
+import { ContextWindowOverflowError, ModelThrottledError, ModelNetworkError } from '../../errors.js'
 import {
   Message,
   CachePointBlock,
@@ -11,6 +11,8 @@ import {
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
+  OffloadedBlock,
+  UnknownBlock,
 } from '../../types/messages.js'
 import type { ContentBlock } from '../../types/messages.js'
 import { formatMessages, mapChunkToEvents } from '../google/adapters.js'
@@ -86,6 +88,18 @@ function setupStreamTest(streamGenerator: () => AsyncGenerator<Record<string, un
 function formatBlock(block: ContentBlock, role: 'user' | 'assistant' = 'user'): ReturnType<typeof formatMessages> {
   return formatMessages([new Message({ role, content: [block] })])
 }
+
+describe('offloaded blocks', () => {
+  it('sends an offloaded block as the text the model receives, at top level and inside a tool result', () => {
+    const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+
+    expect(formatBlock(placeholder)[0]!.parts).toEqual([{ text: '[Dropped] [ref: tu-1]' }])
+    const toolResult = new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })
+    expect(formatBlock(toolResult)[0]!.parts![0]!.functionResponse?.response).toEqual({
+      output: [{ text: '[Dropped] [ref: tu-1]' }],
+    })
+  })
+})
 
 describe('GoogleModel', () => {
   beforeEach(() => {
@@ -551,6 +565,72 @@ describe('GoogleModel', () => {
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
     })
 
+    it('throws ModelNetworkError for a fetch network error', async () => {
+      const networkError = new TypeError('Failed to fetch')
+      const mockClient = {
+        models: {
+          generateContentStream: vi.fn(async () => {
+            throw networkError
+          }),
+        },
+      } as unknown as GoogleGenAI
+
+      const provider = new GoogleModel({ client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      const error = await collectIterator(provider.stream(messages)).catch((caught: unknown) => caught)
+
+      expect(error).toBeInstanceOf(ModelNetworkError)
+      expect(error).toMatchObject({ message: 'Failed to fetch', cause: networkError })
+    })
+
+    it('throws ModelNetworkError when the connection drops while reading the stream', async () => {
+      const { provider, messages } = setupStreamTest(async function* () {
+        yield { candidates: [{ content: { parts: [{ text: 'Hel' }] } }] }
+        throw new TypeError('network error')
+      })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelNetworkError)
+    })
+
+    // #5744
+    const midStreamMessage =
+      'got status: RESOURCE_EXHAUSTED. {"error":{"code":429,"message":"Resource exhausted","status":"RESOURCE_EXHAUSTED"}}'
+    it.each([
+      [
+        'an ApiError with a non-JSON body wrapped by @google/genai',
+        new ApiError({
+          message: JSON.stringify({ error: { message: 'Rate limited', code: 429, status: 'Too Many Requests' } }),
+          status: 429,
+        }),
+      ],
+      ['a mid-stream ApiError', new ApiError({ message: midStreamMessage, status: 429 })],
+      [
+        'a mid-stream ApiError from another @google/genai module copy',
+        Object.assign(new Error(midStreamMessage), { name: 'ApiError', status: 429 }),
+      ],
+      [
+        'an error whose JSON message carries code 429',
+        new Error(JSON.stringify({ error: { message: 'Rate limited', code: 429, status: 'Too Many Requests' } })),
+      ],
+    ])('throws ModelThrottledError for HTTP 429 from %s', async (_, error) => {
+      const mockClient = {
+        models: {
+          generateContentStream: vi.fn(async () => {
+            throw error
+          }),
+        },
+      } as unknown as GoogleGenAI
+
+      const provider = new GoogleModel({ client: mockClient })
+      const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toMatchObject({
+        name: 'ModelThrottledError',
+        cause: error,
+      })
+    })
+
     it('rethrows unrecognized errors', async () => {
       const mockClient = {
         models: {
@@ -762,6 +842,12 @@ describe('GoogleModel', () => {
 
         expect(contents).toHaveLength(0)
         warnSpy.mockRestore()
+      })
+
+      it('skips unknown blocks', () => {
+        const contents = formatBlock(new UnknownBlock({ futureBlock: { value: 1 } }))
+
+        expect(contents).toHaveLength(0)
       })
 
       it('formats tool use blocks as function calls', () => {
@@ -1180,8 +1266,8 @@ describe('GoogleModel', () => {
       const contents = formatMessages(messages)
 
       const resultPart = contents[1]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
-      // Image goes to separate parts, not into response.output
-      expect(resultPart.functionResponse.response).toEqual({ output: [] })
+      // Image goes to separate parts; response.output keeps a $ref to it
+      expect(resultPart.functionResponse.response).toEqual({ output: [{ $ref: 'image.png' }] })
       expect(resultPart.functionResponse.parts).toEqual([
         { inlineData: { data: 'iVBORw==', mimeType: 'image/png', displayName: 'image.png' } },
       ])
@@ -1204,13 +1290,17 @@ describe('GoogleModel', () => {
 
       const contents = formatMessages(messages)
 
-      const resultPart = contents[1]!.parts![0]! as {
-        functionResponse: { parts?: Array<{ inlineData: { displayName: string } }> }
-      }
-      const displayNames = resultPart.functionResponse.parts!.map((p) => p.inlineData.displayName)
+      const resultPart = contents[1]!.parts![0]! as { functionResponse: unknown }
       // Gemini rejects duplicate part names within one function_response.parts.
-      expect(new Set(displayNames).size).toBe(displayNames.length)
-      expect(displayNames).toEqual(['image.png', 'image-1.png'])
+      expect(resultPart.functionResponse).toEqual(
+        expect.objectContaining({
+          response: { output: [{ $ref: 'image.png' }, { $ref: 'image-1.png' }] },
+          parts: [
+            { inlineData: { data: 'iVBORw==', mimeType: 'image/png', displayName: 'image.png' } },
+            { inlineData: { data: 'iVBOSA==', mimeType: 'image/png', displayName: 'image-1.png' } },
+          ],
+        })
+      )
     })
 
     it('disambiguates displayName for documents sharing a name in one tool result', () => {
@@ -1230,12 +1320,63 @@ describe('GoogleModel', () => {
 
       const contents = formatMessages(messages)
 
-      const resultPart = contents[1]!.parts![0]! as {
-        functionResponse: { parts?: Array<{ inlineData: { displayName: string } }> }
+      const resultPart = contents[1]!.parts![0]! as { functionResponse: unknown }
+      expect(resultPart.functionResponse).toEqual(
+        expect.objectContaining({
+          response: { output: [{ $ref: 'report.pdf' }, { $ref: 'report-1.pdf' }] },
+          parts: [
+            { inlineData: { data: 'JVA=', mimeType: 'application/pdf', displayName: 'report.pdf' } },
+            { inlineData: { data: 'JVE=', mimeType: 'application/pdf', displayName: 'report-1.pdf' } },
+          ],
+        })
+      )
+    })
+
+    it.each([
+      { source: { bytes: new Uint8Array([0x68]) }, kind: 'bytes' },
+      { source: { text: 'h' }, kind: 'text' },
+    ])('names an unnamed tool-result document after its format ($kind source)', ({ source }) => {
+      const toolResultBlock = new ToolResultBlock({
+        toolUseId: 'test-id',
+        status: 'success',
+        content: [new DocumentBlock({ name: '', format: 'txt', source })],
+      })
+
+      const contents = formatMessages([new Message({ role: 'user', content: [toolResultBlock] })])
+
+      const resultPart = contents[0]!.parts![0]! as { functionResponse: unknown }
+      expect(resultPart.functionResponse).toEqual(
+        expect.objectContaining({
+          response: { output: [{ $ref: 'document.txt' }] },
+          parts: [{ inlineData: { data: 'aA==', mimeType: 'text/plain', displayName: 'document.txt' } }],
+        })
+      )
+    })
+
+    it('skips a location-source image in a tool result without a $ref', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const toolResultBlock = new ToolResultBlock({
+        toolUseId: 'test-id',
+        status: 'success',
+        content: [
+          new TextBlock('clip'),
+          new ImageBlock({ format: 'png', source: { location: { type: 's3', uri: 's3://bucket/key.png' } } }),
+        ],
+      })
+
+      try {
+        const contents = formatMessages([new Message({ role: 'user', content: [toolResultBlock] })])
+
+        const resultPart = contents[0]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
+        expect(resultPart.functionResponse.response).toEqual({ output: [{ text: 'clip' }] })
+        expect(resultPart.functionResponse.parts).toBeUndefined()
+        expect(warnSpy).toHaveBeenCalledWith(
+          'source_type=<%s> | only bytes sources supported in gemini tool results',
+          'imageSourceS3Location'
+        )
+      } finally {
+        warnSpy.mockRestore()
       }
-      const displayNames = resultPart.functionResponse.parts!.map((p) => p.inlineData.displayName)
-      expect(new Set(displayNames).size).toBe(displayNames.length)
-      expect(displayNames).toEqual(['report.pdf', 'report-1.pdf'])
     })
 
     it('formats document block with bytes source in tool result as inlineData', () => {
@@ -1254,7 +1395,7 @@ describe('GoogleModel', () => {
       const contents = formatMessages(messages)
 
       const resultPart = contents[1]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
-      expect(resultPart.functionResponse.response).toEqual({ output: [] })
+      expect(resultPart.functionResponse.response).toEqual({ output: [{ $ref: 'report.pdf' }] })
       expect(resultPart.functionResponse.parts).toEqual([
         { inlineData: { data: 'JVBERg==', mimeType: 'application/pdf', displayName: 'report.pdf' } },
       ])
@@ -1275,7 +1416,7 @@ describe('GoogleModel', () => {
       const contents = formatMessages(messages)
 
       const resultPart = contents[1]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
-      expect(resultPart.functionResponse.response).toEqual({ output: [] })
+      expect(resultPart.functionResponse.response).toEqual({ output: [{ $ref: 'notes.txt' }] })
       expect(resultPart.functionResponse.parts).toEqual([
         { inlineData: { data: 'SGVsbG8=', mimeType: 'text/plain', displayName: 'notes.txt' } },
       ])
@@ -1323,7 +1464,9 @@ describe('GoogleModel', () => {
       const contents = formatMessages(messages)
 
       const resultPart = contents[1]!.parts![0]! as { functionResponse: { response: unknown; parts?: unknown[] } }
-      expect(resultPart.functionResponse.response).toEqual({ output: [{ text: 'Analysis complete' }] })
+      expect(resultPart.functionResponse.response).toEqual({
+        output: [{ text: 'Analysis complete' }, { $ref: 'image.jpeg' }],
+      })
       expect(resultPart.functionResponse.parts).toEqual([
         { inlineData: { data: 'AQI=', mimeType: 'image/jpeg', displayName: 'image.jpeg' } },
       ])

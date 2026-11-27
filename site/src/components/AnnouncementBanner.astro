@@ -2,19 +2,50 @@
 import { getCollection } from 'astro:content';
 import frog from '../assets/nav/frog-hop.svg?raw';
 import arrow from '../assets/banner/arrow.svg?raw';
-import { activeAnnouncement, announcementExpires } from '../util/announcements';
+import { homepageBanner, latestPostBanner } from '../util/announcements';
+import { getPublishedPosts } from '../util/blog';
 import { pathWithBase } from '../util/links';
 
-const announcements = (await getCollection('announcements')).map((a) => a.data);
-const announcement = activeAnnouncement(announcements, new Date());
+const [announcementEntries, posts] = await Promise.all([
+  getCollection('announcements'),
+  getPublishedPosts(),
+]);
+const today = new Date();
+const announcement = homepageBanner(
+  announcementEntries.map((entry) => entry.data),
+  posts,
+  today,
+);
+const fallback = announcement?.expires ? latestPostBanner(posts) : undefined;
 const isExternal = announcement && /^https?:\/\//.test(announcement.href);
 const href = announcement && (isExternal ? announcement.href : pathWithBase(announcement.href));
+const fallbackHref = fallback && pathWithBase(fallback.href);
+const linkIsExternal = (target: string) => /^https?:\/\//.test(target);
+const linkHref = (target: string) => (linkIsExternal(target) ? target : pathWithBase(target));
 ---
 
 {
   announcement && (
     <>
-      <aside class="announcement" aria-label="Announcement" data-expires={announcementExpires(announcement)}>
+      <aside class="announcement" aria-label="Announcement" data-expires={announcement.expires}>
+        {announcement.links ? (
+          <div class="announcement__links" role="group" aria-label={announcement.title}>
+            <span class="announcement__frog" set:html={frog} aria-hidden="true" />
+            {announcement.links.map((link, i) => (
+              <>
+                {i > 0 && <span class="announcement__sep" aria-hidden="true">·</span>}
+                <a class="announcement__item" href={linkHref(link.href)} {...(linkIsExternal(link.href) && {
+                    target: '_blank',
+                    rel: 'noopener',
+                    'aria-label': `${link.title} (opens in a new tab)`,
+                  })}>
+                  {link.title}
+                  <span class="announcement__arrow" set:html={arrow} aria-hidden="true" />
+                </a>
+              </>
+            ))}
+          </div>
+        ) : (
         <a class="announcement__link" href={href} {...(isExternal && {
             target: '_blank',
             rel: 'noopener',
@@ -27,17 +58,31 @@ const href = announcement && (isExternal ? announcement.href : pathWithBase(anno
             <span class="announcement__arrow" set:html={arrow} aria-hidden="true" />
           </span>
         </a>
+        )}
+        {
+          fallback && (
+            <template class="announcement__fallback">
+              <a class="announcement__link" href={fallbackHref}>
+                <span class="announcement__frog" set:html={frog} aria-hidden="true" />
+                <span class="announcement__title">{fallback.title}</span>
+                <span class="announcement__cta">
+                  {fallback.linkText}
+                  <span class="announcement__arrow" set:html={arrow} aria-hidden="true" />
+                </span>
+              </a>
+            </template>
+          )
+        }
       </aside>
-      {/* The site is only rebuilt on deploy, so drop the banner client-side once it expires. */}
-      <script is:inline>
-        (function () {
-          var el = document.querySelector('.announcement');
-          if (el && el.dataset.expires < new Date().toISOString().slice(0, 10)) el.remove();
-        })();
-      </script>
     </>
   )
 }
+
+<script>
+  import { expireAnnouncement } from '../util/expire-announcement';
+
+  expireAnnouncement(document, new Date().toISOString().slice(0, 10));
+</script>
 
 <style>
   .announcement {
@@ -58,6 +103,33 @@ const href = announcement && (isExternal ? announcement.href : pathWithBase(anno
     line-height: 1.4;
     color: inherit;
     text-decoration: none;
+  }
+
+  .announcement__links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 4px 12px;
+    max-width: 1442px;
+    margin: 0 auto;
+    padding: 8px clamp(16px, 5vw, 96px);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  /* Inline (not flex) so the arrow stays after the last word when the title wraps. */
+  .announcement__item {
+    display: inline;
+    color: inherit;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .announcement__item:hover {
+    text-decoration-thickness: 2px;
   }
 
   .announcement__frog {
@@ -93,11 +165,20 @@ const href = announcement && (isExternal ? announcement.href : pathWithBase(anno
     height: 9px;
   }
 
+  .announcement__item .announcement__arrow {
+    margin-left: 6px;
+  }
+
   @media (max-width: 767px) {
-    .announcement__link {
+    .announcement__link,
+    .announcement__links {
       flex-wrap: wrap;
       font-size: 13px;
       text-align: center;
+    }
+
+    .announcement__sep {
+      display: none;
     }
 
     .announcement__frog {

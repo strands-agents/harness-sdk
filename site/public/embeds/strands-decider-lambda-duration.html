@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lambda durations — Strands Decider</title>
+<style>
+  :root {
+    --brand:   #00FF77;
+    --harness: #2fd07f;
+    --ink:     #ffffff;
+    --muted:   #ffffff;
+    --faint:   #ffffff;
+    --dim:     #9aa1ab;
+    --rule:    #22252b;
+    --grid:    #2b2f37;
+    --axis:    #3a3f48;
+    --card:    #0a0b0d;
+    --mono: "SF Mono", "JetBrains Mono", "Roboto Mono", "Space Mono", ui-monospace, Menlo, Consolas, monospace;
+    /* gutters that line the text up with the plot area: PL/W and PR/W of the viewBox */
+    --gl: 5.286%;
+    --gr: 6.857%;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 28px;
+    background: #000;
+    color: var(--ink);
+    font-family: var(--mono); letter-spacing: 0.02em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1680px; margin: 0 auto;
+    background: var(--card); border: 1px solid #33373f; border-radius: 14px;
+    padding: 44px 48px 38px; }
+
+  .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 40px 56px; flex-wrap: wrap;
+    padding: 0 var(--gr) 0 var(--gl); }
+  h1 { font-size: 74px; line-height: 1.0; font-weight: 700; margin: 0; letter-spacing: 0; max-width: 9ch; }
+  h1 .g { color: var(--brand); }
+
+  .stats { display: flex; gap: 44px; flex-wrap: wrap; padding-top: 4px; justify-content: flex-end; }
+  .stat { width: 440px; max-width: 480px; }
+  .stat .big { font-size: 60px; font-weight: 700; color: var(--brand); line-height: 1; letter-spacing: 0;
+    white-space: nowrap; }
+  .stat .big small { font-size: 40px; font-weight: 700; }
+  .stat .big .arrow { margin-right: 6px; }
+  .stat .cap { font-size: 24px; color: var(--muted); margin-top: 14px; line-height: 1.4; }
+
+  .subtitle { color: var(--muted); font-size: 21px; letter-spacing: 0; line-height: 1.5; margin: 28px 0 8px;
+    padding: 0 var(--gr) 0 var(--gl); }
+  .subtitle .dir { display: inline-block; width: 1.15em; height: 1.15em; vertical-align: -0.22em;
+    fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+
+  #chart { margin-top: 36px; }
+  svg { display: block; overflow: visible; }
+  .gridline { stroke: var(--grid); stroke-width: 1; vector-effect: non-scaling-stroke; shape-rendering: crispEdges; }
+  .axisline { stroke: var(--axis); stroke-width: 1; vector-effect: non-scaling-stroke; shape-rendering: crispEdges; }
+  .ticktext { fill: var(--muted); font-size: 18px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .axistitle { fill: var(--faint); font-size: 18px; letter-spacing: 0.12em; font-family: var(--mono); }
+  .series { fill: none; stroke: var(--harness); stroke-width: 1.8;
+    vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+  .level { stroke: var(--dim); stroke-width: 1.2; stroke-dasharray: 2 6; vector-effect: non-scaling-stroke; }
+  .levelText { fill: var(--dim); font-size: 16px; font-family: var(--mono); }
+  .event { stroke: var(--ink); stroke-width: 1.2; stroke-dasharray: 6 5; opacity: .7; vector-effect: non-scaling-stroke; }
+  .eventText { fill: var(--ink); font-size: 18px; font-weight: 700; font-family: var(--mono); }
+  .cross { stroke: var(--dim); stroke-width: 1; vector-effect: non-scaling-stroke; opacity: 0; }
+  .dot { fill: var(--brand); stroke: var(--card); stroke-width: 2; opacity: 0; }
+
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 12px 30px; align-items: center;
+    margin: 24px 0 10px; font-size: 21px; color: var(--muted);
+    padding: 0 var(--gr) 0 var(--gl);
+  }
+  .lgi { display: inline-flex; align-items: center; gap: 9px; }
+  .lgi.strong { color: var(--ink); font-weight: 700; }
+  .lgi .fkey { width: 34px; height: 0; border-top: 2.6px solid var(--harness); }
+  .lgi .dkey { width: 34px; height: 0; border-top: 2px dotted var(--dim); }
+
+  .footnote { color: #8a8f98; font-size: 21px; line-height: 1.65; margin: 18px 0 0;
+    padding: 0 var(--gr) 0 var(--gl); }
+
+  #tip {
+    position: fixed; z-index: 50; pointer-events: none; opacity: 0; transition: opacity .1s;
+    background: #14161a; border: 1px solid var(--rule); border-radius: 8px;
+    padding: 12px 15px; font-size: 17px; max-width: 360px; box-shadow: 0 8px 24px rgba(0,0,0,.6);
+  }
+  #tip .tv { font-size: 20px; font-weight: 700; color: var(--ink); }
+  #tip .tl { color: var(--muted); margin-top: 5px; }
+</style>
+</head>
+<body>
+<div id="scaler">
+<div class="wrap">
+  <div class="top">
+    <h1><span class="g">Lambda durations</span></h1>
+    <div class="stats">
+      <div class="stat">
+        <div class="big"><span class="arrow">▼</span>74%<small> drop</small></div>
+        <div class="cap">in Lambda execution durations after switching to Strands Decider</div>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="chart"></div>
+
+  <div class="legend">
+    <span class="lgi strong"><span class="fkey"></span>Avg duration (1-min)</span>
+    <span class="lgi"><span class="dkey"></span>Period average</span>
+  </div>
+</div>
+</div>
+<div id="tip" role="tooltip" aria-hidden="true"></div>
+
+<script>
+"use strict";
+(function () {
+
+/* ---------------- data ----------------
+   One value per minute over 24h (00:00–23:59), avg Lambda duration in ms.
+   PLACEHOLDER: synthesized to match the reference CloudWatch screenshot.
+   Replace DATA with real metric values (1440 numbers, or any length — the x-axis
+   spans 24h regardless). SWITCH_MIN is the minute the change shipped. */
+const SWITCH_MIN = 11 * 60 + 28;
+
+const DATA = (() => {
+  let seed = 7;
+  const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const gauss = () => Math.sqrt(-2 * Math.log(rnd() || 1e-9)) * Math.cos(2 * Math.PI * rnd());
+  const hm = (h, m) => h * 60 + m;
+  // slow-moving level before the switch (piecewise, smoothed by the AR term below)
+  const LEVELS = [[hm(0,0),3200],[hm(1,40),3600],[hm(2,10),3150],[hm(2,40),2850],[hm(3,20),3150],
+    [hm(3,50),3550],[hm(5,30),3400],[hm(6,0),3550],[hm(7,20),3450],[hm(7,40),3050],[hm(8,20),3200],
+    [hm(9,30),3400],[hm(10,0),3250],[hm(11,28),3250]];
+  const level = i => { let v = LEVELS[0][1]; for (const [t, l] of LEVELS) if (i >= t) v = l; return v; };
+  const SPIKES = { [hm(1,52)]: 3950, [hm(3,55)]: 4080, [hm(8,42)]: 5100, [hm(8,46)]: 4030,
+    [hm(9,40)]: 4020, [hm(11,28)]: 4820, [hm(23,20)]: 1560 };
+  const out = []; let ar = 0, lv = 3200;
+  for (let i = 0; i < 1440; i++) {
+    let base;
+    if (i < SWITCH_MIN) { lv += (level(i) - lv) * 0.15; base = lv; }
+    else {
+      const t = i - SWITCH_MIN;                        // decay over ~20 min to the new level
+      base = 740 + 2700 * Math.exp(-t / 5.5);
+      if (i >= hm(14,3) && i <= hm(14,8)) base += 90;
+      if (i >= hm(18,0) && i <= hm(18,45)) base += 140 * Math.sin(Math.PI * (i - hm(18,0)) / 45) + 40;
+      if (i >= hm(19,18) && i <= hm(19,24)) base += 180;
+    }
+    ar = ar * 0.6 + gauss() * 0.035;
+    let v = base * (1 + ar + gauss() * 0.03);
+    if (SPIKES[i]) v = SPIKES[i];
+    out.push(Math.round(v));
+  }
+  return out;
+})();
+
+const N = DATA.length, MIN_PER_PT = 1440 / N;
+const sw = Math.round(SWITCH_MIN / MIN_PER_PT);
+const settle = Math.round((SWITCH_MIN + 25) / MIN_PER_PT);   // skip the ramp-down when averaging
+const mean = a => a.reduce((s, v) => s + v, 0) / a.length;
+const before = mean(DATA.slice(0, sw)), after = mean(DATA.slice(settle));
+const pct = Math.round((1 - after / before) * 100);
+const fmt = v => Math.round(v).toLocaleString("en-US");
+
+/* ---------------- geometry ----------------
+   Wide layouts draw on a fixed 1400-unit canvas that the page scales down to the iframe
+   width. Narrow layouts (below WIDE_MIN, matching the CSS breakpoint) draw at the
+   container's real pixel width so tick labels stay legible on phones. */
+const WIDE_MIN = 1000;
+const svgNS = "http://www.w3.org/2000/svg";
+const E = (tag, attrs) => { const n = document.createElementNS(svgNS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); return n; };
+const T = (attrs, s) => { const t = E("text", attrs); t.textContent = s; return t; };
+const chartEl = document.getElementById("chart");
+const tip = document.getElementById("tip");
+const hhmm = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(Math.floor(m % 60)).padStart(2, "0");
+const YMAX = 5500;
+
+const WIDE = { PL: 74, PR: 96, PT: 34, PB: 60, tickDY: 6, xTickY: 26, xTitleY: 52, titleDY: 14, eventDX: 12 };
+const NARROW = { PL: 40, PR: 14, PT: 28, PB: 50, tickDY: 4, xTickY: 18, xTitleY: 38, titleDY: 10, eventDX: 8 };
+
+function layout(narrow) {
+  if (!narrow) return { ...WIDE, W: 1400, H: 640 };
+  const W = Math.max(300, Math.round(chartEl.clientWidth));
+  return { ...NARROW, W, H: Math.round(Math.min(440, Math.max(260, W * 0.66))) };
+}
+
+function draw() {
+  const narrow = window.innerWidth < WIDE_MIN;
+  const g = layout(narrow);
+  const { W, H, PL, PR, PT, PB } = g;
+  const plotW = W - PL - PR, plotH = H - PT - PB;
+  const X = i => PL + (i / (N - 1)) * plotW;
+  const XM = m => PL + (m / 1440) * plotW;
+  const Y = v => PT + plotH - (v / YMAX) * plotH;
+  const hourStep = W >= 900 ? 2 : W >= 520 ? 4 : 6;
+
+  const svg = E("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+    "aria-label": `Average Lambda duration over 24 hours: about ${fmt(before)} ms until ${hhmm(SWITCH_MIN)}, then about ${fmt(after)} ms.` });
+
+  /* grid + axes */
+  for (let v = 0; v <= 5000; v += 1000) {
+    if (v) svg.appendChild(E("line", { class: "gridline", x1: PL, x2: W - PR, y1: Y(v), y2: Y(v) }));
+    svg.appendChild(T({ class: "ticktext", x: PL - 8, y: Y(v) + g.tickDY, "text-anchor": "end" }, v ? (v / 1000) + "k" : "0"));
+  }
+  for (let h = 0; h < 24; h += hourStep) {
+    if (h) svg.appendChild(E("line", { class: "gridline", x1: XM(h * 60), x2: XM(h * 60), y1: PT, y2: PT + plotH }));
+    svg.appendChild(T({ class: "ticktext", x: XM(h * 60), y: PT + plotH + g.xTickY, "text-anchor": h || !narrow ? "middle" : "start" },
+      String(h).padStart(2, "0") + ":00"));
+  }
+  svg.appendChild(E("line", { class: "axisline", x1: PL, x2: W - PR, y1: PT + plotH, y2: PT + plotH }));
+  svg.appendChild(E("line", { class: "axisline", x1: PL, x2: PL, y1: PT, y2: PT + plotH }));
+  svg.appendChild(T({ class: "axistitle", x: PL, y: PT - g.titleDY }, "AVG DURATION (MS)"));
+  svg.appendChild(T({ class: "axistitle", x: W - PR, y: PT + plotH + g.xTitleY, "text-anchor": "end" }, "TIME (UTC)"));
+
+  /* period averages: labels sit in clear space beside the switch line, below the noisy
+     "before" band and above the calm "after" one */
+  const xsw = XM(SWITCH_MIN);
+  const lvl = (x1, x2, v, label, lx, ly, anchor) => {
+    svg.appendChild(E("line", { class: "level", x1, x2, y1: Y(v), y2: Y(v) }));
+    svg.appendChild(T({ class: "levelText", x: lx, y: ly, "text-anchor": anchor }, label));
+  };
+  const beforeLabel = narrow ? `before ${fmt(before)} ms` : `before · avg ${fmt(before)} ms`;
+  const afterLabel = narrow ? `after ${fmt(after)} ms` : `after · avg ${fmt(after)} ms`;
+  lvl(X(0), X(sw), before, beforeLabel, xsw - (narrow ? 8 : 14), Y(2350), "end");
+  lvl(X(settle), X(N - 1), after, afterLabel, xsw + (narrow ? 12 : 40), Y(narrow ? 1400 : 1200), "start");
+
+  /* switch marker */
+  svg.appendChild(E("line", { class: "event", x1: xsw, x2: xsw, y1: PT, y2: PT + plotH }));
+  svg.appendChild(T({ class: "eventText", x: xsw + g.eventDX, y: Y(4600), "text-anchor": "start" }, "Strands Decider"));
+
+  /* series */
+  svg.appendChild(E("path", { class: "series", d: DATA.map((v, i) => (i ? "L" : "M") + X(i).toFixed(1) + "," + Y(v).toFixed(1)).join("") }));
+
+  /* hover */
+  const cross = E("line", { class: "cross", y1: PT, y2: PT + plotH });
+  const dot = E("circle", { class: "dot", r: narrow ? 4 : 6 });
+  svg.appendChild(cross); svg.appendChild(dot);
+  const hit = E("rect", { x: PL, y: PT, width: plotW, height: plotH, fill: "transparent" });
+  hit.style.cursor = "crosshair";
+  svg.appendChild(hit);
+
+  hit.addEventListener("pointermove", ev => {
+    const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    const i = Math.max(0, Math.min(N - 1, Math.round((p.x - PL) / plotW * (N - 1))));
+    const x = X(i), y = Y(DATA[i]);
+    cross.setAttribute("x1", x); cross.setAttribute("x2", x); cross.style.opacity = 1;
+    dot.setAttribute("cx", x); dot.setAttribute("cy", y); dot.style.opacity = 1;
+    tip.innerHTML = `<div class="tv">${fmt(DATA[i])} ms</div><div class="tl">${hhmm(i * MIN_PER_PT)} · ${i < sw ? "before" : "after"} switch</div>`;
+    tip.style.opacity = "1"; tip.setAttribute("aria-hidden", "false");
+    const pad = 14, r = tip.getBoundingClientRect();
+    let tx = ev.clientX + pad, ty = ev.clientY + pad;
+    if (tx + r.width > innerWidth - 8) tx = ev.clientX - r.width - pad;
+    if (ty + r.height > innerHeight - 8) ty = ev.clientY - r.height - pad;
+    tip.style.left = Math.max(8, tx) + "px"; tip.style.top = Math.max(8, ty) + "px";
+  });
+  hit.addEventListener("pointerleave", () => {
+    cross.style.opacity = 0; dot.style.opacity = 0;
+    tip.style.opacity = "0"; tip.setAttribute("aria-hidden", "true");
+  });
+
+  chartEl.replaceChildren(svg);
+  return narrow ? W : 0;
+}
+
+let drawnKey = draw();
+let pending = 0;
+window.addEventListener("resize", () => {
+  cancelAnimationFrame(pending);
+  pending = requestAnimationFrame(() => {
+    const narrow = window.innerWidth < WIDE_MIN;
+    const key = narrow ? Math.max(300, Math.round(chartEl.clientWidth)) : 0;
+    if (key !== drawnKey) drawnKey = draw();
+  });
+});
+})();
+</script>
+<style>
+  /* Render the full wide layout in #scaler and scale it down to the iframe (column)
+     width. #tip sits outside #scaler so the fixed-position tooltip is not transformed. */
+  html, body { margin: 0; overflow: hidden; }
+  body { padding: 0; }
+  #scaler { width: 1320px; padding: 7px; transform-origin: top left; }
+
+  /* Blog column and phones: natural layout at real size; must match WIDE_MIN in the
+     chart script. */
+  @media (max-width: 999px) {
+    #scaler { width: auto; padding: 0; }
+    .wrap { padding: 28px 26px 24px; }
+    .top, .subtitle, .legend, .footnote { padding-left: 0; padding-right: 0; }
+    h1 { font-size: 44px; }
+    .top { gap: 18px 32px; }
+    .stats { justify-content: flex-start; }
+    .stat { width: auto; max-width: 380px; }
+    .stat .big { font-size: 42px; }
+    .stat .big small { font-size: 24px; }
+    .stat .cap { font-size: 17px; margin-top: 10px; }
+    #chart { margin-top: 24px; }
+    .ticktext { font-size: 13px; }
+    .axistitle { font-size: 12px; }
+    .levelText { font-size: 12px; }
+    .eventText { font-size: 13px; }
+    .legend { font-size: 15px; gap: 10px 24px; margin-top: 16px; }
+    #tip { font-size: 15px; max-width: 280px; padding: 9px 12px; }
+    #tip .tv { font-size: 17px; }
+  }
+  @media (max-width: 619px) {
+    .wrap { padding: 20px 16px 18px; }
+    h1 { font-size: 34px; }
+    .top { gap: 14px; }
+    .stat .big { font-size: 34px; }
+    .stat .big small { font-size: 20px; }
+    .stat .cap { font-size: 15px; margin-top: 8px; }
+    .ticktext { font-size: 11px; }
+    .axistitle { font-size: 10px; }
+    .levelText { font-size: 11px; }
+    .eventText { font-size: 12px; }
+    .legend { font-size: 14px; gap: 8px 18px; margin-top: 14px; }
+    #tip { font-size: 14px; max-width: 240px; padding: 8px 10px; }
+    #tip .tv { font-size: 16px; }
+  }
+</style>
+<script>
+  (function () {
+    var scaler = document.getElementById("scaler");
+    var DESIGN_W = 1320;
+    function fit() {
+      var mobile = window.innerWidth < 1000;
+      var scale = mobile ? 1 : window.innerWidth / DESIGN_W;
+      scaler.style.transform = mobile ? "none" : "scale(" + scale + ")";
+      // Same-origin: size our own iframe to the scaled content so nothing is clipped.
+      if (window.frameElement) {
+        window.frameElement.style.height = scaler.offsetHeight * scale + "px";
+        window.frameElement.style.aspectRatio = "auto";
+      }
+    }
+    fit();
+    window.addEventListener("resize", fit);
+    if (window.ResizeObserver) new ResizeObserver(fit).observe(scaler);
+  })();
+</script>
+</body>
+</html>

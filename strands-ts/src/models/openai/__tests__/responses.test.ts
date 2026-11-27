@@ -2,9 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import OpenAI, { APIUserAbortError } from 'openai'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
-import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
-import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../../types/messages.js'
+import { ContextWindowOverflowError, MaxTokensError, ModelThrottledError } from '../../../errors.js'
+import { collectGenerator, collectIterator } from '../../../__fixtures__/model-test-helpers.js'
+import {
+  Message,
+  TextBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  OffloadedBlock,
+  UnknownBlock,
+} from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock } from '../../../types/media.js'
 import { CitationsBlock } from '../../../types/citations.js'
 import { StateStore } from '../../../state-store.js'
@@ -254,6 +261,29 @@ describe("OpenAIModel (api: 'responses')", () => {
       const req = await runOnce({}, [mkUserMessage()], { systemPrompt: 'Be helpful.' })
       expect(req.instructions).toBe('Be helpful.')
     })
+
+    it.each([
+      ['gpt-6.2-sol', { cacheConfig: {} }, true],
+      ['openai.gpt-6.2-astra', {}, true],
+      ['gpt-6.1-sol', { cacheConfig: {} }, false],
+      ['gpt-6.2-sol', { stateful: true }, false],
+    ])(
+      // Guards against GPT-6.2 never caching instructions (#6367).
+      'sends the system prompt as a developer message only where instructions never cache: %s %o',
+      async (modelId, modelOptions, expectDeveloperMessage) => {
+        const systemPrompt = [new TextBlock('Be '), new TextBlock('helpful.')]
+        const req = await runOnce({ modelId, ...modelOptions }, [mkUserMessage()], { systemPrompt })
+        const withoutSystemPrompt = await runOnce({ modelId, ...modelOptions })
+
+        const developer = { role: 'developer', content: [{ type: 'input_text', text: 'Be helpful.' }] }
+        expect(req).toStrictEqual({
+          ...withoutSystemPrompt,
+          ...(expectDeveloperMessage
+            ? { input: [developer, ...withoutSystemPrompt.input] }
+            : { instructions: 'Be helpful.' }),
+        })
+      }
+    )
 
     it('merges toolSpecs with built-in tools from params', async () => {
       const req = await runOnce({ params: { tools: [{ type: 'web_search' }] } }, [mkUserMessage()], {
@@ -520,6 +550,25 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.input[2]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'What about 3+3?' }] })
     })
 
+    it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
+      const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+      const messages = [
+        new Message({ role: 'user', content: [placeholder] }),
+        new Message({ role: 'assistant', content: [placeholder] }),
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: '[Dropped] [ref: tu-1]' }] })
+      expect(req.input[1]).toEqual({ role: 'assistant', content: '[Dropped] [ref: tu-1]' })
+      expect(req.input.find((item: any) => item.type === 'function_call_output')).toMatchObject({
+        call_id: 'tu-1',
+        output: '[Dropped] [ref: tu-1]',
+      })
+    })
+
     it('joins multiple assistant text blocks with newlines', async () => {
       const messages = [
         new Message({ role: 'user', content: [new TextBlock('list two words')] }),
@@ -587,6 +636,30 @@ describe("OpenAIModel (api: 'responses')", () => {
       ]
       const req = await runOnce({}, messages)
       expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'quoted passage' }] })
+    })
+
+    it('skips unknown blocks in messages and tool results, without a warning', async () => {
+      using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const unknownBlock = new UnknownBlock({ futureBlock: { value: 1 } })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('hello'), unknownBlock] }),
+        new Message({ role: 'assistant', content: [new ToolUseBlock({ name: 'tool', toolUseId: 'tu1', input: {} })] }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'tu1',
+              status: 'success',
+              content: [new TextBlock('done'), unknownBlock],
+            }),
+          ],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'hello' }] })
+      expect(req.input.at(-1)).toMatchObject({ type: 'function_call_output', call_id: 'tu1' })
+      expect(JSON.stringify(req.input)).not.toContain('futureBlock')
+      expect(warnSpy).not.toHaveBeenCalled()
     })
   })
 
@@ -738,6 +811,73 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(stop?.stopReason).toBe('maxTokens')
       const metadata = events.find((e: any) => e.type === 'modelMetadataEvent') as any
       expect(metadata?.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 })
+    })
+
+    it('maps response.incomplete with content_filter to stopReason=contentFiltered', async () => {
+      // #5740
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield { type: 'response.output_text.delta', delta: 'partial' }
+        yield { type: 'response.incomplete', response: { incomplete_details: { reason: 'content_filter' } } }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+      const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      expect(events).toEqual([
+        { type: 'modelMessageStartEvent', role: 'assistant' },
+        { type: 'modelContentBlockStartEvent' },
+        { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'partial' } },
+        { type: 'modelContentBlockStopEvent' },
+        { type: 'modelMessageStopEvent', stopReason: 'contentFiltered' },
+      ])
+    })
+
+    describe('when a function call is in flight at response.incomplete', () => {
+      // #5740
+      const truncatedCall = (reason: string) =>
+        createMockClient(async function* () {
+          yield { type: 'response.created', response: { id: 'r' } }
+          yield {
+            type: 'response.output_item.added',
+            item: { type: 'function_call', id: 'item_1', call_id: 'call_1', name: 'write_file' },
+          }
+          yield {
+            type: 'response.function_call_arguments.delta',
+            item_id: 'item_1',
+            delta: '{"path": "notes.md", "content": "Lorem',
+          }
+          yield { type: 'response.incomplete', response: { incomplete_details: { reason } } }
+        })
+      const toolCallEvents = [
+        { type: 'modelMessageStartEvent', role: 'assistant' },
+        {
+          type: 'modelContentBlockStartEvent',
+          start: { type: 'toolUseStart', name: 'write_file', toolUseId: 'call_1' },
+        },
+        {
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'toolUseInputDelta', input: '{"path": "notes.md", "content": "Lorem' },
+        },
+        { type: 'modelContentBlockStopEvent' },
+      ]
+      const messages = [new Message({ role: 'user', content: [new TextBlock('x')] })]
+
+      it('reports maxTokens instead of toolUse for max_output_tokens', async () => {
+        const model = new OpenAIModel({ api: 'responses', client: truncatedCall('max_output_tokens') })
+        const events = await collectIterator(model.stream(messages))
+        expect(events).toEqual([...toolCallEvents, { type: 'modelMessageStopEvent', stopReason: 'maxTokens' }])
+      })
+
+      it('throws MaxTokensError from streamAggregated for max_output_tokens', async () => {
+        const model = new OpenAIModel({ api: 'responses', client: truncatedCall('max_output_tokens') })
+        await expect(collectGenerator(model.streamAggregated(messages))).rejects.toThrow(MaxTokensError)
+      })
+
+      it('keeps toolUse for content_filter', async () => {
+        // contentFiltered here would leave an orphaned toolUse in history; TS has no repair for that yet.
+        const model = new OpenAIModel({ api: 'responses', client: truncatedCall('content_filter') })
+        const events = await collectIterator(model.stream(messages))
+        expect(events).toEqual([...toolCallEvents, { type: 'modelMessageStopEvent', stopReason: 'toolUse' }])
+      })
     })
 
     it('plumbs prompt-cache reads (input_tokens_details.cached_tokens) into cacheReadInputTokens', async () => {
