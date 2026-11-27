@@ -31,7 +31,7 @@
 - id: joy-chakraborty
   name: Joy Chakraborty
   role: "Senior Technical Program Manager, AWS"
-  bio: Joy Chakraborty is a Senior Technical Program Manager for AWS Agentic AI Foundation. He currently manages the Strands Agents and AgentCore Integration programs.
+  bio: Joy Chakraborty is a Senior Technical Program Manager for AWS Agentic AI Foundation.
 
 - id: ryan-coleman
   name: Ryan Coleman
@@ -69,7 +69,7 @@
   bio: Albert Zhao is a DX Engineer at AWS focused on the Strands Harness SDK, robotics, and developer experience.
 
 - id: strands-team
-  name: Strands Agents Team
+  name: Strands Team
   role: Core Team
   bio: The team behind the Strands Harness SDK.
 
@@ -191,12 +191,12 @@
 - id: tim-moreton
   name: Tim Moreton
   role: "Sr. Technical Content Creator, AWS"
-  bio: Tim Moreton is a Sr. Technical Content Creator at AWS working on Strands Agents and agentic AI.
+  bio: Tim Moreton is a Sr. Technical Content Creator at AWS working on Strands and agentic AI.
 
 - id: fernando-dingler
   name: Fernando Dingler
   role: "Principal Engineer, AWS"
-  bio: Fernando Dingler is a Principal Engineer at AWS working on Strands Agents and Strands Box.
+  bio: Fernando Dingler is a Principal Engineer at AWS working on Strands and Strands Box.
 
 - id: chen-wu
   name: Chen Wu
@@ -211,7 +211,7 @@
 - id: liz-radway
   name: Liz Radway
   role: "Software Engineer, AWS"
-  bio: Liz Radway is a Software Engineer at AWS working on the Strands Agents SDK.
+  bio: Liz Radway is a Software Engineer at AWS working on the Strands Harness SDK.
 - id: ariel-nabavian
   name: Ariel Nabavian
   role: "Software Engineer, AWS Agentic AI"
