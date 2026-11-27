@@ -96,6 +96,71 @@ describe('edit tool', () => {
     })
   })
 
+  describe.skipIf(!POSIX_ONLY)('line endings', () => {
+    const editTool = makeEdit(new NotASandboxLocalEnvironment())
+
+    const editBytes = async (content: string, old_str: string, new_str: string): Promise<string> => {
+      const filePath = await writeFile(content)
+      await editTool.invoke({ path: filePath, old_str, new_str }, context)
+      return readFile(filePath)
+    }
+
+    it('matches a multiline old_str against a CRLF file', async () => {
+      expect(await editBytes('a\r\nb\r\nc\r\n', 'a\nb', 'x\ny')).toBe('x\r\ny\r\nc\r\n')
+    })
+
+    it('matches a single-line old_str in a CRLF file', async () => {
+      expect(await editBytes('alpha\r\nbeta\r\n', 'beta', 'BETA')).toBe('alpha\r\nBETA\r\n')
+    })
+
+    it('writes a single-line match with the file line ending', async () => {
+      expect(await editBytes('alpha\r\nbeta\r\n', 'beta', 'b1\nb2')).toBe('alpha\r\nb1\r\nb2\r\n')
+    })
+
+    it('matches a CRLF old_str against an LF file', async () => {
+      expect(await editBytes('a\nb\nc\n', 'a\r\nb', 'x\r\ny')).toBe('x\ny\nc\n')
+    })
+
+    it('leaves line endings outside the match untouched', async () => {
+      expect(await editBytes('head\r\na\nb\r\ntail\r\n', 'a\nb', 'X')).toBe('head\r\nX\r\ntail\r\n')
+    })
+
+    it('keeps LF for an LF match inside a CRLF file', async () => {
+      expect(await editBytes('head\r\na\nb\r\ntail\r\n', 'a\nb', 'x\ny')).toBe('head\r\nx\ny\r\ntail\r\n')
+    })
+
+    it('writes a single-line match with its own line ending', async () => {
+      expect(await editBytes('a\nb\nc\nlast\r\n', 'b', 'b1\nb2')).toBe('a\nb1\nb2\nc\nlast\r\n')
+    })
+
+    it('takes the previous line ending for a match on an unterminated last line', async () => {
+      expect(await editBytes('a\r\nb', 'b', 'b1\nb2')).toBe('a\r\nb1\r\nb2')
+    })
+
+    it('deletes across CRLF', async () => {
+      expect(await editBytes('keep\r\nremove-me\r\nkeep\r\n', 'remove-me\n', '')).toBe('keep\r\nkeep\r\n')
+    })
+
+    it('rejects an ambiguous multiline match on a CRLF file', async () => {
+      const filePath = await writeFile('a\r\nb\r\na\r\nb\r\n')
+      await expect(editTool.invoke({ path: filePath, old_str: 'a\nb', new_str: 'x' }, context)).rejects.toThrow(
+        'appears 2 times'
+      )
+      expect(await readFile(filePath)).toBe('a\r\nb\r\na\r\nb\r\n')
+    })
+
+    it('rejects a missing match on a CRLF file', async () => {
+      const filePath = await writeFile('alpha\r\nbeta\r\n')
+      await expect(editTool.invoke({ path: filePath, old_str: 'zeta', new_str: 'x' }, context)).rejects.toThrow(
+        'did not appear verbatim'
+      )
+    })
+
+    it('matches regex metacharacters in old_str literally', async () => {
+      expect(await editBytes('f(a.b)\r\n[x]\r\n', 'f(a.b)\n[x]', 'ok')).toBe('ok\r\n')
+    })
+  })
+
   // The validator's full semantics are covered in `../../__tests__/paths.test.ts`;
   // this confirms the delegation: a rejected path throws before any sandbox call.
   describe('path validation', () => {
