@@ -23,7 +23,8 @@ import { logger } from '../logging/logger.js'
  * An `InjectedBlock` reaches a model whose `modelInfo.capabilities.temporaryMessages` is `true` as it is
  * stored, and that provider sends it so the model reads it only until the next user message. Every
  * other model, custom ones included, gets the latest user message's injected blocks as text and none
- * of the earlier ones.
+ * of the earlier ones. A `ReasoningBlock` with `providerData` reaches only a model whose
+ * `modelInfo.capabilities.reasoningProvider` names its tag.
  *
  * Deferred tools take one of two paths, by the model's `modelInfo.capabilities.deferredToolLoading`. With `'native'`,
  * the call's `deferredTools` and every `ToolReferenceBlock` reach the provider as they are, and the provider sends them
@@ -113,12 +114,37 @@ export class ModelProxy {
 
   private _prepare(messages: Message[], toolSpecs: ToolSpec[] = []): RenderedMessages {
     messages = withUnknownOnlyToolResultsFilled(
-      this._withToolReferenceText(this._withSummaryText(this._withUnacceptedMediaOmitted(messages)), toolSpecs)
+      this._withToolReferenceText(
+        this._withSummaryText(this._withUnacceptedMediaOmitted(this._withoutForeignReasoning(messages))),
+        toolSpecs
+      )
     )
     if (!messages.some(hasInjectedBlock) || this._model.modelInfo.capabilities?.temporaryMessages === true) {
       return { messages, dynamicTrailingBlocks: 0 }
     }
     return renderInjectedBlocks(messages)
+  }
+
+  /** Leaves out reasoning blocks whose `providerData` names a provider other than the model's. */
+  private _withoutForeignReasoning(messages: Message[]): Message[] {
+    const tagged = (block: ContentBlock): boolean => block.type === 'reasoningBlock' && block.providerData !== undefined
+    // Only a call that carries tagged reasoning reads the model info.
+    if (!messages.some((message) => message.content.some(tagged))) return messages
+    const accepted = this._model.modelInfo.capabilities?.reasoningProvider
+    const foreign = (block: ContentBlock): boolean =>
+      block.type === 'reasoningBlock' && block.providerData !== undefined && block.providerData.provider !== accepted
+    if (!messages.some((message) => message.content.some(foreign))) return messages
+    return messages.map((message) => {
+      if (!message.content.some(foreign)) return message
+      const content = message.content.filter((block) => !foreign(block))
+      return new Message({
+        role: message.role,
+        // A turn that held only such reasoning gets the placeholder an empty assistant turn gets.
+        content: content.length > 0 ? content : [new TextBlock('[blank text]')],
+        trackingId: message.trackingId,
+        ...(message.metadata !== undefined && { metadata: message.metadata }),
+      })
+    })
   }
 
   /** Replaces summary blocks with their text, since only a provider with server-side summaries reads them. */

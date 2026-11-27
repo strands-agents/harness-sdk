@@ -6,10 +6,11 @@ history is turned into what the provider receives in one place.
 A ``summary`` block reaches a model whose ``model_info.capabilities.server_side_summary`` is True as it is stored;
 every other model gets its text. An ``injected`` block reaches a model whose ``temporary_messages`` is True as it is
 stored, and that provider sends it so the model reads it only until the next user message. Every other model, custom
-ones included, gets the latest user message's injected blocks as text and none of the earlier ones. An offload
-placeholder's ``offloaded`` bookkeeping reaches no model. An image, document, video, or audio block whose MIME type the
-model's ``model_info.capabilities.accepted_mime_types`` leaves out is sent as a text saying it was omitted, in a message
-or a tool result; a model without the list gets every block.
+ones included, gets the latest user message's injected blocks as text and none of the earlier ones. A reasoning block
+with ``providerData`` reaches only a model whose ``model_info.capabilities.reasoning_provider`` names its tag. An
+offload placeholder's ``offloaded`` bookkeeping reaches no model. An image, document, video, or audio block whose MIME
+type the model's ``model_info.capabilities.accepted_mime_types`` leaves out is sent as a text saying it was omitted, in
+a message or a tool result; a model without the list gets every block.
 
 A proxy for an agent's own model calls records the tools each call sends, which a summary replays to share the call's
 prompt cache.
@@ -166,7 +167,9 @@ class ModelProxy:
 
     def _prepare(self, messages: Messages) -> tuple[Messages, int]:
         """Return the messages the model accepts, and the trailing blocks the cache point must stay ahead of."""
-        messages = self._without_unaccepted_media(_without_offload_marks(messages))
+        messages = self._without_unaccepted_media(
+            _without_foreign_reasoning(_without_offload_marks(messages), self._model)
+        )
         has_summary = any(_has_block(message, "summary") for message in messages)
         has_injected = any(_has_block(message, "injected") for message in messages)
         if not has_summary and not has_injected:
@@ -232,6 +235,34 @@ def _without_offload_marks(messages: Messages) -> Messages:
         return messages
     return [
         {**message, "content": [_without_offload_mark(block) for block in message["content"]]} for message in messages
+    ]
+
+
+def _without_foreign_reasoning(messages: Messages, model: "Model") -> Messages:
+    """The messages without the reasoning blocks whose ``providerData`` names a provider other than the model's."""
+
+    def tag(block: ContentBlock) -> str | None:
+        provider_data = block.get("reasoningContent", {}).get("providerData")
+        return provider_data["provider"] if provider_data else None
+
+    tags = {tag(block) for message in messages for block in message["content"]} - {None}
+    # Only a call that carries tagged reasoning reads the model info.
+    if not tags:
+        return messages
+    accepted = model.model_info.capabilities.reasoning_provider
+    if tags == {accepted}:
+        return messages
+
+    def foreign(block: ContentBlock) -> bool:
+        return tag(block) not in (None, accepted)
+
+    def without(message: Message) -> Message:
+        content = [block for block in message["content"] if not foreign(block)]
+        # A turn that held only such reasoning gets the placeholder an empty assistant turn gets.
+        return {**message, "content": content or [{"text": "[blank text]"}]}
+
+    return [
+        without(message) if any(foreign(block) for block in message["content"]) else message for message in messages
     ]
 
 

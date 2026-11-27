@@ -67,6 +67,11 @@ export interface ModelCapabilities {
    */
   readonly deferredToolLoading?: DeferredToolLoading | undefined
   /**
+   * The `providerData.provider` tag of the reasoning the model takes back from history, such as `'openai_responses'`.
+   * Reasoning tagged otherwise does not reach the model.
+   */
+  readonly reasoningProvider?: string | undefined
+  /**
    * MIME types the model and provider take in the media blocks of a user message; `[]` when they take only text,
    * `undefined` for every type. An entry matches a type exactly (`image/png`) or by its `type/*`; case and
    * `; parameters` are ignored. A wildcard can also mean the kind isn't verified (see `shared/README.md`). Tool results
@@ -171,6 +176,7 @@ const CAPABILITY_FIELDS = Object.keys({
   serverSideSummary: true,
   temporaryMessages: true,
   deferredToolLoading: true,
+  reasoningProvider: true,
   acceptedMimeTypes: true,
 } satisfies Record<keyof ModelCapabilities, true>)
 const LIMIT_FIELDS = Object.keys({ contextWindow: true, maxOutputTokens: true } satisfies Record<

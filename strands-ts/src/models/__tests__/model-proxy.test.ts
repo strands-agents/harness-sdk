@@ -10,6 +10,7 @@ import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import {
   InjectedBlock,
   Message,
+  ReasoningBlock,
   SummaryBlock,
   TextBlock,
   ToolReferenceBlock,
@@ -635,6 +636,40 @@ describe('ModelProxy', () => {
       expect(streamSpy.mock.calls[0]).toEqual(wellFormed)
       expect(countSpy.mock.calls[0]).toEqual(wellFormed)
       expect(messages[0]!.content).toEqual([new TextBlock('a\ud83d')])
+    })
+  })
+  describe('reasoning provider data', () => {
+    const tagged = new ReasoningBlock({ providerData: { provider: 'openai_responses', modelId: 'm', data: {} } })
+    const plain = new ReasoningBlock({ text: 'plain' })
+    const history = (): Message[] => [
+      userMessage('go'),
+      new Message({ role: 'assistant', content: [tagged, plain, new TextBlock('done')] }),
+      userMessage('next'),
+    ]
+
+    async function sent(accepts: boolean): Promise<ContentBlock[]> {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      if (accepts)
+        vi.spyOn(model, 'modelInfo', 'get').mockReturnValue({ capabilities: { reasoningProvider: 'openai_responses' } })
+      const spy = vi.spyOn(model, 'streamAggregated')
+      await drain(new ModelProxy(model).streamAggregated(history()))
+      return spy.mock.calls[0]![0][1]!.content
+    }
+
+    it('leaves reasoning with provider data out for a model that does not take it back', async () => {
+      expect(await sent(false)).toEqual([plain, new TextBlock('done')])
+    })
+
+    it('keeps a turn that held only dropped reasoning as blank text', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const spy = vi.spyOn(model, 'streamAggregated')
+      const messages = [userMessage('go'), new Message({ role: 'assistant', content: [tagged] }), userMessage('next')]
+      await drain(new ModelProxy(model).streamAggregated(messages))
+      expect(spy.mock.calls[0]![0][1]!.content).toEqual([new TextBlock('[blank text]')])
+    })
+
+    it('sends reasoning with provider data to a model that takes it back', async () => {
+      expect(await sent(true)).toEqual([tagged, plain, new TextBlock('done')])
     })
   })
 })
