@@ -6,7 +6,8 @@ history is turned into what the provider receives in one place.
 A ``summary`` block reaches a model whose ``model_info.capabilities.server_side_summary`` is True as it is stored;
 every other model gets its text. An ``injected`` block reaches a model whose ``temporary_messages`` is True as it is
 stored, and that provider sends it so the model reads it only until the next user message. Every other model, custom
-ones included, gets the latest user message's injected blocks as text and none of the earlier ones. An offload
+ones included, gets the latest user message's injected blocks as text and none of the earlier ones. A reasoning block
+with ``providerData`` reaches only a model whose ``_accepts_reasoning`` takes it back. An offload
 placeholder's ``offloaded`` bookkeeping reaches no model.
 
 A proxy for an agent's own model calls records the tools each call sends, which a summary replays to share the call's
@@ -157,7 +158,7 @@ class ModelProxy:
 
     def _prepare(self, messages: Messages) -> tuple[Messages, int]:
         """Return the messages the model accepts, and the trailing blocks the cache point must stay ahead of."""
-        messages = _without_offload_marks(messages)
+        messages = _without_foreign_reasoning(_without_offload_marks(messages), self._model)
         has_summary = any(_has_block(message, "summary") for message in messages)
         has_injected = any(_has_block(message, "injected") for message in messages)
         if not has_summary and not has_injected:
@@ -223,6 +224,20 @@ def _without_offload_marks(messages: Messages) -> Messages:
         return messages
     return [
         {**message, "content": [_without_offload_mark(block) for block in message["content"]]} for message in messages
+    ]
+
+
+def _without_foreign_reasoning(messages: Messages, model: "Model") -> Messages:
+    """The messages without the reasoning blocks whose ``providerData`` the model does not take back."""
+
+    def foreign(block: ContentBlock) -> bool:
+        provider_data = block.get("reasoningContent", {}).get("providerData")
+        return provider_data is not None and not model._accepts_reasoning(provider_data)
+
+    if not any(foreign(block) for message in messages for block in message["content"]):
+        return messages
+    return [
+        {**message, "content": [block for block in message["content"] if not foreign(block)]} for message in messages
     ]
 
 

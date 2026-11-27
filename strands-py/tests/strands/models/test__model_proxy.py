@@ -242,3 +242,17 @@ def test_prepare_sends_summary_text_unless_the_model_summarizes_server_side(serv
     ]
     assert trailing_blocks == 1
     assert messages == original
+
+
+def test_prepare_sends_reasoning_with_provider_data_only_to_a_model_that_takes_it_back(model):
+    tagged = {"reasoningContent": {"providerData": {"provider": "openai_responses", "modelId": "m", "data": {}}}}
+    plain = {"reasoningContent": {"reasoningText": {"text": "plain"}}}
+    messages = [user({"text": "go"}), {"role": "assistant", "content": [tagged, plain, {"text": "done"}]}]
+    original = copy.deepcopy(messages)
+
+    sent, _ = ModelProxy(model)._prepare(messages)
+    assert sent[1]["content"] == [plain, {"text": "done"}]
+
+    with unittest.mock.patch.object(type(model), "_accepts_reasoning", return_value=True):
+        assert ModelProxy(model)._prepare(messages)[0] == messages
+    assert messages == original

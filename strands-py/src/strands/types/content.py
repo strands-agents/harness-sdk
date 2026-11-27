@@ -53,16 +53,32 @@ class ReasoningTextBlock(TypedDict, total=False):
     text: str
 
 
+class ReasoningProviderData(TypedDict):
+    """Provider-native reasoning that only the provider and model that produced it can replay.
+
+    Attributes:
+        provider: The provider API that produced the reasoning, e.g. ``"openai_responses"``.
+        modelId: The model that produced the reasoning.
+        data: The provider's own reasoning payload, opaque to the SDK.
+    """
+
+    provider: str
+    modelId: str
+    data: dict[str, Any]
+
+
 class ReasoningContentBlock(TypedDict, total=False):
     """Contains content regarding the reasoning that is carried out by the model.
 
     Attributes:
         reasoningText: The reasoning that the model used to return the output.
         redactedContent: The content in the reasoning that was encrypted by the model provider for safety reasons.
+        providerData: Provider-native reasoning, sent only to the provider and model that produced it.
     """
 
     reasoningText: ReasoningTextBlock
     redactedContent: bytes
+    providerData: ReasoningProviderData
 
 
 class CachePoint(TypedDict):

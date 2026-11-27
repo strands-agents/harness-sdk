@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from ..hooks.events import AfterInvocationEvent
 from ..plugins.plugin import Plugin
-from ..types.content import ContentBlock, Messages, SystemContentBlock
+from ..types.content import ContentBlock, Messages, ReasoningProviderData, SystemContentBlock
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
 from ._cache_points import section_ttl
@@ -495,6 +495,10 @@ class Model(abc.ABC):
             )
 
         return input_tokens / context_window_limit
+
+    def _accepts_reasoning(self, provider_data: ReasoningProviderData) -> bool:
+        """Whether this model takes back reasoning tagged with ``provider_data``; the provider that wrote it says so."""
+        return False
 
 
 class _ModelPlugin(Plugin):
