@@ -1,11 +1,97 @@
 ---
 title: NVIDIA NIM
 community: true
-description: 'Connect Strands agents to NVIDIA NIM inference microservices with the strands-nvidia-nim community model provider.'
+description: 'Connect Strands agents to NVIDIA NIM inference microservices through the OpenAI-compatible API or the strands-nvidia-nim community model provider.'
 integrationType: model-provider
-languages: Python
 ---
 
+
+[NVIDIA NIM](https://build.nvidia.com) provides inference microservices for open and
+NVIDIA-optimized models, hosted by NVIDIA or deployed on your own infrastructure.
+
+## OpenAI compatibility
+
+:::note[OpenAI compatibility]
+This route works through the SDK's built-in
+[OpenAI provider](../../user-guide/sdk/model-providers/openai.mdx) pointed at
+NVIDIA NIM's OpenAI-compatible endpoint; it needs no separate package.
+Compatible endpoints can have quirks that deviate from the exact OpenAI API spec, so
+some features may behave differently than they do against OpenAI itself.
+:::
+
+### Installation
+
+The OpenAI provider is an optional dependency. To install, run:
+
+<Tabs>
+<Tab label="Python">
+
+```bash
+pip install 'strands-agents[openai]'
+```
+</Tab>
+<Tab label="TypeScript">
+
+```bash
+npm install @strands-agents/sdk openai
+```
+</Tab>
+</Tabs>
+
+### Usage
+
+Create an [API key](https://build.nvidia.com), export it as `NVIDIA_API_KEY`, and
+point the provider at NVIDIA's endpoint:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+import os
+
+from strands import Agent
+from strands.models.openai import OpenAIModel
+
+model = OpenAIModel(
+    client_args={
+        "api_key": os.environ["NVIDIA_API_KEY"],
+        "base_url": "https://integrate.api.nvidia.com/v1",
+    },
+    model_id="nvidia/nemotron-3.5-super-vl-120b-a12b",
+)
+
+agent = Agent(model=model)
+response = agent("Explain tool calling in one sentence.")
+print(response)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "integrations/model-providers/nvidia-nim_imports.ts:usage_imports"
+
+--8<-- "integrations/model-providers/nvidia-nim.ts:usage"
+```
+</Tab>
+</Tabs>
+
+### Configuration
+
+Two client settings connect the provider to NVIDIA NIM:
+
+* **API key**: from [build.nvidia.com](https://build.nvidia.com)
+* **Base URL**: `https://integrate.api.nvidia.com/v1` for NVIDIA's hosted endpoint. A
+  self-hosted NIM serves the same API at its own base URL, such as
+  `http://localhost:8000/v1`.
+
+Model IDs come from the endpoint's `/models` list, for example
+`https://integrate.api.nvidia.com/v1/models`. Other hosted models include
+`nvidia/nemotron-3-ultra-550b-a55b` and the smaller
+`nvidia/nemotron-3.5-lightning-30b-a3b`. For model parameters and other provider
+options, see the [OpenAI provider](../../user-guide/sdk/model-providers/openai.mdx)
+guide.
+
+## Community package: strands-nvidia-nim
 
 [strands-nvidia-nim](https://github.com/thiago4go/strands-nvidia-nim) is a custom model provider that enables Strands Agents to work with [Nvidia NIM](https://www.nvidia.com/en-us/ai/) APIs. It bridges the message format compatibility gap between Strands Agents SDK and Nvidia NIM API endpoints.
 
@@ -16,7 +102,7 @@ languages: Python
 - **Clean Streaming**: Proper streaming output without artifacts
 - **Error Handling**: Context window overflow detection and Strands-specific errors
 
-## Installation
+### Installation
 
 Install strands-nvidia-nim from PyPI:
 
@@ -24,9 +110,9 @@ Install strands-nvidia-nim from PyPI:
 pip install strands-nvidia-nim
 ```
 
-## Usage
+### Usage
 
-### Basic Agent
+#### Basic Agent
 
 ```python
 from strands import Agent
@@ -46,7 +132,7 @@ agent = Agent(model=model, tools=[notebook])
 agent('Create a notebook named "ideas" and add three uses for accelerated inference.')
 ```
 
-### Using Environment Variables
+#### Using Environment Variables
 
 ```bash
 export NVIDIA_NIM_API_KEY=your-nvidia-nim-api-key
@@ -68,9 +154,9 @@ agent = Agent(model=model, tools=[notebook])
 agent('Create a notebook named "ideas" and add three uses for accelerated inference.')
 ```
 
-## Configuration
+### Configuration
 
-### Model Configuration
+#### Model Configuration
 
 The `NvidiaNIM` provider accepts the following parameters:
 
@@ -80,7 +166,7 @@ The `NvidiaNIM` provider accepts the following parameters:
 | `model_id` | Model identifier | `"meta/llama-3.1-70b-instruct"` |
 | `params` | Generation parameters | `{"max_tokens": 1000}` |
 
-### Available Models
+#### Available Models
 
 Popular Nvidia NIM models:
 
@@ -90,7 +176,7 @@ Popular Nvidia NIM models:
 - `mistralai/mistral-large` - Mistral's flagship model
 - `nvidia/llama-3.1-nemotron-70b-instruct` - Nvidia-optimized variant
 
-### Generation Parameters
+#### Generation Parameters
 
 ```python
 model = NvidiaNIM(
@@ -106,18 +192,20 @@ model = NvidiaNIM(
 )
 ```
 
-## Troubleshooting
+### Troubleshooting
 
-### `BadRequestError` with message formatting
+#### `BadRequestError` with message formatting
 
 This provider exists specifically to solve message formatting issues between Strands and Nvidia NIM. If you encounter this error using standard LiteLLM integration, switch to `strands-nvidia-nim`.
 
-### Context window overflow
+#### Context window overflow
 
 The provider includes detection for context window overflow errors. If you encounter this, try reducing `max_tokens` or the size of your prompts.
 
 ## References
 
+* [NVIDIA NIM API catalog](https://build.nvidia.com)
+* [OpenAI provider](../../user-guide/sdk/model-providers/openai.mdx)
 * [strands-nvidia-nim Repository](https://github.com/thiago4go/strands-nvidia-nim)
 * [PyPI Package](https://pypi.org/project/strands-nvidia-nim/)
 * [Nvidia NIM Documentation](https://docs.nvidia.com/nim/)
