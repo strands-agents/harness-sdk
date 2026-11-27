@@ -313,7 +313,8 @@ class FunctionToolMetadata:
 
         return tool_spec
 
-    def _clean_pydantic_schema(self, schema: dict[str, Any]) -> None:
+    @staticmethod
+    def _clean_pydantic_schema(schema: dict[str, Any]) -> None:
         """Clean up Pydantic schema to match Strands' expected format.
 
         Pydantic's JSON schema output includes several elements that aren't needed for Strands Agent tools and could
@@ -361,7 +362,7 @@ class FunctionToolMetadata:
 
                 # Clean up nested properties recursively
                 if "properties" in prop_schema:
-                    self._clean_pydantic_schema(prop_schema)
+                    FunctionToolMetadata._clean_pydantic_schema(prop_schema)
 
                 # Remove any remaining Pydantic metadata from properties
                 for key in keys_to_remove:

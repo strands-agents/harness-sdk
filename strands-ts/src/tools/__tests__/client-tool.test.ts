@@ -1,17 +1,25 @@
 import { describe, it, expect } from 'vitest'
 import { z } from 'zod'
-import { ClientTool, CLIENT_TOOL_INTERRUPT_NAME } from '../client-tool.js'
+import { ClientTool, CLIENT_TOOL_INTERRUPT_NAME, isClientToolInterrupt } from '../client-tool.js'
 import { Agent } from '../../agent/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { InterruptResponseContent } from '../../types/interrupt.js'
-import { ToolResultBlock } from '../../types/messages.js'
+import { JsonBlock, TextBlock, ToolResultBlock, type ToolResultContent } from '../../types/messages.js'
+import { Interrupt } from '../../interrupt.js'
 import type { JSONValue } from '../../types/json.js'
 
-function createAgent(tool: ClientTool, input: JSONValue): Agent {
+function createAgent(tool: ClientTool, ...toolUses: [string, JSONValue][]): Agent {
   const model = new MockMessageModel()
-    .addTurn({ type: 'toolUseBlock', name: 'get_weather', toolUseId: 't1', input })
+    .addTurn(
+      toolUses.map(([toolUseId, input]) => ({ type: 'toolUseBlock' as const, name: 'get_weather', toolUseId, input }))
+    )
     .addTurn({ type: 'textBlock', text: 'done' })
   return new Agent({ model, tools: [tool], printer: false })
+}
+
+async function respond(agent: Agent, response: JSONValue): Promise<void> {
+  const interrupt = (await agent.invoke('weather?')).interrupts![0]!
+  await agent.invoke([new InterruptResponseContent({ interruptId: interrupt.id, response })])
 }
 
 function toolResults(agent: Agent): ToolResultBlock[] {
@@ -20,124 +28,150 @@ function toolResults(agent: Agent): ToolResultBlock[] {
     .filter((block): block is ToolResultBlock => block.type === 'toolResultBlock')
 }
 
-const Location = z.object({ city: z.string() })
+const Forecast = z.object({ city: z.string(), days: z.number().default(3) })
+const weatherTool = (): ClientTool => new ClientTool({ name: 'get_weather', description: 'Get weather.' })
 
 describe('ClientTool', () => {
   describe('toolSpec', () => {
     it('uses a JSON schema as-is', () => {
       const schema = { type: 'object' as const, properties: { city: { type: 'string' as const } } }
+
       const tool = new ClientTool({ name: 'get_weather', description: 'Get weather.', inputSchema: schema })
 
       expect(tool.toolSpec).toEqual({ name: 'get_weather', description: 'Get weather.', inputSchema: schema })
     })
 
     it('converts a Zod schema', () => {
-      const tool = new ClientTool({ name: 'get_weather', description: 'Get weather.', inputSchema: Location })
+      const tool = new ClientTool({ name: 'get_weather', description: 'Get weather.', inputSchema: Forecast })
 
-      expect(tool.toolSpec.inputSchema).toMatchObject({
+      // Same conversion as tool(), which lists defaulted fields as required.
+      expect(tool.toolSpec.inputSchema).toEqual({
         type: 'object',
-        properties: { city: { type: 'string' } },
-        required: ['city'],
+        properties: { city: { type: 'string' }, days: { type: 'number', default: 3 } },
+        required: ['city', 'days'],
+        additionalProperties: false,
       })
     })
 
     it('defaults to an empty object schema', () => {
-      const tool = new ClientTool({ name: 'get_weather', description: 'Get weather.' })
-
-      expect(tool.toolSpec.inputSchema).toEqual({ type: 'object', properties: {} })
+      expect(weatherTool().toolSpec.inputSchema).toEqual({
+        type: 'object',
+        properties: {},
+        additionalProperties: false,
+      })
     })
   })
 
-  describe('agent loop', () => {
-    it('interrupts with the tool call and returns the response as the tool result', async () => {
-      const agent = createAgent(new ClientTool({ name: 'get_weather', description: 'Get weather.' }), {
-        city: 'Seattle',
-      })
+  describe('stream', () => {
+    it('interrupts with the tool use and returns the response as the tool result', async () => {
+      const agent = createAgent(weatherTool(), ['t1', { city: 'Seattle' }])
 
       const result = await agent.invoke('weather?')
 
       expect(result.stopReason).toBe('interrupt')
       const interrupt = result.interrupts![0]!
       expect(interrupt.name).toBe(CLIENT_TOOL_INTERRUPT_NAME)
-      expect(interrupt.reason).toEqual({ name: 'get_weather', input: { city: 'Seattle' } })
+      expect(interrupt.reason).toEqual({ toolUseId: 't1', name: 'get_weather', input: { city: 'Seattle' } })
 
       const resumed = await agent.invoke([
         new InterruptResponseContent({ interruptId: interrupt.id, response: { tempF: 61 } }),
       ])
 
       expect(resumed.stopReason).toBe('endTurn')
-      const [toolResult] = toolResults(agent)
-      expect(toolResult!.status).toBe('success')
-      expect(toolResult!.content[0]).toMatchObject({ type: 'jsonBlock', json: { tempF: 61 } })
-    })
-
-    it('turns a string response into a text result', async () => {
-      const agent = createAgent(new ClientTool({ name: 'get_weather', description: 'Get weather.' }), {})
-      const interrupt = (await agent.invoke('weather?')).interrupts![0]!
-
-      await agent.invoke([new InterruptResponseContent({ interruptId: interrupt.id, response: 'sunny' })])
-
-      expect(toolResults(agent)[0]!.content[0]).toMatchObject({ type: 'textBlock', text: 'sunny' })
-    })
-
-    it('passes a tool-result-shaped response through, including error status', async () => {
-      const agent = createAgent(new ClientTool({ name: 'get_weather', description: 'Get weather.' }), {})
-      const interrupt = (await agent.invoke('weather?')).interrupts![0]!
-
-      await agent.invoke([
-        new InterruptResponseContent({
-          interruptId: interrupt.id,
-          response: { status: 'error', content: [{ text: 'location permission denied' }] },
-        }),
+      expect(toolResults(agent)).toEqual([
+        new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new JsonBlock({ json: { tempF: 61 } })] }),
       ])
-
-      const [toolResult] = toolResults(agent)
-      expect(toolResult!.toolUseId).toBe('t1')
-      expect(toolResult!.status).toBe('error')
-      expect(toolResult!.content[0]).toMatchObject({ type: 'textBlock', text: 'location permission denied' })
     })
 
-    it.each([{}, { city: 3 }])('returns an error without interrupting when Zod validation fails: %j', async (input) => {
-      const tool = new ClientTool({ name: 'get_weather', description: 'Get weather.', inputSchema: Location })
-      const agent = createAgent(tool, input)
+    it.each<[string, JSONValue, ToolResultContent]>([
+      ['a string', 'sunny', new TextBlock('sunny')],
+      [
+        'data with status and content keys',
+        { status: 200, content: 'x' },
+        new JsonBlock({ json: { status: 200, content: 'x' } }),
+      ],
+      [
+        'a tool result with unknown content',
+        { status: 'success', content: [{ id: 1 }] },
+        new JsonBlock({ json: { status: 'success', content: [{ id: 1 }] } }),
+      ],
+      [
+        'a tool result with empty content',
+        { status: 'success', content: [] },
+        new JsonBlock({ json: { status: 'success', content: [] } }),
+      ],
+    ])('wraps %s as data', async (_label, response, expected) => {
+      const agent = createAgent(weatherTool(), ['t1', {}])
+
+      await respond(agent, response)
+
+      expect(toolResults(agent)).toEqual([
+        new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [expected] }),
+      ])
+    })
+
+    it('passes a tool result response through, including error status', async () => {
+      const agent = createAgent(weatherTool(), ['t1', {}])
+
+      await respond(agent, { status: 'error', content: [{ text: 'permission denied' }], extra: 1 })
+
+      expect(toolResults(agent)).toEqual([
+        new ToolResultBlock({ toolUseId: 't1', status: 'error', content: [new TextBlock('permission denied')] }),
+      ])
+    })
+
+    it.each([{}, { city: 3 }, { city: 'Oslo', days: 'many' }])(
+      'returns an error without interrupting when validation fails: %j',
+      async (input) => {
+        const tool = new ClientTool({ name: 'get_weather', description: 'Get weather.', inputSchema: Forecast })
+        const agent = createAgent(tool, ['t1', input])
+
+        const result = await agent.invoke('weather?')
+
+        expect(result.stopReason).toBe('endTurn')
+        expect(result.interrupts ?? []).toEqual([])
+        expect(toolResults(agent)[0]!.status).toBe('error')
+      }
+    )
+
+    it('forwards the validated input', async () => {
+      const tool = new ClientTool({ name: 'get_weather', description: 'Get weather.', inputSchema: Forecast })
+      const agent = createAgent(tool, ['t1', { city: 'Oslo' }])
 
       const result = await agent.invoke('weather?')
 
-      expect(result.stopReason).toBe('endTurn')
-      expect(result.interrupts ?? []).toEqual([])
-      expect(toolResults(agent)[0]!.status).toBe('error')
+      expect(result.interrupts![0]!.reason).toEqual({
+        toolUseId: 't1',
+        name: 'get_weather',
+        input: { city: 'Oslo', days: 3 },
+      })
     })
 
     it('interrupts once per parallel call and resumes with all responses', async () => {
-      const model = new MockMessageModel()
-        .addTurn([
-          { type: 'toolUseBlock', name: 'get_weather', toolUseId: 'a', input: { city: 'Oslo' } },
-          { type: 'toolUseBlock', name: 'get_weather', toolUseId: 'b', input: { city: 'Rome' } },
-        ])
-        .addTurn({ type: 'textBlock', text: 'done' })
-      const agent = new Agent({
-        model,
-        tools: [new ClientTool({ name: 'get_weather', description: 'Get weather.' })],
-        printer: false,
-      })
+      const agent = createAgent(weatherTool(), ['a', { city: 'Oslo' }], ['b', { city: 'Rome' }])
 
       const result = await agent.invoke('weather?')
 
-      const cities = result.interrupts!.map((i) => (i.reason as { input: { city: string } }).input.city)
-      expect(cities.sort()).toEqual(['Oslo', 'Rome'])
+      const calls = result.interrupts!.filter(isClientToolInterrupt)
+      expect(calls.map((i) => i.reason.toolUseId).sort()).toEqual(['a', 'b'])
       const resumed = await agent.invoke(
-        result.interrupts!.map(
+        calls.map(
           (i) =>
-            new InterruptResponseContent({
-              interruptId: i.id,
-              response: (i.reason as { input: { city: string } }).input.city,
-            })
+            new InterruptResponseContent({ interruptId: i.id, response: (i.reason.input as { city: string }).city })
         )
       )
       expect(resumed.stopReason).toBe('endTurn')
-      const byId = Object.fromEntries(toolResults(agent).map((r) => [r.toolUseId, r.content[0]]))
-      expect(byId.a).toMatchObject({ text: 'Oslo' })
-      expect(byId.b).toMatchObject({ text: 'Rome' })
+      const contentById = Object.fromEntries(toolResults(agent).map((r) => [r.toolUseId, r.content]))
+      expect(contentById).toEqual({ a: [new TextBlock('Oslo')], b: [new TextBlock('Rome')] })
+    })
+  })
+
+  describe('isClientToolInterrupt', () => {
+    it('matches only client tool interrupts', () => {
+      const reason = { toolUseId: 't1', name: 'get_weather', input: {} }
+
+      expect(isClientToolInterrupt(new Interrupt({ id: '1', name: CLIENT_TOOL_INTERRUPT_NAME, reason }))).toBe(true)
+      expect(isClientToolInterrupt(new Interrupt({ id: '2', name: 'approve', reason }))).toBe(false)
     })
   })
 })
