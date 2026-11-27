@@ -4,7 +4,6 @@ import pytest
 
 from strands.models import ModelCapabilities, ModelInfo
 from strands.models._model_proxy import ModelProxy
-from strands.models._reasoning_provenance import tag_reasoning_delta
 from strands.models.anthropic import AnthropicModel
 from strands.models.bedrock import BedrockModel
 from strands.models.gemini import GeminiModel
@@ -19,28 +18,31 @@ def _delta(reasoning: dict) -> dict:
     return {"contentBlockDelta": {"contentBlockIndex": 2, "delta": {"reasoningContent": reasoning}}}
 
 
-@pytest.mark.parametrize("reasoning", [{"signature": "sig"}, {"redactedContent": b"opaque"}])
-def test_tag_reasoning_delta_tags_signed_and_redacted_reasoning(reasoning):
-    tagged = tag_reasoning_delta(_delta(reasoning), "anthropic", "m")
-
-    assert tagged == _delta({**reasoning, "providerData": _tag("anthropic")})
-
-
-@pytest.mark.parametrize("event", [_delta({"text": "plain"}), {"contentBlockDelta": {"delta": {"text": "hi"}}}, {}])
-def test_tag_reasoning_delta_leaves_everything_else_alone(event):
-    assert tag_reasoning_delta(event, "anthropic", "m") is event
-
-
 @pytest.mark.parametrize(
     ("model_id", "tagged"),
-    [("us.anthropic.claude-haiku-4-5-20251001-v1:0", True), ("us.amazon.nova-pro-v1:0", False), ("arn:aws:x", False)],
+    [
+        ("us.anthropic.claude-haiku-4-5-20251001-v1:0", True),
+        ("us.amazon.nova-pro-v1:0", False),
+        ("arn:aws:x", False),
+    ],
 )
 def test_bedrock_tags_signed_reasoning_only_for_a_model_id_naming_claude(model_id, tagged):
     model = BedrockModel(model_id=model_id, region_name="us-west-2")
 
     event = model._tag_reasoning(_delta({"signature": "sig"}))
 
-    assert ("providerData" in event["contentBlockDelta"]["delta"]["reasoningContent"]) is tagged
+    assert event == (
+        _delta({"signature": "sig", "providerData": _tag("anthropic", model_id)})
+        if tagged
+        else _delta({"signature": "sig"})
+    )
+
+
+@pytest.mark.parametrize("event", [_delta({"text": "plain"}), {"contentBlockDelta": {"delta": {"text": "hi"}}}, {}])
+def test_bedrock_leaves_reasoning_without_a_signature_untagged(event):
+    model = BedrockModel(model_id="us.anthropic.claude-x", region_name="us-west-2")
+
+    assert model._tag_reasoning(event) is event
 
 
 @pytest.mark.parametrize(

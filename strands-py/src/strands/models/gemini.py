@@ -25,7 +25,6 @@ from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceToolDict, ToolResult, ToolResultContent, ToolSpec
 from ._defaults import resolve_config_metadata
 from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelCapabilities, ModelInfo
-from ._reasoning_provenance import GOOGLE, tag_reasoning_delta
 from ._validation import _has_location_source, _log_skipped_blocks, validate_config_keys
 from .model import BaseModelConfig, Model
 
@@ -162,7 +161,7 @@ class GeminiModel(Model):
         The Gemini API has no server-side summary, including for Claude models served through it. A ``model_info``
         override still wins over both.
         """
-        reasoning = ModelInfo(capabilities=ModelCapabilities(reasoning_provider=GOOGLE))
+        reasoning = ModelInfo(capabilities=ModelCapabilities(reasoning_provider="google"))
         return ModelInfo.merge(
             super().model_info, SERVER_SIDE_SUMMARY_OFF, reasoning, self.get_config().get("model_info")
         )
@@ -549,16 +548,21 @@ class GeminiModel(Model):
                         }
 
                     case "reasoning_signature":
-                        signature_event: StreamEvent = {
+                        return {
                             "contentBlockDelta": {
                                 "delta": {
                                     "reasoningContent": {
                                         "signature": base64.b64encode(event["data"].thought_signature).decode("ascii"),
+                                        # Bound to the vendor, so any Gemini model takes it back.
+                                        "providerData": {
+                                            "provider": "google",
+                                            "modelId": self.config["model_id"],
+                                            "data": {},
+                                        },
                                     },
                                 },
                             },
                         }
-                        return tag_reasoning_delta(signature_event, GOOGLE, self.config["model_id"])
 
                     case _:
                         return {"contentBlockDelta": {"delta": {"text": event["data"].text}}}

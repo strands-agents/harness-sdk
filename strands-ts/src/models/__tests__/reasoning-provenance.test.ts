@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import type OpenAI from 'openai'
-import { tagReasoningDelta } from '../reasoning-provenance.js'
 import { AnthropicModel } from '../anthropic.js'
 import { BedrockModel } from '../bedrock.js'
 import { GoogleModel } from '../google/model.js'
@@ -10,18 +9,6 @@ import type { Model } from '../model.js'
 import { Message, ReasoningBlock, TextBlock, type ReasoningProviderData } from '../../types/messages.js'
 
 const tag = (provider: string): ReasoningProviderData => ({ provider, modelId: 'm', data: {} })
-
-describe('tagReasoningDelta', () => {
-  it.each([{ signature: 'sig' }, { redactedContent: new Uint8Array([1]) }])('tags %j', (payload) => {
-    const delta = { type: 'reasoningContentDelta' as const, ...payload }
-    expect(tagReasoningDelta(delta, 'anthropic', 'm')).toEqual({ ...delta, providerData: tag('anthropic') })
-  })
-
-  it('leaves text-only reasoning untagged', () => {
-    const delta = { type: 'reasoningContentDelta' as const, text: 'plain' }
-    expect(tagReasoningDelta(delta, 'anthropic', 'm')).toBe(delta)
-  })
-})
 
 describe('the reasoning provider each model reports', () => {
   it.each<[string, () => Model, string[]]>([
@@ -69,6 +56,14 @@ describe('BedrockModel tagging', () => {
     }
     const delta = model._tagReasoning({ type: 'reasoningContentDelta', signature: 'sig' })
     expect(delta.providerData !== undefined).toBe(tagged)
+  })
+
+  it('leaves text-only reasoning untagged', () => {
+    const model = new BedrockModel({ modelId: 'us.anthropic.claude-x' }) as unknown as {
+      _tagReasoning(delta: object): object
+    }
+    const delta = { type: 'reasoningContentDelta', text: 'plain' }
+    expect(model._tagReasoning(delta)).toBe(delta)
   })
 })
 

@@ -20,7 +20,6 @@ import type {
   ToolResultBlock,
 } from '../../types/messages.js'
 import type { ModelStreamEvent } from '../streaming.js'
-import { GOOGLE_REASONING, tagReasoningDelta } from '../reasoning-provenance.js'
 import type { GoogleStreamState } from './types.js'
 import { encodeBase64, type ImageBlock, type DocumentBlock, type VideoBlock } from '../../types/media.js'
 import { toMimeType } from '../../mime.js'
@@ -460,11 +459,15 @@ export function mapChunkToEvents(chunk: GenerateContentResponse, streamState: Go
 
           events.push({
             type: 'modelContentBlockDeltaEvent',
-            delta: tagReasoningDelta(
-              { type: 'reasoningContentDelta', text: part.text, ...(signature !== undefined && { signature }) },
-              GOOGLE_REASONING,
-              streamState.modelId
-            ),
+            delta: {
+              type: 'reasoningContentDelta',
+              text: part.text,
+              // Bound to the vendor, so any Gemini model takes it back.
+              ...(signature !== undefined && {
+                signature,
+                providerData: { provider: 'google', modelId: streamState.modelId, data: {} },
+              }),
+            },
           })
         } else {
           // Handle regular text content

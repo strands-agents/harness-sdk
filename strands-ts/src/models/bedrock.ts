@@ -67,7 +67,6 @@ import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from './model-info.js'
 import { bedrockCacheModelInfo, bedrockLimitsCachePoints, bedrockTakesGptCachePoints } from './bedrock-cache.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
-import { ANTHROPIC_REASONING, tagReasoningDelta } from './reasoning-provenance.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
 import type { CitationsDelta, ModelStreamEvent, ReasoningContentDelta, Usage } from '../models/streaming.js'
 import type { Citation, CitationLocation, CitationsBlockData } from '../types/citations.js'
@@ -627,7 +626,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     // Claude-signed reasoning is taken back on a Claude model ID, and on one that names no vendor (an application
     // inference profile ARN); reasoning produced through the latter is not tagged, so it is not kept from other vendors.
     const namesNoVendor = !(this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId).split('/').pop()!.includes('.')
-    const reasoning = this._namesAnthropic() || namesNoVendor ? { reasoningProvider: ANTHROPIC_REASONING } : {}
+    const reasoning = this._namesAnthropic() || namesNoVendor ? { reasoningProvider: 'anthropic' } : {}
     const info = super.modelInfo
     return ModelInfo.merge(
       info,
@@ -1431,8 +1430,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
   /** Tags a Claude model's signed or redacted reasoning; a model ID that names no vendor stays untagged. */
   private _tagReasoning(delta: ReasoningContentDelta): ReasoningContentDelta {
+    if (!this._namesAnthropic() || (!delta.signature && !delta.redactedContent)) return delta
     const modelId = this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId
-    return this._namesAnthropic() ? tagReasoningDelta(delta, ANTHROPIC_REASONING, modelId) : delta
+    return { ...delta, providerData: { provider: 'anthropic', modelId, data: {} } }
   }
 
   /**

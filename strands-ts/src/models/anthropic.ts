@@ -28,7 +28,6 @@ import { Message, SummaryBlock } from '../types/messages.js'
 import type { ContentBlock, SystemPrompt, ToolResultContent } from '../types/messages.js'
 import type { ModelStreamEvent, ReasoningContentDelta, Usage } from '../models/streaming.js'
 import { accumulateUsage, createEmptyUsage } from '../models/streaming.js'
-import { ANTHROPIC_REASONING, tagReasoningDelta } from './reasoning-provenance.js'
 import type { SummarizeResult } from './summarize.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
 import type { Citation } from '../types/citations.js'
@@ -445,7 +444,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
           deferredToolLoading: capabilities.deferredToolLoading,
           acceptedMimeTypes,
           // Claude signatures are bound to the vendor, so any Claude model or endpoint takes them back.
-          reasoningProvider: ANTHROPIC_REASONING,
+          reasoningProvider: 'anthropic',
         },
       },
       this._config.modelInfo
@@ -513,8 +512,11 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     }
   }
 
+  /** Tags signed or redacted Claude reasoning; the signature is bound to the vendor, so any Claude model takes it. */
   private _tagReasoning(delta: ReasoningContentDelta): ReasoningContentDelta {
-    return tagReasoningDelta(delta, ANTHROPIC_REASONING, this._config.modelId ?? MODEL_DEFAULTS.anthropic.modelId)
+    if (!delta.signature && !delta.redactedContent) return delta
+    const modelId = this._config.modelId ?? MODEL_DEFAULTS.anthropic.modelId
+    return { ...delta, providerData: { provider: 'anthropic', modelId, data: {} } }
   }
 
   /**

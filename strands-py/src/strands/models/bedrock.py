@@ -32,6 +32,7 @@ from ..types.content import (
     Message,
     Messages,
     ReasoningContentBlock,
+    ReasoningProviderData,
     SystemContentBlock,
 )
 from ..types.exceptions import (
@@ -51,7 +52,6 @@ from ._native_output import (
     to_native_output_schema,
     unsupported_mechanisms,
 )
-from ._reasoning_provenance import ANTHROPIC, tag_reasoning_delta
 from ._strict_schema import ensure_strict_json_schema
 from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
 from ._validation import _warn_on_deprecated_cache_tools, validate_config_keys
@@ -469,7 +469,7 @@ class BedrockModel(Model):
         model_id = self.config.get("model_id")
         names_no_vendor = isinstance(model_id, str) and "." not in model_id.rsplit("/", 1)[-1]
         reasoning = ModelCapabilities(
-            reasoning_provider=ANTHROPIC if self._names_anthropic() or names_no_vendor else None
+            reasoning_provider="anthropic" if self._names_anthropic() or names_no_vendor else None
         )
         return ModelInfo.merge(
             super().model_info,
@@ -1083,7 +1083,15 @@ class BedrockModel(Model):
 
     def _tag_reasoning(self, event: StreamEvent) -> StreamEvent:
         """Tag a Claude model's signed or redacted reasoning; a model id that names no vendor stays untagged."""
-        return tag_reasoning_delta(event, ANTHROPIC, self.config["model_id"]) if self._names_anthropic() else event
+        if not self._names_anthropic() or not isinstance(event, dict):
+            return event
+        reasoning = event.get("contentBlockDelta", {}).get("delta", {}).get("reasoningContent", {})
+        if not (reasoning.get("signature") or reasoning.get("redactedContent")):
+            return event
+        provider_data: ReasoningProviderData = {"provider": "anthropic", "modelId": self.config["model_id"], "data": {}}
+        block_delta = event["contentBlockDelta"]
+        delta = {**block_delta["delta"], "reasoningContent": {**reasoning, "providerData": provider_data}}
+        return cast(StreamEvent, {**event, "contentBlockDelta": {**block_delta, "delta": delta}})
 
     def _rejects_reasoning_block(self, reasoning: ReasoningContentBlock) -> bool:
         """Whether the configured model would reject this ``reasoningContent`` block if it were replayed.
