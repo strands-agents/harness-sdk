@@ -1,5 +1,5 @@
 import type { SearchStrategy } from './search/types.js'
-import type { Storage, StorageSearchResult } from './storage.js'
+import type { Storage, StorageSearchOptions, StorageSearchResult } from './storage.js'
 
 import { EPHEMERAL, NAMESPACED, normalizeKey, normalizePrefix } from './storage.js'
 import { KeywordSearchStrategy } from './search/keyword.js'
@@ -153,13 +153,14 @@ export class InMemoryStorage implements Storage {
    * Searches stored content by keyword token-overlap scoring.
    *
    * @param query - Natural-language search query
+   * @param options - Narrows the search to a key prefix and a result count
    * @returns All matches with relevance scores, ranked best-first
    */
-  async search(query: string): Promise<StorageSearchResult[]> {
+  async search(query: string, options?: StorageSearchOptions): Promise<StorageSearchResult[]> {
     if (this._searchStrategy) {
-      return this._searchStrategy.search(this, query)
+      return this._searchStrategy.search(this, query, options)
     }
-    return KeywordSearchStrategy.search(this, query)
+    return KeywordSearchStrategy.search(this, query, options)
   }
 
   /**

@@ -200,7 +200,7 @@ describe('InMemoryStorage', () => {
       await scoped.search('query')
 
       expect(strategy.index).toHaveBeenCalledWith(scoped, 'deploy.md', expect.any(Uint8Array))
-      expect(strategy.search).toHaveBeenCalledWith(scoped, 'query')
+      expect(strategy.search).toHaveBeenCalledWith(scoped, 'query', undefined)
     })
 
     it("keeps a subclass's overrides and fields on the scoped instance", async () => {

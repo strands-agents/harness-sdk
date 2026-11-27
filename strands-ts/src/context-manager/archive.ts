@@ -9,6 +9,7 @@
  */
 
 import { NAMESPACED, namespace as namespaceStorage, type Storage } from '../storage/storage.js'
+import type { StorageSearchResult } from '../storage/storage.js'
 import { Message, ToolResultBlock } from '../types/messages.js'
 import type { ContentBlock } from '../types/messages.js'
 import type { JSONValue } from '../types/json.js'
@@ -19,12 +20,85 @@ import { isOffloaded } from './placeholder.js'
 /** @internal */
 export const ARCHIVE_PREFIX = 'context'
 
-function encode(value: unknown): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(value))
+/**
+ * Suffix on the storage key of an entry holding a block's text.
+ *
+ * `JSON.stringify` escapes every newline, so a JSON entry is one long line and anything reading the
+ * stored bytes — a search strategy scoring lines, a section slice — sees one line however many the
+ * text had. Text is stored as its own bytes instead. The key carries that fact rather than a header
+ * in the payload, because the payload is what an external index reads: `QmdSearchStrategy` points
+ * SQLite FTS5 at these files directly, and a header would be indexed as content.
+ *
+ * Only text entries take the suffix. Every other block stays JSON under the bare key, which is also
+ * what every entry written before this looks like, so there is nothing to migrate.
+ */
+const TEXT_SUFFIX = '.txt'
+
+/** How a value is stored: text as its own bytes under a suffixed key, or JSON under the bare key. */
+function frame(value: unknown): { suffix: string; data: Uint8Array } {
+  const text = flatText(value)
+  if (text === null) return { suffix: '', data: new TextEncoder().encode(JSON.stringify(value)) }
+  return { suffix: TEXT_SUFFIX, data: new TextEncoder().encode(text) }
 }
 
-function decode(bytes: Uint8Array): unknown {
-  return JSON.parse(new TextDecoder().decode(bytes))
+function decode(key: string, bytes: Uint8Array): unknown {
+  const content = new TextDecoder().decode(bytes)
+  return key.endsWith(TEXT_SUFFIX) ? { text: content } : JSON.parse(content)
+}
+
+/**
+ * An archived entry matching a query, as the storage backend's configured search strategy ranked it.
+ *
+ * @internal
+ */
+export interface ArchiveMatch {
+  /** The reference the entry is stored under, without {@link TEXT_SUFFIX}. */
+  key: string
+  /** Relevance of the entry, as the strategy scored it. */
+  score: number
+  /**
+   * The matching sections of the entry's text, best-first, as 0-indexed inclusive line bounds.
+   *
+   * Empty when the strategy ranked the entry without saying which part of it matched, which a
+   * document-level index cannot: BM25 and vector similarity score whole entries.
+   */
+  sections: Array<{ start: number; end: number }>
+}
+
+/**
+ * The line bounds of a result's byte ranges.
+ *
+ * Empty unless the entry holds text and the strategy returned the bytes it measured. A JSON entry is
+ * excluded even when ranges are reported, because the stored bytes are compact JSON while a consumer
+ * renders the entry pretty-printed, so an offset into one names the wrong line of the other.
+ */
+function sectionLines(result: StorageSearchResult): Array<{ start: number; end: number }> {
+  if (!result.key.endsWith(TEXT_SUFFIX) || !result.byteRanges || !result.data) return []
+
+  const encoder = new TextEncoder()
+  const offsets = [0]
+  for (const line of new TextDecoder().decode(result.data).split('\n')) {
+    offsets.push(offsets[offsets.length - 1]! + encoder.encode(line).length + 1)
+  }
+  return result.byteRanges.map((range) => ({ start: lineAt(offsets, range.start), end: lineAt(offsets, range.end) }))
+}
+
+/** The 0-indexed line containing `offset`, given each line's start offset plus the content's length. */
+function lineAt(offsets: number[], offset: number): number {
+  const next = offsets.findIndex((start) => start > offset)
+  return next === -1 ? offsets.length - 2 : next - 1
+}
+
+/**
+ * The text of a value serialized as `{ text }` and nothing else, or `null` when it carries more than
+ * text and so has to stay JSON.
+ */
+function flatText(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null
+  const keys = Object.keys(value)
+  if (keys.length !== 1 || keys[0] !== 'text') return null
+  const { text } = value as { text: unknown }
+  return typeof text === 'string' ? text : null
 }
 
 /**
@@ -114,6 +188,17 @@ export class Archive {
   }
 
   /**
+   * Write a block's serialized form under `key`, framed by what it holds.
+   *
+   * A reference never carries {@link TEXT_SUFFIX}: the suffix is how the bytes are stored, not part
+   * of the key a placeholder quotes, so callers resolve the same `<id>_<index>` either way.
+   */
+  private async _writeValue(key: string, value: unknown): Promise<void> {
+    const { suffix, data } = frame(value)
+    await this._storage.write(`${key}${suffix}`, data)
+  }
+
+  /**
    * The reference an offload placeholder carries for the block it replaces, with the block stored
    * under that reference if it is not already.
    *
@@ -137,7 +222,7 @@ export class Archive {
     }
     const key = formatArchiveKey({ id: message.trackingId, index: blockIndex })
     if (!(await this.list(key)).includes(key)) {
-      await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
+      await this._writeValue(key, block.toJSON())
     }
     return key
   }
@@ -150,7 +235,10 @@ export class Archive {
    */
   async storeRemoved(removed: Message[]): Promise<string> {
     const id = `removed-${removed[0]!.trackingId}`
-    await this.store(id, 0, encode(removed.map((message) => message.toJSON())))
+    await this._writeValue(
+      formatArchiveKey({ id, index: 0 }),
+      removed.map((message) => message.toJSON())
+    )
     return id
   }
 
@@ -177,7 +265,7 @@ export class Archive {
         continue
       }
       try {
-        await this.store(message.trackingId, blockIndex, encode(block.toJSON()))
+        await this._writeValue(formatArchiveKey({ id: message.trackingId, index: blockIndex }), block.toJSON())
       } catch (error) {
         logger.warn(`trackingId=<${message.trackingId}>, error=<${error}> | failed to archive block`)
       }
@@ -207,16 +295,47 @@ export class Archive {
    * @returns The deserialized block data (from `toJSON()`), or null if not found
    */
   async retrieve(reference: string): Promise<{ data: unknown } | null> {
-    const bytes = await this._storage.read(reference)
-    if (bytes === null) return null
-    return { data: decode(bytes) }
+    // Text is the common case, so it is read first; a bare key holds JSON.
+    for (const key of [`${reference}${TEXT_SUFFIX}`, reference]) {
+      const bytes = await this._storage.read(key)
+      if (bytes !== null) return { data: decode(key, bytes) }
+    }
+    return null
+  }
+
+  /**
+   * The entries under `prefix` that match `query`, best-first, as ranked by the storage backend's
+   * configured search strategy.
+   *
+   * The strategy is the point: a backend given a BM25 index, a vector index, or a keyword scan
+   * answers a question about archived content with the index it was configured with, rather than
+   * having every caller scan the content the same way regardless.
+   *
+   * @param query - Natural-language question to answer from the archived content
+   * @param prefix - Reference prefix the search is scoped to
+   * @returns The matches, or `null` when the backend has no `search` at all — the caller's signal to
+   *   scan the content itself rather than read an empty result as "nothing matched"
+   */
+  async search(query: string, prefix: string): Promise<ArchiveMatch[] | null> {
+    if (!this._storage.search) return null
+
+    const results = await this._storage.search(query, { prefix })
+    return results.map((result) => ({
+      key: result.key.endsWith(TEXT_SUFFIX) ? result.key.slice(0, -TEXT_SUFFIX.length) : result.key,
+      score: result.score,
+      sections: sectionLines(result),
+    }))
   }
 
   /**
    * List archived references, optionally only those starting with `prefix`.
+   *
+   * {@link TEXT_SUFFIX} is stripped, so a reference is the same `<id>_<index>` whichever framing its
+   * entry was stored under. Every caller that parses or resolves a reference depends on that.
    */
   async list(prefix = ''): Promise<string[]> {
-    return this._storage.list(prefix)
+    const keys = await this._storage.list(prefix)
+    return [...new Set(keys.map((key) => (key.endsWith(TEXT_SUFFIX) ? key.slice(0, -TEXT_SUFFIX.length) : key)))]
   }
 
   /**
@@ -231,10 +350,10 @@ export class Archive {
   }
 
   /**
-   * Delete an archived entry.
+   * Delete an archived entry, under either framing.
    */
   async delete(reference: string): Promise<void> {
-    await this._storage.delete(reference)
+    await Promise.all([this._storage.delete(`${reference}${TEXT_SUFFIX}`), this._storage.delete(reference)])
     logger.debug(`reference=<${reference}> | archive entry deleted`)
   }
 
@@ -297,14 +416,14 @@ export class Archive {
    * @param entries - Map of reference keys to their JSON values (from {@link takeSnapshot})
    */
   async loadSnapshot(entries: Record<string, JSONValue>): Promise<void> {
-    await Promise.all(Object.entries(entries).map(([key, data]) => this._storage.write(key, encode(data))))
+    await Promise.all(Object.entries(entries).map(([key, data]) => this._writeValue(key, data)))
   }
 
   private async _storeToolResult(block: ToolResultBlock): Promise<void> {
     for (let blockIndex = 0; blockIndex < block.content.length; blockIndex++) {
       const item = block.content[blockIndex]!
       try {
-        await this.store(block.toolUseId, blockIndex, encode(item.toJSON()))
+        await this._writeValue(formatArchiveKey({ id: block.toolUseId, index: blockIndex }), item.toJSON())
       } catch (error) {
         logger.warn(
           `toolUseId=<${block.toolUseId}>, blockIndex=<${blockIndex}>, error=<${error}> | failed to archive sub-block`
