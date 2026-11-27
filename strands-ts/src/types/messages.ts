@@ -694,13 +694,15 @@ function parseToolResultContent(data: ToolResultContentData, onUnknown: OnUnknow
 }
 
 /**
- * Provider-native reasoning that only the provider and model that produced it can replay.
+ * Provider-native reasoning that only a model whose model info names its `provider` tag can replay.
  *
- * Written and read only by the SDK model provider named in `provider`; other models never receive the block.
+ * Written by an SDK model provider; every other model receives only the block's text. For a signature that is
+ * every model of the signing vendor.
  */
 export interface ReasoningProviderData {
   /**
-   * The format tag of the provider that wrote it, e.g. `'openai_responses'`.
+   * The format tag of the provider that wrote it: `'openai_responses'`, or the vendor that signed it (`'anthropic'`,
+   * `'google'`).
    */
   provider: string
 
@@ -710,7 +712,8 @@ export interface ReasoningProviderData {
   modelId: string
 
   /**
-   * The provider's own JSON payload; private to that provider and not a stable shape.
+   * The provider's own JSON payload; private to that provider and not a stable shape. Empty when the block's own
+   * fields already hold everything, as for a signature.
    */
   data: { [key: string]: JSONValue }
 }
@@ -735,7 +738,7 @@ export interface ReasoningBlockData {
   redactedContent?: Uint8Array
 
   /**
-   * Provider-native reasoning, sent only to the provider and model that produced it.
+   * Provider-native reasoning, sent only to models that take it back.
    */
   providerData?: ReasoningProviderData
 }
@@ -767,7 +770,7 @@ export class ReasoningBlock
   readonly redactedContent?: Uint8Array
 
   /**
-   * Provider-native reasoning, sent only to the provider and model that produced it.
+   * Provider-native reasoning, sent only to models that take it back.
    */
   readonly providerData?: ReasoningProviderData
 

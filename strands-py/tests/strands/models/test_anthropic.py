@@ -1018,7 +1018,15 @@ def test_format_chunk_content_block_start_other(model):
 @pytest.mark.parametrize(
     ("delta", "exp_delta"),
     [
-        ({"type": "signature_delta", "signature": "s1"}, {"reasoningContent": {"signature": "s1"}}),
+        (
+            {"type": "signature_delta", "signature": "s1"},
+            {
+                "reasoningContent": {
+                    "signature": "s1",
+                    "providerData": {"provider": "anthropic", "modelId": "m1", "data": {}},
+                }
+            },
+        ),
         ({"type": "thinking_delta", "thinking": "t1"}, {"reasoningContent": {"text": "t1"}}),
         ({"type": "input_json_delta", "partial_json": "{"}, {"toolUse": {"input": "{"}}),
         ({"type": "text_delta", "text": "hello"}, {"text": "hello"}),

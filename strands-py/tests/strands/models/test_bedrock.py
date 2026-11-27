@@ -1096,7 +1096,17 @@ async def test_stream_same_index_reasoning_survives_agent_tool_loop(bedrock_clie
     }
     tru_assistant = serialized_requests[1]["messages"][1]
     assert tru_assistant == exp_assistant
-    assert agent.messages[1] == {**exp_assistant, "metadata": ANY, "tracking_id": ANY}
+    tag = {"provider": "anthropic", "modelId": "anthropic.claude-test", "data": {}}
+    stored = [
+        {"reasoningContent": {**block["reasoningContent"], "providerData": tag}}
+        for block in exp_assistant["content"][:2]
+    ]
+    assert agent.messages[1] == {
+        **exp_assistant,
+        "content": [*stored, *exp_assistant["content"][2:]],
+        "metadata": ANY,
+        "tracking_id": ANY,
+    }
     assert serialized_requests[1]["messages"][0] == serialized_requests[0]["messages"][0]
     tru_tool_result = serialized_requests[1]["messages"][2]["content"][0]["toolResult"]["toolUseId"]
     assert tru_tool_result == "tool-1"
@@ -4568,7 +4578,9 @@ def test_cache_strategy_auto_falls_back_to_the_claude_name_test_for_ids_the_mode
 
     model = BedrockModel(model_id=model_id, cache_config=CacheConfig(strategy="auto"))
 
-    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False, temporary_messages=False)
+    assert model.model_info.capabilities == ModelCapabilities(
+        server_side_summary=False, temporary_messages=False, reasoning_provider="anthropic"
+    )
     assert model._cache_strategy == "anthropic"
 
 
@@ -4580,7 +4592,9 @@ def test_cache_strategy_auto_is_none_for_an_unlisted_id_that_is_not_claude(bedro
         cache_config=CacheConfig(strategy="auto"),
     )
 
-    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False, temporary_messages=False)
+    assert model.model_info.capabilities == ModelCapabilities(
+        server_side_summary=False, temporary_messages=False, reasoning_provider="anthropic"
+    )
     assert model._cache_strategy is None
 
 
@@ -8032,3 +8046,44 @@ async def test_stream_cancel_signal_consumes_detached_task_exception(bedrock_cli
     # The detached worker now fails; its exception must be consumed, not reported to the loop.
     await asyncio.sleep(0.2)
     assert not captured, f"detached task exception was not consumed: {captured}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [True, False])
+async def test_stream_tags_claude_signed_and_redacted_reasoning(bedrock_client, alist, streaming):
+    tag = {"provider": "anthropic", "modelId": "us.anthropic.claude-test", "data": {}}
+    signed = {"reasoningText": {"text": "plan", "signature": "SIG"}}
+    redacted = {"redactedContent": b"opaque"}
+    if streaming:
+
+        def delta(index, reasoning):
+            return {"contentBlockDelta": {"contentBlockIndex": index, "delta": {"reasoningContent": reasoning}}}
+
+        events = [
+            {"messageStart": {"role": "assistant"}},
+            delta(0, {"text": "plan"}),
+            delta(0, {"signature": "SIG"}),
+            {"contentBlockStop": {"contentBlockIndex": 0}},
+            delta(1, {"redactedContent": b"opaque"}),
+            {"contentBlockStop": {"contentBlockIndex": 1}},
+        ]
+        bedrock_client.converse_stream.return_value = {"stream": [*events, {"messageStop": {"stopReason": "end_turn"}}]}
+    else:
+        bedrock_client.converse.return_value = {
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"reasoningContent": signed}, {"reasoningContent": redacted}],
+                }
+            },
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+            "metrics": {"latencyMs": 1},
+        }
+    model = BedrockModel(model_id="us.anthropic.claude-test", streaming=streaming)
+
+    stream = strands.event_loop.streaming.process_stream(model.stream([{"role": "user", "content": [{"text": "go"}]}]))
+    message = (await alist(stream))[-1]["stop"][1]
+
+    reasoning = [block["reasoningContent"] for block in message["content"] if "reasoningContent" in block]
+    assert reasoning == [{**signed, "providerData": tag}, {**redacted, "providerData": tag}]

@@ -26,7 +26,15 @@ from ..event_loop import streaming
 from ..tools import convert_pydantic_to_tool_spec
 from ..tools._tool_helpers import noop_tool
 from ..tools.structured_output._structured_output_context import json_object_from_message
-from ..types.content import CachePoint, ContentBlock, Message, Messages, ReasoningContentBlock, SystemContentBlock
+from ..types.content import (
+    CachePoint,
+    ContentBlock,
+    Message,
+    Messages,
+    ReasoningContentBlock,
+    ReasoningProviderData,
+    SystemContentBlock,
+)
 from ..types.exceptions import (
     ContextWindowOverflowException,
     ModelThrottledException,
@@ -506,10 +514,18 @@ class BedrockModel(Model):
     @property
     @override
     def model_info(self) -> ModelInfo:
-        """Reports server-side summary as off, and how Converse caches the model where the shared model info differs.
+        """Reports server-side summary as off, how Converse caches the model, and the reasoning it takes back.
 
-        A ``model_info`` override still wins over both.
+        Claude-signed reasoning is taken back on a Claude model id, and on a model id that names no vendor, such as an
+        application inference profile ARN. Reasoning produced through such an id is not tagged, so it is not kept from
+        other vendors. A ``model_info`` override still wins over all of these.
         """
+        # A foundation-model or system profile ARN ends in a vendor-qualified id; an application profile's does not.
+        model_id = self.config.get("model_id")
+        names_no_vendor = isinstance(model_id, str) and "." not in model_id.rsplit("/", 1)[-1]
+        reasoning = ModelCapabilities(
+            reasoning_provider="anthropic" if self._names_anthropic() or names_no_vendor else None
+        )
         info = super().model_info
         return ModelInfo.merge(
             info,
@@ -517,6 +533,7 @@ class BedrockModel(Model):
             None
             if self._takes_gpt_cache_points(info)
             else _converse_cache_model_info(str(self.config.get("model_id", ""))),
+            ModelInfo(capabilities=reasoning),
             self.config.get("model_info"),
         )
 
@@ -1164,6 +1181,22 @@ class BedrockModel(Model):
             if msg["role"] == "user" and any("text" in cb or "image" in cb for cb in msg.get("content", [])):
                 return idx
         return None
+
+    def _names_anthropic(self) -> bool:
+        model_id = str(self.config.get("model_id", "")).lower()
+        return "anthropic" in model_id or "claude" in model_id
+
+    def _tag_reasoning(self, event: StreamEvent) -> StreamEvent:
+        """Tag a Claude model's signed or redacted reasoning; a model id that names no vendor stays untagged."""
+        if not self._names_anthropic() or not isinstance(event, dict):
+            return event
+        reasoning = event.get("contentBlockDelta", {}).get("delta", {}).get("reasoningContent", {})
+        if not (reasoning.get("signature") or reasoning.get("redactedContent")):
+            return event
+        provider_data: ReasoningProviderData = {"provider": "anthropic", "modelId": self.config["model_id"], "data": {}}
+        block_delta = event["contentBlockDelta"]
+        delta = {**block_delta["delta"], "reasoningContent": {**reasoning, "providerData": provider_data}}
+        return cast(StreamEvent, {**event, "contentBlockDelta": {**block_delta, "delta": delta}})
 
     def _rejects_reasoning_block(self, reasoning: ReasoningContentBlock) -> bool:
         """Whether the configured model would reject this ``reasoningContent`` block if it were replayed.
@@ -1978,7 +2011,7 @@ class BedrockModel(Model):
                                 callback(event)
                             redaction_emitted = True
 
-                    callback(chunk)
+                    callback(self._tag_reasoning(chunk))
 
                 # Safety net: guardrail_intervened but no metadata chunk arrived.
                 if not redaction_emitted and not saw_guardrail_trace and last_stop_reason == "guardrail_intervened":
@@ -1987,7 +2020,7 @@ class BedrockModel(Model):
 
             else:
                 for event in self.convert_non_streaming_to_streaming(response):
-                    callback(event)
+                    callback(self._tag_reasoning(event))
 
                 guardrail_data = response.get("trace", {}).get("guardrail")
                 if self._should_redact_guardrail_content(guardrail_data, response.get("stopReason")):

@@ -26,7 +26,7 @@ import { acceptsMimeType, lookupModelInfo, ModelInfo } from './model-info.js'
 import { withToolReferenceText } from './tool-references.js'
 import { Message, SummaryBlock } from '../types/messages.js'
 import type { ContentBlock, SystemPrompt, ToolResultContent } from '../types/messages.js'
-import type { ModelStreamEvent, Usage } from '../models/streaming.js'
+import type { ModelStreamEvent, ReasoningContentDelta, Usage } from '../models/streaming.js'
 import { accumulateUsage, createEmptyUsage } from '../models/streaming.js'
 import type { SummarizeResult } from './summarize.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError, normalizeError } from '../errors.js'
@@ -443,6 +443,8 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
           temporaryMessages: capabilities.temporaryMessages,
           deferredToolLoading: capabilities.deferredToolLoading,
           acceptedMimeTypes,
+          // Claude signatures are bound to the vendor, so any Claude model or endpoint takes them back.
+          reasoningProvider: 'anthropic',
         },
       },
       this._config.modelInfo
@@ -508,6 +510,13 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       logger.debug(`error=<${error}> | native token counting failed, falling back to estimation`)
       return super.countTokens(messages, options)
     }
+  }
+
+  /** Tags signed or redacted Claude reasoning; the signature is bound to the vendor, so any Claude model takes it. */
+  private _tagReasoning(delta: ReasoningContentDelta): ReasoningContentDelta {
+    if (!delta.signature && !delta.redactedContent) return delta
+    const modelId = this._config.modelId ?? MODEL_DEFAULTS.anthropic.modelId
+    return { ...delta, providerData: { provider: 'anthropic', modelId, data: {} } }
   }
 
   /**
@@ -582,21 +591,21 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
                 if (event.content_block.thinking) {
                   yield {
                     type: 'modelContentBlockDeltaEvent',
-                    delta: {
+                    delta: this._tagReasoning({
                       type: 'reasoningContentDelta',
                       text: event.content_block.thinking,
                       signature: event.content_block.signature,
-                    },
+                    }),
                   }
                 }
               } else if (event.content_block.type === 'redacted_thinking') {
                 yield { type: 'modelContentBlockStartEvent' }
                 yield {
                   type: 'modelContentBlockDeltaEvent',
-                  delta: {
+                  delta: this._tagReasoning({
                     type: 'reasoningContentDelta',
                     redactedContent: decodeBase64(event.content_block.data),
-                  },
+                  }),
                 }
               } else {
                 yield { type: 'modelContentBlockStartEvent' }
@@ -638,7 +647,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
               } else if (event.delta.type === 'signature_delta') {
                 yield {
                   type: 'modelContentBlockDeltaEvent',
-                  delta: { type: 'reasoningContentDelta', signature: event.delta.signature },
+                  delta: this._tagReasoning({ type: 'reasoningContentDelta', signature: event.delta.signature }),
                 }
               }
               break
