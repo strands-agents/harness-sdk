@@ -12,6 +12,7 @@ import pytest
 
 from strands import Agent, tool
 from strands._async import run_async
+from strands.agent.invocation_context import InvocationContext, _create_invocation_context
 from strands.background_tasks._errors import BackgroundTaskTimeoutError
 from strands.background_tasks.in_process._manager import InProcessTaskManager
 from strands.interrupt import Interrupt, InterruptException
@@ -466,3 +467,56 @@ async def test_wait_fails_interrupts_outside_the_tool_context() -> None:
         "error": {"type": "execution_error", "message": "Interrupt raised: approve_hook"},
     }
     assert tru_failed == exp_failed
+
+
+@pytest.mark.asyncio
+async def test_submit_runs_task_under_invocation_context_captured_at_submission() -> None:
+    invocation_context = _create_invocation_context()
+    seen: list[InvocationContext | None] = []
+
+    def callback(input_data: dict[str, str], context: ToolContext) -> str:
+        seen.append(context.invocation_context)
+        return "done"
+
+    fixture = _create_fixture(callback)
+    await fixture.manager.submit(
+        {"name": "work", "toolUseId": "tool-use-1", "input": {"value": "x"}},
+        {},
+        "pass-1",
+        fixture.work,
+        invocation_context=invocation_context,
+    )
+    await fixture.manager.wait_for_idle()
+
+    assert seen == [invocation_context]
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_cancels_other_tasks_when_one_cancel_fails(caplog: pytest.LogCaptureFixture) -> None:
+    async def callback(tool_input: dict[str, str], context: ToolContext) -> str:
+        while tool_input["value"] != "done" and not context.cancel_signal.is_set():
+            await asyncio.sleep(0)
+        return "cancelled"
+
+    fixture = _create_fixture(callback)
+    done = await _submit(fixture.manager, fixture.work, "done")
+    await fixture.manager.wait(done["task_id"])
+    failing = await _submit(fixture.manager, fixture.work, "failing")
+    other = await _submit(fixture.manager, fixture.work, "other")
+    engine_cancel = fixture.manager._engine.cancel
+
+    def cancel(task_id: str, *, reason: str) -> Any:
+        if task_id == failing["task_id"]:
+            raise RuntimeError("boom")
+        return engine_cancel(task_id, reason=reason)
+
+    fixture.manager._engine.cancel = cancel  # type: ignore[method-assign]
+    fixture.manager.cancel_all()
+
+    tru_statuses = [(await fixture.manager.get(admitted["task_id"]))["status"] for admitted in (done, other)]
+    exp_statuses = ["completed", "cancelled"]
+    assert tru_statuses == exp_statuses
+    assert f"task_id=<{failing['task_id']}>, error=<boom> | background task cancellation failed" in caplog.text
+    fixture.manager._engine.cancel = engine_cancel  # type: ignore[method-assign]
+    await fixture.manager.cancel(failing["task_id"])
+    await fixture.manager.wait_for_idle()

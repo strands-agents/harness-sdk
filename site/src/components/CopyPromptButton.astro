@@ -8,19 +8,21 @@
  * event as the other copy buttons on the site (label: `prompt:<language>`).
  */
 import {
+  EVALS_SKILLS_PROMPT,
   HARNESS_QUICKSTART_PROMPT,
   PYTHON_QUICKSTART_PROMPT,
   TYPESCRIPT_QUICKSTART_PROMPT,
 } from '../data/quickstart-prompts'
 
 interface Props {
-  language: 'python' | 'typescript' | 'harness'
+  language: 'python' | 'typescript' | 'harness' | 'evals-skills'
 }
 
 const PROMPTS = {
   python: PYTHON_QUICKSTART_PROMPT,
   typescript: TYPESCRIPT_QUICKSTART_PROMPT,
   'harness': HARNESS_QUICKSTART_PROMPT,
+  'evals-skills': EVALS_SKILLS_PROMPT,
 } as const
 
 const { language } = Astro.props
@@ -31,9 +33,16 @@ const asksLanguage = language === 'harness'
 <div class="copy-prompt not-content" data-copy-prompt data-language={language}>
   <div class="copy-prompt__text">
     <strong>Using a coding agent?</strong> Copy this prompt into Codex, Claude Code, Kiro,
-    or any coding assistant and it will walk you through this page, ask which{' '}
-    {asksLanguage ? 'path, language, and model provider' : 'model provider'} you want, and offer
-    to set up the Strands MCP server.
+    or any coding assistant and it will{' '}
+    {language === 'evals-skills' ? (
+      'install strands-agents-evals and set up its skills in that assistant.'
+    ) : (
+      <>
+        walk you through this page, ask which{' '}
+        {asksLanguage ? 'path, language, and model provider' : 'model provider'} you want, and
+        offer to set up the Strands MCP server.
+      </>
+    )}
   </div>
   <button type="button" class="copy-prompt__btn" data-copy-prompt-btn aria-label="Copy the quickstart prompt for a coding agent">
     <span data-copy-prompt-label>Copy prompt</span>

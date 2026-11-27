@@ -21,8 +21,17 @@ import type {
   ResponseFunctionCallOutputItem,
   ResponseCreateParamsStreaming,
   ResponseUsage,
+  ResponseReasoningItem,
+  ResponseOutputItem,
 } from 'openai/resources/responses/responses'
-import type { Message, StopReason, ToolResultBlock } from '../../types/messages.js'
+import {
+  Message,
+  type ReasoningBlock,
+  type ReasoningProviderData,
+  type StopReason,
+  type ToolResultBlock,
+} from '../../types/messages.js'
+import type { JSONValue } from '../../types/json.js'
 import type { ImageBlock, DocumentBlock } from '../../types/media.js'
 import { encodeBase64 } from '../../types/media.js'
 import { toMimeType } from '../../mime.js'
@@ -32,12 +41,28 @@ import type { StreamOptions } from '../model.js'
 import { logger } from '../../logging/logger.js'
 import { MODEL_DEFAULTS } from '../defaults.js'
 import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from './formatting.js'
-import { applyCacheConfig } from './cache.js'
+import { applyCacheConfig, CACHE_LIFETIMES } from './cache.js'
 import type { OpenAIResponsesConfig } from './types.js'
+import { lookupSystemPromptPlacement } from '../model-info.js'
+import type { ModelInfo } from '../model-info.js'
 
 export const DEFAULT_RESPONSES_MODEL_ID = MODEL_DEFAULTS.openai.modelId
 
+/** Input content types that accept `prompt_cache_breakpoint` (gpt-5.6+). */
+const CACHEABLE_INPUT_TYPES = new Set(['input_text', 'input_image', 'input_file'])
+
+type InputPart = { type: string; prompt_cache_breakpoint?: { mode: 'explicit'; ttl?: string } }
+
 const MANAGED_PARAMS: ReadonlySet<string> = new Set(['model', 'input', 'stream', 'store'])
+
+/**
+ * The `providerData.provider` tag of the reasoning items this adapter captures: their format, not the endpoint.
+ * Byte-identical to the Python SDK's, since it is persisted.
+ *
+ * @internal
+ */
+export const REASONING_PROVIDER = 'openai_responses'
+const ENCRYPTED_REASONING = 'reasoning.encrypted_content'
 
 /**
  * Logs a warning for each responses-managed key present in `params`.
@@ -51,22 +76,39 @@ export function warnManagedParams(params: Record<string, unknown> | undefined): 
 /**
  * Builds a Responses API streaming request body.
  *
+ * @param modelInfo - What the SDK knows about the model; decides whether durable message checkpoints are placed
+ * @param replayReasoning - Whether captured reasoning is replayed; false once the endpoint has rejected it
  * @internal
  */
 export function formatResponsesRequest(
   config: OpenAIResponsesConfig,
   messages: Message[],
   options: StreamOptions | undefined,
-  stateful: boolean
+  stateful: boolean,
+  modelInfo: ModelInfo,
+  replayReasoning = true
 ): ResponseCreateParamsStreaming {
-  const input = formatResponsesMessages(messages)
+  const { cacheConfig } = config
+  const modelId = config.modelId ?? DEFAULT_RESPONSES_MODEL_ID
+  // A stored conversation already has its reasoning, so only a stateless request replays it.
+  const reasoningModelId = stateful || !replayReasoning ? undefined : modelId
+  const cachePoints = modelInfo.capabilities?.promptCaching === 'cachePoints'
+  const cacheMessages = cachePoints && cacheConfig !== undefined && cacheConfig.messagesTTL !== false
+  const { input, explicitCache } = cacheMessages
+    ? formatCacheableResponsesMessages(
+        messages,
+        options?.dynamicTrailingBlocks,
+        cacheConfig.messagesTTL,
+        reasoningModelId
+      )
+    : { input: formatResponsesMessages(messages, reasoningModelId), explicitCache: false }
 
   // User `params` are spread first so provider-managed fields (asserted
   // required by `ResponseCreateParamsStreaming` below) always win. The
   // managed-params warning fires at config time to surface the collision.
   const request = {
     ...(config.params ?? {}),
-    model: config.modelId ?? DEFAULT_RESPONSES_MODEL_ID,
+    model: modelId,
     input,
     stream: true as const,
     store: stateful,
@@ -77,22 +119,21 @@ export function formatResponsesRequest(
     if (responseId) {
       request.previous_response_id = responseId
     }
+  } else if (request.include === null) {
+    // An explicit null opts out of the SDK default.
+    delete request.include
+  } else if (!request.include?.includes(ENCRYPTED_REASONING)) {
+    // The encrypted reasoning is what lets the next stateless request continue from it.
+    request.include = [...(request.include ?? []), ENCRYPTED_REASONING]
   }
 
-  if (options?.systemPrompt !== undefined) {
-    if (typeof options.systemPrompt === 'string') {
-      request.instructions = options.systemPrompt
-    } else if (Array.isArray(options.systemPrompt)) {
-      const texts: string[] = []
-      for (const block of options.systemPrompt) {
-        if (block.type === 'textBlock') {
-          texts.push(block.text)
-        }
-      }
-      if (texts.length > 0) {
-        request.instructions = texts.join('')
-      }
-    }
+  const systemPrompt = systemPromptText(options?.systemPrompt)
+  // Some models append instructions after the input, where they never cache; a leading developer message
+  // does. A stored conversation would keep every resent copy.
+  if (systemPrompt && !stateful && lookupSystemPromptPlacement(modelId) === 'message') {
+    request.input = [{ role: 'developer', content: [{ type: 'input_text', text: systemPrompt }] }, ...input]
+  } else if (systemPrompt !== undefined) {
+    request.instructions = systemPrompt
   }
 
   if (options?.toolSpecs && options.toolSpecs.length > 0) {
@@ -126,9 +167,97 @@ export function formatResponsesRequest(
   if (config.maxTokens !== undefined) request.max_output_tokens = config.maxTokens
   if (config.topP !== undefined) request.top_p = config.topP
 
-  applyCacheConfig(request, config.cacheConfig, options?.agentMetadata)
+  if (explicitCache) {
+    // Caller-supplied mode, TTL and diagnostics take precedence.
+    const native = config.params?.prompt_cache_options as object | undefined
+    Object.assign(request, { prompt_cache_options: { mode: 'explicit', ...native } })
+  }
+
+  applyCacheConfig(request, cacheConfig, options?.agentMetadata, cachePoints)
 
   return request
+}
+
+function systemPromptText(systemPrompt: StreamOptions['systemPrompt']): string | undefined {
+  if (typeof systemPrompt === 'string') return systemPrompt
+  if (!Array.isArray(systemPrompt)) return undefined
+  const texts = systemPrompt.flatMap((block) => (block.type === 'textBlock' ? [block.text] : []))
+  return texts.length > 0 ? texts.join('') : undefined
+}
+
+/**
+ * Formats messages with a cache checkpoint on the last input part of each durable user message.
+ *
+ * The final user message's last `dynamicTrailingBlocks` blocks are temporary: they go after the
+ * checkpoint and after any tool outputs, so a changing injection never shifts the cached prefix.
+ * A `messagesTTL` naming a cache lifetime becomes each checkpoint's `ttl`. `explicitCache` reports
+ * whether the request should default `prompt_cache_options.mode` to explicit; without a checkpoint or
+ * a temporary suffix, implicit caching stays so the request still caches.
+ */
+function formatCacheableResponsesMessages(
+  messages: Message[],
+  dynamicTrailingBlocks = 0,
+  messagesTTL?: boolean | string,
+  reasoningModelId?: string
+): { input: ResponseInputItem[]; explicitCache: boolean } {
+  const ttl = typeof messagesTTL === 'string' && CACHE_LIFETIMES.has(messagesTTL) ? { ttl: messagesTTL } : {}
+  const input: ResponseInputItem[] = []
+  let hasCheckpoints = false
+  for (const [index, { role, content }] of messages.entries()) {
+    const dynamicCount = role === 'user' && index === messages.length - 1 ? dynamicTrailingBlocks : 0
+    const boundary = Math.max(0, content.length - dynamicCount)
+    const items = formatResponsesMessages(
+      [new Message({ role, content: content.slice(0, boundary) })],
+      reasoningModelId
+    )
+    normalizeToolOutputs(items)
+    const part = role === 'user' ? lastCacheablePart(items) : undefined
+    if (part) {
+      // Mark every durable user message, not just the latest: the provider bounds lookups and
+      // writes itself, and earlier markers keep the previous request's cache entry reachable.
+      part.prompt_cache_breakpoint = { mode: 'explicit', ...ttl }
+      hasCheckpoints = true
+    }
+    if (dynamicCount > 0) {
+      const tail = formatResponsesMessages([new Message({ role: 'user', content: content.slice(boundary) })])
+      normalizeToolOutputs(tail)
+      appendDynamicContent(items, tail)
+    }
+    input.push(...items)
+  }
+  return { input, explicitCache: hasCheckpoints || dynamicTrailingBlocks > 0 }
+}
+
+/**
+ * Sends text tool outputs as one input_text block, so they can carry a checkpoint and replay identically.
+ * An empty output stays a string: an empty text block would be a meaningless checkpoint.
+ */
+function normalizeToolOutputs(items: ResponseInputItem[]): void {
+  for (const item of items) {
+    if (item.type === 'function_call_output' && typeof item.output === 'string' && item.output !== '') {
+      item.output = [{ type: 'input_text', text: item.output }]
+    }
+  }
+}
+
+/** Finds the final input part (text, image, or file) in a formatted, normalized durable user message. */
+function lastCacheablePart(items: ResponseInputItem[]): InputPart | undefined {
+  const parts = items.flatMap((item) => {
+    const content = item.type === 'function_call_output' ? item.output : (item as { content?: unknown }).content
+    return Array.isArray(content) ? (content as InputPart[]) : []
+  })
+  return parts.reverse().find((part) => CACHEABLE_INPUT_TYPES.has(part.type))
+}
+
+/** Merges temporary content into the durable user message; after tool outputs, it becomes its own message. */
+function appendDynamicContent(items: ResponseInputItem[], tail: ResponseInputItem[]): void {
+  const last = items.at(-1)
+  const first = tail[0]
+  if (last && first && 'role' in last && 'role' in first) {
+    ;(last as { content: unknown[] }).content.push(...(first as { content: unknown[] }).content)
+    tail.shift()
+  }
+  items.push(...tail)
 }
 
 /**
@@ -138,12 +267,15 @@ export function formatResponsesRequest(
  * - Text/media → grouped in `{ role, content: [...] }`
  * - Tool calls → separate `{ type: 'function_call', ... }` items
  * - Tool results → separate `{ type: 'function_call_output', ... }` items
+ * - Reasoning this adapter captured from `reasoningModelId` → `{ type: 'reasoning', ... }` items ahead of the rest;
+ *   other reasoning, or all of it when `reasoningModelId` is undefined, is dropped
  */
-function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
+function formatResponsesMessages(messages: Message[], reasoningModelId?: string): ResponseInputItem[] {
   const input: ResponseInputItem[] = []
 
   for (const message of messages) {
     const role = message.role === 'assistant' ? 'assistant' : 'user'
+    const reasoningItems: ResponseInputItem[] = []
     const contentItems: Array<Record<string, unknown>> = []
     const toolCallItems: ResponseInputItem[] = []
     const toolResultItems: ResponseInputItem[] = []
@@ -203,12 +335,19 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
         }
 
         case 'reasoningBlock': {
-          logger.warn(
-            'block_type=<reasoningBlock> | reasoning content is not yet supported in multi-turn conversations with the responses api'
-          )
+          const item = formatReasoningItem(block, reasoningModelId)
+          if (item) {
+            reasoningItems.push(item)
+          } else {
+            logger.warn(
+              'block_type=<reasoningBlock> | reasoning from another provider or model cannot be replayed to the responses api | skipping'
+            )
+          }
           break
         }
 
+        case 'unknownBlock':
+          break
         default: {
           logger.warn(
             `block_type=<${block.type}> | unsupported content type in responses api message formatting | skipping`
@@ -217,6 +356,15 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
       }
     }
 
+    // A reasoning item must be followed by the output it produced, a message or a function call.
+    const followed = toolCallItems.length > 0 || contentItems.some((item) => item.type === 'output_text' && item.text)
+    if (reasoningItems.length > 0 && !followed) {
+      logger.warn(
+        `count=<${reasoningItems.length}> | reasoning without a message or tool call in its turn cannot be replayed to the responses api | skipping`
+      )
+    } else {
+      input.push(...reasoningItems)
+    }
     if (contentItems.length > 0) {
       if (role === 'assistant') {
         // Only the string EasyInputMessage form is a valid assistant *input* shape
@@ -251,6 +399,37 @@ function formatResponsesMessages(messages: Message[]): ResponseInputItem[] {
   }
 
   return input
+}
+
+/**
+ * The request without its replayed reasoning, when the endpoint rejected the request because of that reasoning;
+ * otherwise undefined.
+ *
+ * @internal
+ */
+export function withoutRejectedReasoning(
+  request: ResponseCreateParamsStreaming,
+  error: unknown
+): ResponseCreateParamsStreaming | undefined {
+  const message = error instanceof Error ? error.message.toLowerCase() : ''
+  const input = Array.isArray(request.input) ? request.input : []
+  const replayed = input.some((item) => item.type === 'reasoning')
+  if ((error as { status?: number }).status !== 400 || !replayed) return undefined
+  if (!message.includes('reasoning') && !message.includes('encrypted')) return undefined
+  return { ...request, input: input.filter((item) => item.type !== 'reasoning') }
+}
+
+/** The reasoning input item for a block this adapter captured from `modelId`, else undefined. */
+function formatReasoningItem(block: ReasoningBlock, modelId: string | undefined): ResponseInputItem | undefined {
+  const providerData = block.providerData
+  if (providerData?.provider !== REASONING_PROVIDER || providerData.modelId !== modelId) return undefined
+  const data = providerData.data
+  // A fixed key order keeps the replayed prefix byte-identical across requests, so it stays cached.
+  const item: Record<string, JSONValue> = { type: 'reasoning', summary: data.summary ?? [] }
+  for (const key of ['id', 'content', 'encrypted_content']) {
+    if (data[key] !== undefined) item[key] = data[key]
+  }
+  return item as unknown as ResponseReasoningItem
 }
 
 /**
@@ -308,6 +487,8 @@ function formatToolResultOutput(resultBlock: ToolResultBlock): string | Response
         }
         break
       }
+      case 'unknownBlock':
+        break
       default:
         logger.warn(`block_type=<${c.type}> | unsupported tool result content type for responses api`)
     }
@@ -352,12 +533,17 @@ function formatDocumentInput(docBlock: DocumentBlock): Record<string, unknown> |
  */
 export interface ResponsesStreamState {
   dataType: string | null
+  /** The model whose reasoning items are captured for replay; undefined captures none. */
+  reasoningModelId: string | undefined
+  /** Ids of the reasoning items already captured, so the terminal output only adds the rest. */
+  capturedReasoning: Set<string>
   toolCalls: Map<string, { name: string; arguments: string; callId: string; itemId: string }>
   finalUsage: {
     inputTokens: number
     outputTokens: number
     totalTokens: number
     cacheReadInputTokens?: number
+    cacheWriteInputTokens?: number
   } | null
   stopReason: StopReason
 }
@@ -367,9 +553,11 @@ export interface ResponsesStreamState {
  *
  * @internal
  */
-export function createResponsesStreamState(): ResponsesStreamState {
+export function createResponsesStreamState(reasoningModelId?: string): ResponsesStreamState {
   return {
     dataType: null,
+    reasoningModelId,
+    capturedReasoning: new Set(),
     toolCalls: new Map(),
     finalUsage: null,
     stopReason: 'endTurn',
@@ -378,9 +566,10 @@ export function createResponsesStreamState(): ResponsesStreamState {
 
 /**
  * Maps a Responses API `usage` object to the SDK's usage shape, including
- * prompt-cache reads. The Responses API reports cache hits via
- * `usage.input_tokens_details.cached_tokens`; surfacing it as
- * `cacheReadInputTokens` keeps the Responses path consistent with the Bedrock,
+ * prompt-cache reads and writes. The Responses API reports cache hits via
+ * `usage.input_tokens_details.cached_tokens` and cache writes via
+ * `cache_write_tokens`; surfacing them as `cacheReadInputTokens` /
+ * `cacheWriteInputTokens` keeps the Responses path consistent with the Bedrock,
  * Anthropic, and Vercel model adapters (and lets `telemetry/tracer.ts` emit
  * `gen_ai.usage.cache_read.input_tokens`).
  *
@@ -395,6 +584,12 @@ function mapResponsesUsage(usage: ResponseUsage): NonNullable<ResponsesStreamSta
   const cached = usage.input_tokens_details?.cached_tokens
   if (typeof cached === 'number' && cached > 0) {
     mapped.cacheReadInputTokens = cached
+  }
+  // GPT-5.6 reports cache writes here; the openai package's InputTokensDetails
+  // does not type the field yet, so read it through a narrow cast.
+  const cacheWrite = (usage.input_tokens_details as { cache_write_tokens?: number } | undefined)?.cache_write_tokens
+  if (typeof cacheWrite === 'number' && cacheWrite > 0) {
+    mapped.cacheWriteInputTokens = cacheWrite
   }
   return mapped
 }
@@ -423,6 +618,15 @@ export function mapResponsesEventToSDK(
   modelState: StateStore | undefined
 ): ModelStreamEvent[] {
   const events: ModelStreamEvent[] = []
+
+  // The reasoning_text variant some OpenAI-compatible servers stream; the openai package does not type it.
+  const untyped = event as unknown as { type: string; delta?: unknown }
+  if (untyped.type === 'response.reasoning.delta' && typeof untyped.delta === 'string') {
+    events.push(...switchContent('reasoning', state.dataType))
+    state.dataType = 'reasoning'
+    events.push({ type: 'modelContentBlockDeltaEvent', delta: { type: 'reasoningContentDelta', text: untyped.delta } })
+    return events
+  }
 
   switch (event.type) {
     case 'response.created': {
@@ -491,6 +695,11 @@ export function mapResponsesEventToSDK(
       break
     }
 
+    case 'response.output_item.done': {
+      events.push(...captureReasoning([event.item], state))
+      break
+    }
+
     case 'response.output_item.added': {
       if (event.item.type === 'function_call') {
         // `id` is optional in the SDK type but load-bearing here: it keys
@@ -529,7 +738,10 @@ export function mapResponsesEventToSDK(
       }
       if (resp.incomplete_details?.reason === 'max_output_tokens') {
         state.stopReason = 'maxTokens'
+      } else if (resp.incomplete_details?.reason === 'content_filter') {
+        state.stopReason = 'contentFiltered'
       }
+      events.push(...captureReasoning(resp.output, state))
       break
     }
 
@@ -547,6 +759,7 @@ export function mapResponsesEventToSDK(
       if (resp.usage) {
         state.finalUsage = mapResponsesUsage(resp.usage)
       }
+      events.push(...captureReasoning(resp.output, state))
       break
     }
 
@@ -583,8 +796,9 @@ export function finalizeResponsesStream(state: ResponsesStreamState): ModelStrea
     events.push({ type: 'modelContentBlockStopEvent' })
   }
 
+  // A function call in flight at max_output_tokens has truncated arguments, so maxTokens wins.
   let stopReason = state.stopReason
-  if (state.toolCalls.size > 0) {
+  if (state.toolCalls.size > 0 && stopReason !== 'maxTokens') {
     stopReason = 'toolUse'
   }
 
@@ -594,6 +808,46 @@ export function finalizeResponsesStream(state: ResponsesStreamState): ModelStrea
 
   events.push({ type: 'modelMessageStopEvent', stopReason })
 
+  return events
+}
+
+/**
+ * Emits each new reasoning output item as its own reasoning block, carrying what replaying it needs. Reasoning text
+ * already streamed into the open reasoning block stays there; an item whose text was not streamed gets it from its
+ * `content` or `summary`.
+ */
+function captureReasoning(items: ResponseOutputItem[] | undefined, state: ResponsesStreamState): ModelStreamEvent[] {
+  const events: ModelStreamEvent[] = []
+  if (state.reasoningModelId === undefined || !Array.isArray(items)) return events
+  for (const item of items) {
+    if (item.type !== 'reasoning' || state.capturedReasoning.has(item.id)) continue
+    if (item.id) state.capturedReasoning.add(item.id)
+    const data: { [key: string]: JSONValue } = {}
+    for (const key of ['id', 'summary', 'content', 'encrypted_content'] as const) {
+      const value = item[key]
+      if (value && (!Array.isArray(value) || value.length > 0)) data[key] = value as JSONValue
+    }
+    const parts = (item.content?.length ? item.content : item.summary) ?? []
+    const text = parts.map((part) => part.text ?? '').join('\n')
+    const replayable = data.content !== undefined || data.encrypted_content !== undefined
+    if (state.dataType !== 'reasoning') {
+      if (!text && !replayable) continue
+      events.push(...switchContent('reasoning', state.dataType))
+      if (text) {
+        events.push({ type: 'modelContentBlockDeltaEvent', delta: { type: 'reasoningContentDelta', text } })
+      }
+    }
+    if (replayable) {
+      const providerData: ReasoningProviderData = {
+        provider: REASONING_PROVIDER,
+        modelId: state.reasoningModelId,
+        data,
+      }
+      events.push({ type: 'modelContentBlockDeltaEvent', delta: { type: 'reasoningContentDelta', providerData } })
+    }
+    events.push({ type: 'modelContentBlockStopEvent' })
+    state.dataType = null
+  }
   return events
 }
 

@@ -127,6 +127,9 @@ def _normalize_builtin_tools(
                 normalized[name] = setting
             else:
                 raise ValueError(f"builtin_tools[{name!r}] must be a bool or a config mapping, got {setting!r}.")
+        # A delegation depth of 0 means no subagent tool at all (same as TS's resolveBuiltinTools).
+        if isinstance(normalized["subagent"], Mapping) and normalized["subagent"].get("max_depth") == 0:
+            normalized["subagent"] = False
         return normalized
     if isinstance(value, (str, bool)) or not isinstance(value, Sequence):
         raise ValueError(
@@ -137,6 +140,13 @@ def _normalize_builtin_tools(
     for name in names:
         _check_builtin_tool_name(name)
     return {name: name in names for name in defaults.BUILTIN_TOOL_NAMES}
+
+
+def _check_caching(value: object) -> None:
+    """Raise unless ``value`` is a ``caching`` setting: ``"auto"``, a bool, or ``None``."""
+    if value is None or isinstance(value, bool) or value == "auto":
+        return
+    raise ValueError(f"caching must be 'auto', True, False, or None, got {value!r}; pass False to turn it off.")
 
 
 def _session_config(value: bool | SessionConfig | SessionManager | None) -> SessionConfig | SessionManager | None:

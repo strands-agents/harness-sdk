@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
 import { Agent, tool } from '@strands-agents/sdk'
 import { getTracer, getMeter } from '@strands-agents/sdk/telemetry'
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
@@ -61,7 +61,7 @@ const failingTool = tool({
   },
 })
 
-describe.sequential('Telemetry Integration', () => {
+describe('Telemetry Integration', { concurrent: false }, () => {
   beforeAll(() => {
     exporter = new InMemorySpanExporter()
     provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] })
@@ -594,6 +594,65 @@ describe.sequential('Telemetry Integration', () => {
       expect(attr(agentSpan, 'gen_ai.usage.completion_tokens')).toBe(125)
     })
 
+    it('counts each model call once across the trace with gen_ai_usage_on_model_spans_only', async () => {
+      vi.stubEnv('OTEL_SEMCONV_STABILITY_OPT_IN', 'gen_ai_usage_on_model_spans_only')
+      try {
+        let callCount = 0
+        const model = new TestModelProvider(() => {
+          callCount++
+          return (async function* () {
+            yield { type: 'modelMessageStartEvent' as const, role: 'assistant' as const }
+            if (callCount === 1) {
+              yield {
+                type: 'modelContentBlockStartEvent' as const,
+                start: { type: 'toolUseStart' as const, name: 'calculator', toolUseId: 'tool-1' },
+              }
+              yield {
+                type: 'modelContentBlockDeltaEvent' as const,
+                delta: { type: 'toolUseInputDelta' as const, input: '{"a":1,"b":2}' },
+              }
+              yield { type: 'modelContentBlockStopEvent' as const }
+              yield { type: 'modelMessageStopEvent' as const, stopReason: 'toolUse' as const }
+              yield {
+                type: 'modelMetadataEvent' as const,
+                usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+              }
+            } else {
+              yield { type: 'modelContentBlockStartEvent' as const }
+              yield {
+                type: 'modelContentBlockDeltaEvent' as const,
+                delta: { type: 'textDelta' as const, text: 'The answer is 3' },
+              }
+              yield { type: 'modelContentBlockStopEvent' as const }
+              yield { type: 'modelMessageStopEvent' as const, stopReason: 'endTurn' as const }
+              yield {
+                type: 'modelMetadataEvent' as const,
+                usage: { inputTokens: 200, outputTokens: 75, totalTokens: 275 },
+              }
+            }
+          })()
+        })
+
+        const agent = new Agent({ model, printer: false, name: 'usage-agent', tools: [calculatorTool] })
+
+        await agent.invoke('Add 1 and 2')
+
+        const spans = await flush()
+        const agentSpan = findSpans(spans, AGENT_SPAN_PREFIX)[0]!
+        expect(Object.keys(agentSpan.attributes).filter((key) => key.startsWith('gen_ai.usage.'))).toStrictEqual([])
+        expect(findSpans(spans, MODEL_SPAN_NAME)).toHaveLength(2)
+
+        // A backend that sums usage over every span now gets the real totals: 100+200 and 50+75.
+        const sum = (key: string): number =>
+          spans.reduce((total, span) => total + ((span.attributes[key] as number) ?? 0), 0)
+        expect(sum('gen_ai.usage.input_tokens')).toBe(300)
+        expect(sum('gen_ai.usage.output_tokens')).toBe(125)
+        expect(sum('gen_ai.usage.total_tokens')).toBe(425)
+      } finally {
+        vi.unstubAllEnvs()
+      }
+    })
+
     it('records per-call usage on individual model spans', async () => {
       let callCount = 0
       const model = new TestModelProvider(() => {
@@ -806,7 +865,7 @@ describe.sequential('Telemetry Integration', () => {
   })
 })
 
-describe.sequential('Metrics Integration', () => {
+describe('Metrics Integration', { concurrent: false }, () => {
   let metricExporter: InMemoryMetricExporter
   let metricReader: PeriodicExportingMetricReader
   let meterProvider: MeterProvider

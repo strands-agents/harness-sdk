@@ -2,11 +2,14 @@ import { describe, it, expect, vi } from 'vitest'
 import { ContextOffloader } from '../plugin.js'
 import { InMemoryStorage } from '../storage.js'
 import { AfterToolCallEvent, BeforeModelCallEvent } from '../../../hooks/events.js'
-import { TextBlock, JsonBlock, ToolResultBlock } from '../../../types/messages.js'
+import { TextBlock, JsonBlock, ToolReferenceBlock, ToolResultBlock } from '../../../types/messages.js'
 import { ImageBlock, VideoBlock, DocumentBlock } from '../../../types/media.js'
 import { createMockAgent, invokeTrackedHook } from '../../../__fixtures__/agent-helpers.js'
+import { collectGenerator } from '../../../__fixtures__/model-test-helpers.js'
+import { createMockContext } from '../../../__fixtures__/tool-helpers.js'
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { AgentMetrics } from '../../../telemetry/meter.js'
+import { withDefaultLocale } from '../../../__fixtures__/locale-helpers.js'
 
 const mockModel = new MockMessageModel()
 
@@ -16,7 +19,12 @@ function makeMockAgent() {
 
 function makeEvent(
   content: InstanceType<
-    typeof TextBlock | typeof JsonBlock | typeof ImageBlock | typeof VideoBlock | typeof DocumentBlock
+    | typeof TextBlock
+    | typeof JsonBlock
+    | typeof ImageBlock
+    | typeof VideoBlock
+    | typeof DocumentBlock
+    | typeof ToolReferenceBlock
   >[],
   overrides?: { status?: 'success' | 'error'; toolName?: string }
 ) {
@@ -129,6 +137,39 @@ describe('ContextOffloader', () => {
       expect((event.result.content[0] as TextBlock).text).toBe('x'.repeat(1000))
     })
 
+    it('does not offload tool results made of tool references, which keep the loaded schemas in context', async () => {
+      const plugin = new ContextOffloader({ storage: new InMemoryStorage(), maxResultTokens: 10, previewTokens: 5 })
+      const agent = createMockAgent()
+      plugin.initAgent(agent)
+      const event = makeEvent([new ToolReferenceBlock({ name: 'shell' })], { toolName: 'load_tools' })
+      vi.spyOn(event.agent.model, 'countTokens').mockResolvedValue(1000)
+
+      await invokeTrackedHook(agent, event)
+
+      expect(event.result.content).toEqual([new ToolReferenceBlock({ name: 'shell' })])
+    })
+
+    it('does not offload a tool result that holds a tool reference among other content', async () => {
+      const plugin = new ContextOffloader({ storage: new InMemoryStorage(), maxResultTokens: 10, previewTokens: 5 })
+      const agent = createMockAgent()
+      plugin.initAgent(agent)
+      const content = [new TextBlock('a'.repeat(2000)), new ToolReferenceBlock({ name: 'shell' })]
+      const event = makeEvent(content)
+      await invokeTrackedHook(agent, event)
+      expect(event.result.content).toEqual(content)
+    })
+
+    it('offloads a load_tools result that holds text, like any other tool result', async () => {
+      const plugin = new ContextOffloader({ storage: new InMemoryStorage(), maxResultTokens: 100, previewTokens: 10 })
+      const agent = createMockAgent()
+      plugin.initAgent(agent)
+      const event = makeEvent([new TextBlock('a'.repeat(2000))], { toolName: 'load_tools' })
+
+      await invokeTrackedHook(agent, event)
+
+      expect((event.result.content[0] as TextBlock).text).toMatch(/^\[Offloaded: /)
+    })
+
     it('offloads large text results', async () => {
       const storage = new InMemoryStorage()
       const plugin = new ContextOffloader({ storage, maxResultTokens: 100, previewTokens: 10 })
@@ -145,6 +186,21 @@ describe('ContextOffloader', () => {
       expect(preview).toContain('Tool result was offloaded')
       expect(preview).toContain('[Stored references:]')
       expect(preview).not.toContain(largeText)
+    })
+
+    // https://github.com/strands-agents/harness-sdk/issues/4681
+    it('formats offload sizes the same regardless of the host locale', async () => {
+      const storage = new InMemoryStorage()
+      const plugin = new ContextOffloader({ storage, maxResultTokens: 100, previewTokens: 10 })
+      const agent = createMockAgent()
+      plugin.initAgent(agent)
+
+      const event = makeEvent([new TextBlock('a'.repeat(200_000))])
+      await withDefaultLocale('en-IN', () => invokeTrackedHook(agent, event))
+
+      const preview = (event.result.content[0] as TextBlock).text
+      expect(preview).toContain('text, 200,000 chars')
+      expect(preview).toMatch(/~\d{1,3}(,\d{3})* tokens\]/)
     })
 
     it('offloads large JSON results', async () => {
@@ -349,15 +405,42 @@ describe('ContextOffloader', () => {
       expect((result as DocumentBlock).format).toBe('pdf')
     })
 
-    it('returns error string for missing reference', async () => {
+    it('throws for missing reference', async () => {
       const storage = new InMemoryStorage()
       const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
       const tools = plugin.getTools()
       const retrievalTool = tools[0]!
-      const result = await (retrievalTool as unknown as { invoke(input: unknown): Promise<unknown> }).invoke({
+      const invoke = (retrievalTool as unknown as { invoke(input: unknown): Promise<unknown> }).invoke({
         reference: 'nonexistent',
       })
-      expect(result).toContain('Error: reference not found')
+      await expect(invoke).rejects.toThrow('reference not found')
+    })
+
+    it('reports a storage failure that is not a missing key as itself', async () => {
+      // A throttle is recoverable: told "do not retry" the model abandons content the next call would fetch.
+      const storage = new InMemoryStorage()
+      vi.spyOn(storage, 'retrieve').mockRejectedValue(new Error('ThrottlingException: Rate exceeded'))
+      const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
+      const toolUse = { name: 'retrieve_offloaded_content', toolUseId: 'tu-1', input: { reference: 'mem_1_k1' } }
+
+      const { result } = await collectGenerator(plugin.getTools()[0]!.stream(createMockContext(toolUse)))
+
+      expect(result.status).toBe('error')
+      expect((result.content[0] as TextBlock).text).toBe('Error: ThrottlingException: Rate exceeded')
+    })
+
+    it('tells the model a missing reference is terminal only once it was passed as listed', async () => {
+      // The placeholder lists each reference with a description, so a model can copy the decoration with it.
+      const plugin = new ContextOffloader({ storage: new InMemoryStorage(), includeRetrievalTool: true })
+      const toolUse = { name: 'retrieve_offloaded_content', toolUseId: 'tu-1', input: { reference: ' mem_1_k1 ' } }
+
+      const { result } = await collectGenerator(plugin.getTools()[0]!.stream(createMockContext(toolUse)))
+
+      expect(result.status).toBe('error')
+      expect((result.content[0] as TextBlock).text).toBe(
+        'Error: reference not found: mem_1_k1. Pass the reference exactly as the placeholder lists it. ' +
+          'If that is what you passed, the content is unavailable — do not retry.'
+      )
     })
   })
 
@@ -444,12 +527,10 @@ describe('ContextOffloader', () => {
       const ref = await storage.store('k1', new Uint8Array([137, 80, 78, 71]), 'image/png')
 
       const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
-      const result = (await getRetrievalTool(plugin).invoke({
-        reference: ref,
-        pattern: 'test',
-      })) as string
 
-      expect(result).toContain('Error: cannot search binary content (image/png)')
+      await expect(getRetrievalTool(plugin).invoke({ reference: ref, pattern: 'test' })).rejects.toThrow(
+        'cannot search binary content (image/png)'
+      )
     })
 
     it('falls back to literal match on invalid regex', async () => {
@@ -469,15 +550,13 @@ describe('ContextOffloader', () => {
       expect(result).toContain('> 3| foo (bar again')
     })
 
-    it('returns error for missing reference', async () => {
+    it('throws for missing reference', async () => {
       const storage = new InMemoryStorage()
       const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
-      const result = (await getRetrievalTool(plugin).invoke({
-        reference: 'nonexistent',
-        pattern: 'test',
-      })) as string
 
-      expect(result).toContain('Error: reference not found')
+      await expect(getRetrievalTool(plugin).invoke({ reference: 'nonexistent', pattern: 'test' })).rejects.toThrow(
+        'reference not found'
+      )
     })
 
     it('searches JSON content', async () => {
@@ -554,12 +633,10 @@ describe('ContextOffloader', () => {
       const ref = await storage.store('k1', new TextEncoder().encode(content), 'text/plain')
 
       const plugin = new ContextOffloader({ storage, includeRetrievalTool: true })
-      const result = (await getRetrievalTool(plugin).invoke({
-        reference: ref,
-        line_range: { start: 100, end: 200 },
-      })) as string
 
-      expect(result).toContain('beyond content length (3 lines)')
+      await expect(
+        getRetrievalTool(plugin).invoke({ reference: ref, line_range: { start: 100, end: 200 } })
+      ).rejects.toThrow('beyond content length (3 lines)')
     })
 
     it('clamps line_range.end to actual content length', async () => {

@@ -29,6 +29,18 @@ def live_cache():
     return cache
 
 
+@pytest.fixture(scope="module")
+def fresh_index():
+    """An index rebuilt from llms.txt with no page hydrated; the session cache is restored afterwards."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cache, "_INDEX", None)
+        mp.setattr(cache, "_URL_CACHE", {})
+        mp.setattr(cache, "_URL_TITLES", {})
+        mp.setattr(cache, "_LINKS_LOADED", False)
+        cache.ensure_ready()
+        yield cache.get_index()
+
+
 @pytest.fixture(scope="session")
 def large_doc_page(live_cache):
     """Fetch and cache a known large documentation page.

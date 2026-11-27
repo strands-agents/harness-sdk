@@ -5,6 +5,8 @@ Mirrors ``strands-ts/src/sandbox/ssh.ts``.
 
 import re
 import shlex
+import threading
+import warnings
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -130,6 +132,7 @@ class SshSandbox(PosixShellSandbox):
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ExecutionResult, None]:
         """Execute a command on the remote host, streaming output.
@@ -139,6 +142,8 @@ class SshSandbox(PosixShellSandbox):
             timeout: Maximum execution time in seconds. ``None`` means no timeout.
             cwd: Working directory for this command, overriding ``working_dir``.
             env: Environment variables to set, applied via a shell ``export`` prefix.
+            cancel_signal: Aborts the call when set by killing the local ``ssh`` client.
+                As with ``timeout``, the command may keep running on the remote host.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
@@ -148,6 +153,7 @@ class SshSandbox(PosixShellSandbox):
         Raises:
             ValueError: If an environment variable name is invalid.
             SandboxTimeoutError: If execution exceeds ``timeout`` seconds.
+            SandboxAbortError: If ``cancel_signal`` is set before the command exits.
         """
         effective_cwd = cwd if cwd is not None else self.working_dir
         env_prefix = build_shell_env_prefix(env)
@@ -168,6 +174,12 @@ class SshSandbox(PosixShellSandbox):
         for opt in self._ssh_options:
             args += ["-o", opt]
 
+        # ssh "first obtained value wins" for -o: this trails the user's
+        # ssh_options so a caller-supplied LogLevel takes precedence, while
+        # unopinionated callers get a quiet stderr (OpenSSH 10.1+ otherwise
+        # emits a post-quantum advisory warning on every connection).
+        args += ["-o", "LogLevel=ERROR"]
+
         # ssh requires the hostname and command after all flags. '--' terminates flag
         # parsing so the host is always treated as a positional argument; without it, a
         # host like '-oProxyCommand=evil' would be parsed as a flag, enabling arbitrary
@@ -175,7 +187,11 @@ class SshSandbox(PosixShellSandbox):
         args += ["--", self.host, remote_command]
 
         async for chunk in _stream_process(
-            "ssh", args, timeout=timeout, enoent_message="ssh is not installed or not on PATH"
+            "ssh",
+            args,
+            timeout=timeout,
+            enoent_message="ssh is not installed or not on PATH",
+            cancel_signal=cancel_signal,
         ):
             yield chunk
 
@@ -185,12 +201,19 @@ class SshSandbox(PosixShellSandbox):
         Returns:
             The tools bound to this sandbox, with descriptions naming the remote host.
         """
-        return [
-            make_file_editor(
+        # Suppress the ``make_file_editor`` deprecation warning for this internal
+        # construction: the sandbox retains file_editor until it migrates to the
+        # new read/write/edit vended tools. A user-facing ``make_file_editor``
+        # call still warns.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            file_editor_tool = make_file_editor(
                 sandbox=self,
                 name="sandbox_file_editor",
                 description=f'{DEFAULT_FILE_EDITOR_DESCRIPTION} Files are on host "{self.host}".',
-            ),
+            )
+        return [
+            file_editor_tool,
             make_shell(
                 sandbox=self,
                 name="sandbox_shell",

@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 824" width="720" height="824">
+  <!-- Type: lifecycle (typescript). Story: invocation events bracket the agent loop; model-call and tool events alternate until the model makes no tool calls, and an interrupt ends the request early. Stages are zones; every event is its own chip, stacked in firing order. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="80" y="16" width="208" height="116" rx="8"/>
+  <text class="dg-eyebrow" x="96" y="36">REQUEST START</text>
+
+  <rect class="dg-zone" x="64" y="156" width="592" height="488" rx="8"/>
+  <text class="dg-eyebrow" x="80" y="176">AGENT LOOP</text>
+
+  <rect class="dg-zone" x="80" y="192" width="208" height="236" rx="8"/>
+  <text class="dg-eyebrow" x="96" y="212">MODEL CALL</text>
+
+  <rect class="dg-zone" x="400" y="192" width="240" height="436" rx="8"/>
+  <text class="dg-eyebrow" x="416" y="212">TOOL EXECUTION</text>
+  <rect class="dg-zone" x="416" y="264" width="208" height="196" rx="4"/>
+  <text class="dg-eyebrow" x="432" y="284">EACH TOOL CALL</text>
+
+  <rect class="dg-zone" x="80" y="692" width="208" height="116" rx="8"/>
+  <text class="dg-eyebrow" x="96" y="712">REQUEST END</text>
+
+  <!-- Edges -->
+  <path class="dg-edge" d="M184,132 V190" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M288,248 H398" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M400,288 H290" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M184,428 V498" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M184,544 V690" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-dashed" d="M520,628 V674" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-dashed" d="M520,704 V742 Q520,750 512,750 H290" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask is-on-zone" x="304" y="228" width="80" height="12" rx="2"/>
+  <text class="dg-label" x="344" y="237" text-anchor="middle">TOOL CALLS</text>
+  <rect class="dg-mask is-on-zone" x="314" y="268" width="60" height="12" rx="2"/>
+  <text class="dg-label" x="344" y="277" text-anchor="middle">RESULTS</text>
+  <text class="dg-label" x="196" y="468">NO TOOL CALLS</text>
+  <text class="dg-label" x="532" y="664">INTERRUPT</text>
+
+  <!-- Event chips, in firing order -->
+  <rect class="dg-node is-event" x="96" y="48" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="184" y="66" text-anchor="middle">BeforeInvocationEvent</text>
+  <rect class="dg-node is-event" x="96" y="88" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="184" y="106" text-anchor="middle">MessageAddedEvent</text>
+
+  <rect class="dg-node is-event" x="96" y="224" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="184" y="242" text-anchor="middle">BeforeModelCallEvent</text>
+  <rect class="dg-node is-event" x="96" y="264" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="184" y="282" text-anchor="middle">ModelStreamUpdateEvent</text>
+  <rect class="dg-node is-event" x="96" y="304" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="184" y="322" text-anchor="middle">ContentBlockEvent</text>
+  <rect class="dg-node is-event" x="96" y="344" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="184" y="362" text-anchor="middle">ModelMessageEvent</text>
+  <rect class="dg-node is-event" x="96" y="384" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="184" y="402" text-anchor="middle">AfterModelCallEvent</text>
+
+  <rect class="dg-node is-event" x="96" y="500" width="176" height="44" rx="6"/>
+  <text class="dg-code" x="184" y="518" text-anchor="middle">MessageAddedEvent</text>
+  <text class="dg-sub" x="184" y="534" text-anchor="middle">model message</text>
+
+  <rect class="dg-node is-event" x="432" y="224" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="520" y="242" text-anchor="middle">BeforeToolsEvent</text>
+  <rect class="dg-node is-event" x="432" y="296" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="520" y="314" text-anchor="middle">BeforeToolCallEvent</text>
+  <rect class="dg-node is-event" x="432" y="336" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="520" y="354" text-anchor="middle">ToolStreamUpdateEvent</text>
+  <rect class="dg-node is-event" x="432" y="376" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="520" y="394" text-anchor="middle">AfterToolCallEvent</text>
+  <rect class="dg-node is-event" x="432" y="416" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="520" y="434" text-anchor="middle">ToolResultEvent</text>
+  <rect class="dg-node is-event" x="432" y="472" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="520" y="490" text-anchor="middle">AfterToolsEvent</text>
+  <rect class="dg-node is-event" x="432" y="512" width="176" height="44" rx="6"/>
+  <text class="dg-code" x="520" y="530" text-anchor="middle">MessageAddedEvent</text>
+  <text class="dg-sub" x="520" y="546" text-anchor="middle">model message</text>
+  <rect class="dg-node is-event" x="432" y="568" width="176" height="44" rx="6"/>
+  <text class="dg-code" x="520" y="586" text-anchor="middle">MessageAddedEvent</text>
+  <text class="dg-sub" x="520" y="602" text-anchor="middle">tool results</text>
+
+  <rect class="dg-node is-event" x="432" y="676" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="520" y="694" text-anchor="middle">InterruptEvent</text>
+
+  <rect class="dg-node is-event" x="96" y="724" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="184" y="742" text-anchor="middle">AfterInvocationEvent</text>
+  <rect class="dg-node is-event" x="96" y="764" width="176" height="28" rx="6"/>
+  <text class="dg-code" x="184" y="782" text-anchor="middle">AgentResultEvent</text>
+</svg>

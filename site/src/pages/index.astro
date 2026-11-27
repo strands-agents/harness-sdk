@@ -1,58 +1,43 @@
 ---
-import Navigation from '../components/Navigation.astro';
 import Search from '@astrojs/starlight/components/Search.astro';
+import Navigation from '../components/Navigation.astro';
+import AnnouncementBanner from '../components/AnnouncementBanner.astro';
 import Banner from '../components/Banner.astro';
 import InteractiveToolkit from '../components/InteractiveToolkit.astro';
 import LogoFarm from '../components/LogoFarm.astro';
 import UseCases from '../components/UseCases.astro';
 import ProveCases from '../components/ProveCases.astro';
 import CommunityHub from '../components/CommunityHub.astro';
+import HomeFaq from '../components/HomeFaq.astro';
 import NextSteps from '../components/NextSteps.astro';
 import Footer from '../components/Footer.astro';
-import SiteScripts from '../components/SiteScripts.astro';
-import Analytics from '../components/Analytics.astro';
+import SiteHead from '../components/SiteHead.astro';
+import { products } from '../config/navbar';
+import { productSchema } from '../util/structured-data';
 import '../styles/fonts.css';
 
-// Base-path-aware favicon href — matches the docs override in Head.astro so
-// the homepage doesn't 404 under a prefixed deploy path.
-const base = import.meta.env.BASE_URL || '/';
-const faviconHref = base.endsWith('/') ? `${base}favicon.svg` : `${base}/favicon.svg`;
-// Self-referencing canonical (param-free) so tracking params like ?utm_source=...
-// don't get indexed as duplicate homepages. Docs/blog pages get theirs from Starlight.
-const canonicalHref = new URL(base, Astro.site ?? 'https://strandsagents.com').href;
+const pageTitle = 'Strands Agents | The open source toolkit for production AI agents';
+const pageDescription =
+  'Strands is the open source toolkit for building production AI agents in Python and TypeScript: an agent harness, policy-enforced sandboxing, and evals.';
+const siteUrl = Astro.site?.origin || 'https://strandsagents.com';
+const structuredData = products.map((product) => productSchema(product, siteUrl));
 ---
 
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Strands Agents | Open source SDK for AI agents in Python and TypeScript</title>
-    <meta
-      name="description"
-      content="Open-source SDK for building and running AI agents in Python and TypeScript: lifecycle controls, tools, MCP, multi-agent, memory, streaming, guardrails, and evals."
+    <SiteHead
+      title={pageTitle}
+      description={pageDescription}
+      canonicalPath="/"
+      markdownPath="/index.md"
+      serviceDescriptionPath="/openapi.json"
+      ogImageAlt="Strands Agents — the open source toolkit for production agents"
+      {structuredData}
     />
-    <link rel="canonical" href={canonicalHref} />
-    <link rel="icon" type="image/svg+xml" href={faviconHref} />
-    <script is:inline>
-      // Apply the theme before first paint to avoid a flash. With no saved
-      // preference, follow the system color scheme (matches Starlight's docs
-      // pages and the footer theme control) rather than defaulting to light.
-      (function () {
-        try {
-          var saved = localStorage.getItem('starlight-theme');
-          var theme = (saved === 'dark' || saved === 'light')
-            ? saved
-            : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-          document.documentElement.dataset.theme = theme;
-        } catch (_) {}
-      })();
-    </script>
-    <!-- Cookie consent + analytics, same stack as docs pages. -->
-    <SiteScripts />
-    <Analytics />
   </head>
   <body>
+    <AnnouncementBanner />
     <Navigation />
     {/* Mount Starlight's Pagefind search dialog (button hidden) so the nav's
         search trigger has a modal to open — the homepage isn't a Starlight
@@ -67,6 +52,7 @@ const canonicalHref = new URL(base, Astro.site ?? 'https://strandsagents.com').h
       <UseCases />
       <ProveCases />
       <CommunityHub />
+      <HomeFaq />
       <NextSteps />
     </main>
     {/* NextSteps already provides the green curved transition on the homepage. */}

@@ -15,12 +15,12 @@ agent needs to explore a project and change it.
 
 ## The shell tool
 
-`shell` runs a command line through the Strands Harness SDK's stateless, sandbox-routed shell. Each call
+`shell` runs a command line through the Strands Harness SDK's sandbox-routed shell. Each call
 runs in a fresh shell: there is no persisted working directory or environment between
 calls, so a command that needs a directory or a variable set must set it in the same call.
 The tool takes the `command` to run and an optional `timeout`.
 
-Because it is stateless, the agent chains steps within one command (`cd build && cmake ..`)
+The agent chains steps within one command (`cd build && cmake ..`)
 rather than relying on state carrying over. This is a deliberate design: a fresh shell per
 call is predictable and safe to route through a sandbox.
 
@@ -31,7 +31,9 @@ The three file tools are thin wrappers over the agent's sandbox:
 - `read` reads a file. Text comes back as `cat -n` style numbered lines so the agent can
   cite `path:line` and page through a large file with `offset` and `limit` (default limit
   2000 lines). Images (`png`, `jpg`, `jpeg`, `gif`, `webp`) and binary documents (`pdf`,
-  `doc`, `docx`, `xls`, `xlsx`) are returned as media the model can view directly.
+  `doc`, `docx`, `xls`, `xlsx`) are returned as media the model can view directly. An image's
+  format comes from its bytes, not its extension, and a file with an image extension that is not
+  an image fails the call instead of being sent to the model.
 - `write` creates a file or overwrites it with the content you give.
 - `edit` replaces an exact string in a file. The `old_str` must appear exactly once, so an
   ambiguous edit fails rather than changing the wrong place.
@@ -39,11 +41,16 @@ The three file tools are thin wrappers over the agent's sandbox:
 All three take absolute paths and reject path traversal (a `..` segment), so a tool call
 cannot walk outside the intended location by relative path.
 
-## Everything routes through the sandbox
+## Everything routes through the sandbox interface
+
+:::caution[The default is not a sandbox]
+Omitting the `sandbox` parameter when creating agents runs the agent's command and file tools directly on the host with the full permissions of the agent process. Treat this as convenience for trusted, local development only. For untrusted input or production runs, pass an explicit sandbox.
+:::
 
 Both the shell and the file tools reach the filesystem through the same
-[sandbox](../../../sdk/sandbox/) seam. The default is a local sandbox on the
-host, but the same tools work unchanged against a Docker or SSH sandbox, so the platform,
+[sandbox](../../../sdk/sandbox/) seam. The implementation of the sandbox interface that is
+used by default is a pass-through to the local host that *does not provide any security guardrails*,
+but the same tools work unchanged against a Docker or SSH sandbox, so the platform,
 working directory, and files the agent sees describe where it actually runs. To isolate
 what the agent can touch, run it under a [sandbox](../../../sdk/sandbox/)
 rather than trying to restrict the tools themselves.

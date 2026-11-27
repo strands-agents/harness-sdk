@@ -72,6 +72,27 @@ function customAttributes() {
   // --8<-- [end:custom_attributes]
 }
 
+function baggagePropagation() {
+  // --8<-- [start:baggage_propagation]
+  const agent = new Agent({
+    systemPrompt: 'You are a helpful assistant.',
+    baggageAttributes: {
+      'tenant.id': 'acme',
+      env: 'production',
+    },
+  })
+  // --8<-- [end:baggage_propagation]
+}
+
+function baggageSpanProcessor() {
+  // --8<-- [start:baggage_span_processor]
+  setupTracer({
+    exporters: { otlp: true },
+    baggageProcessor: (key) => key.startsWith('tenant.'),
+  })
+  // --8<-- [end:baggage_span_processor]
+}
+
 function configuringExporters() {
   // --8<-- [start:configuring_exporters]
   const provider = new NodeTracerProvider({

@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 376" width="720" height="376">
+  <!-- Type: flowchart (top to bottom). Story: your code calls the model, runs any tool calls and appends the results, and calls again until the model asks for no tools. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head is-accent" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone is-boundary" x="56" y="72" width="608" height="220" rx="8"/>
+  <text class="dg-eyebrow" x="648" y="92" text-anchor="end">YOU OWN THIS LOOP</text>
+
+  <!-- Edges -->
+  <path class="dg-edge" d="M200,56 V102" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M200,168 V194" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M272,228 H374" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-accent" d="M496,196 V144 Q496,136 488,136 H302" marker-end="url(#arrow-accent)"/>
+  <path class="dg-edge" d="M200,260 V318" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask" x="309" y="208" width="28" height="12" rx="2"/>
+  <text class="dg-label" x="323" y="217" text-anchor="middle">YES</text>
+  <rect class="dg-mask" x="355" y="116" width="80" height="12" rx="2"/>
+  <text class="dg-label is-accent" x="395" y="125" text-anchor="middle">CALL AGAIN</text>
+  <rect class="dg-mask" x="206" y="270" width="20" height="12" rx="2"/>
+  <text class="dg-label" x="210" y="279">NO</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="136" y="16" width="128" height="40" rx="20"/>
+  <text class="dg-name" x="200" y="41" text-anchor="middle">Prompt</text>
+
+  <rect class="dg-node" x="100" y="104" width="200" height="64" rx="6"/>
+  <text class="dg-name" x="200" y="133" text-anchor="middle">Call the model</text>
+  <text class="dg-code" x="200" y="151" text-anchor="middle">chat.completions.create()</text>
+
+  <path class="dg-node" d="M200,196 L272,228 L200,260 L128,228 Z"/>
+  <text class="dg-name" x="200" y="233" text-anchor="middle">Tool calls?</text>
+
+  <rect class="dg-node" x="376" y="196" width="240" height="64" rx="6"/>
+  <text class="dg-name" x="496" y="225" text-anchor="middle">Run tools, append results</text>
+  <text class="dg-code" x="496" y="243" text-anchor="middle">messages.append(...)</text>
+
+  <rect class="dg-node is-input" x="112" y="320" width="176" height="40" rx="20"/>
+  <text class="dg-name" x="200" y="345" text-anchor="middle">Return the message</text>
+</svg>

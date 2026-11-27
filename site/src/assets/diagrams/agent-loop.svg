@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 304" width="720" height="304">
+  <!-- Type: loop (two-station). Story: the model and tools alternate until the model stops asking for tools. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="184" y="24" width="520" height="168" rx="8"/>
+  <text class="dg-eyebrow" x="200" y="44">AGENT LOOP</text>
+  <text class="dg-note" x="688" y="176" text-anchor="end">Every pass adds to the conversation history</text>
+
+  <!-- Edges (drawn before nodes) -->
+  <path class="dg-edge" d="M144,104 H214" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M376,88 H510" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M512,120 H378" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M296,144 V230" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask is-on-zone" x="404" y="68" width="80" height="12" rx="2"/>
+  <text class="dg-label" x="444" y="77" text-anchor="middle">TOOL CALLS</text>
+  <rect class="dg-mask is-on-zone" x="414" y="98" width="60" height="12" rx="2"/>
+  <text class="dg-label" x="444" y="107.5" text-anchor="middle">RESULTS</text>
+  <rect class="dg-mask" x="304" y="203" width="96" height="12" rx="2"/>
+  <text class="dg-label" x="308" y="212">NO TOOL CALLS</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="16" y="72" width="128" height="64" rx="6"/>
+  <text class="dg-name" x="80" y="101" text-anchor="middle">Request</text>
+  <text class="dg-sub" x="80" y="119" text-anchor="middle">prompt + history</text>
+
+  <rect class="dg-node is-focal" x="216" y="64" width="160" height="80" rx="6"/>
+  <text class="dg-name is-focal-text" x="296" y="101" text-anchor="middle">Model</text>
+  <text class="dg-sub" x="296" y="119" text-anchor="middle">decides next step</text>
+
+  <rect class="dg-node" x="512" y="64" width="160" height="80" rx="6"/>
+  <text class="dg-name" x="592" y="101" text-anchor="middle">Tools</text>
+  <text class="dg-sub" x="592" y="119" text-anchor="middle">execute tool calls</text>
+
+  <rect class="dg-node" x="216" y="232" width="160" height="56" rx="6"/>
+  <text class="dg-name" x="296" y="257" text-anchor="middle">Response</text>
+  <text class="dg-sub" x="296" y="275" text-anchor="middle">final message</text>
+</svg>

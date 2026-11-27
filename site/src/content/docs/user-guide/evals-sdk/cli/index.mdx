@@ -5,9 +5,7 @@ sidebar:
   label: "Overview"
 ---
 
-## Overview
-
-Installing `strands-agents-evals` also installs the `strands-evals` console script: a thin wrapper over the public Python API for CI gates and one-off use. It exposes six subcommands that map directly to library calls, so behavior in CI matches what you get from a Python script.
+Installing `strands-agents-evals` also installs the `strands-evals` console script: a thin wrapper over the public Python API for CI gates and one-off use. It exposes seven subcommands that map directly to library calls, so behavior in CI matches what you get from a Python script.
 
 | Command | Purpose |
 | --- | --- |
@@ -17,6 +15,7 @@ Installing `strands-agents-evals` also installs the `strands-evals` console scri
 | [`strands-evals diagnose`](diagnose.md) | Run `detect_failures`, `analyze_root_cause`, or the full `diagnose_session` pipeline on a `Session` JSON file. |
 | [`strands-evals generate`](generate.md) | Synthesize an `Experiment` via `ExperimentGenerator` from a free-form `--context` or an existing `--experiment` file. |
 | [`strands-evals fetch`](diagnose.md#fetch-pull-a-session-from-a-provider) | Pull traces for a session from a provider (`cloudwatch`, `langfuse`, `opensearch`) and emit a `Session` JSON ready to pipe into `diagnose`. |
+| [`strands-evals ui`](ui.md) | Serve a local page over a directory: browse experiments, reports, sessions, and optimizer runs, and edit cases in place. Access needs the token it prints. |
 
 Run any subcommand with `--help` for the full flag set.
 
@@ -97,3 +96,4 @@ A typical CI flow combines `validate` (fast schema gate) with `run` (the actual 
 - [`generate`](generate.md): synthesize an experiment from a context description, with or without topic planning.
 - [`diagnose` and `fetch`](diagnose.md): pull a session from a provider and analyze its failures.
 - [`report` and `validate`](report.md): render reports and schema-check experiment files.
+- [`ui`](ui.md): browse and edit everything in a directory from the browser.

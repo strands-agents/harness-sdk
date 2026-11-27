@@ -1,0 +1,25 @@
+---
+title: 'Strands adds more built-in tools for Python and TypeScript'
+date: 2026-11-04
+description: 'Built-in file, web, and multi-agent tools for your Strands agents, available in both Python and TypeScript.'
+authors:
+  - morgan-willis
+tags:
+  - Announcement
+  - Open Source
+draft: false
+---
+
+All agents need tools. Whether you're building a customer support agent, an incident triage agent, or a deep research agent, many of the same capabilities come up, like reading files, fetching web content, running commands, and delegating work to other agents.
+
+The Strands Harness SDK has expanded its [built-in tools](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/) support for these tasks and more, in both Python and TypeScript. You can add them to your custom agents without building and maintaining each tool yourself, and spend more time on what makes your agent useful.
+
+The SDK includes file tools for [reading](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/read/), [writing](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/write/), and [editing](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/edit/). Pair these with the [shell tool](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/shell/) when your agent needs to run commands, write and execute code, or process data. An incident triage agent could use these tools to inspect exported logs, run diagnostic commands, and save an investigation summary.
+
+[Web Fetch](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/web-fetch/) lets a research agent gather information from web pages, converting them into markdown the model can read. With [Subagent](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/subagent/), it can delegate part of the research to a child agent with the tools it needs and get a summary back. The intermediate research stays in the child's own context.
+
+A document-review agent could use [Graph](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/graph/) to run factual and editorial reviews in parallel, then pass the feedback to an editor. [Swarm](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/swarm/) supports a more iterative process, with an editor handing a draft back to a writer or involving a researcher when a claim needs evidence. You can [configure each specialist’s role and tool access](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/#multi-agent-tools).
+
+Because these tools are now supported directly in the SDK, we're deprecating the `strands-agents-tools` Python package and its repository. Versions before v0.9.0 continue working but will no longer receive updates after November 4, 2026. In v0.9.0, legacy tool imports will raise an error. Check the [migration guide](https://strandsagents.com/docs/user-guide/migrate/strands-agents-tools/) before upgrading, since some replacements also change behavior.
+
+Explore the [built-in tools](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/) and try them with your agents. If you’d like support for additional tools, [open an issue](https://github.com/strands-agents/harness-sdk/issues). For questions or discussion, [join us on Discord](https://discord.gg/strands).

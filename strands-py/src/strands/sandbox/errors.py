@@ -3,6 +3,8 @@
 Mirrors ``strands-ts/src/sandbox/errors.ts``. Each error subclasses its stdlib
 equivalent so existing ``except TimeoutError`` / ``except FileNotFoundError``
 handlers keep working, while giving callers a sandbox-specific type to branch on.
+:class:`SandboxAbortError` has no such equivalent: :class:`asyncio.CancelledError`
+would bypass the ``except Exception`` that turns a tool failure into a tool result.
 """
 
 
@@ -25,12 +27,30 @@ class SandboxTimeoutError(TimeoutError):
         self.stderr = stderr
 
 
+class SandboxAbortError(Exception):
+    """Raised by sandbox execution when the caller's ``cancel_signal`` is set.
+
+    ``stdout`` and ``stderr`` hold whatever the process wrote before it was killed.
+    """
+
+    def __init__(self, stdout: str = "", stderr: str = "") -> None:
+        """Initialize the error with the output captured so far.
+
+        Args:
+            stdout: Standard output captured before the kill.
+            stderr: Standard error captured before the kill.
+        """
+        super().__init__("Execution aborted")
+        self.stdout = stdout
+        self.stderr = stderr
+
+
 class SandboxPathNotFoundError(FileNotFoundError):
-    """Raised by :meth:`~strands.sandbox.base.Sandbox.list_files` when the path does not exist.
+    """Raised by ``list_files`` and ``read_file`` when the path does not exist.
 
     Distinguishes genuine absence (a missing path, or a file where a directory
-    was expected) from permission or transport failures, which raise plain
-    :class:`OSError`/:class:`FileNotFoundError`.
+    was expected) from permission or transport failures, which raise
+    :class:`PermissionError` or plain :class:`OSError`.
     """
 
     def __init__(self, path: str) -> None:

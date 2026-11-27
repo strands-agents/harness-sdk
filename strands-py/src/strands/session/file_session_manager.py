@@ -1,10 +1,13 @@
 """File-based session manager for local filesystem storage."""
 
+import errno
 import json
 import logging
 import os
 import shutil
+import stat
 import tempfile
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -23,6 +26,11 @@ SESSION_PREFIX = "session_"
 AGENT_PREFIX = "agent_"
 MESSAGE_PREFIX = "message_"
 MULTI_AGENT_PREFIX = "multi_agent_"
+
+
+def _open_nofollow(path: str, flags: int) -> int:
+    """Open ``path`` without following a symlink at its final component, where the platform supports it."""
+    return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0))
 
 
 class FileSessionManager(RepositorySessionManager, SessionRepository):
@@ -55,10 +63,22 @@ class FileSessionManager(RepositorySessionManager, SessionRepository):
                 ID is not allowed to contain path separators (e.g., a/b).
             storage_dir: Directory for local filesystem storage.
                 Defaults to a user-private ``~/.strands/sessions/`` directory.
+                A new directory is created with mode ``0o700``. An existing directory keeps its
+                permissions; on POSIX a ``UserWarning`` is emitted if it is accessible by group or others.
             **kwargs: Additional keyword arguments for future extensibility.
         """
         self.storage_dir = storage_dir or self._default_storage_dir()
         os.makedirs(self.storage_dir, mode=0o700, exist_ok=True)
+
+        # Windows reports 0o777 for every directory, so the check is POSIX-only.
+        if os.name == "posix":
+            storage_mode = stat.S_IMODE(os.stat(self.storage_dir).st_mode)
+            if storage_mode & 0o077:
+                warnings.warn(
+                    f"Session storage directory {self.storage_dir} is accessible by group or others"
+                    f" (mode {storage_mode:o}); restrict it with chmod 700",
+                    stacklevel=2,
+                )
 
         super().__init__(session_id=session_id, session_repository=self)
 
@@ -118,16 +138,23 @@ class FileSessionManager(RepositorySessionManager, SessionRepository):
 
     def _read_file(self, path: str) -> dict[str, Any]:
         """Read JSON file with symlink protection."""
+        symlink_message = (
+            f"Refusing to read symlink at {path}. This may indicate a symlink attack or session tampering."
+        )
         # Refuse to read through symlinks (prevents session data injection)
         if os.path.islink(path):
-            raise SessionException(
-                f"Refusing to read symlink at {path}. This may indicate a symlink attack or session tampering."
-            )
+            raise SessionException(symlink_message)
         try:
-            with open(path, encoding="utf-8") as f:
+            # O_NOFOLLOW closes the window between the check above and the open
+            with open(path, encoding="utf-8", opener=_open_nofollow) as f:
                 return cast(dict[str, Any], json.load(f))
         except json.JSONDecodeError as e:
             raise SessionException(f"Invalid JSON in file {path}: {str(e)}") from e
+        except OSError as error:
+            # ELOOP on Linux/macOS, EMLINK on FreeBSD
+            if error.errno in (errno.ELOOP, errno.EMLINK):
+                raise SessionException(symlink_message) from error
+            raise
 
     def _write_file(self, path: str, data: dict[str, Any]) -> None:
         """Write JSON file atomically with symlink protection.

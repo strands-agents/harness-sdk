@@ -6,8 +6,8 @@
  * reader would. It carries the exact code so the coding agent doesn't guess at
  * Strands APIs, and it asks (never assumes) before installing the Strands MCP server.
  *
- * Keep these in sync with quickstart/python.mdx, quickstart/typescript.mdx, and
- * harness/quickstart.mdx.
+ * Keep these in sync with quickstart/python.mdx, quickstart/typescript.mdx,
+ * harness/quickstart.mdx, and evals-sdk/optimization/index.mdx.
  */
 
 const MCP_STEP = `
@@ -227,23 +227,21 @@ Step 2: Build an agent with the CLI
 Install it (Node.js 20+):
   npm install -g @strands-agents/cli
 
-Run the setup assistant:
+Open setup:
   strands
 
-It asks where to start (from scratch, or from a configuration it detects in the current
-directory), the agent's name and goals, and which capabilities to enable (it recommends a
-model, built-in tools, Agent Skills, MCP servers, long-term memory, context management, and
-a tool-approval mode; I can accept its picks or adjust each one), then theme and color
-mode. It keeps the configuration as a draft until I approve it, then opens the agent in a
-chat. Help me answer the questions; do not answer them for me.
+Choose Quickstart. It only asks for a model provider: pick one (Amazon Bedrock, Anthropic,
+OpenAI, Google Gemini, Ollama, or LiteLLM), add credentials if the CLI doesn't already detect
+them, pick a model, then choose Save and Launch to open the agent in a chat. Everything else
+uses the default harness. Customize walks through the name, instructions, tools, plugins,
+memory, and tool permissions instead. Help me choose; do not choose for me.
 
-Fields can also be set directly instead of through the wizard:
-  strands --name release-notes-bot --model anthropic/claude-sonnet-5
-  strands --agent ./agent.ts          # start from an exported agent file
+To skip setup and start from an exported agent file:
+  strands --agent ./agent.ts
 
-When I'm ready to embed the agent in an application, /export inside the chat writes a
-Python or TypeScript project with my choices set on create_harness(...) / createHarness(...)
-and exports a ready-to-import agent.
+When I'm ready to embed the agent in an application, /export inside the chat (or Export in
+setup) writes a Python or TypeScript project with my choices set on create_harness(...) /
+createHarness(...) and exports a ready-to-import agent.
 
 Step 3: Use Strands harness as a library
 Ask me whether I want Python or TypeScript.
@@ -341,4 +339,36 @@ If I say no, skip this step entirely.
 Throughout: prefer the Strands docs at https://strandsagents.com/docs/user-guide/harness/
 over memory. Strands harness returns a standard Strands Agent, so anything from the Strands Harness SDK
 docs applies to it too.
+`.trim()
+
+export const EVALS_SKILLS_PROMPT = `
+Help me install the Strands Evals SDK and all of its agent skills so you can use them in
+this project. Work through these steps in order,
+checking with me before anything that installs software or writes files.
+
+Step 1: Install the package
+Ask me which Python environment to use. If this project already has one (for example .venv),
+use it; otherwise create and activate one (Python 3.10+):
+  python -m venv .venv
+  source .venv/bin/activate
+Then install the SDK with the optimization extra:
+  pip install 'strands-agents-evals[optimization]'
+
+Step 2: Install the skills into this coding assistant
+The skills ship inside the package. First ask me whether to install them for this project
+only or for every project. Then, with the environment from Step 1 active, run this without
+prompts, replacing <agent> with this assistant's skills CLI name (for example claude-code,
+codex, or kiro-cli) and adding -g if I chose every project:
+  npx skills add "$(python -c 'import strands_evals, pathlib; print(pathlib.Path(strands_evals.__file__).parent / ".agents" / "skills")')" --copy -s '*' -a <agent> -y
+-s '*' installs every skill the package ships, -a puts them where you load them from, and -y
+skips the CLI's confirmation prompts. If the command reports "Local path does not exist", the
+package is an editable install from a checkout; run the same command with
+<checkout>/.agents/skills as the path instead.
+
+Step 3: Confirm
+List the installed skills, reload them if this assistant needs a restart to pick up new
+skills, and tell me what each one does and how to start using it.
+
+Throughout: prefer the Strands Evals docs at https://strandsagents.com/docs/user-guide/evals-sdk/
+over memory.
 `.trim()

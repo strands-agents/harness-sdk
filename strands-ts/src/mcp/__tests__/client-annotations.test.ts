@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { InMemoryTransport, type ToolAnnotations } from '@modelcontextprotocol/client'
+import { McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod'
 import { McpClient } from '../client.js'
 
@@ -17,7 +17,7 @@ describe('McpClient annotations over a real transport', () => {
       {
         description: 'Echoes input',
         inputSchema: { value: z.string() },
-        ...(annotations !== undefined && { annotations }),
+        ...(annotations !== undefined && { annotations: annotations as ToolAnnotations }),
       },
       async ({ value }) => ({ content: [{ type: 'text', text: value }] })
     )

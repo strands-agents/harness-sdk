@@ -57,7 +57,7 @@ await agent.invoke("Find the slowest test in this repo and explain why it's slow
 
 ```typescript
 await createHarness({
-  model: 'bedrock/global.anthropic.claude-opus-5', // "provider/name", a bare Bedrock id, or a Model instance
+  model: 'bedrock/global.anthropic.claude-opus-5-5', // "provider/name", a bare Bedrock id, or a Model instance
   effort: 'auto', // "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
   instructions: undefined, // domain text appended to the system prompt
   tools: undefined, // your tools, added alongside the built-ins
@@ -65,7 +65,7 @@ await createHarness({
   mcpServers: undefined, // MCP servers: a mcpServers JSON path or the mapping itself
   builtinTools: undefined, // a list pins the set; a mapping edits the defaults (see below)
   backgroundTasks: undefined, // SDK Background Tasks policy; false to disable
-  builtinPlugins: ['todos', 'environment'], // built-in feature plugins by name; [] for none
+  builtinPlugins: ['environment'], // built-in feature plugins by name; [] for none
   caching: 'auto', // cache system prompt, tools & history where supported; null/false off
   contextManager: 'auto', // "auto" | "agentic" | a ContextManager instance | off (null/false)
   session: true, // true | { id?, dir? } | a SessionManager instance | off (null/false)
@@ -93,12 +93,15 @@ malformed or wrong-language references fail instead of being ignored.
 npm install @strands-agents/harness
 ```
 
-The default agent runs on Amazon Bedrock, which needs no extra dependency. To use another
-provider, install its peer dependency:
+`@strands-agents/sdk` is a required peer dependency. npm 7+ and pnpm install it automatically; with
+other package managers, add `@strands-agents/sdk` alongside the harness.
+
+The default agent runs on Amazon Bedrock, which needs no extra dependency (Claude on Bedrock uses
+`@anthropic-ai/sdk`, a required peer npm installs for you). To use another provider, install its
+peer dependency:
 
 ```bash
 npm install openai              # for openai/*
-npm install @anthropic-ai/sdk   # for anthropic/*
 npm install @google/genai       # for google/*
 ```
 
@@ -107,7 +110,7 @@ npm install @google/genai       # for google/*
 Out of the box, `createHarness()` gives you an agent that:
 
 - **Runs on frontier models with reasoning on**, across Amazon Bedrock, Anthropic, OpenAI, and
-  Google. The default is Claude Opus 5 on Amazon Bedrock, behind a tuned system prompt: explore
+  Google. The default is Claude Opus 5.5 on Amazon Bedrock, behind a tuned system prompt: explore
   before changing things, confirm before anything irreversible, verify before calling a task done.
 - **Comes with working tools**: a shell, file tools (`read`, `write`, `edit`), web access, and
   `programmatic_tool_caller`, a sandbox where it writes code that chains, loops over, and
@@ -128,10 +131,10 @@ Everything above is a default, not a constraint. Here's how to adjust each piece
 Pass a `provider/model` string, a bare model id, or a ready-made `Model` instance:
 
 ```typescript
-await createHarness({ model: 'anthropic/claude-opus-5' }) // Anthropic's API directly
+await createHarness({ model: 'anthropic/claude-opus-5-5' }) // Anthropic's API directly
 await createHarness({ model: 'openai/gpt-5.6-sol' }) // OpenAI
 await createHarness({ model: 'google/gemini-3.5-flash' }) // Google
-await createHarness({ model: 'bedrock/global.anthropic.claude-opus-5' }) // the default, spelled out
+await createHarness({ model: 'bedrock/global.anthropic.claude-opus-5-5' }) // the default, spelled out
 await createHarness({ model: 'bedrock-mantle/openai.gpt-5.6-sol' }) // Bedrock's OpenAI-compatible endpoint
 
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'
@@ -145,7 +148,7 @@ for every provider:
 
 ```typescript
 await createHarness({ effort: 'high' }) // minimal | low | medium | high | xhigh | max, as the provider offers them
-await createHarness({ effort: 'auto' }) // the provider's recommended level (high where supported), the default
+await createHarness({ effort: 'auto' }) // the model vendor's default level (e.g. medium on Opus 5.5, else high), the default
 await createHarness({ effort: 'off' }) // reasoning off (the provider's `none` level where it has one)
 ```
 
@@ -191,7 +194,7 @@ Four tools take a config object, each key an option of the tool's factory: `shel
 (`{ description }`), `web_fetch` (`{ model, transport }`, its summarizer as a `"provider/name"` string or a
 `Model`/`ModelRouter`), `programmatic_tool_caller` (`{ allowedTools, timeout }`, the tools its
 sandboxed code may call and the run's time budget in seconds; `null` lifts each bound) and
-`subagent` (`{ maxDepth }`, how deep delegation may nest). The rest are on/off only. The same shape
+`subagent` (`{ maxDepth }`, how deep delegation may nest; `0` removes the tool). The rest are on/off only. The same shape
 works in a JSON profile, so a configured `builtinTools` mapping ports between the Python and
 TypeScript libraries unchanged (JSON keys are camelCase in both; only Python keyword arguments use
 `allowed_tools` and `max_depth`):
@@ -229,7 +232,8 @@ general-purpose delegate, enabled by default (it is just a name in `builtinTools
 that inherits this agent's configuration (its model, plugins, and interventions, so the gate
 reaches the delegate too), runs it in its own context, and returns a single final report. The
 child's tools are restricted to a subset of this agent's own (it can never gain a capability the
-parent lacks), and delegation depth is bounded so a delegate cannot recurse without limit. Drop
+parent lacks), it keeps every MCP server this agent has, and delegation depth is bounded so a
+delegate cannot recurse without limit. Drop
 `subagent` from `builtinTools` to turn it off:
 
 ```typescript
@@ -238,12 +242,13 @@ await createHarness({ builtinTools: { subagent: false } }) // subagent disabled
 ```
 
 The tool's model-facing parameters are derived from configuration. For a fully configured tool
-(custom roles, model tiers, fixed prompts), build one with `makeSubagent` and pass it via `tools`
-with `subagent` dropped from `builtinTools`. You supply the `builder`, a function that turns a
-resolved `AgentSpec` into the child agent (typically calling `createHarness`); this is the seam
-that makes the child a harness member. Delegation depth is bounded at two levels by default; pass
-`maxDepth` to change it. Each axis (`instructions`, `tools`, `mcpServers`, `model`, `context`) becomes a
-parameter, or not, depending on whether it is `Fixed`, `Inherit`, `Open`, or `Choice`:
+(custom roles, model tiers, fixed prompts), build one with `makeSubagent` (the SDK's, re-exported here
+with its axis types) and pass it via `tools` with `subagent` dropped from `builtinTools`. You supply the
+`builder`, a sync or async function that turns a resolved `AgentSpec` into the child agent (typically
+calling `createHarness`); this is the seam that makes the child a harness member. Delegation depth is
+bounded at two levels by default; pass `maxDepth` (at least 1) to change it. Each axis (`instructions`,
+`tools`, `model`, `context`) becomes a parameter, or not, depending on whether it is `Fixed`, `Inherit`,
+`Open`, or `Choice`; a `Choice` entry is a bare name or `new Option(name, value, description)`:
 
 ```typescript
 import { createHarness, makeSubagent, Fixed, Inherit, Preset, type AgentSpec } from '@strands-agents/harness'
@@ -251,14 +256,21 @@ import { createHarness, makeSubagent, Fixed, Inherit, Preset, type AgentSpec } f
 const NO_SUBAGENT = { subagent: false } // the defaults minus delegation; web_search stays provider-dependent
 
 const reviewer = makeSubagent({
-  builder: (spec: AgentSpec) => createHarness({ instructions: spec.instructions ?? undefined, builtinTools: NO_SUBAGENT }),
+  builder: (spec: AgentSpec) => createHarness({ instructions: spec.instructions, builtinTools: NO_SUBAGENT }),
   presets: { reviewer: new Preset({ instructions: 'You review diffs.', description: 'reviews diffs' }) },
-  instructions: new Fixed(null), // the role owns the prompt; parameter removed
+  instructions: new Fixed(), // the role owns the prompt; parameter removed
   model: new Inherit(),
 })
 
 const agent = await createHarness({ tools: [reviewer], builtinTools: NO_SUBAGENT })
 ```
+
+> **Breaking change:** the harness used to ship its own copy of this tool. Moving to the SDK's drops the
+> `mcpServers` parameter (a delegate always keeps every MCP server), `makeSubagent`'s `inheritedTools` /
+> `inheritedMcpServers` options, and `AgentSpec.task` / `context` / `lastMessages`. `Option` is now
+> `new Option(name, value, description)` (was `new Option(name, { value, description })`), the depth budget
+> lives at `appState` key `strands.subagent_depth` (was `subagentDepth`), child interrupt ids are namespaced as
+> `subagent:<toolUseId>:<id>`, and `maxDepth: 0` removes the tool.
 
 For focused expertise, wrap your own `Agent` instances with `Agent.asTool()` and pass them in
 `tools`; each becomes a tool the main agent can call, named after the agent's `name`. Every call
@@ -319,16 +331,18 @@ await createHarness({ builtinTools: { web_fetch: { model: 'anthropic/claude-haik
 ```
 
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the
-model provider has its own search (OpenAI, Google, GPT-5/GPT-6 models on `bedrock-mantle` via
-Bedrock Web Search, and Anthropic in Python; TypeScript Anthropic support follows in a coming
-`@strands-agents/sdk` release) the harness turns that on and there is no extra service involved. Elsewhere (Amazon Bedrock
-Converse, other Mantle models, a `Model` instance) `web_search` is off by default with a logged
-warning, and naming it explicitly throws. To search there anyway, opt into Exa with
-`{ web_search: 'exa' }`: the model gets a `web_search` tool backed by Exa's hosted search. It is
-keyless to start; `EXA_API_KEY` in the environment lifts the rate limit. `'exa'` is honoured on
-every model, so it also replaces the provider's own search where there is one. Bedrock Web Search
-also needs the `bedrock-websearch` IAM actions (in `AmazonBedrockFullAccess`); without them the
-request succeeds but each search fails.
+model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, and Daybreak models on
+`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. Other
+Amazon Bedrock models get a `web_search` tool backed by
+[Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html)
+instead. In case of no native search (a `Model` instance from another provider) `web_search` is
+off by default. To enable web search for these providers, you can opt into Exa with
+`{ web_search: 'exa' }`. The model then gets a `web_search` tool backed by Exa's hosted search. It
+works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can
+override a provider's native web search by adding `'exa'` explicitly to any model. If you are
+using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in
+`AmazonBedrockFullAccess`) to avoid failing search; AgentCore web search needs
+`bedrock-agentcore:InvokeWebSearch`.
 
 > [!WARNING]
 > Web search through Exa sends every search query the model writes to Exa (exa.ai), a third-party
@@ -337,7 +351,8 @@ request succeeds but each search fails.
 
 ```typescript
 await createHarness({ model: 'openai/gpt-5.6-sol' }) // native search on, it's in the defaults
-await createHarness({ builtinTools: { web_search: 'exa' } }) // Bedrock: search through Exa (third party)
+await createHarness() // Bedrock: AgentCore web search, also a default
+await createHarness({ builtinTools: { web_search: 'exa' } }) // any model: search through Exa (third party)
 ```
 
 ## Caching reused context
@@ -345,7 +360,8 @@ await createHarness({ builtinTools: { web_search: 'exa' } }) // Bedrock: search 
 `caching` is on by default. The stable parts of a conversation (system prompt, tool definitions,
 earlier turns) are cached where the provider supports it, so you're not billed to reprocess them
 on every turn. The harness configures Amazon Bedrock and Anthropic direct with automatic cache points covering
-messages and tools; OpenAI, Google, Bedrock Mantle, and LiteLLM cache server-side on their own, so
+messages and tools, and OpenAI and Bedrock Mantle with the SDK cache config (a per-session cache key,
+plus cache points on GPT-5.6+ models listed in the SDK model info); Google and LiteLLM cache server-side on their own, so
 there's nothing to configure or turn off. The only targets that can't cache are `ollama` and a
 pre-built `Model` instance (its provider is unknown): there the default is a no-op with a logged
 warning, but asking for caching explicitly (`caching: 'auto'` / `true`) throws for an unsupported
@@ -439,10 +455,12 @@ is best-effort (a missing directory is skipped); explicit sources pass straight 
 
 ## Built-in plugins
 
-The harness ships two built-in feature plugins, both on by default:
+The harness ships two built-in feature plugins. `environment` is on by default; `todos` is opt-in:
 
 - **`todos`** lets the agent keep a structured task list and re-surfaces it before each step so it
   stays on plan through longer tasks. The list lives in agent state, never in durable history.
+  Because it re-injects on every turn, it costs tokens and breaks the cached prefix on providers
+  without explicit cache points — enable it where the task tracking earns that.
 - **`environment`** injects a short context block before each turn: the platform, current date,
   working directory, the project's `AGENTS.md` contents, and links to other `AGENTS.md`/`README.md`
   files a couple of levels down (links, not contents, so the block stays small). Everything is read
@@ -550,6 +568,15 @@ import { HARNESS_CONTRACT, buildSystemPrompt } from '@strands-agents/harness'
 
 const prompt = buildSystemPrompt('You are a data-migration assistant.', [`Current time: ${now}`])
 ```
+
+## Versioning
+
+Strands harness is 0.x and versioned separately from the Strands Harness SDK. Patch releases
+(0.x.Y) carry bug fixes and new features, including new built-in tools; minor releases (0.X.0)
+carry breaking changes and say so in the release notes. Pin to a minor
+(`@strands-agents/harness@~0.1.0`) to avoid breaking changes; patch releases still add features and
+tools. Full policy:
+[Versioning and Support](https://strandsagents.com/docs/user-guide/harness/versioning/).
 
 ## Contributing ❤️
 

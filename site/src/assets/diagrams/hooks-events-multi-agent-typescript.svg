@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 620" width="720" height="620">
+  <!-- Type: lifecycle (typescript). Story: initialization fires once; each invocation is bracketed by start and end events, with node events around every node the orchestrator runs and a handoff event between nodes. Stages are zones; every event is its own chip, stacked in firing order. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="88" y="16" width="272" height="76" rx="8"/>
+  <text class="dg-eyebrow" x="104" y="36">INITIALIZATION</text>
+
+  <rect class="dg-zone" x="72" y="116" width="576" height="488" rx="8"/>
+  <text class="dg-eyebrow" x="88" y="136">EACH INVOCATION</text>
+
+  <rect class="dg-zone" x="88" y="152" width="272" height="76" rx="8"/>
+  <text class="dg-eyebrow" x="104" y="172">INVOCATION START</text>
+
+  <rect class="dg-zone" x="88" y="252" width="272" height="196" rx="8"/>
+  <text class="dg-eyebrow" x="104" y="272">NODE EXECUTION</text>
+
+  <rect class="dg-zone" x="88" y="472" width="272" height="116" rx="8"/>
+  <text class="dg-eyebrow" x="104" y="492">INVOCATION END</text>
+
+  <!-- Edges -->
+  <path class="dg-edge" d="M224,92 V150" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M224,228 V250" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M224,448 V470" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M360,420 H504 Q512,420 512,412 V366" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M512,336 V288 Q512,280 504,280 H362" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask is-on-zone" x="397" y="260" width="72" height="12" rx="2"/>
+  <text class="dg-label" x="433" y="269" text-anchor="middle">NEXT NODE</text>
+
+  <!-- Event chips, in firing order -->
+  <rect class="dg-node is-event" x="104" y="48" width="240" height="28" rx="6"/>
+  <text class="dg-code" x="224" y="66" text-anchor="middle">MultiAgentInitializedEvent</text>
+
+  <rect class="dg-node is-event" x="104" y="184" width="240" height="28" rx="6"/>
+  <text class="dg-code" x="224" y="202" text-anchor="middle">BeforeMultiAgentInvocationEvent</text>
+
+  <rect class="dg-node is-event" x="104" y="284" width="240" height="28" rx="6"/>
+  <text class="dg-code" x="224" y="302" text-anchor="middle">BeforeNodeCallEvent</text>
+  <rect class="dg-node is-event" x="104" y="324" width="240" height="28" rx="6"/>
+  <text class="dg-code" x="224" y="342" text-anchor="middle">NodeStreamUpdateEvent</text>
+  <rect class="dg-node is-event" x="104" y="364" width="240" height="28" rx="6"/>
+  <text class="dg-code" x="224" y="382" text-anchor="middle">NodeResultEvent</text>
+  <rect class="dg-node is-event" x="104" y="404" width="240" height="28" rx="6"/>
+  <text class="dg-code" x="224" y="422" text-anchor="middle">AfterNodeCallEvent</text>
+
+  <rect class="dg-node is-event" x="392" y="336" width="240" height="28" rx="6"/>
+  <text class="dg-code" x="512" y="354" text-anchor="middle">MultiAgentHandoffEvent</text>
+
+  <rect class="dg-node is-event" x="104" y="504" width="240" height="28" rx="6"/>
+  <text class="dg-code" x="224" y="522" text-anchor="middle">AfterMultiAgentInvocationEvent</text>
+  <rect class="dg-node is-event" x="104" y="544" width="240" height="28" rx="6"/>
+  <text class="dg-code" x="224" y="562" text-anchor="middle">MultiAgentResultEvent</text>
+</svg>

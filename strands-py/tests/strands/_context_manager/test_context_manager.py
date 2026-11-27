@@ -1,17 +1,24 @@
 """Tests for the ContextManager plugin."""
 
+import sys
+import textwrap
 import unittest.mock
+import warnings
 
 import pytest
 
 from strands._context_manager.context_manager import ContextManager
+from strands._context_manager.placeholder import offload_placeholder
 from strands._context_manager.strategies.offload import Offload
-from strands._context_manager.strategies.offload.truncate import EmergencyTruncateStrategy
+from strands._context_manager.strategies.offload.base import EmergencyTruncateStrategy
+from strands._context_manager.types import ContextState
+from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.hooks import HookRegistry
 from strands.hooks.events import AfterModelCallEvent, BeforeModelCallEvent, MessageAddedEvent
+from strands.storage.in_memory_storage import InMemoryStorage
 from strands.types.content import ContentBlock, Message
 from strands.types.exceptions import ContextWindowOverflowException
-from strands.types.tools import ToolResult, ToolUse
+from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
 
 @pytest.fixture
@@ -44,7 +51,7 @@ class TestContextManagerInit:
         assert isinstance(cm._strategies[2], EmergencyTruncateStrategy)
 
     def test_custom_strategies(self):
-        custom = [Offload.drop("*").when(threshold=500)]
+        custom = [Offload.drop("*").when(block_threshold=500)]
         cm = ContextManager(strategies=custom)
         assert len(cm._strategies) == 2
         assert cm._strategies[0].name == "offload:drop"
@@ -87,6 +94,26 @@ class TestContextManagerRunStrategies:
             exception=ContextWindowOverflowException("overflow"),
         )
         await mock_agent.hooks.invoke_callbacks_async(event)
+        assert event.retry is True
+
+    @pytest.mark.asyncio
+    async def test_overflow_truncates_when_a_strategy_raises(self, mock_agent):
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "failing-strategy"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(side_effect=RuntimeError("summarizer rejected"))
+        mock_agent.messages = [
+            Message(role="user" if i % 2 == 0 else "assistant", content=[ContentBlock(text=f"msg {i}")])
+            for i in range(10)
+        ]
+        mock_agent.model.estimate_utilization = unittest.mock.MagicMock(return_value=1.5)
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+
+        event = AfterModelCallEvent(agent=mock_agent, exception=ContextWindowOverflowException("overflow"))
+        await mock_agent.hooks.invoke_callbacks_async(event)
+
+        assert len(mock_agent.messages) < 10
         assert event.retry is True
 
     @pytest.mark.asyncio
@@ -211,6 +238,103 @@ class TestContextManagerRunStrategies:
         assert call_args.utilization == 0.4
 
 
+class TestTokenCounting:
+    """Tests for the inputs the utilization gates count."""
+
+    @staticmethod
+    def _capture_count_kwargs(agent):
+        """Record the keyword arguments of every count_tokens call on the agent's model."""
+        captured = []
+
+        async def count_tokens(messages, **kwargs):
+            captured.append(kwargs)
+            return 100
+
+        agent.model.count_tokens = count_tokens
+        return captured
+
+    @pytest.mark.asyncio
+    async def test_counts_system_prompt_and_tool_specs_alongside_messages(self, mock_agent):
+        tool_spec = ToolSpec(name="lookup", description="stub lookup", inputSchema={"json": {"type": "object"}})
+        mock_agent.system_prompt = "be helpful"
+        mock_agent.system_prompt_content = [{"text": "be helpful"}]
+        mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[tool_spec])
+        captured = self._capture_count_kwargs(mock_agent)
+
+        applied = False
+
+        async def apply(_context):
+            nonlocal applied
+            if applied:
+                return False
+            applied = True
+            return True
+
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "acts-once"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = apply
+        cm = ContextManager(strategies=[strategy], archive=False)
+        cm.init_agent(mock_agent)
+
+        # No projected_input_tokens, so the initial gate counts too — both counts must see the same inputs.
+        await mock_agent.hooks.invoke_callbacks_async(BeforeModelCallEvent(agent=mock_agent))
+
+        expected = {
+            "tool_specs": [tool_spec],
+            "system_prompt": "be helpful",
+            "system_prompt_content": [{"text": "be helpful"}],
+        }
+        assert captured == [expected, expected]
+
+    @pytest.mark.asyncio
+    async def test_passes_no_system_prompt_when_the_agent_has_none(self, mock_agent):
+        mock_agent.system_prompt = None
+        mock_agent.system_prompt_content = None
+        mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[])
+        captured = self._capture_count_kwargs(mock_agent)
+
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "noop"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(return_value=False)
+        cm = ContextManager(strategies=[strategy], archive=False)
+        cm.init_agent(mock_agent)
+
+        await mock_agent.hooks.invoke_callbacks_async(BeforeModelCallEvent(agent=mock_agent))
+
+        assert captured == [{"tool_specs": [], "system_prompt": None, "system_prompt_content": None}]
+
+    @pytest.mark.asyncio
+    async def test_emergency_truncate_leaves_messages_that_fit_the_window(self, mock_agent):
+        """The gate measures the messages it would drop, not the whole request the other gates are measured on."""
+        mock_agent.tool_registry.get_all_tool_specs = unittest.mock.MagicMock(return_value=[])
+        mock_agent.model.estimate_utilization = unittest.mock.MagicMock(side_effect=lambda tokens: tokens / 10_000)
+        # The request is over the window, the messages are a tenth of it: dropping them cannot be what helps.
+        mock_agent.model.count_tokens = unittest.mock.AsyncMock(return_value=1_000)
+        mock_agent.messages = [
+            Message(role="user", content=[ContentBlock(text="a")]),
+            Message(role="assistant", content=[ContentBlock(text="b")]),
+            Message(role="user", content=[ContentBlock(text="c")]),
+            Message(role="assistant", content=[ContentBlock(text="d")]),
+        ]
+
+        # Only the emergency truncate appended by the constructor can act.
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "noop"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(return_value=False)
+        cm = ContextManager(strategies=[strategy], archive=False)
+        cm.init_agent(mock_agent)
+
+        await mock_agent.hooks.invoke_callbacks_async(
+            BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=20_000)
+        )
+
+        assert len(mock_agent.messages) == 4
+        mock_agent.model.count_tokens.assert_awaited_once_with(mock_agent.messages)
+
+
 class TestFromStrategy:
     """Tests for ContextManager.from_strategy() factory."""
 
@@ -233,7 +357,7 @@ class TestFromStrategy:
         assert ContextManager.from_strategy(cm) is cm
 
     def test_dict_config_returns_context_manager(self):
-        result = ContextManager.from_strategy({"strategies": [Offload.drop("*").when(threshold=500)]})
+        result = ContextManager.from_strategy({"strategies": [Offload.drop("*").when(block_threshold=500)]})
         assert isinstance(result, ContextManager)
 
     def test_unknown_string_raises(self):
@@ -286,14 +410,14 @@ class TestResolveConversationManager:
         assert any("ignoring co-provided conversation_manager" in str(w.message) for w in caught)
 
 
-class TestContextManagerStashHook:
-    """Tests for the stash MessageAddedEvent hook."""
+class TestContextManagerArchiveHook:
+    """Tests for the archive MessageAddedEvent hook."""
 
     @pytest.mark.asyncio
-    async def test_stash_hook_persists_tool_result(self, mock_agent):
+    async def test_archive_hook_persists_tool_result(self, mock_agent):
         mock_agent.session_id = "test-session"
         mock_agent.storage = None
-        cm = ContextManager(stash=True)
+        cm = ContextManager(archive=True)
         cm.init_agent(mock_agent)
 
         block = ContentBlock(toolResult=ToolResult(toolUseId="tu-1", status="success", content=[{"text": "data"}]))
@@ -301,29 +425,33 @@ class TestContextManagerStashHook:
         event = MessageAddedEvent(agent=mock_agent, message=message)
         await mock_agent.hooks.invoke_callbacks_async(event)
 
-        result = await cm._stash.retrieve("tu-1_0")
+        result = await cm._archive.retrieve("tu-1_0")
         assert result is not None
         assert result["text"] == "data"
 
     @pytest.mark.asyncio
-    async def test_stash_hook_tracks_retrieval_tool_use_ids(self, mock_agent):
+    async def test_archive_hook_leaves_out_a_result_of_the_retrieval_tool(self, mock_agent):
         mock_agent.session_id = "test-session"
         mock_agent.storage = None
-        cm = ContextManager(stash=True)
+        cm = ContextManager(archive=True)
         cm.init_agent(mock_agent)
 
-        message = Message(
+        call = Message(
             role="assistant",
             content=[ContentBlock(toolUse=ToolUse(toolUseId="tu-ret", name="retrieve_context", input={}))],
         )
-        event = MessageAddedEvent(agent=mock_agent, message=message)
-        await mock_agent.hooks.invoke_callbacks_async(event)
+        result = ToolResult(toolUseId="tu-ret", status="success", content=[{"text": "retrieved"}])
+        answer = Message(role="user", content=[ContentBlock(toolResult=result)])
+        mock_agent.messages = [call, answer]
 
-        assert "tu-ret" in cm._retrieval_tool_use_ids
+        for message in mock_agent.messages:
+            await mock_agent.hooks.invoke_callbacks_async(MessageAddedEvent(agent=mock_agent, message=message))
+
+        assert await cm._archive.keys_of("tu-ret") == []
 
 
-class TestStashBackfill:
-    """Tests for backfilling the stash from pre-existing agent messages."""
+class TestArchiveBackfill:
+    """Tests for backfilling the archive from pre-existing agent messages."""
 
     @pytest.mark.asyncio
     async def test_backfills_pre_existing_messages_on_first_strategy_run(self):
@@ -351,15 +479,69 @@ class TestStashBackfill:
             ),
         ]
 
-        cm = ContextManager(strategies=[], stash=True)
+        cm = ContextManager(strategies=[], archive=True)
         cm.init_agent(agent)
 
         event = BeforeModelCallEvent(agent=agent, projected_input_tokens=100)
         await agent.hooks.invoke_callbacks_async(event)
 
-        result = await cm._stash.retrieve("pre-tu-1_0")
+        result = await cm._archive.retrieve("pre-tu-1_0")
         assert result is not None
         assert result["text"] == "pre-existing result"
+
+    @pytest.mark.asyncio
+    async def test_backfill_does_not_overwrite_existing_archive_entries(self, mock_agent):
+        """A restored archive holds originals while restored messages hold their previews; the originals win."""
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = None
+        mock_agent.messages = [
+            Message(role="user", content=[ContentBlock(text="seed message")], tracking_id="seed"),
+            Message(
+                role="user",
+                content=[
+                    ContentBlock(
+                        toolResult=ToolResult(
+                            toolUseId="pre-tu-1",
+                            status="success",
+                            content=[{"text": "[Truncated: 1 block, ~7,500 tokens] preview"}],
+                        )
+                    )
+                ],
+            ),
+        ]
+        cm = ContextManager(strategies=[], archive=True)
+        cm.init_agent(mock_agent)
+        await cm.archive.load_snapshot({"pre-tu-1_0": {"text": "original full result"}})
+
+        event = BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=100)
+        await mock_agent.hooks.invoke_callbacks_async(event)
+
+        assert await cm.archive.retrieve("pre-tu-1_0") == {"text": "original full result"}
+        assert await cm.archive.retrieve("seed_0") == {"text": "seed message"}
+
+    @pytest.mark.asyncio
+    async def test_backfill_does_not_archive_placeholders_over_missing_originals(self, mock_agent):
+        """Restored placeholders are never archived under their originals' keys (#5620)."""
+        placeholder = offload_placeholder("truncate", "[Truncated: 1 block, ~7,500 tokens] preview", "pre-tu-1")
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = None
+        mock_agent.messages = [
+            Message(role="user", content=[ContentBlock(text="seed message")], tracking_id="seed"),
+            Message(
+                role="user",
+                content=[
+                    ContentBlock(toolResult=ToolResult(toolUseId="pre-tu-1", status="success", content=[placeholder]))
+                ],
+            ),
+        ]
+        cm = ContextManager(strategies=[], archive=True)
+        cm.init_agent(mock_agent)
+
+        event = BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=100)
+        await mock_agent.hooks.invoke_callbacks_async(event)
+
+        assert await cm.archive.retrieve("pre-tu-1_0") is None
+        assert await cm.archive.retrieve("seed_0") == {"text": "seed message"}
 
     @pytest.mark.asyncio
     async def test_backfill_runs_only_once(self):
@@ -375,20 +557,20 @@ class TestStashBackfill:
             Message(role="user", content=[ContentBlock(text="hello")]),
         ]
 
-        cm = ContextManager(strategies=[], stash=True)
+        cm = ContextManager(strategies=[], archive=True)
         cm.init_agent(agent)
 
         event = BeforeModelCallEvent(agent=agent, projected_input_tokens=100)
         await agent.hooks.invoke_callbacks_async(event)
         assert cm._backfill_done is True
 
-        with unittest.mock.patch.object(cm._stash, "store_message") as mock_store:
+        with unittest.mock.patch.object(cm._archive, "store_message") as mock_store:
             event = BeforeModelCallEvent(agent=agent, projected_input_tokens=100)
             await agent.hooks.invoke_callbacks_async(event)
             mock_store.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_no_backfill_when_stash_disabled(self):
+    async def test_no_backfill_when_archive_disabled(self):
         agent = unittest.mock.MagicMock()
         agent.agent_id = "test-agent"
         agent.session_id = "test-session"
@@ -401,18 +583,18 @@ class TestStashBackfill:
             Message(role="user", content=[ContentBlock(text="hello")]),
         ]
 
-        cm = ContextManager(strategies=[], stash=False)
+        cm = ContextManager(strategies=[], archive=False)
         cm.init_agent(agent)
 
         event = BeforeModelCallEvent(agent=agent, projected_input_tokens=100)
         await agent.hooks.invoke_callbacks_async(event)
-        assert cm._stash is None
+        assert cm._archive is None
 
 
-class TestStrategyInitFallback:
-    """Tests for strategy init() TypeError fallback."""
+class TestStrategyInit:
+    """Tests for the keyword a strategy's optional init() receives the archive under."""
 
-    def test_strategy_without_stash_kwarg_still_inits(self, mock_agent):
+    def test_strategy_without_archive_kwarg_still_inits(self, mock_agent):
         class CustomStrategy:
             @property
             def name(self):
@@ -429,45 +611,139 @@ class TestStrategyInitFallback:
         cm.init_agent(mock_agent)
         assert strategy.initialized is True
 
+    def test_strategy_declaring_archive_receives_it(self, mock_agent):
+        class ArchiveStrategy:
+            name = "custom"
 
-class TestStashProperty:
-    """Tests for the stash property."""
+            def init(self, agent, archive=None):
+                self.received = archive
 
-    def test_stash_is_none_before_init(self):
+            async def apply(self, context):
+                return False
+
+        strategy = ArchiveStrategy()
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+
+        assert strategy.received is cm.archive
+
+    def test_strategy_declaring_the_deprecated_stash_keyword_receives_the_archive(self, mock_agent):
+        """A strategy written against the pre-rename keyword still gets the archive."""
+
+        class StashStrategy:
+            name = "custom"
+
+            def init(self, agent, stash=None):
+                self.received = stash
+
+            async def apply(self, context):
+                return False
+
+        strategy = StashStrategy()
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+
+        assert strategy.received is cm.archive
+
+    def test_strategy_taking_kwargs_receives_the_archive(self, mock_agent):
+        class KwargsStrategy:
+            name = "custom"
+
+            def init(self, agent, **kwargs):
+                self.received = kwargs
+
+            async def apply(self, context):
+                return False
+
+        strategy = KwargsStrategy()
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+
+        assert strategy.received == {"archive": cm.archive}
+
+    @pytest.mark.skipif(sys.version_info < (3, 14), reason="annotations are only deferred on 3.14+")
+    def test_strategy_init_with_unresolvable_annotations(self, mock_agent):
+        """Reading the keyword off the signature must not resolve a type-only annotation."""
+        # Built from source because below 3.14 an unresolvable annotation raises at definition time.
+        namespace = {}
+        exec(  # noqa: S102
+            textwrap.dedent(
+                """
+                class AnnotatedStrategy:
+                    name = "custom"
+
+                    def init(self, agent: OnlyForTypeChecking, archive: OnlyForTypeChecking = None) -> None:
+                        self.received = archive
+
+                    async def apply(self, context):
+                        return False
+                """
+            ),
+            namespace,
+        )
+
+        strategy = namespace["AnnotatedStrategy"]()
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+
+        assert strategy.received is cm.archive
+
+    def test_type_error_raised_by_init_propagates(self, mock_agent):
+        """A TypeError from inside init() is not mistaken for a signature mismatch."""
+
+        class FailingStrategy:
+            name = "custom"
+
+            def init(self, agent, archive=None):
+                raise TypeError("strategy is misconfigured")
+
+            async def apply(self, context):
+                return False
+
+        cm = ContextManager(strategies=[FailingStrategy()])
+
+        with pytest.raises(TypeError, match="strategy is misconfigured"):
+            cm.init_agent(mock_agent)
+
+
+class TestArchiveProperty:
+    """Tests for the archive property."""
+
+    def test_archive_is_none_before_init(self):
         context_manager = ContextManager()
-        assert context_manager.stash is None
+        assert context_manager.archive is None
 
-    def test_stash_is_set_after_init(self, mock_agent):
+    def test_archive_is_set_after_init(self, mock_agent):
         mock_agent.session_id = "test-session"
         mock_agent.storage = None
         context_manager = ContextManager()
         context_manager.init_agent(mock_agent)
-        assert context_manager.stash is not None
+        assert context_manager.archive is not None
 
-    def test_stash_is_none_when_disabled(self, mock_agent):
-        context_manager = ContextManager(stash=False)
+    def test_archive_is_none_when_disabled(self, mock_agent):
+        context_manager = ContextManager(archive=False)
         context_manager.init_agent(mock_agent)
-        assert context_manager.stash is None
+        assert context_manager.archive is None
 
 
-class TestStashIsDurable:
-    """Tests for the stash_is_durable property."""
+class TestArchiveIsDurable:
+    """Tests for the archive_is_durable property."""
 
     def test_false_with_in_memory_storage(self, mock_agent):
         mock_agent.session_id = "test-session"
         mock_agent.storage = None
         context_manager = ContextManager()
         context_manager.init_agent(mock_agent)
-        assert context_manager.stash_is_durable is False
+        assert context_manager.archive_is_durable is False
 
     def test_true_with_non_in_memory_storage(self, mock_agent):
         from strands.storage.local_file_storage import LocalFileStorage
 
         mock_agent.session_id = "test-session"
-        mock_agent.storage = LocalFileStorage(base_dir="/tmp/test-stash-durable")
-        context_manager = ContextManager(stash=True)
+        mock_agent.storage = LocalFileStorage(base_dir="/tmp/test-archive-durable")
+        context_manager = ContextManager(archive=True)
         context_manager.init_agent(mock_agent)
-        assert context_manager.stash_is_durable is True
+        assert context_manager.archive_is_durable is True
 
     def test_false_with_namespaced_in_memory_storage(self, mock_agent):
         from strands.storage.in_memory_storage import InMemoryStorage
@@ -475,10 +751,153 @@ class TestStashIsDurable:
 
         mock_agent.session_id = "test-session"
         mock_agent.storage = _NamespacedStorage(InMemoryStorage(), "tenant")
-        context_manager = ContextManager(stash=True)
+        context_manager = ContextManager(archive=True)
         context_manager.init_agent(mock_agent)
-        assert context_manager.stash_is_durable is False
+        assert context_manager.archive_is_durable is False
 
     def test_false_before_init(self):
         context_manager = ContextManager()
-        assert context_manager.stash_is_durable is False
+        assert context_manager.archive_is_durable is False
+
+
+class TestArchiveRoot:
+    """Tests for resolving the archive root from the configured storage."""
+
+    @pytest.mark.asyncio
+    async def test_explicit_scoped_storage_is_exact_root(self, mock_agent):
+        mock_agent.session_id = "s1"
+        storage = InMemoryStorage()
+        context_manager = ContextManager(archive={"storage": storage.namespace("team")})
+        context_manager.init_agent(mock_agent)
+        await context_manager.archive.store("tool-1", 0, b"{}")
+
+        assert await storage.list("") == ["team/tool-1_0"]
+
+    @pytest.mark.asyncio
+    async def test_scoped_agent_storage_uses_per_agent_root(self, mock_agent):
+        mock_agent.session_id = "s1"
+        storage = InMemoryStorage()
+        mock_agent.storage = storage.namespace("tenant")
+        context_manager = ContextManager()
+        context_manager.init_agent(mock_agent)
+        await context_manager.archive.store("tool-1", 0, b"{}")
+
+        assert await storage.list("") == ["tenant/context/s1/scopes/agent/test-agent/tool-1_0"]
+
+
+class TestContextManagerRequestUsage:
+    """Tests that strategies get a handle joining the request they run for."""
+
+    @pytest.mark.asyncio
+    async def test_strategies_get_a_handle_that_joins_the_request_usage_without_its_limits(self, mock_agent):
+        captured = []
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "mock-strategy"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(side_effect=lambda context: captured.append(context) or False)
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+        request = _create_invocation_context({"turns": 1})
+        request._usage["turns_taken"] = 1
+
+        await mock_agent.hooks.invoke_callbacks_async(
+            BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=5000, invocation_context=request)
+        )
+
+        handed = captured[0].invocation_context
+        handed._record_usage({"inputTokens": 1, "outputTokens": 2, "totalTokens": 3})
+        assert _reached_limit(handed) is None
+        assert request.usage == {"turns_taken": 1, "inputTokens": 1, "outputTokens": 2, "totalTokens": 3}
+
+    @pytest.mark.asyncio
+    async def test_strategies_get_no_handle_outside_a_request(self, mock_agent):
+        captured = []
+        strategy = unittest.mock.AsyncMock()
+        strategy.name = "mock-strategy"
+        strategy.init = unittest.mock.MagicMock()
+        strategy.apply = unittest.mock.AsyncMock(side_effect=lambda context: captured.append(context) or False)
+        cm = ContextManager(strategies=[strategy])
+        cm.init_agent(mock_agent)
+
+        await mock_agent.hooks.invoke_callbacks_async(
+            BeforeModelCallEvent(agent=mock_agent, projected_input_tokens=5000)
+        )
+
+        assert captured[0].invocation_context is None
+
+
+class TestDeprecatedStashNames:
+    """Tests for the pre-rename ``stash`` surface kept until v1.68.0."""
+
+    def test_stash_argument_configures_the_archive(self, mock_agent):
+        with pytest.warns(DeprecationWarning, match="ContextManager\\(stash=...\\) is deprecated"):
+            context_manager = ContextManager(stash=False)
+        context_manager.init_agent(mock_agent)
+
+        assert context_manager.archive is None
+
+    def test_archive_argument_wins_over_stash(self, mock_agent):
+        context_manager = ContextManager(archive=False, stash=True)
+        context_manager.init_agent(mock_agent)
+
+        assert context_manager.archive is None
+
+    def test_config_dict_accepts_the_deprecated_key(self, mock_agent):
+        with pytest.warns(DeprecationWarning, match='"stash" key'):
+            context_manager = ContextManager.from_strategy({"stash": False})
+        context_manager.init_agent(mock_agent)
+
+        assert context_manager.archive is None
+
+    def test_config_dict_archive_key_wins_over_stash(self, mock_agent):
+        context_manager = ContextManager.from_strategy({"archive": False, "stash": True})
+        context_manager.init_agent(mock_agent)
+
+        assert context_manager.archive is None
+
+    def test_construction_emits_no_deprecation_warning(self, mock_agent):
+        # Plugin discovery reads every class attribute, so the old names must not be properties.
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            context_manager = ContextManager()
+            context_manager.init_agent(mock_agent)
+
+        assert [str(warning.message) for warning in caught if "stash" in str(warning.message)] == []
+
+    def test_unknown_attribute_raises_attribute_error(self):
+        context_manager = ContextManager()
+
+        with pytest.raises(AttributeError, match="has no attribute 'not_a_name'"):
+            _ = context_manager.not_a_name
+
+    def test_stash_property_returns_the_archive(self, mock_agent):
+        context_manager = ContextManager()
+        context_manager.init_agent(mock_agent)
+
+        with pytest.warns(DeprecationWarning, match="ContextManager.stash is deprecated"):
+            assert context_manager.stash is context_manager.archive
+
+    def test_stash_is_durable_property_returns_archive_is_durable(self, mock_agent, tmp_path):
+        from strands.storage.local_file_storage import LocalFileStorage
+
+        mock_agent.session_id = "test-session"
+        mock_agent.storage = LocalFileStorage(base_dir=str(tmp_path))
+        context_manager = ContextManager()
+        context_manager.init_agent(mock_agent)
+
+        with pytest.warns(DeprecationWarning, match="ContextManager.stash_is_durable is deprecated"):
+            assert context_manager.stash_is_durable is True
+
+    def test_context_state_stash_returns_the_archive(self, mock_agent, archive):
+        context = ContextState(messages=mock_agent.messages, agent=mock_agent, utilization=0.5, archive=archive)
+
+        with pytest.warns(DeprecationWarning, match="ContextState.stash is deprecated"):
+            assert context.stash is archive
+
+    def test_context_state_stash_assigns_the_archive(self, mock_agent, archive):
+        context = ContextState(messages=mock_agent.messages, agent=mock_agent, utilization=0.5)
+
+        with pytest.warns(DeprecationWarning, match="ContextState.stash is deprecated"):
+            context.stash = archive
+
+        assert context.archive is archive

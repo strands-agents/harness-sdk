@@ -1,10 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import OpenAI, { APIUserAbortError } from 'openai'
+import { z } from 'zod'
+import { Agent } from '../../../agent/agent.js'
+import { tool } from '../../../tools/tool-factory.js'
 import { isNode } from '../../../__fixtures__/environment.js'
 import { OpenAIModel } from '../index.js'
-import { ContextWindowOverflowError, ModelThrottledError } from '../../../errors.js'
-import { collectIterator } from '../../../__fixtures__/model-test-helpers.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../../types/messages.js'
+import { ContextWindowOverflowError, MaxTokensError, ModelThrottledError } from '../../../errors.js'
+import { collectGenerator, collectIterator } from '../../../__fixtures__/model-test-helpers.js'
+import {
+  Message,
+  TextBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  OffloadedBlock,
+  ReasoningBlock,
+  UnknownBlock,
+} from '../../../types/messages.js'
 import { ImageBlock, DocumentBlock } from '../../../types/media.js'
 import { CitationsBlock } from '../../../types/citations.js'
 import { StateStore } from '../../../state-store.js'
@@ -94,6 +105,14 @@ describe("OpenAIModel (api: 'responses')", () => {
     it('returns true when explicitly enabled', () => {
       const model = new OpenAIModel({ api: 'responses', client: {} as OpenAI, stateful: true })
       expect(model.stateful).toBe(true)
+    })
+
+    it('is declared on info', () => {
+      const stateful = new OpenAIModel({ api: 'responses', client: {} as OpenAI, stateful: true })
+      const stateless = new OpenAIModel({ api: 'responses', client: {} as OpenAI })
+
+      expect(stateful.modelInfo.capabilities?.stateful).toBe(true)
+      expect(stateless.modelInfo.capabilities?.stateful).toBe(false)
     })
 
     it('is construction-only and cannot be changed via updateConfig', () => {
@@ -246,6 +265,29 @@ describe("OpenAIModel (api: 'responses')", () => {
       const req = await runOnce({}, [mkUserMessage()], { systemPrompt: 'Be helpful.' })
       expect(req.instructions).toBe('Be helpful.')
     })
+
+    it.each([
+      ['gpt-6.2-sol', { cacheConfig: {} }, true],
+      ['openai.gpt-6.2-astra', {}, true],
+      ['gpt-6.1-sol', { cacheConfig: {} }, false],
+      ['gpt-6.2-sol', { stateful: true }, false],
+    ])(
+      // Guards against GPT-6.2 never caching instructions (#6367).
+      'sends the system prompt as a developer message only where instructions never cache: %s %o',
+      async (modelId, modelOptions, expectDeveloperMessage) => {
+        const systemPrompt = [new TextBlock('Be '), new TextBlock('helpful.')]
+        const req = await runOnce({ modelId, ...modelOptions }, [mkUserMessage()], { systemPrompt })
+        const withoutSystemPrompt = await runOnce({ modelId, ...modelOptions })
+
+        const developer = { role: 'developer', content: [{ type: 'input_text', text: 'Be helpful.' }] }
+        expect(req).toStrictEqual({
+          ...withoutSystemPrompt,
+          ...(expectDeveloperMessage
+            ? { input: [developer, ...withoutSystemPrompt.input] }
+            : { instructions: 'Be helpful.' }),
+        })
+      }
+    )
 
     it('merges toolSpecs with built-in tools from params', async () => {
       const req = await runOnce({ params: { tools: [{ type: 'web_search' }] } }, [mkUserMessage()], {
@@ -512,6 +554,25 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(req.input[2]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'What about 3+3?' }] })
     })
 
+    it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
+      const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+      const messages = [
+        new Message({ role: 'user', content: [placeholder] }),
+        new Message({ role: 'assistant', content: [placeholder] }),
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: '[Dropped] [ref: tu-1]' }] })
+      expect(req.input[1]).toEqual({ role: 'assistant', content: '[Dropped] [ref: tu-1]' })
+      expect(req.input.find((item: any) => item.type === 'function_call_output')).toMatchObject({
+        call_id: 'tu-1',
+        output: '[Dropped] [ref: tu-1]',
+      })
+    })
+
     it('joins multiple assistant text blocks with newlines', async () => {
       const messages = [
         new Message({ role: 'user', content: [new TextBlock('list two words')] }),
@@ -580,9 +641,47 @@ describe("OpenAIModel (api: 'responses')", () => {
       const req = await runOnce({}, messages)
       expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'quoted passage' }] })
     })
+
+    it('skips unknown blocks in messages and tool results, without a warning', async () => {
+      using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const unknownBlock = new UnknownBlock({ futureBlock: { value: 1 } })
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('hello'), unknownBlock] }),
+        new Message({ role: 'assistant', content: [new ToolUseBlock({ name: 'tool', toolUseId: 'tu1', input: {} })] }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'tu1',
+              status: 'success',
+              content: [new TextBlock('done'), unknownBlock],
+            }),
+          ],
+        }),
+      ]
+      const req = await runOnce({}, messages)
+      expect(req.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'hello' }] })
+      expect(req.input.at(-1)).toMatchObject({ type: 'function_call_output', call_id: 'tu1' })
+      expect(JSON.stringify(req.input)).not.toContain('futureBlock')
+      expect(warnSpy).not.toHaveBeenCalled()
+    })
   })
 
   describe('stream event mapping', () => {
+    it('resolves stateful once per stream, not once per event', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'resp_abc' } }
+        for (let i = 0; i < 50; i++) yield { type: 'response.output_text.delta', delta: 'x' }
+        yield { type: 'response.completed', response: {} }
+      })
+      const model = new OpenAIModel({ api: 'responses', client, stateful: true })
+      const getConfig = vi.spyOn(model, 'getConfig')
+
+      await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('hi')] })]))
+
+      expect(getConfig.mock.calls.length).toBeLessThan(10)
+    })
+
     it('captures responseId on response.created when stateful', async () => {
       const modelState = new StateStore()
       const client = createMockClient(async function* () {
@@ -718,6 +817,73 @@ describe("OpenAIModel (api: 'responses')", () => {
       expect(metadata?.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 })
     })
 
+    it('maps response.incomplete with content_filter to stopReason=contentFiltered', async () => {
+      // #5740
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield { type: 'response.output_text.delta', delta: 'partial' }
+        yield { type: 'response.incomplete', response: { incomplete_details: { reason: 'content_filter' } } }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+      const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      expect(events).toEqual([
+        { type: 'modelMessageStartEvent', role: 'assistant' },
+        { type: 'modelContentBlockStartEvent' },
+        { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'partial' } },
+        { type: 'modelContentBlockStopEvent' },
+        { type: 'modelMessageStopEvent', stopReason: 'contentFiltered' },
+      ])
+    })
+
+    describe('when a function call is in flight at response.incomplete', () => {
+      // #5740
+      const truncatedCall = (reason: string) =>
+        createMockClient(async function* () {
+          yield { type: 'response.created', response: { id: 'r' } }
+          yield {
+            type: 'response.output_item.added',
+            item: { type: 'function_call', id: 'item_1', call_id: 'call_1', name: 'write_file' },
+          }
+          yield {
+            type: 'response.function_call_arguments.delta',
+            item_id: 'item_1',
+            delta: '{"path": "notes.md", "content": "Lorem',
+          }
+          yield { type: 'response.incomplete', response: { incomplete_details: { reason } } }
+        })
+      const toolCallEvents = [
+        { type: 'modelMessageStartEvent', role: 'assistant' },
+        {
+          type: 'modelContentBlockStartEvent',
+          start: { type: 'toolUseStart', name: 'write_file', toolUseId: 'call_1' },
+        },
+        {
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'toolUseInputDelta', input: '{"path": "notes.md", "content": "Lorem' },
+        },
+        { type: 'modelContentBlockStopEvent' },
+      ]
+      const messages = [new Message({ role: 'user', content: [new TextBlock('x')] })]
+
+      it('reports maxTokens instead of toolUse for max_output_tokens', async () => {
+        const model = new OpenAIModel({ api: 'responses', client: truncatedCall('max_output_tokens') })
+        const events = await collectIterator(model.stream(messages))
+        expect(events).toEqual([...toolCallEvents, { type: 'modelMessageStopEvent', stopReason: 'maxTokens' }])
+      })
+
+      it('throws MaxTokensError from streamAggregated for max_output_tokens', async () => {
+        const model = new OpenAIModel({ api: 'responses', client: truncatedCall('max_output_tokens') })
+        await expect(collectGenerator(model.streamAggregated(messages))).rejects.toThrow(MaxTokensError)
+      })
+
+      it('keeps toolUse for content_filter', async () => {
+        // contentFiltered here would leave an orphaned toolUse in history; TS has no repair for that yet.
+        const model = new OpenAIModel({ api: 'responses', client: truncatedCall('content_filter') })
+        const events = await collectIterator(model.stream(messages))
+        expect(events).toEqual([...toolCallEvents, { type: 'modelMessageStopEvent', stopReason: 'toolUse' }])
+      })
+    })
+
     it('plumbs prompt-cache reads (input_tokens_details.cached_tokens) into cacheReadInputTokens', async () => {
       const client = createMockClient(async function* () {
         yield { type: 'response.created', response: { id: 'r' } }
@@ -765,6 +931,61 @@ describe("OpenAIModel (api: 'responses')", () => {
       const metadata = events.find((e: any) => e.type === 'modelMetadataEvent') as any
       expect(metadata?.usage).toEqual({ inputTokens: 1553, outputTokens: 42, totalTokens: 1595 })
       expect(metadata?.usage).not.toHaveProperty('cacheReadInputTokens')
+    })
+
+    it('plumbs prompt-cache writes (input_tokens_details.cache_write_tokens) into cacheWriteInputTokens', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield { type: 'response.output_text.delta', delta: 'hi' }
+        yield {
+          type: 'response.completed',
+          response: {
+            usage: {
+              input_tokens: 1553,
+              output_tokens: 42,
+              total_tokens: 1595,
+              input_tokens_details: { cached_tokens: 873, cache_write_tokens: 40 },
+            },
+          },
+        }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+      const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      const metadata = events.find((e: any) => e.type === 'modelMetadataEvent') as any
+      expect(metadata?.usage).toEqual({
+        inputTokens: 1553,
+        outputTokens: 42,
+        totalTokens: 1595,
+        cacheReadInputTokens: 873,
+        cacheWriteInputTokens: 40,
+      })
+    })
+
+    it('omits cacheWriteInputTokens when cache_write_tokens is 0 or absent', async () => {
+      const client = createMockClient(async function* () {
+        yield { type: 'response.created', response: { id: 'r' } }
+        yield {
+          type: 'response.completed',
+          response: {
+            usage: {
+              input_tokens: 1553,
+              output_tokens: 42,
+              total_tokens: 1595,
+              input_tokens_details: { cached_tokens: 873, cache_write_tokens: 0 },
+            },
+          },
+        }
+      })
+      const model = new OpenAIModel({ api: 'responses', client })
+      const events = await collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
+      const metadata = events.find((e: any) => e.type === 'modelMetadataEvent') as any
+      expect(metadata?.usage).toEqual({
+        inputTokens: 1553,
+        outputTokens: 42,
+        totalTokens: 1595,
+        cacheReadInputTokens: 873,
+      })
+      expect(metadata?.usage).not.toHaveProperty('cacheWriteInputTokens')
     })
 
     it('emits URL citation delta from response.output_text.annotation.added', async () => {
@@ -1040,5 +1261,285 @@ describe("OpenAIModel (api: 'responses')", () => {
         collectIterator(model.stream([new Message({ role: 'user', content: [new TextBlock('x')] })]))
       ).rejects.toThrow('some other failure')
     })
+  })
+})
+
+describe('OpenAIModel (api: responses) stateless reasoning replay', () => {
+  const user = (text: string): Message => new Message({ role: 'user', content: [new TextBlock(text)] })
+  const reasoningItem = (id: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    type: 'reasoning',
+    id,
+    summary: [],
+    content: [],
+    encrypted_content: 'enc',
+    ...extra,
+  })
+  const tagged = (id: string, modelId = 'gpt-4o', data: Record<string, unknown> = {}): ReasoningBlock =>
+    new ReasoningBlock({
+      providerData: { provider: 'openai_responses', modelId, data: { id, encrypted_content: 'enc', ...data } as any },
+    })
+
+  async function streamMessage(events: unknown[], config: Record<string, unknown> = {}): Promise<Message> {
+    const client = createMockClient(async function* () {
+      yield { type: 'response.created', response: { id: 'resp_1' } }
+      yield* events
+    })
+    const model = new OpenAIModel({ api: 'responses', client, modelId: 'gpt-4o', ...config })
+    const { result } = await collectGenerator(model.streamAggregated([user('go')]))
+    return result.message
+  }
+
+  async function request(messages: Message[], config: Record<string, unknown> = {}, options = {}): Promise<any> {
+    const capture: { request?: any } = {}
+    const client = createMockClient(async function* () {
+      yield { type: 'response.completed', response: { output: [] } }
+    }, capture)
+    const model = new OpenAIModel({ api: 'responses', client, modelId: 'gpt-4o', ...config })
+    await collectIterator(model.stream(messages, options))
+    return capture.request
+  }
+
+  it.each([
+    [undefined, ['reasoning.encrypted_content']],
+    [['web_search_call.results'], ['web_search_call.results', 'reasoning.encrypted_content']],
+    [['reasoning.encrypted_content'], ['reasoning.encrypted_content']],
+  ])('merges reasoning.encrypted_content into include %j', async (include, expected) => {
+    const params = include ? { include: [...include] } : {}
+    const req = await request([user('hi')], { params })
+    expect(req.include).toEqual(expected)
+    expect(params).toEqual(include ? { include } : {})
+  })
+
+  it('omits include when params set it to null', async () => {
+    const req = await request([user('hi')], { params: { include: null } })
+    expect('include' in req).toBe(false)
+  })
+
+  it('keeps the stateful path as is: no include and no replayed reasoning', async () => {
+    const modelState = new StateStore()
+    modelState.set('responseId', 'resp_0')
+    const messages = [user('hi'), new Message({ role: 'assistant', content: [tagged('rs_1')] }), user('next')]
+    const req = await request(messages, { stateful: true }, { modelState })
+    expect(req.previous_response_id).toBe('resp_0')
+    expect(req.include).toBeUndefined()
+    expect(req.input.some((item: any) => item.type === 'reasoning')).toBe(false)
+  })
+
+  it('captures each reasoning output item as its own block, keeping streamed text', async () => {
+    const message = await streamMessage([
+      { type: 'response.reasoning_summary_text.delta', delta: 'streamed' },
+      {
+        type: 'response.output_item.done',
+        item: reasoningItem('rs_1', { summary: [{ type: 'summary_text', text: 'streamed' }] }),
+      },
+      { type: 'response.output_item.done', item: reasoningItem('rs_2', { encrypted_content: 'enc2' }) },
+      { type: 'response.output_text.delta', delta: 'answer' },
+      { type: 'response.completed', response: { output: [reasoningItem('rs_1'), reasoningItem('rs_2')] } },
+    ])
+    expect(message.content).toEqual([
+      new ReasoningBlock({
+        text: 'streamed',
+        providerData: {
+          provider: 'openai_responses',
+          modelId: 'gpt-4o',
+          data: { id: 'rs_1', summary: [{ type: 'summary_text', text: 'streamed' }], encrypted_content: 'enc' },
+        },
+      }),
+      new ReasoningBlock({
+        providerData: {
+          provider: 'openai_responses',
+          modelId: 'gpt-4o',
+          data: { id: 'rs_2', encrypted_content: 'enc2' },
+        },
+      }),
+      new TextBlock('answer'),
+    ])
+  })
+
+  it('captures a reasoning item that has no summary', async () => {
+    const message = await streamMessage([
+      { type: 'response.output_item.done', item: { type: 'reasoning', id: 'rs_1', encrypted_content: 'enc' } },
+      { type: 'response.completed', response: {} },
+    ])
+    expect(message.content).toEqual([tagged('rs_1')])
+  })
+
+  it('replays captured reasoning on the next tool turn of an agent', async () => {
+    const requests: any[] = []
+    const turns = [
+      [
+        { type: 'response.output_item.done', item: reasoningItem('rs_1') },
+        { type: 'response.output_item.added', item: { type: 'function_call', id: 'fc_1', call_id: 'c1', name: 'add' } },
+        { type: 'response.function_call_arguments.done', item_id: 'fc_1', arguments: '{"a":1}' },
+        { type: 'response.completed', response: {} },
+      ],
+      [
+        { type: 'response.output_text.delta', delta: '2' },
+        { type: 'response.completed', response: {} },
+      ],
+    ]
+    const client = {
+      responses: {
+        create: vi.fn(async (req: any) => {
+          requests.push(req)
+          const events = turns[requests.length - 1]!
+          return (async function* () {
+            yield* events
+          })()
+        }),
+      },
+    } as any
+    const add = tool({
+      name: 'add',
+      description: 'Add one.',
+      inputSchema: z.object({ a: z.number() }),
+      callback: ({ a }) => a + 1,
+    })
+    const model = new OpenAIModel({ api: 'responses', client, modelId: 'gpt-4o' })
+    await new Agent({ model, tools: [add], printer: false }).invoke('add one to 1')
+    expect(requests[1].input.slice(1).map((item: any) => item.type)).toEqual([
+      'reasoning',
+      'function_call',
+      'function_call_output',
+    ])
+    expect(requests[1].input[1]).toEqual({ type: 'reasoning', summary: [], id: 'rs_1', encrypted_content: 'enc' })
+  })
+
+  it('captures reasoning found only in the terminal output', async () => {
+    const content = [{ type: 'reasoning_text', text: 'full reasoning' }]
+    const message = await streamMessage([
+      { type: 'response.output_text.delta', delta: 'answer' },
+      {
+        type: 'response.completed',
+        response: { output: [reasoningItem('rs_1', { content, encrypted_content: null })] },
+      },
+    ])
+    expect(message.content).toEqual([
+      new TextBlock('answer'),
+      new ReasoningBlock({
+        text: 'full reasoning',
+        providerData: { provider: 'openai_responses', modelId: 'gpt-4o', data: { id: 'rs_1', content } },
+      }),
+    ])
+  })
+
+  it('streams response.reasoning.delta as reasoning content', async () => {
+    const message = await streamMessage([
+      { type: 'response.reasoning.delta', delta: 'thinking' },
+      { type: 'response.completed', response: {} },
+    ])
+    expect(message.content).toEqual([new ReasoningBlock({ text: 'thinking' })])
+  })
+
+  it('does not capture reasoning items when stateful', async () => {
+    const message = await streamMessage(
+      [
+        { type: 'response.output_item.done', item: reasoningItem('rs_1') },
+        { type: 'response.output_text.delta', delta: 'answer' },
+        { type: 'response.completed', response: { output: [reasoningItem('rs_1')] } },
+      ],
+      { stateful: true }
+    )
+    expect(message.content).toEqual([new TextBlock('answer')])
+  })
+
+  it('replays captured reasoning ahead of the turn it belongs to, in a fixed key order', async () => {
+    const summary = [{ type: 'summary_text', text: 'plan' }]
+    const messages = [
+      user('add'),
+      new Message({
+        role: 'assistant',
+        content: [
+          new TextBlock('calling'),
+          new ReasoningBlock({ text: 'plan', ...tagged('rs_1', 'gpt-4o', { summary }) }),
+          new ToolUseBlock({ name: 'add', toolUseId: 'c1', input: { a: 1 } }),
+        ],
+      }),
+      new Message({
+        role: 'user',
+        content: [new ToolResultBlock({ toolUseId: 'c1', status: 'success', content: [new TextBlock('2')] })],
+      }),
+    ]
+    const req = await request(messages)
+    expect(req.input.slice(1)).toEqual([
+      { type: 'reasoning', summary, id: 'rs_1', encrypted_content: 'enc' },
+      { role: 'assistant', content: 'calling' },
+      { type: 'function_call', call_id: 'c1', name: 'add', arguments: '{"a":1}' },
+      { type: 'function_call_output', call_id: 'c1', output: '2' },
+    ])
+    expect(Object.keys(req.input[1])).toEqual(['type', 'summary', 'id', 'encrypted_content'])
+  })
+
+  it.each([
+    ['another model', tagged('rs_1', 'gpt-5')],
+    [
+      'another provider',
+      new ReasoningBlock({ providerData: { provider: 'other', modelId: 'gpt-4o', data: { id: 'rs_1' } } }),
+    ],
+    ['plain text reasoning', new ReasoningBlock({ text: 'plain', signature: 'sig' })],
+    ['redacted reasoning', new ReasoningBlock({ redactedContent: new Uint8Array([1]) })],
+  ])('drops reasoning from %s', async (_label, block) => {
+    const warn = vi.spyOn(logger, 'warn')
+    const req = await request([user('hi'), new Message({ role: 'assistant', content: [block, new TextBlock('a')] })])
+    expect(req.input.slice(1)).toEqual([{ role: 'assistant', content: 'a' }])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('reasoning from another provider or model'))
+    warn.mockRestore()
+  })
+
+  describe('when the endpoint rejects replayed reasoning', () => {
+    const history = (): Message[] => [
+      user('go'),
+      new Message({ role: 'assistant', content: [tagged('rs_1'), new TextBlock('ok')] }),
+      user('next'),
+    ]
+    const badRequest = (message: string): Error => Object.assign(new Error(message), { status: 400 })
+
+    async function run(messages: Message[], error: Error, calls = 1): Promise<{ requests: any[]; model: OpenAIModel }> {
+      const requests: any[] = []
+      const create = vi.fn(async (req: any) => {
+        requests.push(req)
+        if (requests.length === 1) throw error
+        return (async function* () {
+          yield { type: 'response.completed', response: {} }
+        })()
+      })
+      const model = new OpenAIModel({ api: 'responses', client: { responses: { create } } as any, modelId: 'gpt-4o' })
+      for (let i = 0; i < calls; i++) await collectIterator(model.stream(messages)).catch(() => undefined)
+      return { requests, model }
+    }
+
+    it('retries once without the reasoning and stops replaying it', async () => {
+      const messages = history()
+      const rejection = badRequest('The encrypted content for item rs_1 could not be verified.')
+      const { requests } = await run(messages, rejection, 2)
+      expect(requests).toHaveLength(3)
+      expect(requests[0].input.some((item: any) => item.type === 'reasoning')).toBe(true)
+      expect(requests.slice(1).some((req) => req.input.some((item: any) => item.type === 'reasoning'))).toBe(false)
+      expect(messages[1]!.content[0]).toEqual(tagged('rs_1'))
+    })
+
+    it.each([
+      ['an unrelated bad request', history(), badRequest('Invalid value for temperature.')],
+      ['a request with no replayed reasoning', [user('next')], badRequest('Invalid reasoning effort.')],
+    ])('does not retry %s', async (_label, messages, error) => {
+      expect((await run(messages, error)).requests).toHaveLength(1)
+    })
+  })
+
+  it('drops reasoning from a turn with nothing after it', async () => {
+    const req = await request([user('go'), new Message({ role: 'assistant', content: [tagged('rs_1')] }), user('next')])
+    expect(req.input.some((item: any) => item.type === 'reasoning')).toBe(false)
+  })
+
+  it('names the reasoning provider it takes back in its model info', () => {
+    const model = new OpenAIModel({ api: 'responses', client: {} as OpenAI, modelId: 'gpt-4o' })
+    expect(model.modelInfo.capabilities?.reasoningProvider).toBe('openai_responses')
+    const chat = new OpenAIModel({ api: 'chat', client: {} as OpenAI, modelId: 'gpt-4o' })
+    expect(chat.modelInfo.capabilities?.reasoningProvider).toBeUndefined()
+  })
+
+  it('keeps provider data through a JSON round trip', () => {
+    const block = tagged('rs_1')
+    expect(ReasoningBlock.fromJSON(JSON.parse(JSON.stringify(block)))).toEqual(block)
   })
 })

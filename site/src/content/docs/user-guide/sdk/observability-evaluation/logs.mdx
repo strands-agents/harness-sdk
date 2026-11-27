@@ -89,6 +89,15 @@ The Strands Agents SDK uses standard log levels:
 
 - **CRITICAL**: Reserved for catastrophic failures.
 
+In the Python SDK, notices about *how the SDK is being used* (an unset `context_window_limit`, an unknown cache strategy, a graph built without execution limits) are emitted through Python's [`warnings`](https://docs.python.org/3/library/warnings.html) module instead of the logger. The standard library deduplicates repeats, so each warning surfaces once rather than on every call. The TypeScript SDK reports these through its logger.
+
+Control them with `-W` or `PYTHONWARNINGS`, like any other warning:
+
+```bash
+# Promote all UserWarnings, including SDK usage warnings, to errors (useful in CI)
+python -W error::UserWarning my_agent.py
+```
+
 ## Key Logging Areas
 
 <Tabs>

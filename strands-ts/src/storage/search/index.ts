@@ -9,5 +9,8 @@
  */
 
 export type { SearchStrategy } from './types.js'
+export { Embedder } from '../embeddings/embedder.js'
 export type { StorageSearchResult } from '../storage.js'
 export { KeywordSearchStrategy } from './keyword.js'
+export { S3VectorSearchStrategy } from './s3-vector.js'
+export type { S3VectorSearchStrategyConfig } from './s3-vector.js'

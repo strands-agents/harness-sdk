@@ -5,6 +5,8 @@ sidebar:
   label: "How it works"
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 Most agent setups isolate command execution with a container or a cloud sandbox. Both
 work, and both cost something on every command: a Docker container adds a cold start and
 a daemon to manage; a cloud sandbox adds a network round trip and a platform dependency.
@@ -38,22 +40,10 @@ Your code talks to the shell through one of three surfaces: an MCP server, the P
 API, or the Node.js API. Every command, file read, and network request initiated inside
 Strands Shell flows through the Kernel, the single mediation boundary.
 
-```mermaid
-flowchart TB
-    agent["Your agent code"]
-    agent -->|"MCP, Python, or Node.js"| shell
-
-    subgraph shell ["Strands Shell"]
-        direction TB
-        subgraph kernel ["Kernel (mediation boundary)"]
-            vfs["VFS: isolated filesystem"]
-            net["Network: SSRF guard plus allowlist"]
-            creds["Credentials: injected per URL"]
-            limits["Limits: timeout, output, fds"]
-        end
-        engine["Shell engine: parser, builtins, commands, Lua"]
-    end
-```
+<Diagram
+  name="shell-kernel-and-engine"
+  alt="Your agent code calls Strands Shell through MCP, the Python API, or the Node.js API, and reaches the shell engine, which holds the parser, builtins, commands, and Lua. Every effect the engine has goes through the Kernel, the mediation boundary, which has four parts: the VFS, an isolated filesystem; Network, an SSRF guard plus an allowlist; Credentials, injected per URL; and Limits on timeout, output, and file descriptors. All of it runs in your process, with no container or VM."
+/>
 
 The engine parses and runs shell syntax. When a command needs to touch the outside
 world, it asks the Kernel, and the Kernel decides. The filesystem is an in-memory VFS

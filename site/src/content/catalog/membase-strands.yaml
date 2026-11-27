@@ -1,0 +1,10 @@
+name: membase-strands
+description: "Membase as a Strands MemoryStore: recalls a person's memory into each turn citing the source Memory, with tools to search, save and read the profile."
+integrationType: memory-store
+maintainedBy: partner
+languages:
+  python:
+    package: membase-strands
+github: https://github.com/unibaseio/membase/tree/main/integrations/strands
+docsUrl: https://github.com/unibaseio/membase/tree/main/integrations/strands#readme
+addedDate: 2026-10-25

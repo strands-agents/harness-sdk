@@ -12,12 +12,14 @@ import type { CollectionEntry } from 'astro:content'
  */
 export type IntegrationType =
   | 'model-provider'
+  | 'decision-model'
   | 'tool'
   | 'session-manager'
   | 'memory-store'
   | 'storage'
   | 'integration'
   | 'plugin'
+  | 'observability'
   | 'agent-extension'
   | 'intervention'
 

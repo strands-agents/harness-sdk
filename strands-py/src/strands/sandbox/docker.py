@@ -3,6 +3,8 @@
 Mirrors ``strands-ts/src/sandbox/docker.ts``.
 """
 
+import threading
+import warnings
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -48,6 +50,7 @@ class DockerSandbox(PosixShellSandbox):
         timeout: float | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        cancel_signal: threading.Event | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamChunk | ExecutionResult, None]:
         """Execute a command in the container, streaming output.
@@ -57,6 +60,8 @@ class DockerSandbox(PosixShellSandbox):
             timeout: Maximum execution time in seconds. ``None`` means no timeout.
             cwd: Working directory for this command, overriding ``working_dir``.
             env: Environment variables to set, passed as ``docker exec -e`` flags.
+            cancel_signal: Aborts the call when set by killing the local ``docker exec``
+                client. As with ``timeout``, the command may keep running in the container.
             **kwargs: Additional keyword arguments for forward compatibility.
 
         Yields:
@@ -66,6 +71,7 @@ class DockerSandbox(PosixShellSandbox):
         Raises:
             ValueError: If an environment variable name is invalid.
             SandboxTimeoutError: If execution exceeds ``timeout`` seconds.
+            SandboxAbortError: If ``cancel_signal`` is set before the command exits.
         """
         args = ["exec"]
 
@@ -92,7 +98,11 @@ class DockerSandbox(PosixShellSandbox):
         args += ["--", self.container, "sh", "-c", command]
 
         async for chunk in _stream_process(
-            "docker", args, timeout=timeout, enoent_message="docker is not installed or not on PATH"
+            "docker",
+            args,
+            timeout=timeout,
+            enoent_message="docker is not installed or not on PATH",
+            cancel_signal=cancel_signal,
         ):
             yield chunk
 
@@ -103,12 +113,19 @@ class DockerSandbox(PosixShellSandbox):
             The tools bound to this sandbox, with descriptions naming this container.
         """
         cwd = f" Working directory: {self.working_dir}." if self.working_dir else ""
-        return [
-            make_file_editor(
+        # Suppress the ``make_file_editor`` deprecation warning for this internal
+        # construction: the sandbox retains file_editor until it migrates to the
+        # new read/write/edit vended tools. A user-facing ``make_file_editor``
+        # call still warns.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            file_editor_tool = make_file_editor(
                 sandbox=self,
                 name="sandbox_file_editor",
                 description=f'{DEFAULT_FILE_EDITOR_DESCRIPTION} Files are in Docker container "{self.container}".',
-            ),
+            )
+        return [
+            file_editor_tool,
             make_shell(
                 sandbox=self,
                 name="sandbox_shell",

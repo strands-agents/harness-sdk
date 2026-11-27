@@ -39,6 +39,21 @@ describe('AgentPrinter', () => {
       expect(allOutput).toBe('\n💭 Reasoning:\n   Let me think\n\n')
     })
 
+    it('prints no reasoning header for a reasoning block without text', async () => {
+      const model = new MockMessageModel().addTurn([
+        { type: 'reasoningBlock', redactedContent: new Uint8Array([1]) },
+        { type: 'textBlock', text: 'Hi' },
+      ])
+
+      const outputs: string[] = []
+      const agent = new Agent({ model, printer: false })
+      ;(agent as any)._printer = new AgentPrinter((text: string) => outputs.push(text))
+
+      await collectGenerator(agent.stream('Test'))
+
+      expect(outputs.join('')).toBe('Hi\n')
+    })
+
     it('prints text and reasoning together', async () => {
       const model = new MockMessageModel().addTurn([
         { type: 'textBlock', text: 'Answer: ' },

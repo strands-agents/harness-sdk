@@ -1,0 +1,1050 @@
+{
+  "start": "-P30D",
+  "periodOverride": "inherit",
+  "widgets": [
+    {
+      "type": "text",
+      "properties": {
+        "markdown": "## Python integration tests: health and flaky-test triage\n\nEvery completed integration test run publishes one datapoint per test (TestPassed / TestFailed / TestSkipped / TestDuration) from [upload-integ-test-metrics.py](https://github.com/strands-agents/harness-sdk/blob/main/.github/scripts/upload-integ-test-metrics.py). This dashboard is generated from code in [test-infra/dashboards](https://github.com/strands-agents/harness-sdk/tree/main/test-infra/dashboards); edit it there.\n\n**How to read the per-test tables.** Each row is one test; the value is its failure rate over the window (failed / (passed + failed); a skipped execution publishes only TestSkipped and does not count). 1.00 = failed every run (broken). 0.05-0.95 = flaky. A row showing 0 means no test in that group is inside the band. Tests are split into groups by name token because one widget can only show 500 series.\n\n**Caveats.** Most datapoints come from pull requests, so a PR breaking its own tests shows up here as flakiness; the \"merge queue / main only\" section at the bottom separates the two. Metric math cannot join a \"minimum runs\" filter onto a rate, so read the rate tables together with the \"fewer than 5 runs\" tables. Widgets built on Metrics Insights (SELECT ...) only see the last 14 days whatever the time range says. A test that has not run for 14 days drops out of every table."
+      },
+      "x": 0,
+      "y": 0,
+      "width": 24,
+      "height": 7
+    },
+    {
+      "type": "text",
+      "properties": {
+        "markdown": "### Latest publish\nSums over the most recent hour with data; the sparkline is the last 30 days."
+      },
+      "x": 0,
+      "y": 7,
+      "width": 24,
+      "height": 2
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Failed, latest hour",
+        "region": "us-east-1",
+        "view": "singleValue",
+        "period": 3600,
+        "metrics": [
+          [
+            {
+              "expression": "SELECT SUM(TestFailed) FROM SCHEMA(\"Strands/Tests\", Repository,SDK,TestName) WHERE SDK = 'python'",
+              "id": "q1",
+              "period": 3600
+            }
+          ]
+        ],
+        "sparkline": true
+      },
+      "x": 0,
+      "y": 9,
+      "width": 6,
+      "height": 4
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Passed, latest hour",
+        "region": "us-east-1",
+        "view": "singleValue",
+        "period": 3600,
+        "metrics": [
+          [
+            {
+              "expression": "SELECT SUM(TestPassed) FROM SCHEMA(\"Strands/Tests\", Repository,SDK,TestName) WHERE SDK = 'python'",
+              "id": "q1",
+              "period": 3600
+            }
+          ]
+        ],
+        "sparkline": true
+      },
+      "x": 6,
+      "y": 9,
+      "width": 6,
+      "height": 4
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Skipped, latest hour",
+        "region": "us-east-1",
+        "view": "singleValue",
+        "period": 3600,
+        "metrics": [
+          [
+            {
+              "expression": "SELECT SUM(TestSkipped) FROM SCHEMA(\"Strands/Tests\", Repository,SDK,TestName) WHERE SDK = 'python'",
+              "id": "q1",
+              "period": 3600
+            }
+          ]
+        ],
+        "sparkline": true
+      },
+      "x": 12,
+      "y": 9,
+      "width": 6,
+      "height": 4
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Datapoints published, latest hour (executed tests x runs; skips excluded)",
+        "region": "us-east-1",
+        "view": "singleValue",
+        "period": 3600,
+        "metrics": [
+          [
+            {
+              "expression": "SELECT COUNT(TestFailed) FROM SCHEMA(\"Strands/Tests\", Repository,SDK,TestName) WHERE SDK = 'python'",
+              "id": "q1",
+              "period": 3600
+            }
+          ]
+        ],
+        "sparkline": true
+      },
+      "x": 18,
+      "y": 9,
+      "width": 6,
+      "height": 4
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Runs published per day, all legs and events (TestsRun)",
+        "region": "us-east-1",
+        "view": "singleValue",
+        "period": 86400,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,Event,Branch,Leg} MetricName=\"TestsRun\" SDK=\"python\"', 'SampleCount', 86400)",
+              "id": "runs",
+              "period": 86400,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SUM(runs)",
+              "id": "total",
+              "period": 86400
+            }
+          ]
+        ],
+        "sparkline": true
+      },
+      "x": 0,
+      "y": 13,
+      "width": 24,
+      "height": 4
+    },
+    {
+      "type": "text",
+      "properties": {
+        "markdown": "### Suite health\nLeft pair: last 14 days from Metrics Insights. Right pair: 30 days from suite counters."
+      },
+      "x": 0,
+      "y": 17,
+      "width": 24,
+      "height": 2
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Failed test executions per day, last 14 days (Metrics Insights cap); daily sums track PR volume, not health; read with the runs/day widget",
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "period": 86400,
+        "metrics": [
+          [
+            {
+              "expression": "SELECT SUM(TestFailed) FROM SCHEMA(\"Strands/Tests\", Repository,SDK,TestName) WHERE SDK = 'python'",
+              "id": "q1",
+              "period": 86400,
+              "color": "#d62728"
+            }
+          ]
+        ],
+        "stacked": false
+      },
+      "x": 0,
+      "y": 19,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Share of executions passing per day, last 14 days; daily sums track PR volume, not health; read with the runs/day widget",
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "period": 86400,
+        "metrics": [
+          [
+            {
+              "expression": "SELECT AVG(TestFailed) FROM SCHEMA(\"Strands/Tests\", Repository,SDK,TestName) WHERE SDK = 'python'",
+              "id": "fr",
+              "period": 86400,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "1 - fr",
+              "id": "passing",
+              "period": 86400,
+              "label": "1 - failed/(passed + failed)"
+            }
+          ]
+        ],
+        "stacked": false,
+        "yAxis": {
+          "left": {
+            "min": 0,
+            "max": 1
+          }
+        },
+        "annotations": {
+          "horizontal": [
+            {
+              "value": 0.95,
+              "label": "95% passing"
+            }
+          ]
+        }
+      },
+      "x": 12,
+      "y": 19,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Pass rate per day, all events, 30 days",
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "period": 86400,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,Event,Branch,Leg} MetricName=\"TestsPassed\" SDK=\"python\"', 'Sum', 86400)",
+              "id": "p",
+              "period": 86400,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,Event,Branch,Leg} MetricName=\"TestsFailed\" SDK=\"python\"', 'Sum', 86400)",
+              "id": "f",
+              "period": 86400,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SUM(p) / (SUM(p) + SUM(f))",
+              "id": "rate",
+              "period": 86400,
+              "label": "passed / (passed + failed)"
+            }
+          ]
+        ],
+        "stacked": false,
+        "yAxis": {
+          "left": {
+            "min": 0,
+            "max": 1
+          }
+        }
+      },
+      "x": 0,
+      "y": 25,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Failed tests per day, all events, 30 days",
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "period": 86400,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,Event,Branch,Leg} MetricName=\"TestsPassed\" SDK=\"python\"', 'Sum', 86400)",
+              "id": "p",
+              "period": 86400,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,Event,Branch,Leg} MetricName=\"TestsFailed\" SDK=\"python\"', 'Sum', 86400)",
+              "id": "f",
+              "period": 86400,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SUM(f)",
+              "id": "failed",
+              "period": 86400,
+              "label": "failed tests",
+              "color": "#d62728"
+            }
+          ]
+        ],
+        "stacked": false
+      },
+      "x": 12,
+      "y": 25,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "text",
+      "properties": {
+        "markdown": "### Flaky tests, 30 days\nSorted by failure rate inside the (0.05, 0.95) band; the top row is the worst flake."
+      },
+      "x": 0,
+      "y": 31,
+      "width": 24,
+      "height": 2
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, models: failure rate strictly between 0.05 and 0.95 (0 = none in band; check the fewer-than-5-runs table below)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"python\" models', 'Average', 2592000)",
+              "id": "r",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(r - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 33,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, other: failure rate strictly between 0.05 and 0.95 (0 = none in band; check the fewer-than-5-runs table below)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"python\" NOT models', 'Average', 2592000)",
+              "id": "r",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(r - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 42,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Tests with fewer than 5 runs in 30 days, models (rates above are unreliable for these; value = runs, 0 = enough runs)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"python\" models', 'SampleCount', 2592000)",
+              "id": "n",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(4.5 - 10 ^ LOG10(4.5 - n), 0), MAX, DESC, 20)",
+              "id": "low",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 51,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Tests with fewer than 5 runs in 30 days, other (rates above are unreliable for these; value = runs, 0 = enough runs)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"python\" NOT models', 'SampleCount', 2592000)",
+              "id": "n",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(4.5 - 10 ^ LOG10(4.5 - n), 0), MAX, DESC, 20)",
+              "id": "low",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 12,
+      "y": 51,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "text",
+      "properties": {
+        "markdown": "### Broken and recently flaky, by week\nWeek columns show whether a problem is new, ongoing or fixed."
+      },
+      "x": 0,
+      "y": 57,
+      "width": 24,
+      "height": 2
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Broken tests by week, models: 1 = failure rate at or above 0.95 that week (columns are weeks, rightmost = this week; summary = broken weeks; sample size: low-run table)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 604800,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"python\" models', 'Average', 604800)",
+              "id": "r7",
+              "period": 604800,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FLOOR(r7 + 0.05), SUM, DESC, 15)",
+              "id": "broken",
+              "period": 604800
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "SUM"
+          ],
+          "showTimeSeriesData": true
+        }
+      },
+      "x": 0,
+      "y": 59,
+      "width": 24,
+      "height": 8
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Broken tests by week, other: 1 = failure rate at or above 0.95 that week (columns are weeks, rightmost = this week; summary = broken weeks; sample size: low-run table)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 604800,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"python\" NOT models', 'Average', 604800)",
+              "id": "r7",
+              "period": 604800,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FLOOR(r7 + 0.05), SUM, DESC, 15)",
+              "id": "broken",
+              "period": 604800
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "SUM"
+          ],
+          "showTimeSeriesData": true
+        }
+      },
+      "x": 0,
+      "y": 67,
+      "width": 24,
+      "height": 8
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Recently flaky by week, models: 1 = failure rate strictly between 0.05 and 0.95 that week (columns are weeks, rightmost = this week; summary = flaky weeks)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 604800,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"python\" models', 'Average', 604800)",
+              "id": "r7",
+              "period": 604800,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(ABS(CEIL(0.45 - ABS(r7 - 0.5))), SUM, DESC, 15)",
+              "id": "flaky",
+              "period": 604800
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "SUM"
+          ],
+          "showTimeSeriesData": true
+        }
+      },
+      "x": 0,
+      "y": 75,
+      "width": 24,
+      "height": 8
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Recently flaky by week, other: 1 = failure rate strictly between 0.05 and 0.95 that week (columns are weeks, rightmost = this week; summary = flaky weeks)",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 604800,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestFailed\" SDK=\"python\" NOT models', 'Average', 604800)",
+              "id": "r7",
+              "period": 604800,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(ABS(CEIL(0.45 - ABS(r7 - 0.5))), SUM, DESC, 15)",
+              "id": "flaky",
+              "period": 604800
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "SUM"
+          ],
+          "showTimeSeriesData": true
+        }
+      },
+      "x": 0,
+      "y": 83,
+      "width": 24,
+      "height": 8
+    },
+    {
+      "type": "text",
+      "properties": {
+        "markdown": "### Duration\np90 of each test's TestDuration; the trend is the mean of those p90s per day."
+      },
+      "x": 0,
+      "y": 91,
+      "width": 24,
+      "height": 2
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "10 slowest tests, p90 duration in seconds over 30 days, models",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SORT(SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"python\" models', 'p90', 2592000), MAX, DESC, 10)",
+              "id": "slow",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 93,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Mean of per-test p90 duration per day, seconds, models",
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "period": 86400,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"python\" models', 'p90', 86400)",
+              "id": "d",
+              "period": 86400,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "AVG(d)",
+              "id": "mean_p90",
+              "period": 86400,
+              "label": "mean of per-test p90"
+            }
+          ]
+        ],
+        "stacked": false
+      },
+      "x": 12,
+      "y": 93,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "10 slowest tests, p90 duration in seconds over 30 days, other",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SORT(SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"python\" NOT models', 'p90', 2592000), MAX, DESC, 10)",
+              "id": "slow",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 99,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Mean of per-test p90 duration per day, seconds, other",
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "period": 86400,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName} MetricName=\"TestDuration\" SDK=\"python\" NOT models', 'p90', 86400)",
+              "id": "d",
+              "period": 86400,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "AVG(d)",
+              "id": "mean_p90",
+              "period": 86400,
+              "label": "mean of per-test p90"
+            }
+          ]
+        ],
+        "stacked": false
+      },
+      "x": 12,
+      "y": 99,
+      "width": 12,
+      "height": 6
+    },
+    {
+      "type": "text",
+      "properties": {
+        "markdown": "### Merge queue / main only\nPass rate: every run that is not a pull request (merge queue, nightly and release runs). Flaky tables: the nightly run on main only, one table per matrix leg and name group."
+      },
+      "x": 0,
+      "y": 105,
+      "width": 24,
+      "height": 2
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Pass rate per day, merge queue and nightly runs on main only",
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "period": 86400,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,Event,Branch,Leg} MetricName=\"TestsPassed\" SDK=\"python\" Branch=\"main\" NOT \"pull_request_target\"', 'Sum', 86400)",
+              "id": "p",
+              "period": 86400,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,Event,Branch,Leg} MetricName=\"TestsFailed\" SDK=\"python\" Branch=\"main\" NOT \"pull_request_target\"', 'Sum', 86400)",
+              "id": "f",
+              "period": 86400,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SUM(p) / (SUM(p) + SUM(f))",
+              "id": "rate",
+              "period": 86400,
+              "label": "passed / (passed + failed)"
+            }
+          ]
+        ],
+        "stacked": false,
+        "yAxis": {
+          "left": {
+            "min": 0,
+            "max": 1
+          }
+        }
+      },
+      "x": 0,
+      "y": 107,
+      "width": 24,
+      "height": 6
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, all leg, models: failure rate strictly between 0.05 and 0.95",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"python\" Event=\"schedule\" Branch=\"main\" Leg=\"all\" models', 'Average', 2592000)",
+              "id": "rb",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(rb - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 113,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, all leg, other: failure rate strictly between 0.05 and 0.95",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"python\" Event=\"schedule\" Branch=\"main\" Leg=\"all\" NOT models', 'Average', 2592000)",
+              "id": "rb",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(rb - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 122,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, bidi leg: failure rate strictly between 0.05 and 0.95",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"python\" Event=\"schedule\" Branch=\"main\" Leg=\"bidi\"', 'Average', 2592000)",
+              "id": "rb",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(rb - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 131,
+      "width": 24,
+      "height": 9
+    },
+    {
+      "type": "metric",
+      "properties": {
+        "title": "Top 15 flaky tests, 30 days, nightly runs on main only, mcp-1x leg: failure rate strictly between 0.05 and 0.95",
+        "region": "us-east-1",
+        "view": "table",
+        "period": 2592000,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{Strands/Tests,Repository,SDK,TestName,Event,Branch,Leg} MetricName=\"TestFailed\" SDK=\"python\" Event=\"schedule\" Branch=\"main\" Leg=\"mcp-1x\"', 'Average', 2592000)",
+              "id": "rb",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "10 ^ LOG10(rb - 0.05) + 0.05",
+              "id": "lo",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "0.95 - 10 ^ LOG10(0.95 - lo)",
+              "id": "band",
+              "period": 2592000,
+              "visible": false
+            }
+          ],
+          [
+            {
+              "expression": "SORT(FILL(band, 0), MAX, DESC, 15)",
+              "id": "top",
+              "period": 2592000
+            }
+          ]
+        ],
+        "table": {
+          "summaryColumns": [
+            "MAX"
+          ],
+          "showTimeSeriesData": false
+        }
+      },
+      "x": 0,
+      "y": 140,
+      "width": 24,
+      "height": 9
+    }
+  ]
+}

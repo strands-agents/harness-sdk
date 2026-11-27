@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 184" width="720" height="184">
+  <!-- Type: decision fan-out. Story: after the model responds, the handler either accepts the response or discards it and retries with guidance. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head is-accent" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Edges: fanned from the handler's right edge, r=8 elbows -->
+  <path class="dg-edge" d="M152,92 H190" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M384,80 H392 Q400,80 400,72 V56 Q400,48 408,48 H494" marker-end="url(#arrow)"/>
+  <path class="dg-edge is-accent" d="M384,104 H392 Q400,104 400,112 V128 Q400,136 408,136 H494" marker-end="url(#arrow-accent)"/>
+
+  <!-- Edge labels -->
+  <text class="dg-label" x="452" y="37" text-anchor="middle">PROCEED</text>
+  <text class="dg-label is-accent" x="452" y="125" text-anchor="middle">GUIDE</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="16" y="68" width="136" height="48" rx="6"/>
+  <text class="dg-name" x="84" y="97" text-anchor="middle">Model response</text>
+
+  <rect class="dg-node is-focal" x="192" y="52" width="192" height="80" rx="6"/>
+  <text class="dg-name is-focal-text" x="288" y="89" text-anchor="middle">Steering handler</text>
+  <text class="dg-code" x="288" y="107" text-anchor="middle">AfterModelCallEvent</text>
+
+  <rect class="dg-node" x="496" y="16" width="208" height="64" rx="6"/>
+  <text class="dg-name" x="600" y="45" text-anchor="middle">Response accepted</text>
+  <text class="dg-sub" x="600" y="63" text-anchor="middle">kept as-is</text>
+
+  <rect class="dg-node" x="496" y="104" width="208" height="64" rx="6"/>
+  <text class="dg-name" x="600" y="133" text-anchor="middle">Response discarded</text>
+  <text class="dg-sub" x="600" y="151" text-anchor="middle">retried with guidance</text>
+</svg>

@@ -99,6 +99,9 @@ def _process_property(
     result = {}
     is_nullable = False
 
+    if _has_multiple_non_null_branches(prop):
+        return _process_union(prop, defs, fully_expand)
+
     # Handle anyOf for optional fields (like Optional[Type])
     if "anyOf" in prop:
         # Check if this is an Optional[...] case (one null, one type)
@@ -122,6 +125,15 @@ def _process_property(
         if null_type and non_null_type:
             # For Optional fields, we mark as nullable but copy all properties from the non-null option
             result = non_null_type.copy() if isinstance(non_null_type, dict) else {}
+
+            # Preserve anyOf when enum/const is present — a null type with non-null enum/const values is invalid.
+            if "enum" in result or "const" in result:
+                result = {"anyOf": [non_null_type, {"type": "null"}]}
+                # Carry over top-level metadata from the original property
+                for key, value in prop.items():
+                    if key != "anyOf":
+                        result[key] = value
+                return result
 
             # For type, ensure it includes "null"
             if "type" in result and isinstance(result["type"], str):
@@ -159,7 +171,7 @@ def _process_property(
         if key not in ["$ref", "anyOf"]:
             if isinstance(value, dict):
                 result[key] = _process_nested_dict(value, defs)
-            elif key == "type" and not is_required and not is_nullable:
+            elif key == "type" and not is_required and not is_nullable and "enum" not in prop and "const" not in prop:
                 # For non-required fields, ensure type is a list with "null"
                 if isinstance(value, str):
                     result[key] = [value, "null"]
@@ -171,6 +183,39 @@ def _process_property(
                 result[key] = value
 
     return result
+
+
+def _has_multiple_non_null_branches(prop: dict[str, Any]) -> bool:
+    """Whether a property is an anyOf union of several types, rather than Optional[T].
+
+    Args:
+        prop: The property to inspect
+
+    Returns:
+        True if the property's anyOf has more than one non-null branch
+    """
+    non_null_branches = [option for option in prop.get("anyOf", []) if option.get("type") != "null"]
+    return len(non_null_branches) > 1
+
+
+def _process_union(prop: dict[str, Any], defs: dict[str, Any], fully_expand: bool = True) -> dict[str, Any]:
+    """Process an anyOf union, keeping every branch and resolving references inside each one.
+
+    Branches are processed as required so nullability comes only from an explicit null branch.
+
+    Args:
+        prop: The anyOf property to process
+        defs: The definitions dictionary for resolving references
+        fully_expand: Whether to fully expand nested properties
+
+    Returns:
+        Processed property with the resolved anyOf branches and the original metadata
+    """
+    branches = [
+        _process_property(option, defs, is_required=True, fully_expand=fully_expand) for option in prop["anyOf"]
+    ]
+    metadata = {key: value for key, value in prop.items() if key != "anyOf"}
+    return {"anyOf": branches, **metadata}
 
 
 def _process_schema_object(
@@ -326,6 +371,10 @@ def _expand_nested_properties(schema: dict[str, Any], model: type[BaseModel]) ->
 
         # If this is a BaseModel field, expand its properties with full details
         if isinstance(field_type, type) and issubclass(field_type, BaseModel):
+            # Skip properties already expanded inline (e.g. via a model_json_schema override).
+            if "properties" in prop_info:
+                continue
+
             # Get the nested model's schema with all its properties
             nested_model_schema = field_type.model_json_schema()
 

@@ -7,8 +7,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@strands-agents/sdk": "file:../../strands-ts",
+    "@anthropic-ai/bedrock-sdk": "^1.1.1",
     "@opentelemetry/sdk-trace-node": "^2.6.1",
+    "@strands-agents/sdk": "file:../../strands-ts",
     "express": "^5.1.0"
   },
   "devDependencies": {

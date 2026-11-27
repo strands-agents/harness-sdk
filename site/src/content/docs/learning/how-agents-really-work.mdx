@@ -1,24 +1,30 @@
 ---
-title: "Lesson 1: How Agents Really Work"
+title: "Lesson 1: How agents really work"
 description: "A ground-up look at the agent loop: how a model, a set of tools, and a running context combine to let an agent reason, act, and observe until a task is done."
 redirectFrom:
   - docs/community/learning/lesson1-how-agents-really-work
 ---
 
-<YouTube id="ZpXWGjISMs8" title="Lesson 1: How Agents Really Work" />
-*[Watch on YouTube](https://www.youtube.com/watch?v=ZpXWGjISMs8&list=PLDzwjhH-4yhU)*
+import CourseNotice from '../../../components/CourseNotice.astro'
 
-:::note[About this lesson]
-The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
-:::
+<CourseNotice title="Before you follow along">
+
+This video is a snapshot in time. Some APIs and examples have changed since
+recording. Follow the code on this page, and look for "Changed since recording"
+notices below.
+
+</CourseNotice>
+
+<YouTube id="ZpXWGjISMs8" title="Lesson 1: How agents really work" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=ZpXWGjISMs8&list=PLDzwjhH-4yhU)*
 
 *Code for this lesson: [`samples/01-agent-loop`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/01-agent-loop)*
 
-## Why Agents?
+## Why agents?
 
 Models are stateless. They process one request, produce a completion, and forget. They can't take action, access live data, or coordinate multi-step workflows alone. Agents solve this by wrapping a model in a runtime system that gives it tools, memory, and a reasoning loop.
 
-## The Agent Loop
+## The agent loop
 
 ![Agent Loop Flow](../assets/learning/agent-loop-flow.png)
 
@@ -27,13 +33,13 @@ Models are stateless. They process one request, produce a completion, and forget
 3. Tool **executes**, result feeds back into context
 4. Loop **repeats** until the task is complete
 
-## Agent = Model + Harness
+## Agent = model + harness
 
 The **harness** is the system that surrounds the model and turns it into an agent. It handles the agent loop, tool execution, context management, memory, lifecycle control, observability, and verification.
 
 Together, **model + harness = agent.**
 
-## Three Layers of Engineering
+## Three layers of engineering
 
 **Prompt Engineering:** Instructions and constraints sent to the model
 
@@ -47,7 +53,7 @@ The Strands Harness SDK is an open-source SDK for building agent harnesses. It p
 
 **Design philosophy:** Let the model drive. You define the environment and boundaries; the model reasons through the task.
 
-## Code: A Simple Agent
+## Code: a simple agent
 
 This is already a working agent with a loop, just without tools.
 
@@ -62,13 +68,20 @@ print(response)
 
 📂 [simple_agent.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/01-agent-loop/simple_agent.py)
 
-## Code: Agent with Tools
+## Code: agent with tools
 
-The `web_fetch` vended tool pulls in an HTML parser, so install the SDK with that extra: `pip install 'strands-agents[web-fetch]'`.
+<CourseNotice>
+
+The samples use SDK-vended `file_editor`, `shell`, and `web_fetch` instead of
+the older community-tool imports. Web fetching needs the optional dependencies:
+`pip install "strands-agents[web-fetch]"`. Use the imports shown below.
+
+</CourseNotice>
 
 ```python
 from strands import Agent, tool
-from strands.vended_tools import file_editor, web_fetch
+from strands.vended_tools import file_editor
+from strands.vended_tools.web_fetch import web_fetch
 
 @tool
 def query_product_database(query: str) -> str:
@@ -117,7 +130,7 @@ After a run, `agent.messages` shows every step the loop took: user turns, assist
 
 📂 [agent_with_tools.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/01-agent-loop/agent_with_tools.py)
 
-## Out of the Box Components
+## Out of the box components
 
 Strands also ships preconfigured components that give you a capable agent out of the box:
 

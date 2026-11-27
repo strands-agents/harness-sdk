@@ -5,6 +5,8 @@ sidebar:
   label: OpenAI
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 If you build on OpenAI today, you are in one of two places: you wrote your own
 loop over the OpenAI SDK (`chat.completions` or the Responses API), or you use the
 OpenAI Agents SDK. This guide moves either one to Strands Agents without changing
@@ -57,13 +59,10 @@ model, check for `tool_calls`, run each tool, append the results to `messages`,
 and call again until the model stops asking. You own the loop, the message
 bookkeeping, and every control that wraps it.
 
-```mermaid
-flowchart LR
-  A[Call the model] --> B{tool_calls?}
-  B -->|Yes| C[Run tools and append results]
-  C --> A
-  B -->|No| D[Return the message]
-```
+<Diagram
+  name="migrate-openai-hand-written-loop"
+  alt="A hand-written OpenAI loop, all of which you own. The prompt goes to a call to the model with chat.completions.create(). If the response has tool_calls, your code runs the tools, appends the results to messages, and calls the model again. When the response has no tool_calls, your code returns the message."
+/>
 
 Strands *is* that loop, tested and maintained. You describe the tools and the
 model; the [agent loop](../sdk/agents/agent-loop.md) runs the

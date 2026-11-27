@@ -1,0 +1,99 @@
+---
+title: Input Content
+description: "Send text, images, and streaming audio to BidiAgent. Combine ordered content blocks, use dictionary forms, and understand how inputs become model messages."
+languages: [python]
+tags: [bidi-streaming]
+sourceLinks:
+  - path: strands-py/src/strands/bidi/agent/agent.py
+  - path: strands-py/src/strands/bidi/types/agent.py
+  - path: strands-py/src/strands/bidi/types/content.py
+  - path: strands-py/src/strands/bidi/types/media.py
+  - path: strands-py/src/strands/bidi/models/model.py
+  - path: strands-py/src/strands/types/content.py
+  - path: strands-py/src/strands/types/media.py
+---
+
+Provide user input to `BidiAgent` as text, images, or streaming audio. Text and image blocks form complete user messages, while audio deltas add samples to an ongoing input stream.
+
+## Send input
+
+Use `agent.send()` to provide input once the agent is running. A string is enough to send text:
+
+```python
+import asyncio
+
+from strands.bidi.agent import BidiAgent
+from strands.bidi.types import BidiResponseStopEvent
+
+
+async def main() -> None:
+    async with BidiAgent() as agent:
+        await agent.send("Tell me about Lisbon.")
+
+        async for event in agent.receive():
+            if isinstance(event, BidiResponseStopEvent):
+                break
+
+
+asyncio.run(main())
+```
+
+`send()` returns after sending the input. Read the model's response separately through [`agent.receive()`](events.mdx#consume-events), as the example does.
+
+[`BidiAgentInput`](@api/python/strands.bidi.types#strands.bidi.types.BidiAgentInput) defines the forms you can send:
+
+| Content | Accepted forms |
+| --- | --- |
+| Text | A string, [`TextBlock`](@api/python/strands.types.content#strands.types.content.TextBlock), or `{"text": ...}`. |
+| Image | [`ImageBlock`](@api/python/strands.types.media#strands.types.media.ImageBlock) or `{"image": ...}`. |
+| Streaming audio | [`AudioDelta`](@api/python/strands.bidi.types#strands.bidi.types.AudioDelta) or `{"audio_delta": ...}`. |
+
+A nonempty list of strings, text/image blocks, or their dictionary forms groups content into one user message, preserving block order.
+
+For continuous input, pass [input streams](io.mdx) to `agent.run()`. Each read returns one of these input forms.
+
+## Streaming audio
+
+Send live audio as individual [`AudioDelta`](@api/python/strands.bidi.types#strands.bidi.types.AudioDelta) inputs, outside text and image lists. Each delta carries a chunk of audio samples without explicitly ending the user's turn; the model provider determines when the turn is complete.
+
+The built-in models expect raw PCM bytes matching their configured input sample rate and channel count. This example forwards chunks from an asynchronous audio source to a running agent:
+
+<Tabs>
+<Tab label="Typed content">
+```python
+from collections.abc import AsyncIterable
+
+from strands.bidi.agent import BidiAgent
+from strands.bidi.types import AudioDelta
+
+
+async def send_audio(agent: BidiAgent, chunks: AsyncIterable[bytes]) -> None:
+    async for chunk in chunks:
+        await agent.send(AudioDelta(format="pcm", source={"bytes": chunk}))
+```
+</Tab>
+<Tab label="Dictionaries">
+```python
+from collections.abc import AsyncIterable
+
+from strands.bidi.agent import BidiAgent
+
+
+async def send_audio(agent: BidiAgent, chunks: AsyncIterable[bytes]) -> None:
+    async for chunk in chunks:
+        await agent.send({
+            "audio_delta": {"format": "pcm", "source": {"bytes": chunk}},
+        })
+```
+</Tab>
+</Tabs>
+
+For microphone input, [`AudioIO`](io.mdx#audio-io) creates these deltas using the model's audio configuration.
+
+## Model messages
+
+Your application sends user input through `agent.send()`, which prepares it for [`BidiModel.send()`](@api/python/strands.bidi.models#strands.bidi.models.BidiModel.send). Text and images become a [`BidiMessage`](@api/python/strands.bidi.types#strands.bidi.types.BidiMessage) containing an ordered list of typed blocks; audio deltas pass through individually.
+
+The agent also uses `BidiMessage` to return tool results to the model, packaging each tool's output as a [`ToolResultBlock`](@api/python/strands.types.tools#strands.types.tools.ToolResultBlock). It handles this delivery automatically, so tool results aren't part of `BidiAgentInput`. You can track tool calls and results through [tool execution events](events.mdx#tool-execution).
+
+See [Messages](events.mdx#messages) for how the agent records user input and tool results alongside content assembled from stream events.

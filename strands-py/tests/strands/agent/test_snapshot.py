@@ -351,6 +351,14 @@ def test_load_snapshot_rejects_invalid_scope():
         agent.load_snapshot(snap)
 
 
+def test_load_snapshot_rejects_multi_agent_scope():
+    agent = _make_agent()
+    snapshot = _make_snapshot(scope="multiAgent", data={"state": {"node": "n-1"}})
+
+    with pytest.raises(SnapshotException, match="Expected snapshot scope 'agent'"):
+        agent.load_snapshot(snapshot)
+
+
 def test_take_snapshot_always_produces_agent_scope():
     """take_snapshot() should always set scope to 'agent'."""
     agent = _make_agent()

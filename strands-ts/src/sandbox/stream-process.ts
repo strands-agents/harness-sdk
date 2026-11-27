@@ -2,7 +2,7 @@
  * Spawn a process and stream its stdout/stderr as an async generator.
  */
 
-import { spawn } from 'child_process'
+import { spawn, type ChildProcess } from 'child_process'
 import { SandboxAbortError, SandboxTimeoutError } from './errors.js'
 import type { ExecutionResult, StreamChunk } from './types.js'
 
@@ -27,6 +27,12 @@ export interface StreamProcessOptions {
   signal?: AbortSignal | undefined
   /** Custom error message when the spawned binary is not found (ENOENT). */
   enoentMessage?: string | undefined
+  /** Working directory for the child. */
+  cwd?: string | undefined
+  /** Environment for the child (replaces, not merges). */
+  env?: Record<string, string | undefined> | undefined
+  /** Written to the child's stdin, which is then closed. */
+  input?: string | undefined
 }
 
 /**
@@ -49,7 +55,18 @@ export async function* streamProcess(
   args: string[],
   options?: StreamProcessOptions
 ): AsyncGenerator<StreamChunk | ExecutionResult, void, undefined> {
-  const proc = spawn(command, args)
+  if (options?.signal?.aborted) throw new SandboxAbortError()
+  const proc = spawn(command, args, {
+    // Own process group on POSIX, so abort and timeout reach the command's children, not only `sh -c`.
+    detached: process.platform !== 'win32',
+    ...(options?.cwd !== undefined && { cwd: options.cwd }),
+    ...(options?.env !== undefined && { env: options.env }),
+  })
+  if (options?.input !== undefined) {
+    // A missing binary surfaces through the 'error' event below; EPIPE here would only duplicate it.
+    proc.stdin?.on('error', () => {})
+    proc.stdin?.end(options.input)
+  }
   // Decode with a StringDecoder that holds partial multibyte bytes across chunk
   // boundaries, so a UTF-8 sequence split across two pipe reads is not decoded
   // as two invalid halves.
@@ -65,7 +82,6 @@ export async function* streamProcess(
   let enoent = false
   let resolveWait: (() => void) | undefined
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-  let killTimer: ReturnType<typeof setTimeout> | undefined
 
   const wake = (): void => {
     if (resolveWait) {
@@ -74,15 +90,20 @@ export async function* streamProcess(
     }
   }
 
+  // SIGTERM now, SIGKILL a second later. The timer outlives the generator, so a command that ignores SIGTERM still dies.
+  const killTree = (): void => {
+    signalTree(proc, 'SIGTERM')
+    setTimeout(() => {
+      if (!done) signalTree(proc, 'SIGKILL')
+    }, 1000).unref()
+  }
+
   const terminate = (reason: Error): void => {
     if (terminating || done) return
     terminating = true
     error = reason
-    proc.kill('SIGTERM')
+    killTree()
     wake()
-    killTimer = setTimeout(() => {
-      if (!done) proc.kill('SIGKILL')
-    }, 1000)
   }
 
   proc.stdout?.on('data', (data) => {
@@ -125,15 +146,9 @@ export async function* streamProcess(
     }
   })
 
-  const onAbort = (): void => terminate(new SandboxAbortError())
+  const onAbort = (): void => terminate(new SandboxAbortError(stdout, stderr))
 
-  if (options?.signal) {
-    if (options.signal.aborted) {
-      onAbort()
-    } else {
-      options.signal.addEventListener('abort', onAbort, { once: true })
-    }
-  }
+  options?.signal?.addEventListener('abort', onAbort, { once: true })
 
   if (options?.timeout !== undefined) {
     timeoutHandle = setTimeout(() => {
@@ -180,8 +195,22 @@ export async function* streamProcess(
     } satisfies ExecutionResult
   } finally {
     if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
-    if (killTimer !== undefined) clearTimeout(killTimer)
     if (options?.signal) options.signal.removeEventListener('abort', onAbort)
-    if (!done) proc.kill()
+    if (!done && !terminating) killTree()
+  }
+}
+
+/** Signal the child's process group on POSIX; Windows has no process groups, so only the child. */
+function signalTree(proc: ChildProcess, signal: 'SIGTERM' | 'SIGKILL'): void {
+  // No pid means the spawn failed. `proc.kill` could then signal this process's own group.
+  if (proc.pid === undefined) return
+  if (process.platform === 'win32') {
+    proc.kill(signal)
+    return
+  }
+  try {
+    process.kill(-proc.pid, signal)
+  } catch {
+    // The group has already exited.
   }
 }

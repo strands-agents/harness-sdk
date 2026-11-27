@@ -15,6 +15,7 @@ from typing_extensions import NotRequired, TypedDict
 from .citations import CitationsContentBlock
 from .event_loop import Metrics, Usage
 from .media import AudioContent, DocumentContent, ImageContent, VideoContent
+from .offload import OffloadedBlock
 from .tools import ToolResult, ToolUse
 
 
@@ -52,16 +53,34 @@ class ReasoningTextBlock(TypedDict, total=False):
     text: str
 
 
+class ReasoningProviderData(TypedDict):
+    """Provider-native reasoning that only the provider and model that produced it can replay.
+
+    Written and read only by the SDK model provider named in ``provider``; other models never receive the block.
+
+    Attributes:
+        provider: The format tag of the provider that wrote it, e.g. ``"openai_responses"``.
+        modelId: The model that produced the reasoning.
+        data: The provider's own JSON payload; private to that provider and not a stable shape.
+    """
+
+    provider: str
+    modelId: str
+    data: dict[str, Any]
+
+
 class ReasoningContentBlock(TypedDict, total=False):
     """Contains content regarding the reasoning that is carried out by the model.
 
     Attributes:
         reasoningText: The reasoning that the model used to return the output.
         redactedContent: The content in the reasoning that was encrypted by the model provider for safety reasons.
+        providerData: Provider-native reasoning, sent only to the provider and model that produced it.
     """
 
     reasoningText: ReasoningTextBlock
     redactedContent: bytes
+    providerData: ReasoningProviderData
 
 
 class CachePoint(TypedDict):
@@ -77,6 +96,40 @@ class CachePoint(TypedDict):
     ttl: NotRequired[str]
 
 
+class SummaryBlock(TypedDict, total=False):
+    """A summary of earlier conversation history that takes the summarized messages' place.
+
+    Attributes:
+        provider: Name of the provider that wrote the summary server-side, for example "anthropic".
+        signature: Signature the provider returned with the summary, sent back unchanged.
+        text: The summary text.
+    """
+
+    provider: str | None
+    signature: str | None
+    text: str
+
+
+class InjectedBlock(TypedDict):
+    """Text the app adds to a user turn, such as a reminder, kept apart from the user's own words.
+
+    Readers of ``agent.messages`` can skip it (``"injected" in block``). ``ContextInjector`` writes its text as injected
+    blocks. It belongs in a user message, after the existing content; in any other message it is left out.
+
+    When the model takes temporary messages (``model_info.capabilities.temporary_messages``), the provider sends it as
+    a system message the model reads only until the next user message, which the model ranks above the user. Every
+    other model receives only the latest user message's injected text, as plain text. Keep content from outside the
+    conversation, such as tool output or retrieved documents, out of it.
+
+    Attributes:
+        text: Text the app adds to the user turn.
+        source: Name of the component that added the text, such as a ``ContextInjector``'s name.
+    """
+
+    text: str
+    source: str
+
+
 class ContentBlock(TypedDict, total=False):
     """A block of content for a message that you pass to, or receive from, a model.
 
@@ -86,7 +139,10 @@ class ContentBlock(TypedDict, total=False):
         document: A document to include in the message.
         guardContent: Contains the content to assess with the guardrail.
         image: Image to include in the message.
+        injected: Text the app adds to a user turn, kept apart from the user's own words.
+        offloaded: Where a placeholder's text came from, when a context manager's strategy offloaded the content.
         reasoningContent: Contains content regarding the reasoning that is carried out by the model.
+        summary: A summary of earlier conversation history.
         text: Text to include in the message.
         toolResult: The result for a tool request that a model makes.
         toolUse: Information about a tool use request from a model.
@@ -99,7 +155,10 @@ class ContentBlock(TypedDict, total=False):
     document: DocumentContent
     guardContent: GuardContent
     image: ImageContent
+    injected: InjectedBlock
+    offloaded: OffloadedBlock
     reasoningContent: ReasoningContentBlock
+    summary: SummaryBlock
     text: str
     toolResult: ToolResult
     toolUse: ToolUse

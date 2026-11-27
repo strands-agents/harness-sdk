@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 296" width="720" height="296">
+  <!-- Type: pipeline (left to right, one branch down). Story: for each case the task runs the agent, evaluators score the result, and detectors read the trajectory of any case that failed. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="8" y="8" width="704" height="280" rx="8"/>
+  <text class="dg-eyebrow" x="24" y="32">EXPERIMENT · REPEATS FOR EVERY CASE</text>
+
+  <!-- Edges (drawn before nodes) -->
+  <path class="dg-edge" d="M160,88 H246" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M400,88 H494" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M596,128 V206" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M324,120 V232 Q324,240 332,240 H506" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask is-on-zone" x="424" y="68" width="48" height="12" rx="2"/>
+  <text class="dg-label" x="448" y="77" text-anchor="middle">RESULT</text>
+  <text class="dg-label" x="604" y="171">ON FAILURE</text>
+  <rect class="dg-mask is-on-zone" x="380" y="220" width="80" height="12" rx="2"/>
+  <text class="dg-label" x="420" y="229" text-anchor="middle">TRAJECTORY</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="24" y="56" width="136" height="64" rx="6"/>
+  <text class="dg-name" x="92" y="85" text-anchor="middle">Case</text>
+  <text class="dg-sub" x="92" y="103" text-anchor="middle">input + expected</text>
+
+  <rect class="dg-node" x="248" y="56" width="152" height="64" rx="6"/>
+  <text class="dg-name" x="324" y="85" text-anchor="middle">Task</text>
+  <text class="dg-sub" x="324" y="103" text-anchor="middle">runs your agent</text>
+
+  <rect class="dg-node is-focal" x="496" y="48" width="200" height="80" rx="6"/>
+  <text class="dg-name is-focal-text" x="596" y="85" text-anchor="middle">Evaluators</text>
+  <text class="dg-sub" x="596" y="103" text-anchor="middle">score output + trajectory</text>
+
+  <rect class="dg-node is-optional" x="508" y="208" width="176" height="64" rx="6"/>
+  <text class="dg-name" x="596" y="237" text-anchor="middle">Detectors</text>
+  <text class="dg-sub" x="596" y="255" text-anchor="middle">diagnose why it failed</text>
+</svg>

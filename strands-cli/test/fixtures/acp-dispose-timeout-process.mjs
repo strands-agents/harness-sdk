@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { AcpService } from '../../src/tui/acp/server.js'
+import { Agent } from '@strands-agents/sdk'
+import { AcpService } from '../../src/cli/acp.js'
 
 let markStarted
 const started = new Promise((resolve) => {
@@ -9,9 +10,15 @@ const started = new Promise((resolve) => {
 const agent = {
   addHook() {},
   cancel() {},
+  shutdown: Agent.prototype.shutdown,
   async initialize() {},
   messages: [],
-  model: { getConfig: () => ({}) },
+  model: { modelInfo: {}, getConfig: () => ({}) },
+  memoryManager: {
+    flush() {
+      process.stderr.write('Memory flushed before the active prompt settled.\n')
+    },
+  },
   async *stream() {
     markStarted()
     await new Promise(() => {})
