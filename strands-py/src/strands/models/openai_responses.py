@@ -227,6 +227,8 @@ class OpenAIResponsesModel(Model):
         self._custom_client = client
         self.client_args = client_args or {}
         self._bedrock_mantle_config = bedrock_mantle_config
+        # The model id whose replayed reasoning the endpoint rejected; it is not replayed again.
+        self._rejected_reasoning_model_id: str | None = None
 
         if bedrock_mantle_config is not None and client_args:
             conflicting = [k for k in ("api_key", "base_url") if k in client_args]
@@ -289,6 +291,7 @@ class OpenAIResponsesModel(Model):
             not self.stateful
             and provider_data["provider"] == _REASONING_PROVIDER
             and provider_data["modelId"] == self.config["model_id"]
+            and provider_data["modelId"] != self._rejected_reasoning_model_id
         )
 
     @override
@@ -407,8 +410,12 @@ class OpenAIResponsesModel(Model):
                 except openai.BadRequestError as rejection:
                     if not self._rejects_replayed_reasoning(request, rejection):
                         raise
-                    # History keeps the reasoning, so a later endpoint that accepts it still gets it.
-                    logger.warning("error=<%s> | endpoint rejected replayed reasoning | retrying without it", rejection)
+                    # History keeps the reasoning for another model or a new instance; this one stops replaying it.
+                    logger.warning(
+                        "error=<%s> | endpoint rejected replayed reasoning | retrying and no longer replaying it",
+                        rejection,
+                    )
+                    self._rejected_reasoning_model_id = str(self.config["model_id"])
                     request = {
                         **request,
                         "input": [item for item in request["input"] if item.get("type") != "reasoning"],
@@ -690,7 +697,8 @@ class OpenAIResponsesModel(Model):
         )
         stateful = self.stateful
         # A stored conversation already has its reasoning, so only a stateless request replays it.
-        reasoning_model_id = None if stateful else str(self.config["model_id"])
+        model_id = str(self.config["model_id"])
+        reasoning_model_id = None if stateful or model_id == self._rejected_reasoning_model_id else model_id
         input_items, explicit_cache = (
             self._format_cacheable_request_messages(
                 messages,

@@ -77,6 +77,7 @@ export function warnManagedParams(params: Record<string, unknown> | undefined): 
  * Builds a Responses API streaming request body.
  *
  * @param modelInfo - What the SDK knows about the model; decides whether durable message checkpoints are placed
+ * @param replayReasoning - Whether captured reasoning is replayed; false once the endpoint has rejected it
  * @internal
  */
 export function formatResponsesRequest(
@@ -84,12 +85,13 @@ export function formatResponsesRequest(
   messages: Message[],
   options: StreamOptions | undefined,
   stateful: boolean,
-  modelInfo: ModelInfo
+  modelInfo: ModelInfo,
+  replayReasoning = true
 ): ResponseCreateParamsStreaming {
   const { cacheConfig } = config
   const modelId = config.modelId ?? DEFAULT_RESPONSES_MODEL_ID
   // A stored conversation already has its reasoning, so only a stateless request replays it.
-  const reasoningModelId = stateful ? undefined : modelId
+  const reasoningModelId = stateful || !replayReasoning ? undefined : modelId
   const cachePoints = modelInfo.capabilities?.promptCaching === 'cachePoints'
   const cacheMessages = cachePoints && cacheConfig !== undefined && cacheConfig.messagesTTL !== false
   const { input, explicitCache } = cacheMessages

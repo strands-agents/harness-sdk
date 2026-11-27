@@ -1494,7 +1494,7 @@ describe('OpenAIModel (api: responses) stateless reasoning replay', () => {
     ]
     const badRequest = (message: string): Error => Object.assign(new Error(message), { status: 400 })
 
-    async function run(messages: Message[], error: Error): Promise<any[]> {
+    async function run(messages: Message[], error: Error, calls = 1): Promise<{ requests: any[]; model: OpenAIModel }> {
       const requests: any[] = []
       const create = vi.fn(async (req: any) => {
         requests.push(req)
@@ -1504,24 +1504,26 @@ describe('OpenAIModel (api: responses) stateless reasoning replay', () => {
         })()
       })
       const model = new OpenAIModel({ api: 'responses', client: { responses: { create } } as any, modelId: 'gpt-4o' })
-      await collectIterator(model.stream(messages)).catch(() => undefined)
-      return requests
+      for (let i = 0; i < calls; i++) await collectIterator(model.stream(messages)).catch(() => undefined)
+      return { requests, model }
     }
 
-    it('retries once without the reasoning', async () => {
+    it('retries once without the reasoning and stops replaying it', async () => {
       const messages = history()
-      const requests = await run(messages, badRequest('The encrypted content for item rs_1 could not be verified.'))
-      expect(requests).toHaveLength(2)
+      const rejection = badRequest('The encrypted content for item rs_1 could not be verified.')
+      const { requests, model } = await run(messages, rejection, 2)
+      expect(requests).toHaveLength(3)
       expect(requests[0].input.some((item: any) => item.type === 'reasoning')).toBe(true)
-      expect(requests[1].input.some((item: any) => item.type === 'reasoning')).toBe(false)
+      expect(requests.slice(1).some((req) => req.input.some((item: any) => item.type === 'reasoning'))).toBe(false)
       expect(messages[1]!.content[0]).toEqual(tagged('rs_1'))
+      expect(model._acceptsReasoning(tagged('rs_1').providerData!)).toBe(false)
     })
 
     it.each([
       ['an unrelated bad request', history(), badRequest('Invalid value for temperature.')],
       ['a request with no replayed reasoning', [user('next')], badRequest('Invalid reasoning effort.')],
     ])('does not retry %s', async (_label, messages, error) => {
-      expect(await run(messages, error)).toHaveLength(1)
+      expect((await run(messages, error)).requests).toHaveLength(1)
     })
   })
 

@@ -86,6 +86,8 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
    * resolves to the other base path.
    */
   private _mantleBaseUrl?: string
+  /** The model id whose replayed reasoning the endpoint rejected; it is not replayed again. */
+  private _rejectedReasoningModelId?: string
   /**
    * State retained so `updateConfig` can rebuild the Mantle client on a base-path
    * change. `_mantleApiKey` is the setter built at construction and is deliberately
@@ -167,7 +169,8 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
       this._api === 'responses' &&
       !this.stateful &&
       providerData.provider === REASONING_PROVIDER &&
-      providerData.modelId === (this.modelId ?? DEFAULT_RESPONSES_MODEL_ID)
+      providerData.modelId === (this.modelId ?? DEFAULT_RESPONSES_MODEL_ID) &&
+      providerData.modelId !== this._rejectedReasoningModelId
     )
   }
 
@@ -336,7 +339,8 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
         messages,
         options,
         stateful,
-        this.modelInfo
+        this.modelInfo,
+        this._rejectedReasoningModelId !== (this.modelId ?? DEFAULT_RESPONSES_MODEL_ID)
       )
       let stream
       try {
@@ -344,8 +348,11 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
       } catch (error) {
         const retry = withoutRejectedReasoning(request, error)
         if (!retry) throw error
-        // History keeps the reasoning, so a later endpoint that accepts it still gets it.
-        logger.warn(`error=<${String(error)}> | endpoint rejected replayed reasoning | retrying without it`)
+        // History keeps the reasoning for another model or a new instance; this one stops replaying it.
+        logger.warn(
+          `error=<${String(error)}> | endpoint rejected replayed reasoning | retrying and no longer replaying it`
+        )
+        this._rejectedReasoningModelId = this.modelId ?? DEFAULT_RESPONSES_MODEL_ID
         stream = await this._client.responses.create(retry, { signal: options?.cancelSignal })
       }
 

@@ -3260,15 +3260,18 @@ _REPLAY_HISTORY = [
 @pytest.mark.asyncio
 async def test_stream_retries_once_without_reasoning_the_endpoint_rejects(openai_client, agenerator, alist):
     rejection = _bad_request("The encrypted content for item rs_1 could not be verified.")
-    openai_client.responses.create = unittest.mock.AsyncMock(side_effect=[rejection, agenerator([_completed()])])
+    openai_client.responses.create = unittest.mock.AsyncMock(
+        side_effect=[rejection, agenerator([_completed()]), agenerator([_completed()])]
+    )
     model = OpenAIResponsesModel(model_id="gpt-4o")
 
     await alist(model.stream(_REPLAY_HISTORY))
+    await alist(model.stream(_REPLAY_HISTORY))
 
-    first, second = (call.kwargs["input"] for call in openai_client.responses.create.call_args_list)
+    first, second, third = (call.kwargs["input"] for call in openai_client.responses.create.call_args_list)
     assert [item.get("type") for item in first].count("reasoning") == 1
-    assert all(item.get("type") != "reasoning" for item in second)
-    assert _REPLAY_HISTORY[1]["content"][0]["reasoningContent"]["providerData"]
+    assert all(item.get("type") != "reasoning" for item in second + third)
+    assert not model._accepts_reasoning(_REPLAY_HISTORY[1]["content"][0]["reasoningContent"]["providerData"])
 
 
 @pytest.mark.asyncio
