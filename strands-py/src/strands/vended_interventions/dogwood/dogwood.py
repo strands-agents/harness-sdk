@@ -23,8 +23,10 @@ from ._schema_generator import (
     RESOURCE,
     apply_namespace,
     assert_cedar_namespace,
+    decimal_parameters,
     generate_action_schema,
     namespace_prefix_of,
+    specs_of,
 )
 
 if TYPE_CHECKING:
@@ -111,7 +113,8 @@ class DogwoodAuthorization(InterventionHandler):
 
     A tool's result is not recorded, only the fact that it returned, so a predicate on a result
     field (``response{ output.x: ... }``) type-checks and then never matches. Arguments are
-    compared as the model emitted them: an enum parameter as a string, a number as a whole number.
+    compared as the model emitted them: an enum parameter as a string, a number as a Cedar
+    ``decimal``, so a condition on one reads ``context.input.amount.lessThan(decimal("10.0"))``.
 
     Dogwood checks a call against the schema before it will decide, so an argument the tool does
     not declare — or a required one the model left out — denies the call rather than reaching the
@@ -213,6 +216,9 @@ class DogwoodAuthorization(InterventionHandler):
             if action_schema
             else apply_namespace(generate_action_schema(tools or []), namespace)
         )
+        # A hand-written schema declares its own types, so its author chose what each parameter
+        # accepts and nothing here should widen a value against that choice.
+        self._decimal_parameters = {} if action_schema else decimal_parameters(specs_of(tools or []))
         # Reject a policy set that does not type-check here, rather than denying at the first call.
         errors = validate(self._policies, self._action_schema)["errors"]
         if errors:
@@ -406,7 +412,7 @@ class DogwoodAuthorization(InterventionHandler):
         Only the tool's input is recorded, because the event schema declares nothing else a
         temporal predicate could read.
         """
-        logged: EventGroups = {INPUT_GROUP: tool_input or {}}
+        logged: EventGroups = {INPUT_GROUP: self._widen_decimals(tool_name, tool_input or {})}
         context = self._context_of(tool_name, logged, timestamp)
         # An action that declares no `session` group rejects an event carrying one, and no policy
         # can read it there either, so the enricher is not asked for fields with nowhere to go.
@@ -417,6 +423,18 @@ class DogwoodAuthorization(InterventionHandler):
             {"tool_name": tool_name, "tool_input": logged[INPUT_GROUP], "invocation_state": invocation_state}
         )
         return logged, {**context, ENRICHED_GROUP: enriched}
+
+    def _widen_decimals(self, tool_name: str, tool_input: Any) -> Any:
+        """Widen the whole numbers a model sent for a ``decimal`` parameter.
+
+        A ``number`` parameter is generated as ``decimal``, which Dogwood matches against a float
+        but not against the ``int`` a model sends for a whole value. Only a declared ``decimal``
+        parameter is widened: an ``integer`` one is generated as ``Long``, which a float fails.
+        """
+        decimals = self._decimal_parameters.get(tool_name)
+        if not decimals or not isinstance(tool_input, dict):
+            return tool_input
+        return {name: _as_float(value) if name in decimals else value for name, value in tool_input.items()}
 
     def _context_of(self, tool_name: str, logged: EventGroups, timestamp: int) -> EventGroups:
         """The Cedar request context for an event, carrying only groups the action declares.
@@ -453,6 +471,18 @@ def _load_source(value: str, extension: str) -> str:
     if not path.exists():
         raise FileNotFoundError(f"Dogwood {extension} file not found: {value}")
     return path.read_text(encoding="utf-8")
+
+
+def _as_float(value: DogwoodValue) -> DogwoodValue:
+    """``value`` as a float, or element-wise for a list, leaving the rest for Dogwood to reject."""
+    # `bool` is an `int` in Python, and Dogwood matches it against `Bool`, never `decimal`.
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return float(value)
+    if isinstance(value, list):
+        return [_as_float(item) for item in value]
+    return value
 
 
 def _cedar_datetime(timestamp: int) -> dict[str, Any]:

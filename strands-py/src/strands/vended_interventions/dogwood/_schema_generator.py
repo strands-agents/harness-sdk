@@ -42,11 +42,53 @@ def generate_action_schema(tools: list[AgentTool | ToolSpec]) -> str:
 
     Raises:
         DogwoodError: If a tool spec is not a manifest the converter accepts.
-        ValueError: If the generated schema is not in the shape :func:`_allow_absent_input` reads.
+        ValueError: If the generated schema is not in the shape the rewrites below read.
     """
-    specs = [tool.tool_spec if isinstance(tool, AgentTool) else tool for tool in tools]
-    retyped = [_retype_for_raw_arguments(spec) for spec in specs]
-    return _allow_absent_input(_rename_resource(mcp_to_cedar_schema(retyped)), specs)
+    specs = specs_of(tools)
+    unconstrained = [_drop_enum_constraints(spec) for spec in specs]
+    return _allow_absent_input(_rename_resource(mcp_to_cedar_schema(unconstrained)), specs)
+
+
+def specs_of(tools: list[AgentTool | ToolSpec]) -> list[ToolSpec]:
+    """The specs of ``tools``, which may be the tools themselves or already their specs.
+
+    Args:
+        tools: The tools to read specs from.
+
+    Returns:
+        One spec per tool, in order.
+    """
+    return [tool.tool_spec if isinstance(tool, AgentTool) else tool for tool in tools]
+
+
+def decimal_parameters(specs: list[ToolSpec]) -> dict[str, frozenset[str]]:
+    """The parameters a generated schema declares ``decimal``, by tool name.
+
+    Only a tool's own parameters: a parameter nested in an object is generated as an entity type,
+    which a raw JSON argument never matches whatever its numbers are.
+
+    Args:
+        specs: The tool specs the schema was generated from.
+
+    Returns:
+        Tool name to its ``number`` parameter names, omitting the tools that declare none.
+    """
+    by_tool = {}
+    for spec in specs:
+        properties = _input_schema(spec).get("properties") or {}
+        names = frozenset(name for name, declared in properties.items() if _declares_number(declared))
+        if names:
+            by_tool[spec["name"]] = names
+    return by_tool
+
+
+def _declares_number(declared: Any) -> bool:
+    """Whether a parameter declaration is a JSON Schema ``number``, or an array of them."""
+    if not isinstance(declared, dict):
+        return False
+    if declared.get("type") == "number":
+        return True
+    return declared.get("type") == "array" and _declares_number(declared.get("items"))
 
 
 def apply_namespace(schema: str, namespace: str | None) -> str:
@@ -62,13 +104,15 @@ def apply_namespace(schema: str, namespace: str | None) -> str:
     if namespace == GENERATED_NAMESPACE:
         return schema
 
+    declaration = f"namespace {GENERATED_NAMESPACE} {{"
+    _assert_rewritable(schema, declaration, expected=1)
     # Qualified references first — an object parameter is generated as its own entity type and
     # referenced qualified — so renaming the declaration does not have to exclude itself.
     requalified = schema.replace(f"{GENERATED_NAMESPACE}::", "" if namespace is None else f"{namespace}::")
     if namespace is not None:
-        return requalified.replace(f"namespace {GENERATED_NAMESPACE} {{", f"namespace {namespace} {{", 1)
+        return requalified.replace(declaration, f"namespace {namespace} {{", 1)
 
-    unwrapped = requalified.replace(f"namespace {GENERATED_NAMESPACE} {{", "", 1)
+    unwrapped = requalified.replace(declaration, "", 1)
     return re.sub(r"\}\s*$", "", unwrapped)
 
 
@@ -113,11 +157,45 @@ def _rename_resource(schema: str) -> str:
     """Rename the generator's resource entity to the one ``CedarAuthorization`` uses.
 
     A policy naming the resource then reads the same against either handler.
+
+    Raises:
+        ValueError: If the generated schema does not declare the resource entity, or no action
+            applies to it.
     """
+    declaration = f"entity {GENERATED_RESOURCE};"
+    reference = f"resource: [{GENERATED_RESOURCE}]"
+    _assert_rewritable(schema, declaration, expected=1)
+    _assert_rewritable(schema, reference)
     # Only the declaration and the action references: a tool or parameter whose own name contains
     # `Gateway` must keep it, or the action it declares becomes unreachable.
-    renamed = schema.replace(f"entity {GENERATED_RESOURCE};", f"entity {RESOURCE};", 1)
-    return renamed.replace(f"resource: [{GENERATED_RESOURCE}]", f"resource: [{RESOURCE}]")
+    renamed = schema.replace(declaration, f"entity {RESOURCE};", 1)
+    return renamed.replace(reference, f"resource: [{RESOURCE}]")
+
+
+def _assert_rewritable(schema: str, text: str, expected: int | None = None) -> None:
+    """Assert the generated schema carries text a rewrite below replaces.
+
+    A rewrite is a plain string replacement, so a generator that stops emitting the text would
+    otherwise leave the schema declaring one name while policies are validated against another.
+
+    Args:
+        schema: Generated Cedar action schema text.
+        text: The text a rewrite replaces.
+        expected: The exact number of occurrences required, or None for at least one.
+
+    Raises:
+        ValueError: If the count does not match, which means the installed Dogwood emits a shape
+            this handler cannot rewrite.
+    """
+    found = schema.count(text)
+    if found == expected or (expected is None and found > 0):
+        return
+
+    wanted = "at least one" if expected is None else str(expected)
+    raise ValueError(
+        f"expected {wanted} `{text}` in the generated schema, found {found}; the installed "
+        f"`dogwood-aws` emits a shape this handler cannot rewrite"
+    )
 
 
 def _allow_absent_input(schema: str, specs: list[ToolSpec]) -> str:
@@ -151,43 +229,41 @@ def _allow_absent_input(schema: str, specs: list[ToolSpec]) -> str:
     return schema
 
 
-def _required_parameters(spec: ToolSpec) -> list[str]:
-    """The parameters a tool requires, reading either input-schema shape the converter takes."""
+def _input_schema(spec: ToolSpec) -> dict[str, Any]:
+    """A tool's JSON Schema, reading either input-schema shape the converter takes."""
     input_schema = spec.get("inputSchema") or {}
-    return input_schema.get("json", input_schema).get("required") or []
+    json_schema: dict[str, Any] = input_schema.get("json", input_schema)
+    return json_schema
 
 
-def _retype_for_raw_arguments(spec: ToolSpec | dict[str, Any]) -> dict[str, Any]:
-    """Retype a tool spec so a Cedar condition can compare the raw JSON arguments a model sends.
+def _required_parameters(spec: ToolSpec) -> list[str]:
+    """The parameters a tool requires, empty when every one is optional."""
+    return _input_schema(spec).get("required") or []
 
-    Two of the generated types never match one:
 
-    - A parameter with an ``enum`` constraint is generated as an entity type, so comparing it to a
-      string type-checks and then never fires. Dropping the constraint generates ``String``.
-    - A ``number`` parameter is generated as ``decimal``, which rejects ``<`` and ``>``. Declaring
-      it ``integer`` generates ``Long``, which accepts them.
+def _drop_enum_constraints(spec: ToolSpec | dict[str, Any]) -> dict[str, Any]:
+    """Drop every ``enum`` constraint from a tool spec, so a Cedar condition can compare the value.
 
-    Dogwood's own generator config turns both on and ``mcp_to_cedar_schema`` takes no config
-    argument, so the spec is rewritten on the way in instead.
+    An ``enum`` parameter is generated as an entity type, so comparing it to a string type-checks
+    and then never fires; without the constraint it generates ``String``. Dogwood's own generator
+    config turns this off and ``mcp_to_cedar_schema`` takes no config argument, so the spec is
+    rewritten on the way in instead.
 
     Args:
         spec: A tool spec.
 
     Returns:
-        A copy of the spec, retyped.
+        A copy of the spec, carrying no ``enum`` constraint.
     """
-    retyped: dict[str, Any] = {}
+    dropped: dict[str, Any] = {}
     for key, value in spec.items():
-        # Only a list-valued `enum` and the exact string `number`, so a parameter *named* `enum` or
-        # `type` is untouched.
+        # Only a list-valued `enum`, so a parameter *named* `enum` is untouched.
         if key == "enum" and isinstance(value, list):
             continue
-        if key == "type" and value == "number":
-            retyped[key] = "integer"
-        elif isinstance(value, dict):
-            retyped[key] = _retype_for_raw_arguments(value)
+        if isinstance(value, dict):
+            dropped[key] = _drop_enum_constraints(value)
         elif isinstance(value, list):
-            retyped[key] = [_retype_for_raw_arguments(item) if isinstance(item, dict) else item for item in value]
+            dropped[key] = [_drop_enum_constraints(item) if isinstance(item, dict) else item for item in value]
         else:
-            retyped[key] = value
-    return retyped
+            dropped[key] = value
+    return dropped

@@ -86,7 +86,7 @@ cedar = ["cedarpy==4.12.2", "cedar-policy-mcp-schema-generator==0.7.0"]
 # genai-prices needs Python 3.11; on 3.10 the extra installs nothing and the plugin raises ImportError.
 cost-estimator = ["genai-prices>=0.2.4,<0.3; python_version>='3.11'"]
 
-dogwood = ["dogwood-aws==1.2.0"]
+dogwood = ["dogwood-aws>=1.2.0,<2.0.0"]
 
 bidi = [
     "aws_sdk_bedrock_runtime[awscrt]>=0.11.0,<0.12.0; python_version>='3.12'",
