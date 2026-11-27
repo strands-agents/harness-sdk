@@ -254,7 +254,7 @@ describe('AnthropicModel', () => {
       expect(ModelInfo.accepts(lookupModelInfo('claude-sonnet-4-6'), docx)).toBe(true)
       const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' }).modelInfo
 
-      expect(info.capabilities?.acceptedMimeTypes).toEqual(sendable)
+      expect(info.capabilities?.acceptedMimeTypes).toEqual([...sendable, 'application/json', 'application/xml'])
       expect(ModelInfo.accepts(info, docx)).toBe(false)
       expect(Object.isFrozen(info.capabilities?.acceptedMimeTypes)).toBe(true)
     })
@@ -266,7 +266,8 @@ describe('AnthropicModel', () => {
         expect(ModelInfo.accepts(shared, 'application/msword') || ModelInfo.accepts(shared, 'video/mp4')).toBe(true)
         const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId }).modelInfo
 
-        for (const type of info.capabilities?.acceptedMimeTypes ?? []) expect(sendable).toContain(type)
+        for (const type of info.capabilities?.acceptedMimeTypes ?? [])
+          expect([...sendable, 'application/json', 'application/xml']).toContain(type)
         expect(ModelInfo.accepts(info, 'application/msword')).toBe(false)
         expect(ModelInfo.accepts(info, 'video/mp4')).toBe(false)
       }

@@ -18,6 +18,8 @@ import {
   type ContentBlock,
 } from '../../types/messages.js'
 
+import { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
+
 function userMessage(text: string): Message {
   return new Message({ role: 'user', content: [new TextBlock(text)] })
 }
@@ -156,6 +158,85 @@ describe('ModelProxy', () => {
       expect(messages[0]!.content[0]).toEqual(
         new ToolResultBlock({ toolUseId: 't-1', status: 'success', content: [unknown, unknown] })
       )
+    })
+  })
+
+  describe('media the model does not accept', () => {
+    const bytes = new Uint8Array([1])
+    const png = new ImageBlock({ format: 'png', source: { bytes } })
+    const gif = new ImageBlock({ format: 'gif', source: { bytes } })
+    const docx = new DocumentBlock({ name: 'report', format: 'docx', source: { bytes } })
+    const mp4 = new VideoBlock({ format: 'mp4', source: { bytes } })
+
+    async function sent(messages: Message[], acceptedMimeTypes?: string[]): Promise<Message[]> {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      if (acceptedMimeTypes) model.updateConfig({ modelInfo: { capabilities: { acceptedMimeTypes } } })
+      const streamSpy = vi.spyOn(model, 'stream')
+      await drain(new ModelProxy(model).streamAggregated(messages))
+      return streamSpy.mock.calls[0]![0]
+    }
+
+    it('sends a text in place of each media block the model does not accept, in messages and tool results', async () => {
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('look'), png, gif, docx], trackingId: 'msg-1' }),
+        new Message({
+          role: 'user',
+          content: [new ToolResultBlock({ toolUseId: 't-1', status: 'success', content: [mp4, png] })],
+          trackingId: 'msg-2',
+        }),
+      ]
+
+      expect(await sent(messages, ['image/png', 'application/pdf'])).toEqual([
+        new Message({
+          role: 'user',
+          content: [
+            new TextBlock('look'),
+            png,
+            new TextBlock("[image omitted: this model can't read image/gif]"),
+            new TextBlock(
+              `[document "report" omitted: this model can't read ${'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}]`
+            ),
+          ],
+          trackingId: 'msg-1',
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 't-1',
+              status: 'success',
+              content: [new TextBlock("[video omitted: this model can't read video/mp4]"), png],
+            }),
+          ],
+          trackingId: 'msg-2',
+        }),
+      ])
+      expect(messages[0]!.content[2]).toBe(gif)
+    })
+
+    it('passes a message through unchanged when the model accepts all of its media', async () => {
+      const message = new Message({ role: 'user', content: [png, mp4] })
+
+      expect((await sent([message], ['image/*', 'video/*']))[0]).toBe(message)
+    })
+
+    it('sends every block to a model without an accepted list', async () => {
+      const message = new Message({ role: 'user', content: [gif, docx, mp4] })
+
+      expect((await sent([message]))[0]).toBe(message)
+    })
+
+    it('replaces audio by its audio/* type', async () => {
+      const audio = new AudioBlock({ format: 'mp3', source: { bytes } })
+      const [message] = await sent([new Message({ role: 'user', content: [audio] })], ['image/*'])
+
+      expect(message!.content).toEqual([new TextBlock("[audio omitted: this model can't read audio/mp3]")])
+    })
+
+    it('sends only text to a text-only model', async () => {
+      const [message] = await sent([new Message({ role: 'user', content: [png] })], [])
+
+      expect(message!.content).toEqual([new TextBlock("[image omitted: this model can't read image/png]")])
     })
   })
 
