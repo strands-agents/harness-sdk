@@ -522,7 +522,8 @@ class Swarm(MultiAgentBase):
         """Wrap an async generator with timeout for total execution time.
 
         Tracks elapsed time from start and enforces timeout across all events.
-        Each event wait uses remaining time from the total timeout budget.
+        Each event wait uses remaining time from the total timeout budget. Time the caller
+        spends handling a yielded event does not count against the budget.
 
         Args:
             async_generator: The generator to wrap
@@ -539,12 +540,24 @@ class Swarm(MultiAgentBase):
             async for event in async_generator:
                 yield event
         elif sys.version_info >= (3, 11):
-            try:
-                async with asyncio.timeout(timeout):
-                    async for event in async_generator:
-                        yield event
-            except asyncio.TimeoutError as err:
-                raise Exception(timeout_message) from err
+            # The timeout scope must not stay open across a yield: it would fire in the caller's
+            # task wherever the caller is suspended and surface there as a bare CancelledError.
+            loop = asyncio.get_running_loop()
+            remaining = timeout
+            iterator = aiter(async_generator)
+            while True:
+                if remaining <= 0:
+                    raise Exception(timeout_message)
+                started_at = loop.time()
+                try:
+                    async with asyncio.timeout(remaining):
+                        event = await anext(iterator)
+                except StopAsyncIteration:
+                    return
+                except asyncio.TimeoutError as err:
+                    raise Exception(timeout_message) from err
+                remaining -= loop.time() - started_at
+                yield event
         else:
             # Python 3.10 fallback: timeout is only checked between yielded events.
             # A generator that hangs mid-await won't be interrupted until the next event.
