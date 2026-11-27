@@ -7,12 +7,16 @@ const LEGACY_PROFILE_GUARD =
   'Keep this role for the entire durable session. Do not repeat this profile unless the user asks.'
 const PROFILE_GUARD =
   "Keep this assistant role for the entire durable session. Never infer or address the user by the assistant's name."
+/** Around what an open panel showed when a message was typed beside it: for the agent, not for the transcript. */
+export const SCREEN_CONTEXT_OPEN = '<strands_dev_screen>'
+export const SCREEN_CONTEXT_CLOSE = '</strands_dev_screen>'
 const HIDDEN_DESKTOP_ENVELOPES = [
   [AGENT_PROFILE_OPEN, AGENT_PROFILE_CLOSE],
   ['<strands_session_recovery>', '</strands_session_recovery>'],
   ['<strands_recovered_conversation>', '</strands_recovered_conversation>'],
   ['<strands_reply_context>', '</strands_reply_context>'],
   ['<strands_skill_activation>', '</strands_skill_activation>'],
+  [SCREEN_CONTEXT_OPEN, SCREEN_CONTEXT_CLOSE],
 ] as const
 
 export function upgradeDesktopAgentProfileMessages(messages: Message[]): Message[] {

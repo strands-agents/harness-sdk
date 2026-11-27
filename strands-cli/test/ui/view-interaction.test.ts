@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 
 import { describe, expect, it, vi } from 'vitest'
+import { afterEach } from 'vitest'
 
 import {
   clampAgentGridViewport,
@@ -23,8 +24,19 @@ import { summarizeToolInput } from '../../src/ui/presentation.js'
 import { parseMouseInput, selectScreenText } from '../../src/terminal/mouse-input.js'
 import { ChatApp } from '../../src/ui/chat/screen.js'
 import { ChatController } from '../../src/ui/chat/controller.js'
+import type { ChatControllerApi, ChatSnapshot } from '../../src/ui/chat/controller.js'
+import { ConversationManager } from '../../src/ui/chat/conversations.js'
+import * as fix from '../../src/dev/fix-in-new-tab.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { render, captureFrame, ttyInput, ttyOutput } from '../fixtures/terminal.js'
+import * as terminal from '../../src/terminal/terminal.js'
+
+const rendered: (() => Promise<void>)[] = []
+
+afterEach(async () => {
+  for (const dispose of rendered.splice(0)) await dispose()
+  vi.restoreAllMocks()
+})
 
 describe('voice input', () => {
   it('uses a single empty-editor Space tap for mute without consuming typed spaces', () => {
@@ -99,6 +111,186 @@ describe('MCP panel input', () => {
   })
 })
 
+const devWorkspace = {
+  root: '/project/strands-dev',
+  entrypoint: '/project/agent.ts',
+  boundEntrypoint: '/project/agent.ts',
+  origin: 'discovered',
+}
+
+const renderChat = (controller: ChatControllerApi, owners: readonly ChatControllerApi[] = [controller]) => {
+  const input = ttyInput()
+  const output = ttyOutput(100, 24)
+  const frame = captureFrame(output)
+  const instance = render(createElement(ChatApp, { controller }), {
+    stdin: input,
+    stdout: output,
+    stderr: ttyOutput(100, 24),
+    exitOnCtrlC: false,
+    patchConsole: false,
+    interactive: true,
+  })
+  rendered.push(async () => {
+    instance.unmount()
+    for (const chat of owners) await chat.dispose()
+  })
+  return { input, frame, instance }
+}
+
+describe('error panel input', () => {
+  it('shouldCopyTheWholeErrorWhenControlYIsPressedInAScrollingDevErrorPanel', async () => {
+    const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
+    const controller = new ChatController(idleBackend(), {
+      settings: { animations: false },
+      runtime: { devWorkspace },
+    })
+    const message = Array.from({ length: 30 }, (_, index) => `Trace ${index}: agent.ts failed`).join('\n')
+    const { input, frame } = renderChat(controller)
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('/settings'))
+    controller.showError('Agent reload failed', message)
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Ctrl+Y copy error · Esc close'))
+    expect(frame().join('\n')).not.toContain('Trace 29')
+
+    input.write('\u0019')
+
+    await vi.waitFor(() => expect(copy).toHaveBeenCalledOnce())
+    expect(copy.mock.calls[0]![0]).toBe(`Agent reload failed\n${message}`)
+    expect(controller.getSnapshot().panel?.kind).toBe('error')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('chars copied to clipboard'))
+  })
+
+  it('shouldNotCopyAnErrorWhenControlYIsPressedOutsideADevChat', async () => {
+    const copy = vi.spyOn(terminal, 'copyTerminalText').mockResolvedValue(true)
+    const controller = new ChatController(idleBackend(), { settings: { animations: false } })
+    const { input, frame, instance } = renderChat(controller)
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('/settings'))
+    controller.showError('Agent reload failed', 'agent.ts failed')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Esc close'))
+    expect(frame().join('\n')).not.toContain('Ctrl+Y')
+
+    input.write('\u0019')
+    await instance.waitUntilRenderFlush()
+
+    expect(copy).not.toHaveBeenCalled()
+    expect(controller.getSnapshot().panel?.kind).toBe('error')
+  })
+})
+
+describe('dev error panel fix', () => {
+  const reloading = (controller: ChatController): ChatControllerApi => {
+    let source: ChatSnapshot | undefined
+    let snapshot: ChatSnapshot | undefined
+    const getSnapshot = (): ChatSnapshot => {
+      const current = controller.getSnapshot()
+      if (current !== source) {
+        source = current
+        snapshot = { ...current, composerStatus: 'Reloading agent…' }
+      }
+      return snapshot!
+    }
+    return new Proxy(controller, {
+      get: (target, property, receiver) =>
+        property === 'getSnapshot' ? getSnapshot : Reflect.get(target, property, receiver),
+    })
+  }
+
+  it.each([
+    ['ChatController', (controller: ChatController): ChatControllerApi => controller, true, 'reload'],
+    [
+      'ConversationManager',
+      (controller: ChatController): ChatControllerApi =>
+        new ConversationManager(controller, { fork: async () => controller }),
+      false,
+      'restart',
+    ],
+  ] as const)(
+    'shouldOpenStrandsInANewTabWhenFIsPressedOnAReloadFailureIn%s',
+    async (_, wrap, sourceWatching, retry) => {
+      const open = vi
+        .spyOn(fix, 'fixInNewTab')
+        .mockResolvedValue({ status: 'success', text: 'Opened Strands in a new tmux window.' })
+      const controller = new ChatController(idleBackend(), {
+        settings: { animations: false },
+        runtime: { devWorkspace, cwd: '/project', sourceWatching },
+      })
+      const chat = wrap(controller)
+      const { input, frame } = renderChat(chat, [chat, controller])
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('/settings'))
+      chat.showError?.('Agent reload failed', 'SyntaxError: unexpected token', { fixDirectory: '/project' })
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('f fix with Strands · Ctrl+Y copy error · Esc close'))
+
+      input.write('f')
+
+      await vi.waitFor(() => expect(frame().join('\n')).toContain('Opened Strands in a new tmux window.'))
+      expect(open).toHaveBeenCalledOnce()
+      expect(open.mock.calls[0]![0]).toEqual({
+        report: 'Agent reload failed\nSyntaxError: unexpected token',
+        directory: '/project',
+        retry,
+      })
+      expect(chat.getSnapshot().panel).toBeUndefined()
+    }
+  )
+
+  it('shouldOpenModelSetupWhenSIsPressedOnACredentialFailure', async () => {
+    const requestSetup = vi.fn()
+    const controller = new ChatController(
+      idleBackend({
+        async *stream() {
+          yield* []
+          throw new Error('Could not load credentials from any providers')
+        },
+      }),
+      { settings: { animations: false }, runtime: { devWorkspace, cwd: '/project' }, requestSetup }
+    )
+    const { input, frame } = renderChat(controller)
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('/settings'))
+    await controller.submit('hello')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('s set up a model · Ctrl+Y copy error · Esc close'))
+
+    input.write('s')
+
+    await vi.waitFor(() => expect(requestSetup).toHaveBeenCalledOnce())
+    expect(controller.getSnapshot().panel).toBeUndefined()
+  })
+
+  it('shouldNotOfferAFixWhenTheErrorIsNotAProjectFailure', async () => {
+    const open = vi.spyOn(fix, 'fixInNewTab')
+    const controller = new ChatController(idleBackend(), {
+      settings: { animations: false },
+      runtime: { devWorkspace, cwd: '/project' },
+    })
+    const { input, frame, instance } = renderChat(controller)
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('/settings'))
+    controller.showError('unknown command', '/foo is not a command')
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('Ctrl+Y copy error · Esc close'))
+    expect(frame().join('\n')).not.toContain('f fix')
+
+    input.write('f')
+
+    await instance.waitUntilRenderFlush()
+    expect(open).not.toHaveBeenCalled()
+    expect(controller.getSnapshot().panel?.kind).toBe('error')
+  })
+
+  it('shouldIgnoreFWhileTheAgentReloads', async () => {
+    const open = vi.spyOn(fix, 'fixInNewTab')
+    const controller = new ChatController(idleBackend(), {
+      settings: { animations: false },
+      runtime: { devWorkspace, cwd: '/project' },
+    })
+    controller.showError('Agent reload failed', 'SyntaxError: unexpected token', { fixDirectory: '/project' })
+    const { input, frame, instance } = renderChat(reloading(controller), [controller])
+    await vi.waitFor(() => expect(frame().join('\n')).toContain('SyntaxError: unexpected token'))
+
+    input.write('f')
+
+    await instance.waitUntilRenderFlush()
+    expect(open).not.toHaveBeenCalled()
+    expect(controller.getSnapshot().panel?.kind).toBe('error')
+  })
+})
+
 describe('panel helpers', () => {
   const rows = [
     { label: 'Model A', description: 'Provider A', filter: 'bedrock' },
@@ -108,6 +300,13 @@ describe('panel helpers', () => {
   it('truncates tool summaries without splitting graphemes or changing the input', () => {
     const input = { command: `${'a'.repeat(158)}😀x` }
     expect(summarizeToolInput('shell', input)).toBe(`${'a'.repeat(158)}…`)
+
+    expect(
+      summarizeToolInput('strands_dev_single_select', {
+        question: 'Which experiment should the run use?',
+        options: [{ value: 'refunds', label: 'refunds' }],
+      })
+    ).toBe('Which experiment should the run use?')
     expect(input.command).toBe(`${'a'.repeat(158)}😀x`)
     expect(summarizeToolInput('custom', `${'a'.repeat(155)}😀xxx`)).toBe(`"${'a'.repeat(155)}😀x…`)
     expect(summarizeToolInput('shell', { command: 'e\u0301'.repeat(161) })).toBe(`${'e\u0301'.repeat(159)}…`)

@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_HARNESS_AGENT_CONFIG,
   defineHarnessAgentConfig,
@@ -7,11 +10,12 @@ import {
   type HarnessConfigBuiltinTools,
 } from '@strands-agents/harness'
 
-import type { DetectedProviderEnvironment } from '../../src/config/store.js'
+import { CliConfigStore, type DetectedProviderEnvironment } from '../../src/config/store.js'
 import {
   compatibleProfile,
   effectiveProviderEnvironment,
   exaWebSearchActive,
+  modelProviderNeedsSetup,
   providerAssessment,
   quickstartDraft,
 } from '../../src/ui/setup/providers.js'
@@ -622,5 +626,54 @@ describe('setup web_search availability', () => {
     expect(withWebSearchFallback(['read', 'shell'])).toMatchObject({ read: true, shell: true, web_search: 'exa' })
     expect(withWebSearchFallback({ subagent: false })).toEqual({ subagent: false, web_search: 'exa' })
     expect(webSearchFallback(withWebSearchFallback({}))).toBe('exa')
+  })
+})
+
+describe('model provider readiness', () => {
+  const AWS_VARIABLES = [
+    'AWS_PROFILE',
+    'AWS_REGION',
+    'AWS_DEFAULT_REGION',
+    'AWS_ACCESS_KEY_ID',
+    'AWS_SECRET_ACCESS_KEY',
+    'AWS_SESSION_TOKEN',
+    'AWS_CONFIG_FILE',
+    'AWS_SHARED_CREDENTIALS_FILE',
+    'AWS_BEARER_TOKEN_BEDROCK',
+    'AWS_WEB_IDENTITY_TOKEN_FILE',
+    'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI',
+    'AWS_CONTAINER_CREDENTIALS_FULL_URI',
+    'ANTHROPIC_API_KEY',
+  ]
+  let home: string | undefined
+
+  afterEach(async () => {
+    vi.unstubAllEnvs()
+    if (home) await rm(home, { recursive: true, force: true })
+    home = undefined
+  })
+
+  it.each([
+    ['an Anthropic model with its API key', 'anthropic/claude-sonnet-4-5', { ANTHROPIC_API_KEY: 'sk-ant-test' }, false],
+    ['an Anthropic model without its API key', 'anthropic/claude-sonnet-4-5', {}, true],
+    ['an Ollama model, which only a probe can check', 'ollama/llama3', {}, false],
+    [
+      'a Bedrock model with an API token',
+      'bedrock/global.anthropic.claude-opus-5',
+      { AWS_BEARER_TOKEN_BEDROCK: 'token', AWS_REGION: 'us-west-2' },
+      false,
+    ],
+    ['a Bedrock model without AWS credentials', 'bedrock/global.anthropic.claude-opus-5', {}, true],
+  ])('shouldReportWhetherSetupIsNeededFor %s', async (_, model, environment, needed) => {
+    home = await mkdtemp(join(tmpdir(), 'strands-provider-ready-'))
+    vi.stubEnv('HOME', home)
+    vi.stubEnv('USERPROFILE', home)
+    vi.stubEnv('AWS_EC2_METADATA_DISABLED', 'true')
+    for (const variable of AWS_VARIABLES) vi.stubEnv(variable, '')
+    for (const [variable, value] of Object.entries(environment)) vi.stubEnv(variable, value)
+
+    const result = await modelProviderNeedsSetup(CliConfigStore.memory(), model)
+
+    expect(result).toBe(needed)
   })
 })

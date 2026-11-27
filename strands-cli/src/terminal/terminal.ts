@@ -8,6 +8,7 @@ const RESET_KITTY_KEYBOARD = '\u001b[<u'.repeat(16)
 const ENABLE_MOUSE = '\u001b[?1002h\u001b[?1006h'
 const ENABLE_MOUSE_MOTION = '\u001b[?1002l\u001b[?1003h'
 const ENABLE_MOUSE_CLICKS = '\u001b[?1003l\u001b[?1002h'
+const PAUSE_MOUSE_REPORTING = '\u001b[?1003l\u001b[?1002l'
 const DISABLE_MOUSE = '\u001b[?1006l\u001b[?1003l\u001b[?1002l'
 const LEAVE_ALTERNATE_SCREEN = `${DISABLE_MOUSE}\u001b[?25h\u001b[?1049l\u001b[?25h`
 const SYNCHRONIZED_OUTPUT_START = '\u001b[?2026h'
@@ -28,13 +29,20 @@ export function setTerminalTitle(title: string, output: TerminalOutput = process
   output.write(`\u001b]2;${text}\u0007`)
 }
 
+/** Names the terminal tab (the icon name), which a shell otherwise leaves as the command it ran. */
+export function setTerminalTabTitle(title: string, output: TerminalOutput = process.stdout): void {
+  if (!output.isTTY) return
+  const text = sanitizeTerminalText(title).replace(/\s+/gu, ' ').trim() || 'strands'
+  output.write(`\u001b]1;${text}\u0007`)
+}
+
 export function saveTerminalTitle(output: TerminalOutput = process.stdout): () => void {
   let saved = output.isTTY === true
-  if (saved) output.write('\u001b[22;2t')
+  if (saved) output.write('\u001b[22;0t')
   return (): void => {
     if (!saved) return
     saved = false
-    writeTerminalReset(output, '\u001b[23;2t')
+    writeTerminalReset(output, '\u001b[23;0t')
   }
 }
 
@@ -73,6 +81,13 @@ export function restoreTerminalModes(output: TerminalOutput = process.stdout): v
 
 export function setTerminalMouseMotion(enabled: boolean, output: TerminalOutput = process.stdout): void {
   output.write(enabled ? ENABLE_MOUSE_MOTION : ENABLE_MOUSE_CLICKS)
+}
+
+export const pauseMouseReporting = (output: TerminalOutput = process.stdout): (() => void) => {
+  output.write(PAUSE_MOUSE_REPORTING)
+  return (): void => {
+    output.write(ENABLE_MOUSE_CLICKS)
+  }
 }
 
 export async function copyTerminalText(text: string, output: TerminalOutput = process.stdout): Promise<boolean> {

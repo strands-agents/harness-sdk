@@ -31,7 +31,7 @@ import {
   type NewChatPanel,
   type SettingsCategory,
 } from './types.js'
-import { SETTINGS_CATEGORIES, SETTING_DEFINITIONS, settingDescription } from '../../config/settings.js'
+import { SETTINGS_CATEGORIES, SETTING_DEFINITIONS, settingDescription, settingValue } from '../../config/settings.js'
 
 export const SETTINGS_SETUP_ACTION = 'settings-action:setup'
 export const SETTINGS_UPDATE_ACTION = 'settings-action:update'
@@ -196,8 +196,11 @@ function formatDate(value: string): string {
     .replace(',', '')
 }
 
-export function settingsCategoryFilters(): ChatPanelFilter[] {
-  return SETTINGS_CATEGORIES.map(({ id, label }) => ({ id: `settings:${id}`, label }))
+export function settingsCategoryFilters(includeWorkspace = false): ChatPanelFilter[] {
+  return [
+    ...SETTINGS_CATEGORIES.map(({ id, label }) => ({ id: `settings:${id}`, label })),
+    ...(includeWorkspace ? [{ id: 'settings:Workspace', label: 'Strands dev workspace' }] : []),
+  ]
 }
 
 export function settingsRows(
@@ -206,7 +209,7 @@ export function settingsRows(
   includeSetupAction = false
 ): ChatPanelRow[] {
   const rows = SETTING_DEFINITIONS.filter(({ section }) => category === undefined || section === category).map(
-    ({ key, label, section, control, options }): ChatPanelRow => ({
+    ({ key, label, section, control, options, max }): ChatPanelRow => ({
       label,
       description: settingDescription(settings, key),
       value: key,
@@ -214,15 +217,17 @@ export function settingsRows(
       ...(category ? { filter: `settings:${category}` } : {}),
       control:
         control === 'toggle'
-          ? { kind: 'toggle', checked: settings[key] as boolean }
-          : {
-              kind: 'segmented',
-              options: options.map((option) => ({
-                label: option.label,
-                value: String(option.value),
-                ...(settings[key] === option.value ? { active: true } : {}),
-              })),
-            },
+          ? { kind: 'toggle', checked: settingValue(settings, key) as boolean }
+          : control === 'number'
+            ? { kind: 'number', value: String(settingValue(settings, key)), max: max ?? Number.MAX_SAFE_INTEGER }
+            : {
+                kind: 'segmented',
+                options: options.map((option) => ({
+                  label: option.label,
+                  value: String(option.value),
+                  ...(settingValue(settings, key) === option.value ? { active: true } : {}),
+                })),
+              },
     })
   )
   return includeSetupAction && category === 'Agent'
@@ -316,7 +321,16 @@ export function sanitizePanelRow(row: ChatPanelRow): ChatPanelRow {
               })),
             },
           }
-        : {}),
+        : row.control?.kind === 'number'
+          ? {
+              control: {
+                kind: 'number',
+                value: row.control.value.replace(/\D/gu, ''),
+                max: row.control.max,
+                ...(row.control.editing ? { editing: true } : {}),
+              },
+            }
+          : {}),
     ...(row.badge
       ? {
           badge: {
@@ -375,6 +389,14 @@ export function makePanel(id: string, panel: NewChatPanel): ChatPanel {
         kind: panel.kind,
         configuration: panel.configuration,
         language: panel.language,
+      }
+    case 'dev':
+      return {
+        ...common,
+        kind: panel.kind,
+        command: panel.command,
+        view: panel.view,
+        close: panel.close,
       }
     default:
       return { ...common, kind: panel.kind }

@@ -24,6 +24,7 @@ import { containsPath } from '../paths.js'
 import { npmInvocation } from '../terminal/npm.js'
 import type { AgentProjectLanguage } from './import.js'
 import { assertPortablePathComponent, MAX_PROJECT_BYTES, MAX_PROJECT_ENTRIES } from './packaging.js'
+import { ignoreStateFolder } from './state-folder.js'
 
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 export const AGENT_ENTRYPOINTS = ['ts', 'mts', 'js', 'mjs', 'py'].flatMap((extension) => [
@@ -184,6 +185,17 @@ export async function prepareArchiveDependencies(root: string, language: AgentPr
   if (root === cache || !containsPath(cache, root)) return
   // Keep the lock outside the archive: wrapped projects must still have a single child directory.
   const lockPath = join(cache, `${relative(cache, root).split(sep)[0]}.dependencies.lock`)
+  await prepareDependencies(root, language, lockPath)
+}
+
+export const prepareWorkspaceDependencies = async (root: string, language: AgentProjectLanguage): Promise<void> => {
+  const state = join(root, '.strands', 'state')
+  mkdirSync(state, { recursive: true, mode: 0o700 })
+  ignoreStateFolder(state)
+  await prepareDependencies(realpathSync(root), language, join(state, 'dependencies.lock'))
+}
+
+const prepareDependencies = async (root: string, language: AgentProjectLanguage, lockPath: string): Promise<void> => {
   const deadline = Date.now() + 3 * 180_000
   const owner = `${process.pid}-${randomUUID()}`
   while (true) {

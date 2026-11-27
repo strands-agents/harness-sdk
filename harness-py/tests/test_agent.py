@@ -2,13 +2,11 @@ import json
 import logging
 import re
 import textwrap
-from importlib.metadata import version
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import boto3
 import pytest
-from packaging.version import Version
 from strands import Agent, BackgroundTasksConfig, tool
 from strands.agent.conversation_manager import NullConversationManager
 from strands.context_manager import ContextManager
@@ -124,7 +122,7 @@ class _RetrievingModel(Model):
 def test_defaults():
     agent = create_harness()
     assert isinstance(agent, Agent)
-    assert {"shell", "read", "write", "edit", "web_fetch"} <= set(agent.tool_names)
+    assert {"shell", "read", "write", "edit", "web_fetch", "manage_background_task"} <= set(agent.tool_names)
     assert agent.system_prompt == HARNESS_CONTRACT
     assert _context_managed(agent)
     assert agent._background_tasks is not None
@@ -139,6 +137,7 @@ def test_background_tasks_true_matches_the_default():
 
 def test_subagent_stays_backgrounded_under_a_custom_policy():
     policy: BackgroundTasksConfig = {
+        "manage_tool_name": "task_admin",
         "agentic": ["subagent"],
         "always": [sample_tool, "subagent"],
         "never": ["*", "subagent"],
@@ -152,6 +151,7 @@ def test_subagent_stays_backgrounded_under_a_custom_policy():
     assert agent._background_tasks._config.get("wait_for_completion") is False
     assert agent._background_tasks._config.get("max_concurrency") == 2
     assert agent._background_tasks._config.get("timeout") == 5.0
+    assert "task_admin" in agent.tool_names
     assert policy.get("agentic") == ["subagent"]
     assert policy.get("always") == [sample_tool, "subagent"]
     assert policy.get("never") == ["*", "subagent"]
@@ -929,12 +929,7 @@ def test_offloaded_tool_result_returned_in_full_on_retrieval(tmp_path):
 
     assert len(model.seen_tool_results) == 2
     assert model.seen_tool_results[0].startswith("[Truncated:")
-    retrieved = model.seen_tool_results[1]
-    # strands-agents 1.65.0 and earlier return the archived block serialized to JSON; since #6101 the SDK returns text.
-    # TODO: drop the JSON case once harness-py requires a strands-agents release that includes #6101.
-    if Version(version("strands-agents")) <= Version("1.65.0"):
-        retrieved = json.loads(retrieved)["text"]
-    assert retrieved == _LARGE_RESULT
+    assert model.seen_tool_results[1] == _LARGE_RESULT
     assert agent.context_manager.archive_is_durable is True
     agent_scope = Path("scopes", "agent", agent.agent_id)
     snapshot_path = tmp_path / "session" / "retrieval" / agent_scope / "snapshots" / "snapshot_latest.json"

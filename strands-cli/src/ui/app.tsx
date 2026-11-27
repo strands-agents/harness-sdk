@@ -1,6 +1,8 @@
-import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react'
-import { Box, useInput } from 'ink'
+import { type ReactElement, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import { Box, useStdout } from 'ink'
+import { useTerminalInput } from './input.js'
 import { sanitizeTerminalText } from '../terminal/text.js'
+import { pauseMouseReporting } from '../terminal/terminal.js'
 import { Text, useTheme, ThemeProvider } from './theme.js'
 import { basename } from 'node:path'
 import { ChatApp } from './chat/screen.js'
@@ -27,7 +29,7 @@ export interface McpTrustRequest {
 /** Asks inside Ink: a readline prompt would drop the raw mode Ink's input relies on. */
 export function McpTrustPrompt({ request }: { request: McpTrustRequest }): ReactElement {
   const { accent } = useTheme()
-  useInput((character, key) => {
+  useTerminalInput((character, key) => {
     const answer = character.toLowerCase()
     if (answer === 'y') request.resolve(true)
     else if (answer === 'n' || key.escape || key.return) request.resolve(false)
@@ -50,15 +52,28 @@ export function McpTrustPrompt({ request }: { request: McpTrustRequest }): React
 
 export type ChatLaunch = SetupChange
 
+export interface ProviderSetup {
+  model(): string | undefined
+}
+
 export interface SetupBridge {
   request: RequestSetup
   confirmMcp(workspace: string, paths: readonly string[]): Promise<boolean>
 }
 
+const DevStartupView = (props: Parameters<typeof ChatView>[0]): ReactElement => {
+  const { stdout } = useStdout()
+  useEffect(() => pauseMouseReporting(stdout), [stdout])
+  return <ChatView {...props} />
+}
+
 interface ChatRootProps {
+  startupContent?: ReactNode
+  startupStatus?: string
   controller?: ChatControllerApi
   intro: boolean
   setup: boolean
+  providerSetup?: ProviderSetup
   config?: CliConfigStore
   trustRequest?: McpTrustRequest
   setupBridge: SetupBridge
@@ -71,9 +86,12 @@ interface ChatRootProps {
 }
 
 export function ChatRoot({
+  startupContent,
+  startupStatus,
   controller,
   intro,
   setup,
+  providerSetup,
   config,
   trustRequest,
   setupBridge,
@@ -178,6 +196,7 @@ export function ChatRoot({
       )
     }
     const snapshot = config.snapshot()
+    const providerSetupModel = providerSetup?.model()
     const hasSavedHarness = !config.needsSetup() || snapshot.agentProject !== undefined
     const escapeHint = controller
       ? 'Esc to return to chat'
@@ -193,6 +212,8 @@ export function ChatRoot({
           ? { introStartedAt: introStartedAt.current }
           : {})}
         checkForUpdate={resolveUpdate}
+        {...(providerSetup ? { providerOnly: true } : {})}
+        {...(providerSetupModel ? { initialModel: providerSetupModel } : {})}
         onComplete={(change) => finishSetup(0, true, change)}
         onCancel={(exitCode) => finishSetup(exitCode, false)}
       />
@@ -212,6 +233,21 @@ export function ChatRoot({
   if (!controller) {
     placeholderEntranceFade.current ??= !deckShown.current
     deckShown.current = true
+    if (startupContent !== undefined || startupStatus !== undefined) {
+      return (
+        <DevStartupView
+          snapshot={startupSnapshot(settings, config, startupContent ? undefined : startupStatus)}
+          {...(startupContent ? { startupContent } : {})}
+          quietFooter={startupContent === undefined && startupStatus !== undefined}
+          entranceFade={placeholderEntranceFade.current}
+          input=""
+          cursor={0}
+          terminalWidth={columns}
+          terminalHeight={rows}
+          {...(introStartedAt.current !== undefined ? { introStartedAt: introStartedAt.current } : {})}
+        />
+      )
+    }
     return (
       <ChatView
         snapshot={startupSnapshot(settings, config)}
@@ -255,7 +291,7 @@ function configuredModelName(config?: CliConfigStore): string | undefined {
   }
 }
 
-function startupSnapshot(settings: ChatSettings, config?: CliConfigStore): ChatSnapshot {
+function startupSnapshot(settings: ChatSettings, config?: CliConfigStore, status = 'Starting agent…'): ChatSnapshot {
   return {
     completedTurns: [],
     pendingSteering: [],
@@ -264,7 +300,7 @@ function startupSnapshot(settings: ChatSettings, config?: CliConfigStore): ChatS
     tasks: [],
     context: {},
     status: 'idle',
-    composerStatus: 'Starting agent…',
+    composerStatus: status,
     runtime: {
       agent: 'Strands harness',
       version: readCliVersion(),

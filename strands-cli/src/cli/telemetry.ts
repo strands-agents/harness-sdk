@@ -40,7 +40,7 @@ export function buildTelemetryPing(profile: HarnessAgentConfig, cliVersion = rea
 
 /** Never rejects: network errors and non-2xx responses surface only through the optional `log` callback. */
 export async function sendTelemetryPing(
-  ping: TelemetryPing,
+  ping: object,
   options: { endpoint?: string; fetch?: typeof globalThis.fetch; log?: (message: string) => void } = {}
 ): Promise<void> {
   const endpoint = options.endpoint ?? process.env.STRANDS_CLI_TELEMETRY_ENDPOINT ?? TELEMETRY_ENDPOINT
