@@ -32,21 +32,33 @@ Applying the just-in-time standard to context management, we hypothesized that i
 
 The first step is choosing how to represent each kind of data in the window: compact enough to save tokens, lossy only where the loss doesn't matter. The right representation depends on the agent. Command-line agents truncate old output, conversational agents summarize history, and coding agents use Tree-sitter or language-native APIs to keep only function headers.
 
-```python
-from strands import Agent
-from strands.context_manager import Offload
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands import Agent
+    from strands.context_manager import Offload
 
-agent = Agent(
-    context_manager={
-        "strategies": [
-            # Bulky tool output collapses to a head/tail preview once a block exceeds 1,500 tokens
-            Offload.truncate("tool_results", {"preview_tokens": 750}).when(block_threshold=1500),
-            # Conversation history condenses into a summary once the window is 85% full
-            Offload.summarize("*").when(context_utilization="85%", preserve_recent=4),
-        ],
-    },
-)
-```
+    agent = Agent(
+        context_manager={
+            "strategies": [
+                # Bulky tool output collapses to a head/tail preview once a block exceeds 1,500 tokens
+                Offload.truncate("tool_results", {"preview_tokens": 750}).when(block_threshold=1500),
+                # Conversation history condenses into a summary once the window is 85% full
+                Offload.summarize("*").when(context_utilization="85%", preserve_recent=4),
+            ],
+        },
+    )
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { Agent } from '@strands-agents/sdk'
+    import { Offload } from '@strands-agents/sdk/context-manager'
+
+    --8<-- "../blog/jit-context-retrieval.ts:offload_strategies"
+    ```
+  </Tab>
+</Tabs>
 
 ```text
 [Truncated: 1 block, ~12,500 tokens]
@@ -76,33 +88,57 @@ Strands keeps a lossless copy of everything sent to the agent in a log called th
   alt="The archive next to the context window. The context window, billed every turn, holds only a preview: the head and tail of tool result tu_abc123 with about 12,500 tokens cut. The archive, which lives in storage and is never billed, holds the lossless block tu_abc123_0 with the full 12,500-token result. The agent calls retrieve_context against the archive, and only the slice it asked for returns to the context window."
 />
 
-```python
-from strands import Agent
-from strands.storage import LocalFileStorage
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands import Agent
+    from strands.storage import LocalFileStorage
 
-# The archive needs no configuration: it is on by default, and falls back to the
-# agent's own storage, then to in-memory. Name a backend to make it durable.
-agent = Agent(
-    context_manager={
-        "archive": {"storage": LocalFileStorage()},
-    },
-)
-```
+    # The archive needs no configuration: it is on by default, and falls back to the
+    # agent's own storage, then to in-memory. Name a backend to make it durable.
+    agent = Agent(
+        context_manager={
+            "archive": {"storage": LocalFileStorage()},
+        },
+    )
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { Agent } from '@strands-agents/sdk'
+    import { LocalFileStorage } from '@strands-agents/sdk/storage'
+
+    --8<-- "../blog/jit-context-retrieval.ts:archive"
+    ```
+  </Tab>
+</Tabs>
 
 ## Context Relevance
 
 Yet this begets a new problem: how does the agent know what full context to retrieve? Today, the agent narrows a block by pattern or line range, paying for the lines it needs instead of the whole result. Built-in search strategies rank the archive for it: BM25 and keyword search ship in the box, and the search interface accepts custom implementations. Surfacing these on the context manager, so the agent can search the archive against its current work, lands next.
 
-```python
-from strands.storage import LocalFileStorage
-from strands.storage.search import Bm25SearchStrategy
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands.storage import LocalFileStorage
+    from strands.storage.search import Bm25SearchStrategy
 
-# Indexed on write, ranked best-first on read
-storage = LocalFileStorage(
-    "./.strands/artifacts",
-    search_strategy=Bm25SearchStrategy(),
-)
-```
+    # Indexed on write, ranked best-first on read
+    storage = LocalFileStorage(
+        "./.strands/artifacts",
+        search_strategy=Bm25SearchStrategy(),
+    )
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { LocalFileStorage } from '@strands-agents/sdk/storage'
+    import { Bm25SearchStrategy } from '@strands-agents/sdk/storage/search/bm25'
+
+    --8<-- "../blog/jit-context-retrieval.ts:search_strategy"
+    ```
+  </Tab>
+</Tabs>
 
 <Diagram
   name="context-retrieval-decision"
@@ -113,24 +149,36 @@ storage = LocalFileStorage(
 
 The same mechanics isolate context between agents. An orchestrator launches sub-agents for separate tasks, and each sub-agent's window stays specific to its own work. Storage in Strands is decoupled from any one construct, so isolating context across sessions, multi-agent patterns, or sub-agents is just a different path passed to the context manager.
 
-```python
-from strands import Agent
-from strands.storage import LocalFileStorage
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands import Agent
+    from strands.storage import LocalFileStorage
 
-storage = LocalFileStorage("./.strands")
+    storage = LocalFileStorage("./.strands")
 
-researcher = Agent(
-    agent_id="researcher",
-    storage=storage.namespace("researcher"),
-    context_manager="auto",
-)
+    researcher = Agent(
+        agent_id="researcher",
+        storage=storage.namespace("researcher"),
+        context_manager="auto",
+    )
 
-writer = Agent(
-    agent_id="writer",
-    storage=storage.namespace("writer"),
-    context_manager="auto",
-)
-```
+    writer = Agent(
+        agent_id="writer",
+        storage=storage.namespace("writer"),
+        context_manager="auto",
+    )
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { Agent } from '@strands-agents/sdk'
+    import { LocalFileStorage } from '@strands-agents/sdk/storage'
+
+    --8<-- "../blog/jit-context-retrieval.ts:isolation"
+    ```
+  </Tab>
+</Tabs>
 
 <Diagram
   name="context-isolation-namespaces"
@@ -151,14 +199,7 @@ We ran the same agent over all 642 tasks of SWE-bench Pro v2 with GPT-5.6, once 
 
 On the tasks both configurations completed, accuracy is equal. The difference is everything else. The context manager cut input tokens by 46% and eliminated the overflow crash entirely: 17 trials died to it with the manager off, zero with `auto`.
 
-ContextBench, a 50-task benchmark built to stress long-horizon context handling, shows the same shape with Claude Opus 4.8:
-
-| | Context manager off | `context_manager="auto"` | Tuned retrieval config |
-|---|---|---|---|
-| Score | 71.1% | 72.3% | 72.1% |
-| Input tokens | 61.5M | 56.7M (−8%) | **40.2M (−35%)** |
-
-Tuned configurations beat `auto` on tokens at the same score. That gap is why the context manager accepts fine-grained strategies and not just a switch.
+ContextBench, a 50-task benchmark built to stress long-horizon context handling, shows the same shape with Claude Opus 4.8: `auto` at 72.3% against the unmanaged baseline's 71.1%, and a tuned retrieval configuration matching the baseline on 35% fewer input tokens. Tuned configurations beat `auto`. That gap is why the context manager accepts fine-grained strategies and not just a switch.
 
 ## Conclusion
 
