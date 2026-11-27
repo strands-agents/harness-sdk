@@ -11,26 +11,26 @@ draft: true
 
 import Diagram from '@components/Diagram.astro'
 
-When developing agentic systems, the limited width of the context window quickly becomes one of your most sacred and scarce resources. The Strands team has come to know this well: Model performance degrades under context bloat, causing bugs to bubble up in code; Applications hit context window overflows and crash; Agents get stuck in loops attempting to access the context they just shrunk. Meanwhile, token costs continue to rise.
+When you build an agentic system, the context window quickly becomes your scarcest resource. The Strands team knows this well: model performance degrades as context bloats, applications crash on context window overflows, and agents loop trying to re-read context they just shrunk. Meanwhile, token costs keep rising.
 
-With this in mind, we developed a tiered approach to the curation of the model's context window, ensuring context is dropped, but never forgotten. These are the defaults behind [Strands harness](/blog/introducing-strands-harness/), and a large part of why it costs 28% less than other harnesses across six benchmarks.
+So we built a tiered approach to curating the model's context window: context is dropped, but never forgotten. These are the defaults behind [Strands harness](/blog/introducing-strands-harness/), and a large part of why it costs 28% less than other harnesses across six benchmarks.
 
 ## Philosophy
 
-Historically, at their inception, agentic systems relied upon rudimentary "Conversation Managers", which acted as a stopgap between the application and the dreaded Context Window Overflow Error. In Strands, a Conversation Manager would merely catch a Context Window Overflow Error returned by the model call once the context window had surpassed its limit, then either it would drop (or summarize) the oldest 30% of its context to be able to free up space in the context window, reinvoke the model, and recover gracefully.
+Early agentic systems relied on conversation managers as a stopgap between the application and the context window overflow error. In Strands, the conversation manager caught the overflow error after the model call failed, dropped (or summarized) the oldest 30% of context, and reinvoked the model.
 
 <Diagram
   name="context-overflow-recovery"
   alt="The reactive recovery loop. An agent turn triggers a model call. If the context fits, the model returns a response. If it is over the limit, the call fails with a context overflow error and the turn is wasted. The conversation manager then drops or summarizes the oldest 30% of context and retries the model call."
 />
 
-While this approach enabled the advent of model-driven applications, it was far from ideal. Each Context Window Overflow Error meant that an entire turn was wasted, requiring re-invocation of the model at a high token cost.
+This recovered gracefully, but each overflow wasted an entire turn: the failed call was already billed, and the retry billed again.
 
-Applying the Just-In-Time standard to context management, we hypothesized that in an ideal world, the context window would exclusively contain only the information that is purely sufficient and necessary for the next model call. Any information that is not necessary for the current turn, would remain accessible and lossless outside of the limited context window space. This would minimize not only token spending, but the "lost-in-the-middle effect" where model performance degrades (especially over information located in the middle of a data source) when faced with larger inputs.
+We wanted the opposite default. The context window should hold only what the next model call needs, and everything else should stay accessible and lossless outside it. That cuts token spend, and it also cuts the "lost-in-the-middle" effect, where model accuracy drops over information buried in the middle of a large input.
 
 ## Context Compression
 
-The first step in our methodology required determining representations of data in the context window. Depending on the type of data in the context window, one must determine a representation that optimizes its compactness in comparison to its lossiness. This representation often varies depending on use case. For instance, command-line agents can simply use truncated versions of the previous context, whereas conversational agents may condense conversation history in summaries, and coding agents may use Tree-sitter or language-native APIs to maintain only function headers.
+The first step is choosing how to represent each kind of data in the window: compact enough to save tokens, lossy only where the loss doesn't matter. The right representation depends on the agent. Command-line agents truncate old output, conversational agents summarize history, and coding agents use Tree-sitter or language-native APIs to keep only function headers.
 
 ```python
 from strands import Agent
@@ -67,9 +67,9 @@ FAILED tests/test_tools.py::test_concurrent_tool_execution
 
 ## Context Persistence
 
-Although compressing context clears out room for further conversations, it loses critical data, leading to forgetfulness, duplicate tool calls, and increased token usage.
+Compression clears room, but it destroys data. A truncated test log can't tell you which assertion failed, so the agent re-runs the tests: forgetfulness, duplicate tool calls, and the token spend you just saved, spent again.
 
-We resolved this in Strands by maintaining a lossless copy of any context that has been sent to the agent in a log colloquially known as the "stash". Since this "stash" is maintained in storage independently of the agent's context window, the agent is able to empty its context window without sacrificing any information. Now, the compacted versions of context are able to act as previews for the agent to retrieve the full context blocks as needed.
+Strands keeps a lossless copy of everything sent to the agent in a log we call the stash. Because the stash lives in storage, independent of the context window, the agent can empty its window without losing anything. The compacted block in the window becomes a preview, and the agent retrieves the full block from the stash when it needs it.
 
 <Diagram
   name="context-stash-preview"
@@ -91,7 +91,7 @@ agent = Agent(
 
 ## Context Relevance
 
-Yet, this begets a new set of problems: how does the agent know what full context to retrieve? Today, the agent narrows a block by pattern or line range, paying for the lines it needs instead of the whole result. In Strands, our built-in Search Strategies handle this on your behalf, vending algorithms to return the top-k relevant results, including BM25, lexical search, and with extension support for any custom search. Surfacing these on the Context Manager, so your agent can search and retrieve relevant context to its current work, is landing next.
+Retrieval raises its own question: how does the agent know what to pull back? Today, the agent narrows a block by pattern or line range, paying for the lines it needs instead of the whole result. Built-in search strategies rank the stash for it: BM25 and lexical search ship in the box, and the search interface accepts custom implementations. Surfacing these on the context manager, so the agent can search the stash against its current work, lands next.
 
 ```python
 from strands.storage import LocalFileStorage
@@ -111,7 +111,7 @@ storage = LocalFileStorage(
 
 ## Context Isolation
 
-Once the context window has been curated specifically for a task, an orchestrator agent may launch sub-agents for isolated tasks, allowing the context window to remain task-specific and minimal. In Strands, Storage is decoupled from any one construct, so a user can isolate their agent's context across sessions, multi-agent patterns, or sub-agents simply through passing a different path into the Context Manager.
+The same mechanics isolate context between agents. An orchestrator launches sub-agents for separate tasks, and each sub-agent's window stays specific to its own work. Storage in Strands is decoupled from any one construct, so isolating context across sessions, multi-agent patterns, or sub-agents is just a different path passed to the context manager.
 
 ```python
 from strands import Agent
@@ -134,9 +134,25 @@ writer = Agent(
 
 <Diagram
   name="context-isolation-namespaces"
-  alt="Context isolation through storage namespaces. An orchestrator launches two sub-agents, a researcher and a writer. Each works in its own storage namespace — ./.strands/researcher and ./.strands/writer — so no context bleeds between them and each context window stays task-specific."
+  alt="Context isolation through storage namespaces. An orchestrator launches two sub-agents, a researcher and a writer. Each works in its own storage namespace (./.strands/researcher and ./.strands/writer), so no context bleeds between them and each context window stays task-specific."
 />
 
-The Context Window Overflow Error was never the problem; it was the symptom of treating the context window as the only place context could live. Once context has somewhere else to go, the window stops being the bottleneck of agentic capability and becomes what it always should have been: a working set, assembled for the turn in front of it.
+## Measuring it
 
-Storage is cheap and the context window is not. The tiered approach then becomes a relevance classification problem of keeping each piece of context in whichever tier it belongs to this turn. In Strands, start with `context_manager="auto"` and drop down to fine-grained context configurations as you determine what your agentic workflow needs at each step.
+We ran the same agent over all 642 tasks of SWE-bench Pro v2 with GPT-5.6, once with the context manager off and once with `context_manager="auto"`. Everything else was identical. The testing setup was distributed benchmarking on EC2 with Harbor.
+
+| | Context manager off | `context_manager="auto"` |
+|---|---|---|
+| Score | 86.9% | **90.3%** |
+| Score, excluding errored trials | 90.0% | 90.6% |
+| Input tokens | 553M | **301M (−46%)** |
+| Errored trials | 23 | **4** |
+| Context window overflow crashes | 17 | **0** |
+
+On the tasks both configurations completed, accuracy is equal. The difference is everything else. The context manager cut input tokens by 46% and eliminated the overflow crash entirely: 17 trials died to it with the manager off, zero with `auto`.
+
+ContextBench, a 50-task benchmark built to stress long-horizon context handling, shows the same shape with Claude Opus 4.8: `auto` at 72.3% against the unmanaged baseline's 71.1%, and a tuned retrieval configuration matching the baseline on 35% fewer input tokens. Tuned configurations beat `auto`. That gap is why the context manager accepts fine-grained strategies and not just a switch.
+
+The overflow error was never the problem. It was the symptom of treating the context window as the only place context could live. Once context has somewhere else to go, the window becomes what it should have been all along: a working set, assembled for the turn in front of it.
+
+Storage is cheap; the context window is not. Context management reduces to deciding, each turn, which tier every piece of context belongs in. Start with `context_manager="auto"`, and drop down to fine-grained strategies as you learn what your workflow needs.
