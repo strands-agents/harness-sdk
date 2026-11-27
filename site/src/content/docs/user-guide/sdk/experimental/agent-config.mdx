@@ -24,7 +24,7 @@ from strands.experimental import config_to_agent
 
 # Create agent from dictionary
 agent = config_to_agent({
-    "model": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+    "model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
     "prompt": "You are a helpful assistant"
 })
 ```
@@ -52,7 +52,7 @@ agent = config_to_agent("file:///path/to/config.json")
 
 ```json
 {
-  "model": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+  "model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
   "prompt": "You are a coding assistant. Help users write, debug, and improve their code. You have access to file operations and can execute shell commands when needed.",
   "tools": ["strands.vended_tools.file_editor", "strands.vended_tools.shell"]
 }
