@@ -77,6 +77,7 @@ async def test_metadata_populated_on_assistant_message(agent, model, agenerator,
         [
             {"contentBlockDelta": {"delta": {"text": "response"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
             {
                 "metadata": {
                     "usage": {"inputTokens": 42, "outputTokens": 10, "totalTokens": 52},
@@ -108,6 +109,7 @@ async def test_metadata_has_default_usage_when_no_metadata_event(agent, model, a
         [
             {"contentBlockDelta": {"delta": {"text": "response"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 
@@ -138,6 +140,7 @@ async def test_metadata_stripped_before_model_call(agent, model, agenerator, ali
         [
             {"contentBlockDelta": {"delta": {"text": "response"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 

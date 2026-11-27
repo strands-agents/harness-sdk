@@ -18,6 +18,7 @@ from strands.types._events import (
     TypedEvent,
 )
 from strands.types.content import Message, Messages
+from strands.types.exceptions import IncompleteStreamError
 from strands.types.streaming import (
     ContentBlockDeltaEvent,
     ContentBlockStartEvent,
@@ -1101,11 +1102,12 @@ def test_extract_usage_metrics_empty_metadata():
         ),
         # Empty Message
         (
-            [{}],
+            [{}, {"messageStop": {"stopReason": "end_turn"}}],
             [
                 {
                     "event": {},
                 },
+                {"event": {"messageStop": {"stopReason": "end_turn"}}},
                 {
                     "stop": (
                         "end_turn",
@@ -1609,6 +1611,60 @@ async def test_process_stream_signature_does_not_leak_into_later_empty_block(age
     assert tru_content == exp_content
 
 
+@pytest.mark.parametrize(
+    "response",
+    [
+        [],
+        [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockDelta": {"delta": {"text": "partial answer"}}},
+        ],
+        [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockDelta": {"delta": {"text": "partial answer"}}},
+            {"contentBlockStop": {}},
+        ],
+        [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "tool-1", "name": "tool"}}}},
+            {"contentBlockDelta": {"delta": {"toolUse": {"input": "{}"}}}},
+            {"contentBlockStop": {}},
+        ],
+        [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "thinking..."}}}},
+            {"contentBlockStop": {}},
+        ],
+    ],
+    ids=["empty", "unfinished-text-block", "text", "tool-use", "reasoning"],
+)
+@pytest.mark.asyncio
+async def test_process_stream_raises_when_stream_ends_without_message_stop(response, agenerator, alist):
+    stream = strands.event_loop.streaming.process_stream(agenerator(response))
+
+    with pytest.raises(IncompleteStreamError, match="ended without messageStop"):
+        await alist(stream)
+
+
+@pytest.mark.asyncio
+async def test_process_stream_reports_cancelled_when_cancelled_after_the_last_chunk(alist):
+    cancel_signal = threading.Event()
+
+    async def chunks():
+        for chunk in [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockDelta": {"delta": {"text": "partial answer"}}},
+            {"contentBlockStop": {}},
+        ]:
+            yield chunk
+        cancel_signal.set()
+
+    stream = strands.event_loop.streaming.process_stream(chunks(), cancel_signal=cancel_signal)
+
+    last_event = cast(ModelStopReason, (await alist(stream))[-1])
+    assert last_event["stop"][0] == "cancelled"
+
+
 @pytest.mark.asyncio
 async def test_stream_messages(agenerator, alist):
     mock_model = unittest.mock.MagicMock()
@@ -1616,6 +1672,7 @@ async def test_stream_messages(agenerator, alist):
         [
             {"contentBlockDelta": {"delta": {"text": "test"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 
@@ -1649,6 +1706,7 @@ async def test_stream_messages(agenerator, alist):
                 "contentBlockStop": {},
             },
         },
+        {"event": {"messageStop": {"stopReason": "end_turn"}}},
         {
             "stop": (
                 "end_turn",
@@ -1681,6 +1739,7 @@ async def test_stream_messages_strips_id_before_model_call(agenerator, alist):
         [
             {"contentBlockDelta": {"delta": {"text": "test"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 
@@ -1722,7 +1781,7 @@ async def test_stream_messages_sends_summary_text_to_model_without_server_side_s
 ):
     mock_model = unittest.mock.MagicMock()
     mock_model.model_info.capabilities.server_side_summary = server_side_summary
-    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}])
+    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}, {"messageStop": {"stopReason": "end_turn"}}])
     messages = _summary_history()
 
     await alist(
@@ -1738,7 +1797,7 @@ async def test_stream_messages_sends_summary_text_to_model_without_server_side_s
 async def test_stream_messages_keeps_summary_block_for_model_with_server_side_summary(agenerator, alist):
     mock_model = unittest.mock.MagicMock()
     mock_model.model_info.capabilities.server_side_summary = True
-    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}])
+    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}, {"messageStop": {"stopReason": "end_turn"}}])
 
     await alist(
         strands.event_loop.streaming.stream_messages(
@@ -1753,7 +1812,9 @@ async def test_stream_messages_keeps_summary_block_for_model_with_server_side_su
 async def test_stream_messages_keeps_the_cache_point_ahead_of_the_latest_injected_text(agenerator, alist):
     mock_model = unittest.mock.MagicMock()
     mock_model.model_info.capabilities.temporary_messages = False
-    mock_model.stream.side_effect = lambda *args, **kwargs: agenerator([{"contentBlockStop": {}}])
+    mock_model.stream.side_effect = lambda *args, **kwargs: agenerator(
+        [{"contentBlockStop": {}}, {"messageStop": {"stopReason": "end_turn"}}]
+    )
     messages = [
         {
             "role": "user",
@@ -1796,6 +1857,7 @@ async def test_stream_messages_with_system_prompt_content(agenerator, alist):
         [
             {"contentBlockDelta": {"delta": {"text": "test"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 
@@ -1833,6 +1895,7 @@ async def test_stream_messages_single_text_block_backwards_compatibility(agenera
         [
             {"contentBlockDelta": {"delta": {"text": "test"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 
@@ -1870,6 +1933,7 @@ async def test_stream_messages_empty_system_prompt_content(agenerator, alist):
         [
             {"contentBlockDelta": {"delta": {"text": "test"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 
@@ -1905,6 +1969,7 @@ async def test_stream_messages_none_system_prompt_content(agenerator, alist):
         [
             {"contentBlockDelta": {"delta": {"text": "test"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 
@@ -1943,6 +2008,7 @@ async def test_stream_messages_normalizes_messages(agenerator, alist):
         [
             {"contentBlockDelta": {"delta": {"text": "test"}}},
             {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "end_turn"}},
         ]
     )
 
@@ -2156,7 +2222,7 @@ async def test_process_stream_tool_use_info_in_delta(agenerator, alist):
 async def test_stream_messages_forwards_cancel_signal_to_model(agenerator, alist):
     """The model receives the exact cancellation event the SDK checkpoints on."""
     mock_model = unittest.mock.MagicMock()
-    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}])
+    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}, {"messageStop": {"stopReason": "end_turn"}}])
     cancel_signal = threading.Event()
 
     stream = strands.event_loop.streaming.stream_messages(
@@ -2179,7 +2245,7 @@ async def test_stream_messages_forwards_structured_output_model_to_model(agenera
         value: str
 
     mock_model = unittest.mock.MagicMock()
-    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}])
+    mock_model.stream.return_value = agenerator([{"contentBlockStop": {}}, {"messageStop": {"stopReason": "end_turn"}}])
 
     stream = strands.event_loop.streaming.stream_messages(
         mock_model,

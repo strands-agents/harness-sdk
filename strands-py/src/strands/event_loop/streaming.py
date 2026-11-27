@@ -29,6 +29,7 @@ from ..types._events import (
 )
 from ..types.citations import CitationsContentBlock
 from ..types.content import ContentBlock, Message, Messages, ReasoningContentBlock, SystemContentBlock
+from ..types.exceptions import IncompleteStreamError
 from ..types.streaming import (
     ContentBlockDeltaEvent,
     ContentBlockStart,
@@ -461,6 +462,9 @@ async def process_stream(
 
     Yields:
         The reason for stopping, the constructed message, and the usage metrics.
+
+    Raises:
+        IncompleteStreamError: If the stream ends without a ``messageStop`` event.
     """
     stop_reason: StopReason = "end_turn"
     saw_message_stop = False
@@ -518,17 +522,18 @@ async def process_stream(
         elif "redactContent" in chunk:
             handle_redact_content(chunk["redactContent"], state)
 
-    # A provider that aborts in flight ends the stream without messageStop; the in-loop check
-    # above cannot see it, so report the cancellation here rather than a truncated end_turn.
-    if not saw_message_stop and cancel_signal and cancel_signal.is_set():
-        _record_usage(invocation_context, usage, model_key)
-        yield ModelStopReason(
-            stop_reason="cancelled",
-            message={"role": "assistant", "content": [{"text": "Cancelled by user"}]},
-            usage=usage,
-            metrics=metrics,
-        )
-        return
+    # A provider that aborts in flight can end the iterator without the protocol's terminal event.
+    if not saw_message_stop:
+        if cancel_signal and cancel_signal.is_set():
+            _record_usage(invocation_context, usage, model_key)
+            yield ModelStopReason(
+                stop_reason="cancelled",
+                message={"role": "assistant", "content": [{"text": "Cancelled by user"}]},
+                usage=usage,
+                metrics=metrics,
+            )
+            return
+        raise IncompleteStreamError("model response stream ended without messageStop")
 
     _record_usage(invocation_context, usage, model_key)
     yield ModelStopReason(stop_reason=stop_reason, message=state["message"], usage=usage, metrics=metrics)
@@ -583,6 +588,9 @@ async def stream_messages(
 
     Yields:
         The reason for stopping, the final message, and the usage metrics
+
+    Raises:
+        IncompleteStreamError: If the stream ends without a ``messageStop`` event.
     """
     # Lazy: _model_proxy imports this module at load time.
     from ..models._model_proxy import ModelProxy
