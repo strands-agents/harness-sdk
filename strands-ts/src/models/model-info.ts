@@ -26,8 +26,8 @@ export type DeferredToolLoading = 'unsupported' | 'native' | 'stubs'
 
 /**
  * What the model can do. A yes/no fact is a `boolean`; a fact with more than two states is a string
- * union, like {@link PromptCaching} (which mechanism). A fact about two features together gets its
- * own field named after the pair. `undefined` is unknown either way.
+ * union, like {@link PromptCaching} (which mechanism); a set of supported values is a list, where `[]` means none.
+ * A fact about two features together gets its own field named after the pair. `undefined` is unknown either way.
  */
 export interface ModelCapabilities {
   /** Whether the model keeps conversation state server-side; {@link Model.stateful} reads it. */
@@ -66,6 +66,18 @@ export interface ModelCapabilities {
    * `BedrockModel` names each loaded tool and other providers leave it out.
    */
   readonly deferredToolLoading?: DeferredToolLoading | undefined
+  /**
+   * The `providerData.provider` tag of the reasoning the model takes back from history, such as `'openai_responses'`.
+   * Reasoning tagged otherwise does not reach the model.
+   */
+  readonly reasoningProvider?: string | undefined
+  /**
+   * MIME types the model and provider take in the media blocks of a user message; `[]` when they take only text,
+   * `undefined` for every type. An entry matches a type exactly (`image/png`) or by its `type/*`; case and
+   * `; parameters` are ignored. A wildcard can also mean the kind isn't verified (see `shared/README.md`). Tool results
+   * can take fewer.
+   */
+  readonly acceptedMimeTypes?: readonly string[] | undefined
 }
 
 /** Size limits of the model. */
@@ -83,7 +95,9 @@ export interface ModelInfo {
 }
 
 function defined<T extends object>(section: T): T | undefined {
-  const entries = Object.entries(section).filter(([, value]) => value !== undefined)
+  const entries = Object.entries(section)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => [key, Array.isArray(value) ? Object.freeze([...value]) : value])
   return entries.length === 0 ? undefined : (Object.freeze(Object.fromEntries(entries)) as T)
 }
 
@@ -113,6 +127,22 @@ export const ModelInfo = Object.freeze({
     return Object.freeze(merged)
   },
 })
+
+/**
+ * Whether a model takes a MIME type in a user message, by its `acceptedMimeTypes`.
+ *
+ * @internal
+ * @param info - What the SDK knows about the model, usually {@link Model.modelInfo}
+ * @param mimeType - The type to check, such as `image/png`; parameters (`; charset=utf-8`) are ignored
+ * @returns True when the list names the type or its `type/*`, or when the model has no list
+ */
+export function acceptsMimeType(info: ModelInfo, mimeType: string): boolean {
+  const accepted = info.capabilities?.acceptedMimeTypes
+  if (accepted === undefined) return true
+  const type = mimeType.split(';')[0]!.trim().toLowerCase()
+  const wildcard = `${type.split('/')[0]}/*`
+  return accepted.some((entry) => [type, wildcard].includes(entry.toLowerCase()))
+}
 
 /**
  * Turns `serverSideSummary` off for providers that serve a model the shared info lists it for but have no
@@ -146,6 +176,8 @@ const CAPABILITY_FIELDS = Object.keys({
   serverSideSummary: true,
   temporaryMessages: true,
   deferredToolLoading: true,
+  reasoningProvider: true,
+  acceptedMimeTypes: true,
 } satisfies Record<keyof ModelCapabilities, true>)
 const LIMIT_FIELDS = Object.keys({ contextWindow: true, maxOutputTokens: true } satisfies Record<
   keyof ModelLimits,
@@ -159,7 +191,8 @@ function knownFields(entry: ModelInfo): ModelInfo {
     const picked = Object.fromEntries(Object.entries(section ?? {}).filter(([key]) => keys.includes(key)))
     return Object.keys(picked).length > 0 ? picked : undefined
   }
-  const capabilities = pick(entry.capabilities, CAPABILITY_FIELDS)
+  const capabilities = pick(entry.capabilities, CAPABILITY_FIELDS) as Record<string, unknown> | undefined
+  for (const value of Object.values(capabilities ?? {})) if (Array.isArray(value)) Object.freeze(value)
   const limits = pick(entry.limits, LIMIT_FIELDS)
   return { ...(capabilities ? { capabilities } : {}), ...(limits ? { limits } : {}) } as ModelInfo
 }

@@ -770,7 +770,7 @@ class TestPublicExports:
         import strands.vended_interventions as vended
         import strands.vended_interventions.hitl as hitl
 
-        assert vended.__all__ == ["CedarAuthorization", "HumanInTheLoop"]
+        assert vended.__all__ == ["CedarAuthorization", "DogwoodAuthorization", "HumanInTheLoop"]
         assert hitl.__all__ == ["HumanInTheLoop", "HumanInTheLoopClassifier", "LLMClassifierConfig"]
         assert vended.HumanInTheLoop is hitl.HumanInTheLoop
         assert hitl.HumanInTheLoop.name == "strands:human-in-the-loop"
