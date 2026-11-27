@@ -30,8 +30,8 @@
     ◆ <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-mcp">MCP Server</a>
     ◆ <a href="https://discord.gg/strands">Discord</a>
     <br>
-    Harness (<a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-ts">TypeScript</a>)
-    ◆ SDK (<a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-ts">TypeScript</a>)
+    Harness (<a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-ts">TypeScript</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-rs">Rust</a>)
+    ◆ SDK (<a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-py">Python</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-ts">TypeScript</a>, <a href="https://github.com/strands-agents/harness-sdk/tree/main/strands-rs">Rust</a>)
     ◆ <a href="https://github.com/strands-agents/box">Box</a>
     ◆ <a href="https://github.com/strands-agents/shell">Shell</a>
     ◆ <a href="https://github.com/strands-agents/evals">Evals</a>
@@ -39,7 +39,7 @@
   </p>
 </div>
 
-Strands Agents is an open-source SDK for building and running AI agents in Python and TypeScript. Choose Strands when you would otherwise write your own agent loop: it runs in your process with no hosted control plane, and it covers the jobs a hand-rolled loop grows into. In one SDK you get [lifecycle controls](https://strandsagents.com/docs/user-guide/concepts/agents/agent-loop/) (turn limits, token budgets, cancellation, stop reasons), [tools](https://strandsagents.com/docs/user-guide/concepts/tools/) and [structured output](https://strandsagents.com/docs/user-guide/concepts/agents/structured-output/), [MCP](https://strandsagents.com/docs/user-guide/concepts/tools/mcp-tools/), [multi-agent patterns](https://strandsagents.com/docs/user-guide/concepts/multi-agent/multi-agent-patterns/), [memory](https://strandsagents.com/docs/user-guide/concepts/memory/overview/) and [sessions](https://strandsagents.com/docs/user-guide/concepts/agents/session-management/), [model portability](https://strandsagents.com/docs/user-guide/concepts/model-providers/), [streaming](https://strandsagents.com/docs/user-guide/concepts/streaming/), [guardrails](https://strandsagents.com/docs/user-guide/safety-security/guardrails/), [tracing](https://strandsagents.com/docs/user-guide/observability-evaluation/observability/), and [evals](https://strandsagents.com/docs/user-guide/evals-sdk/quickstart/).
+Strands Agents is an open-source SDK for building and running AI agents in Python, TypeScript and Rust (developer preview). Choose Strands when you would otherwise write your own agent loop: it runs in your process with no hosted control plane, and it covers the jobs a hand-rolled loop grows into. In one SDK you get [lifecycle controls](https://strandsagents.com/docs/user-guide/concepts/agents/agent-loop/) (turn limits, token budgets, cancellation, stop reasons), [tools](https://strandsagents.com/docs/user-guide/concepts/tools/) and [structured output](https://strandsagents.com/docs/user-guide/concepts/agents/structured-output/), [MCP](https://strandsagents.com/docs/user-guide/concepts/tools/mcp-tools/), [multi-agent patterns](https://strandsagents.com/docs/user-guide/concepts/multi-agent/multi-agent-patterns/), [memory](https://strandsagents.com/docs/user-guide/concepts/memory/overview/) and [sessions](https://strandsagents.com/docs/user-guide/concepts/agents/session-management/), [model portability](https://strandsagents.com/docs/user-guide/concepts/model-providers/), [streaming](https://strandsagents.com/docs/user-guide/concepts/streaming/), [guardrails](https://strandsagents.com/docs/user-guide/safety-security/guardrails/), [tracing](https://strandsagents.com/docs/user-guide/observability-evaluation/observability/), and [evals](https://strandsagents.com/docs/user-guide/evals-sdk/quickstart/).
 
 Using a coding agent? Install the Strands plugin for Claude Code, Codex, or Cursor.
 It adds framework selection, scaffolding, tool authoring, MCP server connections, web
@@ -47,14 +47,16 @@ framework guides, and LangGraph migration guidance. See
 [Use Strands with AI coding agents](https://strandsagents.com/docs/user-guide/build-with-ai/)
 for install and verification steps.
 
-This monorepo contains Strands harness, the Python and TypeScript SDKs, the documentation site, and supporting packages:
+This monorepo contains Strands harness, the Python, TypeScript and Rust SDKs, the documentation site, and supporting packages:
 
 | Directory | Description |
 |-----------|-------------|
 | [`harness-py/`](harness-py/) | Python Strands harness: fully assembled agent via `create_harness()` ([PyPI](https://pypi.org/project/strands-harness/) · [docs](https://strandsagents.com/docs/user-guide/harness/)) |
+| [`harness-rs/`](harness-rs/) | Rust Strands harness (developer preview): fully assembled agent via `create_harness()` ([crates.io](https://crates.io/crates/strands-harness), [docs](https://docs.rs/strands-harness)) |
 | [`harness-ts/`](harness-ts/) | TypeScript Strands harness: fully assembled agent via `createHarness()` ([npm](https://www.npmjs.com/package/@strands-agents/harness) · [docs](https://strandsagents.com/docs/user-guide/harness/)) |
 | [`strands-cli/`](strands-cli/) | `strands` CLI: prototype and chat with a harness agent from the terminal ([npm](https://www.npmjs.com/package/@strands-agents/cli)) |
 | [`strands-py/`](strands-py/) | Python SDK: agent loop, model providers, tools ([PyPI](https://pypi.org/project/strands-agents/) · [releases](https://github.com/strands-agents/harness-sdk/releases?q=python%2F&expanded=false)) |
+| [`strands-rs/`](strands-rs/) | Rust SDK (developer preview): agent loop, model providers, tools ([crates.io](https://crates.io/crates/strands), [docs](https://docs.rs/strands)) |
 | [`strands-ts/`](strands-ts/) | TypeScript SDK: agent loop, model providers, tools ([npm](https://www.npmjs.com/package/@strands-agents/sdk) · [releases](https://github.com/strands-agents/harness-sdk/releases?q=typescript%2F&expanded=false)) |
 | [`strands-mcp/`](strands-mcp/) | MCP server that gives coding agents knowledge about building with Strands Agents ([PyPI](https://pypi.org/project/strands-agents-mcp-server/)) |
 | [`site/`](site/) | Source for the [strandsagents.com](https://strandsagents.com) documentation site (Astro/Starlight) |
@@ -100,6 +102,24 @@ import { createHarness } from '@strands-agents/harness'
 
 const agent = await createHarness()
 await agent.invoke("Find the slowest test in this repo and explain why it's slow")
+```
+
+### Rust
+
+```bash
+cargo add strands-harness strands
+cargo add tokio --features macros,rt-multi-thread
+```
+
+```rust
+use strands_harness::{HarnessAgentOptions, create_harness};
+
+#[tokio::main]
+async fn main() -> strands::Result<()> {
+    let mut agent = create_harness(HarnessAgentOptions::default()).await?;
+    agent.invoke("Find the slowest test in this repo and explain why it's slow").await?;
+    agent.shutdown().await
+}
 ```
 
 Start here to get a batteries-included agent, then drop down to the SDKs below when you want to own the agent loop and wire up tools, model providers, and memory yourself. The [harness configuration reference](https://strandsagents.com/docs/user-guide/harness/reference/configuration/) documents every default you can override.
@@ -150,6 +170,33 @@ to configure a model provider, run your first agent, and add tools. Use the
 [TypeScript API reference](https://strandsagents.com/docs/api/typescript/) for the full
 SDK surface, or explore more examples in the [TypeScript SDK README](strands-ts/).
 
+### Rust
+
+The Rust SDK is a developer preview and needs Rust 1.96+. Add it with an async runtime:
+
+```bash
+cargo add strands
+cargo add tokio --features macros,rt-multi-thread
+```
+
+```rust
+use strands::Agent;
+use strands::vended_tools::http_request::http_request;
+
+#[tokio::main]
+async fn main() -> strands::Result<()> {
+    let mut agent = Agent::builder().tools([http_request()]).build()?;
+    agent
+        .invoke("Tell me about the Strands harness features: https://strandsagents.com/docs/user-guide/harness/index.md")
+        .await?;
+    agent.shutdown().await
+}
+```
+
+As in the other SDKs, the agent uses Amazon Bedrock by default. The [Rust SDK README](strands-rs/strands/) covers
+model providers, tools and the `#[tool]` macro, MCP, sessions and telemetry, and the
+[crate documentation](https://docs.rs/strands) has the full API.
+
 ## Documentation
 
 For detailed guidance & examples, explore our documentation:
@@ -160,7 +207,7 @@ For detailed guidance & examples, explore our documentation:
 - [Agent Loop](https://strandsagents.com/docs/user-guide/concepts/agents/agent-loop/)
 - [Bidirectional Streaming](https://strandsagents.com/docs/user-guide/sdk/bidi/) (Python)
 - [Examples](https://strandsagents.com/docs/examples/)
-- API Reference: [Python](https://strandsagents.com/docs/api/python/strands.agent.agent/) · [TypeScript](https://strandsagents.com/docs/api/typescript/)
+- API Reference: [Python](https://strandsagents.com/docs/api/python/strands.agent.agent/) · [TypeScript](https://strandsagents.com/docs/api/typescript/) · [Rust](https://docs.rs/strands)
 - [Production & Deployment Guide](https://strandsagents.com/docs/user-guide/deploy/operating-agents-in-production/)
 
 The docs themselves live in this monorepo under [`site/`](site/), and doc PRs are welcome alongside code changes.
@@ -182,6 +229,13 @@ hatch fmt         # format & lint
 npm ci            # install from repo root
 npm run build     # build
 npm test          # run unit tests
+```
+
+**Rust SDK and harness** (`strands-rs/`, `harness-rs/`):
+```bash
+cargo test --workspace --all-features    # run unit tests from the repo root
+cargo fmt --all                          # format
+cargo clippy --workspace --all-targets --all-features -- -D warnings   # lint
 ```
 
 **Documentation site** (`site/`):

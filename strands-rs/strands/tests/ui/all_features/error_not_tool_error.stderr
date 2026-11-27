@@ -1,0 +1,18 @@
+error[E0277]: `#[tool]` cannot turn `u32` into a tool error
+ --> tests/ui/all_features/error_not_tool_error.rs:5:27
+  |
+5 | async fn get_weather() -> Result<String, u32> {
+  |                           ^^^^^^ the error type of this `Result`
+  |
+  = help: the trait `std::error::Error` is not implemented for `u32`
+  = note: return an error that implements `std::error::Error`, `ToolError`, or a type that converts into `strands::BoxError` (`String`, `&str`, `anyhow::Error`)
+  = note: required for `Box<(dyn std::error::Error + Send + std::marker::Sync + 'static)>` to implement `From<u32>`
+  = note: required for `u32` to implement `Into<Box<(dyn std::error::Error + Send + std::marker::Sync + 'static)>>`
+  = note: required for `u32` to implement `strands::__private::IntoBoxError`
+note: required by a bound in `strands::__private::BoxErrorKind::into_tool_error`
+ --> src/__private.rs
+  |
+  | impl BoxErrorKind {
+  |     /// The error, boxed and wrapped.
+  |     pub fn into_tool_error<E: IntoBoxError>(self, error: E) -> ToolError {
+  |                               ^^^^^^^^^^^^ required by this bound in `BoxErrorKind::into_tool_error`

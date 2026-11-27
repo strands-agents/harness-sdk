@@ -52,14 +52,16 @@ The `team/` folder holds the rest of our shared context: the full [tenets](./tea
 
 ## Development Environment
 
-This is a monorepo containing the Strands harness, Python SDK, TypeScript SDK, CLI, MCP server, documentation site, and integ test infrastructure. Each has its own toolchain:
+This is a monorepo containing the Strands harness, Python SDK, TypeScript SDK, Rust SDK, CLI, MCP server, documentation site, and integ test infrastructure. Each has its own toolchain:
 
 | Area | Directory | Toolchain |
 |------|-----------|-----------|
 | Python harness | [`harness-py/`](./harness-py/) | hatch |
+| Rust harness | [`harness-rs/`](./harness-rs/) | cargo |
 | TypeScript harness | [`harness-ts/`](./harness-ts/) | npm |
 | CLI | [`strands-cli/`](./strands-cli/) | npm |
 | Python SDK | [`strands-py/`](./strands-py/) | hatch |
+| Rust SDK | [`strands-rs/`](./strands-rs/) | cargo workspace |
 | TypeScript SDK | [`strands-ts/`](./strands-ts/) | npm workspace |
 | MCP server | [`strands-mcp/`](./strands-mcp/) | hatch |
 | Docs site | [`site/`](./site/) | Astro (npm) |
@@ -175,6 +177,29 @@ alter a structural file (`package.json`, `package-lock.json`, a `strands-ts`
 `tsconfig`, `vitest.config.ts`, a shared integration fixture under
 `test/integ/__fixtures__/`, or a TypeScript CI workflow), the full
 integration suite runs automatically.
+
+### Rust SDK and harness
+
+The Rust SDK (`strands-rs/`) and harness (`harness-rs/`) are crates in one cargo workspace rooted at the repository
+root. They need Rust 1.96 or later (the MSRV); install a toolchain with [rustup](https://rustup.rs/). The toolchain is
+pinned in `rust-toolchain.toml`, which rustup picks up automatically. Run the checks
+from the repository root:
+
+```bash
+cargo fmt --all --check                                              # formatting
+cargo clippy --workspace --all-targets --all-features -- -D warnings  # lints
+cargo test --workspace --all-features                                # unit tests, doctests and README examples
+cargo test --workspace --no-default-features                         # the build without optional providers
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+cargo deny check                                                     # licenses, bans and sources
+```
+
+Live tests against model providers are `#[ignore]`d and skip without credentials; run them with
+`cargo test -p strands --all-features -- --ignored live_`. The wire fixtures in `strands-rs/conformance/fixtures/`
+are written by the TypeScript SDK (`npx tsx strands-rs/conformance/generate.ts`), and the Rust tests read them back
+byte for byte. [`strands-rs/AGENTS.md`](./strands-rs/AGENTS.md) and
+[`strands-rs/docs/TESTING.md`](./strands-rs/docs/TESTING.md) cover the full gate list, the code rules and how parity
+with the other SDKs is tracked.
 
 ### Documentation Site
 

@@ -1,0 +1,125 @@
+[workspace]
+resolver = "3"
+members = ["strands-rs/strands", "strands-rs/strands-macros", "harness-rs/strands-harness"]
+
+[workspace.package]
+# Placeholder, as in the other SDKs: each release stamps its version in before packaging
+# (.github/scripts/stamp-rust-versions.py). strands and strands-macros inherit this one.
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+license = "Apache-2.0"
+repository = "https://github.com/strands-agents/harness-sdk"
+homepage = "https://strandsagents.com"
+authors = ["Strands Agents"]
+
+[workspace.dependencies]
+strands = { path = "strands-rs/strands", version = "0.0.0", default-features = false }
+# Exact: the macros expand to `strands::__private`, which is not semver-stable, so the two crates
+# release in lockstep. The harness uses the public `strands` API only, so a caret requirement fits.
+strands-macros = { path = "strands-rs/strands-macros", version = "=0.0.0" }
+
+async-stream = "0.3"
+async-trait = "0.1"
+futures = "0.3"
+tokio = { version = "1.50", default-features = false }
+tokio-util = "0.7"
+
+base64 = "0.22"
+http = "1"
+indexmap = { version = "2", features = ["serde"] }
+jiff = { version = "0.2", features = ["serde"] }
+jsonschema = { version = "0.61", default-features = false }
+regex = "1"
+schemars = { version = "1", features = ["preserve_order"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+yaml-rust2 = { version = "0.13", default-features = false }
+rand = "0.9"
+
+bon = "3"
+thiserror = "2"
+
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio", "credentials-process", "sso"] }
+aws-credential-types = "1"
+aws-sdk-bedrockagentcore = { version = "1", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
+aws-sdk-bedrockruntime = { version = "1", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
+aws-sigv4 = "1"
+aws-smithy-runtime-api = "1"
+aws-smithy-types = "1"
+
+eventsource-stream = "0.2"
+htmd = "0.5"
+# The DOM types htmd hands element handlers, at the version htmd uses.
+markup5ever_rcdom = "0.38"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream", "gzip", "brotli", "deflate"] }
+
+rmcp = { version = "3.9", default-features = false }
+sse-stream = "0.2"
+hyper = "1"
+hyper-util = "0.1"
+http-body-util = "0.1"
+bytes = "1"
+
+opentelemetry = { version = "0.33", default-features = false, features = ["trace", "metrics", "internal-logs"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["trace", "metrics", "http-proto", "http-json", "reqwest-blocking-client", "reqwest-rustls", "internal-logs"] }
+opentelemetry-stdout = { version = "0.33", default-features = false, features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "metrics", "internal-logs"] }
+tracing = "0.1"
+tracing-opentelemetry = { version = "0.34", default-features = false }
+tracing-subscriber = "0.3"
+
+# Pinned exactly: `cedar-policy-mcp-schema-generator` 0.7 depends on `cedar-policy-core =4.14.0`, and
+# only `cedar-policy` 4.14.0 pins the same core; any other pair compiles two copies of it.
+cedar-policy = "=4.14.0"
+cedar-policy-mcp-schema-generator = "0.7"
+mcp-tools-sdk = "0.5"
+# Shares Cedar's `cedar-policy` 4.14.0 (and its schema generator) with the `cedar` feature.
+dogwood-ops = { version = "1.2", features = ["mcp-schema"] }
+# Pinned exactly: the `monty` worker binary (`monty-runtime`) the programmatic tool caller spawns
+# must speak the same protocol version as `monty-pool`.
+monty = "=1.5.0"
+monty-pool = "=1.5.0"
+monty-types = "=1.5.0"
+nix = { version = "0.31", default-features = false, features = ["signal"] }
+
+darling = "0.24"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "3", features = ["full", "extra-traits"] }
+
+tempfile = "3"
+trybuild = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "warn"
+needless_pass_by_value = "warn"
+redundant_clone = "warn"
+semicolon_if_nothing_returned = "warn"
+explicit_iter_loop = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+manual_let_else = "warn"
+match_same_arms = "warn"
+uninlined_format_args = "warn"
+cognitive_complexity = "warn"
+large_futures = "warn"
+
+# Line tables keep backtraces readable while keeping test binaries under the MSVC linker's
+# program-database limit; the same setting on every OS keeps builds comparable.
+[profile.dev]
+debug = "line-tables-only"

@@ -1,0 +1,5 @@
+error: `#[tool]` parameters must be owned types, because they are deserialized from the tool input
+ --> tests/ui/reference_param.rs:5:25
+  |
+5 | async fn borrowed(city: &str) -> String {
+  |                         ^^^^

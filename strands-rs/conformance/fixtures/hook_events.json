@@ -1,0 +1,73 @@
+{
+  "source": "strands-ts/src/hooks/events.ts",
+  "cases": [
+    {
+      "name": "initialized_event",
+      "json": "{\"type\":\"initializedEvent\"}"
+    },
+    {
+      "name": "before_invocation_event",
+      "json": "{\"type\":\"beforeInvocationEvent\"}"
+    },
+    {
+      "name": "after_invocation_event",
+      "json": "{\"type\":\"afterInvocationEvent\"}"
+    },
+    {
+      "name": "message_added_event",
+      "json": "{\"type\":\"messageAddedEvent\",\"message\":{\"role\":\"user\",\"content\":[{\"text\":\"What is the weather in Seattle?\"}],\"trackingId\":\"00000000-0000-4000-8000-000000000018\"}}"
+    },
+    {
+      "name": "before_tool_call_event",
+      "json": "{\"type\":\"beforeToolCallEvent\",\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-weather-1\",\"input\":{\"city\":\"Seattle\"}}}"
+    },
+    {
+      "name": "after_tool_call_event",
+      "json": "{\"type\":\"afterToolCallEvent\",\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-weather-1\",\"input\":{\"city\":\"Seattle\"}},\"result\":{\"toolResult\":{\"toolUseId\":\"tooluse-weather-1\",\"status\":\"success\",\"content\":[{\"json\":{\"city\":\"Seattle\",\"forecast\":\"sunny\",\"high\":22}}]}}}"
+    },
+    {
+      "name": "before_model_call_event",
+      "json": "{\"type\":\"beforeModelCallEvent\",\"projectedInputTokens\":94}"
+    },
+    {
+      "name": "after_model_call_event",
+      "json": "{\"type\":\"afterModelCallEvent\",\"attemptCount\":1,\"stopData\":{\"message\":{\"role\":\"assistant\",\"content\":[{\"text\":\"Let me check.\"},{\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-weather-1\",\"input\":{\"city\":\"Seattle\"}}}],\"trackingId\":\"00000000-0000-4000-8000-00000000001c\",\"metadata\":{\"usage\":{\"inputTokens\":20,\"outputTokens\":10,\"totalTokens\":30}}},\"stopReason\":\"toolUse\"}}"
+    },
+    {
+      "name": "model_stream_update_event",
+      "json": "{\"type\":\"modelStreamUpdateEvent\",\"event\":{\"type\":\"modelMessageStartEvent\",\"role\":\"assistant\"}}"
+    },
+    {
+      "name": "content_block_event",
+      "json": "{\"type\":\"contentBlockEvent\",\"contentBlock\":{\"text\":\"Let me check.\"}}"
+    },
+    {
+      "name": "model_message_event",
+      "json": "{\"type\":\"modelMessageEvent\",\"message\":{\"role\":\"assistant\",\"content\":[{\"text\":\"Let me check.\"},{\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-weather-1\",\"input\":{\"city\":\"Seattle\"}}}],\"trackingId\":\"00000000-0000-4000-8000-00000000001c\",\"metadata\":{\"usage\":{\"inputTokens\":20,\"outputTokens\":10,\"totalTokens\":30}}},\"stopReason\":\"toolUse\"}"
+    },
+    {
+      "name": "tool_result_event",
+      "json": "{\"type\":\"toolResultEvent\",\"result\":{\"toolResult\":{\"toolUseId\":\"tooluse-weather-1\",\"status\":\"success\",\"content\":[{\"json\":{\"city\":\"Seattle\",\"forecast\":\"sunny\",\"high\":22}}]}}}"
+    },
+    {
+      "name": "tool_stream_update_event",
+      "json": "{\"type\":\"toolStreamUpdateEvent\",\"event\":{\"type\":\"toolStreamEvent\",\"data\":{\"progress\":\"looking up\"}}}"
+    },
+    {
+      "name": "agent_result_event",
+      "json": "{\"type\":\"agentResultEvent\",\"result\":{\"type\":\"agentResult\",\"stopReason\":\"endTurn\",\"lastMessage\":{\"role\":\"assistant\",\"content\":[{\"text\":\"It is sunny in Seattle.\"}],\"trackingId\":\"00000000-0000-4000-8000-000000000022\",\"metadata\":{\"usage\":{\"inputTokens\":40,\"outputTokens\":8,\"totalTokens\":48}}}}}"
+    },
+    {
+      "name": "interrupt_event",
+      "json": "{\"type\":\"interruptEvent\",\"interrupt\":{\"id\":\"tool:tooluse-delete-1:confirm_delete\",\"name\":\"confirm_delete\",\"reason\":{\"message\":\"Delete these files?\",\"path\":\"/tmp/x\"},\"source\":\"tool\"}}"
+    },
+    {
+      "name": "before_tools_event",
+      "json": "{\"type\":\"beforeToolsEvent\",\"message\":{\"role\":\"assistant\",\"content\":[{\"text\":\"Let me check.\"},{\"toolUse\":{\"name\":\"get_weather\",\"toolUseId\":\"tooluse-weather-1\",\"input\":{\"city\":\"Seattle\"}}}],\"trackingId\":\"00000000-0000-4000-8000-00000000001c\",\"metadata\":{\"usage\":{\"inputTokens\":20,\"outputTokens\":10,\"totalTokens\":30}}}}"
+    },
+    {
+      "name": "after_tools_event",
+      "json": "{\"type\":\"afterToolsEvent\",\"message\":{\"role\":\"user\",\"content\":[{\"toolResult\":{\"toolUseId\":\"tooluse-weather-1\",\"status\":\"success\",\"content\":[{\"json\":{\"city\":\"Seattle\",\"forecast\":\"sunny\",\"high\":22}}]}}],\"trackingId\":\"00000000-0000-4000-8000-00000000001e\"}}"
+    }
+  ]
+}

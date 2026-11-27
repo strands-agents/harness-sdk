@@ -1,0 +1,5 @@
+error: only one parameter can be `#[tool(context)]`
+ --> tests/ui/two_context_params.rs:5:61
+  |
+5 | async fn two_contexts(#[tool(context)] first: &ToolContext, #[tool(context)] second: &ToolContext) -> String {
+  |                                                             ^^^^^^^^^^^^^^^^

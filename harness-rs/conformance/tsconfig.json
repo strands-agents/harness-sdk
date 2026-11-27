@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "baseUrl": ".",
+    "paths": {
+      "@strands-agents/sdk": ["../../strands-ts/src/index.ts"],
+      "@strands-agents/sdk/*": ["../../strands-ts/src/*/index.ts"]
+    }
+  }
+}
